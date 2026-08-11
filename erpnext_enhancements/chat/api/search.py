@@ -136,7 +136,7 @@ def search_messages(
 		# `record_or_refuse`, not the swallowing variant: this function is about to return
 		# message bodies, so §F.12's rule applies in full — if the read cannot be recorded, the
 		# read does not happen. Nothing else on the page dies with it; this is an endpoint, not
-		# a permission hook.
+		# a permission hook, which is the whole reason the recording lives here.
 		audit.record_or_refuse(
 			user=user,
 			purpose="search",
@@ -144,10 +144,6 @@ def search_messages(
 			query=term,
 			rooms=_audited_rooms(rows),
 			message_count=len(rows),
-			# The dedupe would otherwise swallow this behind the thin row that
-			# `membership_filter_sql` already wrote for this same request, and the thin row is
-			# the one without the rooms in it.
-			force_new=True,
 		)
 
 	results = [_result(row, term, user) for row in rows]

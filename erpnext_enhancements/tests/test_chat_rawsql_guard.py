@@ -532,6 +532,22 @@ UNRESOLVED_QUERY_EXEMPTIONS: dict[tuple[str, str], str] = {
 		"SYSTEM_CONTEXT_READS. Verify that by deleting one of those entries: this suite goes "
 		"red naming the caller."
 	),
+	(
+		"audit.py",
+		"_acquire_chain_lock",
+	): (
+		"`select get_lock(%s, %s)` names no table, and that is the point: it is a MariaDB "
+		"advisory lock, not a read. It serialises read-head -> insert -> commit for the audit "
+		"chain, because two overlapping privileged reads that both sign the same predecessor "
+		"fork the chain and produce a permanent false 'tampered' verdict. GET_LOCK is "
+		"connection-scoped rather than transaction-scoped, which is exactly why a "
+		"`SELECT ... FOR UPDATE` cannot do this job — the critical section contains a commit. "
+		"There is no row set to scope, so there is nothing this guard could protect."
+	),
+	(
+		"audit.py",
+		"_release_chain_lock",
+	): ("`select release_lock(%s)`. The other half of the advisory lock above; touches no table."),
 }
 
 _TAB_RE = re.compile(r"`tab([^`]+)`")

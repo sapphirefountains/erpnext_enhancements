@@ -54,6 +54,17 @@ WRITER_MODULES: frozenset[str] = frozenset(
 	{
 		"chat/audit.py",
 		"chat/doctype/chat_retrieval_audit/chat_retrieval_audit.py",
+		# The ONE deleter, and it is on this list deliberately rather than by accident: this
+		# scan caught it the moment it was written, which is the check doing its job. It
+		# removes the rows the withdrawn v1.268.0 design wrote — rows carrying no rooms, no
+		# counts and an `accessed_by` of Administrator, whose chain_hash was computed over a
+		# `creation` Frappe overwrote and which therefore fail verification permanently. It
+		# goes through the controller's documented purge flag rather than around it, and
+		# selects on `recorded_at is null`, which cannot match a row from the current writer
+		# because that field is required.
+		#
+		# A second entry here should be argued as hard as this one was.
+		"patches/purge_pre_redesign_chat_audit_rows.py",
 	}
 )
 
@@ -193,6 +204,109 @@ class TestTheAuditTablesAreWrittenInOnePlace(unittest.TestCase):
 			+ "\n  ".join(sorted(set(offenders)))
 			+ "\n\nRaw SQL reaches neither the DocPerm layer nor the controller. There is no "
 			"legitimate reason for a second module to write these rows.",
+		)
+
+
+class TestThePrivilegedReadIsRecordedAtTheEndpoint(unittest.TestCase):
+	"""**The rule that replaced writing from permission hooks.**
+
+	v1.268.0 wrote the audit row inside ``note_privileged_read``, which fires from nine places
+	in the permission stack. That committed inside other requests' transactions, recorded
+	reads that were later denied, recorded nothing about what was read, and fired for
+	``Administrator`` from background jobs. The row is now written by the endpoint returning
+	the content — so the thing to enforce is that **every endpoint which can obtain the
+	unrestricted scope actually records one.**
+	"""
+
+	def test_the_hook_marks_and_does_not_write(self) -> None:
+		perms = (APP_DIR / "chat" / "permissions.py").read_text(encoding="utf-8")
+		tree = ast.parse(perms)
+		fn = next(
+			(
+				n
+				for n in ast.walk(tree)
+				if isinstance(n, ast.FunctionDef) and n.name == "note_privileged_read"
+			),
+			None,
+		)
+		self.assertIsNotNone(fn, "note_privileged_read has moved; re-derive this check.")
+
+		called = {
+			_dotted(n.func)
+			for n in ast.walk(fn)
+			if isinstance(n, ast.Call)
+		}
+		short = {c.rsplit(".", 1)[-1] for c in called}
+
+		self.assertIn(
+			"mark_privileged_scope",
+			short,
+			"note_privileged_read no longer marks the scope, so nothing records that the "
+			"permission stack handed out an unrestricted read.",
+		)
+		for forbidden in ("record_privileged_read", "record_or_refuse", "insert", "commit"):
+			self.assertNotIn(
+				forbidden,
+				short,
+				f"note_privileged_read calls {forbidden}(). A database write from a permission "
+				f"hook commits inside whatever transaction the request was already building - "
+				f"announce_unread is a Chat Message.after_insert, so this reaches the relay "
+				f"path - and it runs before the permission answer is even known.",
+			)
+
+	def test_every_endpoint_that_can_go_unrestricted_records_the_read(self) -> None:
+		"""A function that branches on the unrestricted scope must audit in that branch.
+
+		Keyed on the ``"1 = 1"`` comparison, because that literal IS the unrestricted scope -
+		``membership_filter_sql`` returns it by contract and spells denial ``"1 = 0"`` so that
+		neither can be produced by accident.
+		"""
+		offenders: list[str] = []
+		chat_files = [p for p in _python_files() if p.parts[len(APP_DIR.parts)] == "chat"]
+		self.assertGreater(len(chat_files), 20, "the chat package scan found almost nothing.")
+
+		for path in chat_files:
+			if _is_writer(path):
+				continue
+			try:
+				tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+			except SyntaxError:  # pragma: no cover
+				continue
+			for node in ast.walk(tree):
+				if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+					continue
+				# CONSUMERS only: a function that COMPARES something to "1 = 1" has been handed
+				# the unrestricted scope and is deciding what to do about it. The function that
+				# RETURNS the literal is membership_filter_sql itself — the producer, which must
+				# not write (it runs inside the permission stack), and which matched the first
+				# version of this rule. Restricting to the chat package likewise stops an
+				# unrelated `1 = 1` in a SQL builder elsewhere in the app reading as a defect.
+				consumes = any(
+					isinstance(cmp_node, ast.Compare)
+					and any(
+						isinstance(c, ast.Constant) and c.value == "1 = 1"
+						for c in cmp_node.comparators
+					)
+					for cmp_node in ast.walk(node)
+				)
+				if not consumes:
+					continue
+				calls = {
+					_dotted(c.func).rsplit(".", 1)[-1]
+					for c in ast.walk(node)
+					if isinstance(c, ast.Call)
+				}
+				if not calls & {"record_or_refuse", "record_privileged_read"}:
+					offenders.append(f"{_rel(path)}:{node.lineno} {node.name}()")
+
+		self.assertFalse(
+			sorted(set(offenders)),
+			"these functions branch on the unrestricted scope but record no audit row:\n  "
+			+ "\n  ".join(sorted(set(offenders)))
+			+ "\n\nDecision #12 permits a non-participant read BECAUSE it is recorded. A code "
+			"path that obtains the unrestricted scope and returns content without writing a "
+			"Chat Retrieval Audit row is the half of that bargain the feature exists to keep. "
+			"Use audit.record_or_refuse() if the function returns message content.",
 		)
 
 

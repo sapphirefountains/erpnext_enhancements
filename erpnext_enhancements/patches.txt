@@ -536,3 +536,12 @@ erpnext_enhancements.patches.finish_chat_bootstrap
 # Backstopped from after_migrate AND after_install for the reason stated at both of
 # those hooks. Idempotent, checks information_schema before any DDL, safe twice.
 erpnext_enhancements.patches.add_chat_phase2_indexes
+# Chat decision #12 (v1.269.0): remove the Chat Retrieval Audit rows written by the
+# v1.268.0 design, which wrote from inside the permission hooks. Those rows record no
+# rooms, no counts and an accessed_by of Administrator, their chain_hash was computed
+# over a `creation` Frappe overwrote, and they predate `recorded_at` -- so they fail
+# verification permanently and cannot be re-verified. Deleting audit rows is otherwise
+# forbidden; this goes through the controller's one documented purge flag rather than
+# around it. Selected on `recorded_at is null`, which cannot match a row written by the
+# current writer because the field is reqd. Idempotent, safe on a fresh site.
+erpnext_enhancements.patches.purge_pre_redesign_chat_audit_rows
