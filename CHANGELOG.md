@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.7] - 2026-08-11
+
+### Fixed
+
+- **The chunk sweep selected a column that does not exist.** `_messages_after` asked
+  `Chat Message` for `origin_timestamp`; the field is `gchat_create_time`. MariaDB answers
+  that with **1054, Unknown column**, raised as `OperationalError` — deterministically, on
+  every run. Production logged it every ten minutes from the Phase 5 deploy, and **no chat
+  message has been indexed yet on any site.**
+
+### Added
+
+- `tests/test_chat_sql_columns.py`, in CI: every backticked column in the chat package's SQL
+  must be a field of a DocType the same statement names, a Frappe standard column, or an alias
+  the statement defines. It fails on the real bug when the fix is reverted — checked, not
+  assumed.
+
+### Notes
+
+- **This ran for two hours on production because nothing had ever executed that statement.**
+  The pure suites cover `chunker.chunk_messages` thoroughly and it is a good chunker; the SQL
+  that *feeds* it needs a database, so it sat in the gap between "tested without a bench" and
+  "tested with one" — and the bench suite has never completed a run anywhere.
+- **Review would not have caught it either.** `origin_timestamp` is an entirely plausible name
+  for the field it was reaching for, and the surrounding code reads correctly. The only thing
+  that distinguishes it from a working query is a fact stored in a different file, which is
+  exactly what a static check is good at and a human reading a diff is not.
+- The same scan cleared the rest of the package: three hits, two of them `as` aliases the
+  statements define themselves, one real.
+
+## [1.277.6] - 2026-08-11
+
+### Fixed
+
+- Chunk-sweep failures now log the **MariaDB error number** alongside the exception class.
+
+### Notes
+
+- **`OperationalError` alone is not actionable.** It covers a lock wait (1205), an unknown
+  column (1054) and an illegal mix of collations (1267) — three causes wanting three different
+  responses. Production has been logging exactly that string every ten minutes since the Phase
+  5 deploy, on one room, and it does not say which.
+- The errno is a **number**, so unlike the driver's message it cannot carry the row that
+  failed. These rows are message bodies. That is the whole reason this logs a code rather than
+  `str(exc)` — the previous version logged nothing at all for the same reason, which traded one
+  failure mode for a worse one.
+- v1.277.5 confirmed working on production: the summariser's `model was unavailable` errors
+  stopped once the Chat App Service Account was set, and the chunk failures began naming their
+  exception class. The remaining fault is this one, and it predates Phase 5's sweepers only in
+  the sense that nothing had queried those tables on a schedule before.
+
 ## [1.277.5] - 2026-08-11
 
 Three defects found by watching the Phase 5 jobs run on production for the first time. Chat

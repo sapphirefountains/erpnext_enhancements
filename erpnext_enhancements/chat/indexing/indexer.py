@@ -102,7 +102,7 @@ def sweep_chunks() -> dict[str, int]:
 			# failed, and these rows are message bodies. A class name is enough to tell an
 			# integrity error from a timeout, which is the whole question when this repeats,
 			# and it is what "chunking failed for room X" alone could not answer on production.
-			_note(f"chunking failed for room {room['name']}: {exc.__class__.__name__}")
+			_note(f"chunking failed for room {room['name']}: {_cause(exc)}")
 	return {"rooms": len(rooms), "chunks": built, "skipped": skipped}
 
 
@@ -248,7 +248,7 @@ def _to_chunker_messages(rows: list[dict[str, Any]]) -> tuple[list[chunker.Messa
 	stamps: dict[str, Any] = {}
 	previous: Any = None
 	for row in rows:
-		stamp = row.get("origin_timestamp") or row.get("creation")
+		stamp = row.get("gchat_create_time") or row.get("creation")
 		stamps[row["name"]] = stamp
 		gap = 0.0
 		if previous is not None and stamp is not None:
@@ -280,7 +280,7 @@ def _tail_idle_minutes(last_row: dict[str, Any]) -> float | None:
 	*this* function that error seals every tail immediately, which is precisely the
 	per-message embedding cost the tail rule exists to prevent.
 	"""
-	stamp = last_row.get("origin_timestamp") or last_row.get("creation")
+	stamp = last_row.get("gchat_create_time") or last_row.get("creation")
 	if not stamp:
 		return None
 	try:
@@ -332,7 +332,7 @@ def _messages_after(room: str, watermark: int, *, limit: int) -> list[dict[str, 
 		frappe.db.sql(
 			f"""
 		select `name`, `seq`, `sender`, `sender_email`, `text`, `text_plain`,
-			`thread_root`, `creation`, `origin_timestamp`
+			`thread_root`, `creation`, `gchat_create_time`
 		from `tab{MESSAGE_DOCTYPE}`
 		where `room` = %(room)s
 			and `seq` > %(watermark)s
@@ -409,6 +409,22 @@ def _setting(fieldname: str) -> Any:
 		return frappe.db.get_single_value("Chat Settings", fieldname)
 	except Exception:
 		return None
+
+
+def _cause(exc: Exception) -> str:
+	"""The exception class, plus the **database error number** when there is one.
+
+	`OperationalError` alone is not actionable — it covers a lock wait, an unknown column and
+	an illegal mix of collations, which want three different responses. The MariaDB errno
+	separates them exactly (1205 vs 1054 vs 1267) and is a **number**, so unlike the driver's
+	message it cannot carry the row that failed. These rows are message bodies; that
+	distinction is the whole reason this returns a code and not `str(exc)`.
+	"""
+	name = exc.__class__.__name__
+	args = getattr(exc, "args", None) or ()
+	if args and isinstance(args[0], int):
+		return f"{name}({args[0]})"
+	return name
 
 
 def _note(message: str) -> None:
