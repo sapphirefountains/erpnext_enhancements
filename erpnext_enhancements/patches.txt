@@ -561,3 +561,27 @@ erpnext_enhancements.patches.purge_pre_redesign_chat_audit_rows
 # Backstopped from after_migrate AND after_install for the reason stated at both hooks.
 # Idempotent, no DDL, safe twice.
 erpnext_enhancements.patches.chat_phase4_notifications
+# chat Phase 5 (v1.272.0). The retrieval composites, and one raw-DDL FULLTEXT index that has
+# no framework helper -- frappe.db.add_index emits a plain ADD INDEX, which on a longtext
+# column is a prefix index or an error, never a FULLTEXT index.
+#
+# A third file rather than rows appended to add_chat_phase2_indexes, for the reason that file
+# states about its own predecessor: a patch is written to Patch Log on every site that ran it
+# and run_all() has no re-run path, so a row added to a spent patch creates its index on a
+# fresh site and never on production.
+#
+# unique(room, first_seq) on Chat Context Chunk is correctness, not speed. The indexer is a
+# retried background job -- a deploy FLUSHDBs the queue Redis, v16 wires no RQ retries, the
+# sweeper re-drives -- so two workers building the same chunk is scheduled, and the result is
+# the same conversation in the ranker's candidate set twice.
+#
+# The FULLTEXT index IS the lexical tier, which is mandatory rather than a fallback: it is
+# what makes an exact invoice number outrank a chunk that is merely about invoices. Missing,
+# it does not degrade gracefully -- it silently deletes the half of retrieval that handles
+# identifiers, with no error anywhere.
+#
+# Backstopped from after_migrate AND after_install, and the after_migrate half is doing real
+# work here rather than being belt-and-braces: whether bench migrate drops a hand-added
+# FULLTEXT index is an open VERIFY, and re-creating it every migrate is what makes the bad
+# answer survivable. Checks information_schema before any DDL. Safe twice.
+erpnext_enhancements.patches.add_chat_phase5_indexes

@@ -1,0 +1,219 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "autoname": "field:room",
+ "creation": "2026-08-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "room",
+  "digest_version",
+  "generation_count",
+  "column_break_head",
+  "is_stale",
+  "stale_since",
+  "watermark_section",
+  "watermark_seq",
+  "watermark_count",
+  "column_break_watermark",
+  "watermark_modified",
+  "coverage_section",
+  "covered_from",
+  "covered_to",
+  "column_break_coverage",
+  "covered_from_at",
+  "covered_to_at",
+  "summary_section",
+  "summary_text",
+  "token_count",
+  "generation_meta_section",
+  "model_used",
+  "generated_at",
+  "generation_ms",
+  "column_break_generation",
+  "rebuild_failures",
+  "poisoned",
+  "last_error"
+ ],
+ "fields": [
+  {
+   "description": "One digest per room, and the docname IS the room - so 'two workers generated a digest for the same room at once' is a failed insert rather than two summaries that disagree. There is no second uniqueness rule to keep in sync.",
+   "fieldname": "room",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Room",
+   "options": "Chat Room",
+   "reqd": 1,
+   "set_only_once": 1,
+   "unique": 1
+  },
+  {
+   "default": "1",
+   "description": "Monotonic, bumped on every republish. It is embedded in every cache key derived from this digest, which is what makes an invalidation actually invalidate: without it, a re-generated summary keeps the key of the one it replaced and the old text is served until the TTL happens to roll.",
+   "fieldname": "digest_version",
+   "fieldtype": "Int",
+   "label": "Digest Version"
+  },
+  {
+   "description": "How many times this digest has been rolled forward incrementally. At the configured ceiling the next pass is a FULL rebuild from source messages regardless of staleness, because a summary of a summary of a summary drifts from the transcript in ways nothing measures.",
+   "fieldname": "generation_count",
+   "fieldtype": "Int",
+   "label": "Generation Count"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Set by the staleness seam when an edit or a delete lands inside the covered span. RETRIEVAL SKIPS A STALE DIGEST OUTRIGHT rather than serving it with a caveat, and the rebuild is a full regeneration from source, never an incremental append: a rolling summary can add information but it cannot unsay it. This is the mechanism that stops a deleted sentence surviving in a model's context window after the person who wrote it deleted it.",
+   "fieldname": "is_stale",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Is Stale"
+  },
+  {
+   "fieldname": "stale_since",
+   "fieldtype": "Datetime",
+   "label": "Stale Since"
+  },
+  {
+   "fieldname": "watermark_section",
+   "fieldtype": "Section Break",
+   "label": "Watermark"
+  },
+  {
+   "description": "First value of the three-value watermark: the highest seq covered. Necessary and NOT sufficient on its own - an edit and a delete both leave seq untouched, so a digest keyed on seq alone is unchanged by a delete, its cache key is unchanged, and the summary containing the deleted message is served again.",
+   "fieldname": "watermark_seq",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Watermark Seq"
+  },
+  {
+   "description": "Second value: how many messages the summary was built from. This is the one that catches a HARD delete, which moves neither seq nor modified.",
+   "fieldname": "watermark_count",
+   "fieldtype": "Int",
+   "label": "Watermark Count"
+  },
+  {
+   "fieldname": "column_break_watermark",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Third value: max(modified) across the covered messages, which is what catches an EDIT. Compared using frappe.utils.now_datetime() on both sides or converted explicitly, never against SQL NOW(): the production database runs UTC while Frappe writes creation/modified in site-local time, so a naive TIMESTAMPDIFF reports a row written one minute ago as six hours old and every freshness predicate built on it is wrong in the same direction.",
+   "fieldname": "watermark_modified",
+   "fieldtype": "Datetime",
+   "label": "Watermark Modified"
+  },
+  {
+   "fieldname": "coverage_section",
+   "fieldtype": "Section Break",
+   "label": "Coverage"
+  },
+  {
+   "description": "The seq span this summary describes, inclusive. An edit or delete whose message falls inside [covered_from, covered_to] is what sets is_stale - which is why the span is stored rather than inferred from the watermark.",
+   "fieldname": "covered_from",
+   "fieldtype": "Int",
+   "label": "Covered From"
+  },
+  {
+   "fieldname": "covered_to",
+   "fieldtype": "Int",
+   "label": "Covered To"
+  },
+  {
+   "fieldname": "column_break_coverage",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Wall-clock bounds of the covered span. A span older than the configured age forces a full rebuild even when nothing is stale, because a rolling summary of a year of conversation is a summary of nothing in particular.",
+   "fieldname": "covered_from_at",
+   "fieldtype": "Datetime",
+   "label": "Covered From At"
+  },
+  {
+   "fieldname": "covered_to_at",
+   "fieldtype": "Datetime",
+   "label": "Covered To At"
+  },
+  {
+   "fieldname": "summary_section",
+   "fieldtype": "Section Break",
+   "label": "Summary"
+  },
+  {
+   "description": "The rendered summary, a few hundred tokens. It is DERIVED from employee-private conversation and is therefore exactly as sensitive as the conversation - more so in one respect, because a summary crosses time and topic boundaries that a single message does not. Zero DocPerm, same as Chat Message.",
+   "fieldname": "summary_text",
+   "fieldtype": "Long Text",
+   "label": "Summary Text"
+  },
+  {
+   "fieldname": "token_count",
+   "fieldtype": "Int",
+   "label": "Token Count"
+  },
+  {
+   "fieldname": "generation_meta_section",
+   "fieldtype": "Section Break",
+   "label": "Generation"
+  },
+  {
+   "fieldname": "model_used",
+   "fieldtype": "Data",
+   "label": "Model Used",
+   "length": 140
+  },
+  {
+   "description": "When this digest was last produced. The health check alerts when the newest generated_at across all digests is older than the configured window - the failure being watched for is not an error, it is silence.",
+   "fieldname": "generated_at",
+   "fieldtype": "Datetime",
+   "label": "Generated At"
+  },
+  {
+   "fieldname": "generation_ms",
+   "fieldtype": "Int",
+   "label": "Generation (ms)"
+  },
+  {
+   "fieldname": "column_break_generation",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Consecutive rebuild failures. The poison-pill guard: at the configured ceiling the room stops being scheduled for rebuild and an alert is raised, because a digest that fails every five minutes forever is a job that fills the Error Log until nobody reads it.",
+   "fieldname": "rebuild_failures",
+   "fieldtype": "Int",
+   "label": "Rebuild Failures"
+  },
+  {
+   "default": "0",
+   "description": "Set when rebuild_failures hits the ceiling. The digest stays stale, stays unserved, and stops being retried until a human clears this. Deliberately a separate flag from is_stale: 'nobody has rebuilt this yet' and 'this cannot be rebuilt' need different answers from an operator.",
+   "fieldname": "poisoned",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Poisoned"
+  },
+  {
+   "description": "The last failure, scrubbed. Never a message body.",
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Room Digest",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

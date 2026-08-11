@@ -938,6 +938,11 @@ after_install = [
 	"erpnext_enhancements.patches.default_chat_settings.ensure_chat_settings",
 	# Phase 2's composites, same shape and same reason as the line above it.
 	"erpnext_enhancements.patches.add_chat_phase2_indexes.ensure_chat_phase2_indexes",
+	# Phase 5's composites, plus the FULLTEXT index on Chat Context Chunk.body, which is
+	# the whole lexical half of retrieval -- the half that makes an exact invoice number
+	# findable at all. frappe.db.add_index cannot create a FULLTEXT index, so that one is
+	# raw DDL and exists only if this runs.
+	"erpnext_enhancements.patches.add_chat_phase5_indexes.ensure_chat_phase5_indexes",
 	# Phase 4's Notification Type records. Notification Log.type is a LINK on v16, so
 	# without these two rows every chat bell notification fails link validation on insert --
 	# one Error Log per message and a bell that never lights.
@@ -1084,6 +1089,18 @@ after_migrate = [
 	# path this is five cheap reads and no writes. Never raises -- a hook that raised here
 	# would brick every future deploy rather than report one bad constraint.
 	"erpnext_enhancements.patches.add_chat_phase2_indexes.ensure_chat_phase2_indexes",
+	# chat Phase 5 (v1.272.0): the retrieval composites, and one thing the other two index
+	# backstops do not carry. unique(room, first_seq) on Chat Context Chunk is correctness
+	# rather than speed -- the indexer is a retried background job, so two workers building
+	# the same chunk is scheduled rather than unlikely, and the result is the same
+	# conversation in the candidate set twice.
+	#
+	# The FULLTEXT index on Chat Context Chunk.body is why this specifically needs the
+	# after_migrate half. `VERIFY:` whether bench migrate drops a hand-added FULLTEXT index
+	# -- add it, migrate twice, SHOW INDEX. If it does, the lexical tier degrades INVISIBLY
+	# after every deploy: exact-string matching stops working and nothing raises. Re-creating
+	# it here makes the bad answer to that question a one-migrate window instead of forever.
+	"erpnext_enhancements.patches.add_chat_phase5_indexes.ensure_chat_phase5_indexes",
 	# chat Phase 4 (notifications): the two `Notification Type` records, plus the presence
 	# retune. Both need the after_migrate half specifically, for opposite reasons.
 	#

@@ -146,7 +146,48 @@ SQL_CALLS: frozenset[tuple[str, ...]] = frozenset(
 	}
 )
 
+#: ``(file, function)`` occurrences permitted to *name* a retrieval table outside the gate,
+#: each with the reason it is a name rather than a read.
+#:
+#: Keyed on the pair rather than the file, deliberately, matching
+#: ``tests/test_chat_rawsql_guard.py``: a file-level exemption silently covers whatever
+#: function is added to that file next, and the next function is the one that answers a
+#: user.
+#:
+#: The exemption is also **structural rather than trusted** —
+#: :class:`TestTheExemptionsAreHonest` asserts that no exempted ``(file, function)``
+#: executes anything. The day one of them grows a ``frappe.db.sql`` or a ``frappe.get_all``
+#: it has stopped being a name and become a query, and this suite says so.
+NAME_ONLY_EXEMPTIONS: dict[tuple[str, str], str] = {
+	(
+		"assistant_tools/_gate.py",
+		"<module>",
+	): (
+		"CHAT_DENYLIST_DOCTYPES — the list of tables the generic AI tools must REFUSE. "
+		"Reporting it as an ungated read would be exactly backwards: it is the thing that "
+		"stops the read. Same inversion as permissions.py's fragment builders in the "
+		"raw-SQL guard, which name the chat tables because they ARE the membership filter.\n"
+		"It is also checked against the filesystem by set equality in "
+		"tests/test_chat_mcp_denylist.py, so these three names are not optional there — "
+		"omitting them to keep this scan quiet would silently open the surface the denylist "
+		"exists to close."
+	),
+	(
+		"patches/add_chat_phase5_indexes.py",
+		"<module>",
+	): (
+		"The index definitions: (doctype, columns, index_name) tuples the patch turns into "
+		"DDL. Creating an index reads no rows and returns none — and the FULLTEXT index in "
+		"particular has no framework helper at all, so its table name has to appear in raw "
+		"DDL somewhere or the lexical tier does not exist.\n"
+		"The module scope holds only the tuples; every statement that executes lives in a "
+		"named function below, and the only SELECT among them is against "
+		"information_schema.STATISTICS, which holds index metadata rather than conversation."
+	),
+}
+
 _TAB_RE = re.compile(r"`tab([^`]+)`")
+_MIN_REASON = 120
 
 
 # --------------------------------------------------------------------------- collection
@@ -426,7 +467,11 @@ class TestTheAnalyserItself(unittest.TestCase):
 
 class TestRuleATheIndexTablesHaveOneDoor(unittest.TestCase):
 	def test_no_module_outside_the_gate_names_a_retrieval_table(self):
-		offenders = sorted(str(use) for use in _app_table_uses() if use.file != GATE_REL)
+		offenders = sorted(
+			str(use)
+			for use in _app_table_uses()
+			if use.file != GATE_REL and (use.file, use.function) not in NAME_ONLY_EXEMPTIONS
+		)
 		self.assertFalse(
 			offenders,
 			"these modules name a Phase 5 index table outside the retrieval gate:\n  "
@@ -439,7 +484,11 @@ class TestRuleATheIndexTablesHaveOneDoor(unittest.TestCase):
 			"query, for speed'. The cost of that shortcut is not a slow page: it is a "
 			"correct answer delivered to somebody who is not in the room, with no "
 			"exception, no symptom and nothing in any log. Move the query into the gate "
-			"and give it a name.",
+			"and give it a name.\n"
+			"If the occurrence genuinely NAMES the table without reading it — a denylist, "
+			"an index definition — add the (file, function) pair to NAME_ONLY_EXEMPTIONS "
+			"with the reason. That exemption is structural: an exempted pair that executes "
+			"any query fails the honesty check below.",
 		)
 
 	def test_the_scan_covers_the_whole_app_and_not_just_the_chat_package(self):
@@ -565,6 +614,62 @@ class TestRuleDTheEntryPointDerivesItsOwnRoomSet(unittest.TestCase):
 			"that exact path, so every index-table query in the package is currently an "
 			"offender — or worse, there are none yet and the package is being assembled "
 			"somewhere else.",
+		)
+
+
+class TestTheExemptionsAreHonest(unittest.TestCase):
+	"""An exemption list nobody prunes is a hole nobody is watching, and this one
+	sits directly on the security boundary."""
+
+	def test_every_exemption_states_why_the_name_is_not_a_read(self):
+		for key, reason in sorted(NAME_ONLY_EXEMPTIONS.items()):
+			with self.subTest(exemption=key):
+				self.assertGreaterEqual(
+					len(reason.strip()),
+					_MIN_REASON,
+					f"NAME_ONLY_EXEMPTIONS[{key!r}] has no real justification. Two things "
+					"have to be true and the entry has to say both: the occurrence names "
+					"the table without reading it, and nothing in that scope executes a "
+					"query.",
+				)
+
+	def test_no_exempted_scope_executes_a_query(self):
+		"""The exemption is granted on the claim 'this is a name, not a read'. This
+		is what makes that claim structural instead of trusted."""
+		offenders: list[str] = []
+		for rel, function in sorted(NAME_ONLY_EXEMPTIONS):
+			path = APP_DIR / rel
+			if not path.is_file():
+				continue  # reported as stale by the test below
+			tree = _parse(path)
+			functions = _function_index(tree)
+			for node in ast.walk(tree):
+				if not isinstance(node, ast.Call):
+					continue
+				if functions.get(id(node), "<module>") != function:
+					continue
+				dotted = _dotted(node.func)
+				if dotted in SQL_CALLS:
+					offenders.append(f"{rel}:{node.lineno} {function}() calls {'.'.join(dotted)}")
+		self.assertFalse(
+			offenders,
+			"these NAME_ONLY_EXEMPTIONS scopes now execute a query:\n  "
+			+ "\n  ".join(offenders)
+			+ "\n\nThe exemption was granted on the claim that the occurrence NAMES a "
+			"retrieval table without reading it. That is no longer true. Either move the "
+			"query into the gate, or remove the exemption and justify the read properly.",
+		)
+
+	def test_no_exemption_is_stale(self):
+		"""A pair that matches no occurrence exempts nothing today and whatever
+		takes that name tomorrow."""
+		live = {(use.file, use.function) for use in _app_table_uses()}
+		stale = sorted(key for key in NAME_ONLY_EXEMPTIONS if key not in live)
+		self.assertFalse(
+			stale,
+			f"these NAME_ONLY_EXEMPTIONS entries match no occurrence: {stale}. A function "
+			"was renamed, moved or deleted. Delete the entry in the same commit — nobody "
+			"re-reads an exemption they did not have to write.",
 		)
 
 

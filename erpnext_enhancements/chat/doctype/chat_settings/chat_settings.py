@@ -35,6 +35,7 @@ from erpnext_enhancements.chat.doctype.chat_settings.chat_settings_rules import 
 	validate_budgets,
 	validate_endpoint_url,
 	validate_retention,
+	validate_retrieval,
 )
 
 # Fields that hold a Google *identifier* and must never hold a Google *credential*.
@@ -82,6 +83,7 @@ class ChatSettings(Document):
 		errors.extend(self._secret_material_errors())
 		errors.extend(endpoint_errors)
 		errors.extend(self._budget_errors())
+		errors.extend(self._retrieval_errors())
 		errors.extend(self._retention_errors())
 		errors.extend(self._whitelist_errors())
 
@@ -150,6 +152,32 @@ class ChatSettings(Document):
 			cint(self.get("budget_t2_cross")),
 			cint(self.get("budget_t3_authored")),
 			cint(self.get("budget_reserve")),
+		)
+
+	def _retrieval_errors(self) -> list[str]:
+		"""The Phase 5 dials. Keyword-only at the rules boundary on purpose — nineteen
+		positional integers is nineteen chances to transpose two that are both plausible
+		in either position."""
+		return validate_retrieval(
+			retrieval_top_k=cint(self.get("retrieval_top_k")),
+			max_candidate_chunks=cint(self.get("max_candidate_chunks")),
+			max_rooms_per_retrieval=cint(self.get("max_rooms_per_retrieval")),
+			rrf_k=cint(self.get("rrf_k")),
+			recency_half_life_days=cint(self.get("recency_half_life_days")),
+			embedding_dim=cint(self.get("embedding_dim")),
+			chunk_seal_tokens=cint(self.get("chunk_seal_tokens")),
+			chunk_seal_messages=cint(self.get("chunk_seal_messages")),
+			chunk_seal_gap_minutes=cint(self.get("chunk_seal_gap_minutes")),
+			chunk_idle_tail_minutes=cint(self.get("chunk_idle_tail_minutes")),
+			digest_dirty_message_threshold=cint(self.get("digest_dirty_message_threshold")),
+			digest_dirty_minutes=cint(self.get("digest_dirty_minutes")),
+			digest_batch_rooms=cint(self.get("digest_batch_rooms")),
+			thread_digest_min_messages=cint(self.get("thread_digest_min_messages")),
+			digest_max_rebuild_failures=cint(self.get("digest_max_rebuild_failures")),
+			digest_staleness_alert_minutes=cint(self.get("digest_staleness_alert_minutes")),
+			context_token_ceiling=cint(self.get("context_token_ceiling")),
+			semantic_tier_enabled=bool(cint(self.get("semantic_tier_enabled"))),
+			lexical_tier_enabled=bool(cint(self.get("lexical_tier_enabled"))),
 		)
 
 	def _retention_errors(self) -> list[str]:

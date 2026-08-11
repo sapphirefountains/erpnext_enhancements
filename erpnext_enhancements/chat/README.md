@@ -43,7 +43,10 @@ bubble on every Desk page.
 | Dual-surface bubble, bubble→SPA handoff, unread badge | **built** (Phase 3) |
 | Inline `[[ref:N]]` citation rendering, feature-degrading to today's behaviour | **built** (Phase 3) |
 | Notifications, Web Push, VAPID, the suppression matrix | Phase 4 |
-| Triton integration, retrieval gate, embeddings, digests, the citation MANIFEST | Phase 5 |
+| The MCP denylist — chat is unreadable through the generic AI tools | **built** (Phase 5) |
+| The retrieval source scan (one door, `allowed_rooms` first) | **built** (Phase 5) |
+| Phase 5 schema — chunk, two digests, invocation log, FULLTEXT index | **built** (Phase 5) |
+| Triton integration, retrieval gate, embeddings, digests, the citation MANIFEST | Phase 5, in progress |
 | Export, audit writes, drift reports, pilot rollout | Phase 6 |
 
 **Phase 3 built the entire API surface, not just a UI on top of one.** Phase 2's brief said
@@ -86,6 +89,9 @@ are written from day one.
 | `doctype/chat_event_subscription/` | Workspace Events subscription bookkeeping — `expire_time` (read off Google's response, never computed from a constant), `renew_after`, `state`, `event_count`, `last_event_at`, failure counters. One row per coworker (shape B). An expired subscription is permanently **deleted** by Google and cannot be renewed, which is why its expiry is tracked in a row rather than assumed. |
 | `doctype/chat_message_revision/` | **New in Phase 2.** The edit/delete audit trail §4.F requires and the ADR never named. `unique(message, revision_no)` by patch, `text_before` / `text_after`, `change_type`, `actor`, `origin`, `origin_timestamp`. **Zero DocPerm, tighter than `Chat Message` itself** — this is where superseded and deleted content lives, so it is reachable only through the oversight role. |
 | `doctype/chat_provisioning_run/` | **New in Phase 2.** The checkpoint row that makes a bulk org sweep resumable rather than restartable: `mode`, `dry_run` (defaults **on**), `status`, `cursor`, the four counts, `log`. Zero DocPerm. One run is one mode, because a run meaning "departments then teams" could not be resumed without re-deriving where the boundary fell. |
+| `doctype/chat_context_chunk/` | **New in Phase 5.** The semantic index: a run of consecutive messages in **one** room, sealed at a boundary, with one embedding. `body` holds the messages **verbatim**, so this is not a derived artefact needing lighter handling — it is the transcript, pre-assembled into prose, and it is treated exactly like `Chat Message`. A chunk never spans rooms, and that is the permission boundary rather than a chunking heuristic: the gate filters candidates on `room` before a vector is loaded, so a two-room chunk is a chunk that *cannot be filtered*. `unique(room, first_seq)` by patch, `(room, last_seq)` for the bounded candidate scan, and a raw-DDL **FULLTEXT** index on `body` that is the whole lexical tier. |
+| `doctype/chat_room_digest/`, `doctype/chat_thread_digest/` | **New in Phase 5.** Rolling summaries, one per room and one per long thread. The docname **is** the room / the thread root, so concurrent generation is a failed insert rather than two summaries that disagree. Both carry the **three-value watermark** (`watermark_seq`, `watermark_count`, `watermark_modified`) — see [the watermark](#the-three-value-watermark-and-why-one-value-is-a-privacy-bug). `poisoned` is deliberately separate from `is_stale`: "nobody has rebuilt this yet" and "this cannot be rebuilt" need different answers from an operator. |
+| `doctype/triton_invocation_log/` | **New in Phase 5.** One row per `@triton` turn: tokens, cache-hit tokens, candidate counts, citation misses, four timings. **Instrumentation, not audit** — every write is best-effort and a failure is swallowed, which is the *opposite* posture from `Chat Retrieval Audit`. An audit that fails open is not an audit; instrumentation that fails closed is an outage caused by a metric. `request_id` is derived from the triggering mention and unique, so a redelivered interaction event produces one turn rather than two answers. |
 | `sync/states.py` | **Pure.** The one relay-job transition table, its projection onto `Chat Message.sync_state`, and the jitter-free `available_at` delay. `assert_transition` is the only gate on a status write — **no bare `db_set` on either field anywhere.** There is deliberately no `Retrying` state: a transient failure returns to `Pending` with `attempts` incremented. |
 | `sync/decisions.py` | **Pure, and the heart of it.** `classify_inbound()` — the whole echo ladder as a total function — plus `parse_pubsub_envelope()`, the idempotency keys, and the bounded fallback heuristic that ships disabled. Names no Google host, so the guardrail test stays true. |
 | `sync/budget.py` | **Pure.** The 32,000-byte fit. Truncates on a codepoint boundary and reserves room for the deep-link suffix inside the limit. |
@@ -401,6 +407,46 @@ Absences that a reader will otherwise assume are oversights:
 ---
 
 ## Rules that are easy to get wrong
+
+### The three-value watermark, and why one value is a privacy bug
+
+Every digest, chunk and context cache key is keyed on **`(max(seq), count(*), max(modified))`**
+over the covered span, and all three are load-bearing:
+
+| Value | What it catches | What it misses |
+|---|---|---|
+| `watermark_seq` | a new message | **an edit, and a delete** — neither advances `seq` |
+| `watermark_modified` | an **edit** | a hard delete |
+| `watermark_count` | a **hard delete** | — |
+
+A digest keyed on `seq` alone is *unchanged* by a delete. So its cache key is unchanged, so
+the summary containing the message somebody just deleted is served again — and it keeps being
+served until the TTL happens to roll. That is a privacy failure that presents as a caching
+bug, and R03 names it "the single most common bug in this design; write the test first."
+
+Two consequences the implementation must keep:
+
+- **Retrieval skips a stale digest or chunk outright** rather than serving it with a caveat,
+  and the rebuild is a **full regeneration from source**, never an incremental append. A
+  rolling summary can add information but it cannot unsay it. ERPNext holds the *only* copy of
+  a deleted body — Google's tombstone is content-free — so a stale row served once is deleted
+  text back in a model's context window, with the person who deleted it unable to know.
+- **Every freshness comparison uses `frappe.utils.now_datetime()` on both sides, or converts
+  explicitly.** The production database runs UTC while Frappe writes `creation`/`modified` in
+  site-local time, so a naive `TIMESTAMPDIFF(MINUTE, MAX(creation), NOW())` reports a row
+  written one minute ago as **361 minutes** old. Every SQL-side freshness predicate built that
+  way — the dirty-room predicate, the staleness alarm, the cache-invalidation window — is wrong
+  in the same direction, and the direction is "nothing is ever fresh".
+
+**The dirty-room predicate is derived, not counted, and that is a deliberate divergence from
+the ADR.** §I.6 specifies `unsummarized_count >= 25 OR digest_dirty_since < now() - 15 min`,
+which implies two counter columns maintained on the message write path. This build computes the
+same predicate from facts the room already stores — `Chat Room.seq_high_water` minus the
+digest's `watermark_seq` *is* the unsummarised count, and `Chat Room.last_message_at` against
+the digest's `generated_at` *is* the dirty age. The reasoning is the one this repo applies
+everywhere else: a counter is a second source of truth for a number already known, it needs a
+write on the hottest path in the feature, and the copy that drifts is the one nobody notices.
+Derived is self-correcting; counted is not.
 
 ### A unique-index collision on `gchat_message_name` is SUCCESS, not an error
 

@@ -165,6 +165,10 @@ CHAT_DENYLIST_DOCTYPES = frozenset(
     {
         "Chat Allowed User",
         "Chat Attachment",
+        # Phase 5's semantic index. `body` holds the messages verbatim, so this is
+        # not a derived artefact needing lighter handling — it is the transcript,
+        # pre-assembled into prose, which is easier to read than the transcript.
+        "Chat Context Chunk",
         "Chat Event Subscription",
         "Chat Inbound Event",
         "Chat Mention",
@@ -176,8 +180,17 @@ CHAT_DENYLIST_DOCTYPES = frozenset(
         "Chat Retrieval Audit",
         "Chat Retrieval Audit Room",
         "Chat Room",
+        # The digests are summaries of conversation, which is worse rather than
+        # better: a summary crosses time and topic boundaries a single message does
+        # not, and it cannot be un-said once it is in a context window.
+        "Chat Room Digest",
         "Chat Room Member",
         "Chat Settings",
+        "Chat Thread Digest",
+        # No message text — identifiers, counts and timings. It does hold *who asked
+        # Triton what, when*, which is a behavioural record of employees and belongs
+        # behind the same door as the conversation.
+        "Triton Invocation Log",
     }
 )
 

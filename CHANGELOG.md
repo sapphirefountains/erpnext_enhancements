@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.272.0] - 2026-08-11
+
+Phase 5's schema: the semantic index, the two digest tables, the invocation log, and the
+thirty-seven settings dials that size them. No behaviour yet — these are the tables the
+retrieval gate will read and the numbers an operator will retune without a deploy.
+
+### Added
+
+- **`Chat Context Chunk`** — a run of consecutive messages in **one** room, sealed at a
+  boundary, with one embedding. Volume is roughly messages ÷ 15. `body` holds the messages
+  verbatim, so it is treated exactly like `Chat Message`: zero DocPerm, no global search,
+  `track_changes = 0`, in the MCP denylist.
+- **`Chat Room Digest`** and **`Chat Thread Digest`** — rolling summaries, one per room and
+  one per long thread. The docname *is* the room / the thread root, so concurrent generation
+  is a failed insert rather than two summaries that disagree, and no `unique(...)` patch is
+  needed for either.
+- **`Triton Invocation Log`** — one row per `@triton` turn: context tokens, cached-content
+  tokens, candidate counts, citation misses, and four separate timings.
+- `patches/add_chat_phase5_indexes.py`, registered on both `after_migrate` and
+  `after_install`: `unique(room, first_seq)`, four composites, and a raw-DDL **FULLTEXT**
+  index on `Chat Context Chunk.body`.
+- Thirty-seven `Chat Settings` fields across three new sections — Triton Retrieval, Triton
+  Indexing, Triton Behaviour — plus `chat_settings_rules.validate_retrieval`, which refuses
+  the six combinations whose symptom is "the feature appears to work".
+
+### Notes
+
+- **A chunk never spans rooms, and that is the permission boundary rather than a chunking
+  heuristic.** The gate filters candidates on `room` in the `WHERE` clause before a vector is
+  loaded, so a two-room chunk is a chunk that *cannot be filtered* — it would be admitted by
+  membership of either room and carry the other one's content with it. `room` is `reqd` and
+  `set_only_once`, and the controller re-checks the span rather than trusting the writer,
+  because the writer is a background job that will be retried.
+- **`unique(room, first_seq)` is correctness, not speed.** Background jobs here are retried by
+  construction — a deploy FLUSHDBs the queue Redis, Frappe v16 wires no RQ retries, the
+  sweeper re-drives — so two workers building the same chunk is *scheduled* rather than
+  unlikely, and the result is the same conversation in the ranker's candidate set twice.
+- **The FULLTEXT index has no framework helper.** `frappe.db.add_index` emits a plain
+  `ADD INDEX`, which on a `longtext` column is a prefix index or an error, never a FULLTEXT
+  index. The lexical tier is mandatory rather than a fallback — it is what makes an exact
+  invoice number outrank a chunk merely *about* invoices — so a missing index does not degrade
+  gracefully, it silently deletes the half of retrieval that handles identifiers.
+  `VERIFY:` whether `bench migrate` drops a hand-added FULLTEXT index; the `after_migrate`
+  backstop is what makes the bad answer a one-migrate window instead of forever.
+- **The unsealed tail of every room is deliberately excluded from the semantic index**, and a
+  reviewer will challenge it, so the argument is in the controller docstring: embedding the
+  tail means one embedding call per chat message, which is the largest avoidable cost in the
+  design. The asking room's tail is carried verbatim by the thread tier, other rooms' tails
+  are reachable lexically, and the next digest pass folds them in. The residual gap is "a
+  semantic match in another room's last few minutes", bounded by the digest cadence.
+- **The dirty-room predicate is derived rather than counted — a deliberate divergence from
+  ADR §I.6.** The ADR specifies `unsummarized_count` and `digest_dirty_since` columns, which
+  implies two counters maintained on the message write path. This build computes the identical
+  predicate from facts the room already stores: `Chat Room.seq_high_water` minus the digest's
+  `watermark_seq` *is* the unsummarised count, and `last_message_at` against `generated_at`
+  *is* the dirty age. A counter is a second source of truth for a number already known, it
+  costs a write on the hottest path in the feature, and the copy that drifts is the one nobody
+  notices. Derived is self-correcting.
+- **`poisoned` is a separate flag from `is_stale` on both digest tables.** "Nobody has rebuilt
+  this yet" and "this cannot be rebuilt" need different answers from an operator, and
+  collapsing them means a permanently failing room looks identical to a busy one.
+- **The invocation log is instrumentation and fails *open*; the retrieval audit is audit and
+  fails *closed*.** Stated because the two tables look similar and the postures are opposite:
+  an audit that fails open is not an audit, and instrumentation that fails closed is an outage
+  caused by a metric.
+- Three of the CQ answers Phase 5 is waiting on are now **settings fields rather than code
+  paths**, so answering them later costs a checkbox rather than a release:
+  `triton_reply_exempt_from_confirmation` (CQ-18), `manifest_backed_source_chips` (CQ-14,
+  shipped **off** = today's chip row preserved byte for byte), and `context_token_ceiling`
+  (CQ-17, already present since Phase 1, now logged per turn).
+- `validate_retrieval` is **keyword-only**, unlike `validate_budgets`. Nineteen positional
+  integers is nineteen chances to transpose two that are plausible in either position —
+  `chunk_seal_messages` and `chunk_seal_tokens` being the obvious pair, where a swap makes
+  chunks a twentieth of the intended size with no error anywhere. A test asserts by AST that
+  the controller passes every dial the rule takes, because a forgotten one reads as its
+  signature default and is silently never validated.
+
 ## [1.271.0] - 2026-08-11
 
 Phase 5 of the chat work begins with a commit that adds no capability: the two
