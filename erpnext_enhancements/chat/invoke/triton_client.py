@@ -86,20 +86,31 @@ def ask(*, user: str, question: str, context: str, request_id: str = "", room: s
 	"""
 	from erpnext_enhancements import triton_chat
 
+	# --- configuration, read BEFORE assuming anybody's identity ---------------------------
+	#
+	# `get_settings()` reads Triton Settings, and that includes `get_password()` on the gateway
+	# secret — which Frappe permission-checks. Reading it inside the impersonation window
+	# below asked the *mentioning person* for permission to read a password field, and they do
+	# not have it. Nor does the bot account, which is how it surfaced: the digest summariser
+	# raised PermissionError on every run.
+	#
+	# It would have done the same for **every mention**, since `handle()` passes the employee
+	# who typed it. Configuration is the app's, not the asker's; only the token mint needs
+	# their identity, and that stays inside the window.
+	settings = triton_chat.get_settings()
+	if not settings.get("enabled"):
+		raise TritonUnavailable("The Triton assistant is switched off in ERPNext.")
+	base_url = settings.get("base_url") or ""
+	if not base_url:
+		raise TritonUnavailable("Triton Settings has no Gateway URL, so there is nothing to ask.")
+	timeout = cint(settings.get("timeout")) or DEFAULT_TIMEOUT
+
 	previous = frappe.session.user
 	try:
 		# The token cache is keyed on the session user, and this runs in a background job
 		# whose session is Administrator. Minting without setting this would hand Triton a
 		# superuser token — the two-identity rule defeated by a cache key.
 		frappe.set_user(user)
-		settings = triton_chat.get_settings()
-		if not settings.get("enabled"):
-			raise TritonUnavailable("The Triton assistant is switched off in ERPNext.")
-		base_url = settings.get("base_url") or ""
-		if not base_url:
-			raise TritonUnavailable("Triton Settings has no Gateway URL, so there is nothing to ask.")
-
-		timeout = cint(settings.get("timeout")) or DEFAULT_TIMEOUT
 		session_id = _session_for(base_url, user=user, room=room, timeout=timeout)
 		body = _post(
 			base_url,
@@ -140,7 +151,17 @@ def _post(base_url: str, path: str, payload: dict[str, Any], *, timeout: int) ->
 
 	from erpnext_enhancements import triton_chat
 
-	token = triton_chat.mint_user_token()
+	try:
+		token = triton_chat.mint_user_token()
+	except Exception as exc:
+		# A mint failure is an outage of this integration, not a bug in the caller, so it is
+		# reported as one — and named, because "the model was unavailable" for a permission
+		# problem sent us looking at the model for an hour. The class only: this message is
+		# not known to be content-free the way the ones below are.
+		raise TritonUnavailable(
+			f"could not mint a Triton token for this identity: {exc.__class__.__name__}"
+		) from None
+
 	try:
 		response = requests.post(
 			f"{base_url}{path}",
