@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.267.1] - 2026-08-10
+
+### Fixed
+
+- **The chat accent failed WCAG AA wherever it carried text, in both directions.**
+  Sapphire's brand blue `#00a0dd` measures **2.97:1** against white — and
+  white measures the same 2.97:1 against it — so it failed as a foreground and
+  as a background. It was doing both: the unread badge, the send button and the
+  primary buttons were white on `#00a0dd`, while links, citations, mention chips
+  and the sidebar's text buttons were `#00a0dd` on white. Neither clears the
+  4.5:1 AA threshold, and neither clears the 3:1 floor for large text. Light is
+  the SPA's default theme (dark applies only under `prefers-color-scheme`), so
+  this was the default experience, and the unread count — the single
+  most-looked-at element in a chat client — was the least readable thing on the
+  page.
+
+  Fixed by splitting one token into three, because the requirements genuinely
+  conflict: text on the page background has to move *away* from that background
+  (darker in light, lighter in dark), while a surface carrying white text has to
+  stay dark in *both* themes. `--ee-brand` keeps `#00a0dd` exactly and is now
+  used only where nothing sits on it — `color-mix` tints, avatar fills, the
+  focus ring. `--ee-brand-ink` (`#0077a8` light, `#4cc2f0` dark) is the accent
+  as text. `--ee-brand-surface` (`#0077a8`, unchanged across themes) is the
+  accent as a background under white. Measured after: 5.0:1 for ink on white,
+  8.7:1 on `#15181d`, 5.0:1 for white on the surface in either theme, and 3.6:1
+  for the surface against the dark page — clearing the 3:1 that a non-text UI
+  component needs to have a visible edge. The brand colour itself is unchanged
+  and still reads as the same blue.
+
+  Found by measuring the deployed stylesheet rather than by looking at it, which
+  is the only reason it was found at all: it is not a bug anyone reports, and the
+  file's own header comment already claimed care about colour-only cues.
+
+### Added
+
+- A fifteenth source rule: `--ee-brand` may appear only inside `color-mix(...)`
+  or as an `outline`. Stated mechanically rather than as a contrast calculation,
+  because a stylesheet has no resolved background to measure against — legal uses are
+  tints and the focus ring, and everything else is the defect returning.
+  Mutation-tested against four ways it could come back, including a
+  `border-color` shape that none of the original three defects took.
+
 ## [1.267.0] - 2026-08-10
 
 Thirteen chat defects found by an adversarial sweep after the first day of real

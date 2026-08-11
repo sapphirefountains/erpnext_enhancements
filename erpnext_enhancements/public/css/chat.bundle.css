@@ -15,8 +15,36 @@
  * prefers-reduced-motion removes every transition and animation, including the typing dots.
  */
 
+/*
+ * THE ACCENT IS THREE TOKENS, NOT ONE, AND THAT IS THE WHOLE POINT.
+ *
+ * Sapphire's brand blue is #00a0dd. Measured against white it is 2.97:1, and white measured
+ * against it is the same 2.97:1 — so used as a text colour on the light theme, OR as a
+ * background with white text on it, it fails WCAG AA (4.5:1) and does not even clear the
+ * 3:1 floor for large text. It shipped doing both: the unread badge, the send button and the
+ * primary buttons were white on #00a0dd, and links, citations and mention chips were #00a0dd
+ * on white. The unread count is the single most-looked-at element in a chat client and it was
+ * the least readable thing on the page.
+ *
+ * One token cannot serve all three jobs, because the requirements point in opposite
+ * directions: text on the page background has to move AWAY from the background (darker in
+ * light theme, lighter in dark theme), while a surface carrying white text has to stay dark
+ * in BOTH themes. So:
+ *
+ *   --ee-brand          the brand exactly, for things that carry no text — tints built with
+ *                       color-mix, the focus ring, avatar fills. Untouched, still #00a0dd.
+ *   --ee-brand-ink      the accent used AS TEXT on the page background. Per theme.
+ *   --ee-brand-surface  the accent used AS A BACKGROUND with white text on it. Dark in both
+ *                       themes, because white does not get lighter at night.
+ *
+ * Measured: ink 5.0:1 on white and 8.7:1 on #15181d; white on surface 5.0:1 in either theme,
+ * and surface against the dark page is 3.6:1, clearing the 3:1 that non-text UI components
+ * need to have a visible boundary.
+ */
 :root {
 	--ee-brand: #00a0dd;
+	--ee-brand-ink: #0077a8;
+	--ee-brand-surface: #0077a8;
 	--ee-bg: #ffffff;
 	--ee-bg-alt: #f6f8fa;
 	--ee-border: #d8dee4;
@@ -40,6 +68,11 @@
 		--ee-border: #333a44;
 		--ee-text: #e6edf3;
 		--ee-muted: #9aa4b1;
+
+		/* Accent text moves the other way at night: #0077a8 on #15181d is 2.7:1, worse than
+		   the problem it was introduced to fix. `--ee-brand-surface` deliberately does NOT
+		   change — it is a background with white text on it, and white does not get lighter. */
+		--ee-brand-ink: #4cc2f0;
 	}
 }
 
@@ -227,7 +260,7 @@ body .container {
 	min-width: 20px;
 	padding: 1px 6px;
 	border-radius: 10px;
-	background: var(--ee-brand);
+	background: var(--ee-brand-surface);
 	color: #fff;
 	font-size: 11px;
 	font-weight: 700;
@@ -235,7 +268,7 @@ body .container {
 }
 .ee-room-mention {
 	font-weight: 700;
-	color: var(--ee-brand);
+	color: var(--ee-brand-ink);
 }
 .ee-room-empty {
 	padding: 16px 14px;
@@ -416,7 +449,7 @@ body .container {
 	background: color-mix(in srgb, #d29922 35%, transparent);
 }
 .ee-chat-link {
-	color: var(--ee-brand);
+	color: var(--ee-brand-ink);
 }
 
 .ee-msg-actions {
@@ -443,7 +476,7 @@ body .container {
 	border: 1px solid var(--ee-border);
 	border-radius: 999px;
 	background: none;
-	color: var(--ee-brand);
+	color: var(--ee-brand-ink);
 	font: inherit;
 	font-size: 12px;
 	cursor: pointer;
@@ -606,7 +639,7 @@ body .container {
 	height: 38px;
 	border: none;
 	border-radius: var(--ee-radius);
-	background: var(--ee-brand);
+	background: var(--ee-brand-surface);
 	color: #fff;
 	font-size: 15px;
 	cursor: pointer;
@@ -641,7 +674,7 @@ body .container {
 	background: color-mix(in srgb, var(--ee-brand) 16%, transparent);
 }
 .ee-mention-option.is-triton .ee-mention-label {
-	color: var(--ee-brand);
+	color: var(--ee-brand-ink);
 	font-weight: 700;
 }
 .ee-mention-option.is-outsider {
@@ -761,7 +794,7 @@ body .container {
 	padding: 0 4px;
 	border-radius: 4px;
 	background: color-mix(in srgb, var(--ee-brand) 16%, transparent);
-	color: var(--ee-brand);
+	color: var(--ee-brand-ink);
 	font-size: 11px;
 	font-weight: 700;
 	text-decoration: none;
@@ -788,7 +821,7 @@ body .container {
 	min-height: 32px;
 }
 .ee-link-btn {
-	color: var(--ee-brand);
+	color: var(--ee-brand-ink);
 	min-width: 0;
 }
 .ee-icon-btn:hover,
@@ -920,7 +953,7 @@ body .container {
 	padding: 8px 14px;
 	border: none;
 	border-radius: var(--ee-radius);
-	background: var(--ee-brand);
+	background: var(--ee-brand-surface);
 	color: #fff;
 	font: inherit;
 	cursor: pointer;

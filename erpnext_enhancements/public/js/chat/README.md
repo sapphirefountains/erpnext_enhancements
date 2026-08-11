@@ -63,6 +63,23 @@ The pure ones carry the logic on purpose: this repo has no Frappe integration-te
 so the bench-free tier is the only one with automatic regression protection, and anything that
 matters is pushed into a function a plain `node` script can call.
 
+## The accent is three tokens
+
+`--ee-brand` is Sapphire's `#00a0dd`, and it measures 2.97:1 against white **in both
+directions** — so it fails AA as a text colour on the light theme *and* as a background with
+white text on it. It shipped doing both. The tokens are split by job, not by shade:
+
+| token | job | light | dark |
+|---|---|---|---|
+| `--ee-brand` | tints, avatar fills, the focus ring — carries no text | `#00a0dd` | `#00a0dd` |
+| `--ee-brand-ink` | the accent **as text** on the page background | `#0077a8` | `#4cc2f0` |
+| `--ee-brand-surface` | the accent **as a background** under white text | `#0077a8` | `#0077a8` |
+
+`--ee-brand-surface` is deliberately identical across themes: white does not get lighter at
+night, so a surface carrying it cannot lighten either. Rule 13 in
+`scripts/test_chat_source_rules.js` fails the build if `--ee-brand` appears anywhere except
+inside `color-mix(...)` or an `outline`.
+
 ## Two rules the first day of pilot use bought
 
 Both of these shipped through review and a green suite, several times each, and both are now
