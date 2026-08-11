@@ -829,6 +829,62 @@ function stripComments(source) {
 	}
 }
 
+// ------------------------------------------------------------------ 13. the accent carries no text
+
+/**
+ * **`--ee-brand` may never be a text colour or a text-bearing background.**
+ *
+ * Sapphire's blue is #00a0dd, which is 2.97:1 against white in BOTH directions. It shipped
+ * as white-on-brand (the unread badge, the send button, the primary buttons) and as
+ * brand-on-white (links, citations, mention chips) — failing AA at both ends, on the theme
+ * that is the default. The fix splits the token: `--ee-brand` for tints and the focus ring,
+ * `--ee-brand-ink` for accent text, `--ee-brand-surface` for a background under white text.
+ *
+ * The rule is mechanical rather than a contrast calculation, because the calculation needs a
+ * resolved background and a stylesheet does not have one: `var(--ee-brand)` is legal only
+ * inside `color-mix(...)` (a tint, which the page's own text colour sits on) or as an
+ * `outline` (the focus ring, which is not text). Anything else — `color:`, `background:`,
+ * `border-color:` on a text-bearing element — is the defect coming back.
+ */
+{
+	const cssPath = path.join(ROOT, 'erpnext_enhancements', 'public', 'css', 'chat.bundle.css');
+	const css = must(cssPath).replace(/\/\*[\s\S]*?\*\//g, '');   // strip comments; they discuss the rule
+
+	for (const token of ['--ee-brand-ink', '--ee-brand-surface']) {
+		if (!css.includes(token + ':')) {
+			console.error('MARKERS NOT FOUND: chat.bundle.css no longer defines ' + token + '.');
+			process.exit(2);
+		}
+	}
+
+	const offenders = [];
+	for (const m of css.matchAll(/^\s*([a-z-]+)\s*:\s*([^;]*var\(--ee-brand\)[^;]*);/gm)) {
+		const [, prop, value] = m;
+		if (/color-mix\(/.test(value)) continue;      // a tint
+		if (prop === 'outline') continue;             // the focus ring
+		const line = css.slice(0, m.index).split('\n').length;
+		offenders.push(`${prop}: ${value.trim()}  (stripped-comment line ~${line})`);
+	}
+
+	// The rule must have something to be true ABOUT, or it passes vacuously the day someone
+	// renames the token.
+	const legal = [...css.matchAll(/var\(--ee-brand\)/g)].length;
+	if (legal < 4) {
+		console.error('MARKERS NOT FOUND: only ' + legal + ' --ee-brand usages; the scan has stopped matching.');
+		process.exit(2);
+	}
+
+	if (offenders.length) {
+		fail(
+			'--ee-brand used where it carries text (2.97:1 against white, both directions) — use ' +
+			'--ee-brand-ink for text or --ee-brand-surface for a background under white:\n        ' +
+			offenders.join('\n        ')
+		);
+	} else {
+		pass(`the accent carries no text (${legal} --ee-brand usages, all tints or the focus ring)`);
+	}
+}
+
 console.log('');
 if (failures) {
 	console.error(failures + ' assertion(s) failed');
