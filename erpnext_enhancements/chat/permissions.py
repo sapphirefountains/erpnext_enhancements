@@ -222,19 +222,34 @@ def note_privileged_read(
 ) -> None:
 	"""**The** hook point for decision #12's non-participant audit write.
 
-	Phase 1 deliberately does nothing here. Phase 6 writes one ``Chat Retrieval Audit``
-	row (ADR §F.12) and this is the only place it should have to touch — the alternative
-	is audit calls sprinkled through eight functions six months from now, with one of
-	them missed.
+	Filled in. It writes one ``Chat Retrieval Audit`` row per **request** via
+	:mod:`chat.audit`, which is the only module that writes one — the alternative was audit
+	calls sprinkled through eight functions six months from now, with one of them missed.
 
-	Two rules for whoever fills it in:
+	Both rules the stub laid down still hold, and both are now the callee's problem:
 
 	* **It must never raise.** It is called from inside permission hooks. An exception
 	  here denies the read at best and breaks every desk page that touches a chat
-	  DocType at worst.
+	  DocType at worst. :func:`chat.audit.record_privileged_read` swallows and logs.
 	* **It must never itself go through the permission stack**, or an audited read
-	  recurses into auditing the audit.
+	  recurses into auditing the audit — unboundedly, since auditing the audit is itself
+	  a privileged read. The writer uses raw SQL and ``ignore_permissions`` throughout.
+
+	**What a row written from here does and does not say.** These nine call sites fire while
+	a query is being *built*, so they know who is reading and that the read is privileged, but
+	not which rooms it will reach. A row from here therefore records that a privileged read
+	happened. A caller that knows what it returned — today only ``search_messages`` — records
+	the rooms as well, and records *before* returning. See ``chat/audit.py`` for why the ADR's
+	fail-closed ordering is relaxed on this path and only on this path.
 	"""
+	from erpnext_enhancements.chat import audit
+
+	audit.record_privileged_read(
+		user=_resolve_user(user),
+		purpose="oversight",
+		actor_type="Admin",
+		reason=f"{doctype} {ptype or 'read'}".strip(),
+	)
 	return None
 
 

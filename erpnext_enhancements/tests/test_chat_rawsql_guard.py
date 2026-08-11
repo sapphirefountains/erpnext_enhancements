@@ -141,6 +141,21 @@ PERMISSIONS_MODULE: str = "permissions.py"
 #: Adding a table here is a policy decision, not a convenience. The test that matters is the
 #: one below asserting the reason is actually written.
 UNSCOPED_TABLES: dict[str, str] = {
+	"Chat Retrieval Audit": (
+		"The decision #12 audit log. It records THAT a privileged read happened, by whom, for "
+		"what and over which rooms — never what was said: no body, no snippet, and the query "
+		"text only behind a flag that ships off. Scoping it by the reader's own membership "
+		"would be precisely backwards, because the rows worth reading are the ones where the "
+		"reader was NOT a member; a membership filter would hide exactly the events the log "
+		"exists to surface. Per §F.12 it carries DocPerm rather than none — System Manager, "
+		"read and report only — because an audit log nobody can look at is not an audit log."
+	),
+	"Chat Retrieval Audit Room": (
+		"The child of the above: one row per room touched by one privileged read, carrying "
+		"room, was_participant and the seq range. Same reasoning, and it holds no text either. "
+		"Read only by the chain verifier, which must walk EVERY row in insertion order — a "
+		"scoped walk would report a break at the first row the walker could not see."
+	),
 	"Chat Relay Job": (
 		"The outbound retry queue. A row holds identifiers (room, message, job_seq), a state, "
 		"an attempt count, a lease and a scrubbed error string — no message text, ever, "
@@ -249,6 +264,25 @@ FOREIGN_TABLES: dict[str, str] = {
 #: bounded by something other than the reader's identity, and no column selected is a body.**
 #: A read that answers an HTTP request fails all three and does not belong here.
 SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
+	# --- chat/audit.py: the writer that must not re-enter the permission stack ----------
+	(
+		"audit.py",
+		"_was_participant",
+		"Chat Room Member",
+	): (
+		"The one read in this package that must NOT use membership_filter_sql, and the reason "
+		"is recursion rather than convenience. membership_filter_sql calls "
+		"note_privileged_read for an oversight user; that writes an audit row; writing the row "
+		"has to answer 'was this person a member of this room' per room — and answering it "
+		"through the filter would call membership_filter_sql again, unboundedly, because "
+		"auditing the audit is itself a privileged read. Both of the rules in "
+		"note_privileged_read's docstring say exactly this.\n"
+		"It passes the three tests above on its own merits: the row set is bounded by an "
+		"explicit (room, user) pair the caller already holds rather than by the reader's "
+		"identity, the only thing selected is the literal 1, and it serves an audit write "
+		"rather than an HTTP request. The most it can return is a boolean about a membership "
+		"the caller already named."
+	),
 	# --- chat/permissions.py: the module that IS the rule -----------------------------
 	(
 		"permissions.py",
@@ -1033,12 +1067,19 @@ class TestTheAllowlistsAreHonest(unittest.TestCase):
 		stale = sorted(key for key in UNRESOLVED_QUERY_EXEMPTIONS if key not in live)
 		self.assertFalse(stale, f"stale UNRESOLVED_QUERY_EXEMPTIONS entries: {stale}")
 
-	def test_the_unscoped_allowlist_is_exactly_the_four_the_brief_names(self) -> None:
+	def test_the_unscoped_allowlist_is_exactly_the_tables_named_here(self) -> None:
 		"""Pinned by name so growing it is a deliberate edit to a test, not a quiet dict entry.
 
-		These four are the operational tables the ADR keeps at zero DocPerm and off any
+		Four of these are the operational tables the ADR keeps at zero DocPerm and off any
 		membership model. A fifth would have to be a table somebody decided carries no
 		per-user content — a decision worth making in front of a reviewer.
+
+		The two audit tables are the deliberate exception, and they are the *inverse* case
+		rather than another operational queue: they hold no conversation, and scoping them by
+		the reader's own membership would hide precisely the rows they exist to surface — the
+		reads where the reader was **not** a member. They also carry DocPerm (§F.12, System
+		Manager read/report) rather than none, which is why they are listed here with a reason
+		and not quietly waved through.
 		"""
 		self.assertEqual(
 			sorted(UNSCOPED_TABLES),
@@ -1047,6 +1088,8 @@ class TestTheAllowlistsAreHonest(unittest.TestCase):
 				"Chat Inbound Event",
 				"Chat Provisioning Run",
 				"Chat Relay Job",
+				"Chat Retrieval Audit",
+				"Chat Retrieval Audit Room",
 			],
 		)
 

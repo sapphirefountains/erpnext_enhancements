@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.268.0] - 2026-08-10
+
+Decision #12 lets a configured role read conversations it is not a participant in,
+**on the condition that the read is recorded**. The recording half did not exist:
+`permissions.note_privileged_read()` was a documented stub that returned `None`,
+so filling `Chat Settings.admin_oversight_role` handed a role the whole company's
+private conversations — including deleted bodies, since ERPNext holds the only
+copy — and logged nothing anywhere.
+
+This was found by enabling the setting on production on 2026-08-10, verifying it
+worked, and then checking the audit half. It was reverted the same day and the
+field is blank again.
+
+### Added
+
+- **`Chat Retrieval Audit` and `Chat Retrieval Audit Room`**, to the ADR §F.12
+  field shape plus the Phase 6 additions (`chain_hash`, per-room `first_seq` /
+  `last_seq`, `reason`). The load-bearing field is `was_participant`, resolved per
+  room **at read time** and stored: a non-empty set of `was_participant = 0` rows
+  is precisely the oversight event decision #12 exists to make visible, and
+  re-deriving it later against today's membership would answer a different
+  question every time it was read.
+- **`chat/audit.py`**, the only module that writes those rows.
+- **A chain verifier**, `bench execute erpnext_enhancements.chat.audit.verify_chain`,
+  which walks `chain_hash` and reports the first break with its row name and
+  timestamp. A break is a point in time, not a count: every row after it is
+  suspect and every row before it is not.
+
+### Changed
+
+- `note_privileged_read()` writes instead of returning `None`. Both rules from its
+  stub docstring still bind and are now the callee's problem: never raise (it runs
+  inside permission hooks), and never re-enter the permission stack (auditing the
+  audit is itself a privileged read, so the recursion is unbounded).
+- `search_messages` records **after** running its query and **before** returning
+  bodies, so the row carries the rooms and the seq ranges actually read rather
+  than "somebody privileged searched something".
+
+**Two deliberate departures from the ADR, both documented in `chat/audit.py`:**
+
+*One row per request, not per call.* The ADR designs this around the Phase 5
+`retrieve()` gate — one call per turn, which knows its rooms before it returns.
+That gate does not exist. What exists is nine call sites inside `permissions.py`
+that fire while a query is being *built*, several times per page load. A row per
+call is a flood, and an audit nobody can read is not much better than none, so the
+write is deduplicated per request.
+
+*Fail-closed applies to endpoints, not to hooks.* §F.12 says an audit failure must
+fail the read, and `search_messages` obeys it exactly — `record_or_refuse` throws
+and no bodies are returned. Inside a permission hook the same rule would deny the
+read at best and break every Desk page touching a chat DocType at worst, so
+`record_privileged_read` swallows and logs. When the Phase 5 gate lands it should
+take the endpoint rule, not the hook one.
+
+**Immutability is four layers, because each is bypassed by the next one down.**
+DocPerm (`System Manager`, read and report only) is bypassed by
+`ignore_permissions`, which the writer itself needs. The controller's `before_save`
+/ `on_trash` guards catch that and Administrator, but cannot see `db_set`,
+`frappe.db.set_value` or raw SQL, none of which load a document. A new source scan
+(`tests/test_chat_audit_immutability.py`) is the only layer that can see that blind
+spot. `chain_hash` catches a direct database edit after the fact — it makes
+tampering **detectable, not impossible**, since anyone with database write access
+can rewrite a row and recompute the tail.
+
+All eleven new assertions were mutation-tested. Four did not catch their planted
+defect on the first attempt — a guard neutered to `if False:` keeps the method, the
+constant and the word `throw` in the file, and an `except Exception` narrowed to
+`except ValueError` was masked by an inner handler. Those four assertions were
+rewritten to check reachability and handler position via the AST rather than
+matching substrings; the mutations were not softened.
+
+### Still missing before oversight is genuinely reviewable
+
+Recording is not reviewing, and the field is deliberately still blank:
+
+- Nothing reads the log. No oversight viewer, no `Chat Access Report`, no scheduled
+  chain verification — a privileged read is recorded and nobody is told.
+- A row written from a permission hook records that a read happened, not what it
+  reached. Only `search_messages` records rooms and ranges.
+- `reason` is free text that nothing enforces, because the thing that should
+  collect it is the viewer that does not exist yet.
+
 ## [1.267.1] - 2026-08-10
 
 ### Fixed

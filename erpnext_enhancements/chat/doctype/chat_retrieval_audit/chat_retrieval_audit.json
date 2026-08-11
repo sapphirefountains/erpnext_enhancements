@@ -1,0 +1,175 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-10 21:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "accessed_by",
+  "actor_type",
+  "purpose",
+  "request_id",
+  "column_break_who",
+  "reason",
+  "section_break_query",
+  "query_hash",
+  "query_text",
+  "tiers_used",
+  "column_break_counts",
+  "chunk_count",
+  "message_count",
+  "token_count",
+  "context_truncated",
+  "section_break_rooms",
+  "rooms",
+  "section_break_chain",
+  "chain_hash"
+ ],
+ "fields": [
+  {
+   "description": "The ERPNext user the read was performed for. Never Administrator, never a service account, never a shared login - an audit row naming a shared identity answers nothing.",
+   "fieldname": "accessed_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Accessed By",
+   "options": "User",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "actor_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Actor Type",
+   "options": "Triton\nAdmin\nUser",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "purpose",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Purpose",
+   "options": "mention\nsearch\nbriefing\noversight\nattachment",
+   "reqd": 1
+  },
+  {
+   "description": "Correlates this read with the Triton turn that caused it. For an Admin read it correlates the rows written by one viewer session.",
+   "fieldname": "request_id",
+   "fieldtype": "Data",
+   "label": "Request ID",
+   "length": 64,
+   "search_index": 1
+  },
+  {
+   "fieldname": "column_break_who",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Why this read happened. Required for an Admin read and collected once per viewer session, not per scroll. For a Triton read it is the invocation id. Empty is legal only for a read that returned nothing.",
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason"
+  },
+  {
+   "fieldname": "section_break_query",
+   "fieldtype": "Section Break",
+   "label": "Query"
+  },
+  {
+   "description": "sha256 of the query text. The hash is stored by default and the text is not, because the query a manager types is itself sensitive.",
+   "fieldname": "query_hash",
+   "fieldtype": "Data",
+   "label": "Query Hash",
+   "length": 64
+  },
+  {
+   "description": "Written ONLY when Chat Settings.store_retrieval_query_text is on, which ships off.",
+   "fieldname": "query_text",
+   "fieldtype": "Long Text",
+   "label": "Query Text"
+  },
+  {
+   "fieldname": "tiers_used",
+   "fieldtype": "Data",
+   "label": "Tiers Used",
+   "length": 140
+  },
+  {
+   "fieldname": "column_break_counts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "chunk_count",
+   "fieldtype": "Int",
+   "label": "Chunk Count"
+  },
+  {
+   "fieldname": "message_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Message Count"
+  },
+  {
+   "fieldname": "token_count",
+   "fieldtype": "Int",
+   "label": "Token Count"
+  },
+  {
+   "fieldname": "context_truncated",
+   "fieldtype": "Check",
+   "label": "Context Truncated"
+  },
+  {
+   "fieldname": "section_break_rooms",
+   "fieldtype": "Section Break",
+   "label": "Rooms"
+  },
+  {
+   "description": "One row per room the read touched, whether or not the reader was a member. Written always and marked per room: deciding participation per room and conditionally writing is more code and more ways to be wrong.",
+   "fieldname": "rooms",
+   "fieldtype": "Table",
+   "label": "Rooms",
+   "options": "Chat Retrieval Audit Room"
+  },
+  {
+   "fieldname": "section_break_chain",
+   "fieldtype": "Section Break",
+   "label": "Tamper Evidence"
+  },
+  {
+   "description": "sha256(previous row's chain_hash + canonical json of this row's audited fields). Makes silent tampering detectable, NOT impossible - anyone with database write access or root on the VM can rewrite rows and recompute the chain. Verify with erpnext_enhancements.chat.audit.verify_chain.",
+   "fieldname": "chain_hash",
+   "fieldtype": "Data",
+   "label": "Chain Hash",
+   "length": 64,
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-10 21:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Retrieval Audit",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

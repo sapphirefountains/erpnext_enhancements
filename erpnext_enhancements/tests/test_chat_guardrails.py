@@ -62,6 +62,12 @@ REQUIRED_DOCTYPES: frozenset[str] = frozenset(
 #: anyway so that the phase which creates it lands on the ADR's shape rather than on
 #: whatever felt reasonable that afternoon; the assertion simply does not fire until the
 #: JSON appears.
+#: The audit tables, which are the one place in this package where "narrow the list to your
+#: own rooms" is the wrong instinct: the rows worth reading are the ones where the reader was
+#: NOT a member. Named here so the exception below is a list of two rather than a predicate
+#: somebody has to re-derive.
+_AUDIT_DOCTYPES: frozenset[str] = frozenset({"Chat Retrieval Audit", "Chat Retrieval Audit Room"})
+
 EXPECTED_DOCPERMS: dict[str, dict[str, frozenset[str]]] = {
 	# §H.4.2: the socket join is keyed on the room, so this is the one DocType that MUST
 	# be permission-resolvable — a zero-DocPerm doctype cannot be doc-room-joined by
@@ -488,11 +494,24 @@ class TestZeroDocPerm(unittest.TestCase):
 		queries = _hooks_dict("permission_query_conditions")
 		single_doc = _hooks_dict("has_permission")
 		for name, data in sorted(DOCTYPES.items()):
-			if not _perm_map(data):
+			perms = _perm_map(data)
+			if not perms:
 				continue
 			if data.get("issingle"):
 				# A Single has exactly one row and no list view; a query condition has
 				# nothing to filter.
+				continue
+			if name in _AUDIT_DOCTYPES and set(perms) <= {"System Manager"}:
+				# §F.12's stated exception, and it is conditional rather than blanket. An audit
+				# log exists to be read across every row — a query condition narrowing it to
+				# "rooms you are in" would hide precisely the non-participant reads it was
+				# written to surface — and `System Manager` sees all rows by design, so there is
+				# nothing for the pair to add.
+				#
+				# The condition is the load-bearing half: the ADR says the obligation fires "the
+				# moment a narrower role is granted read here", so this exemption evaporates as
+				# soon as the perm map names anyone else. Phase 6 grants the oversight role
+				# `read` with `export = 0`, and on that commit both hooks must ship.
 				continue
 			with self.subTest(doctype=name):
 				self.assertIn(

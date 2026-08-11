@@ -35,7 +35,7 @@ from typing import Any
 import frappe
 from frappe.utils import cint
 
-from erpnext_enhancements.chat import permissions
+from erpnext_enhancements.chat import audit, permissions
 from erpnext_enhancements.chat.api._common import (
 	TOMBSTONE_TEXT,
 	dm_counterpart,
@@ -89,11 +89,7 @@ def search_messages(
 		scoped_room = None
 
 	scope = permissions.membership_filter_sql("`m`.`room`", user, seq_column="`m`.`seq`")
-	if scope == "1 = 1":
-		# Unrestricted means the oversight role (or Administrator). That is a read of
-		# conversations this person is not in, which is exactly what decision #12 requires be
-		# audited. One call, at the one place it can happen.
-		permissions.note_privileged_read("Chat Message", scoped_room, user, "read")
+	privileged = scope == "1 = 1"
 
 	where = [
 		"coalesce(`m`.`is_deleted`, 0) = 0",
@@ -130,6 +126,30 @@ def search_messages(
 		as_dict=True,
 	)
 
+	if privileged:
+		# **Unrestricted means the oversight role (or Administrator): a read of conversations
+		# this person is not in.** Recorded HERE rather than before the query, because before
+		# the query the rooms and the message ranges are not known yet, and "somebody
+		# privileged searched something" is a much weaker record than "they read these rooms,
+		# these seq ranges, and were a member of none of them".
+		#
+		# `record_or_refuse`, not the swallowing variant: this function is about to return
+		# message bodies, so §F.12's rule applies in full — if the read cannot be recorded, the
+		# read does not happen. Nothing else on the page dies with it; this is an endpoint, not
+		# a permission hook.
+		audit.record_or_refuse(
+			user=user,
+			purpose="search",
+			actor_type="Admin",
+			query=term,
+			rooms=_audited_rooms(rows),
+			message_count=len(rows),
+			# The dedupe would otherwise swallow this behind the thin row that
+			# `membership_filter_sql` already wrote for this same request, and the thin row is
+			# the one without the rooms in it.
+			force_new=True,
+		)
+
 	results = [_result(row, term, user) for row in rows]
 	return {
 		"query": term,
@@ -137,6 +157,28 @@ def search_messages(
 		"results": results,
 		"has_more": len(rows) >= size,
 	}
+
+
+def _audited_rooms(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+	"""Collapse the hit list into one audit entry per room, with the seq range actually read.
+
+	``was_participant`` is deliberately **not** set here — it is left for the writer to resolve
+	against live membership, so that the participation answer comes from one place rather than
+	from whichever caller happened to think about it.
+	"""
+	by_room: dict[str, dict[str, Any]] = {}
+	for row in rows:
+		room = row.get("room")
+		if not room:
+			continue
+		seq = cint(row.get("seq"))
+		entry = by_room.setdefault(
+			room, {"room": room, "messages_read": 0, "first_seq": seq, "last_seq": seq}
+		)
+		entry["messages_read"] += 1
+		entry["first_seq"] = min(entry["first_seq"], seq)
+		entry["last_seq"] = max(entry["last_seq"], seq)
+	return list(by_room.values())
 
 
 def _result(row: dict[str, Any], term: str, viewer: str) -> dict[str, Any]:
