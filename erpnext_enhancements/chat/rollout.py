@@ -72,12 +72,30 @@ def erpnext_link_report(as_dict: bool = False) -> Any:
 	for user in roster:
 		(linked if has_erpnext_link(user) else unlinked).append(user)
 
+	# --- the SECOND gate, and it is a different whitelist entirely ------------------------
+	#
+	# ``mint_user_token`` refuses anybody outside **Triton Assistant Settings**' allowed
+	# users, and that is not the Chat Settings whitelist this report's roster comes from. Two
+	# independent lists, two different admins, and one of them was invisible here: a person
+	# could be reported "linked and ready" and still have every mention fail, because the mint
+	# refused them before Triton was ever reached.
+	#
+	# It is also what stopped the digest summariser on production — the bot service account
+	# was not on that list either, and the failure surfaced as ``PermissionError`` several
+	# layers away from the list nobody had thought to check.
+	no_triton_access = [u for u in roster if not _has_triton_access(u)]
+	summariser = _setting("chat_app_service_account") or ""
+	summariser_ready = bool(summariser) and _has_triton_access(summariser)
+
 	report = {
 		"roster_source": source,
 		"roster_size": len(roster),
 		"linked": sorted(linked),
 		"unlinked": sorted(unlinked),
-		"ready": not unlinked and bool(roster),
+		"no_triton_access": sorted(no_triton_access),
+		"summariser_account": summariser,
+		"summariser_ready": summariser_ready,
+		"ready": not unlinked and not no_triton_access and bool(roster),
 		"triton_enabled": _flag("triton_enabled"),
 		"chat_enabled": _flag("enabled"),
 		"retrieval_paused": _flag("pause_retrieval"),
@@ -88,6 +106,25 @@ def erpnext_link_report(as_dict: bool = False) -> Any:
 		return report
 	_print(report)
 	return None
+
+
+def _has_triton_access(user: str) -> bool:
+	"""Whether ``user`` can mint a Triton token — the gate ``mint_user_token`` actually applies.
+
+	Deliberately **not** a call to ``triton_chat.user_has_widget_access()``: that reads
+	``frappe.session.user``, so asking it about somebody else silently answers about the
+	caller. A report that quietly reports on the wrong person is worse than one that does not
+	report at all.
+	"""
+	from erpnext_enhancements import triton_chat
+
+	try:
+		settings = triton_chat.get_settings()
+	except Exception:
+		return False
+	if not settings.get("restrict_to_whitelist"):
+		return True
+	return user == "Administrator" or user in (settings.get("allowed_users") or ())
 
 
 def unlinked_users() -> list[str]:
@@ -183,8 +220,30 @@ def _print(report: dict[str, Any]) -> None:
 			"\nto give. That is the whole reason this is an afternoon of somebody's time rather"
 			"\nthan a migration."
 		)
-	elif report["roster_size"]:
-		print("\nEveryone on the roster has linked. Nothing to chase.")
+	if report["no_triton_access"]:
+		print("\n" + "-" * 78)
+		print("SEPARATELY — these people are outside the TRITON assistant whitelist, which is a")
+		print("different list from the chat one. The token mint refuses them before Triton is")
+		print("reached, so a mention fails even when they HAVE linked:\n")
+		for user in report["no_triton_access"]:
+			print(f"  - {user}")
+		print(
+			"\nWhat an admin does: add them under Triton Assistant Settings -> Allowed Users,"
+			"\nor switch Restrict To Whitelist off there. Unlike the link above this one is NOT"
+			"\ntheirs to give, so chasing them for it will not help."
+		)
+
+	if not report["summariser_ready"]:
+		print("\n" + "-" * 78)
+		account = report["summariser_account"] or "(not set)"
+		print(f"The digest summariser account {account} cannot mint a token either, so")
+		print("rolling summaries will not build. Retrieval still works without them — chunks")
+		print("are the primary tier and digests are the compression layer for long history.")
+
+	if report["roster_size"] and not report["unlinked"] and not report["no_triton_access"]:
+		print("\nEveryone on the roster has linked and can reach Triton. Nothing to chase.")
+	elif report["roster_size"] and not report["unlinked"]:
+		pass
 	else:
 		print("\nThe roster is empty — nobody is whitelisted and no room has an active member.")
 

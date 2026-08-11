@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.10] - 2026-08-11
+
+### Added
+
+- The `@triton` readiness report now checks **both** gates. It only ever checked the ERPNext
+  OAuth link; `mint_user_token` separately refuses anybody outside **Triton Assistant
+  Settings**' allowed users, which is a different whitelist from the Chat Settings one the
+  report's roster is built from. A person could be reported "linked and ready" and still have
+  every mention fail.
+- It also reports whether the **digest summariser account** can mint a token, since that is
+  what stopped summaries on production.
+
+### Notes
+
+- **Two independent whitelists, two different admins, and only one was visible.** The remedies
+  differ in who can perform them, which is why the report now separates them: the OAuth link is
+  the person's to give and worth chasing them for; whitelist membership is an admin's and
+  chasing the person is useless.
+- `_has_triton_access` deliberately does not call `triton_chat.user_has_widget_access()`, which
+  reads `frappe.session.user` — asking it about somebody else silently answers about the
+  caller. **A report that quietly reports on the wrong person is worse than one that does not
+  report at all.**
+- Confirmed on production: after v1.277.9 the summariser's failure moved one layer in, from
+  `unexpected PermissionError` to `could not mint a Triton token for this identity:
+  PermissionError`. The whitelist is the gate; the bot account is not on it.
+
 ## [1.277.9] - 2026-08-11
 
 ### Fixed
