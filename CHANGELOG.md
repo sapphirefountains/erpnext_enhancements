@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.11] - 2026-08-11
+
+### Fixed
+
+- **The summariser asked Triton to authenticate a Google service account.**
+  `_summariser_user()` read `chat_app_service_account` raw, and on production that field holds
+  `chat-app@…iam.gserviceaccount.com` — a **GCP identity for calling the Chat API**, not an
+  ERPNext User and not a mailbox. Triton's bridge answered
+  `rejected non-domain email`, which is the correct answer to the wrong question.
+- It now delegates to `handler._bot_user()`, which already accepted that field **only when a
+  User by that name exists** and otherwise fell back to the real domain account. The readiness
+  report resolves the same way.
+
+### Notes
+
+- **Two resolvers for one identity, and the second skipped the check that made the first
+  correct.** `_bot_user` was written first and got it right; `_summariser_user` was written
+  later, for the same concept, and read the field directly. Nothing flagged the duplication
+  because both compiled and both returned a plausible string.
+- The field name carries the ambiguity: `chat_app_service_account` is used as a **GCP service
+  account** by the Google side and as an **ERPNext User** by the reply path. Both readings are
+  defensible, which is why one resolver has to own the interpretation rather than each caller
+  guessing.
+- Worth stating plainly: three of today's faults were a name that looked right —
+  `origin_timestamp`, `/api/v1/assistant/query`, and now a service account standing in for a
+  user. Each was locally plausible and wrong only against a fact held somewhere else.
+
+## [1.277.10] - 2026-08-11
+
+### Added
+
+- The `@triton` readiness report now checks **both** gates. It only ever checked the ERPNext
+  OAuth link; `mint_user_token` separately refuses anybody outside **Triton Assistant
+  Settings**' allowed users, which is a different whitelist from the Chat Settings one the
+  report's roster is built from. A person could be reported "linked and ready" and still have
+  every mention fail.
+- It also reports whether the **digest summariser account** can mint a token, since that is
+  what stopped summaries on production.
+
+### Notes
+
+- **Two independent whitelists, two different admins, and only one was visible.** The remedies
+  differ in who can perform them, which is why the report now separates them: the OAuth link is
+  the person's to give and worth chasing them for; whitelist membership is an admin's and
+  chasing the person is useless.
+- `_has_triton_access` deliberately does not call `triton_chat.user_has_widget_access()`, which
+  reads `frappe.session.user` — asking it about somebody else silently answers about the
+  caller. **A report that quietly reports on the wrong person is worse than one that does not
+  report at all.**
+- Confirmed on production: after v1.277.9 the summariser's failure moved one layer in, from
+  `unexpected PermissionError` to `could not mint a Triton token for this identity:
+  PermissionError`. The whitelist is the gate; the bot account is not on it.
+
 ## [1.277.9] - 2026-08-11
 
 ### Fixed
