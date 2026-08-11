@@ -201,6 +201,11 @@ def message_payload(row: Any, *, include_body: bool = True) -> dict[str, Any]:
 		"client_message_id": get("client_message_id") or None,
 		"late_arrival": bool(cint(get("late_arrival", 0))),
 		"sync_state": get("sync_state") or None,
+		# Always present, so the renderers never branch on a missing key. Filled from the
+		# `Chat Mention` child rows by `history._attach_mentions` / `compose._sent`; an empty
+		# list here means "no mentions", never "not loaded". It shipped absent entirely, which
+		# is why no @mention had ever rendered as one.
+		"mentions": [],
 	}
 
 	if deleted or not include_body:
@@ -212,7 +217,32 @@ def message_payload(row: Any, *, include_body: bool = True) -> dict[str, Any]:
 	return payload
 
 
-def room_payload(row: Any, *, member: Any = None) -> dict[str, Any]:
+def dm_counterpart(row: Any, viewer: str) -> tuple[str | None, str]:
+	"""The *other* participant of a DM, and the name to show for them.
+
+	A direct message has no title — it is named after whoever you are not, which means the
+	label depends on who is looking and cannot be stored on the row. Resolving it here rather
+	than in the client is what stops the UI falling back to a raw email address: the clients
+	only have `dm_user_1`/`dm_user_2`, which are `User` docnames, and a docname is an email on
+	this site. Showing that is technically correct and reads as unfinished software.
+
+	Returns ``(user, label)``. The label degrades to the address only when the account has no
+	full name at all, which is the one case where the address really is the best we have.
+	"""
+	get = row.get if isinstance(row, dict) else (lambda k, d=None: getattr(row, k, d))
+	one = (get("dm_user_1") or "").strip()
+	two = (get("dm_user_2") or "").strip()
+	other = two if one == viewer else one
+	if not other:
+		return None, ""
+	try:
+		full = frappe.db.get_value("User", other, "full_name")
+	except Exception:
+		full = None
+	return other, (full or other)
+
+
+def room_payload(row: Any, *, member: Any = None, viewer: str | None = None) -> dict[str, Any]:
 	"""One ``Chat Room`` as the room list sees it, rendered from the denormalised columns.
 
 	``last_message_at`` / ``last_message_preview`` / ``last_message_sender`` are written by
@@ -224,10 +254,23 @@ def room_payload(row: Any, *, member: Any = None) -> dict[str, Any]:
 	last_seq = cint(get("seq_high_water", 0))
 	read_seq = cint((member or {}).get("last_read_seq", 0)) if member else 0
 
+	# The one label the client cannot compute. Resolved per viewer, because a DM is named
+	# after the person you are NOT.
+	who = viewer or (frappe.session.user or "")
+	other_user, other_label = (None, "")
+	if (get("room_type") or "") == "Direct Message":
+		other_user, other_label = dm_counterpart(row, who)
+
 	return {
 		"name": get("name"),
 		"room_type": get("room_type") or "Group",
 		"title": get("title") or "",
+		# `display_title` is what a UI should render: the room's own title for a group, the
+		# other participant's NAME for a DM. Clients that fall back to `dm_user_*` end up
+		# showing an email address.
+		"display_title": (get("title") or "").strip() or other_label or (get("name") or ""),
+		"other_user": other_user,
+		"other_user_name": other_label or None,
 		"description": get("description") or "",
 		"is_archived": bool(cint(get("is_archived", 0))),
 		"linked_doctype": get("linked_doctype") or None,
@@ -247,6 +290,22 @@ def room_payload(row: Any, *, member: Any = None) -> dict[str, Any]:
 		"role": (member or {}).get("role") or "Member",
 		"notification_mode": (member or {}).get("notification_mode") or "All",
 		"muted_until": _dt((member or {}).get("muted_until")),
+	}
+
+
+def mention_payload(row: Any) -> dict[str, Any]:
+	"""One ``Chat Mention`` span, as the renderers expect it.
+
+	``start_index``/``length`` are offsets into the message body, and the client slices the
+	text at them rather than being handed markup — same rule as the search snippet, for the
+	same reason. ``user`` is ``None`` for a ``Triton`` mention, which names no ``User``.
+	"""
+	get = row.get if isinstance(row, dict) else (lambda k, d=None: getattr(row, k, d))
+	return {
+		"mention_type": get("mention_type") or "User",
+		"user": get("user") or None,
+		"start_index": cint(get("start_index", 0)),
+		"length": cint(get("length", 0)),
 	}
 
 

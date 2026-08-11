@@ -242,7 +242,7 @@ def _room_result(room: str, created: bool) -> dict[str, Any]:
 		as_dict=True,
 	) or {}
 
-	payload = room_payload(row, member=member)
+	payload = room_payload(row, member=member, viewer=frappe.session.user)
 	payload["created"] = bool(created)
 	return payload
 

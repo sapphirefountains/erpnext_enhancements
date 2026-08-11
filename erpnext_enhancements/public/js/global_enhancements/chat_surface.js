@@ -29,6 +29,7 @@ import {
 	ReadBatcher,
 	TypingRegistry,
 	TypingThrottle,
+	ensureClientId,
 	typingLabel,
 } from "../chat/signals.js";
 import { M, call } from "../chat/transport.js";
@@ -57,14 +58,84 @@ export class BubbleChatSurface {
 		this.typingOut = new TypingThrottle();
 		this.typingIn = new TypingRegistry();
 		this.composerMentions = [];
+		this.drafts = new Map();
+		this.clientId = ensureClientId();
 		this.loaded = false;
 		this.build();
+		this.startHeartbeat();
+	}
+
+	/**
+	 * Publish presence, the same way the SPA does.
+	 *
+	 * The bubble had no beat at all, and it is the surface everybody actually lives in — so a
+	 * colleague working in the bubble all day was painted **offline** in the SPA's member
+	 * pane, under a caption reading "No ERPNext session", one element away from a live
+	 * "…is typing" line for that same person. Typing was published; existence was not.
+	 *
+	 * `focused` is `document.hasFocus()` on the Desk page, not on the panel: the question the
+	 * server is answering is "is this person at this computer", and the panel losing focus to
+	 * a form field on the same page does not change the answer.
+	 */
+	startHeartbeat() {
+		const beat = () => {
+			if (!this.me) return;
+			call(M.HEARTBEAT, {
+				client_id: this.clientId,
+				active_room: this.room || null,
+				thread: null,
+				focused: document.hasFocus() ? 1 : 0,
+				visibility: document.visibilityState,
+			}).catch(() => {
+				/* presence is an accelerator; a missed beat expires by TTL */
+			});
+		};
+		beat();
+		this._heartbeat = setInterval(beat, 30000);
+		window.addEventListener("pagehide", () => {
+			call(M.GOODBYE, { client_id: this.clientId }, { keepalive: true }).catch(() => {});
+		});
 	}
 
 	build() {
 		clear(this.host);
 		this.els = {};
-		this.els.list = el("div", { class: "triton-chat-rooms" });
+		// Its own strip, above the list. `notice()` used to render INTO `els.list`, which is
+		// the entire left pane — every room row, the unread badges and the "Message someone…"
+		// box — so one failed room open replaced the bubble's whole navigation surface with a
+		// single line of grey text. Nothing repainted it either: `ensureLoaded` early-returns
+		// on `this.loaded`, and the reconnect path bails when there is no open room, which is
+		// exactly the state the failure left behind. The user's only fix was reloading Desk.
+		this.els.notice = el("div", { class: "triton-chat-notice is-hidden", role: "status" });
+
+		// The people picker is built ONCE, here, outside the region `renderRooms` repaints.
+		// It used to be rebuilt on every repaint — and a repaint happens on every inbound
+		// `chat_unread_updated`, i.e. whenever any colleague sends anything in any room — so a
+		// user half way through typing a name lost both the text and the keyboard focus, with
+		// the following keystrokes going to `document.body`.
+		this.els.newSearch = el("input", {
+			class: "triton-chat-newinput",
+			type: "search",
+			placeholder: "Message someone…",
+			"aria-label": "Search people to message",
+			oninput: (ev) => this.searchPeople(ev.target.value),
+			onkeydown: (ev) => {
+				if (isComposingKey(ev)) return;
+				if (ev.key === "Escape") this.clearPeople();
+			},
+		});
+		this.els.people = el("div", { class: "triton-chat-people is-hidden" });
+		this.els.roomRows = el("div", { class: "triton-chat-roomrows" });
+
+		// The bubble gets a one-line people picker rather than the SPA's modal: a 380px panel
+		// has no room for a dialog, and the bubble's job here is "message somebody quickly".
+		// Group creation is deliberately SPA-only — naming a room and picking a roster is not a
+		// thing to do in a strip this narrow.
+		this.els.list = el("div", { class: "triton-chat-rooms" }, [
+			el("div", { class: "triton-chat-newrow" }, [this.els.newSearch]),
+			this.els.people,
+			this.els.roomRows,
+		]);
 		this.els.conversation = el("div", { class: "triton-chat-conv is-hidden" }, [
 			(this.els.convHead = el("div", { class: "triton-chat-conv-head" }, [
 				el("button", {
@@ -99,6 +170,7 @@ export class BubbleChatSurface {
 			]),
 		]);
 
+		this.host.appendChild(this.els.notice);
 		this.host.appendChild(this.els.list);
 		this.host.appendChild(this.els.conversation);
 		this.els.messages.addEventListener("scroll", () => this.onScroll(), { passive: true });
@@ -124,41 +196,23 @@ export class BubbleChatSurface {
 			this.renderRooms();
 			this.reportUnread();
 		} catch (err) {
+			// `loaded` back to false so the next tab switch retries. Only the room rows are
+			// replaced — the picker stays, so "message someone" still works even when the list
+			// itself could not be read.
 			this.loaded = false;
-			clear(this.els.list);
-			this.els.list.appendChild(
+			clear(this.els.roomRows);
+			this.els.roomRows.appendChild(
 				el("div", { class: "triton-chat-empty", text: "Conversations are unavailable right now." })
 			);
 		}
 	}
 
+	/** Repaint the room rows **only**. The picker above them is built once and left alone. */
 	renderRooms() {
-		clear(this.els.list);
-
-		// The bubble gets a one-line people picker rather than the SPA's modal: a 380px panel
-		// has no room for a dialog, and the bubble's job here is "message somebody quickly".
-		// Group creation is deliberately SPA-only — naming a room and picking a roster is not a
-		// thing to do in a strip this narrow.
-		this.els.list.appendChild(
-			el("div", { class: "triton-chat-newrow" }, [
-				(this.els.newSearch = el("input", {
-					class: "triton-chat-newinput",
-					type: "search",
-					placeholder: "Message someone…",
-					"aria-label": "Search people to message",
-					oninput: (ev) => this.searchPeople(ev.target.value),
-					onkeydown: (ev) => {
-						if (isComposingKey(ev)) return;
-						if (ev.key === "Escape") this.clearPeople();
-					},
-				})),
-			])
-		);
-		this.els.people = el("div", { class: "triton-chat-people is-hidden" });
-		this.els.list.appendChild(this.els.people);
+		clear(this.els.roomRows);
 
 		if (!this.rooms.length) {
-			this.els.list.appendChild(
+			this.els.roomRows.appendChild(
 				el("div", { class: "triton-chat-empty", text: "No conversations yet." })
 			);
 			return;
@@ -166,7 +220,7 @@ export class BubbleChatSurface {
 		for (const room of this.rooms) {
 			if (room.is_archived) continue;
 			const unread = Number(room.unread) || 0;
-			this.els.list.appendChild(
+			this.els.roomRows.appendChild(
 				el(
 					"button",
 					{
@@ -327,7 +381,15 @@ export class BubbleChatSurface {
 
 	async openRoom(room) {
 		this.flushRead(true);
-		if (this.room && this.room !== room) this.leaveRoom(this.room);
+		// **Before** `this.room` moves. The composer node is built once and lives for the whole
+		// Desk page, and nothing used to reset it on a switch — so typing to one coworker,
+		// pressing "←", opening a different conversation and pressing Enter delivered that text
+		// to the wrong person. The SPA has had per-room drafts since it shipped; this is the
+		// same behaviour, not a new feature.
+		if (this.room && this.room !== room) {
+			this.saveDraft();
+			this.leaveRoom(this.room);
+		}
 		this.room = room;
 		this.joinRoom(room);
 		this.readBatcher.reset();
@@ -350,16 +412,43 @@ export class BubbleChatSurface {
 		}
 
 		this.els.convTitle.textContent = this.titleOf(this.roomDetail);
+
+		// Tier 3 of the SPA's restoration (§4.3) lives on the server, and until now ONLY the
+		// SPA wrote it — so somebody who lives in the bubble, which is everybody today, opened
+		// /chat cold to an empty room list. The hint has to be written by whichever surface the
+		// user actually used. Throttled server-side to one write per 30s per user.
+		call(M.LAST_OPEN, { room, thread: null }).catch(() => {});
 		this.els.list.classList.add("is-hidden");
 		this.els.conversation.classList.remove("is-hidden");
+		this.restoreDraft();
 		this.renderMessages();
 		this.scrollDown();
 		this.els.text.focus();
 		this.notifyState();
 	}
 
+	/** Park the composer's contents under the room they were typed for. */
+	saveDraft() {
+		if (!this.room) return;
+		const text = this.els.text.value || "";
+		if (text.trim()) this.drafts.set(this.room, { text, mentions: this.composerMentions });
+		else this.drafts.delete(this.room);
+	}
+
+	/** Put back whatever was typed for the room now open — and nothing from any other room. */
+	restoreDraft() {
+		const stored = this.drafts.get(this.room);
+		this.els.text.value = (stored && stored.text) || "";
+		// The anchors travel with the text they point into. Carrying the previous room's
+		// anchors over new text would leave them indexing into a string they were not measured
+		// against; `_clean_mentions` drops non-members server-side, so the damage was cosmetic,
+		// but a span at the wrong offset is still a chip drawn around the wrong word.
+		this.composerMentions = (stored && stored.mentions) || [];
+	}
+
 	closeRoom() {
 		this.flushRead(true);
+		this.saveDraft();
 		this.leaveRoom(this.room);
 		this.room = null;
 		this.roomDetail = null;
@@ -637,15 +726,35 @@ export class BubbleChatSurface {
 	onRealtime(name, payload) {
 		if (!payload) return;
 		if (name === "chat_unread_updated") {
+			// `reconcile` means the counters moved for more than one room — mark-all-read from
+			// another tab. The event cannot carry the new list, so it asks for a refetch; the
+			// badge used to sit stale until the Desk page was reloaded.
+			if (payload.reconcile) {
+				this.resyncRooms();
+				return;
+			}
 			const room = this.rooms.find((r) => r.name === payload.room);
 			if (room) room.unread = Number(payload.unread) || 0;
 			this.renderRooms();
 			this.reportUnread();
 			return;
 		}
+		// Not room-scoped: it says the caller's membership changed, and the room they are
+		// looking at may be one they no longer belong to.
+		if (name === "chat_room_updated") {
+			this.resyncRooms();
+			return;
+		}
 		if (payload.room !== this.room) return;
 		if (name === "chat_message_created") {
 			this.backfill();
+		} else if (name === "chat_message_edited" || name === "chat_message_deleted") {
+			// Neither an edit nor a tombstone changes `seq`, so `backfill()` — which asks for
+			// rows strictly newer than the newest one held — can never return the affected row.
+			// Without this branch a message deleted in the SPA stayed on screen, original text
+			// and all, for every bubble user in that room until they reloaded Desk. The author
+			// had already been told "It will show as deleted for everyone."
+			this.refreshMessage(payload.message);
 		} else if (name === "chat_typing" && payload.user !== this.me) {
 			this.typingIn.start(payload.room, null, payload.user, Date.now());
 			this.renderTyping();
@@ -656,6 +765,39 @@ export class BubbleChatSurface {
 			const index = this.marks.findIndex((m) => m.user === payload.user);
 			if (index >= 0) this.marks[index].last_read_seq = payload.last_read_seq;
 			else this.marks.push({ user: payload.user, last_read_seq: payload.last_read_seq });
+			this.renderMessages();
+		}
+	}
+
+	/** Re-read one message in place — the edit and tombstone path. */
+	async refreshMessage(message) {
+		if (!message || !this.room) return;
+		try {
+			const res = await call(M.CONTEXT, { message, limit: 1 });
+			for (const row of res.messages || []) {
+				const index = this.messages.findIndex((m) => m.name === row.name);
+				if (index >= 0) this.messages[index] = row;
+			}
+			this.renderMessages();
+		} catch (e) {
+			/* the next full room open repaints it */
+		}
+	}
+
+	/** Re-read the room list wholesale. The reconciliation path, not the accelerator. */
+	async resyncRooms() {
+		try {
+			this.rooms = (await call(M.ROOMS)) || [];
+			this.renderRooms();
+			this.reportUnread();
+			// The open room may no longer be in the list — removed, or archived. Backing out is
+			// the honest response; staying in a room the server would now refuse is not.
+			if (this.room && !this.rooms.some((r) => r.name === this.room)) {
+				this.notice("You are no longer in that conversation.");
+				this.closeRoom();
+			}
+		} catch (e) {
+			/* the next event or page load repaints */
 		}
 	}
 
@@ -813,19 +955,35 @@ export class BubbleChatSurface {
 		if (this.hooks.onStateChange) this.hooks.onStateChange(this.handoffState());
 	}
 
+	/**
+	 * Say something went wrong **without** destroying what the user was looking at.
+	 *
+	 * Auto-clears, like the SPA's. A message that stays on screen forever is indistinguishable
+	 * from a broken pane, which is how the previous version of this read.
+	 */
 	notice(text) {
-		clear(this.els.list);
-		this.els.list.appendChild(el("div", { class: "triton-chat-empty", text }));
+		this.els.notice.textContent = text;
+		this.els.notice.classList.remove("is-hidden");
+		clearTimeout(this._noticeTimer);
+		this._noticeTimer = setTimeout(() => {
+			this.els.notice.classList.add("is-hidden");
+			this.els.notice.textContent = "";
+		}, 6000);
 	}
 
 	// ------------------------------------------------------------------ helpers
 
 	titleOf(room) {
 		if (!room) return "";
+		// `display_title` is resolved server-side per viewer: the room's own title for a group,
+		// the OTHER participant's full name for a DM. The dm_user_* fallback below is kept for
+		// a payload from an older build, and it is why this used to render a raw email — a
+		// `User` docname on this site IS an email address.
+		if (room.display_title) return room.display_title;
 		if (room.title) return room.title;
 		if (room.room_type === "Direct Message") {
-			const other = room.dm_user_1 === this.me ? room.dm_user_2 : room.dm_user_1;
-			return other || "Direct message";
+			return room.other_user_name || room.other_user ||
+				(room.dm_user_1 === this.me ? room.dm_user_2 : room.dm_user_1) || "Direct message";
 		}
 		return room.name || "";
 	}

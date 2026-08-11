@@ -313,6 +313,32 @@ export function unionPresence(clients, now, ttlSeconds, room) {
 	};
 }
 
+/**
+ * One presence client id per TAB, in `sessionStorage`.
+ *
+ * `sessionStorage`, not `localStorage`: the id keys the multi-tab union above, and a shared
+ * id would make three tabs look like one client — so closing one would read as the user
+ * going offline everywhere.
+ *
+ * Shared by both surfaces rather than copied into each. The SPA and the bubble can be open
+ * at once in different tabs, and a second generator is a second way for the union to be
+ * wrong about the same person.
+ */
+export function ensureClientId() {
+	try {
+		let id = sessionStorage.getItem("ee_chat_client_id");
+		if (!id) {
+			id = "c-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+			sessionStorage.setItem("ee_chat_client_id", id);
+		}
+		return id;
+	} catch (e) {
+		// Private browsing, or storage disabled. A per-load id still beats no presence: the
+		// union just sees a new client each reload and the old one expires by TTL.
+		return "c-" + Math.random().toString(36).slice(2);
+	}
+}
+
 function scopeKey(room, thread) {
 	return `${room || ""}|${thread || ""}`;
 }

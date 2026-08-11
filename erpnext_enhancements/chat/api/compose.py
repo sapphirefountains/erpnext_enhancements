@@ -306,8 +306,20 @@ def _publish_change(room: str, event: str, message: str, seq: int) -> None:
 
 
 def _sent(row: Any, *, deduplicated: bool = False) -> dict[str, Any]:
-	"""The send response. Same shape as a transcript row, plus the dedupe flag."""
+	"""The send response. Same shape as a transcript row, plus the dedupe flag.
+
+	"Same shape" has to include the mention spans. ``reconcile()`` assigns this payload over
+	the optimistic entry the composer rendered, so a response without them would strip the
+	sender's own mention chips the instant their message was acknowledged — and only for the
+	sender, which is the kind of asymmetry nobody reproduces.
+	"""
 	payload = message_payload(row)
+	# Delegated rather than reimplemented. `_attach_mentions` carries the membership filter,
+	# and a second child-row query here would be a second thing to keep scoped — the exact
+	# shape `tests/test_chat_rawsql_guard.py` exists to prevent.
+	from erpnext_enhancements.chat.api.history import _attach_mentions
+
+	_attach_mentions([payload])
 	payload["deduplicated"] = deduplicated
 	return payload
 

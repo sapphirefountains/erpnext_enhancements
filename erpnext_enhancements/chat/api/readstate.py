@@ -225,6 +225,14 @@ def _publish_user_counter(
 	if room:
 		payload["room"] = room
 		payload["unread"] = _unread_for(room, user)
+	else:
+		# No room means the change was not local to one — `mark_all_read` is the only caller
+		# that does this, and it can move every counter at once. Both clients key their badge
+		# update on `payload.room`, so a roomless event used to reach them, resolve to no room,
+		# and no-op: every other tab kept a stale badge until a full page reload. The payload
+		# cannot carry the new list (512-byte cap, and it must not carry content), so it says
+		# so instead and the client refetches. One extra round trip, once, per mark-all-read.
+		payload["reconcile"] = 1
 	if state is not None:
 		payload["total_unread"] = cint(state.get("total_unread"))
 		payload["total_mentions"] = cint(state.get("total_mentions"))

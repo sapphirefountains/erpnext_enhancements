@@ -38,6 +38,7 @@ from frappe.utils import cint
 from erpnext_enhancements.chat import permissions
 from erpnext_enhancements.chat.api._common import (
 	TOMBSTONE_TEXT,
+	dm_counterpart,
 	page_size,
 	require_room,
 	require_session,
@@ -117,6 +118,7 @@ def search_messages(
 				`m`.`name`, `m`.`room`, `m`.`seq`, `m`.`sender`, `m`.`sender_email`,
 				`m`.`sender_kind`, `m`.`text_plain`, `m`.`thread_root`, `m`.`creation`,
 				`r`.`title` as `room_title`, `r`.`room_type`,
+				`r`.`dm_user_1`, `r`.`dm_user_2`,
 				`u`.`full_name` as `sender_name`
 			from `tabChat Message` `m`
 			join `tabChat Room` `r` on `r`.`name` = `m`.`room`
@@ -128,7 +130,7 @@ def search_messages(
 		as_dict=True,
 	)
 
-	results = [_result(row, term) for row in rows]
+	results = [_result(row, term, user) for row in rows]
 	return {
 		"query": term,
 		"room": scoped_room,
@@ -137,7 +139,7 @@ def search_messages(
 	}
 
 
-def _result(row: dict[str, Any], term: str) -> dict[str, Any]:
+def _result(row: dict[str, Any], term: str, viewer: str) -> dict[str, Any]:
 	"""One search hit, with a snippet and the shared deep link.
 
 	The snippet carries ``match_start``/``match_length`` rather than pre-wrapped ``<mark>``
@@ -145,6 +147,16 @@ def _result(row: dict[str, Any], term: str) -> dict[str, Any]:
 	``innerHTML`` is a stored-XSS vector with a straight path from any employee to every
 	employee. The client highlights by slicing at those offsets and building nodes with
 	``textContent``.
+
+	``room_title`` is resolved **here**, through the same :func:`_common.dm_counterpart` the
+	room list uses, because a DM has no stored title — it is named after whoever the viewer is
+	not. This module builds its own result dict instead of going through ``room_payload``, and
+	that is exactly how it shipped emitting ``""`` for every DM hit, which the client rendered
+	as the room's random hash docname. One shared resolver, called from both places, is the
+	only version of this that stays fixed.
+
+	The ``User`` lookup inside ``dm_counterpart`` is a primary-key read per DM hit, bounded by
+	the page size (25 by default). Worth it to keep one definition of the label.
 	"""
 	text = row.get("text_plain") or ""
 	lowered = text.lower()
@@ -157,10 +169,16 @@ def _result(row: dict[str, Any], term: str) -> dict[str, Any]:
 		snippet = ("…" if start > 0 else "") + text[start:end] + ("…" if end < len(text) else "")
 		offset = index - start + (1 if start > 0 else 0)
 
+	title = (row.get("room_title") or "").strip()
+	if not title and (row.get("room_type") or "") == "Direct Message":
+		_other, title = dm_counterpart(row, viewer)
+
 	return {
 		"message": row["name"],
 		"room": row["room"],
-		"room_title": row.get("room_title") or "",
+		# Never falls back to `row["room"]`. A docname here is a random hash, and the client
+		# rendering one is the defect this resolution exists to prevent.
+		"room_title": title or "",
 		"room_type": row.get("room_type") or "Group",
 		"seq": cint(row.get("seq")),
 		"sender": row.get("sender") or None,

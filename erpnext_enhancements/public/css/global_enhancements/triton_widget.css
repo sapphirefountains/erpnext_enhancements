@@ -863,8 +863,29 @@
 	flex: 1;
 	min-height: 0;
 }
-.triton-chat-rooms {
+/* The room ROWS scroll; the "Message someone…" row above them does not. Pinning the picker
+   is why the rows live in their own container — and it is also what stops a repaint (one per
+   inbound message, in any room) from destroying an input the user is typing into. */
+.triton-chat-roomrows {
+	flex: 1;
+	min-height: 0;
 	overflow-y: auto;
+}
+.triton-chat-newrow {
+	flex: 0 0 auto;
+}
+
+/* Errors go here, ABOVE the list, and never replace it. */
+.triton-chat-notice {
+	flex: 0 0 auto;
+	padding: 8px 12px;
+	background: var(--bg-light-gray, #f4f5f6);
+	border-bottom: 1px solid var(--border-color, #e2e6e9);
+	color: var(--text-color, #1f272e);
+	font-size: 12px;
+}
+.triton-chat-notice.is-hidden {
+	display: none;
 }
 .triton-chat-conv.is-hidden,
 .triton-chat-rooms.is-hidden {

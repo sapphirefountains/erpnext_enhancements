@@ -7,6 +7,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.267.0] - 2026-08-10
+
+Thirteen chat defects found by an adversarial sweep after the first day of real
+pilot use, all of them siblings of the three that turned up the first time a
+human opened `/chat`. Those three had one shape in common: a feature wired on
+one surface and read from another, or a state that rendered literally nothing.
+So the sweep looked for exactly those shapes rather than for bugs in general —
+41 candidates raised, 22 surviving independent refutation, deduping to the 13
+below. Each was then re-verified by hand against the source before being fixed.
+
+Every fix here is behaviour that was specified and shipped broken, not new
+scope. It is a MINOR rather than a PATCH because the message payload gains a
+field (`mentions`) and the bubble now calls two endpoints it never called.
+
+### Fixed
+
+**Features whose write half was missing, so the read half was inert.**
+
+- **No `@mention` had ever rendered as a mention.** `send_message` validated and
+  stored `Chat Mention` child rows, the room-list "@" badge read them, and both
+  transcript renderers asked for them — but `message_payload` builds an explicit
+  dict with no `mentions` key, so no query could deliver them. `tokenizeMentions`
+  filtered every span away and returned plain text, making `.ee-mention` a CSS
+  rule that could not match. Someone mentioned by name saw their name styled
+  exactly like every other word. Now hydrated in one batched query per
+  transcript page (`history._attach_mentions`) and in the send response, or the
+  sender's own chips would vanish the instant the server acknowledged them.
+- **The bubble never published presence, so its users read as offline.** The SPA
+  was the only heartbeat writer, and the bubble is the surface everyone actually
+  uses — so a colleague working in it all day was painted with the grey offline
+  dot in the SPA's member pane, captioned "No ERPNext session", one element away
+  from a live "…is typing" line for that same person. Typing was published;
+  existence was not. `ensureClientId` moved to `chat/signals.js` so both surfaces
+  mint one kind of id — a second generator is a second way for the multi-tab
+  union to be wrong about the same person.
+- **Mark-all-read left every other tab's badge stale.** The event it publishes
+  carries no room, because the change is not local to one; both clients keyed
+  their update on `payload.room`, resolved to nothing and no-opped. The payload
+  cannot carry the new list (512-byte cap, and it must not carry content), so it
+  now says `reconcile` and the client refetches. Recovery had otherwise required
+  a full page reload: the bubble's only wholesale refetch is reached from the
+  reconnect path, which returns early when no room is open — the badge-only tab,
+  which is the case the badge exists for.
+
+**States that rendered nothing.**
+
+- **A failed room open gutted the bubble's entire left pane.** `notice()` was
+  `clear(els.list)` plus one line of grey text, and `els.list` held every room
+  row, every unread badge and the "Message someone…" box. A network blip or a
+  403 from a room you had been removed from left one sentence on a blank panel.
+  Nothing repainted it — `ensureLoaded` early-returns once loaded, and the
+  reconnect path bails when no room is open, which is exactly the state the
+  failure had just created. The failure disabled its own repair; only reloading
+  Desk brought it back. Errors now go to their own auto-clearing strip.
+- **Search results rendered into an element CSS had hidden.** `.ee-placeholder`
+  hides the transcript while it is up, and `openSearch`/`openTriton` never
+  cleared it. Reachable mid-session by pressing Back (which resolves `/chat` to
+  the empty state) and then searching: the hits arrived, went into a
+  `display: none` viewport, and the pane still read "Pick a conversation".
+- **A search with no hits painted a blank rectangle.** No zero-result branch at
+  all, and the server's `too_short` flag — sent for any query under two
+  characters — was read nowhere in the client. Both now render a real state.
+- **The connection banner was a red bar on a page that was fine.** Built without
+  `is-hidden` and only ever hidden by the socket's first `connect`, it was on
+  screen for a bootstrap round trip plus a socket.io download plus a handshake.
+
+**Raw identifiers on screen.** On this site a `User` docname is an email address
+and `Chat Room` is `autoname: hash`, so both of these were legible and wrong.
+
+- **Search captioned every direct-message hit with the room's random hash.**
+  `search.py` is the one payload builder that bypasses `room_payload`, so it
+  emitted an empty title for DMs — which have none by design, being named after
+  whoever the viewer is not — and the client's `|| hit.room` fallback rendered
+  the docname. Resolved server-side through the shared `dm_counterpart`, and the
+  client fallback removed so a regression shows as a blank rather than a hash.
+- **"Read by N" listed email addresses instead of names.** The roster carrying
+  `full_name` was already in hand and discarded at the call site.
+
+**Other.**
+
+- **The bubble carried an unsent draft into the next conversation.** The
+  composer node lives for the whole Desk page and nothing reset it on a room
+  switch, so typing to one coworker, backing out and opening another delivered
+  that text to the wrong person. Per-room drafts, as the SPA has always had.
+- **The bubble dropped `chat_message_edited`, `chat_message_deleted`,
+  `chat_room_updated` and `chat_mention`.** Its handler was an else-if chain
+  with no trailing branch. Neither an edit nor a tombstone changes `seq`, so the
+  backfill — which asks for rows strictly newer than the newest held — could
+  never repair it: a message deleted in the SPA stayed on screen, original text
+  and all, for every bubble user in that room until they reloaded, after the
+  author had been told "It will show as deleted for everyone."
+- **A room-list repaint destroyed the people-search box mid-keystroke.** The
+  repaint runs on every inbound `chat_unread_updated`, i.e. whenever anybody
+  sends anything in any room the user belongs to. The picker is now built once,
+  outside the repainted region, and the room rows scroll under it.
+- **`send()` discarded in-flight uploads.** It collected only resolved uploads,
+  then emptied the queue and detached the progress rows — including their Cancel
+  buttons — so the message posted without the attachment, the file stayed
+  attached to the room with no `Chat Attachment` row, and the sender had no
+  indication. Sending now waits for uploads to finish.
+- **The composer stayed live and bound to the previous room** in the search and
+  Triton panes, so Enter posted into whichever conversation had been open before
+  the search. On a cold load of a `/chat/search` URL it posted with a null room,
+  producing a failed bubble that Retry could never clear (it resends the same
+  null room) and that then redrew at the bottom of every room opened afterwards.
+
+### Added
+
+- Four source-level rules in `scripts/test_chat_source_rules.js`, each derived
+  from a defect above rather than from a style preference: every pane that
+  empties the transcript must render a state in its place; an error message must
+  not replace the navigation; both surfaces must write every piece of shared
+  per-user state; and no room or user docname may be rendered as a label. All
+  four were mutation-tested — each planted defect confirmed caught, and the two
+  that were not caught on the first attempt were rules too loose to keep, and
+  were tightened rather than the mutation being softened.
+- Contract coverage for the mention serialiser and the DM search label, likewise
+  mutation-tested in both directions.
+
 ## [1.266.1] - 2026-08-10
 
 ### Fixed

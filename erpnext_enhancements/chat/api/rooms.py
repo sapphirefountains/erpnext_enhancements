@@ -92,7 +92,7 @@ def get_rooms(include_archived: Any = 0) -> list[dict[str, Any]]:
 		as_dict=True,
 	)
 
-	return [room_payload(row, member=row) for row in rows]
+	return [room_payload(row, member=row, viewer=user) for row in rows]
 
 
 @frappe.whitelist()
@@ -138,7 +138,7 @@ def get_room(room: str) -> dict[str, Any]:
 		as_dict=True,
 	) or {}
 
-	payload = room_payload(row, member=mine)
+	payload = room_payload(row, member=mine, viewer=user)
 	payload["members"] = _members(name)
 	payload["linked_document_url"] = _linked_document_url(row)
 	return payload

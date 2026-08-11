@@ -589,6 +589,246 @@ function stripComments(source) {
 	}
 }
 
+// ------------------------------------------------------------------ 9. no state renders nothing
+
+/**
+ * **Every pane that empties the transcript must put something in its place.**
+ *
+ * `setItems([])` leaves the virtual list holding two zero-height spacers, which is not a
+ * blank message — it is a blank *rectangle*, and it reads as a broken page. This shipped
+ * three times over: the cold empty state rendered literally nothing, a search with no hits
+ * rendered nothing, and a query the server rejected as too short rendered nothing.
+ *
+ * The rule is structural: a function that calls `setItems([])` must also, within its own
+ * body, reach the one placeholder writer. That is checkable; "looks like it handles the
+ * empty case" is not.
+ */
+{
+	const app = stripComments(must(path.join(CLIENT_DIR, 'app.js')));
+	const problems = [];
+
+	// The one writer must exist, or the rule below is comparing against nothing.
+	if (!/showPlaceholder\s*\(mark,\s*title,\s*sub\)\s*\{/.test(app)) {
+		console.error(
+			'MARKERS NOT FOUND: app.js has no showPlaceholder(mark, title, sub). The placeholder ' +
+			'has been restructured — re-derive this check rather than deleting it.'
+		);
+		process.exit(2);
+	}
+
+	// Every `setItems([])` — the literal empty case — and the function it sits in.
+	const fnStarts = [...app.matchAll(/^\t(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{/gm)]
+		.map((m) => ({ name: m[1], at: m.index }));
+	if (fnStarts.length < 20) {
+		console.error('MARKERS NOT FOUND: method scan found only ' + fnStarts.length + ' methods in app.js.');
+		process.exit(2);
+	}
+
+	const enclosing = (index) => {
+		let found = null;
+		for (const f of fnStarts) {
+			if (f.at <= index) found = f;
+			else break;
+		}
+		return found ? found.name : '(top level)';
+	};
+
+	// `openTriton` is the one legitimate exception and says so in place: it empties the
+	// transcript and writes a signpost into `els.notice` instead of the placeholder.
+	const ALLOWED = new Set(['openTriton']);
+
+	for (const m of app.matchAll(/setItems\(\[\]\)/g)) {
+		const fn = enclosing(m.index);
+		if (ALLOWED.has(fn)) continue;
+		// The body from this call to the end of the function, roughly.
+		const next = fnStarts.find((f) => f.at > m.index);
+		const body = app.slice(m.index, next ? next.at : app.length);
+		if (!/showPlaceholder\(|els\.notice/.test(body)) {
+			problems.push(
+				`${fn}() empties the transcript and never reaches showPlaceholder(), so the pane ` +
+				`renders as a blank rectangle`
+			);
+		}
+	}
+
+	// Search specifically must branch on the EMPTY case before it paints. Checking only that
+	// the function mentions the placeholder somewhere is too weak — the success path mentions
+	// it too, so deleting the zero-result branch would slip through. This asserts the branch.
+	{
+		const decl = fnStarts.find((f) => f.name === 'renderSearchResults');
+		if (!decl) {
+			console.error('MARKERS NOT FOUND: app.js has no renderSearchResults method.');
+			process.exit(2);
+		}
+		const next = fnStarts.find((f) => f.at > decl.at);
+		const body = app.slice(decl.at, next ? next.at : decl.at + 4000);
+		if (!/!items\.length|items\.length === 0/.test(body)) {
+			problems.push(
+				'renderSearchResults does not branch on an empty result set, so a search with no ' +
+				'hits paints a blank rectangle under a "Search: …" header'
+			);
+		}
+		if (!/too_short/.test(body)) {
+			problems.push(
+				'renderSearchResults ignores the server\'s `too_short` flag, so a one-character ' +
+				'query is indistinguishable from a search that genuinely matched nothing'
+			);
+		}
+	}
+
+	// The transcript is hidden by CSS whenever the placeholder is up, so any pane that renders
+	// INTO the transcript must clear it first. Search learnt this the hard way: its hits went
+	// into a `display: none` element and it read as "no results".
+	const css = must(path.join(ROOT, 'erpnext_enhancements', 'public', 'css', 'chat.bundle.css'));
+	if (/\.ee-placeholder:not\(\.is-hidden\)\s*~\s*\.ee-transcript/.test(css)) {
+		for (const fn of ['openSearch', 'openTriton']) {
+			// From the METHOD, not the first textual occurrence — both of these are called from
+			// `routeTo` hundreds of lines above their own definition, and slicing from the call
+			// site reads an unrelated region. This check reported both as broken when they were
+			// correct, which is the failure mode a guard can least afford.
+			const decl = fnStarts.find((f) => f.name === fn);
+			if (!decl) {
+				console.error('MARKERS NOT FOUND: app.js has no ' + fn + ' method.');
+				process.exit(2);
+			}
+			const next = fnStarts.find((f) => f.at > decl.at);
+			const body = app.slice(decl.at, next ? next.at : decl.at + 3000);
+			if (!/enterAuxPane\(\)|hidePlaceholder\(\)/.test(body)) {
+				problems.push(
+					`${fn}() renders into the transcript without clearing the placeholder, and CSS ` +
+					`hides the transcript while the placeholder is up — the results go nowhere`
+				);
+			}
+		}
+	}
+
+	if (problems.length) {
+		fail('a state that renders nothing:\n        ' + problems.join('\n        '));
+	} else {
+		pass('every pane that empties the transcript renders a state in its place');
+	}
+}
+
+// ------------------------------------------------------------------ 10. notice != destroy
+
+/**
+ * **An error message must not replace the navigation.**
+ *
+ * The bubble's `notice()` was `clear(els.list)` plus one line of text, and `els.list` is the
+ * whole left pane — every room, the unread badges, the people picker. One failed room open
+ * gutted it, and nothing repainted it: `ensureLoaded` early-returns once loaded, and the
+ * reconnect path bails when no room is open, which is precisely the state the failure left.
+ * A page reload was the only way back.
+ */
+{
+	const src = stripComments(must(SURFACE_JS));
+	const start = src.indexOf('notice(text) {');
+	if (start === -1) {
+		console.error('MARKERS NOT FOUND: chat_surface.js has no notice(text). Re-derive this check.');
+		process.exit(2);
+	}
+	const body = src.slice(start, start + 700);
+	if (/clear\(this\.els\.list\)/.test(body)) {
+		fail(
+			'chat_surface notice() clears els.list — the container holding every room row and the ' +
+			'people picker. An error message must sit beside the navigation, never replace it.'
+		);
+	} else if (!/this\.els\.notice/.test(body)) {
+		fail('chat_surface notice() writes to no dedicated notice element.');
+	} else {
+		pass('the bubble reports errors without destroying its own conversation list');
+	}
+
+	// And the repaint must not eat the picker either: it is built once, outside the region.
+	const rr = src.indexOf('renderRooms() {');
+	const rrBody = src.slice(rr, rr + 400);
+	if (/clear\(this\.els\.list\)/.test(rrBody)) {
+		fail(
+			'renderRooms() clears els.list, destroying the people-search input on every repaint — ' +
+			'and a repaint happens on every inbound message in any room, so it lands mid-typing.'
+		);
+	} else {
+		pass('a room-list repaint leaves the people picker and its focus alone');
+	}
+}
+
+// ------------------------------------------------------------------ 11. both surfaces write
+
+/**
+ * **A feature whose read side is on one surface and write side on another is dead.**
+ *
+ * Three defects of this exact shape have now shipped: the bubble listened for room events and
+ * never joined the room; the bubble read the tier-3 restoration hint that only the SPA ever
+ * wrote; and presence had exactly one writer, so a bubble-only colleague read as *offline* in
+ * the SPA beside a live "is typing" line for the same person.
+ *
+ * So: for each endpoint that records per-user state, BOTH surfaces must call it.
+ */
+{
+	const app = stripComments(must(path.join(CLIENT_DIR, 'app.js')));
+	const surface = stripComments(must(SURFACE_JS));
+	const transport = stripComments(must(path.join(CLIENT_DIR, 'transport.js')));
+
+	const shared = [
+		{ key: 'HEARTBEAT', why: 'presence — without it the user is painted offline to everyone else' },
+		{ key: 'LAST_OPEN', why: 'the tier-3 restoration hint — without it /chat opens cold' },
+		{ key: 'MARK_READ', why: 'read receipts — without it the sender never sees their message land' },
+	];
+
+	const problems = [];
+	for (const { key, why } of shared) {
+		if (!new RegExp(`\\b${key}\\s*:`).test(transport)) {
+			console.error('MARKERS NOT FOUND: transport.js no longer declares M.' + key + '.');
+			process.exit(2);
+		}
+		for (const [label, src] of [['the SPA', app], ['the bubble', surface]]) {
+			if (!new RegExp(`M\\.${key}\\b`).test(src)) {
+				problems.push(`${label} never calls M.${key} (${why})`);
+			}
+		}
+	}
+
+	if (problems.length) {
+		fail('a write side that only one surface has:\n        ' + problems.join('\n        '));
+	} else {
+		pass(`both surfaces write all ${shared.length} pieces of shared per-user state`);
+	}
+}
+
+// ------------------------------------------------------------------ 12. no raw docnames
+
+/**
+ * **A `User` or `Chat Room` docname must never be rendered as a label.**
+ *
+ * On this site a `User` docname IS an email address, and `Chat Room` is `autoname: hash`. Both
+ * have already reached the screen: a DM titled with a raw email, and search hits captioned
+ * with a random hash. Both times the cause was a `||` fallback that turned a missing label
+ * into a visible identifier — so the fallback is the thing to ban.
+ */
+{
+	const app = stripComments(must(path.join(CLIENT_DIR, 'app.js')));
+	const problems = [];
+
+	if (/hit\.room_title\s*\|\|\s*hit\.room\b/.test(app)) {
+		problems.push(
+			'renderSearchResults falls back to `hit.room` — a Chat Room docname, which is a random hash'
+		);
+	}
+	// A map straight from a reader row to `.user`, with no roster lookup in the arrow body, is
+	// a list of email addresses. Matched UNCONDITIONALLY rather than "unless `full_name`
+	// appears nearby": the loose form passed when the raw join was planted next to correct
+	// code that still mentioned `full_name`, which is exactly how a half-finished edit lands.
+	if (/readers\.map\(\s*\([^)]*\)\s*=>\s*\w+\.user\s*\)/.test(app)) {
+		problems.push('showReaders joins raw `reader.user` values, which on this site are emails');
+	}
+
+	if (problems.length) {
+		fail('a raw identifier on screen:\n        ' + problems.join('\n        '));
+	} else {
+		pass('no room or user docname is rendered as a label');
+	}
+}
+
 console.log('');
 if (failures) {
 	console.error(failures + ' assertion(s) failed');
