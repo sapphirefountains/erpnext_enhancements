@@ -674,6 +674,14 @@ jobs:
       # to somebody who is not in the room.
       - name: Chat retrieval gate has one door (the ungated-SQL source scan)
         run: python -m unittest erpnext_enhancements.tests.test_chat_gate_source_scan -v
+      # `origin_timestamp` was selected from Chat Message, which has no such field. MariaDB
+      # answers that with 1054 on every execution, and it ran on production for two hours
+      # because nothing had ever executed that statement: the pure suites test the chunker,
+      # and the SQL that feeds it needs a database. A wrong column name is invisible to every
+      # bench-free test, and review does not catch it either - the name was entirely
+      # plausible. Both sides of the check are files, so it needs no bench.
+      - name: Chat SQL only names columns that exist (the 1054 guard)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_sql_columns -v
       # Five of the seven retrieval modules import nothing but the stdlib, and this is why:
       # what they decide fails SILENTLY when it is wrong. A chunker that is not deterministic
       # makes the content hash meaningless and re-running the indexer duplicative. A ranker
