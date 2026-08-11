@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.9] - 2026-08-11
+
+### Fixed
+
+- **`ask()` read configuration inside the impersonation window, so every turn raised
+  `PermissionError`.** `get_settings()` reads Triton Settings, including `get_password()` on
+  the gateway secret — which Frappe permission-checks. Asking it *after* `frappe.set_user()`
+  asks the **mentioning person** for permission to read a password field, and no ordinary
+  employee has it. Configuration is the app's; only the token mint needs the asker's identity,
+  and that stays inside the window.
+- A failed `mint_user_token()` is now reported as `TritonUnavailable` naming the exception
+  class, rather than escaping as an unclassified error.
+
+### Notes
+
+- **This would have broken every `@triton` mention, not just the digest summariser.**
+  `handle()` passes the employee who typed the mention, so the same permission check would
+  have failed for all of them. It surfaced through the summariser only because that is the
+  path a scheduler runs unattended, every five minutes, where a failure gets logged instead of
+  shrugged at — the digest found a bug belonging to the whole feature.
+- **The live round trip would have caught this and nothing else would.** No test can: the
+  suites stub the client, and the fault needs a real permission stack, a real password field
+  and a non-privileged user in the same call.
+- Diagnosis took one sweep, because v1.277.8 had just stopped flattening the reason into "the
+  model was unavailable". The three logging fixes earlier today paid for themselves here.
+
 ## [1.277.8] - 2026-08-11
 
 ### Fixed
