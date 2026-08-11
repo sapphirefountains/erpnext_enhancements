@@ -736,6 +736,95 @@ class TestRuleETheWireSurfaceIsOneMethodAndItGates(unittest.TestCase):
 			)
 
 
+class TestTheHandlerCannotSeeTheOrigin(unittest.TestCase):
+	"""Locked decision #4, asserted structurally rather than behaviourally.
+
+	The strongest form — two real payloads through two real normalisers producing identical
+	handler input — needs a bench, and CI has none. What runs here is the property that makes
+	the bench test almost redundant: **the envelope has no origin field**, so a branch on
+	origin cannot be written, and ``origin`` reaches the handler only as a parameter that is
+	written to the log and read nowhere else.
+
+	A reviewer can miss a branch. A reviewer cannot miss a branch that does not compile.
+	"""
+
+	INVOKE_DIR = APP_DIR / "chat" / "invoke"
+	ENVELOPE_REL = "chat/invoke/envelope.py"
+	HANDLER_REL = "chat/invoke/handler.py"
+
+	def _handler_function(self):
+		tree = _parse(APP_DIR / self.HANDLER_REL)
+		for node in ast.walk(tree):
+			if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == "handle":
+				return node
+		return None
+
+	def test_the_envelope_dataclass_declares_no_origin_field(self):
+		if not self.INVOKE_DIR.is_dir():
+			self.skipTest("chat/invoke/ does not exist yet")
+		tree = _parse(APP_DIR / self.ENVELOPE_REL)
+		fields: set[str] = set()
+		for node in ast.walk(tree):
+			if not isinstance(node, ast.ClassDef) or node.name != "Envelope":
+				continue
+			for item in node.body:
+				if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+					fields.add(item.target.id)
+		self.assertTrue(fields, "the Envelope dataclass has no annotated fields at all")
+		for banned in ("origin", "source", "client", "space"):
+			self.assertNotIn(
+				banned,
+				fields,
+				f"Envelope declares a {banned!r} field. Decision #4 says a mention behaves "
+				"identically from either client, and the way that is guaranteed rather than "
+				"hoped for is that the handler has nothing to branch on. Origin is recorded — "
+				"the normalisers write it to Triton Invocation Log — it just never travels "
+				"with the question.",
+			)
+
+	def test_the_handler_reads_origin_only_to_log_it(self):
+		"""``origin`` is a parameter of ``handle`` so the log row can carry it. It must be
+		read exactly once, in the call that opens that row."""
+		if not self.INVOKE_DIR.is_dir():
+			self.skipTest("chat/invoke/ does not exist yet")
+		func = self._handler_function()
+		self.assertIsNotNone(func, "chat/invoke/handler.py has no handle()")
+		reads = [
+			node
+			for node in ast.walk(func)
+			if isinstance(node, ast.Name) and node.id == "origin" and isinstance(node.ctx, ast.Load)
+		]
+		self.assertLessEqual(
+			len(reads),
+			1,
+			f"handle() reads `origin` {len(reads)} times. It may be read once, to write it to "
+			"the invocation log. A second read is a decision being made on which client "
+			"asked, which is exactly what decision #4 forbids — and the symptom would be two "
+			"coworkers getting different answers to the same question for a reason neither "
+			"of them can see.",
+		)
+
+	def test_the_handler_never_compares_against_an_origin_name(self):
+		if not self.INVOKE_DIR.is_dir():
+			self.skipTest("chat/invoke/ does not exist yet")
+		source = (APP_DIR / self.HANDLER_REL).read_text(encoding="utf-8")
+		tree = ast.parse(source)
+		docstrings = _docstring_constant_ids(tree)
+		offenders = [
+			node.value
+			for node in ast.walk(tree)
+			if isinstance(node, ast.Constant)
+			and isinstance(node.value, str)
+			and id(node) not in docstrings
+			and node.value in ("Google Chat", "SPA")
+		]
+		self.assertFalse(
+			offenders,
+			f"handler.py contains the literal(s) {offenders}. Those are origin names, and the "
+			"handler has no business knowing them.",
+		)
+
+
 class TestTheExemptionsAreHonest(unittest.TestCase):
 	"""An exemption list nobody prunes is a hole nobody is watching, and this one
 	sits directly on the security boundary."""

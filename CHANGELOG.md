@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.274.0] - 2026-08-11
+
+One `@triton` handler, reached from both origins, that physically cannot see which client
+asked. `@triton` now answers — behind `triton_enabled`, which ships **off**.
+
+### Added
+
+- **`chat/invoke/envelope.py`** — the frozen contract, its canonical form, and a
+  `request_id` **derived** from the mention rather than generated.
+- **`chat/invoke/normalize.py`** — both origins → one envelope. Two functions in one file, on
+  purpose: side by side, a field one sets and the other forgets is visible on one screen.
+- **`chat/invoke/handler.py`** — the one handler. Retrieves as the human, posts as the bot,
+  and writes the invocation-log row *before* any work so a job killed mid-turn leaves evidence.
+- **`chat/invoke/dispatch.py`** — acknowledge, dedupe, enqueue, inside Google's deadline.
+- **`chat/invoke/triton_client.py`** — the model turn, carrying the mentioning person's
+  identity.
+- `chat/gchat/webhook.handle` now dispatches after verifying; `chat.api.compose.send_message`
+  dispatches after storing. Both meet at the same envelope.
+
+### Notes
+
+- **The envelope has no origin field, and that is the guarantee.** "The handler must not
+  branch on origin" is a rule somebody has to keep; "there is no origin here" is a fact. Origin
+  *is* recorded — the normalisers write it to `Triton Invocation Log` — it simply never travels
+  with the question. Three source-level assertions pin it: the dataclass declares no such
+  field, `handle()` reads its `origin` parameter at most once (the call that opens the log
+  row), and the module contains neither origin name as a literal.
+- **No second world-reachable endpoint was created, diverging from Appendix B.** It specifies
+  `chat/invoke/webhook.py` with its own JWT verification; `chat/gchat/webhook.py` already *is*
+  that endpoint, and its path is baked into the audience Google mints against. A second one
+  means a second copy of an authentication boundary — and the copy that drifts is a
+  world-reachable open relay. The existing endpoint gained a dispatch call instead.
+- **Dispatch is called from the composer, not from a `doc_events` hook.** The enqueue itself is
+  safe, but a hook runs inside the inserting transaction on a web worker, and a hook is where
+  the next person adds the call that reaches Google — at which point a timeout becomes a
+  *failed message insert*. Invariant I1 stays intact.
+- **Dedupe is on the invocation-log row, not on `frappe.enqueue(deduplicate=True)`.** That flag
+  drops a new enqueue while an existing job is `QUEUED` *or* `STARTED`, so a second mention
+  arriving while the first is running would be silently swallowed — the same trap that makes
+  the digest pass a batch rather than a per-message enqueue.
+- **`_already_seen` fails *open* while everything else in this feature fails closed**, and the
+  asymmetry is deliberate: a duplicate answer costs a coworker seeing the same reply twice; a
+  swallowed turn is a mention that is never answered and that nobody can distinguish from
+  Triton ignoring them.
+- **The Triton client sets the session user before minting.** The token cache is keyed on the
+  session, and this runs in a background job whose session is `Administrator` — minting without
+  setting it would hand Triton a superuser token. The two-identity rule defeated by a cache key
+  is exactly the kind of failure that never looks like one.
+- **CQ-24 is implemented as "reuse the existing bridge"**, with the cost stated in the module:
+  the endpoint and its secret keep saying "erpnext" while serving Chat, and that same secret is
+  the telephony gateway's, so its blast radius is wider than its name suggests. The posture is
+  identical either way; a sibling bridge is ~150 lines in the other repository.
+- **An unlinked user gets a sentence they can act on**, in-thread, rather than the generic
+  failure the streaming path produces. This is the rollout task that will look like a Phase 5
+  bug: for ~50 people it is an afternoon of onboarding, but only if somebody schedules it.
+
 ## [1.273.0] - 2026-08-11
 
 The retrieval gate — Phase 5's security boundary — and the six modules around it. Nothing

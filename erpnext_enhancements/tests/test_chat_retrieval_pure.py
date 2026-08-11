@@ -29,6 +29,7 @@ success — this repo lost a suite that way for weeks.
 from __future__ import annotations
 
 from erpnext_enhancements.chat.indexing import chunker
+from erpnext_enhancements.chat.invoke import envelope
 from erpnext_enhancements.chat.retrieval import assemble, budget, citations, lexical, rank
 
 # --------------------------------------------------------------------------- chunking
@@ -571,3 +572,99 @@ def test_the_wire_shape_carries_the_keys_the_existing_chip_row_reads() -> None:
 	payload = _manifest()[0].as_dict()
 	for key in ("ref", "room", "label", "kind", "subtitle", "url"):
 		assert key in payload
+
+
+# --------------------------------------------------------------------------- the envelope
+#
+# Locked decision #4 says a mention behaves identically from the native Chat client and from
+# the SPA. The strongest form of that assertion needs a bench — two real payloads through two
+# real normalisers — so what is asserted here is the half that makes the bench half almost
+# redundant: the envelope has no origin field, so there is nothing for the handler to branch
+# on. A reviewer cannot miss a branch that cannot be written.
+
+
+def test_the_envelope_carries_no_origin() -> None:
+	"""The structural guarantee behind decision #4, and the reason it is structural: 'the
+	handler must not branch on origin' is a rule somebody has to keep, while 'there is no
+	origin here' is a fact."""
+	fields = set(envelope.Envelope("u", "r", "m", "t").as_job_kwargs())
+	assert "origin" not in fields
+	assert "space" not in fields
+	assert "gchat_message" not in fields
+
+
+def test_two_envelopes_differing_only_in_transport_are_byte_identical() -> None:
+	"""``transport`` is precisely the part that legitimately differs between origins — a
+	Google space name exists on one path and not the other. Including it in the canonical
+	form would make the identity test impossible to satisfy, and the natural fix would be to
+	delete the test."""
+	from_chat = envelope.Envelope(
+		"alice", "room-1", "msg-1", "what is the status", seq=7, transport={"space": "spaces/x"}
+	)
+	from_spa = envelope.Envelope("alice", "room-1", "msg-1", "what is the status", seq=7)
+	assert from_chat.canonical() == from_spa.canonical()
+	assert from_chat.fingerprint() == from_spa.fingerprint()
+
+
+def test_a_different_question_is_a_different_envelope() -> None:
+	a = envelope.Envelope("alice", "room-1", "msg-1", "status")
+	b = envelope.Envelope("alice", "room-1", "msg-1", "budget")
+	assert a.canonical() != b.canonical()
+
+
+def test_the_request_id_is_derived_so_a_redelivery_is_one_turn() -> None:
+	"""Generating a UUID would make idempotency a property of the transport — and the
+	transport is Google's interaction webhook, which is at-least-once by design."""
+	first = envelope.derive_request_id("r", "m", "what is the status")
+	second = envelope.derive_request_id("r", "m", "what is the status")
+	assert first == second
+
+
+def test_editing_the_mention_makes_it_a_new_question() -> None:
+	"""Keying on the message alone would mean editing '@triton what is the status' to
+	'@triton what is the budget' returns the first answer, from the cache, forever."""
+	before = envelope.derive_request_id("r", "m", "what is the status")
+	after = envelope.derive_request_id("r", "m", "what is the budget")
+	assert before != after
+
+
+def test_the_mention_token_is_removed_and_the_question_survives() -> None:
+	assert envelope.strip_mention("@triton what is the status") == "what is the status"
+
+
+def test_removing_the_mention_leaves_no_double_space_or_orphaned_punctuation() -> None:
+	"""Cosmetic on its own — but this string is what the model is asked AND what the audit
+	row's query hash is computed over, so two spellings of the same question would hash
+	differently and read as two different reads."""
+	assert envelope.strip_mention("hey @triton, status?") == "hey, status?"
+	assert envelope.strip_mention("so @triton what now") == "so what now"
+
+
+def test_only_the_first_mention_is_removed() -> None:
+	"""'ask @triton about the @triton rollout' means the second one literally, and a blanket
+	replace would turn the question into nonsense."""
+	assert envelope.strip_mention("ask @triton about the @triton rollout") == (
+		"ask about the @triton rollout"
+	)
+
+
+def test_a_longer_word_starting_with_the_handle_is_not_a_mention() -> None:
+	assert envelope.strip_mention("@tritonics is a company") == "@tritonics is a company"
+
+
+def test_an_envelope_from_another_release_is_refused_rather_than_reinterpreted() -> None:
+	"""A deploy FLUSHDBs the queue, so this is belt and braces — but the field that changed
+	is the one nobody would notice."""
+	kwargs = envelope.Envelope("u", "r", "m", "t").as_job_kwargs()
+	kwargs["version"] = envelope.ENVELOPE_VERSION + 1
+	try:
+		envelope.from_job_kwargs(kwargs)
+	except ValueError as exc:
+		assert "version" in str(exc)
+	else:  # pragma: no cover - the assertion is the raise
+		raise AssertionError("an envelope from another release was accepted")
+
+
+def test_the_round_trip_through_job_kwargs_is_lossless() -> None:
+	original = envelope.Envelope("alice", "r", "m", "q", thread_root="t", seq=3, request_id="x")
+	assert envelope.from_job_kwargs(original.as_job_kwargs()) == original

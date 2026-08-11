@@ -629,6 +629,29 @@ def _unauthorized(reason: str, detail: str = "") -> dict[str, Any]:
 	return {}
 
 
+def _verified_payload() -> Optional[dict[str, Any]]:
+	"""The whole request body as a dict, **strictly after verification**.
+
+	Phase 5's dispatch needs the message and the space, not just the event type. Kept as a
+	separate function from :func:`_peek_event_type` so the Phase 1 reasoning above stays
+	readable: the peek is deliberately minimal and this is deliberately not, and merging them
+	would make the minimal one look like an accident.
+
+	Same caveat as the peek: Frappe populates ``form_dict`` from the request before any app
+	code runs, so "after verification" means after *ours*. Nothing here can move the
+	framework's own pre-parse.
+	"""
+	request = getattr(frappe, "request", None)
+	raw = request.get_data() if request is not None else b""
+	if not raw:
+		return None
+	try:
+		payload = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
+	except (UnicodeDecodeError, ValueError):
+		return None
+	return payload if isinstance(payload, dict) else None
+
+
 def _peek_event_type() -> Optional[str]:
 	"""The event `type`, for the Phase 1 log line. None when the body is not a JSON object.
 
@@ -688,5 +711,32 @@ def handle() -> dict[str, Any]:
 	frappe.logger("chat.gchat.webhook", allow_site=True).info(
 		f"Chat webhook accepted: event_type={event_type or 'unspecified'}"
 	)
+
+	# Phase 5's dispatch. It acknowledges and enqueues and NEVER answers inline: Google's
+	# interaction deadline is a hard 30 seconds, and a handler that does retrieval plus a
+	# model turn inside it works in development and times out under load — where the symptom
+	# is not an error but a mention that is silently never answered.
+	#
+	# Wrapped, because this endpoint's contract is "verify, then 200". A dispatch failure must
+	# not turn a verified request into a 500 that Google will retry against a system already
+	# having a bad day.
+	#
+	# Imported inside the function so this module stays importable — and its verifier stays
+	# testable — without pulling in the retrieval stack.
+	try:
+		payload = _verified_payload()
+		if payload is not None:
+			from erpnext_enhancements.chat.invoke import dispatch
+
+			dispatch.dispatch_chat_interaction(payload)
+	except Exception:
+		try:
+			frappe.log_error(
+				"A verified Chat interaction event was accepted but could not be dispatched.",
+				"Chat Triton",
+			)
+		except Exception:
+			pass
+
 	frappe.local.response.http_status_code = 200
 	return {}

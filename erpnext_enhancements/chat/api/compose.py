@@ -173,8 +173,39 @@ def send_message(
 	if files:
 		_link_attachments(doc.name, name, files)
 
+	_dispatch_triton(doc.name)
+
 	row = frappe.db.get_value(MESSAGE_DOCTYPE, doc.name, "*", as_dict=True)
 	return _sent(row)
+
+
+def _dispatch_triton(message: str) -> None:
+	"""Hand a ``@triton`` mention to the one handler. Called from here, not from a hook.
+
+	Deliberately **not** a ``doc_events`` entry, and the distinction is invariant I1's: a
+	document event runs inside the inserting transaction on a web worker, and the rule this
+	package keeps is that no chat write path reaches an external service from there. The
+	enqueue itself is safe — it is ``enqueue_after_commit`` and touches no network — but a
+	hook is where the next person adds the call that is not, and the failure mode of that
+	mistake is a Google timeout turning into a *failed message insert*.
+
+	It is also called for the SPA, the desk bubble and any future ERPNext-side composer at
+	once, because all three go through ``send_message``. The native Chat client's mentions
+	arrive by the interaction webhook instead, and both paths meet at the same envelope.
+
+	Never raises. A mention that cannot be dispatched must not fail the message it was
+	written in: the person typed something to their colleagues as well as to Triton, and
+	losing the message is strictly worse than losing the answer.
+	"""
+	try:
+		from erpnext_enhancements.chat.invoke import dispatch
+
+		dispatch.dispatch_spa_message(message)
+	except Exception:
+		try:
+			frappe.log_error(f"Could not dispatch the @triton mention in {message}.", "Chat Triton")
+		except Exception:
+			pass
 
 
 @frappe.whitelist()
