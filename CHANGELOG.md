@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.268.1] - 2026-08-11
+
+### Fixed
+
+- **v1.268.0 failed to deploy, and left the pipeline blocked.**
+  `Chat Retrieval Audit Room` shipped with its JSON and an `__init__.py` but no
+  `chat_retrieval_audit_room.py`. Frappe's `load_doctype_module` runs for **every**
+  DocType during `bench migrate` — child tables included — and raises
+  `ModuleNotFoundError` when the controller is absent, so the migrate aborted
+  partway through `sync_all`.
+
+  The half-state it left is the part worth knowing about. The child DocType record
+  and its table were created; the parent `Chat Retrieval Audit` was not. Because a
+  registered DocType is re-walked on **every** migrate, the same ImportError then
+  reproduced on any subsequent deploy of any change — chat or otherwise — so the
+  failure was not confined to the feature that caused it. Production kept serving
+  v1.267.1 throughout (the build failed before `bench build` and the restart, so the
+  running workers never picked up the new code) and no user-facing behaviour changed.
+
+  Adding the controller is the whole fix: the next migrate creates the parent, the
+  orphaned child reconciles, and no manual cleanup is needed.
+
+### Added
+
+- `tests/test_doctype_modules.py` now asserts every DocType JSON has a sibling
+  controller `.py` and an `__init__.py`. Nothing in CI runs a `bench migrate`, so a
+  missing controller was invisible to the entire test suite until it reached
+  production — this filesystem check is the only place it can be caught beforehand.
+  Verified by deleting the controller and confirming the suite goes red.
+
+  A child table is the easy case to get wrong: it needs no logic, so an empty
+  `Document` subclass reads as redundant right up until the deploy fails.
+
 ## [1.268.0] - 2026-08-10
 
 Decision #12 lets a configured role read conversations it is not a participant in,
