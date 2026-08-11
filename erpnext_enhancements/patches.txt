@@ -585,3 +585,10 @@ erpnext_enhancements.patches.chat_phase4_notifications
 # FULLTEXT index is an open VERIFY, and re-creating it every migrate is what makes the bad
 # answer survivable. Checks information_schema before any DDL. Safe twice.
 erpnext_enhancements.patches.add_chat_phase5_indexes
+
+# Fills the defaults the Phase 5 fields were declared with into the EXISTING Chat Settings
+# row. A `default` on a new field of a Single never reaches the row that already exists —
+# tabSingles gets no row on migrate and load_from_db applies no defaults — so all fifteen
+# numeric dials read 0 on production and validation refused every save of the settings page.
+# Fills missing rows only, never over a stored falsy value. Safe twice.
+erpnext_enhancements.patches.backfill_chat_settings_defaults

@@ -979,6 +979,10 @@ after_install = [
 	# findable at all. frappe.db.add_index cannot create a FULLTEXT index, so that one is
 	# raw DDL and exists only if this runs.
 	"erpnext_enhancements.patches.add_chat_phase5_indexes.ensure_chat_phase5_indexes",
+	# A `default` on a new field of a Single never reaches the row that already exists, so
+	# the Phase 5 dials read 0 on any pre-existing site and validation refused every save
+	# of the settings page. Fills missing rows only. Safe twice.
+	"erpnext_enhancements.patches.backfill_chat_settings_defaults.backfill_chat_settings_defaults",
 	# Phase 4's Notification Type records. Notification Log.type is a LINK on v16, so
 	# without these two rows every chat bell notification fails link validation on insert --
 	# one Error Log per message and a bell that never lights.
@@ -1137,6 +1141,10 @@ after_migrate = [
 	# after every deploy: exact-string matching stops working and nothing raises. Re-creating
 	# it here makes the bad answer to that question a one-migrate window instead of forever.
 	"erpnext_enhancements.patches.add_chat_phase5_indexes.ensure_chat_phase5_indexes",
+	# A `default` on a new field of a Single never reaches the row that already exists, so
+	# the Phase 5 dials read 0 on any pre-existing site and validation refused every save
+	# of the settings page. Fills missing rows only. Safe twice.
+	"erpnext_enhancements.patches.backfill_chat_settings_defaults.backfill_chat_settings_defaults",
 	# chat Phase 4 (notifications): the two `Notification Type` records, plus the presence
 	# retune. Both need the after_migrate half specifically, for opposite reasons.
 	#
