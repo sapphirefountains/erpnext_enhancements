@@ -942,6 +942,11 @@ after_install = [
 	# without these two rows every chat bell notification fails link validation on insert --
 	# one Error Log per message and a bell that never lights.
 	"erpnext_enhancements.patches.chat_phase4_notifications.ensure_chat_phase4_notifications",
+	# Chat log retention. Same shape, and needed here for a different reason than the
+	# others: the Chat Settings retention fields have held their defaults since Phase 1 and
+	# may never be saved again, so hanging the sync only off on_update would leave the
+	# `Logs To Clear` rows absent on every site that does not happen to edit the form.
+	"erpnext_enhancements.chat.retention.ensure_chat_log_retention",
 ]
 
 # Run after each `bench migrate` (from global_enhancements)
@@ -1095,6 +1100,11 @@ after_migrate = [
 	# Idempotent: two exists-checks and a get_singles_dict on a healthy migrate, no writes.
 	# Never raises.
 	"erpnext_enhancements.patches.chat_phase4_notifications.ensure_chat_phase4_notifications",
+	# Chat log retention. Same shape, and needed here for a different reason than the
+	# others: the Chat Settings retention fields have held their defaults since Phase 1 and
+	# may never be saved again, so hanging the sync only off on_update would leave the
+	# `Logs To Clear` rows absent on every site that does not happen to edit the form.
+	"erpnext_enhancements.chat.retention.ensure_chat_log_retention",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
