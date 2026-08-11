@@ -11,6 +11,7 @@
   "purpose",
   "request_id",
   "column_break_who",
+  "recorded_at",
   "reason",
   "section_break_query",
   "query_hash",
@@ -68,6 +69,15 @@
   {
    "fieldname": "column_break_who",
    "fieldtype": "Column Break"
+  },
+  {
+   "description": "When the read happened, as recorded by the writer. This is the timestamp the chain signs - NOT `creation`. Frappe's Document.insert() calls set_user_and_timestamp() before anything else and assigns `creation = modified = now()` unconditionally for a new document, so a caller-supplied `creation` never survives; signing it meant signing a value the database never stored, and v1.268.0 reported its very first row as tampered because of it. This field is owned entirely by the writer and Frappe never touches it.",
+   "fieldname": "recorded_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Recorded At",
+   "read_only": 1,
+   "reqd": 1
   },
   {
    "description": "Why this read happened. Required for an Admin read and collected once per viewer session, not per scroll. For a Triton read it is the invocation id. Empty is legal only for a read that returned nothing.",

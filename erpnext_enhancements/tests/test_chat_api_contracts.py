@@ -206,7 +206,7 @@ def test_the_chain_hash_commits_to_the_fields_that_matter() -> None:
 		"reason": "investigating a complaint",
 		"query_hash": audit.query_hash("pump"),
 		"message_count": 3,
-		"creation": "2026-08-10 12:00:00",
+		"recorded_at": "2026-08-10 12:00:00.000000",
 	}
 	rooms = [{"room": "R1", "was_participant": 0, "messages_read": 3, "first_seq": 1, "last_seq": 3}]
 	base = audit.compute_chain_hash(row, "prev", rooms)
@@ -221,7 +221,7 @@ def test_the_chain_hash_commits_to_the_fields_that_matter() -> None:
 		("reason", "no reason at all"),
 		("query_hash", audit.query_hash("housing")),
 		("message_count", 4),
-		("creation", "2026-08-10 12:00:01"),
+		("recorded_at", "2026-08-10 12:00:01.000000"),
 	]:
 		mutated = dict(row)
 		mutated[field] = replacement
@@ -250,6 +250,67 @@ def test_the_chain_links_to_its_predecessor() -> None:
 	and rows could be reordered or deleted wholesale without detection."""
 	row = {"accessed_by": "a@b.c", "actor_type": "Admin", "purpose": "oversight", "creation": "x"}
 	assert audit.compute_chain_hash(row, "prev-a", []) != audit.compute_chain_hash(row, "prev-b", [])
+
+
+def test_the_chain_survives_the_round_trip_through_the_database() -> None:
+	"""The writer hashes a timestamp STRING; the verifier reads a ``datetime`` back.
+
+	``str(datetime)`` drops ``.000000`` when the microseconds are zero and
+	``frappe.utils.now()`` never does, so without normalisation roughly one row in a million
+	reports as tampered for no reason — the worst kind of intermittent, on the one log whose
+	entire value is being trustworthy.
+	"""
+	import datetime as _dt
+
+	stamp = _dt.datetime(2026, 8, 11, 3, 52, 11, 123456)
+	as_written = "2026-08-11 03:52:11.123456"        # what frappe.utils.now() produces
+	row = {"accessed_by": "a@b.c", "actor_type": "Admin", "purpose": "oversight"}
+
+	assert audit.compute_chain_hash({**row, "recorded_at": as_written}, "prev", []) == (
+		audit.compute_chain_hash({**row, "recorded_at": stamp}, "prev", [])
+	), "the writer's string and the database's datetime hash differently"
+
+	midnight = _dt.datetime(2026, 8, 11, 0, 0, 0, 0)
+	assert audit.compute_chain_hash({**row, "recorded_at": midnight}, "p", []) == (
+		audit.compute_chain_hash({**row, "recorded_at": "2026-08-11 00:00:00.000000"}, "p", [])
+	), "a whole-second timestamp hashes differently as a datetime than as a string"
+
+
+def test_the_chain_signs_a_timestamp_frappe_cannot_overwrite() -> None:
+	"""**The v1.268.0 bug, and why the fix is a new field rather than a better assignment.**
+
+	``Document.insert()`` calls ``set_user_and_timestamp()`` before anything else, and that
+	assigns ``creation = modified = now()`` unconditionally for a new document. A
+	caller-supplied ``creation`` therefore cannot survive — which is why the first attempt at
+	this fix, ``doc.creation = row["creation"]``, was inert. Signing ``creation`` meant
+	signing a value the database never stored, and ``verify_chain`` reported the very first
+	row ever written as tampered. Confirmed on production against a real row before this was
+	rewritten.
+
+	So the chain signs ``recorded_at``, a field of this app's own that Frappe has no opinion
+	about, and ``creation`` is not signed at all.
+	"""
+	import ast
+	import inspect
+	import textwrap
+
+	assert "recorded_at" in audit._CHAINED_FIELDS
+	assert "creation" not in audit._CHAINED_FIELDS, (
+		"creation is signed again. Frappe overwrites it during insert, so the signed value "
+		"and the stored value cannot be the same instant."
+	)
+
+	# And the writer must actually put it on the document, or the column is null and reqd
+	# validation fails on the first write.
+	written = ast.parse(textwrap.dedent(inspect.getsource(audit._write)))
+	keys = {
+		k.value
+		for node in ast.walk(written)
+		if isinstance(node, ast.Dict)
+		for k in node.keys
+		if isinstance(k, ast.Constant)
+	}
+	assert "recorded_at" in keys, "_write never sets recorded_at, so the reqd column is null"
 
 
 def test_the_canonical_form_is_stable_against_key_order() -> None:
@@ -282,19 +343,71 @@ def test_search_collapses_its_hits_into_one_audit_entry_per_room() -> None:
 	assert "was_participant" not in entries["R1"]
 
 
-def test_the_search_audit_is_fail_closed_and_the_hook_is_not() -> None:
-	"""The two paths differ ON PURPOSE, and the difference is the ADR's ordering rule.
+def test_the_chain_is_serialised_and_refuses_rather_than_forking() -> None:
+	"""Two overlapping privileged reads must not both sign the same predecessor.
+
+	Without serialisation they do, the chain forks, and ``verify_chain`` reports a permanent
+	break that is indistinguishable from tampering. This is not a rare race: the SPA issues
+	its room list, unread counts and transcript as parallel requests, so an oversight user's
+	first page load is enough.
+
+	Structural, because the real thing needs two concurrent database connections and CI has no
+	bench. Three properties, each of which the other two do not imply.
+	"""
+	import ast
+	import inspect
+	import textwrap
+
+	fn = ast.parse(textwrap.dedent(inspect.getsource(audit._write))).body[0]
+
+	# 1. The lock is taken, reachably.
+	guards = [
+		node
+		for node in ast.walk(fn)
+		if isinstance(node, ast.If)
+		and not (isinstance(node.test, ast.Constant) and not node.test.value)
+		and "_acquire_chain_lock" in ast.dump(node.test)
+	]
+	assert guards, "_write does not reachably acquire the chain lock, so writers can fork it"
+
+	# 2. Failing to take it REFUSES. Proceeding unlocked is the fork.
+	raises = [n for g in guards for n in ast.walk(g) if isinstance(n, ast.Raise)]
+	assert raises, (
+		"_write proceeds when the chain lock cannot be acquired. A row signed against a stale "
+		"head is a permanent false 'tampered' verdict on the one log whose job is to be "
+		"trustworthy — refusing the read is the lesser failure."
+	)
+
+	# 3. It is released on every path, including the raising one.
+	tries = [n for n in ast.walk(fn) if isinstance(n, ast.Try) and n.finalbody]
+	released = any(
+		"_release_chain_lock" in ast.dump(stmt) for t in tries for stmt in t.finalbody
+	)
+	assert released, "_write does not release the chain lock in a finally; an exception strands it"
+
+
+def test_the_endpoint_records_and_the_hook_only_marks() -> None:
+	"""**The rule the v1.268.0 redesign turns on.**
 
 	``search_messages`` is about to return message bodies, so it records first and refuses to
-	return if it cannot. ``note_privileged_read`` runs inside permission hooks, where raising
-	takes down every desk page touching a chat DocType — so it swallows.
+	return if it cannot. ``note_privileged_read`` runs inside permission hooks — where a write
+	commits inside whatever transaction the request was already building, and where the
+	permission answer is not even known yet — so it marks memory and writes nothing.
 	"""
 	import ast
 	import inspect
 	import textwrap
 
 	assert "audit.record_or_refuse" in _called_names(search, "search_messages")
-	assert "audit.record_privileged_read" in _called_names(permissions, "note_privileged_read")
+
+	hook_calls = _called_names(permissions, "note_privileged_read")
+	assert "audit.mark_privileged_scope" in hook_calls
+	for forbidden in ("audit.record_privileged_read", "audit.record_or_refuse"):
+		assert forbidden not in hook_calls, (
+			f"note_privileged_read calls {forbidden}. A permission hook must not write: "
+			f"announce_unread is a Chat Message.after_insert, so the commit lands inside the "
+			f"relay's transaction."
+		)
 
 	def _fn(func: Any) -> ast.FunctionDef:
 		return ast.parse(textwrap.dedent(inspect.getsource(func))).body[0]

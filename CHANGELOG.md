@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.269.0] - 2026-08-11
+
+The decision #12 audit, rebuilt. v1.268.0 shipped it writing from inside the
+permission hooks, and an adversarial sweep over the never-executed write path
+raised 29 candidate defects, of which 27 survived independent refutation and
+deduplicate to about ten. They shared one root cause, so this is a redesign
+rather than ten patches.
+
+**The whole of it was proven on production before being rewritten.** A
+diagnostic probe evaluating `membership_filter_sql` for `Administrator` wrote a
+real audit row, and `verify_chain` then reported that row — the first ever
+written, untouched by anyone — as tampered.
+
+### Changed
+
+- **The audit row is written by the endpoint that returns the content, never by
+  a permission hook.** `note_privileged_read()` now only marks memory. Writing
+  from the hooks cost four separate defects: it committed inside whatever
+  transaction the request was already building (`announce_unread` is a
+  `Chat Message.after_insert`, so this reached the relay path); it recorded reads
+  that the permission stack went on to deny, because a `has_permission` hook runs
+  before the answer is known; it recorded almost nothing, because a hook knows
+  the scope is unrestricted but not which rooms will be read; and it fired for
+  `Administrator`, filling the log with rows naming an identity the field's own
+  description calls meaningless.
+- **The chain signs `recorded_at`, a new writer-owned field, instead of
+  `creation`.** `Document.insert()` calls `set_user_and_timestamp()` before
+  anything else and assigns `creation = modified = now()` unconditionally for a
+  new document, so a caller-supplied `creation` cannot survive. Signing it meant
+  signing a value the database never stored. Worth recording that the first
+  attempt at this fix — `doc.creation = row["creation"]` — was **inert**, and its
+  comment cited the wrong Frappe function with some confidence; the sweep caught
+  it before it shipped.
+- **Chain writes are serialised by a MariaDB advisory lock.** Two overlapping
+  privileged reads previously read the same head, both signed it, and forked the
+  chain into a permanent false "tampered" verdict. That is the ordinary case, not
+  a rare race: the SPA issues its room list, unread counts and transcript as
+  parallel requests. `GET_LOCK` rather than `SELECT … FOR UPDATE` because the
+  critical section contains a commit and the lock must outlive it. Failing to
+  take the lock refuses the read — a forked chain is worse than a failed search.
+- **`verify_chain` also re-derives `query_text` against `query_hash`**, and loads
+  child rows in one query instead of one per parent. Signing the text directly
+  would sign something other than what is stored, since Frappe may sanitise it.
+
+### Added
+
+- `recorded_at` on `Chat Retrieval Audit` — required, read-only, writer-owned.
+- A build-failing rule: any function that consumes the unrestricted scope must
+  record an audit row. Keyed on the `"1 = 1"` comparison, because that literal
+  *is* the unrestricted scope by contract. The first version of this rule also
+  matched `membership_filter_sql` — the function that *produces* the literal —
+  and an unrelated QuickBooks SQL builder; it now matches consumers only, inside
+  the chat package.
+- A one-shot patch removing the rows the withdrawn design wrote. Deleting audit
+  rows is otherwise forbidden and the controller refuses it, so this goes through
+  the one documented purge flag rather than around it. Selected on
+  `recorded_at is null`, which cannot match a row from the current writer because
+  the field is required.
+
+Thirteen mutations planted against the new design, all caught. Two were missed
+first time — nothing asserted the chain lock existed at all — which is the value
+of planting them rather than assuming.
+
+### Still missing before oversight is reviewable
+
+Unchanged, and the reason `admin_oversight_role` stays blank: nothing reads the
+log. No oversight viewer, no `Chat Access Report`, no scheduled verification.
+`reason` is free text that nothing enforces, because the viewer that should
+collect it does not exist.
+
 ## [1.268.1] - 2026-08-11
 
 ### Fixed

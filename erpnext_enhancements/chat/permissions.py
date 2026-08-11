@@ -220,36 +220,36 @@ def note_privileged_read(
 	user: str | None = None,
 	ptype: str | None = None,
 ) -> None:
-	"""**The** hook point for decision #12's non-participant audit write.
+	"""Note that an unrestricted scope was granted. **Marks memory; writes nothing.**
 
-	Filled in. It writes one ``Chat Retrieval Audit`` row per **request** via
-	:mod:`chat.audit`, which is the only module that writes one — the alternative was audit
-	calls sprinkled through eight functions six months from now, with one of them missed.
+	This function used to write the ``Chat Retrieval Audit`` row itself, and every serious
+	defect in v1.268.0 came from that. It is called from nine places inside the permission
+	stack, and a database write from here:
 
-	Both rules the stub laid down still hold, and both are now the callee's problem:
+	* **committed inside other people's transactions.** The row has to be durable before
+	  content is returned, so the writer commits — and from a hook firing part-way through an
+	  unrelated request (``announce_unread`` is a ``Chat Message.after_insert``, and the relay
+	  inserts messages from background jobs) that ends a transaction somebody else was still
+	  building.
+	* **recorded reads that were then denied.** A ``has_permission`` hook runs before the
+	  answer is known.
+	* **recorded almost nothing.** A hook knows the scope is unrestricted; it does not know
+	  which rooms will be read. The rows said "something privileged happened" and no more.
+	* **fired for ``Administrator``**, filling the log with rows naming an identity the
+	  schema's own field description calls meaningless.
 
-	* **It must never raise.** It is called from inside permission hooks. An exception
-	  here denies the read at best and breaks every desk page that touches a chat
-	  DocType at worst. :func:`chat.audit.record_privileged_read` swallows and logs.
-	* **It must never itself go through the permission stack**, or an audited read
-	  recurses into auditing the audit — unboundedly, since auditing the audit is itself
-	  a privileged read. The writer uses raw SQL and ``ignore_permissions`` throughout.
+	So the audit row is written by **the endpoint that returns the content**, which is the
+	only place that knows what was actually read.
+	``tests/test_chat_audit_immutability.py`` fails the build if an endpoint that can obtain
+	the unrestricted scope does not record.
 
-	**What a row written from here does and does not say.** These nine call sites fire while
-	a query is being *built*, so they know who is reading and that the read is privileged, but
-	not which rooms it will reach. A row from here therefore records that a privileged read
-	happened. A caller that knows what it returned — today only ``search_messages`` — records
-	the rooms as well, and records *before* returning. See ``chat/audit.py`` for why the ADR's
-	fail-closed ordering is relaxed on this path and only on this path.
+	Both rules the original stub laid down still hold, and are easier to keep now: this cannot
+	raise (it touches no database) and cannot re-enter the permission stack (it makes no
+	query).
 	"""
 	from erpnext_enhancements.chat import audit
 
-	audit.record_privileged_read(
-		user=_resolve_user(user),
-		purpose="oversight",
-		actor_type="Admin",
-		reason=f"{doctype} {ptype or 'read'}".strip(),
-	)
+	audit.mark_privileged_scope(user=_resolve_user(user), doctype=doctype, ptype=ptype)
 	return None
 
 

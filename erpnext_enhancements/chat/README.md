@@ -904,20 +904,42 @@ If you need one person to see one thing, add them to the room.
 
 ### The decision #12 audit
 
-`chat/audit.py` is the **only** module that writes a `Chat Retrieval Audit` row, and
-`permissions.note_privileged_read()` is the only hook that calls it. Two things about the
-design are not what the ADR describes, and both are deliberate:
+`chat/audit.py` is the **only** module that writes a `Chat Retrieval Audit` row.
 
-- **One row per request, not per call.** `note_privileged_read` fires from nine call sites
-  inside `permissions.py`, all of which run while a query is being *built* — a page load
-  produces a dozen. The write is deduplicated per request through `frappe.flags`.
-- **The fail-closed rule applies to endpoints, not to hooks.** §F.12 says an audit failure
-  must fail the read. That is correct for `search_messages`, which calls
-  `audit.record_or_refuse` and does not return bodies if it cannot record them. It is *not*
-  applicable inside a permission hook, where raising denies the read at best and breaks every
-  Desk page touching a chat DocType at worst — so `record_privileged_read` swallows and logs.
-  The ADR's design assumes the Phase 5 `retrieve()` gate, which is a single choke point that
-  knows its rooms before it returns. When that lands it should take the endpoint rule.
+**The row is written by the endpoint that returns the content, never by a permission hook.**
+That is the rule the whole design turns on, and it was learned the hard way: v1.268.0 wrote
+from inside `note_privileged_read()`, and every serious defect that release shipped came from
+that one decision.
+
+- It **committed inside other requests' transactions.** The row must be durable before
+  content is returned, so the writer commits — and a hook fires part-way through arbitrary
+  requests. `announce_unread` is a `Chat Message.after_insert`, so this reached the relay.
+- It **recorded reads that were then denied.** A `has_permission` hook runs before the answer.
+- It **recorded almost nothing** — a hook knows the scope is unrestricted, not which rooms
+  will be read. Real rows from that design carried no rooms, no counts and no query.
+- It **fired for `Administrator`**, because `membership_filter_sql` grants the unrestricted
+  scope to `Administrator` *or* the oversight role. The log filled with rows naming an
+  identity the schema's own field description calls meaningless — and, note, this means **the
+  privileged branch is reachable with `admin_oversight_role` blank.**
+
+So `note_privileged_read()` now only marks memory (`audit.mark_privileged_scope`), and
+endpoints record. Rule 2 in `tests/test_chat_audit_immutability.py` fails the build if a
+function that consumes the unrestricted scope does not.
+
+**The chain signs `recorded_at`, not `creation`.** `Document.insert()` calls
+`set_user_and_timestamp()` first thing, which assigns `creation = modified = now()`
+unconditionally for a new document — so a caller-supplied `creation` never survives, and
+signing it meant signing a value the database never stored. v1.268.0 reported its very first
+row as tampered for exactly this reason, confirmed on production before it was rewritten.
+`recorded_at` is this app's own field and Frappe has no opinion about it.
+
+**Writes are serialised by a MariaDB advisory lock.** Two overlapping privileged reads that
+both read the same chain head both sign it, the chain forks, and `verify_chain` reports a
+permanent break indistinguishable from tampering. That is the normal case rather than a rare
+race — the SPA issues its room list, unread counts and transcript as parallel requests. If the
+lock cannot be taken the write fails and the read is refused, because a forked chain is worse
+than a refused search. `GET_LOCK` is connection-scoped rather than transaction-scoped, which
+is why `SELECT … FOR UPDATE` cannot do this job: the critical section contains a commit.
 
 Immutability is four layers, because each is bypassed by the next one down: DocPerm (bypassed
 by `ignore_permissions`, which the writer needs), the controller's `before_save`/`on_trash`
