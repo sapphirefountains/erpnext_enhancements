@@ -97,10 +97,18 @@ def sweep_digests() -> dict[str, int]:
 	rooms = _dirty_rooms(limit=batch)
 	rebuilt = 0
 	failed = 0
+	not_rebuilt = 0
 	for room in rooms:
 		try:
 			if _rebuild_room_digest(room["name"]):
 				rebuilt += 1
+			else:
+				# A room that was selected and not rebuilt did not succeed. It reported its
+				# own reason and returned, so no exception reached here — and counting only
+				# exceptions made this return `failed: 0` while `rebuild_failures` climbed and
+				# the room was poisoned. An operator reading that number concluded nothing was
+				# wrong, which is worse than no number.
+				not_rebuilt += 1
 		except Exception as exc:
 			failed += 1
 			frappe.db.rollback()
@@ -108,7 +116,13 @@ def sweep_digests() -> dict[str, int]:
 
 	threads = _sweep_thread_digests(limit=batch)
 	frappe.db.commit()
-	return {"rooms": len(rooms), "rebuilt": rebuilt, "failed": failed, "threads": threads}
+	return {
+		"rooms": len(rooms),
+		"rebuilt": rebuilt,
+		"failed": failed,
+		"not_rebuilt": not_rebuilt,
+		"threads": threads,
+	}
 
 
 def check_digest_staleness() -> dict[str, Any]:
@@ -342,21 +356,43 @@ def _summarise(*, room: str, messages: list[dict[str, Any]], previous: str | Non
 		_note(f"no digest for room {room}: Chat Settings has no Chat App Service Account")
 		return None
 
-	try:
-		from erpnext_enhancements.chat.invoke import triton_client
+	# Imported OUTSIDE the try: the except clause below names `triton_client`, and an import
+	# that failed inside the try would make handling the exception raise NameError instead —
+	# an error path that only breaks when the error path is taken.
+	from erpnext_enhancements.chat.invoke import triton_client
 
+	try:
 		answer = triton_client.ask(
 			user=summariser,
 			question=prompt,
 			context="",
 			request_id=f"digest:{room}",
 		)
-	except Exception:
-		_note(f"could not summarise room {room}: the model was unavailable")
+	except triton_client.TritonUnavailable as exc:
+		# Logged VERBATIM, and safe to: every message this type carries is content-free by
+		# construction — a status code, a path, an exception class name — because the body of
+		# a Triton response can echo the prompt back, and the prompt is the transcript. That
+		# is the whole reason the type exists.
+		#
+		# "the model was unavailable" was the string here, and it discarded the one fact
+		# needed: a 404 on the session create, a 401 from the gateway and a connection refused
+		# want three different answers and produced one sentence. Three separate faults today
+		# were slow to diagnose for this reason, all of them mine, all of them the same
+		# instinct — strip the detail to protect message content — applied without asking
+		# whether the string could contain any.
+		_note(f"could not summarise room {room}: {exc}")
+		return None
+	except Exception as exc:
+		# Anything else is a bug rather than an outage, and its message is NOT known to be
+		# content-free, so only the class is recorded.
+		_note(f"could not summarise room {room}: unexpected {exc.__class__.__name__}")
 		return None
 
 	text = (answer.get("text") or "").strip()
-	return {"text": text, "model": answer.get("model")} if text else None
+	if not text:
+		_note(f"could not summarise room {room}: the model answered with no text")
+		return None
+	return {"text": text, "model": answer.get("model")}
 
 
 def _prompt(*, previous: str | None, transcript: str, target: int) -> str:
