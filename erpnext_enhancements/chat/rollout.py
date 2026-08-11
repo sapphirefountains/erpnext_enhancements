@@ -84,7 +84,15 @@ def erpnext_link_report(as_dict: bool = False) -> Any:
 	# was not on that list either, and the failure surfaced as ``PermissionError`` several
 	# layers away from the list nobody had thought to check.
 	no_triton_access = [u for u in roster if not _has_triton_access(u)]
-	summariser = _setting("chat_app_service_account") or ""
+
+	# Resolved through the same helper the summariser uses, NOT read from the settings field
+	# directly: that field holds the **Google** service account on production, which is a GCP
+	# identity rather than an ERPNext User. Reporting on it would have reported readiness for
+	# an account that cannot mint a token by construction — the exact fault this section is
+	# here to surface.
+	from erpnext_enhancements.chat.indexing.digest import _summariser_user
+
+	summariser = _summariser_user()
 	summariser_ready = bool(summariser) and _has_triton_access(summariser)
 
 	report = {

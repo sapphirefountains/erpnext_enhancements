@@ -1,6 +1,6 @@
 {
   "name": "erpnext-enhancements",
-  "version": "1.277.10",
+  "version": "1.277.11",
   "description": "ERPNext Enhancements",
   "private": true,
   "scripts": {

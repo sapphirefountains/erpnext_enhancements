@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.11] - 2026-08-11
+
+### Fixed
+
+- **The summariser asked Triton to authenticate a Google service account.**
+  `_summariser_user()` read `chat_app_service_account` raw, and on production that field holds
+  `chat-app@…iam.gserviceaccount.com` — a **GCP identity for calling the Chat API**, not an
+  ERPNext User and not a mailbox. Triton's bridge answered
+  `rejected non-domain email`, which is the correct answer to the wrong question.
+- It now delegates to `handler._bot_user()`, which already accepted that field **only when a
+  User by that name exists** and otherwise fell back to the real domain account. The readiness
+  report resolves the same way.
+
+### Notes
+
+- **Two resolvers for one identity, and the second skipped the check that made the first
+  correct.** `_bot_user` was written first and got it right; `_summariser_user` was written
+  later, for the same concept, and read the field directly. Nothing flagged the duplication
+  because both compiled and both returned a plausible string.
+- The field name carries the ambiguity: `chat_app_service_account` is used as a **GCP service
+  account** by the Google side and as an **ERPNext User** by the reply path. Both readings are
+  defensible, which is why one resolver has to own the interpretation rather than each caller
+  guessing.
+- Worth stating plainly: three of today's faults were a name that looked right —
+  `origin_timestamp`, `/api/v1/assistant/query`, and now a service account standing in for a
+  user. Each was locally plausible and wrong only against a fact held somewhere else.
+
 ## [1.277.10] - 2026-08-11
 
 ### Added

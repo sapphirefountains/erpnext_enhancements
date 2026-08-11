@@ -430,8 +430,26 @@ def _summariser_user() -> str:
 
 	So there is no fallback. An unconfigured summariser builds no digests, which is a missing
 	feature; the fallback was a privilege escalation, which is not.
+
+	**It delegates rather than resolving its own**, because resolving its own is what broke it.
+	This read ``chat_app_service_account`` raw, and on production that field holds the **Google**
+	service account — ``chat-app@…iam.gserviceaccount.com``, a GCP identity for calling the Chat
+	API. It is not an ERPNext User and not a mailbox, and Triton's bridge rejected it as a
+	non-domain email, which is the correct answer to the wrong question.
+
+	``handler._bot_user`` already resolved this properly: it accepts that field *only when a
+	User by that name exists* and otherwise falls back to the real domain account. Two
+	resolvers for one identity, and the second one skipped the check that made the first
+	correct.
 	"""
-	return frappe.db.get_single_value("Chat Settings", "chat_app_service_account") or ""
+	from erpnext_enhancements.chat.invoke.handler import _bot_user
+
+	try:
+		return _bot_user()
+	except Exception:
+		# Unconfigured. The caller reports it and builds nothing, which is the same answer as
+		# before — reached through the one resolver instead of a second, laxer copy of it.
+		return ""
 
 
 # ------------------------------------------------------------------------------- queries
