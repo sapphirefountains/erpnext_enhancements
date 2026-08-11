@@ -15,6 +15,11 @@ a bot with a name attached. That single decision shapes most of this package; se
 > (§F data model, §G sync, §H notifications, §I Triton, §J infrastructure). The
 > file-by-file build order is
 > [Appendix B](../../decisions/adr/0009-appendix-b-implementation-plan.md).
+>
+> **Phase 5 diverged from both in six places, deliberately.** The ADR is immutable, so what
+> Phase 5 decided — and every place the build contradicts the plan, with the reason — is in
+> [Addendum 1](../../decisions/adr/0009-addendum-1-phase-5-decisions.md). Read it before
+> "fixing" anything under `retrieval/`, `indexing/` or `invoke/` back towards the plan.
 
 ---
 
@@ -50,7 +55,8 @@ bubble on every Desk page.
 | One `@triton` handler for both origins, and the Triton client | **built** (Phase 5) |
 | The index writer — chunking, embeddings, rolling digests, invalidation | **built** (Phase 5) |
 | Citations on the wire, and the `@triton` readiness report | **built** (Phase 5) |
-| The bench suite, the ADR addendum, the live round trip | Phase 5, remaining |
+| The bench suite and the ADR addendum | **built** (Phase 5) |
+| The live round trip, and the evaluation baseline | Phase 5, remaining — **needs a bench and a human** |
 | Export, audit writes, drift reports, pilot rollout | Phase 6 |
 
 **Phase 3 built the entire API surface, not just a UI on top of one.** Phase 2's brief said

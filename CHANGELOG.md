@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.0] - 2026-08-11
+
+The bench suite that carries Phase 5's security claims, and the addendum recording what the
+phase decided and where it diverged from the plan. No behaviour change.
+
+### Added
+
+- **`tests/test_chat_triton_bench.py`** — bench-required, **not run in CI**. The room
+  boundary (T5-2, T5-5, T5-8, T5-9, T5-11), the fail-closed audit (T5-10, T5-16), the
+  three-value watermark (D6), the two identities (I13), the FULLTEXT index, budget and
+  assembly on real rows, and a fifteen-question evaluation set.
+- **`decisions/adr/0009-addendum-1-phase-5-decisions.md`**, linked from the ADR index and from
+  `chat/README.md`. ADR 0009 is immutable, so the decisions its §I deferred to Phase 5 had to
+  land somewhere a reader of 0009 can find.
+
+### Notes
+
+- **One test in that suite matters more than the rest**, and it says so:
+  `test_a_non_members_message_appears_in_no_tier`. Every other Phase 5 failure produces a
+  wrong answer, which somebody notices. That one produces a correct answer delivered to the
+  wrong reader — no exception, no symptom, no complaint. It asserts on the **rendered bytes**
+  rather than a row count, because the failure being guarded is "the text reached the model"
+  and a count can be right while the bytes are wrong.
+- **The audit test breaks the chain lock rather than monkeypatching the insert.** Two
+  overlapping privileged reads, or a lock held by a crashed connection, is the realistic
+  failure; a patched insert tests the patch.
+- **The watermark group carries its own control.** `test_a_seq_only_watermark_would_miss_both`
+  asserts that `seq` does *not* move on an edit — without it, the two tests above it could
+  pass because the key changed for some incidental reason rather than because of the edit.
+- **The evaluation set records a baseline; it does not gate.** Retrieval quality has no
+  threshold anybody can defend in advance, and a test pinning which chunk ranks first makes
+  every tuning change a red build — which makes tuning expensive, which means it stops
+  happening. Two things *are* asserted, because they are bugs at any quality level: nothing
+  leaks across the room boundary, and a question the corpus cannot answer does not come back
+  with a fistful of citations. The last question in the set has no answer on purpose.
+- **The addendum records three corrections, one of them to this changelog.** `SINV-04412` does
+  not survive as a single search term — InnoDB splits the stored body the same way, so the
+  mechanism is a required conjunction of both parts. CQ-14 was answered on 2026-08-10 and
+  v1.272.0 said otherwise. And `Citation.as_dict` was keyed on a field the renderer discards.
+- **The addendum's §2 exists so the divergences are not "fixed" back.** The recurring failure
+  mode in this repository is somebody seeing a deliberate construct, assuming it is an
+  oversight, and reverting it — and six of Phase 5's constructs contradict something written
+  down in the plan.
+
 ## [1.276.0] - 2026-08-11
 
 Citations reach the renderer that has been waiting for them since Phase 3, and the rollout
