@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.4] - 2026-08-11
+
+### Changed
+
+- Recorded the Single-doctype defaults trap in `CLAUDE.md`'s gotcha list, where the
+  expensive-to-rediscover facts live. Docs only; no executable change.
+
+### Notes
+
+- **Checked whether this is live anywhere else: it is not, and the reason is the useful part.**
+  Saving a Single **deletes and re-inserts every field row**, so any settings page somebody
+  actually uses self-heals on the next save. The ones that bite are the settings for *dormant*
+  features — where the first save is the one you need, and the one that fails. Chat Settings
+  was the only exposed page in the app for exactly that reason.
+- There are 20 Single doctypes here, so the next bulk field addition should ship a backfill
+  patch alongside the fields rather than after the incident.
+
 ## [1.277.3] - 2026-08-11
 
 ### Fixed
