@@ -414,6 +414,27 @@ def invalidate_token_cache(subject: str = "", scopes: Sequence[str] = RELAY_SCOP
 # ---------------------------------------------------------------------------
 
 
+def get_vm_access_token(timeout: int = 30) -> str:
+	"""A token for the **VM-attached** service account, for Google APIs that are not Chat.
+
+	Phase 5's embedding calls need one: Vertex AI is a different API on a different host with
+	a different scope, and it is *not* a Chat call, so neither the delegated path (which
+	impersonates a coworker) nor the app path (``chat.bot``) is the right credential. The VM's
+	own identity is.
+
+	A thin public wrapper over the same Application Default Credentials step the delegated
+	flow already uses for step 1, exposed rather than reached into — a caller importing a
+	private helper is a caller that breaks silently when the private helper is refactored.
+
+	The scope comes from the instance's own configuration rather than from this call, which is
+	the keyless design's whole point: there is no key, so there is nothing here to scope.
+	Confirm the instance carries ``cloud-platform`` before expecting Vertex AI to answer.
+
+	Never log the return value.
+	"""
+	return _adc_access_token(timeout)
+
+
 def _adc_access_token(timeout: int) -> str:
 	"""Step 1 — a token for the **VM-attached** service account.
 

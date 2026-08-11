@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.273.0] - 2026-08-11
+
+The retrieval gate — Phase 5's security boundary — and the six modules around it. Nothing
+calls it yet; the `@triton` handler is the next commit.
+
+### Added
+
+- **`chat/retrieval/gate.py`** — the only module in the app that may query the chat index.
+  `retrieve()` derives the room set from the caller's own membership and has no parameter by
+  which one can be supplied; `restrict_to` intersects and can only narrow.
+  `retrieve_for_oversight()` is a separate function, not a flag, and pays for its exemption
+  with the configured oversight role, a mandatory reason, explicit rooms and an audit row.
+- **`rank.py`, `budget.py`, `assemble.py`, `lexical.py`** — pure, stdlib-only.
+  RRF hybrid ranking; the token ceiling and the ordered degradation ladder; S0–S5 assembly in
+  prompt-cache order; the BOOLEAN MODE query builder.
+- **`vectors.py`** — the two-method `VectorBackend` adapter plus the numpy cosine
+  implementation, base64 `float32` storage, and normalisation asserted in both directions.
+- **`citations.py`** — the manifest, the tolerant `[[ref:N]]` parse, and **server-side** URL
+  resolution.
+- **`chat/indexing/chunker.py`** (pure, five boundary rules) and **`chat/indexing/embed.py`**
+  (Vertex AI over `requests`; no SDK).
+- **`chat/retrieval/api.py`** — the one whitelisted method, `get_chat_context`.
+- `tests/test_chat_retrieval_pure.py` (62 assertions, own pytest step), plus three new rules
+  in the source scan: exactly one whitelisted method in the package, it gates before it reads,
+  and it takes no `user` parameter.
+- `chat/gchat/auth.get_vm_access_token` — the VM's own identity, for the Google APIs that are
+  not Chat.
+
+### Changed
+
+- `Chat Retrieval Audit` now records `chunk_count`, `token_count`, `tiers_used` and
+  `context_truncated`. Those columns have existed since Phase 3 and **nothing has ever written
+  them** — a governance column that is always empty reads as "this never happens" rather than
+  "nobody fills this in". All four are added to the signed chain.
+
+### Notes
+
+- **The filter is applied twice on every statement**, and the second one is not ceremony. The
+  derived room set is the narrow bound; `permissions.membership_filter_sql` is the *same*
+  expression the permission hooks and the socket server use, so the raw path here cannot drift
+  from the hook path — and a drift on this seam is a leak rather than a bug. They are ANDed, so
+  the fragment can never widen the set. That is what makes the same statement safe on the
+  oversight path, where the fragment returns `1 = 1`.
+- **`retrieve(user="Administrator")` raises**, and so does `Guest`. Administrator
+  short-circuits the permission stack, so "every room" would be the literal, correct answer to
+  the room-set question — and the caller would never know it had asked a meaningless one.
+- **The audit row is written and committed before content is returned**, through the
+  fail-closed `record_or_refuse`. Nothing may move above that line: the trade decision #12
+  makes is a non-participant read in exchange for a record of it, and a read without the record
+  is the half nobody agreed to.
+- **The room set is never cached.** A room removal takes effect on the very next call, which is
+  the whole reason it is the one entry on the never-cache list.
+- **Rungs 1–3 of the ladder do not claim the view was cut; rungs 4 and 5 do.** Dropping the
+  least relevant chunks is retrieval working as designed, and announcing it would train users
+  to discount every answer. Losing the thread or falling to the hard floor is information being
+  withheld, and a model that answers silently from a cut view produces a confident wrong answer.
+- **The `__init__` re-export is lazy, through a module `__getattr__`, and that is load-bearing.**
+  An eager `from .gate import retrieve` would run `import frappe` the moment anything in the
+  package was imported — including `budget`, which imports nothing precisely so its arithmetic
+  can be tested without a bench. One eager import would move five pure modules out of the tier
+  CI runs and into the tier nothing runs.
+- **The vector adapter takes a candidate *loader* rather than running its own query**, because
+  the invariant outranks the signature: all chat SQL lives in the gate. The consequence is
+  stated rather than hidden — a future MariaDB-native vector backend cannot simply be dropped in
+  behind this interface; its query belongs in the gate too, or that rule gets revisited on
+  purpose.
+- **Three corrections the tests forced, each of which had been written down wrongly first.**
+  Unused T1 budget genuinely does reach T3 before anything is dropped, so a 20-item authored
+  tier is *not* a degradation case. `SINV-04412` becomes **two required terms**, not one:
+  InnoDB's tokenizer splits the stored body the same way, so an intact `sinv04412` term would
+  match nothing at all — requiring both parts is what makes the identifier findable. And the
+  oversight entry point must take explicit rooms, so Rule D exempts it conditionally and asserts
+  the four compensating controls instead of waving it through.
+- **`normalise` is applied on the way in and asserted on the way out.** The embedding model
+  returns unit-length vectors only at its native dimension; any other output dimension is a
+  Matryoshka truncation, and cosine similarity over non-unit vectors is a different function
+  that returns plausible numbers. It is the documented number-one mistake with this model family
+  and its failure shape is the worst available — retrieval keeps working and is subtly wrong.
+
 ## [1.272.0] - 2026-08-11
 
 Phase 5's schema: the semantic index, the two digest tables, the invocation log, and the

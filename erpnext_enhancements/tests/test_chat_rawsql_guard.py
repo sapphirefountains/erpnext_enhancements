@@ -223,6 +223,16 @@ SCOPED_TABLES: frozenset[str] = frozenset(
 		"Chat Room Member",
 		"Chat Attachment",
 		"Chat Mention",
+		# Phase 5's index. `Chat Context Chunk.body` holds the messages VERBATIM, so it is
+		# not a derived artefact deserving lighter handling — it is the transcript,
+		# pre-assembled into prose, and a leak here is a leak of the conversation in a form
+		# that is easier to read than the conversation.
+		"Chat Context Chunk",
+		# The digests are *summaries* of conversation, which is worse rather than better: a
+		# summary crosses time and topic boundaries a single message does not, and it cannot
+		# be un-said once it has been quoted into a context window.
+		"Chat Room Digest",
+		"Chat Thread Digest",
 	}
 )
 
@@ -351,6 +361,54 @@ SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
 		"<module>",
 		"Chat Room Member",
 	): ("_MEMBER_TABLE, same as _MESSAGE_TABLE above: the identifier the fragment is built from."),
+	# --- chat/retrieval/gate.py: the module constants the gate's statements are built from ---
+	#
+	# Four entries rather than one, because the key is a triple and a file-level exemption
+	# would silently cover the next function added to the gate — which, in this file above all
+	# others, is the function that returns conversation to a model.
+	#
+	# Each is a backticked identifier held in a module-level constant, which is the correct
+	# style for the same reason `permissions.py` uses it: a typo inside an f-string is a
+	# runtime SQL error on a live path rather than a test failure. Every statement that
+	# interpolates one lives in a function that ANDs in membership_filter_sql, and this suite
+	# checks that separately — delete one of those calls and the function, not the constant,
+	# is what goes red.
+	(
+		"retrieval/gate.py",
+		"<module>",
+		"Chat Context Chunk",
+	): (
+		"_CHUNK_TABLE. The semantic index's identifier. Every read of it in this module is "
+		"bounded by BOTH an explicit `room in (<derived set>)` and the shared membership "
+		"fragment, ANDed — so the fragment can never widen the derived set, which is what "
+		"makes the same statement safe on the oversight path where the fragment returns "
+		"`1 = 1`."
+	),
+	(
+		"retrieval/gate.py",
+		"<module>",
+		"Chat Room Digest",
+	): (
+		"_ROOM_DIGEST_TABLE. Same construction and the same double bound. Digests are read "
+		"only where `is_stale = 0 and poisoned = 0`, which is the invalidation contract "
+		"rather than a filter: a stale digest may summarise a message somebody deleted, and "
+		"ERPNext holds the only copy of that text."
+	),
+	(
+		"retrieval/gate.py",
+		"<module>",
+		"Chat Thread Digest",
+	): ("_THREAD_DIGEST_TABLE. Same construction, same bounds, same staleness contract."),
+	(
+		"retrieval/gate.py",
+		"<module>",
+		"Chat Message",
+	): (
+		"_MESSAGE_TABLE. The verbatim thread tier and the authored tier both read it, and "
+		"both statements pass the message-scope form of the shared fragment (the one taking "
+		"a seq column) as well as the explicit room list. The watermark read is an aggregate "
+		"over the same bounds and selects no body at all."
+	),
 	# --- chat/bench_verify.py: a probe that refuses to run beside real data -------------
 	(
 		"bench_verify.py",

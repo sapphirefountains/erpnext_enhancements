@@ -674,6 +674,20 @@ jobs:
       # to somebody who is not in the room.
       - name: Chat retrieval gate has one door (the ungated-SQL source scan)
         run: python -m unittest erpnext_enhancements.tests.test_chat_gate_source_scan -v
+      # Five of the seven retrieval modules import nothing but the stdlib, and this is why:
+      # what they decide fails SILENTLY when it is wrong. A chunker that is not deterministic
+      # makes the content hash meaningless and re-running the indexer duplicative. A ranker
+      # that adds raw scores instead of fusing ranks lets whichever tier has the larger
+      # numbers decide the answer. A ladder that degrades out of order throws away the thread
+      # the question was asked in. An assembly whose stable prefix is not byte-stable costs
+      # the entire prompt-cache discount on every request with no error and no log line. And
+      # a boolean-mode query built from raw user text turns "-20%" into an exclusion and
+      # returns fewer rows for no stated reason.
+      #
+      # Its own pytest step, like every other bench-free chat suite: `python -m unittest`
+      # silently collects zero tests from a file of plain functions and reports success.
+      - name: Chat retrieval pure logic (chunking, ranking, budget ladder, assembly order)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_retrieval_pure.py -q
       # Decision #12 buys a non-participant read with a record of it, and that trade only holds
       # while the record cannot be quietly altered afterwards. Immutability has to be argued in
       # layers because each mechanism is bypassed by the next one down: DocPerm is bypassed by

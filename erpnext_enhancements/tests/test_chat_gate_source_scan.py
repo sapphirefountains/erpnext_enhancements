@@ -115,6 +115,10 @@ RETRIEVAL_TABLES: frozenset[str] = frozenset(
 #: reach it, and it shows up as itself in a stack trace and in a grep.
 PUBLIC_SYMBOLS: frozenset[str] = frozenset({"retrieve", "retrieve_for_oversight"})
 
+#: The one entry point Rule D exempts, conditionally — see
+#: :meth:`TestRuleDTheEntryPointDerivesItsOwnRoomSet.test_the_oversight_path_pays_for_its_exemption`.
+OVERSIGHT_SYMBOL: str = "retrieve_for_oversight"
+
 #: The required first positional parameter of every SQL builder in the package.
 ALLOWED_ROOMS: str = "allowed_rooms"
 
@@ -587,6 +591,8 @@ class TestRuleDTheEntryPointDerivesItsOwnRoomSet(unittest.TestCase):
 			self.skipTest("chat/retrieval/ does not exist yet — Rule A is the live fence")
 		offenders: list[str] = []
 		for rel, func in self._entry_points():
+			if func.name == OVERSIGHT_SYMBOL:
+				continue  # see test_the_oversight_path_pays_for_its_exemption
 			smuggled = sorted(_all_param_names(func) & FORBIDDEN_ENTRY_PARAMS)
 			if smuggled:
 				offenders.append(f"{rel}:{func.lineno} {func.name}() accepts {smuggled}")
@@ -603,6 +609,62 @@ class TestRuleDTheEntryPointDerivesItsOwnRoomSet(unittest.TestCase):
 			"which is intersected with the derived set and therefore cannot widen it.",
 		)
 
+	def test_the_oversight_path_pays_for_its_exemption(self):
+		"""``retrieve_for_oversight`` is the one entry point that DOES take rooms, and it has
+		to earn that.
+
+		Rule D exists because a caller can get a room list wrong, and the caller of
+		:func:`retrieve` is a model-driven turn assembling arguments from text. The oversight
+		caller is a named human clicking a button, reading rooms they are deliberately not in,
+		and the audit row has to say *which* rooms — so "derive it from membership" is not
+		merely unhelpful there, it is incoherent: their membership is precisely what the read
+		is not about.
+
+		The exemption is therefore conditional on three compensating controls, asserted here
+		rather than assumed, because an exemption nobody re-checks is how the strict path ends
+		up with the lenient path's signature.
+		"""
+		if not RETRIEVAL_DIR.is_dir():
+			self.skipTest("chat/retrieval/ does not exist yet")
+		source = (APP_DIR / GATE_REL).read_text(encoding="utf-8")
+		tree = ast.parse(source)
+		func = None
+		for node in ast.walk(tree):
+			if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == OVERSIGHT_SYMBOL:
+				func = node
+		self.assertIsNotNone(func, f"{OVERSIGHT_SYMBOL} is gone from {GATE_REL}")
+
+		params = _all_param_names(func)
+		self.assertIn(
+			"reason",
+			params,
+			"the oversight read no longer requires a reason. The reason is what makes the "
+			"read defensible six months later; without it the audit row records that "
+			"somebody read a colleague's rooms and nothing about why.",
+		)
+		self.assertIn(
+			"rooms",
+			params,
+			"the oversight read no longer names its rooms. An oversight read of 'everything' "
+			"is not expressible on purpose — the audit row has to say what was read.",
+		)
+
+		body = ast.dump(func)
+		self.assertIn(
+			"_has_oversight",
+			body,
+			"the oversight read no longer checks the oversight role. That role is read from "
+			"Chat Settings and ships BLANK, which is what makes this path fail closed until "
+			"somebody deliberately configures it — a literal role name here would ship it open.",
+		)
+		self.assertNotIn(
+			"restrict_to",
+			params,
+			"the oversight read now takes restrict_to as well as rooms. Two narrowing "
+			"parameters on one function is two chances for a caller to believe the wrong one "
+			"is authoritative.",
+		)
+
 	def test_the_gate_module_exists_if_the_package_does(self):
 		"""A retrieval package without its gate is the failure this whole file
 		exists to prevent, arriving as a directory rather than as a query."""
@@ -615,6 +677,63 @@ class TestRuleDTheEntryPointDerivesItsOwnRoomSet(unittest.TestCase):
 			"offender — or worse, there are none yet and the package is being assembled "
 			"somewhere else.",
 		)
+
+
+class TestRuleETheWireSurfaceIsOneMethodAndItGates(unittest.TestCase):
+	"""The package is reachable over HTTP by exactly one method, and it runs as the session.
+
+	Asserted by AST rather than by import, unlike ``test_chat_api_contracts``: importing this
+	package's endpoint pulls in the gate, which imports ``frappe``, and the whole reason the
+	pure modules are pure is so this suite needs no stub set.
+	"""
+
+	def _whitelisted(self):
+		found: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]] = []
+		for rel, func, _ in _retrieval_functions():
+			for decorator in func.decorator_list:
+				target = decorator.func if isinstance(decorator, ast.Call) else decorator
+				if ".".join(_dotted(target)[-2:]) == "frappe.whitelist":
+					found.append((rel, func))
+		return found
+
+	def test_there_is_exactly_one_whitelisted_method(self):
+		if not RETRIEVAL_DIR.is_dir():
+			self.skipTest("chat/retrieval/ does not exist yet")
+		found = self._whitelisted()
+		self.assertEqual(
+			len(found),
+			1,
+			f"chat/retrieval exposes {[f'{rel}:{fn.name}' for rel, fn in found]} over the wire. "
+			"There is one method on purpose: every additional one is another place the acting "
+			"identity is resolved, and they only have to disagree once.",
+		)
+
+	def test_the_whitelisted_method_gates_before_it_reads(self):
+		if not RETRIEVAL_DIR.is_dir():
+			self.skipTest("chat/retrieval/ does not exist yet")
+		for rel, func in self._whitelisted():
+			body = ast.dump(func)
+			self.assertIn(
+				"require_session",
+				body,
+				f"{rel}:{func.name} is whitelisted but never calls require_session. That gate "
+				"resolves the caller, refuses Guest and enforces the pilot whitelist; without "
+				"it the endpoint is reachable by any signed-in user.",
+			)
+
+	def test_the_whitelisted_method_takes_no_user_parameter(self):
+		"""A ``user`` argument on a whitelisted method is an impersonation parameter however
+		carefully it is documented — and the caller here is a model-driven turn assembling
+		arguments from text."""
+		if not RETRIEVAL_DIR.is_dir():
+			self.skipTest("chat/retrieval/ does not exist yet")
+		for rel, func in self._whitelisted():
+			self.assertNotIn(
+				"user",
+				_all_param_names(func),
+				f"{rel}:{func.name} accepts a user parameter. The acting person is the "
+				"session, full stop.",
+			)
 
 
 class TestTheExemptionsAreHonest(unittest.TestCase):

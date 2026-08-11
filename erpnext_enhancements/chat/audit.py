@@ -96,7 +96,26 @@ _CHAINED_FIELDS = (
 	"query_hash",
 	"message_count",
 	"recorded_at",
+	# Phase 5. The retrieval facts — how much was read, from which tiers, and whether the
+	# reader's view was cut. Signed rather than merely stored, because an audit row whose
+	# *scale* can be edited without breaking the chain is one where "Triton read four
+	# messages" can quietly become the record of a read of four hundred.
+	"chunk_count",
+	"token_count",
+	"tiers_used",
+	"context_truncated",
 )
+
+#: Fields coerced through ``cint`` before hashing. This is what makes adding an integer column
+#: to :data:`_CHAINED_FIELDS` **backward-compatible**: a row written before the column existed
+#: signed ``row.get(k)`` → ``None``, while the verifier reads it back from MariaDB as ``0``.
+#: Without the coercion those two hash differently and every pre-existing row reports as
+#: tampered — an alarm firing on the whole log, for a schema change.
+#:
+#: (Measured 2026-08-11: production holds **zero** audit rows, so nothing is retroactively
+#: affected today. The coercion is here so the next person to add a column does not have to
+#: rediscover this.)
+_CHAINED_INT_FIELDS = frozenset({"message_count", "chunk_count", "token_count", "context_truncated"})
 
 _GENESIS = "chat-retrieval-audit-genesis"
 
@@ -169,7 +188,10 @@ def compute_chain_hash(row: dict[str, Any], previous: str, rooms: list[dict[str,
 	about what was signed — a verifier with its own idea of the payload reports false breaks,
 	and an alarm that always fires is worse than no alarm at all.
 	"""
-	payload = {k: _chain_value(row.get(k)) for k in _CHAINED_FIELDS}
+	payload = {
+		k: (cint(row.get(k)) if k in _CHAINED_INT_FIELDS else _chain_value(row.get(k)))
+		for k in _CHAINED_FIELDS
+	}
 	payload["rooms"] = [
 		{
 			"room": r.get("room"),
@@ -198,6 +220,10 @@ def record_privileged_read(
 	reason: str | None = None,
 	request_id: str | None = None,
 	message_count: int = 0,
+	chunk_count: int = 0,
+	token_count: int = 0,
+	tiers_used: str | None = None,
+	context_truncated: int = 0,
 ) -> str | None:
 	"""Record one privileged read. Returns the row name, or ``None`` if it could not.
 
@@ -219,6 +245,10 @@ def record_privileged_read(
 			reason=reason,
 			request_id=request_id,
 			message_count=message_count,
+			chunk_count=chunk_count,
+			token_count=token_count,
+			tiers_used=tiers_used,
+			context_truncated=context_truncated,
 		)
 	except Exception:
 		try:
@@ -289,6 +319,10 @@ def _write(
 	reason: str | None,
 	request_id: str | None,
 	message_count: int,
+	chunk_count: int = 0,
+	token_count: int = 0,
+	tiers_used: str | None = None,
+	context_truncated: int = 0,
 ) -> str:
 	"""Insert the row under the chain lock. Private: the public entry points wrap this."""
 	room_rows = _resolve_rooms(rooms, user)
@@ -303,6 +337,13 @@ def _write(
 		"query_hash": query_hash(query) if query is not None else None,
 		"message_count": cint(message_count) or sum(cint(r.get("messages_read")) for r in room_rows),
 		"recorded_at": stamp,
+		# Phase 5's retrieval facts. Present since Phase 3 as columns nothing wrote, which is
+		# its own defect: a governance column that is always empty reads as "this never
+		# happens" rather than as "nobody fills this in".
+		"chunk_count": cint(chunk_count),
+		"token_count": cint(token_count),
+		"tiers_used": (tiers_used or "")[:140] or None,
+		"context_truncated": 1 if cint(context_truncated) else 0,
 	}
 
 	if not _acquire_chain_lock():
@@ -413,7 +454,8 @@ def verify_chain(limit: int | None = None) -> dict[str, Any]:
 	"""
 	rows = frappe.db.sql(
 		"""select `name`, `recorded_at`, `chain_hash`, `accessed_by`, `actor_type`, `purpose`,
-				`request_id`, `reason`, `query_hash`, `query_text`, `message_count`
+				`request_id`, `reason`, `query_hash`, `query_text`, `message_count`,
+				`chunk_count`, `token_count`, `tiers_used`, `context_truncated`
 			from `tabChat Retrieval Audit`
 			order by `recorded_at` asc, `name` asc
 			limit %(limit)s""",
