@@ -99,6 +99,21 @@ class ChatSettings(Document):
 		"""
 		frappe.clear_document_cache(self.doctype, self.name)
 
+		# Push the two retention numbers into Frappe's `Logs To Clear`, which is the thing that
+		# actually deletes rows. Without this the fields on this form are decorative: they are
+		# validated and then read by nothing, and `Chat Relay Job` / `Chat Inbound Event` have
+		# no upper bound at all.
+		#
+		# See `chat/retention.py` for why this is a sync rather than a
+		# `default_log_clearing_doctypes` entry. Short version: a static hook and a settings
+		# field are two sources of truth for one number, and the hook wins in a way that makes
+		# "0 = never" impossible to express — `add_default_logtypes` puts a removed row back.
+		#
+		# Never raises: an exception here would stop somebody saving a kill switch mid-incident.
+		from erpnext_enhancements.chat.retention import sync as sync_log_retention
+
+		sync_log_retention(self)
+
 	# -- validation helpers -------------------------------------------------------
 
 	def _trim_identifiers(self) -> None:

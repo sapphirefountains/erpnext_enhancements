@@ -658,14 +658,14 @@
   },
   {
    "default": "30",
-   "description": "Purge processed inbound events after this many days. Failed rows are exempt and are never purged.",
+   "description": "Purge processed inbound events after this many days. Failed rows are exempt and are never purged. **0 means never purge**, and it means it durably - the Logs To Clear row is removed and nothing puts it back. Changing this number takes effect on the next save: it is written straight into Frappe's Logs To Clear, which is the thing that actually deletes rows, and the daily maintenance job does the work. Until v1.270.2 this field was validated and then read by NOTHING, so the table had no upper bound at all.",
    "fieldname": "inbound_event_retention_days",
    "fieldtype": "Int",
    "label": "Inbound Event Retention (days)"
   },
   {
    "default": "30",
-   "description": "Purge completed relay jobs after this many days. Dead rows are exempt.",
+   "description": "Purge completed relay jobs after this many days. Dead rows are exempt - a dead job is evidence of a message that never arrived, and it is kept until somebody has looked at it. **0 means never purge**, durably. Changing this number takes effect on the next save: it is written straight into Frappe's Logs To Clear and the daily maintenance job does the work. Until v1.270.2 this field was validated and then read by NOTHING.",
    "fieldname": "relay_job_retention_days",
    "fieldtype": "Int",
    "label": "Relay Job Retention (days)"

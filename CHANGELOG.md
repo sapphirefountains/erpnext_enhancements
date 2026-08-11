@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.270.2] - 2026-08-11
+
+Make the two chat retention settings actually retain anything. They have been on
+the Chat Settings form since Phase 1, validated on every save, and read by
+nothing.
+
+### Fixed
+
+- **`Chat Relay Job` and `Chat Inbound Event` had no upper bound at all.** Both
+  controllers carry a `clear_old_logs(days)` staticmethod whose docstring says it
+  exists so Frappe's log clearing can call it — and Frappe never called it,
+  because nothing ever registered either doctype with `Log Settings`. Meanwhile
+  `relay_job_retention_days` and `inbound_event_retention_days` were read in
+  exactly one place, `validate()`, to check they were not negative. Two dead
+  operator controls, two dead implementations, two unbounded queue tables, and no
+  symptom anywhere until somebody looks at the table.
+- `chat/retention.py` now writes those two numbers into Frappe's `Logs To Clear`
+  on every Chat Settings save and on every migrate, so the daily maintenance job
+  does the deleting through the `clear_old_logs` methods that already existed.
+
+### Notes
+
+- **Deliberately not `default_log_clearing_doctypes`**, which is the obvious
+  answer and the wrong one. That hook is a static number and these two have a
+  dynamic one on a settings form: declaring both gives one fact two sources of
+  truth, which is the lying-settings-field trap v1.270.0 removed from the
+  presence constants. Worse, `add_default_logtypes` appends any hook-declared
+  doctype whose row is absent, and it runs from `LogSettings.validate` — so a row
+  removed to mean "never purge" is silently recreated on the next save, and
+  `0 = never` could never stick. A test asserts the two are not also in the hook,
+  so the decision cannot be undone by somebody being helpful.
+- **`0` means never purge, durably** — the `Logs To Clear` row is removed and
+  nothing puts it back. That matches the convention the rest of the form already
+  documents for `message_retention_days` and `hard_delete_after_days`.
+- Both tables are **empty on production** (measured 2026-08-11: 0 rows each),
+  because chat is still in dry-run pilot. This is preventative, which is the
+  right time to add a retention rule rather than the usual one.
+- The new suite is mostly about the wiring being real rather than the arithmetic,
+  because a typo'd fieldname reads as `0` through `getattr(..., None) or 0` — and
+  `0` now means never purge, so a typo silently restores the original bug. Each
+  test was verified to fail against a deliberately broken implementation.
+- Field descriptions on the form were updated to say what they now do, and to
+  record that until this release they did nothing.
 ## [1.270.1] - 2026-08-11
 
 Register `Notification Log` for retention. It has never been registered — not by

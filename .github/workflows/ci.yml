@@ -709,6 +709,19 @@ jobs:
       # would delete this whole step from CI silently.
       - name: Chat Phase 4 notification policy (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_chat_notification_policy.py -q
+      # The chat log-retention sync. Guards a bug whose whole nature is that nothing
+      # errors: `Chat Settings.relay_job_retention_days` and `inbound_event_retention_days`
+      # shipped in Phase 1, were validated, and were then read by NOTHING -- while both
+      # controllers carried a `clear_old_logs` Frappe never called, because nothing ever
+      # registered either doctype with Log Settings. Two dead controls, two dead
+      # implementations, two unbounded queue tables, and no symptom until somebody looks.
+      # The tests are mostly about the wiring being real rather than about arithmetic: a
+      # typo'd fieldname reads as 0, and 0 now means NEVER PURGE, so a typo silently
+      # restores the original bug. It also asserts the design decision -- that these two
+      # doctypes are NOT in `default_log_clearing_doctypes` -- because a static hook fights
+      # the settings field and `add_default_logtypes` re-adds any row removed to mean never.
+      - name: Chat log retention sync (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_retention.py -q
       # The Web Push key schedule, pinned to RFC 8291's published example byte for byte.
       # A round-trip test cannot substitute for this and it is worth saying why: every
       # mistake available in that code is SYMMETRIC. Swap the two public keys in
