@@ -161,7 +161,7 @@ def _install_frappe_stub() -> types.ModuleType:
 
 FRAPPE = _install_frappe_stub()
 
-from erpnext_enhancements.chat import links, permissions  # noqa: E402
+from erpnext_enhancements.chat import audit, links, permissions  # noqa: E402
 from erpnext_enhancements.chat.api import (  # noqa: E402
 	_common,
 	compose,
@@ -170,6 +170,174 @@ from erpnext_enhancements.chat.api import (  # noqa: E402
 	mentions,
 	search,
 )
+
+
+# ---------------------------------------------------------------------------
+# The decision #12 audit — the pure half, which is the half that can be wrong silently
+# ---------------------------------------------------------------------------
+
+
+def test_the_query_hash_is_sha256_of_the_query() -> None:
+	"""The hash is stored; the text is not, unless a flag that ships off says otherwise.
+
+	The query a manager types is itself content — "did anyone mention my name", typed by the
+	person about to run a redundancy, is not metadata.
+	"""
+	import hashlib
+
+	assert audit.query_hash("pump housing") == hashlib.sha256(b"pump housing").hexdigest()
+	# None and "" hash the same, and that is fine: both mean "no query", and the alternative
+	# is a null that reads as "we forgot to record it".
+	assert audit.query_hash(None) == audit.query_hash("")
+
+
+def test_the_chain_hash_commits_to_the_fields_that_matter() -> None:
+	"""Change any audited field and the hash moves. That is the whole mechanism.
+
+	A chain that does not cover a field is a field an editor can rewrite for free, so each one
+	is checked individually rather than by changing the row wholesale — a single combined
+	assertion would pass if only ONE field were covered.
+	"""
+	row = {
+		"accessed_by": "auditor@example.com",
+		"actor_type": "Admin",
+		"purpose": "search",
+		"request_id": "req-1",
+		"reason": "investigating a complaint",
+		"query_hash": audit.query_hash("pump"),
+		"message_count": 3,
+		"creation": "2026-08-10 12:00:00",
+	}
+	rooms = [{"room": "R1", "was_participant": 0, "messages_read": 3, "first_seq": 1, "last_seq": 3}]
+	base = audit.compute_chain_hash(row, "prev", rooms)
+
+	assert audit.compute_chain_hash(dict(row), "prev", list(rooms)) == base, "not deterministic"
+
+	for field, replacement in [
+		("accessed_by", "someone.else@example.com"),
+		("actor_type", "User"),
+		("purpose", "oversight"),
+		("request_id", "req-2"),
+		("reason", "no reason at all"),
+		("query_hash", audit.query_hash("housing")),
+		("message_count", 4),
+		("creation", "2026-08-10 12:00:01"),
+	]:
+		mutated = dict(row)
+		mutated[field] = replacement
+		assert audit.compute_chain_hash(mutated, "prev", rooms) != base, (
+			f"{field} is not covered by the chain, so it can be rewritten without detection"
+		)
+
+
+def test_the_chain_covers_the_rooms_and_the_participation_flag() -> None:
+	"""``was_participant`` is the field the log exists for, so it must be signed.
+
+	A tamperer who could flip it to 1 could turn every non-participant read into an ordinary
+	one, which is precisely the evidence decision #12 wants preserved.
+	"""
+	row = {"accessed_by": "a@b.c", "actor_type": "Admin", "purpose": "oversight", "creation": "x"}
+	was_not = [{"room": "R1", "was_participant": 0, "messages_read": 2, "first_seq": 1, "last_seq": 2}]
+	was = [{"room": "R1", "was_participant": 1, "messages_read": 2, "first_seq": 1, "last_seq": 2}]
+
+	assert audit.compute_chain_hash(row, "p", was_not) != audit.compute_chain_hash(row, "p", was)
+	# And a room disappearing from the list must show up too.
+	assert audit.compute_chain_hash(row, "p", was_not) != audit.compute_chain_hash(row, "p", [])
+
+
+def test_the_chain_links_to_its_predecessor() -> None:
+	"""Same row, different predecessor, different hash — otherwise it is a per-row checksum
+	and rows could be reordered or deleted wholesale without detection."""
+	row = {"accessed_by": "a@b.c", "actor_type": "Admin", "purpose": "oversight", "creation": "x"}
+	assert audit.compute_chain_hash(row, "prev-a", []) != audit.compute_chain_hash(row, "prev-b", [])
+
+
+def test_the_canonical_form_is_stable_against_key_order() -> None:
+	"""Writer and verifier must agree byte for byte, or every row reports as tampered — which
+	trains people to ignore the alarm, and is worse than having no chain."""
+	assert audit._canonical({"b": 1, "a": 2}) == audit._canonical({"a": 2, "b": 1})
+	assert " " not in audit._canonical({"a": 1, "b": 2})
+
+
+def test_search_collapses_its_hits_into_one_audit_entry_per_room() -> None:
+	"""The audit records the seq RANGE read per room, not one entry per message.
+
+	"They looked at that room once" is not a useful audit record; "they read seq 4 through 91
+	of a room they were not in" is.
+	"""
+	rows = [
+		{"room": "R1", "seq": 9},
+		{"room": "R1", "seq": 4},
+		{"room": "R2", "seq": 30},
+		{"room": "R1", "seq": 7},
+	]
+	entries = {e["room"]: e for e in search._audited_rooms(rows)}
+	assert set(entries) == {"R1", "R2"}
+	assert entries["R1"]["messages_read"] == 3
+	assert entries["R1"]["first_seq"] == 4
+	assert entries["R1"]["last_seq"] == 9
+	assert entries["R2"]["messages_read"] == 1
+	# was_participant is deliberately absent: the writer resolves it against live membership,
+	# so there is one answer to "were they a member" rather than one per caller.
+	assert "was_participant" not in entries["R1"]
+
+
+def test_the_search_audit_is_fail_closed_and_the_hook_is_not() -> None:
+	"""The two paths differ ON PURPOSE, and the difference is the ADR's ordering rule.
+
+	``search_messages`` is about to return message bodies, so it records first and refuses to
+	return if it cannot. ``note_privileged_read`` runs inside permission hooks, where raising
+	takes down every desk page touching a chat DocType — so it swallows.
+	"""
+	import ast
+	import inspect
+	import textwrap
+
+	assert "audit.record_or_refuse" in _called_names(search, "search_messages")
+	assert "audit.record_privileged_read" in _called_names(permissions, "note_privileged_read")
+
+	def _fn(func: Any) -> ast.FunctionDef:
+		return ast.parse(textwrap.dedent(inspect.getsource(func))).body[0]
+
+	# The fail-closed one must REACHABLY refuse. Asserting only that the source mentions
+	# `frappe.throw` passes for `if False: frappe.throw(...)` — which is exactly the mutation
+	# that slipped through the first version of this test.
+	refuse = _fn(audit.record_or_refuse)
+	guarded_throws = [
+		node
+		for node in ast.walk(refuse)
+		if isinstance(node, ast.If)
+		and not (isinstance(node.test, ast.Constant) and not node.test.value)
+		and any(
+			isinstance(c, ast.Call) and getattr(c.func, "attr", "") == "throw"
+			for c in ast.walk(node)
+		)
+	]
+	assert guarded_throws, "record_or_refuse has no reachable frappe.throw — it cannot refuse"
+	assert not [n for n in ast.walk(refuse) if isinstance(n, ast.ExceptHandler)], (
+		"record_or_refuse swallows, so it is not fail-closed"
+	)
+
+	# ...and the hook-facing one must catch BROADLY, or a permission hook can raise and take
+	# down every desk page touching a chat DocType. A narrowed `except ValueError` is the
+	# realistic regression, so the handler type is checked rather than the word "except".
+	swallow = _fn(audit.record_privileged_read)
+	# The OUTERMOST try only — a direct child of the function body. Walking the whole tree
+	# finds the inner `except Exception: pass` around the log_error call and passes even when
+	# the real handler has been narrowed to `except ValueError`, which was the miss.
+	outer = [n for n in swallow.body if isinstance(n, ast.Try)]
+	assert outer, "record_privileged_read no longer wraps its work in a try at all"
+	broad = [
+		h
+		for t in outer
+		for h in t.handlers
+		if h.type is None or getattr(h.type, "id", "") == "Exception"
+	]
+	assert broad, (
+		"record_privileged_read's outer handler has been narrowed; anything it does not catch "
+		"is raised out of a permission hook, which denies the read at best and breaks every "
+		"desk page touching a chat DocType at worst"
+	)
 
 
 # ---------------------------------------------------------------------------

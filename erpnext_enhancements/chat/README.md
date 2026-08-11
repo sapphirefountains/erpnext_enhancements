@@ -175,7 +175,10 @@ Run down this list for **every** query added under `erpnext_enhancements/chat/**
 - [ ] **Does it bypass the filter for an admin?** Then it must be gated on the role read
       from `Chat Settings.admin_oversight_role` — never a literal role name, never a
       caller-supplied flag — and it must call `permissions.note_privileged_read(...)`,
-      which is the single hook point Phase 6 turns into an audit row.
+      which is the single hook point, and which now **writes** a `Chat Retrieval Audit` row
+      rather than returning `None`. If the query is about to return message bodies, call
+      `chat.audit.record_or_refuse(...)` instead: it records the rooms and the seq ranges and
+      refuses the read if it cannot record it. See [the audit](#the-decision-12-audit).
 - [ ] **Does it join to a table this checklist has not considered?** `Chat Attachment` and
       `Chat Mention` reach message content transitively. Filter on the message's room, not
       on the child row.
@@ -887,10 +890,56 @@ the unrestricted `""` query condition is unreachable. Filling it hands every hol
 role the entire company's private conversations, including deleted bodies (`is_deleted = 1`
 rows keep their text; Google's tombstone has none, so ERPNext is the only copy). It is a
 governance decision with an audit obligation attached — every privileged read routes
-through `permissions.note_privileged_read()`, which Phase 6 turns into a `Chat Retrieval
-Audit` row and which today is a no-op. **Setting it before Phase 6 means privileged reads
-that are not recorded anywhere.** If you need one person to see one thing, add them to the
-room.
+through `permissions.note_privileged_read()`, which writes a `Chat Retrieval Audit` row.
+
+**That obligation is now met, which it was not until v1.268.0.** Until then the hook returned
+`None`, so filling this field granted the whole company's private conversations to a role and
+logged nothing at all. It was briefly set on production on 2026-08-10 and reverted the same
+day for exactly that reason. If you are reading a note that says "setting it before Phase 6
+means privileged reads that are not recorded anywhere", that note is out of date — but read
+[the audit](#the-decision-12-audit) for what *is* still missing before you turn it on, because
+the recording is not the same thing as the reviewing.
+
+If you need one person to see one thing, add them to the room.
+
+### The decision #12 audit
+
+`chat/audit.py` is the **only** module that writes a `Chat Retrieval Audit` row, and
+`permissions.note_privileged_read()` is the only hook that calls it. Two things about the
+design are not what the ADR describes, and both are deliberate:
+
+- **One row per request, not per call.** `note_privileged_read` fires from nine call sites
+  inside `permissions.py`, all of which run while a query is being *built* — a page load
+  produces a dozen. The write is deduplicated per request through `frappe.flags`.
+- **The fail-closed rule applies to endpoints, not to hooks.** §F.12 says an audit failure
+  must fail the read. That is correct for `search_messages`, which calls
+  `audit.record_or_refuse` and does not return bodies if it cannot record them. It is *not*
+  applicable inside a permission hook, where raising denies the read at best and breaks every
+  Desk page touching a chat DocType at worst — so `record_privileged_read` swallows and logs.
+  The ADR's design assumes the Phase 5 `retrieve()` gate, which is a single choke point that
+  knows its rooms before it returns. When that lands it should take the endpoint rule.
+
+Immutability is four layers, because each is bypassed by the next one down: DocPerm (bypassed
+by `ignore_permissions`, which the writer needs), the controller's `before_save`/`on_trash`
+(bypassed by `db_set`/`db.set_value`/raw SQL, none of which load a document),
+`tests/test_chat_audit_immutability.py` (the only layer that can see the previous one's blind
+spot), and `chain_hash`. The chain makes tampering **detectable, not impossible** — anyone
+with database write access can rewrite a row and recompute the tail. Verify it with:
+
+```bash
+bench --site <site> execute erpnext_enhancements.chat.audit.verify_chain
+```
+
+**What is still missing before oversight is genuinely reviewable**, and why turning the field
+on is still a decision rather than a formality:
+
+- Nothing *reads* the log yet. There is no oversight viewer, no `Chat Access Report`, and no
+  scheduled chain verification — so a privileged read is recorded and nobody is told.
+- A row written from a permission hook records that a privileged read happened, not what it
+  reached; only `search_messages` records rooms and seq ranges today.
+- `reason` is a free-text field that nothing enforces, because the thing that should collect
+  it — the viewer — does not exist. The ADR requires a minimum-length reason per viewer
+  session for Admin reads.
 
 ## What is deliberately lossy
 

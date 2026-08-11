@@ -654,6 +654,18 @@ jobs:
       # turns it red and naming the offender, and the same query with the filter turns it green.
       - name: Chat raw-SQL membership guard (the likeliest route to a real data leak)
         run: python -m unittest erpnext_enhancements.tests.test_chat_rawsql_guard -v
+      # Decision #12 buys a non-participant read with a record of it, and that trade only holds
+      # while the record cannot be quietly altered afterwards. Immutability has to be argued in
+      # layers because each mechanism is bypassed by the next one down: DocPerm is bypassed by
+      # ignore_permissions (which the writer needs), the controller's before_save/on_trash are
+      # bypassed by db_set/db.set_value/raw SQL (none of which load a document), and both are
+      # bypassed by a direct MariaDB edit. This step is the layer that can see the controller's
+      # blind spot -- it walks the whole app and fails if any module other than the one
+      # allowlisted writer names an audit table beside a mutating call. Mutation-tested in both
+      # directions: eleven planted defects, including a guard neutered to `if False:` and a
+      # handler narrowed from Exception to ValueError, each confirmed caught.
+      - name: Chat audit log is append-only (the layer the controller cannot enforce)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_audit_immutability -v
       # The Phase 2 checkpoint gate. Two hundred messages both ways through the fake Chat API --
       # edits, deletes, attachments, three 10-in-2-second bursts, a 60-second outage, every tenth
       # event redelivered, both out-of-order pairs, a worker killed mid-relay -- then the whole

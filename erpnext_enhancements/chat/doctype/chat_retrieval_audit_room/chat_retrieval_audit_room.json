@@ -1,0 +1,73 @@
+{
+ "actions": [],
+ "creation": "2026-08-10 21:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "room",
+  "was_participant",
+  "messages_read",
+  "first_seq",
+  "last_seq",
+  "oldest_message_ts",
+  "newest_message_ts"
+ ],
+ "fields": [
+  {
+   "fieldname": "room",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Room",
+   "options": "Chat Room",
+   "reqd": 1
+  },
+  {
+   "description": "Whether the person this read was performed FOR was actually a member of this room at the time of the read. This is the field that makes the log worth keeping: a non-empty set of was_participant = 0 rows is precisely the oversight event decision #12 exists to make visible. Computed per room per read, never inferred later - membership changes.",
+   "fieldname": "was_participant",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Was Participant"
+  },
+  {
+   "fieldname": "messages_read",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Messages Read"
+  },
+  {
+   "description": "The seq range actually read, which is what makes an audit record useful. 'They looked at that room once' is not. Both are 0 when the read did not resolve to specific rows.",
+   "fieldname": "first_seq",
+   "fieldtype": "Int",
+   "label": "First Seq"
+  },
+  {
+   "fieldname": "last_seq",
+   "fieldtype": "Int",
+   "label": "Last Seq"
+  },
+  {
+   "fieldname": "oldest_message_ts",
+   "fieldtype": "Datetime",
+   "label": "Oldest Message"
+  },
+  {
+   "fieldname": "newest_message_ts",
+   "fieldtype": "Datetime",
+   "label": "Newest Message"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-10 21:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Retrieval Audit Room",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
