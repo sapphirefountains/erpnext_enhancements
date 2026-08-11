@@ -348,9 +348,10 @@ def _sent(row: Any, *, deduplicated: bool = False) -> dict[str, Any]:
 	# Delegated rather than reimplemented. `_attach_mentions` carries the membership filter,
 	# and a second child-row query here would be a second thing to keep scoped — the exact
 	# shape `tests/test_chat_rawsql_guard.py` exists to prevent.
-	from erpnext_enhancements.chat.api.history import _attach_mentions
+	from erpnext_enhancements.chat.api.history import _attach_citations, _attach_mentions
 
 	_attach_mentions([payload])
+	_attach_citations([payload])
 	payload["deduplicated"] = deduplicated
 	return payload
 

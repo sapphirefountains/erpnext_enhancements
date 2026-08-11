@@ -233,6 +233,12 @@ SCOPED_TABLES: frozenset[str] = frozenset(
 		# be un-said once it has been quoted into a context window.
 		"Chat Room Digest",
 		"Chat Thread Digest",
+		# Holds no message text — identifiers, counts and timings — but the citation manifest
+		# on it carries a person's name and a room's identity per entry, so an unscoped read
+		# leaks who is talking to whom without leaking a single body. It also records WHO
+		# ASKED TRITON WHAT, WHEN, which is a behavioural record of employees and belongs
+		# behind the same door as the conversation.
+		"Triton Invocation Log",
 	}
 )
 
@@ -425,6 +431,26 @@ SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
 		"`bench execute`, and the row set is bounded by 'the row this function just made'.\n\n"
 		"Scoped to this function on purpose. The next function somebody adds to this file "
 		"gets no cover from this entry, which is why the key is a triple."
+	),
+	# --- chat/rollout.py: the @triton readiness report, bench execute only -------------
+	(
+		"rollout.py",
+		"_room_members",
+		"Chat Room Member",
+	): (
+		"Distinct active members across every room, as the roster for the ERPNext-link "
+		"readiness report. It passes all three tests. There is no session user — the only "
+		"caller is `bench execute` on the VM, which already implies shell and therefore "
+		"direct database access, and the module is deliberately NOT whitelisted and is "
+		"registered in no hook, scheduler or endpoint. The row set is bounded by "
+		"`is_active = 1` across the whole site rather than by the reader's identity. And the "
+		"only column selected is `user`: no room, no message, nothing about who talks to whom."
+		"\n"
+		"Scoping it to the invoking identity would also be answering the wrong question. The "
+		"operator is asking 'who on the roster still needs to click Link ERPNext', and an "
+		"answer that depended on which rooms the person running the command happened to be in "
+		"would be silently short — which is worse than no answer, because the missing names "
+		"are exactly the people nobody then chases."
 	),
 	# --- chat/health.py: bench execute only, aggregates only ---------------------------
 	(

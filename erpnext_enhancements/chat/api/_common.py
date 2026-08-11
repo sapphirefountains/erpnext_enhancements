@@ -206,6 +206,15 @@ def message_payload(row: Any, *, include_body: bool = True) -> dict[str, Any]:
 		# list here means "no mentions", never "not loaded". It shipped absent entirely, which
 		# is why no @mention had ever rendered as one.
 		"mentions": [],
+		# Same contract as `mentions` above, and for the same reason: always present, so the
+		# renderers never branch on a missing key, and an empty list means "no citations"
+		# rather than "not loaded". Filled from `Triton Invocation Log.citations` by
+		# `history._attach_citations`.
+		#
+		# `public/js/chat/message_view.js` already reads this — it was written in Phase 3
+		# against the contract and degrades to today's exact rendering when the list is
+		# empty, which is what let Phase 3 ship before the retrieval that fills it.
+		"citations": [],
 	}
 
 	if deleted or not include_body:

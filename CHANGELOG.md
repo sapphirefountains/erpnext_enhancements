@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.276.0] - 2026-08-11
+
+Citations reach the renderer that has been waiting for them since Phase 3, and the rollout
+task that will otherwise present as a Phase 5 bug gets a report.
+
+### Fixed
+
+- **The Python manifest emitted keys the client discards.** `Citation.as_dict` produced
+  `ref`/`kind`; `public/js/chat/citations.js` — written eight days earlier — indexes on
+  `entry.k` and switches on `citation.type`, and its `indexManifest` **silently drops** any
+  entry whose `k` is not a positive integer. So nothing would have raised: every citation
+  would have been a miss, every `[[ref:N]]` marker stripped, and the answer would have
+  rendered as prose with no numbers and no indication there were meant to be any. The wire
+  shape now matches the renderer, and `tests/test_chat_retrieval_pure.py` asserts the keys
+  against `citations.js`'s own source rather than against a copy of the contract.
+- **`manifest_backed_source_chips` gated a decision that was already made.** v1.273.0 shipped
+  it **off** on the belief that CQ-14 was open. It is not: the manifest-backed sources row —
+  full retrieved set, cited entries marked and sorted first — was approved on **2026-08-10**
+  and recorded in v1.265.0, and Phase 3 built it. A settings switch that defaults to
+  disabling an approved, shipped behaviour is the lying-settings-field trap v1.270.0 removed
+  from the presence constants. The field is deleted.
+
+### Added
+
+- `Triton Invocation Log.citations` — the manifest as JSON, joined to the answer by
+  `answer_message`.
+- `chat.api.history._attach_citations` — the bulk hydrator, called from every transcript path
+  beside `_attach_mentions`, and `message_payload` now always emits a `citations` key.
+- **`chat/rollout.py`** — `bench execute
+  erpnext_enhancements.chat.rollout.erpnext_link_report`: who can use `@triton` and who has
+  not linked ERPNext yet, with the roster taken from the pilot whitelist when it is on.
+
+### Notes
+
+- **The manifest lives on the invocation log, not on `Chat Message`.** The hot table must not
+  grow a column that is null for every message but one sender's, and a manifest is metadata
+  about a *turn*, which is what that table is for.
+- **No `snippet` in the manifest, deliberately.** The client renders one in the tooltip if
+  present, and a snippet is message text — putting it there would carry conversation into the
+  one chat table that is content-free by construction. The label says who and which room;
+  clicking is what shows the message, through the deep link, under the full permission check.
+- **The hydrator is membership-scoped, and that matters more than it looks.** A citation label
+  carries a person's name and a room's identity, so an unscoped read here would leak who is
+  talking to whom without leaking a single body.
+- **It is the one hydrator that degrades rather than failing the page.** Citations are an
+  enrichment; mentions and attachments are part of the message. A failure here returns
+  silently and the transcript renders exactly as it did in Phase 3.
+- **The readiness report imports the handler's predicate rather than re-implementing it.** A
+  report that answered "who is ready" differently from the code deciding "can this turn run"
+  would be worse than no report — confidently wrong at the moment somebody trusted it and told
+  twenty people they were ready. `has_erpnext_link` is public for exactly that reason.
+- **The report states what it cannot see.** ERPNext is the OAuth *provider*, so a grant here is
+  authoritative about this side only; a Triton-side restore would leave it saying yes while
+  the turn still fails. It also does not send anything — listing who needs an email is useful,
+  sending it from a `bench execute` is a decision for somebody's own hands.
+- The roster is the **pilot whitelist** when that is on, otherwise active room members — never
+  "every enabled user". The number in front of the reader decides whether this is a task:
+  "12 people need to click a button" is an afternoon, "180" is a reason to abandon it.
+
 ## [1.275.0] - 2026-08-11
 
 The index writer. Until this, the retrieval gate had nothing to search — chunks and digests

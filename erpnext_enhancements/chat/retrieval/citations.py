@@ -72,6 +72,27 @@ MAX_MARKER_LENGTH: int = 16
 CONTEXT_LINE_TEMPLATE: str = "⟦ref:{ref}⟧ {author} ({timestamp}): {body}"
 
 
+#: The client's citation types, from ``public/js/chat/citations.js``. **This is a contract
+#: with code that already shipped**, not a vocabulary this module gets to choose:
+#: ``citations.js`` has a ``LINKABLE`` set and renders anything outside it as a flat,
+#: non-navigating pill.
+#:
+#: ``digest`` is deliberately absent from ``LINKABLE`` on the client side, and that absence is
+#: right: a digest has no single canonical message to point at, and a link that guesses one is
+#: a lie. It is a weaker claim than "this message said so" and it renders as one.
+TYPE_CHAT_MESSAGE: str = "chat_message"
+TYPE_DIGEST: str = "digest"
+
+#: ``kind`` (how this module thinks about a source) → ``type`` (what the client renders).
+#: A chunk *is* a run of messages, so it points at the first of them; the reader lands on
+#: real text they can check rather than on a synthetic object.
+_KIND_TO_TYPE: dict[str, str] = {
+	"chunk": TYPE_CHAT_MESSAGE,
+	"message": TYPE_CHAT_MESSAGE,
+	"digest": TYPE_DIGEST,
+}
+
+
 @dataclass(frozen=True)
 class Citation:
 	"""One manifest entry. ``ref`` is its position in assembly order, 1-based."""
@@ -80,26 +101,36 @@ class Citation:
 	room: str
 	message: str | None
 	label: str
-	#: ``chunk`` / ``message`` / ``digest`` — what the reader will land on. The client shows
-	#: a digest citation differently because "a summary said so" is a weaker claim than "this
-	#: message said so", and collapsing the two would overstate the evidence.
+	#: ``chunk`` / ``message`` / ``digest``. Translated to the client's vocabulary by
+	#: :meth:`as_dict`; nothing outside this module should read it.
 	kind: str = "chunk"
 	subtitle: str = ""
 	thread_root: str | None = None
 	url: str = ""
 
 	def as_dict(self) -> dict[str, object]:
-		"""The wire shape. Keys match what the existing chip renderer already reads
-		(``label``, ``url``) plus the two it receives today and discards (``kind``,
-		``subtitle``), so a manifest-backed chip row needs no new contract."""
+		"""The wire shape, **matching the renderer that already shipped in Phase 3**.
+
+		``k`` rather than ``ref``, and ``type`` rather than ``kind``, because
+		``public/js/chat/citations.js`` was written against that contract in Phase 3 and its
+		``indexManifest`` silently **discards** any entry whose ``k`` is not a positive
+		integer. An entry keyed on ``ref`` would therefore not fail — it would vanish, every
+		citation would be a miss, and the answer would render with its markers quietly
+		stripped. ``tests/test_chat_api_contracts.py`` asserts the two sides agree.
+
+		**No ``snippet``.** The client will render one in the tooltip if present, and a
+		snippet is message text — putting it here would carry conversation into
+		``Triton Invocation Log``, which is otherwise content-free by construction. The label
+		(who, and which room) is what a reader needs to decide whether to click, and clicking
+		is what shows them the message under the full permission check.
+		"""
 		return {
-			"ref": self.ref,
+			"k": self.ref,
+			"type": _KIND_TO_TYPE.get(self.kind, TYPE_CHAT_MESSAGE),
+			"label": self.label,
+			"url": self.url,
 			"room": self.room,
 			"message": self.message,
-			"label": self.label,
-			"kind": self.kind,
-			"subtitle": self.subtitle,
-			"url": self.url,
 		}
 
 

@@ -189,6 +189,7 @@ def handle(envelope: Envelope, *, origin: str = "") -> str | None:
 		answer_message=reply_name,
 		citation_miss_count=len(missing),
 		answer=answer,
+		manifest=result.manifest,
 	)
 	return log_name
 
@@ -264,13 +265,24 @@ def _bot_user() -> str:
 	)
 
 
-def _has_erpnext_link(user: str) -> bool:
+def has_erpnext_link(user: str) -> bool:
 	"""Whether this person has completed the ERPNext OAuth link Triton needs.
 
-	Checked here rather than discovered as an exception mid-turn, because the exception
-	surfaces to the user as a generic failure and the actionable sentence is the whole point.
-	Any failure to answer the question reads as **not linked** — the safe direction, since the
-	cost is one unnecessary prompt and the alternative is a turn that dies silently.
+	Checked before the turn rather than discovered as an exception mid-turn, because the
+	exception surfaces to the user as *"Communication disruption detected"* — a sentence
+	nobody has ever fixed anything from — and the actionable prompt is the whole point.
+
+	**Public, and deliberately the only implementation.** ``chat/rollout.py``'s readiness
+	report calls this exact function rather than writing its own predicate: a report that
+	answers "who is ready" differently from the code that decides "can this turn run" is worse
+	than no report, because it is confidently wrong at the moment somebody trusts it.
+
+	ERPNext can answer this authoritatively because ERPNext is the OAuth *provider* — Triton
+	holds a bearer issued here, so the grant is a row in this database. What ERPNext cannot
+	see is whether Triton's own copy is intact; that residual is stated in the report.
+
+	Any failure to answer reads as **not linked** — the safe direction, since the cost is one
+	unnecessary prompt and the alternative is a turn that dies with a generic error.
 	"""
 	try:
 		return bool(
@@ -279,6 +291,10 @@ def _has_erpnext_link(user: str) -> bool:
 		)
 	except Exception:
 		return False
+
+
+#: Kept as a private alias so the call site below reads as a guard rather than as a query.
+_has_erpnext_link = has_erpnext_link
 
 
 # ------------------------------------------------------------------------------ the log
@@ -330,6 +346,7 @@ def _close_log(
 	answer_message: str | None = None,
 	citation_miss_count: int = 0,
 	answer: dict[str, Any] | None = None,
+	manifest: list[Any] | None = None,
 ) -> None:
 	if not log_name:
 		return
@@ -359,6 +376,15 @@ def _close_log(
 				"citation_count": len(getattr(result, "manifest", []) or []),
 			}
 		)
+	if manifest:
+		# Stored so the SPA can render inline citations on an answer it loads later — a
+		# transcript scrolled back to next week must show the same links it showed live, and
+		# the manifest is the only thing that makes an id resolvable.
+		#
+		# The wire shape is produced by `Citation.as_dict`, which matches the renderer that
+		# shipped in Phase 3. No snippet, deliberately: a snippet is message text, and this
+		# table is content-free by construction.
+		values["citations"] = frappe.as_json([entry.as_dict() for entry in manifest])
 	if answer:
 		values.update(
 			{

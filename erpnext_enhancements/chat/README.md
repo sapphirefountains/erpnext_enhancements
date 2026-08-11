@@ -49,7 +49,8 @@ bubble on every Desk page.
 | The gated retrieval module, ranking, budget ladder, assembly, citations | **built** (Phase 5) |
 | One `@triton` handler for both origins, and the Triton client | **built** (Phase 5) |
 | The index writer — chunking, embeddings, rolling digests, invalidation | **built** (Phase 5) |
-| Citations on the wire to the widget; the ERPNext-link rollout report | Phase 5, remaining |
+| Citations on the wire, and the `@triton` readiness report | **built** (Phase 5) |
+| The bench suite, the ADR addendum, the live round trip | Phase 5, remaining |
 | Export, audit writes, drift reports, pilot rollout | Phase 6 |
 
 **Phase 3 built the entire API surface, not just a UI on top of one.** Phase 2's brief said
@@ -117,6 +118,7 @@ are written from day one.
 | `invoke/` | **New in Phase 5.** `@triton` from both origins into one handler. The envelope carries **no origin field**, so the handler has nothing to branch on; origin is recorded on `Triton Invocation Log` by the normalisers. Retrieval and tool calls run as the mentioning human; the reply is posted by the bot. Acknowledge and enqueue, never answer inline — Google's interaction deadline is a hard 30 seconds. |
 | `seams.py` | `notify_new_message` (Phase 4) and `mark_room_context_stale` (Phase 5) as call sites wired now, plus the Redis-backed counters `health.py` reads. `notify_new_message` firing **exactly once per genuinely new message and zero times for echoes** is the cheapest proof the mirror is not looping. |
 | `realtime.py` | The **only** publish in this package — a security module, not a wrapper. Always an explicit `room=`, always `after_commit=True`, and `list_update` / `docinfo_update` are refused with a `ValueError` rather than documented as a hazard. |
+| `rollout.py` | **New in Phase 5.** `bench execute`-able: who can use `@triton` and who has not completed the ERPNext OAuth link. It imports `handler.has_erpnext_link` rather than re-implementing the check — a readiness report that disagrees with the code enforcing readiness is worse than none, because it is confidently wrong exactly when somebody trusts it. Not whitelisted, reads one column (`user`), and prints what it *cannot* see: ERPNext is the OAuth provider, so a grant here is authoritative about this side only. |
 | `health.py` | `bench execute`-able report, written for somebody at 2am who did not write this. Every number is named, carries its unit, and is judged. **Never raises, never reads message text, and is deliberately not whitelisted.** |
 | `gchat/events_client.py` | `workspaceevents.googleapis.com` — a different host, therefore a different module, because the guardrail test confines each Google host to one place. Builders only; execution goes through `GoogleChatClient.execute`, so there is one retry loop and one dry-run short-circuit. |
 | `doctype/chat_settings/` | The Single. Identifiers, feature flags, kill switches, quotas, retention, Triton budgets. **No secret-bearing field, ever.** `chat_settings_rules.py` holds the pure validators (budget arithmetic, retention coherence, endpoint URL, secret-material detection) so they can be tested without a bench. |

@@ -138,7 +138,6 @@
   "triton_behaviour_section",
   "triton_reply_exempt_from_confirmation",
   "inline_citations_enabled",
-  "manifest_backed_source_chips",
   "column_break_triton_behaviour",
   "triton_ack_deadline_seconds",
   "triton_degrade_without_erpnext_link"
@@ -1013,13 +1012,6 @@
    "fieldname": "inline_citations_enabled",
    "fieldtype": "Check",
    "label": "Inline Citations Enabled"
-  },
-  {
-   "default": "0",
-   "description": "OFF (the shipped default) preserves the existing sources chip row byte for byte and adds inline citations alongside it - zero regression risk, at the cost of chips and inline citations disagreeing when the existing substring heuristic misses a cited chunk. ON renders the full retrieval manifest with cited entries marked, which is strictly more useful and is unambiguously a change to a surface a locked decision said would be preserved exactly. That is a product call, not an implementation one, which is why it ships off.",
-   "fieldname": "manifest_backed_source_chips",
-   "fieldtype": "Check",
-   "label": "Source Chips Show The Full Manifest"
   },
   {
    "fieldname": "column_break_triton_behaviour",

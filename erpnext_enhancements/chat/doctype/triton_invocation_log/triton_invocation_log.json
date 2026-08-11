@@ -35,6 +35,7 @@
   "column_break_retrieval",
   "citation_count",
   "citation_miss_count",
+  "citations",
   "timing_section",
   "retrieval_ms",
   "model_ms",
@@ -216,6 +217,12 @@
    "fieldname": "citation_miss_count",
    "fieldtype": "Int",
    "label": "Citation Miss Count"
+  },
+  {
+   "description": "The citation manifest for this answer, as JSON, in the shape public/js/chat/citations.js already reads: k, type, label, url, room, message. It lives here rather than on Chat Message because the hot table must not grow a column for one sender's messages - and because a manifest is metadata about a turn, which is what this table is.\n\nDeliberately carries NO snippet. The client would render one in a tooltip, and a snippet is message text; storing it here would put conversation into the one chat table that is content-free by construction. The label says who and which room, and clicking is what shows the message - under the full permission check, through the deep link.",
+   "fieldname": "citations",
+   "fieldtype": "Long Text",
+   "label": "Citations (JSON)"
   },
   {
    "fieldname": "timing_section",

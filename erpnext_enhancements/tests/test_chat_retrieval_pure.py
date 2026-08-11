@@ -566,12 +566,22 @@ def test_a_relative_route_needs_no_site_origin() -> None:
 	assert citations.relative_route("r1", "m1").startswith("/chat/")
 
 
-def test_the_wire_shape_carries_the_keys_the_existing_chip_row_reads() -> None:
-	"""``label`` and ``url`` are what the widget reads today; ``kind`` and ``subtitle`` are
-	what it already receives and discards. A manifest-backed chip row needs no new contract."""
+def test_the_wire_shape_is_the_one_the_phase_3_renderer_already_reads() -> None:
+	"""``k`` and ``type``, not ``ref`` and ``kind``.
+
+	The first version of this module invented its own names, which is the mistake worth
+	leaving a test against: the renderer shipped eight days earlier and its ``indexManifest``
+	**discards** an entry whose ``k`` is not a positive integer — so the mismatch would not
+	have raised anything. Every citation would have been a miss and every marker stripped, and
+	the answer would have rendered as prose with no numbers in it.
+
+	The keys are re-asserted against the renderer's own source in the wire-contract section
+	further down; this row pins the payload itself.
+	"""
 	payload = _manifest()[0].as_dict()
-	for key in ("ref", "room", "label", "kind", "subtitle", "url"):
+	for key in ("k", "type", "label", "url", "room", "message"):
 		assert key in payload
+	assert payload["k"] == 1
 
 
 # --------------------------------------------------------------------------- the envelope
@@ -668,3 +678,96 @@ def test_an_envelope_from_another_release_is_refused_rather_than_reinterpreted()
 def test_the_round_trip_through_job_kwargs_is_lossless() -> None:
 	original = envelope.Envelope("alice", "r", "m", "q", thread_root="t", seq=3, request_id="x")
 	assert envelope.from_job_kwargs(original.as_job_kwargs()) == original
+
+
+# ------------------------------------------------------- the citation wire contract
+#
+# The Python manifest and the JavaScript renderer are two halves of one contract written
+# eight days apart, and a mismatch between them **fails silently in the worst possible way**:
+# `indexManifest` discards any entry whose `k` is not a positive integer, so an entry keyed on
+# anything else does not error — it vanishes. Every citation becomes a miss, every marker is
+# stripped from the answer, and what the reader sees is prose with no numbers in it and no
+# indication that there were supposed to be any.
+#
+# So the keys are asserted against the renderer's own source rather than against a copy of it
+# here. A test carrying its own idea of the contract passes forever while the two sides drift.
+
+import pathlib
+import re
+
+_CITATIONS_JS = pathlib.Path(__file__).resolve().parents[1] / "public" / "js" / "chat" / "citations.js"
+
+
+def _js_source() -> str:
+	return _CITATIONS_JS.read_text(encoding="utf-8")
+
+
+def test_the_renderer_this_contract_is_written_against_exists() -> None:
+	"""Not vacuous: every assertion below reads that file."""
+	assert _CITATIONS_JS.is_file(), f"{_CITATIONS_JS} is missing"
+	assert "indexManifest" in _js_source()
+
+
+def test_the_manifest_is_keyed_on_k_because_the_renderer_indexes_on_k() -> None:
+	"""``indexManifest`` reads ``entry.k`` and DISCARDS anything else. An entry keyed on
+	``ref`` would not raise — it would disappear, and so would every citation."""
+	assert "Number(entry.k)" in _js_source(), (
+		"public/js/chat/citations.js no longer indexes on `k`. Whatever it indexes on now is "
+		"what Citation.as_dict must emit, or the manifest silently renders as no citations "
+		"at all."
+	)
+	assert "k" in _manifest_entry()
+
+
+def test_the_manifest_carries_type_because_the_renderer_switches_on_type() -> None:
+	assert "citation.type" in _js_source()
+	assert "type" in _manifest_entry()
+
+
+def test_every_type_the_python_side_emits_is_one_the_renderer_knows() -> None:
+	"""``LINKABLE`` is the renderer's allowlist; anything outside it renders as a flat pill.
+	That is the correct fate for a digest and the *wrong* fate for a message citation, which
+	would silently stop being clickable."""
+	source = _js_source()
+	linkable = set(re.findall(r'"([a-z_]+)"', source.split("const LINKABLE")[1].split(")")[0]))
+	assert citations.TYPE_CHAT_MESSAGE in linkable, (
+		f"the renderer no longer treats {citations.TYPE_CHAT_MESSAGE!r} as linkable, so every "
+		"message citation would render as a dead pill — visible, and not clickable, with "
+		"nothing explaining why."
+	)
+	assert citations.TYPE_DIGEST not in linkable, (
+		"the renderer now treats a digest as linkable. A digest has no single canonical "
+		"message to point at, so the link would be a guess presented as a source."
+	)
+
+
+def test_a_chunk_citation_points_at_a_real_message() -> None:
+	"""A chunk is a run of messages, so it cites the first of them. The reader lands on text
+	they can check rather than on a synthetic object with no address."""
+	entry = _manifest_entry(kind="chunk", message="MSG-1")
+	assert entry["type"] == citations.TYPE_CHAT_MESSAGE
+	assert entry["message"] == "MSG-1"
+
+
+def test_a_digest_citation_is_typed_as_a_digest() -> None:
+	assert _manifest_entry(kind="digest")["type"] == citations.TYPE_DIGEST
+
+
+def test_an_unknown_kind_degrades_to_a_message_citation_rather_than_vanishing() -> None:
+	"""An unmapped kind must not produce a type the renderer drops. Degrading to the common
+	case costs a slightly wrong icon; producing an unknown type costs the citation."""
+	assert _manifest_entry(kind="something-new")["type"] == citations.TYPE_CHAT_MESSAGE
+
+
+def test_the_manifest_carries_no_snippet() -> None:
+	"""The renderer shows a snippet in the tooltip if it is there. A snippet is message text,
+	and the manifest is stored on Triton Invocation Log — which is content-free by
+	construction. The label says who and which room; clicking is what shows the message,
+	under the full permission check."""
+	assert "snippet" not in _manifest_entry()
+
+
+def _manifest_entry(*, kind: str = "message", message: str | None = "MSG-1") -> dict:
+	return citations.build_manifest(
+		[{"room": "R1", "message": message, "label": "Jane in #riverwalk", "kind": kind}]
+	)[0].as_dict()
