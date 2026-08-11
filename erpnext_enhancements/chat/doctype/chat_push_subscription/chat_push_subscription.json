@@ -1,0 +1,150 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-11 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "user",
+  "device_label",
+  "is_active",
+  "column_break_identity",
+  "endpoint",
+  "endpoint_hash",
+  "keys_section",
+  "p256dh",
+  "auth",
+  "column_break_keys",
+  "vapid_public_key",
+  "health_section",
+  "last_seen",
+  "last_success",
+  "column_break_health",
+  "failure_count"
+ ],
+ "fields": [
+  {
+   "description": "Whose device this is. Matched on the endpoint rather than on (user, endpoint) at registration time: a shared machine can hand the same endpoint to a second person after a re-login, and the endpoint is what the push service addresses - so it belongs to whoever most recently proved they hold it.",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "description": "A human name for the device, so a person deactivating a lost phone can tell which row is which. Derived from the user agent; cosmetic.",
+   "fieldname": "device_label",
+   "fieldtype": "Data",
+   "label": "Device",
+   "length": 140
+  },
+  {
+   "default": "1",
+   "description": "Cleared rather than deleted when a subscription dies, so the device history survives somebody asking why their phone stopped buzzing. Set to 0 immediately on 404/410 (the push service saying the subscription is gone), after 10 consecutive non-terminal failures, or by the stale sweep.",
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "label": "Active"
+  },
+  {
+   "fieldname": "column_break_identity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The push service URL for this device. SMALL TEXT AND DELIBERATELY NOT INDEXED. These routinely exceed 255 characters; Frappe's Data defaults to varchar(140), MariaDB TRUNCATES on insert rather than refusing, and two distinct devices then collide on a unique index - one silently stops receiving anything. It is also a bearer capability: anyone holding it can push to that browser, which is why it is never written to a log.",
+   "fieldname": "endpoint",
+   "fieldtype": "Small Text",
+   "label": "Endpoint",
+   "reqd": 1
+  },
+  {
+   "description": "SHA-256 hex of the endpoint - the unique key the endpoint itself cannot be, and the ADR's recorded escape hatch for a natural key too long to index. Hex rather than base64url because 64 characters of [0-9a-f] are collation-safe: a case-insensitive collation would fold a base64url hash's A and a together and turn this into an occasional unreproducible collision. Unique is declared HERE on the DocField, not in a patch, because Frappe coerces empty string to NULL only when the DocField carries unique - without it the second unwritten row in the whole table would refuse to insert, in production only.",
+   "fieldname": "endpoint_hash",
+   "fieldtype": "Data",
+   "label": "Endpoint Hash",
+   "length": 64,
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "keys_section",
+   "fieldtype": "Section Break",
+   "label": "Keys"
+  },
+  {
+   "description": "The browser's public key for this subscription, base64url, 65 bytes uncompressed. Half of the ECDH exchange that encrypts the payload. Public by construction - it is what the message is encrypted TO, not a secret.",
+   "fieldname": "p256dh",
+   "fieldtype": "Data",
+   "label": "P256DH",
+   "length": 255,
+   "reqd": 1
+  },
+  {
+   "description": "The subscription's 16-byte authentication secret, base64url. Salts the first HKDF extraction, which is what stops anybody who merely knows the public key from encrypting to it. Not a site credential and not usable for anything except talking to this one browser - which is why it is a Data field and not a Password one, and why no chat DocType may declare a Password field at all.",
+   "fieldname": "auth",
+   "fieldtype": "Data",
+   "label": "Auth Secret",
+   "length": 64,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_keys",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The site's application server key at the moment this device subscribed. Recorded because regenerating the site keypair makes every older subscription permanently undeliverable, and the push service answers 403 for those rather than 410 - so the prune-on-gone rule never fires and the dead rows would stay forever, each costing one HTTPS request per notification. Rows whose key no longer matches are skipped rather than attempted.",
+   "fieldname": "vapid_public_key",
+   "fieldtype": "Data",
+   "label": "VAPID Public Key",
+   "length": 255,
+   "read_only": 1
+  },
+  {
+   "fieldname": "health_section",
+   "fieldtype": "Section Break",
+   "label": "Delivery Health"
+  },
+  {
+   "description": "When the browser last re-registered. Browsers reissue the same endpoint on every page load, so this moves often for a device in use - which is what makes the 60-day stale sweep meaningful. Push services never tell us about a device that was wiped or simply never opened again.",
+   "fieldname": "last_seen",
+   "fieldtype": "Datetime",
+   "label": "Last Seen",
+   "read_only": 1
+  },
+  {
+   "description": "When a push was last accepted by the service. Accepted is not delivered - the service takes responsibility for the message, and whether it ever reached the device is not observable from here.",
+   "fieldname": "last_success",
+   "fieldtype": "Datetime",
+   "label": "Last Success",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_health",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Consecutive non-terminal failures. Reset to zero by any success and by a re-registration, so a device that recovers is not retired by a stale count. At 10 the row is deactivated - not at 1, because a push service having a bad afternoon must not cost the whole company their subscriptions.",
+   "fieldname": "failure_count",
+   "fieldtype": "Int",
+   "label": "Consecutive Failures",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-11 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Push Subscription",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

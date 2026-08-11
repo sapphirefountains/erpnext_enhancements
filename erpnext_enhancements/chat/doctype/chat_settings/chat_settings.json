@@ -65,6 +65,7 @@
   "subscription_renew_before_seconds",
   "presence_heartbeat_seconds",
   "presence_ttl_seconds",
+  "blur_grace_seconds",
   "log_message_bodies",
   "sync_engine_section",
   "circuit_breaker_threshold",
@@ -77,6 +78,12 @@
   "echo_fallback_enabled",
   "echo_fallback_window_seconds",
   "oversized_message_policy",
+  "notifications_section",
+  "push_enabled",
+  "push_show_preview",
+  "column_break_notifications",
+  "mention_beats_mute",
+  "push_contact_mailto",
   "retention_section",
   "message_retention_days",
   "hard_delete_after_days",
@@ -481,18 +488,25 @@
    "label": "Renew Subscription Before (seconds)"
   },
   {
-   "default": "30",
-   "description": "How often a focused client reports presence. 30 is the house constant (live_form_sync.js:71-72), per ADR §F.13. This must never be the thing keeping the WebSocket alive — socket.io's own 25s ping is the keepalive. Raising it for efficiency on the assumption that it doubles as a keepalive would silently kill every idle connection.",
+   "default": "20",
+   "description": "How often a browser tab reports presence. **20, not the house 30** (ADR H.3.1): 30s is exactly the Google Cloud load balancer's idle-connection cut, and the only reason realtime works on this site is that socket.io's stock 25s ping beats that cut by five seconds. A new subsystem sitting on that boundary inherits a five-second margin for no benefit. This must never be the thing keeping the WebSocket alive - socket.io's ping is the keepalive. Clamped to 5-60 on read; the server sends the effective value to the client on every beat, so the two cannot drift.",
    "fieldname": "presence_heartbeat_seconds",
    "fieldtype": "Int",
    "label": "Presence Heartbeat (seconds)"
   },
   {
-   "default": "75",
-   "description": "Redis TTL on a presence key. 75 is the house constant (ADR §F.13), two and a half heartbeats: two may be missed before a user drops to offline. A deploy flushes Redis, so the worst case is everyone showing offline for one heartbeat.",
+   "default": "55",
+   "description": "How long a presence report stays believable, and the Redis TTL on the key. **55, not the house 75** - about two heartbeats plus one beat of slack, so a single dropped beat (a GC pause, a throttled background timer, a transient 502) does not flip a present user to absent. Longer than necessary is not safe here: presence SUPPRESSES notifications, so an over-long TTL means a crashed browser keeps silencing its owner's messages. A deploy flushes Redis, so the worst case is everyone notified for one heartbeat, which is the safe direction. Clamped to at least two heartbeats on read.",
    "fieldname": "presence_ttl_seconds",
    "fieldtype": "Int",
    "label": "Presence TTL (seconds)"
+  },
+  {
+   "default": "120",
+   "description": "How long a blurred window still counts as present before messages start notifying. The single most tunable number in the notification system (ADR H.2.1 / CQ-2), and it exists because 'blurred' spans two situations needing opposite answers: alt-tabbed for eight seconds to read an email, and left the tab open on Friday and went home. Pinging the first is the most-complained-about class of chat notification; staying silent for the second is message loss, and worse than the ordinary case because the person believes the app is open. 120 is about twice the presence TTL, so blur hysteresis sits one layer above presence expiry instead of racing it. It never affects read receipts - a blurred window NEVER auto-marks read, however briefly it has been blurred, because a false read receipt is unrecoverable in a way a suppressed ping is not.",
+   "fieldname": "blur_grace_seconds",
+   "fieldtype": "Int",
+   "label": "Blur Grace (seconds)"
   },
   {
    "default": "0",
@@ -574,6 +588,43 @@
    "fieldtype": "Select",
    "label": "Oversized Message Policy",
    "options": "Truncate With Link\nReject"
+  },
+  {
+   "fieldname": "notifications_section",
+   "fieldtype": "Section Break",
+   "label": "Notifications"
+  },
+  {
+   "default": "0",
+   "description": "Send native Web Push notifications. Ships OFF. Turning it on requires a VAPID keypair in site_config.json (bench execute erpnext_enhancements.chat.notifications.webpush.vapid.generate) - with no keypair this flag does nothing but log. Frappe's own push path is NOT used and cannot be: it is Google-Cloud-Messaging only and hardcoded to a relay this site does not have, so it reports itself enabled and fails at request time. See chat/notifications/README.md before 'fixing' that.",
+   "fieldname": "push_enabled",
+   "fieldtype": "Check",
+   "label": "Web Push Enabled"
+  },
+  {
+   "default": "0",
+   "description": "Include the message body in the push notification. OFF by default (ADR CQ-6): this is a business chat carrying customer names, prices and complaints about colleagues, and a lock screen is readable by anyone glancing at a phone on a table. Off means sender and room name only. Note this is a RENDERING choice, not a security control - the payload is encrypted end to end either way, and the text is on the device the moment the push arrives.",
+   "fieldname": "push_show_preview",
+   "fieldtype": "Check",
+   "label": "Show Message Text In Push"
+  },
+  {
+   "fieldname": "column_break_notifications",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Whether an @mention notifies in a room the recipient has muted. OFF, matching the ADR's truth table (H.1 row 9 lists the rows a mention overrides and row 11 is not among them; H.2.3 says so in terms). The ADR's own CQ-8 ship-default reads the other way, and the two contradict - this flag is where that gets settled rather than guessed. ON is the more forgiving answer for urgent work; OFF is the answer that makes mute mean something. Either way a muted room still shows its unread dot.",
+   "fieldname": "mention_beats_mute",
+   "fieldtype": "Check",
+   "label": "A Mention Pierces A Muted Room"
+  },
+  {
+   "description": "The mailto: address signed into every VAPID header, so a push service operator has somebody to contact about this site's traffic before they start rejecting it. Not a secret and not an identifier anyone authenticates with. Defaults to the site's own support email when blank.",
+   "fieldname": "push_contact_mailto",
+   "fieldtype": "Data",
+   "label": "Push Contact Address",
+   "length": 255
   },
   {
    "fieldname": "retention_section",

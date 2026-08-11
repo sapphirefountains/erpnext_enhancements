@@ -281,7 +281,7 @@ def reset_counters() -> None:
 
 
 def notify_new_message(message: Any) -> None:
-	"""Phase 4's notification entry point. Here: count it and debug-log the identifiers.
+	"""The notification entry point. Counts, logs, and hands off to the Phase 4 fan-out.
 
 	**Exactly once per genuinely new message; zero times for echoes, replays,
 	reconciliations and outbound relays.** An echo is our own message arriving back from
@@ -317,6 +317,20 @@ def notify_new_message(message: Any) -> None:
 				name or "<unnamed>",
 				room or "<unknown>",
 			)
+
+		# Phase 4. Note the ordering: the counter above is bumped BEFORE this, and
+		# independently of whether it succeeds. The counter's whole job is to prove the sync
+		# engine calls this seam exactly once per genuinely new message and zero times for
+		# echoes — a count that moved only when a notification also happened would stop
+		# measuring that, and Phase 2's soak asserts against it.
+		#
+		# Imported inside the function so the seam stays importable, and Phase 2's bench-free
+		# suites stay runnable, on a bench where the notification package's own dependencies
+		# are absent.
+		if name:
+			from erpnext_enhancements.chat.notifications import fanout
+
+			fanout.enqueue_fanout(name)
 	except Exception:
 		# See the docstring: a seam may not be able to abort the transaction it observes.
 		pass

@@ -67,6 +67,10 @@ export const M = {
 	HEARTBEAT: "erpnext_enhancements.chat.api.presence.heartbeat",
 	GOODBYE: "erpnext_enhancements.chat.api.presence.goodbye",
 	PRESENCE: "erpnext_enhancements.chat.api.presence.get_presence",
+
+	PUSH_CONFIG: "erpnext_enhancements.chat.notifications.api.push_config",
+	PUSH_SUBSCRIBE: "erpnext_enhancements.chat.notifications.api.subscribe",
+	PUSH_UNSUBSCRIBE: "erpnext_enhancements.chat.notifications.api.unsubscribe",
 };
 
 /** A refusal the SPA can recognise, so "you were removed from this room" degrades quietly

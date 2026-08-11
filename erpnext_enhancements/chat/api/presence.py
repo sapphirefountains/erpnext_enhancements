@@ -41,19 +41,34 @@ from frappe.utils import cint
 
 from erpnext_enhancements.chat import realtime
 from erpnext_enhancements.chat.api._common import require_room, require_session
+from erpnext_enhancements.chat.notifications import policy, settings
+from erpnext_enhancements.chat.notifications import presence as store
 
 #: One key per (user, client). The hash lets a single ``hgetall`` answer "every client of
 #: this user" without a key scan, which is what the focus union needs on every publish.
-_PRESENCE_KEY = "ee_chat_presence"
+#:
+#: Owned by :mod:`chat.notifications.presence` since Phase 4 — the store and the reader had
+#: to agree on a key shape, and two modules holding the same string literal is how they stop
+#: agreeing. Re-exported here because this module's own tests and README refer to it.
+_PRESENCE_KEY = store.KEY_PREFIX
 
-#: 75 seconds — 2.5 heartbeats at the client's 30 s cadence. Long enough that one dropped
-#: request does not flap a dot; short enough that a closed laptop goes offline while the
-#: person who noticed is still looking at the screen.
-PRESENCE_TTL_SECONDS = 75
+#: **Changed in Phase 4, deliberately, from the house 30 s / 75 s pair.**
+#:
+#: Phase 3 copied ``public/js/collab/live_form_sync.js``'s constants, which is ordinarily the
+#: right instinct — except that **30 s is exactly the Google Cloud load balancer's
+#: idle-connection cut**, and the only reason realtime works on this site at all is that
+#: socket.io's stock 25 s ``pingInterval`` beats that cut by five seconds. Inheriting the
+#: house pair into a subsystem that has no reason to sit on that boundary inherits a
+#: five-second margin and buys nothing (ADR §H.3.1).
+#:
+#: These now live in :mod:`chat.notifications.policy`, next to the suppression rule that
+#: reads them, because a TTL in one file and a freshness check in another is a drift that
+#: presents as "notifications stopped working" rather than as a mismatch anybody can see.
+PRESENCE_TTL_SECONDS = policy.PRESENCE_TTL_SECONDS
 
 #: The client heartbeat interval this TTL is sized against. Exported so the SPA and the
 #: server cannot drift: the SPA reads it out of the bootstrap payload rather than hardcoding.
-HEARTBEAT_SECONDS = 30
+HEARTBEAT_SECONDS = policy.HEARTBEAT_SECONDS
 
 #: A client that has been hidden for longer than this is "away" rather than "online".
 AWAY_AFTER_SECONDS = 300
@@ -62,10 +77,6 @@ AWAY_AFTER_SECONDS = 300
 #: on the *receiving* side. Both numbers ship to the client in the bootstrap payload.
 TYPING_THROTTLE_SECONDS = 3
 TYPING_EXPIRY_SECONDS = 5
-
-
-def _cache() -> Any:
-	return frappe.cache()
 
 
 # --------------------------------------------------------------------------- typing
@@ -107,8 +118,9 @@ def heartbeat(
 	thread: str | None = None,
 	focused: Any = 1,
 	visibility: str | None = None,
+	surface: str | None = None,
 ) -> dict[str, Any]:
-	"""One client's liveness and focus, every ~30 s. Writes one Redis field with a TTL.
+	"""One client's liveness and focus, every ~20 s. Writes one Redis field with a TTL.
 
 	Args:
 		client_id: a per-tab identifier the SPA mints once and keeps in ``sessionStorage``.
@@ -120,14 +132,25 @@ def heartbeat(
 			behind a spreadsheet is visible and not focused, and §4.7 says that is *not*
 			being read.
 		visibility: ``document.visibilityState``.
+		surface: ``"app"`` from the SPA, ``"desk"`` from the floating bubble. **Phase 4.**
+			It is what makes ADR §H.1's row 5 — "in ERPNext, chat closed" — an observable
+			state rather than a wish: the bubble beats from every Desk page with no active
+			room, so a record with ``room = None`` distinguishes "at their desk, not in
+			chat" from "not in ERPNext at all", which are different reason codes for the
+			same outcome and therefore different things to tell an operator.
 
 	Returns the coarse state now published for this user plus the presence of everyone in
 	``active_room``, so the SPA's dots refresh on the same beat and need no second call.
 
-	**This phase reports; Phase 4 decides.** Nothing here suppresses a notification. The
-	focus record exists so that Phase 4 can make every suppression decision on the server,
-	which is invariant I6's client half — a client that decides by simply not rendering a
-	notification has made the decision unauditable.
+	**The client reports; the server decides.** Nothing here suppresses anything — the
+	record exists so that :mod:`chat.notifications.policy` can make every suppression
+	decision server-side (invariant I6). A client that decided by simply not rendering a
+	notification would have made the decision unauditable, and the test for I6 stubs the
+	client's suppression out entirely and asserts the server still emits nothing.
+
+	Note what this endpoint does **not** accept: ``focused_changed_at``. It is stamped by
+	the store, on receipt, because a client that could supply it could backdate its own blur
+	and buy silence for as long as it liked.
 	"""
 	user = require_session()
 	client = (client_id or "").strip()
@@ -138,27 +161,26 @@ def heartbeat(
 	if room:
 		# Gated: "which room is this user looking at" is only reportable for a room they can
 		# read. Otherwise the focus record is a way to assert presence in someone else's room,
-		# and Phase 4 would then suppress that room's notifications on the strength of it.
+		# and the notifier would then suppress that room's notifications on the strength of it.
 		_user, room = require_room(room, user=user)
 
-	previous = state_of(user)
-	record = {
-		"room": room or None,
-		"thread": (thread or "").strip() or None,
-		"focused": 1 if cint(focused) else 0,
-		"visibility": (visibility or "visible").strip()[:16],
-		"ts": int(time.time()),
-	}
+	# The effective values, not the module constants: an operator may have retuned them, and a
+	# client beating on one cadence under a TTL sized for another drops to "absent" between
+	# beats and is over-notified permanently. Read once per beat, from the cached Single.
+	tuning = settings.load()
+	beat_seconds = settings.heartbeat_seconds()
 
-	cache = _cache()
-	key = _user_key(user)
-	try:
-		cache.hset(key, client, record)
-		cache.expire(key, PRESENCE_TTL_SECONDS)
-	except Exception:
-		# Presence is an accelerator. A Redis hiccup must not fail the request that carries
-		# it, or a cache outage becomes a chat outage.
-		frappe.log_error(title="chat presence write failed", message=f"user={user}")
+	previous = state_of(user)
+	store.record_beat(
+		user,
+		client,
+		room=room or None,
+		focused=bool(cint(focused)),
+		surface=surface,
+		thread=thread,
+		visibility=visibility,
+		ttl_seconds=tuning.presence_ttl_seconds,
+	)
 
 	current = state_of(user)
 	if current != previous:
@@ -169,8 +191,8 @@ def heartbeat(
 
 	return {
 		"state": current,
-		"ttl": PRESENCE_TTL_SECONDS,
-		"heartbeat_seconds": HEARTBEAT_SECONDS,
+		"ttl": tuning.presence_ttl_seconds,
+		"heartbeat_seconds": beat_seconds,
 		"typing_throttle_seconds": TYPING_THROTTLE_SECONDS,
 		"typing_expiry_seconds": TYPING_EXPIRY_SECONDS,
 		"room_presence": get_presence(room) if room else {},
@@ -191,9 +213,7 @@ def goodbye(client_id: str) -> dict[str, Any]:
 		return {"cleared": False}
 
 	previous = state_of(user)
-	try:
-		_cache().hdel(_user_key(user), client)
-	except Exception:
+	if not store.forget(user, client):
 		return {"cleared": False}
 
 	current = state_of(user)
@@ -276,22 +296,21 @@ def focus_state(
 
 
 def _clients(user: str) -> list[dict[str, Any]]:
-	"""Every client record for one user. ``[]`` on any cache failure — presence fails to off."""
-	if not user or user == "Guest":
-		return []
-	try:
-		values = _cache().hgetall(_user_key(user)) or {}
-	except Exception:
-		return []
-	records: list[dict[str, Any]] = []
-	for value in values.values():
-		if isinstance(value, dict):
-			records.append(value)
-	return records
+	"""Every client record for one user. ``[]`` on any cache failure.
+
+	**The dot fails to "offline"; the notifier does not.** That asymmetry is deliberate and
+	it is the one thing to understand about this function. A grey dot during a Redis outage
+	is a cosmetic wrong answer somebody shrugs at. Applying the same "assume nothing is
+	there" to *suppression* would be silent message loss — so the notifier calls
+	:func:`chat.notifications.presence.clients_for`, which returns an explicit
+	store-unavailable flag and fails toward notifying. Two readers, two failure directions,
+	on purpose.
+	"""
+	return store.raw_clients(user)
 
 
 def _user_key(user: str) -> str:
-	return f"{_PRESENCE_KEY}:{user}"
+	return store.user_key(user)
 
 
 def _publish_presence(user: str, state: str, room: str | None) -> None:

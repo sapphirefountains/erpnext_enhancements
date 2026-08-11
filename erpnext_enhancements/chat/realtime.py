@@ -117,6 +117,12 @@ EVENT_ROOM_UPDATED: Final[str] = "chat_room_updated"
 #: User room (``publish_user_counter``):
 EVENT_UNREAD_UPDATED: Final[str] = "chat_unread_updated"
 EVENT_MENTION: Final[str] = "chat_mention"
+#: Phase 4. Published whenever a read lands on ANY surface, carrying the new high-water mark
+#: and the notification rows it cleared. This is what makes every other tab and the floating
+#: bubble converge without a refresh — and it is a **user-room** event on purpose: a read is
+#: one person's private state, it spans rooms, and it must reach the reader's Desk tab where
+#: no chat document room has been joined.
+EVENT_NOTIFICATION_STATE: Final[str] = "chat_notification_state"
 
 #: Every event name this package may publish, as one set. The SPA generates its handler map
 #: from the same list (``public/js/chat/events.js``) so a name added on one side and not the
@@ -139,6 +145,7 @@ ALL_EVENTS: Final[frozenset[str]] = frozenset(
 		EVENT_ROOM_UPDATED,
 		EVENT_UNREAD_UPDATED,
 		EVENT_MENTION,
+		EVENT_NOTIFICATION_STATE,
 	}
 )
 

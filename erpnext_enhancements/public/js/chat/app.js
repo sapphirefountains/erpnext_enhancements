@@ -25,6 +25,7 @@ import {
 	ensureClientId,
 	typingLabel,
 } from "./signals.js";
+import * as push from "./push.js";
 import { ChatSocket } from "./socket.js";
 import { M, boot, call, upload } from "./transport.js";
 import { VirtualTranscript } from "./virtual_list.js";
@@ -118,6 +119,13 @@ class ChatApp {
 		this.socket.connect();
 		this.startHeartbeat();
 		this.bindGlobalEvents();
+
+		// Attach to push if — and only if — permission was granted previously. NEVER prompts:
+		// requestPermission() without a user gesture is the fastest way to have everybody press
+		// Block once, and the browser remembers "denied" permanently with no API to ask again.
+		// Re-attaching on every load is also what keeps the subscription alive, because the
+		// server moves `last_seen` on each registration and the 60-day sweep measures that.
+		push.ensure();
 
 		await this.routeTo(location.pathname, location.search, {
 			handoff: readHandoff({ session: sessionStorage, local: localStorage }, Date.now()),
@@ -690,6 +698,13 @@ class ChatApp {
 		this.state.thread = null;
 		this.readBatcher.reset();
 		this.typingIn.clearAll();
+
+		// Report the switch now rather than at the next beat. Until the server hears about it,
+		// it still believes this tab is watching the room we just left — so a message arriving
+		// there would be suppressed for somebody who has moved on, and a message arriving HERE
+		// would notify somebody who is staring at it. Not awaited: the room must render at the
+		// speed of the room fetch, not of a presence write.
+		this.beatPresence();
 
 		const detail = await call(M.ROOM, { room });
 		this.state.roomDetail = detail;
@@ -1470,7 +1485,13 @@ class ChatApp {
 		if (!this.readBatcher.shouldFlush(now, force)) return;
 		const seq = this.readBatcher.take(now);
 		if (!seq) return;
-		call(M.MARK_READ, { room: this.state.room, up_to_seq: seq }, { keepalive: !!force })
+		const room = this.state.room;
+		// Clear this device's own banners immediately rather than waiting for the data push the
+		// server sends to the person's OTHER devices to come back round to us. Reading a room
+		// with its own notification still sitting in the tray is the thing people describe as
+		// "the notifications are stuck".
+		push.clearRoom(room);
+		call(M.MARK_READ, { room: room, up_to_seq: seq }, { keepalive: !!force })
 			.then((res) => res && this.readBatcher.acknowledge(res.last_read_seq))
 			.catch(() => {
 				/* the next flush carries the same or a higher value; nothing is lost */
@@ -1639,6 +1660,18 @@ class ChatApp {
 	async resync(reason) {
 		this.typingIn.clearAll();
 		this.renderTyping();
+
+		// Re-beat FIRST, before the refetch, and do not await it.
+		//
+		// Every production deploy runs `redis-cli -p 13000 FLUSHDB` and restarts the bench, so
+		// presence is guaranteed wiped on every release and every socket drops. Waiting out the
+		// 20s timer would mean everybody is classified "absent" — and therefore notified about
+		// everything — for up to a full interval after each deploy. Beating on reconnect bounds
+		// that window to reconnect latency instead, which is the whole reason
+		// `collab/live_form_sync.js` binds `realtime.on("connect")` to `_on_reconnect()`; this
+		// is the same shape for the same reason.
+		this.beatPresence();
+
 		try {
 			this.state.rooms = (await call(M.ROOMS, { include_archived: this.state.showArchived ? 1 : 0 })) || [];
 			this.indexRooms();
@@ -1725,28 +1758,60 @@ class ChatApp {
 
 	// ------------------------------------------------------------------ presence heartbeat
 
-	startHeartbeat() {
-		const beat = () => {
-			if (!this.me) return;
-			call(M.HEARTBEAT, {
-				client_id: this.clientId,
-				active_room: this.state.room || null,
-				thread: this.state.thread || null,
-				focused: document.hasFocus() ? 1 : 0,
-				visibility: document.visibilityState,
+	/**
+	 * Report this tab's liveness and focus.
+	 *
+	 * Called on a timer AND out of band, and the out-of-band calls are the ones that matter.
+	 * The server decides whether a message notifies from the last record this tab wrote, so
+	 * between an alt-tab and the next scheduled beat the server believes something that
+	 * stopped being true — up to a whole interval of either pinging somebody who is looking
+	 * at the screen, or staying silent for somebody who has gone. Transitions users notice
+	 * have to be sub-second; the interval only maintains liveness.
+	 *
+	 * `surface: "app"` is what tells the server this is the chat SPA rather than the bubble.
+	 * A record with no active room from the bubble means "at their desk, chat closed"; the
+	 * same record from the SPA would mean something else, and the two are different rows of
+	 * the suppression table.
+	 */
+	beatPresence() {
+		if (!this.me) return Promise.resolve(null);
+		return call(M.HEARTBEAT, {
+			client_id: this.clientId,
+			active_room: this.state.room || null,
+			thread: this.state.thread || null,
+			focused: document.hasFocus() && document.visibilityState === "visible" ? 1 : 0,
+			visibility: document.visibilityState,
+			surface: "app",
+		})
+			.then((res) => {
+				if (!res) return null;
+				// The server owns the cadence. Reading it back rather than hardcoding is what
+				// stops the client beating every 30s under a 55s TTL after somebody retunes one
+				// side — which would not fail, it would just start dropping people to "absent"
+				// between beats and over-notify them forever.
+				const seconds = Number(res.heartbeat_seconds) || 0;
+				if (seconds > 0 && seconds * 1000 !== this._heartbeatMs) this.restartHeartbeat(seconds * 1000);
+				if (res.room_presence) {
+					this.state.presence = res.room_presence;
+					this.renderPresence();
+				}
+				return res;
 			})
-				.then((res) => {
-					if (res && res.room_presence) {
-						this.state.presence = res.room_presence;
-						this.renderPresence();
-					}
-				})
-				.catch(() => {
-					/* presence is an accelerator; a failed beat expires by TTL */
-				});
-		};
-		beat();
-		this._heartbeat = setInterval(beat, 30000);
+			.catch(() => {
+				/* presence is an accelerator; a failed beat expires by TTL */
+				return null;
+			});
+	}
+
+	startHeartbeat() {
+		this.beatPresence();
+		this.restartHeartbeat(this._heartbeatMs || 20000);
+	}
+
+	restartHeartbeat(ms) {
+		this._heartbeatMs = ms;
+		if (this._heartbeat) clearInterval(this._heartbeat);
+		this._heartbeat = setInterval(() => this.beatPresence(), ms);
 	}
 
 	// ------------------------------------------------------------------ members
@@ -2004,11 +2069,23 @@ class ChatApp {
 		// Forced read flushes (§4.7). `pagehide` uses fetch(keepalive) rather than sendBeacon:
 		// a beacon cannot set the CSRF header, so Frappe rejects it — which is exactly how "it
 		// never marks the last message read when I close the tab" happens.
-		window.addEventListener("blur", () => this.flushRead(true));
-		window.addEventListener("focus", () => this.evaluateReadState());
+		// Every one of these also re-beats presence, immediately. The suppression decision is
+		// made server-side from the last record this tab wrote, so a focus change that waits
+		// for the next scheduled beat leaves the server deciding on something that has stopped
+		// being true — which is how somebody gets pinged about the message already on their
+		// screen, and how somebody who walked away gets nothing.
+		window.addEventListener("blur", () => {
+			this.flushRead(true);
+			this.beatPresence();
+		});
+		window.addEventListener("focus", () => {
+			this.evaluateReadState();
+			this.beatPresence();
+		});
 		document.addEventListener("visibilitychange", () => {
 			if (document.visibilityState === "hidden") this.flushRead(true);
 			else this.resync("visible");
+			this.beatPresence();
 		});
 		window.addEventListener("pagehide", () => {
 			this.flushRead(true);
