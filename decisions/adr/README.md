@@ -36,3 +36,9 @@ one, so the history of the reasoning survives.
 | [0007](0007-tolerate-mixed-indentation.md) | Tolerate mixed indentation rather than reformat | Accepted, temporary |
 | [0008](0008-global-assets-ship-as-bundles.md) | Global browser assets ship as esbuild bundles, not raw `/assets` paths | Accepted |
 | [0009](0009-erpnext-google-chat-triton.md) | Employee chat is a module in this app, mirrored to Google Chat, with Triton on `@triton` | Accepted |
+| [0009-A1](0009-addendum-1-phase-5-decisions.md) | Addendum: what Phase 5 decided, and where the build diverged from the plan | Accepted |
+
+0009 carries two appendices linked from the record itself — the widget behaviour inventory and
+the file-by-file implementation plan — and one **addendum**. The addendum is listed above
+because it is a decision record rather than a reference: 0009 is immutable, so the choices its
+§I deferred to Phase 5 had to land somewhere that a reader of 0009 can find.

@@ -104,7 +104,43 @@
   "tier_t0_enabled",
   "tier_t1_enabled",
   "tier_t2_enabled",
-  "tier_t3_enabled"
+  "tier_t3_enabled",
+  "retrieval_section",
+  "retrieval_top_k",
+  "max_candidate_chunks",
+  "max_rooms_per_retrieval",
+  "rrf_k",
+  "recency_half_life_days",
+  "column_break_retrieval",
+  "lexical_tier_enabled",
+  "semantic_tier_enabled",
+  "context_cache_ttl_seconds",
+  "retrieval_lock_ttl_seconds",
+  "indexing_section",
+  "embedding_model",
+  "embedding_dim",
+  "embedding_version",
+  "max_embed_failures",
+  "chunk_seal_tokens",
+  "chunk_seal_messages",
+  "chunk_seal_gap_minutes",
+  "chunk_idle_tail_minutes",
+  "column_break_indexing",
+  "digest_dirty_message_threshold",
+  "digest_dirty_minutes",
+  "digest_batch_rooms",
+  "digest_room_target_tokens",
+  "thread_digest_min_messages",
+  "digest_full_rebuild_generations",
+  "digest_full_rebuild_days",
+  "digest_max_rebuild_failures",
+  "digest_staleness_alert_minutes",
+  "triton_behaviour_section",
+  "triton_reply_exempt_from_confirmation",
+  "inline_citations_enabled",
+  "column_break_triton_behaviour",
+  "triton_ack_deadline_seconds",
+  "triton_degrade_without_erpnext_link"
  ],
  "fields": [
   {
@@ -758,6 +794,242 @@
    "fieldname": "tier_t3_enabled",
    "fieldtype": "Check",
    "label": "Tier T3 Enabled (authored)"
+  },
+  {
+   "fieldname": "retrieval_section",
+   "fieldtype": "Section Break",
+   "label": "Triton Retrieval"
+  },
+  {
+   "default": "24",
+   "description": "How many chunks survive ranking and are offered to the assembler. The token budget, not this number, decides how many actually fit - this is the ceiling on how much the ranker is asked to hand over.",
+   "fieldname": "retrieval_top_k",
+   "fieldtype": "Int",
+   "label": "Retrieval Top K"
+  },
+  {
+   "default": "8000",
+   "description": "Upper bound on the candidate set AFTER the permission filter and BEFORE scoring. In-process cosine over a few thousand vectors is microseconds; over a hundred thousand it is visible in a web worker's profile. The vector backend's revisit trigger is written against this filtered number rather than the corpus size, precisely because the filter runs first.",
+   "fieldname": "max_candidate_chunks",
+   "fieldtype": "Int",
+   "label": "Max Candidate Chunks"
+  },
+  {
+   "default": "0",
+   "description": "Cap on how many of the asking person's rooms one retrieval may span. 0 means no cap. This narrows and can never widen: it is applied to the room set the gate derived from membership, never to a set a caller supplied. Someone in two hundred rooms is the case it exists for.",
+   "fieldname": "max_rooms_per_retrieval",
+   "fieldtype": "Int",
+   "label": "Max Rooms Per Retrieval"
+  },
+  {
+   "default": "60",
+   "description": "The constant in Reciprocal Rank Fusion, which is how the semantic and lexical tiers are combined. Deliberately NOT a weighted sum of raw scores: a cosine similarity and a FULLTEXT relevance score are not on the same scale and never will be, so adding them means the tier with the larger numbers wins by accident. RRF combines RANKS, which are comparable.",
+   "fieldname": "rrf_k",
+   "fieldtype": "Int",
+   "label": "RRF K"
+  },
+  {
+   "default": "30",
+   "description": "How fast an older chunk's score decays. A half-life rather than a cutoff, so an old but exactly-right answer is discounted instead of erased.",
+   "fieldname": "recency_half_life_days",
+   "fieldtype": "Int",
+   "label": "Recency Half-Life (days)"
+  },
+  {
+   "fieldname": "column_break_retrieval",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "The FULLTEXT half of retrieval, and it is MANDATORY rather than a fallback: it is what makes an exact invoice number outrank a chunk that is merely about invoices. Switching it off degrades exact-match lookup to nothing, silently. Note that a FULLTEXT index sees COMMITTED rows only, so a chunk sealed in the current transaction is not findable until it commits.",
+   "fieldname": "lexical_tier_enabled",
+   "fieldtype": "Check",
+   "label": "Lexical Tier Enabled"
+  },
+  {
+   "default": "1",
+   "description": "The embedding half. Off means retrieval still works through the lexical tier alone, which is the correct degradation when the embedding provider is unavailable - an answer from exact matches beats no answer.",
+   "fieldname": "semantic_tier_enabled",
+   "fieldtype": "Check",
+   "label": "Semantic Tier Enabled"
+  },
+  {
+   "default": "900",
+   "description": "How long an assembled context is cached. The three-value watermark is IN the key, so a message, an edit or a delete invalidates it immediately and this TTL only bounds how long an untouched room's context survives. Note the cache Redis runs an LRU eviction policy and a deploy flushes it, so every consumer must treat a miss as normal.",
+   "fieldname": "context_cache_ttl_seconds",
+   "fieldtype": "Int",
+   "label": "Context Cache TTL (s)"
+  },
+  {
+   "default": "30",
+   "description": "The stampede guard. Two turns asking the same question in the same room at once should build the context once. After the poll budget expires the loser BUILDS ANYWAY rather than blocking the user - a slow answer is a cost, a missing one is a bug.",
+   "fieldname": "retrieval_lock_ttl_seconds",
+   "fieldtype": "Int",
+   "label": "Retrieval Lock TTL (s)"
+  },
+  {
+   "fieldname": "indexing_section",
+   "fieldtype": "Section Break",
+   "label": "Triton Indexing"
+  },
+  {
+   "default": "gemini-embedding-001",
+   "description": "Stored on every chunk and compared before scoring. Cosine similarity between vectors from two different models is a number with no meaning, and it looks exactly like a number with meaning.",
+   "fieldname": "embedding_model",
+   "fieldtype": "Data",
+   "label": "Embedding Model",
+   "length": 140
+  },
+  {
+   "default": "1536",
+   "description": "Output dimension. Anything other than the model's native size is a Matryoshka truncation and MUST be re-normalised after truncating (v divided by its norm) - skipping that silently corrupts cosine similarity and produces plausible-looking but subtly wrong retrieval, which is the worst failure shape available. Changing this requires bumping Embedding Version and re-embedding.",
+   "fieldname": "embedding_dim",
+   "fieldtype": "Int",
+   "label": "Embedding Dim"
+  },
+  {
+   "default": "1",
+   "description": "Bump when the embedding pipeline changes in a way that invalidates stored vectors. It is part of every vector cache key, which is what makes an invalidation actually invalidate.",
+   "fieldname": "embedding_version",
+   "fieldtype": "Int",
+   "label": "Embedding Version"
+  },
+  {
+   "default": "3",
+   "description": "Consecutive failures before a chunk stops being retried. It stays reachable through the lexical tier. A permanently failing chunk must not be retried once a minute forever.",
+   "fieldname": "max_embed_failures",
+   "fieldtype": "Int",
+   "label": "Max Embed Failures"
+  },
+  {
+   "default": "1200",
+   "description": "Seal a chunk once it reaches this size. One of five boundary conditions - the others are message count, a conversation gap, a thread boundary, and an idle tail.",
+   "fieldname": "chunk_seal_tokens",
+   "fieldtype": "Int",
+   "label": "Chunk Seal Tokens"
+  },
+  {
+   "default": "20",
+   "fieldname": "chunk_seal_messages",
+   "fieldtype": "Int",
+   "label": "Chunk Seal Messages"
+  },
+  {
+   "default": "45",
+   "description": "A silence this long ends the chunk. Two hours apart is two conversations even when it is the same two people.",
+   "fieldname": "chunk_seal_gap_minutes",
+   "fieldtype": "Int",
+   "label": "Chunk Seal Gap (min)"
+  },
+  {
+   "default": "30",
+   "description": "How long the open tail of a room must be quiet before it is sealed on age alone. The tail is deliberately NOT in the semantic index until it seals: embedding it would cost one embedding call per chat message, which is the largest avoidable cost in the design. The current room's tail is carried verbatim by the thread tier and other rooms' tails are reachable lexically, so the gap this leaves is bounded by the digest cadence.",
+   "fieldname": "chunk_idle_tail_minutes",
+   "fieldtype": "Int",
+   "label": "Chunk Idle Tail (min)"
+  },
+  {
+   "fieldname": "column_break_indexing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "25",
+   "description": "A room this many messages past its digest watermark is summarised on the next pass. With the age trigger below, worst-case staleness is about twenty minutes.",
+   "fieldname": "digest_dirty_message_threshold",
+   "fieldtype": "Int",
+   "label": "Digest Dirty Messages"
+  },
+  {
+   "default": "15",
+   "description": "A room with any unsummarised message older than this is summarised even if it has not reached the message threshold - otherwise a quiet room never gets a digest at all.",
+   "fieldname": "digest_dirty_minutes",
+   "fieldtype": "Int",
+   "label": "Digest Dirty Age (min)"
+  },
+  {
+   "default": "20",
+   "description": "Rooms per scheduler pass. The pass is a BATCH over a dirty predicate and never a per-message enqueue: deduplicate=True drops a new enqueue when an existing job is QUEUED *or* STARTED, so in a busy room the digest job is always running, the drop always happening, and the digest never advances - silently, with one ERROR line and a return.",
+   "fieldname": "digest_batch_rooms",
+   "fieldtype": "Int",
+   "label": "Digest Batch Rooms"
+  },
+  {
+   "default": "400",
+   "fieldname": "digest_room_target_tokens",
+   "fieldtype": "Int",
+   "label": "Room Digest Target Tokens"
+  },
+  {
+   "default": "40",
+   "description": "A thread shorter than this gets no digest: the thread tier carries it verbatim, and a summary would be strictly worse than the text it replaces.",
+   "fieldname": "thread_digest_min_messages",
+   "fieldtype": "Int",
+   "label": "Thread Digest Min Messages"
+  },
+  {
+   "default": "20",
+   "description": "Roll forward this many times, then rebuild from source. A summary of a summary of a summary drifts from the transcript in ways nothing measures.",
+   "fieldname": "digest_full_rebuild_generations",
+   "fieldtype": "Int",
+   "label": "Full Rebuild After Generations"
+  },
+  {
+   "default": "90",
+   "description": "A covered span older than this forces a full rebuild even when nothing is stale.",
+   "fieldname": "digest_full_rebuild_days",
+   "fieldtype": "Int",
+   "label": "Full Rebuild After (days)"
+  },
+  {
+   "default": "3",
+   "description": "The poison-pill guard. At this many consecutive failures the digest is marked Poisoned, stops being scheduled and raises an alert. Poisoned is a SEPARATE flag from Is Stale on purpose: 'nobody has rebuilt this yet' and 'this cannot be rebuilt' need different answers from an operator.",
+   "fieldname": "digest_max_rebuild_failures",
+   "fieldtype": "Int",
+   "label": "Max Rebuild Failures"
+  },
+  {
+   "default": "60",
+   "description": "Alert when the newest digest anywhere is older than this. The failure being watched for is not an error - it is silence.",
+   "fieldname": "digest_staleness_alert_minutes",
+   "fieldtype": "Int",
+   "label": "Digest Staleness Alert (min)"
+  },
+  {
+   "fieldname": "triton_behaviour_section",
+   "fieldtype": "Section Break",
+   "label": "Triton Behaviour"
+  },
+  {
+   "default": "1",
+   "description": "Whether Triton's conversational answer to a mention may be posted without a human confirmation card. The standing rule is that any AI tool mutating an external system routes through the pending-action flow, and a Google Chat post is such a mutation - but applied literally it renders an approval card asking permission to answer somebody, which is a broken chat bot rather than a security boundary. The exemption is deliberately narrow and is bolted down in code: the reply may target ONLY the room and thread of the triggering mention (never a room derived from model output), it is posted by the bot identity so it cannot impersonate the human, and it still writes an invocation-log row - 'not confirmed' never means 'not recorded'. Everything else Triton does from a chat turn stays gated. Switching this off does NOT gate the reply; it disables @triton until an approval surface exists inside Google Chat.",
+   "fieldname": "triton_reply_exempt_from_confirmation",
+   "fieldtype": "Check",
+   "label": "Triton's Own Reply Is Exempt From Confirmation"
+  },
+  {
+   "default": "1",
+   "description": "Render [[ref:N]] markers in Triton's answer as live links. The manifest is known before generation and streams first, so links resolve as tokens arrive. Anchors are built with DOM APIs and never innerHTML; URLs are resolved SERVER-side, which is what stops a model-authored javascript: or cross-room link becoming a live anchor. Off degrades to today's behaviour exactly.",
+   "fieldname": "inline_citations_enabled",
+   "fieldtype": "Check",
+   "label": "Inline Citations Enabled"
+  },
+  {
+   "fieldname": "column_break_triton_behaviour",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "30",
+   "description": "Google's hard deadline for an interaction response. The webhook acknowledges and enqueues well inside it and NEVER answers inline - a handler that does retrieval inline works in development and times out under load. This value is here so the budget is visible, not so it can be raised: raising it does not move Google's deadline.",
+   "fieldname": "triton_ack_deadline_seconds",
+   "fieldtype": "Int",
+   "label": "Interaction Ack Deadline (s)"
+  },
+  {
+   "default": "0",
+   "description": "Every person Triton acts for must have completed the ERPNext OAuth link, or the turn dies before the first token - the client raises on a user-scoped construction with no grant, and on the streaming path that surfaces as a generic failure rather than a 'link ERPNext' prompt. OFF means such a mention gets an explicit, actionable refusal in-thread. ON is not implemented as 'answer anyway with system credentials' and never will be: that is exactly the superuser service account the design forbids.",
+   "fieldname": "triton_degrade_without_erpnext_link",
+   "fieldtype": "Check",
+   "label": "Answer Without An ERPNext Link"
   }
  ],
  "index_web_pages_for_search": 0,

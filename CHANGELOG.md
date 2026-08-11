@@ -7,6 +7,484 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.1] - 2026-08-11
+
+### Fixed
+
+- **The interaction webhook read the request body twice.** v1.274.0 added Phase 5's dispatch
+  by calling a new `_verified_payload()` beside the existing `_peek_event_type()`, and both
+  called `request.get_data()`. Two body copies on an endpoint anybody on the internet can post
+  to, on the request path where the payload is attacker-sized by definition.
+- Collapsed into one read: `_verified_payload()` parses once, and `_event_type_of(payload)` is
+  now pure and takes the parsed dict.
+
+### Notes
+
+- **Caught by `tests/test_chat_webhook_verify.py`, which traces every touch of the request and
+  asserts the sequence is exactly `["settings", "verify", "body"]`.** That test was written in
+  Phase 1 to pin *ordering* — verify before any body access, no database write on the way out —
+  and it caught a second read four phases later because it asserts the whole trace rather than
+  the property it was aimed at. Worth noting as a pattern: the assertion that pins the shape
+  catches the regression the assertion that pins the rule would have missed.
+- It also caught a process failure of mine: I ran a chosen subset of the chat suites locally
+  rather than the full CI set, and this one was not in the subset. The set is 32 pytest steps
+  and several unittest steps; running them selectively is how a regression reaches CI.
+
+## [1.277.0] - 2026-08-11
+
+The bench suite that carries Phase 5's security claims, and the addendum recording what the
+phase decided and where it diverged from the plan. No behaviour change.
+
+### Added
+
+- **`tests/test_chat_triton_bench.py`** — bench-required, **not run in CI**. The room
+  boundary (T5-2, T5-5, T5-8, T5-9, T5-11), the fail-closed audit (T5-10, T5-16), the
+  three-value watermark (D6), the two identities (I13), the FULLTEXT index, budget and
+  assembly on real rows, and a fifteen-question evaluation set.
+- **`decisions/adr/0009-addendum-1-phase-5-decisions.md`**, linked from the ADR index and from
+  `chat/README.md`. ADR 0009 is immutable, so the decisions its §I deferred to Phase 5 had to
+  land somewhere a reader of 0009 can find.
+
+### Notes
+
+- **One test in that suite matters more than the rest**, and it says so:
+  `test_a_non_members_message_appears_in_no_tier`. Every other Phase 5 failure produces a
+  wrong answer, which somebody notices. That one produces a correct answer delivered to the
+  wrong reader — no exception, no symptom, no complaint. It asserts on the **rendered bytes**
+  rather than a row count, because the failure being guarded is "the text reached the model"
+  and a count can be right while the bytes are wrong.
+- **The audit test breaks the chain lock rather than monkeypatching the insert.** Two
+  overlapping privileged reads, or a lock held by a crashed connection, is the realistic
+  failure; a patched insert tests the patch.
+- **The watermark group carries its own control.** `test_a_seq_only_watermark_would_miss_both`
+  asserts that `seq` does *not* move on an edit — without it, the two tests above it could
+  pass because the key changed for some incidental reason rather than because of the edit.
+- **The evaluation set records a baseline; it does not gate.** Retrieval quality has no
+  threshold anybody can defend in advance, and a test pinning which chunk ranks first makes
+  every tuning change a red build — which makes tuning expensive, which means it stops
+  happening. Two things *are* asserted, because they are bugs at any quality level: nothing
+  leaks across the room boundary, and a question the corpus cannot answer does not come back
+  with a fistful of citations. The last question in the set has no answer on purpose.
+- **The addendum records three corrections, one of them to this changelog.** `SINV-04412` does
+  not survive as a single search term — InnoDB splits the stored body the same way, so the
+  mechanism is a required conjunction of both parts. CQ-14 was answered on 2026-08-10 and
+  v1.272.0 said otherwise. And `Citation.as_dict` was keyed on a field the renderer discards.
+- **The addendum's §2 exists so the divergences are not "fixed" back.** The recurring failure
+  mode in this repository is somebody seeing a deliberate construct, assuming it is an
+  oversight, and reverting it — and six of Phase 5's constructs contradict something written
+  down in the plan.
+
+## [1.276.0] - 2026-08-11
+
+Citations reach the renderer that has been waiting for them since Phase 3, and the rollout
+task that will otherwise present as a Phase 5 bug gets a report.
+
+### Fixed
+
+- **The Python manifest emitted keys the client discards.** `Citation.as_dict` produced
+  `ref`/`kind`; `public/js/chat/citations.js` — written eight days earlier — indexes on
+  `entry.k` and switches on `citation.type`, and its `indexManifest` **silently drops** any
+  entry whose `k` is not a positive integer. So nothing would have raised: every citation
+  would have been a miss, every `[[ref:N]]` marker stripped, and the answer would have
+  rendered as prose with no numbers and no indication there were meant to be any. The wire
+  shape now matches the renderer, and `tests/test_chat_retrieval_pure.py` asserts the keys
+  against `citations.js`'s own source rather than against a copy of the contract.
+- **`manifest_backed_source_chips` gated a decision that was already made.** v1.273.0 shipped
+  it **off** on the belief that CQ-14 was open. It is not: the manifest-backed sources row —
+  full retrieved set, cited entries marked and sorted first — was approved on **2026-08-10**
+  and recorded in v1.265.0, and Phase 3 built it. A settings switch that defaults to
+  disabling an approved, shipped behaviour is the lying-settings-field trap v1.270.0 removed
+  from the presence constants. The field is deleted.
+
+### Added
+
+- `Triton Invocation Log.citations` — the manifest as JSON, joined to the answer by
+  `answer_message`.
+- `chat.api.history._attach_citations` — the bulk hydrator, called from every transcript path
+  beside `_attach_mentions`, and `message_payload` now always emits a `citations` key.
+- **`chat/rollout.py`** — `bench execute
+  erpnext_enhancements.chat.rollout.erpnext_link_report`: who can use `@triton` and who has
+  not linked ERPNext yet, with the roster taken from the pilot whitelist when it is on.
+
+### Notes
+
+- **The manifest lives on the invocation log, not on `Chat Message`.** The hot table must not
+  grow a column that is null for every message but one sender's, and a manifest is metadata
+  about a *turn*, which is what that table is for.
+- **No `snippet` in the manifest, deliberately.** The client renders one in the tooltip if
+  present, and a snippet is message text — putting it there would carry conversation into the
+  one chat table that is content-free by construction. The label says who and which room;
+  clicking is what shows the message, through the deep link, under the full permission check.
+- **The hydrator is membership-scoped, and that matters more than it looks.** A citation label
+  carries a person's name and a room's identity, so an unscoped read here would leak who is
+  talking to whom without leaking a single body.
+- **It is the one hydrator that degrades rather than failing the page.** Citations are an
+  enrichment; mentions and attachments are part of the message. A failure here returns
+  silently and the transcript renders exactly as it did in Phase 3.
+- **The readiness report imports the handler's predicate rather than re-implementing it.** A
+  report that answered "who is ready" differently from the code deciding "can this turn run"
+  would be worse than no report — confidently wrong at the moment somebody trusted it and told
+  twenty people they were ready. `has_erpnext_link` is public for exactly that reason.
+- **The report states what it cannot see.** ERPNext is the OAuth *provider*, so a grant here is
+  authoritative about this side only; a Triton-side restore would leave it saying yes while
+  the turn still fails. It also does not send anything — listing who needs an email is useful,
+  sending it from a `bench execute` is a decision for somebody's own hands.
+- The roster is the **pilot whitelist** when that is on, otherwise active room members — never
+  "every enabled user". The number in front of the reader decides whether this is a task:
+  "12 people need to click a button" is an afternoon, "180" is a reason to abandon it.
+
+## [1.275.0] - 2026-08-11
+
+The index writer. Until this, the retrieval gate had nothing to search — chunks and digests
+were tables nothing filled, and `@triton` would have answered from the current thread alone
+while appearing to have searched.
+
+### Added
+
+- **`chat/indexing/indexer.py`** — `sweep_chunks` (every 10 min) reads messages past each
+  room's derived watermark and writes sealed chunks; `sweep_embeddings` backfills vectors.
+- **`chat/indexing/digest.py`** — `sweep_digests` (every 5 min) rewrites room summaries for
+  rooms matching a **derived** dirty predicate, and summarises threads past the length
+  threshold; `check_digest_staleness` (hourly at `:35`) alerts when the newest digest anywhere
+  is older than the window.
+- **`chat/indexing/invalidate.py`** — the staleness writer the Phase 2 seam has been waiting
+  for. `chat.seams.mark_room_context_stale` now calls it, so an edit or delete marks every
+  overlapping chunk and digest stale immediately.
+- Four scheduler entries, **appended** to the existing `*/5` and `*/10` keys rather than given
+  new ones — `scheduler_events` is one dict literal and a duplicate key silently replaces the
+  earlier entry, which would have deleted the relay sweeper.
+- `SYSTEM_CONTEXT_PACKAGES` in the raw-SQL guard and `WRITER_PACKAGE` / `WRITER_ENTRY_POINTS`
+  in the gate scan, with the four assertions that make the writer package's exemption
+  structural.
+
+### Notes
+
+- **Chunking and embedding are separate jobs, and that is the load-bearing decision here.**
+  Chunking is cheap, local and always correct; embedding is a paid external call that can
+  fail, rate-limit or hang. Fused, an embedding outage stops the index advancing and a room's
+  history silently stops being searchable **at all** rather than only semantically. Split,
+  chunk rows keep landing, the lexical tier keeps finding them, and the vectors backfill.
+- **Both watermarks are derived rather than stored.** "Where did indexing get to" is
+  `max(last_seq)` over that room's chunks; "how far behind is the digest" is
+  `Chat Room.seq_high_water - digest.watermark_seq`. No cursor column, no counter on the
+  message write path. Derived is self-correcting — delete a chunk or a digest and the next
+  pass rebuilds it — and a `coalesce(..., 0)` makes a room with *nothing* indexed dirty by
+  definition, so the first pass needs no backfill script.
+- **Only sealed chunks are written; the open tail is left on the floor and re-read.** Writing
+  the tail unsealed and updating it per message gives the row a `content_hash` that changes
+  under a reader and reintroduces exactly the per-message cost the tail rule exists to avoid.
+- **A chunk insert colliding on `unique(room, first_seq)` is success**, not an error. Another
+  worker built the same chunk from the same messages, which is what a deterministic pure
+  chunker buys. Logging it would turn normal operation into noise.
+- **Invalidation is by overlap, not containment** — `first_seq <= to and last_seq >= from`.
+  Containment misses the case that actually happens: a multi-message delete spanning two
+  chunks contains neither. Rows are **marked, never deleted**: a deleted row still tells the
+  indexer that span is covered, so removing it silently re-opens a gap the watermark thinks is
+  closed.
+- **Thread digests are generated, not just read.** Leaving the gate reading a table nothing
+  writes would be the same defect as the four audit columns this phase just filled — a
+  feature that reads as "this never happens" rather than "nobody built the other half".
+- **Every freshness predicate binds `now_datetime()` rather than calling SQL `NOW()`.** The
+  database runs UTC and Frappe writes site-local, so `NOW()` here would make every room look
+  permanently dirty, the pass would rebuild everything every five minutes, and the only
+  symptom would be the model bill.
+- **The writer package is exempted from both source guards as a package, and pays four
+  prices**, each asserted in both files so deleting one guard does not silently remove the
+  other's precondition: no `@frappe.whitelist()` anywhere in it, every public function named
+  and justified individually, every one of those a registered scheduler job (bar the seam's
+  writer), and nothing under `chat/api/` importing it. Twenty per-function entries all making
+  the same argument would be twenty entries nobody re-reads, which is worse for a security
+  list than one entry somebody does.
+- `invalidate._rows_affected` exists as one helper rather than `select row_count()` inlined
+  three times, so the unresolved-target exemption is one entry rather than three copies of one
+  argument — and the count itself matters: an invalidation reporting nothing is
+  indistinguishable from one that matched nothing, and those need different responses.
+
+## [1.274.0] - 2026-08-11
+
+One `@triton` handler, reached from both origins, that physically cannot see which client
+asked. `@triton` now answers — behind `triton_enabled`, which ships **off**.
+
+### Added
+
+- **`chat/invoke/envelope.py`** — the frozen contract, its canonical form, and a
+  `request_id` **derived** from the mention rather than generated.
+- **`chat/invoke/normalize.py`** — both origins → one envelope. Two functions in one file, on
+  purpose: side by side, a field one sets and the other forgets is visible on one screen.
+- **`chat/invoke/handler.py`** — the one handler. Retrieves as the human, posts as the bot,
+  and writes the invocation-log row *before* any work so a job killed mid-turn leaves evidence.
+- **`chat/invoke/dispatch.py`** — acknowledge, dedupe, enqueue, inside Google's deadline.
+- **`chat/invoke/triton_client.py`** — the model turn, carrying the mentioning person's
+  identity.
+- `chat/gchat/webhook.handle` now dispatches after verifying; `chat.api.compose.send_message`
+  dispatches after storing. Both meet at the same envelope.
+
+### Notes
+
+- **The envelope has no origin field, and that is the guarantee.** "The handler must not
+  branch on origin" is a rule somebody has to keep; "there is no origin here" is a fact. Origin
+  *is* recorded — the normalisers write it to `Triton Invocation Log` — it simply never travels
+  with the question. Three source-level assertions pin it: the dataclass declares no such
+  field, `handle()` reads its `origin` parameter at most once (the call that opens the log
+  row), and the module contains neither origin name as a literal.
+- **No second world-reachable endpoint was created, diverging from Appendix B.** It specifies
+  `chat/invoke/webhook.py` with its own JWT verification; `chat/gchat/webhook.py` already *is*
+  that endpoint, and its path is baked into the audience Google mints against. A second one
+  means a second copy of an authentication boundary — and the copy that drifts is a
+  world-reachable open relay. The existing endpoint gained a dispatch call instead.
+- **Dispatch is called from the composer, not from a `doc_events` hook.** The enqueue itself is
+  safe, but a hook runs inside the inserting transaction on a web worker, and a hook is where
+  the next person adds the call that reaches Google — at which point a timeout becomes a
+  *failed message insert*. Invariant I1 stays intact.
+- **Dedupe is on the invocation-log row, not on `frappe.enqueue(deduplicate=True)`.** That flag
+  drops a new enqueue while an existing job is `QUEUED` *or* `STARTED`, so a second mention
+  arriving while the first is running would be silently swallowed — the same trap that makes
+  the digest pass a batch rather than a per-message enqueue.
+- **`_already_seen` fails *open* while everything else in this feature fails closed**, and the
+  asymmetry is deliberate: a duplicate answer costs a coworker seeing the same reply twice; a
+  swallowed turn is a mention that is never answered and that nobody can distinguish from
+  Triton ignoring them.
+- **The Triton client sets the session user before minting.** The token cache is keyed on the
+  session, and this runs in a background job whose session is `Administrator` — minting without
+  setting it would hand Triton a superuser token. The two-identity rule defeated by a cache key
+  is exactly the kind of failure that never looks like one.
+- **CQ-24 is implemented as "reuse the existing bridge"**, with the cost stated in the module:
+  the endpoint and its secret keep saying "erpnext" while serving Chat, and that same secret is
+  the telephony gateway's, so its blast radius is wider than its name suggests. The posture is
+  identical either way; a sibling bridge is ~150 lines in the other repository.
+- **An unlinked user gets a sentence they can act on**, in-thread, rather than the generic
+  failure the streaming path produces. This is the rollout task that will look like a Phase 5
+  bug: for ~50 people it is an afternoon of onboarding, but only if somebody schedules it.
+
+## [1.273.0] - 2026-08-11
+
+The retrieval gate — Phase 5's security boundary — and the six modules around it. Nothing
+calls it yet; the `@triton` handler is the next commit.
+
+### Added
+
+- **`chat/retrieval/gate.py`** — the only module in the app that may query the chat index.
+  `retrieve()` derives the room set from the caller's own membership and has no parameter by
+  which one can be supplied; `restrict_to` intersects and can only narrow.
+  `retrieve_for_oversight()` is a separate function, not a flag, and pays for its exemption
+  with the configured oversight role, a mandatory reason, explicit rooms and an audit row.
+- **`rank.py`, `budget.py`, `assemble.py`, `lexical.py`** — pure, stdlib-only.
+  RRF hybrid ranking; the token ceiling and the ordered degradation ladder; S0–S5 assembly in
+  prompt-cache order; the BOOLEAN MODE query builder.
+- **`vectors.py`** — the two-method `VectorBackend` adapter plus the numpy cosine
+  implementation, base64 `float32` storage, and normalisation asserted in both directions.
+- **`citations.py`** — the manifest, the tolerant `[[ref:N]]` parse, and **server-side** URL
+  resolution.
+- **`chat/indexing/chunker.py`** (pure, five boundary rules) and **`chat/indexing/embed.py`**
+  (Vertex AI over `requests`; no SDK).
+- **`chat/retrieval/api.py`** — the one whitelisted method, `get_chat_context`.
+- `tests/test_chat_retrieval_pure.py` (62 assertions, own pytest step), plus three new rules
+  in the source scan: exactly one whitelisted method in the package, it gates before it reads,
+  and it takes no `user` parameter.
+- `chat/gchat/auth.get_vm_access_token` — the VM's own identity, for the Google APIs that are
+  not Chat.
+
+### Changed
+
+- `Chat Retrieval Audit` now records `chunk_count`, `token_count`, `tiers_used` and
+  `context_truncated`. Those columns have existed since Phase 3 and **nothing has ever written
+  them** — a governance column that is always empty reads as "this never happens" rather than
+  "nobody fills this in". All four are added to the signed chain.
+
+### Notes
+
+- **The filter is applied twice on every statement**, and the second one is not ceremony. The
+  derived room set is the narrow bound; `permissions.membership_filter_sql` is the *same*
+  expression the permission hooks and the socket server use, so the raw path here cannot drift
+  from the hook path — and a drift on this seam is a leak rather than a bug. They are ANDed, so
+  the fragment can never widen the set. That is what makes the same statement safe on the
+  oversight path, where the fragment returns `1 = 1`.
+- **`retrieve(user="Administrator")` raises**, and so does `Guest`. Administrator
+  short-circuits the permission stack, so "every room" would be the literal, correct answer to
+  the room-set question — and the caller would never know it had asked a meaningless one.
+- **The audit row is written and committed before content is returned**, through the
+  fail-closed `record_or_refuse`. Nothing may move above that line: the trade decision #12
+  makes is a non-participant read in exchange for a record of it, and a read without the record
+  is the half nobody agreed to.
+- **The room set is never cached.** A room removal takes effect on the very next call, which is
+  the whole reason it is the one entry on the never-cache list.
+- **Rungs 1–3 of the ladder do not claim the view was cut; rungs 4 and 5 do.** Dropping the
+  least relevant chunks is retrieval working as designed, and announcing it would train users
+  to discount every answer. Losing the thread or falling to the hard floor is information being
+  withheld, and a model that answers silently from a cut view produces a confident wrong answer.
+- **The `__init__` re-export is lazy, through a module `__getattr__`, and that is load-bearing.**
+  An eager `from .gate import retrieve` would run `import frappe` the moment anything in the
+  package was imported — including `budget`, which imports nothing precisely so its arithmetic
+  can be tested without a bench. One eager import would move five pure modules out of the tier
+  CI runs and into the tier nothing runs.
+- **The vector adapter takes a candidate *loader* rather than running its own query**, because
+  the invariant outranks the signature: all chat SQL lives in the gate. The consequence is
+  stated rather than hidden — a future MariaDB-native vector backend cannot simply be dropped in
+  behind this interface; its query belongs in the gate too, or that rule gets revisited on
+  purpose.
+- **Three corrections the tests forced, each of which had been written down wrongly first.**
+  Unused T1 budget genuinely does reach T3 before anything is dropped, so a 20-item authored
+  tier is *not* a degradation case. `SINV-04412` becomes **two required terms**, not one:
+  InnoDB's tokenizer splits the stored body the same way, so an intact `sinv04412` term would
+  match nothing at all — requiring both parts is what makes the identifier findable. And the
+  oversight entry point must take explicit rooms, so Rule D exempts it conditionally and asserts
+  the four compensating controls instead of waving it through.
+- **`normalise` is applied on the way in and asserted on the way out.** The embedding model
+  returns unit-length vectors only at its native dimension; any other output dimension is a
+  Matryoshka truncation, and cosine similarity over non-unit vectors is a different function
+  that returns plausible numbers. It is the documented number-one mistake with this model family
+  and its failure shape is the worst available — retrieval keeps working and is subtly wrong.
+
+## [1.272.0] - 2026-08-11
+
+Phase 5's schema: the semantic index, the two digest tables, the invocation log, and the
+thirty-seven settings dials that size them. No behaviour yet — these are the tables the
+retrieval gate will read and the numbers an operator will retune without a deploy.
+
+### Added
+
+- **`Chat Context Chunk`** — a run of consecutive messages in **one** room, sealed at a
+  boundary, with one embedding. Volume is roughly messages ÷ 15. `body` holds the messages
+  verbatim, so it is treated exactly like `Chat Message`: zero DocPerm, no global search,
+  `track_changes = 0`, in the MCP denylist.
+- **`Chat Room Digest`** and **`Chat Thread Digest`** — rolling summaries, one per room and
+  one per long thread. The docname *is* the room / the thread root, so concurrent generation
+  is a failed insert rather than two summaries that disagree, and no `unique(...)` patch is
+  needed for either.
+- **`Triton Invocation Log`** — one row per `@triton` turn: context tokens, cached-content
+  tokens, candidate counts, citation misses, and four separate timings.
+- `patches/add_chat_phase5_indexes.py`, registered on both `after_migrate` and
+  `after_install`: `unique(room, first_seq)`, four composites, and a raw-DDL **FULLTEXT**
+  index on `Chat Context Chunk.body`.
+- Thirty-seven `Chat Settings` fields across three new sections — Triton Retrieval, Triton
+  Indexing, Triton Behaviour — plus `chat_settings_rules.validate_retrieval`, which refuses
+  the six combinations whose symptom is "the feature appears to work".
+
+### Notes
+
+- **A chunk never spans rooms, and that is the permission boundary rather than a chunking
+  heuristic.** The gate filters candidates on `room` in the `WHERE` clause before a vector is
+  loaded, so a two-room chunk is a chunk that *cannot be filtered* — it would be admitted by
+  membership of either room and carry the other one's content with it. `room` is `reqd` and
+  `set_only_once`, and the controller re-checks the span rather than trusting the writer,
+  because the writer is a background job that will be retried.
+- **`unique(room, first_seq)` is correctness, not speed.** Background jobs here are retried by
+  construction — a deploy FLUSHDBs the queue Redis, Frappe v16 wires no RQ retries, the
+  sweeper re-drives — so two workers building the same chunk is *scheduled* rather than
+  unlikely, and the result is the same conversation in the ranker's candidate set twice.
+- **The FULLTEXT index has no framework helper.** `frappe.db.add_index` emits a plain
+  `ADD INDEX`, which on a `longtext` column is a prefix index or an error, never a FULLTEXT
+  index. The lexical tier is mandatory rather than a fallback — it is what makes an exact
+  invoice number outrank a chunk merely *about* invoices — so a missing index does not degrade
+  gracefully, it silently deletes the half of retrieval that handles identifiers.
+  `VERIFY:` whether `bench migrate` drops a hand-added FULLTEXT index; the `after_migrate`
+  backstop is what makes the bad answer a one-migrate window instead of forever.
+- **The unsealed tail of every room is deliberately excluded from the semantic index**, and a
+  reviewer will challenge it, so the argument is in the controller docstring: embedding the
+  tail means one embedding call per chat message, which is the largest avoidable cost in the
+  design. The asking room's tail is carried verbatim by the thread tier, other rooms' tails
+  are reachable lexically, and the next digest pass folds them in. The residual gap is "a
+  semantic match in another room's last few minutes", bounded by the digest cadence.
+- **The dirty-room predicate is derived rather than counted — a deliberate divergence from
+  ADR §I.6.** The ADR specifies `unsummarized_count` and `digest_dirty_since` columns, which
+  implies two counters maintained on the message write path. This build computes the identical
+  predicate from facts the room already stores: `Chat Room.seq_high_water` minus the digest's
+  `watermark_seq` *is* the unsummarised count, and `last_message_at` against `generated_at`
+  *is* the dirty age. A counter is a second source of truth for a number already known, it
+  costs a write on the hottest path in the feature, and the copy that drifts is the one nobody
+  notices. Derived is self-correcting.
+- **`poisoned` is a separate flag from `is_stale` on both digest tables.** "Nobody has rebuilt
+  this yet" and "this cannot be rebuilt" need different answers from an operator, and
+  collapsing them means a permanently failing room looks identical to a busy one.
+- **The invocation log is instrumentation and fails *open*; the retrieval audit is audit and
+  fails *closed*.** Stated because the two tables look similar and the postures are opposite:
+  an audit that fails open is not an audit, and instrumentation that fails closed is an outage
+  caused by a metric.
+- Three of the CQ answers Phase 5 is waiting on are now **settings fields rather than code
+  paths**, so answering them later costs a checkbox rather than a release:
+  `triton_reply_exempt_from_confirmation` (CQ-18), `manifest_backed_source_chips` (CQ-14,
+  shipped **off** = today's chip row preserved byte for byte), and `context_token_ceiling`
+  (CQ-17, already present since Phase 1, now logged per turn).
+- `validate_retrieval` is **keyword-only**, unlike `validate_budgets`. Nineteen positional
+  integers is nineteen chances to transpose two that are plausible in either position —
+  `chunk_seal_messages` and `chunk_seal_tokens` being the obvious pair, where a swap makes
+  chunks a twentieth of the intended size with no error anywhere. A test asserts by AST that
+  the controller passes every dial the rule takes, because a forgotten one reads as its
+  signature default and is silently never validated.
+
+## [1.271.0] - 2026-08-11
+
+Phase 5 of the chat work begins with a commit that adds no capability: the two
+fences that ADR 0009 Appendix B requires green **before any search function
+exists**. A scan written after the code it polices is a scan that gets argued
+with, one exemption at a time, by an author who has already written the query.
+
+The security fix in here is live today and does not wait for the rest of Phase 5.
+
+### Added
+
+- **The generic AI tools now refuse every chat DocType, and the refusal cannot be
+  switched off.** `assistant_tools/_gate.py` gains `CHAT_DENYLIST_DOCTYPES` and a
+  new **first** branch in `_gated_execute` — above the confirm-flow bypass and
+  above the `ai_write_gating_enabled` check. Refusals name the one supported door
+  (`chat.retrieval.gate.retrieve`) rather than merely denying, and each one writes
+  an `AI Action Log` row, so an attempt to read chat through a generic tool is
+  evidence rather than silence.
+- `tests/test_chat_mcp_denylist.py` — bench-free, appended to the existing
+  multi-module unittest step because it needs the stub set
+  `test_assistant_tools_schema` installs. Four assertions: no chat DocType carries
+  a DocPerm row except the three documented exceptions; the denylist equals the
+  filesystem by **set equality**; the gate refuses with gating off, with the
+  bypass flag on, and never calls the underlying tool, including for eight
+  evasions of the SQL match; and the seam is still named `_safe_execute`.
+- `tests/test_chat_gate_source_scan.py` — bench-free, its own step. The Phase 5
+  index tables are nameable from exactly one file; every query builder in
+  `chat/retrieval/` must take `allowed_rooms` as a required first positional
+  parameter; the package exports exactly two symbols; and the entry point has no
+  parameter by which a caller supplies room ids.
+
+### Notes
+
+- **Withholding DocPerm closes two of the three surfaces and the third is the one
+  that matters.** `run_database_query`'s own stated security model is *"Restricted
+  to SELECT statements only. Requires System Manager role for security"* — a role
+  check and a read-only-SQL check, and nothing else. Raw SQL sits *underneath*
+  DocPerm, `permission_query_conditions` and `has_permission`, so no Frappe
+  permission mechanism touches it. Any answer that stops at "no DocPerm" leaves a
+  System Manager one ``select text, sender from `tabChat Message` `` away from
+  every private message on the site, delivered into a model's context window.
+- **"No DocPerm" is also not "unreachable" — it is "unreachable by everyone
+  except Administrator."** `frappe/permissions.py` short-circuits
+  `if user == "Administrator"` and allows everything, so a zero-DocPerm DocType
+  is still fully readable through the desk, `/api/resource` and `get_document`.
+- **Order is the invariant, and it is asserted on the source** because there is no
+  way to observe it from a passing call: both orders refuse while gating is on,
+  and only one refuses while it is off — which is the shipped state.
+  `ai_write_gating_enabled` defaults dormant, so a denylist below that check would
+  be off in production today. A refusal that a settings checkbox can disable is
+  not an invariant.
+- **The SQL match is coarse on purpose and over-refuses.** String-matching SQL
+  loses to backticks, case, comments, whitespace, `information_schema` and joins
+  in subqueries *if it tries to parse*. So it does not: the text is case-folded,
+  comments are stripped, everything that is not a word character is dropped, and
+  any chat table name appearing in the result refuses the whole call. Over-refusal
+  costs an analyst one rephrase. Under-refusal costs the invariant, silently.
+- **Appendix B's wording for the source scan is not the wording enforced, and the
+  divergence is deliberate.** The appendix says *"every SQL literal under
+  `chat/**` lives in `gate.py`"*. That was written before Phase 3 existed and is
+  now false by construction — `api/history.py`, `api/search.py`, `permissions.py`
+  and `health.py` all hold chat SQL legitimately, and
+  `tests/test_chat_rawsql_guard.py` already polices them per `(file, function,
+  table)` triple with a written justification each. Enforcing the sentence
+  literally would mean deleting that guard or exempting the whole package. What is
+  kept is the half carrying the security weight: **the retrieval path has one
+  door.** The general "is every chat query scoped or justified" question stays
+  where it already works.
+- Three tests in the source scan skip until `chat/retrieval/` exists. They are the
+  package-shaped rules; the app-wide rule and the analyser's own positive and
+  negative controls run now, and the controls are what make the suite able to fail
+  at all before the package lands.
+
 ## [1.270.2] - 2026-08-11
 
 Make the two chat retention settings actually retain anything. They have been on

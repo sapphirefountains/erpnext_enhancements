@@ -1,0 +1,282 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "autoname": "hash",
+ "creation": "2026-08-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "room",
+  "thread_root",
+  "sealed",
+  "column_break_head",
+  "first_seq",
+  "last_seq",
+  "message_count",
+  "span_section",
+  "first_message",
+  "first_message_at",
+  "column_break_span",
+  "last_message",
+  "last_message_at",
+  "body_section",
+  "body",
+  "participants",
+  "tokens_section",
+  "token_count",
+  "token_count_method",
+  "column_break_tokens",
+  "content_hash",
+  "embedding_section",
+  "embedding",
+  "column_break_embedding",
+  "embedding_model",
+  "embedding_dim",
+  "embedding_version",
+  "embedded_at",
+  "staleness_section",
+  "is_stale",
+  "stale_since",
+  "column_break_staleness",
+  "stale_from_seq",
+  "stale_to_seq",
+  "embed_failures",
+  "last_error"
+ ],
+ "fields": [
+  {
+   "description": "The room every message in this chunk belongs to. A chunk NEVER spans rooms - that is not a chunking heuristic, it is the permission boundary. The retrieval gate filters candidates on this column before a single vector is loaded, so a chunk covering two rooms would be a chunk that cannot be filtered.",
+   "fieldname": "room",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Room",
+   "options": "Chat Room",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "The thread this chunk is confined to, when it is. Empty means the room's main timeline. A thread boundary seals a chunk, because a reply three days later about a different subject is not continuous with the message above it in seq order.",
+   "fieldname": "thread_root",
+   "fieldtype": "Link",
+   "label": "Thread Root",
+   "options": "Chat Message",
+   "set_only_once": 1
+  },
+  {
+   "default": "0",
+   "description": "Sealed means finished: no further message will be appended and the chunk may be embedded. THE UNSEALED TAIL IS DELIBERATELY EXCLUDED FROM THE SEMANTIC INDEX. Embedding it would mean one embedding call per chat message, which is the largest avoidable cost in the design. What covers the tail instead: the current room's tail arrives verbatim in the thread tier, other rooms' tails are reachable through the lexical tier, and the next digest pass folds them in.",
+   "fieldname": "sealed",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Sealed"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The seq of the first message covered, inclusive. Unique with room by patch: a second chunk claiming the same starting message is a duplicate produced by a retried indexing job, and the index makes that a failed insert instead of two chunks the ranker will both return.",
+   "fieldname": "first_seq",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "First Seq",
+   "reqd": 1
+  },
+  {
+   "description": "The seq of the last message covered, inclusive. Indexed with room so the gate's range scan over a permission-filtered candidate set stays bounded - the design caps that set at 8,000 chunks, and it can only be capped if the range is indexed.",
+   "fieldname": "last_seq",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Last Seq",
+   "reqd": 1
+  },
+  {
+   "description": "How many messages the body was built from. Stored rather than derived because it is half of the watermark this chunk was sealed against: a hard delete inside the span changes the count without changing either seq bound.",
+   "fieldname": "message_count",
+   "fieldtype": "Int",
+   "label": "Message Count"
+  },
+  {
+   "fieldname": "span_section",
+   "fieldtype": "Section Break",
+   "label": "Span"
+  },
+  {
+   "fieldname": "first_message",
+   "fieldtype": "Link",
+   "label": "First Message",
+   "options": "Chat Message"
+  },
+  {
+   "description": "Origin time of the first message. Ordering is ALWAYS by seq and never by a timestamp; these two datetimes exist for the ranker's recency decay and for the human-readable label on a citation line.",
+   "fieldname": "first_message_at",
+   "fieldtype": "Datetime",
+   "label": "First Message At"
+  },
+  {
+   "fieldname": "column_break_span",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_message",
+   "fieldtype": "Link",
+   "label": "Last Message",
+   "options": "Chat Message"
+  },
+  {
+   "fieldname": "last_message_at",
+   "fieldtype": "Datetime",
+   "label": "Last Message At"
+  },
+  {
+   "fieldname": "body_section",
+   "fieldtype": "Section Break",
+   "label": "Body"
+  },
+  {
+   "description": "The chunk text: verbatim messages, each prefixed with its author and origin timestamp, in seq order. THIS IS EMPLOYEE-PRIVATE CONVERSATION and this table therefore ships with zero DocPerm, exactly like Chat Message. It is also the column the FULLTEXT index for the lexical tier is built over, by raw-DDL patch, because Frappe's DocType JSON cannot express one.",
+   "fieldname": "body",
+   "fieldtype": "Long Text",
+   "label": "Body"
+  },
+  {
+   "description": "JSON array of the User names who spoke in this chunk. Used by the ranker to boost a chunk the asking person participated in, and by the citation line. Not a permission input: membership decides what may be read, and speaking in a room is neither necessary nor sufficient for being in it.",
+   "fieldname": "participants",
+   "fieldtype": "Long Text",
+   "label": "Participants"
+  },
+  {
+   "fieldname": "tokens_section",
+   "fieldtype": "Section Break",
+   "label": "Tokens"
+  },
+  {
+   "description": "Computed ONCE at seal time, and every budgeting decision downstream is pure arithmetic over it. That is the risk worth stating: a systematically wrong count silently over- or under-fills the context ceiling, and nothing errors either way.",
+   "fieldname": "token_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Token Count"
+  },
+  {
+   "description": "How token_count was arrived at, so a later correction pass can find the estimates instead of guessing which rows to trust. `heuristic` is ceil(len/4) x 1.15, which is what a background job falls back to when no real counter is available in-process.",
+   "fieldname": "token_count_method",
+   "fieldtype": "Select",
+   "label": "Token Count Method",
+   "options": "\nheuristic\ntokenizer"
+  },
+  {
+   "fieldname": "column_break_tokens",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "sha256 of the body as sealed. Two jobs that build the same chunk produce the same hash, which is what makes re-running the indexer idempotent rather than merely harmless - and it is how a rebuild decides whether the embedding it already holds is still the embedding of this text.",
+   "fieldname": "content_hash",
+   "fieldtype": "Data",
+   "label": "Content Hash",
+   "length": 64,
+   "read_only": 1
+  },
+  {
+   "fieldname": "embedding_section",
+   "fieldtype": "Section Break",
+   "label": "Embedding"
+  },
+  {
+   "description": "base64 of the raw numpy float32 bytes. The decision says BLOB and Frappe has no BLOB fieldtype, so this is the nearest thing that satisfies it: a measured 33% storage overhead, with a raw longblob by patch recorded as the optimisation if volume ever justifies it. Scored with in-process cosine over the permission-filtered candidate set - production MariaDB is 10.11 and has no VECTOR type and no VEC_* functions, measured rather than assumed, and the deploy pipeline has no pip install step, so an extension is not available either.",
+   "fieldname": "embedding",
+   "fieldtype": "Long Text",
+   "label": "Embedding (base64 float32)"
+  },
+  {
+   "fieldname": "column_break_embedding",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The embedding model that produced the vector. In the cache key and compared before scoring: cosine similarity between vectors from two different models is a number with no meaning, and it looks exactly like a number with meaning.",
+   "fieldname": "embedding_model",
+   "fieldtype": "Data",
+   "label": "Embedding Model",
+   "length": 140
+  },
+  {
+   "description": "Dimension count of the stored vector. Checked before scoring rather than trusted - a truncated (MRL) dimension must be RE-NORMALISED after truncation or cosine similarity is silently corrupted, which is the documented number-one mistake with this model family and produces plausible-looking but subtly wrong retrieval.",
+   "fieldname": "embedding_dim",
+   "fieldtype": "Int",
+   "label": "Embedding Dim"
+  },
+  {
+   "description": "Bumped when the embedding pipeline changes in a way that invalidates stored vectors - a model swap, a dimension change, a different normalisation. It is part of every vector cache key, which is what makes an invalidation actually invalidate.",
+   "fieldname": "embedding_version",
+   "fieldtype": "Int",
+   "label": "Embedding Version"
+  },
+  {
+   "fieldname": "embedded_at",
+   "fieldtype": "Datetime",
+   "label": "Embedded At"
+  },
+  {
+   "fieldname": "staleness_section",
+   "fieldtype": "Section Break",
+   "label": "Staleness"
+  },
+  {
+   "default": "0",
+   "description": "Set when an edit or a delete lands inside this chunk's seq span. A stale chunk is SKIPPED by retrieval outright rather than served with a caveat, and is rebuilt from source rather than patched. A rolling summary can add information but it cannot unsay it - so serving a stale chunk means serving text somebody deleted, and the person who deleted it has no way to know.",
+   "fieldname": "is_stale",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Is Stale"
+  },
+  {
+   "fieldname": "stale_since",
+   "fieldtype": "Datetime",
+   "label": "Stale Since"
+  },
+  {
+   "fieldname": "column_break_staleness",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The seq span the invalidating change touched, as reported by the staleness seam. Recorded rather than merely acted on so an operator can tell a targeted invalidation from a room-wide one.",
+   "fieldname": "stale_from_seq",
+   "fieldtype": "Int",
+   "label": "Stale From Seq"
+  },
+  {
+   "fieldname": "stale_to_seq",
+   "fieldtype": "Int",
+   "label": "Stale To Seq"
+  },
+  {
+   "description": "Consecutive embedding failures. At the configured ceiling the chunk stops being retried and stays unembedded, reachable through the lexical tier only. A blob that fails permanently must not be retried once a minute forever.",
+   "fieldname": "embed_failures",
+   "fieldtype": "Int",
+   "label": "Embed Failures"
+  },
+  {
+   "description": "The last failure, scrubbed. Never a message body, and never a bearer token - an exception raised out of a background job publishes its frames' locals into the Error Log, and this app has leaked private key material exactly that way once.",
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Context Chunk",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

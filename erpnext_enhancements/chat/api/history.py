@@ -29,6 +29,7 @@ Indentation is tabs, per ``CLAUDE.md``.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import frappe
@@ -125,6 +126,7 @@ def get_messages(
 	messages = [message_payload(row) for row in rows]
 	_attach_attachments(messages)
 	_attach_mentions(messages)
+	_attach_citations(messages)
 	if not (thread or "").strip():
 		_attach_reply_counts(name, messages)
 
@@ -173,6 +175,7 @@ def get_thread(root: str, limit: Any = None) -> dict[str, Any]:
 	root_payload = message_payload(root_row[0])
 	_attach_attachments([root_payload])
 	_attach_mentions([root_payload])
+	_attach_citations([root_payload])
 
 	return {
 		"root": root_payload,
@@ -233,6 +236,7 @@ def get_message_context(message: str, limit: Any = None) -> dict[str, Any]:
 	messages = [message_payload(r) for r in older + newer]
 	_attach_attachments(messages)
 	_attach_mentions(messages)
+	_attach_citations(messages)
 	if not thread_root:
 		_attach_reply_counts(row["room"], messages)
 
@@ -320,6 +324,65 @@ def _attach_mentions(messages: list[dict[str, Any]]) -> None:
 	for message in messages:
 		if not message.get("is_deleted"):
 			message["mentions"] = by_message.get(message["name"], [])
+
+
+def _attach_citations(messages: list[dict[str, Any]]) -> None:
+	"""Fill ``citations`` on any Triton answers in this page. One query, or none.
+
+	Without this the Phase 3 renderer is inert in exactly the way ``_attach_mentions`` was
+	before it was written: ``public/js/chat/message_view.js`` reads ``message.citations`` and
+	calls ``applyCitations``, which is a **no-op on an empty manifest** — so every inline
+	``[[ref:N]]`` marker would be stripped from the answer and nothing would say why. Not an
+	error, not a broken link: the numbers would simply not be there, and the sources row would
+	fall back to the pre-manifest renderer.
+
+	The manifest lives on ``Triton Invocation Log`` rather than on ``Chat Message`` because the
+	hot table must not grow a column that is null for every message but one sender's, and
+	because a manifest is metadata about a *turn*. The join is on ``answer_message``.
+
+	**Scoped like every other read here.** The membership fragment is ANDed in, so a manifest
+	cannot be read for a message in a room the caller is not in — which matters more than it
+	looks: a citation label carries a person's name and a room's identity, so an unscoped read
+	here would leak who is talking to whom without leaking a single message body.
+
+	Deleted messages are skipped, same as mentions: the body has already been replaced by the
+	tombstone, so there is nothing left for a citation to annotate.
+	"""
+	wanted = [m["name"] for m in messages if m.get("name") and not m.get("is_deleted")]
+	if not wanted:
+		return
+
+	scope = permissions.membership_filter_sql("`m`.`room`", seq_column="`m`.`seq`")
+	try:
+		rows = frappe.db.sql(
+			f"""select `t`.`answer_message` as `message`, `t`.`citations` as `citations`
+				from `tabTriton Invocation Log` `t`
+				join `tabChat Message` `m` on `m`.`name` = `t`.`answer_message`
+				where `t`.`answer_message` in %(names)s
+					and `t`.`citations` is not null
+					and `t`.`citations` != ''
+					and {scope}""",
+			{"names": tuple(wanted)},
+			as_dict=True,
+		)
+	except Exception:
+		# A transcript must render without its citations rather than not render. This is the
+		# one hydrator whose data is an enrichment rather than part of the message, so its
+		# failure degrades to Phase 3's behaviour instead of failing the page.
+		return
+
+	by_message: dict[str, list[dict[str, Any]]] = {}
+	for row in rows:
+		try:
+			entries = json.loads(row.get("citations") or "[]")
+		except Exception:
+			continue
+		if isinstance(entries, list):
+			by_message[row["message"]] = entries
+
+	for message in messages:
+		if not message.get("is_deleted") and message["name"] in by_message:
+			message["citations"] = by_message[message["name"]]
 
 
 def _attach_attachments(messages: list[dict[str, Any]]) -> None:

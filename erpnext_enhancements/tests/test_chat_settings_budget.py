@@ -286,3 +286,138 @@ def test_floats_are_accepted_and_reported_faithfully() -> None:
 	errors = rules.validate_budgets(100.0, 0.0, 60.5, 0.0, 40.0, 0.0, 0.0)
 	assert len(errors) == 1, errors
 	assert "100.5" in errors[0], errors[0]
+
+
+# --- Phase 5: the retrieval and indexing dials --------------------------------
+#
+# Only the *incoherent combinations* are tested, because only those are what the rule
+# refuses. A dial being unusual is the operator's business; a dial that silently disables a
+# feature because it contradicts another dial is what a form has to catch, and every case
+# below was chosen because its symptom is "the feature appears to work".
+
+
+def _shipped_retrieval_kwargs(**overrides) -> dict:
+	"""The dials exactly as ``chat_settings.json`` ships them, with overrides applied.
+
+	Read from the JSON rather than restated here, which is the point: a test carrying its
+	own copy of the defaults passes forever while the shipped configuration drifts away
+	from it. The one assertion that matters most in this section is that the SHIPPED set
+	is valid, and that is only true if these numbers come from the file the site installs.
+	"""
+	shipped = {
+		"retrieval_top_k": _json_default("retrieval_top_k"),
+		"max_candidate_chunks": _json_default("max_candidate_chunks"),
+		"max_rooms_per_retrieval": _json_default("max_rooms_per_retrieval"),
+		"rrf_k": _json_default("rrf_k"),
+		"recency_half_life_days": _json_default("recency_half_life_days"),
+		"embedding_dim": _json_default("embedding_dim"),
+		"chunk_seal_tokens": _json_default("chunk_seal_tokens"),
+		"chunk_seal_messages": _json_default("chunk_seal_messages"),
+		"chunk_seal_gap_minutes": _json_default("chunk_seal_gap_minutes"),
+		"chunk_idle_tail_minutes": _json_default("chunk_idle_tail_minutes"),
+		"digest_dirty_message_threshold": _json_default("digest_dirty_message_threshold"),
+		"digest_dirty_minutes": _json_default("digest_dirty_minutes"),
+		"digest_batch_rooms": _json_default("digest_batch_rooms"),
+		"thread_digest_min_messages": _json_default("thread_digest_min_messages"),
+		"digest_max_rebuild_failures": _json_default("digest_max_rebuild_failures"),
+		"digest_staleness_alert_minutes": _json_default("digest_staleness_alert_minutes"),
+		"context_token_ceiling": _json_default("context_token_ceiling"),
+		"semantic_tier_enabled": bool(_json_default("semantic_tier_enabled")),
+		"lexical_tier_enabled": bool(_json_default("lexical_tier_enabled")),
+	}
+	shipped.update(overrides)
+	return shipped
+
+
+def test_the_shipped_retrieval_configuration_is_valid() -> None:
+	"""The one that would otherwise fail on the first save of an untouched form — and it
+	would fail during `bench migrate`, when default_chat_settings seeds the Single."""
+	assert rules.validate_retrieval(**_shipped_retrieval_kwargs()) == []
+
+
+def test_a_top_k_above_the_candidate_cap_is_refused() -> None:
+	errors = rules.validate_retrieval(**_shipped_retrieval_kwargs(retrieval_top_k=99_999))
+	assert any("can never be filled" in e for e in errors), errors
+
+
+def test_a_chunk_larger_than_the_whole_ceiling_is_refused() -> None:
+	"""The symptom is the interesting part: retrieval looks like it is working and every
+	answer is missing its best source, because the chunk that matched cannot fit."""
+	errors = rules.validate_retrieval(**_shipped_retrieval_kwargs(chunk_seal_tokens=50_000))
+	assert any("too large to fit in any assembly" in e for e in errors), errors
+
+
+def test_an_idle_tail_longer_than_the_gap_rule_is_refused() -> None:
+	"""The gap rule would already have sealed the chunk, so the idle rule never fires and
+	the tail of a quiet room is never indexed at all."""
+	errors = rules.validate_retrieval(
+		**_shipped_retrieval_kwargs(chunk_idle_tail_minutes=120, chunk_seal_gap_minutes=45)
+	)
+	assert any("never fires" in e for e in errors), errors
+
+
+def test_a_staleness_alarm_inside_the_normal_window_is_refused() -> None:
+	"""An alert that is always on is worse than no alert: it trains everyone to ignore the
+	channel that carries the real one."""
+	errors = rules.validate_retrieval(
+		**_shipped_retrieval_kwargs(digest_staleness_alert_minutes=10, digest_dirty_minutes=15)
+	)
+	assert any("always on" in e for e in errors), errors
+
+
+def test_switching_off_both_tiers_is_refused() -> None:
+	"""Neither tier means retrieval returns nothing while appearing to work — Triton would
+	answer every chat question from the current thread alone."""
+	errors = rules.validate_retrieval(
+		**_shipped_retrieval_kwargs(semantic_tier_enabled=False, lexical_tier_enabled=False)
+	)
+	assert any("return nothing at all" in e for e in errors), errors
+
+
+def test_switching_off_only_the_semantic_tier_is_allowed() -> None:
+	"""The correct degradation when the embedding provider is unavailable: an answer from
+	exact matches beats no answer."""
+	assert rules.validate_retrieval(**_shipped_retrieval_kwargs(semantic_tier_enabled=False)) == []
+
+
+def test_zero_rooms_per_retrieval_means_no_cap_and_is_allowed() -> None:
+	"""The one dial where 0 is a value rather than a mistake. Every other dial rejects 0,
+	because on those it disables the behaviour it sizes."""
+	assert rules.validate_retrieval(**_shipped_retrieval_kwargs(max_rooms_per_retrieval=0)) == []
+	assert any(
+		"greater than zero" in e
+		for e in rules.validate_retrieval(**_shipped_retrieval_kwargs(digest_batch_rooms=0))
+	)
+
+
+def test_a_negative_room_cap_is_refused() -> None:
+	errors = rules.validate_retrieval(**_shipped_retrieval_kwargs(max_rooms_per_retrieval=-1))
+	assert any("Use 0 for no cap" in e for e in errors), errors
+
+
+def test_the_controller_passes_every_dial_the_rule_takes() -> None:
+	"""A dial the controller forgets to pass reads as its default in the rule signature and
+	is never validated — the form would then accept an incoherent value that breaks a
+	background job hours later. Asserted by AST rather than by running the controller,
+	which needs a bench.
+
+	This is the same class of bug as a typo'd fieldname reading as 0 through
+	``getattr(..., None) or 0``: nothing errors, and the check silently stops checking.
+	"""
+	controller = (
+		APP_DIR / "chat" / "doctype" / "chat_settings" / "chat_settings.py"
+	).read_text(encoding="utf-8")
+	tree = ast.parse(controller)
+
+	call = None
+	for node in ast.walk(tree):
+		if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "validate_retrieval":
+			call = node
+	assert call is not None, "chat_settings.py no longer calls validate_retrieval at all"
+
+	passed = {kw.arg for kw in call.keywords if kw.arg}
+	expected = set(_shipped_retrieval_kwargs())
+	assert passed == expected, (
+		f"the controller passes {sorted(passed)} but the rule takes {sorted(expected)}. "
+		f"Missing: {sorted(expected - passed)}; unexpected: {sorted(passed - expected)}."
+	)

@@ -1,0 +1,275 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "autoname": "hash",
+ "creation": "2026-08-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "request_id",
+  "status",
+  "origin",
+  "column_break_head",
+  "asked_by",
+  "room",
+  "mention_message",
+  "thread_root",
+  "answer_section",
+  "answer_message",
+  "answered_at",
+  "column_break_answer",
+  "model_used",
+  "error",
+  "tokens_section",
+  "context_tokens",
+  "prompt_tokens",
+  "completion_tokens",
+  "column_break_tokens",
+  "cached_content_tokens",
+  "context_truncated",
+  "degradation_rung",
+  "retrieval_section",
+  "chunks_considered",
+  "chunks_returned",
+  "digests_used",
+  "column_break_retrieval",
+  "citation_count",
+  "citation_miss_count",
+  "citations",
+  "timing_section",
+  "retrieval_ms",
+  "model_ms",
+  "column_break_timing",
+  "queue_ms",
+  "total_ms"
+ ],
+ "fields": [
+  {
+   "description": "The idempotency key for one @triton turn, derived from the triggering mention rather than generated. Unique, so a redelivered interaction event or a double-tapped mention produces one turn and not two answers - and so the whole cost of a turn is one row rather than a set nobody can join.",
+   "fieldname": "request_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Request ID",
+   "length": 140,
+   "reqd": 1,
+   "set_only_once": 1,
+   "unique": 1
+  },
+  {
+   "description": "Where the turn got to. `Refused` is distinct from `Failed` on purpose: refused means the system declined (no ERPNext link, retrieval paused, not whitelisted), failed means it tried and broke, and conflating them makes a rollout problem look like an outage.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Received\nRetrieving\nGenerating\nAnswered\nFailed\nRefused",
+   "reqd": 1
+  },
+  {
+   "description": "Which client the mention came from. Recorded for observability ONLY - the handler itself cannot see this field, because identical behaviour from either origin is guaranteed by the handler having no origin to branch on rather than by a reviewer checking that it does not.",
+   "fieldname": "origin",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Origin",
+   "options": "\nGoogle Chat\nSPA"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The human who typed the mention. Every tool call and every chat read in this turn ran as this person - never as a service account, and never as the bot that posts the answer. Those are two different identities and merging them is how a superuser service account gets built.",
+   "fieldname": "asked_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Asked By",
+   "options": "User"
+  },
+  {
+   "fieldname": "room",
+   "fieldtype": "Link",
+   "label": "Room",
+   "options": "Chat Room"
+  },
+  {
+   "fieldname": "mention_message",
+   "fieldtype": "Link",
+   "label": "Mention Message",
+   "options": "Chat Message"
+  },
+  {
+   "fieldname": "thread_root",
+   "fieldtype": "Link",
+   "label": "Thread Root",
+   "options": "Chat Message"
+  },
+  {
+   "fieldname": "answer_section",
+   "fieldtype": "Section Break",
+   "label": "Answer"
+  },
+  {
+   "description": "The message Triton posted. In the same room and the same thread as the mention, always - never a room derived from model output.",
+   "fieldname": "answer_message",
+   "fieldtype": "Link",
+   "label": "Answer Message",
+   "options": "Chat Message"
+  },
+  {
+   "fieldname": "answered_at",
+   "fieldtype": "Datetime",
+   "label": "Answered At"
+  },
+  {
+   "fieldname": "column_break_answer",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "model_used",
+   "fieldtype": "Data",
+   "label": "Model Used",
+   "length": 140
+  },
+  {
+   "description": "Why the turn failed or was refused, scrubbed. Never a message body and never a bearer token.",
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error"
+  },
+  {
+   "fieldname": "tokens_section",
+   "fieldtype": "Section Break",
+   "label": "Tokens"
+  },
+  {
+   "description": "Retrieved chat context only, excluding the system prompt and tool definitions - the number the ceiling actually governs. Logged on EVERY turn, because the ceiling was chosen deliberately rather than derived from a model limit, and the only honest way to retune it is two weeks of this column.",
+   "fieldname": "context_tokens",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Context Tokens"
+  },
+  {
+   "fieldname": "prompt_tokens",
+   "fieldtype": "Int",
+   "label": "Prompt Tokens"
+  },
+  {
+   "fieldname": "completion_tokens",
+   "fieldtype": "Int",
+   "label": "Completion Tokens"
+  },
+  {
+   "fieldname": "column_break_tokens",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Tokens served from the model's context cache, as reported upstream. This is the column that says whether prompt-cache ordering is actually paying: a stable prefix that never engages the cache costs the full discount silently, with no error and no log line anywhere.",
+   "fieldname": "cached_content_tokens",
+   "fieldtype": "Int",
+   "label": "Cached Content Tokens"
+  },
+  {
+   "default": "0",
+   "description": "Set when the degradation ladder reached a rung that removes information the user would expect to be there. When this is set, Triton is instructed to SAY its view was cut - a model that silently answers from a truncated view produces a confident wrong answer and the user gets no signal at all.",
+   "fieldname": "context_truncated",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Context Truncated"
+  },
+  {
+   "description": "How far down the fixed ladder assembly had to go: 0 for no degradation, then 1..5. Stored as a number rather than a flag so the common case can be told from the extreme one - rung 1 drops the least useful chunks, rung 5 is a hard floor of the last twenty messages.",
+   "fieldname": "degradation_rung",
+   "fieldtype": "Int",
+   "label": "Degradation Rung"
+  },
+  {
+   "fieldname": "retrieval_section",
+   "fieldtype": "Section Break",
+   "label": "Retrieval"
+  },
+  {
+   "description": "Candidate chunks after the permission filter and before ranking. The vector backend's revisit triggers are written against THIS number rather than the corpus size, because the filter runs first: past the configured threshold the in-process cosine stops being the right implementation and the adapter swap becomes a scheduled task rather than a debate.",
+   "fieldname": "chunks_considered",
+   "fieldtype": "Int",
+   "label": "Chunks Considered"
+  },
+  {
+   "fieldname": "chunks_returned",
+   "fieldtype": "Int",
+   "label": "Chunks Returned"
+  },
+  {
+   "fieldname": "digests_used",
+   "fieldtype": "Int",
+   "label": "Digests Used"
+  },
+  {
+   "fieldname": "column_break_retrieval",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "citation_count",
+   "fieldtype": "Int",
+   "label": "Citation Count"
+  },
+  {
+   "description": "Citations the model emitted that resolved to nothing in the manifest. Dropped silently in the rendered answer - a broken citation must not become a broken page - but counted here, because a miss rate above a couple of percent is a PROMPT regression signal rather than a UI bug.",
+   "fieldname": "citation_miss_count",
+   "fieldtype": "Int",
+   "label": "Citation Miss Count"
+  },
+  {
+   "description": "The citation manifest for this answer, as JSON, in the shape public/js/chat/citations.js already reads: k, type, label, url, room, message. It lives here rather than on Chat Message because the hot table must not grow a column for one sender's messages - and because a manifest is metadata about a turn, which is what this table is.\n\nDeliberately carries NO snippet. The client would render one in a tooltip, and a snippet is message text; storing it here would put conversation into the one chat table that is content-free by construction. The label says who and which room, and clicking is what shows the message - under the full permission check, through the deep link.",
+   "fieldname": "citations",
+   "fieldtype": "Long Text",
+   "label": "Citations (JSON)"
+  },
+  {
+   "fieldname": "timing_section",
+   "fieldtype": "Section Break",
+   "label": "Timing"
+  },
+  {
+   "description": "Time inside the gate: derive the room set, filter, rank, assemble. The revisit trigger is a p95 over this column.",
+   "fieldname": "retrieval_ms",
+   "fieldtype": "Int",
+   "label": "Retrieval (ms)"
+  },
+  {
+   "fieldname": "model_ms",
+   "fieldtype": "Int",
+   "label": "Model (ms)"
+  },
+  {
+   "fieldname": "column_break_timing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "How long the turn sat between being acknowledged and being picked up by a worker. The interaction webhook has a hard 30-second deadline, so the model turn can never answer inline - it acknowledges, enqueues, and posts asynchronously. This column is what says whether that queue is healthy, and a growing value is the first symptom of a backed-up worker.",
+   "fieldname": "queue_ms",
+   "fieldtype": "Int",
+   "label": "Queue (ms)"
+  },
+  {
+   "fieldname": "total_ms",
+   "fieldtype": "Int",
+   "label": "Total (ms)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Triton Invocation Log",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

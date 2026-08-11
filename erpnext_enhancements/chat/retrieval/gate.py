@@ -1,0 +1,1112 @@
+# Copyright (c) 2026, Sapphire Fountains and contributors
+# For license information, please see license.txt
+
+"""The one door onto chat history. **Every chat query in the retrieval path lives here.**
+
+Read this before adding a line. This module is a **security boundary**, not a correctness
+boundary, and the distinction decides how it is written. Every other risk in Phase 5 produces
+a *wrong answer*, which somebody notices and reports. A mistake here produces **a correct
+answer delivered to the wrong reader** — no exception, no user-visible symptom, nothing in any
+log, and no complaint, because the person who received it has no idea they should not have.
+
+Five rules. They are not style; each closes a specific way the boundary fails.
+
+1. **``allowed_rooms`` is derived here and is never a parameter.** There is no argument,
+   keyword or otherwise, by which a caller supplies room ids — because the caller is a
+   model-driven turn assembling arguments from text, and a parameter is a thing a caller can
+   get wrong. ``restrict_to`` exists and can only **narrow**: it is intersected, so a
+   ``restrict_to`` naming a room the person cannot see contributes nothing.
+2. **Every private search function takes ``allowed_rooms`` as a required first positional
+   parameter.** Not a keyword, not defaulted. Omitting a required positional is a ``TypeError``
+   during development; omitting a defaulted keyword is an unfiltered query in production that
+   looks like nothing at all.
+3. **The permission filter is in the ``WHERE`` clause, before any vector is loaded, any score
+   computed or any ranking applied.** Filtering after ranking is forbidden *even where the
+   visible output would be identical*, for two independent reasons: the ranker has then already
+   read content the person may not see, and any quantity derived from that read — a score
+   distribution, a count, a latency difference — is a side channel. More prosaically,
+   post-filtering is one ``return`` away from being no filter at all.
+4. **The audit row is written and committed before content is returned, and if it cannot be
+   written the read does not happen.** An audit that fails open is not an audit.
+5. **``retrieve(user="Administrator")`` raises.** Administrator short-circuits Frappe's
+   permission stack entirely, so "every room" would be the literal, correct answer to "which
+   rooms may this user see" — and the caller would never know it had asked a meaningless
+   question. ``Guest`` raises for the same reason in the other direction.
+
+--------------------------------------------------------------------------------------
+Why the filter is applied twice
+--------------------------------------------------------------------------------------
+
+Every statement below constrains rooms **both** by ``room in (<derived set>)`` **and** by
+``permissions.membership_filter_sql(...)``. That is not redundancy for its own sake:
+
+* the derived set is the narrow bound, and it is what makes the candidate scan cheap;
+* the shared fragment is the *same expression* the ``permission_query_conditions`` hooks and
+  the socket server use, so the raw path here cannot drift away from the hook path — and a
+  drift on this seam is a leak rather than a bug.
+
+The two are ANDed, so the fragment can never widen the derived set. That matters for the
+oversight path specifically: ``membership_filter_sql`` returns ``1 = 1`` for an oversight role,
+and here it lands inside an ``AND`` against an explicit room list.
+
+--------------------------------------------------------------------------------------
+What is deliberately not here
+--------------------------------------------------------------------------------------
+
+No ranking (:mod:`chat.retrieval.rank`), no budgeting (:mod:`chat.retrieval.budget`), no
+assembly (:mod:`chat.retrieval.assemble`), no vector arithmetic
+(:mod:`chat.retrieval.vectors`). Those are pure and tested bench-free. This module fetches,
+and it is the only thing in the app that may.
+
+Indentation is tabs, per ``CLAUDE.md``.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+import frappe
+from frappe.utils import cint, get_datetime, now_datetime
+
+from erpnext_enhancements.chat import audit, permissions
+from erpnext_enhancements.chat.retrieval import assemble, budget, citations, lexical, rank, vectors
+
+__all__ = ["retrieve", "retrieve_for_oversight"]
+
+CHUNK_DOCTYPE = "Chat Context Chunk"
+ROOM_DIGEST_DOCTYPE = "Chat Room Digest"
+THREAD_DIGEST_DOCTYPE = "Chat Thread Digest"
+
+_CHUNK_TABLE = "`tabChat Context Chunk`"
+_ROOM_DIGEST_TABLE = "`tabChat Room Digest`"
+_THREAD_DIGEST_TABLE = "`tabChat Thread Digest`"
+_MESSAGE_TABLE = "`tabChat Message`"
+
+#: Hard cap on the T1 verbatim thread, independent of the token budget. The budget is a cost
+#: control; this is a statement-cost control, so one enormous thread cannot make the query
+#: itself the problem.
+MAX_THREAD_MESSAGES: int = 200
+
+#: Hard cap on the T3 authored tier.
+MAX_AUTHORED_MESSAGES: int = 60
+
+
+class RetrievalRefused(Exception):
+	"""Raised when retrieval must not proceed. Never carries content."""
+
+
+@dataclass
+class RetrievalResult:
+	"""What one gated retrieval returns. No raw rows escape this dataclass."""
+
+	assembly: assemble.Assembly | None = None
+	manifest: list[citations.Citation] = field(default_factory=list)
+	plan: budget.Plan | None = None
+	rooms_searched: tuple[str, ...] = ()
+	chunks_considered: int = 0
+	chunks_returned: int = 0
+	digests_used: int = 0
+	context_tokens: int = 0
+	context_truncated: bool = False
+	degradation_rung: int = 0
+	tiers_used: tuple[str, ...] = ()
+	audit_row: str | None = None
+	#: Terms the FULLTEXT index cannot match. Surfaced so a caller can say "your search
+	#: terms were too short" rather than "no results", which are different answers.
+	dropped_terms: tuple[str, ...] = ()
+
+
+# --------------------------------------------------------------------- the derived room set
+
+
+def _assert_real_user(user: str | None) -> str:
+	"""Resolve the acting user, refusing the two that make the question meaningless.
+
+	``Administrator`` bypasses the permission stack unconditionally — ``frappe/permissions.py``
+	short-circuits on it — so "which rooms may Administrator see" answers "all of them",
+	truthfully, and a caller that accepted the answer would have built the cross-user reach
+	the whole design forbids. ``Guest`` is refused because chat has no anonymous surface at
+	all and a Guest reaching here means something upstream is wrong.
+
+	This is invariant I4's first line of defence and it raises rather than returning empty: an
+	empty room set would produce a valid-looking answer with no sources, which reads as "there
+	was nothing relevant" instead of "you asked the wrong question".
+	"""
+	resolved = (user or frappe.session.user or "").strip()
+	if not resolved:
+		raise RetrievalRefused("Chat retrieval requires a user and none was resolved.")
+	if resolved in ("Administrator", "Guest"):
+		raise RetrievalRefused(
+			f"Chat retrieval refuses to run as {resolved}. Retrieval must run as the real "
+			"person asking, because the room set is derived from their membership — and "
+			f"{resolved} either bypasses the permission stack entirely or has no membership "
+			"at all. Pass the mentioning user."
+		)
+	return resolved
+
+
+def _visible_room_ids(user: str, restrict_to: list[str] | None = None) -> frozenset[str]:
+	"""The rooms ``user`` is an **active** member of, optionally narrowed.
+
+	Derived here, from :func:`permissions.visible_room_names`, which is the same helper the
+	room list uses. Never cached — a room removal must take effect on the **very next** call,
+	and a cache with any TTET at all means a departed member keeps reading for that long.
+	That is the one entry on the never-cache list, and this is the function it is about.
+
+	``restrict_to`` is intersected. It cannot widen, it cannot introduce a room, and a name
+	in it that the person cannot see contributes nothing rather than raising — narrowing to a
+	room you have just been removed from is a legitimate race, not an attack.
+	"""
+	allowed = frozenset(permissions.visible_room_names(user))
+	if restrict_to:
+		requested = frozenset(str(room).strip() for room in restrict_to if str(room or "").strip())
+		allowed = allowed & requested
+	return _cap_rooms(allowed)
+
+
+def _cap_rooms(rooms: frozenset[str]) -> frozenset[str]:
+	"""Apply ``max_rooms_per_retrieval``, which narrows and can never widen.
+
+	Sorted before slicing, so the cap is deterministic rather than dependent on set iteration
+	order — an unstable cap would make two identical retrievals search different rooms, which
+	is both a cache miss and a support call nobody can reproduce.
+	"""
+	cap = cint(_setting("max_rooms_per_retrieval"))
+	if cap <= 0 or len(rooms) <= cap:
+		return rooms
+	return frozenset(sorted(rooms)[:cap])
+
+
+def _room_list_sql(allowed_rooms: frozenset[str]) -> str:
+	"""``('a','b')`` for an ``IN`` clause, every value escaped.
+
+	There is no parameter binding on this seam — the room set is variable-length — so
+	``frappe.db.escape`` is the whole defence and it is applied per value, always. Room
+	docnames are framework-generated hashes today; escaping them anyway costs nothing and
+	survives the day a room name comes from somewhere else.
+
+	Returns ``('')`` for an empty set rather than ``()``, because ``in ()`` is a syntax error
+	in MariaDB while ``in ('')`` is a legal predicate that matches nothing. Failing closed
+	has to also mean *parsing*.
+	"""
+	if not allowed_rooms:
+		return "('')"
+	values = ", ".join(frappe.db.escape(room) for room in sorted(allowed_rooms))
+	return f"({values})"
+
+
+# ------------------------------------------------------------------------- the fetch surface
+#
+# Every function below takes `allowed_rooms` as a required FIRST POSITIONAL parameter, and
+# every one references permissions.membership_filter_sql. Both are asserted by
+# tests/test_chat_gate_source_scan.py and tests/test_chat_rawsql_guard.py respectively.
+
+
+def _semantic_candidate_rows(
+	allowed_rooms: frozenset[str],
+	*,
+	limit: int,
+) -> list[tuple[str, str, str, int]]:
+	"""``(chunk, room, embedding, embedding_dim)`` for embeddable chunks in scope.
+
+	Sealed, not stale, and carrying a vector. The **unsealed tail is excluded by design** —
+	see ``Chat Context Chunk``'s controller for why, and for what covers it instead.
+
+	Ordered by ``last_seq desc`` so that when the cap bites it keeps the *recent* history
+	rather than an arbitrary slice. An arbitrary slice is the worse failure: retrieval would
+	work perfectly for old conversations and mysteriously not for this morning's.
+	"""
+	scope = permissions.membership_filter_sql(f"{_CHUNK_TABLE}.`room`", _acting_user())
+	rooms = _room_list_sql(allowed_rooms)
+	rows = frappe.db.sql(
+		f"""
+		select `name`, `room`, `embedding`, `embedding_dim`
+		from {_CHUNK_TABLE}
+		where `room` in {rooms}
+			and {scope}
+			and `sealed` = 1
+			and `is_stale` = 0
+			and `embedding` is not null
+			and `embedding` != ''
+		order by `last_seq` desc
+		limit %(limit)s
+		""",
+		{"limit": max(cint(limit), 0)},
+	)
+	return [(row[0], row[1], row[2], cint(row[3])) for row in rows or []]
+
+
+def _lexical_chunk_order(
+	allowed_rooms: frozenset[str],
+	*,
+	expression: str,
+	limit: int,
+) -> list[str]:
+	"""Chunk names in FULLTEXT relevance order, best first.
+
+	``expression`` comes from :func:`chat.retrieval.lexical.build_boolean_query` and is bound
+	as a parameter, never interpolated. An empty expression is refused here rather than passed
+	through: an empty ``AGAINST`` is a full-corpus read wearing a search's clothes.
+
+	InnoDB FULLTEXT sees **committed rows only**, so a chunk sealed in the calling transaction
+	is invisible to this until that transaction commits. The indexer commits before anything
+	expects to find what it wrote.
+	"""
+	if not expression:
+		return []
+	scope = permissions.membership_filter_sql(f"{_CHUNK_TABLE}.`room`", _acting_user())
+	rooms = _room_list_sql(allowed_rooms)
+	rows = frappe.db.sql(
+		f"""
+		select `name`
+		from {_CHUNK_TABLE}
+		where `room` in {rooms}
+			and {scope}
+			and `is_stale` = 0
+			and match(`body`) against (%(expression)s in boolean mode)
+		order by match(`body`) against (%(expression)s in boolean mode) desc, `name` asc
+		limit %(limit)s
+		""",
+		{"expression": expression, "limit": max(cint(limit), 0)},
+	)
+	return [row[0] for row in rows or []]
+
+
+def _chunk_rows(allowed_rooms: frozenset[str], *, names: list[str]) -> list[dict[str, Any]]:
+	"""Full chunk rows for a named set — the only place a chunk **body** is read.
+
+	Filtered on the room set again even though the names came from a filtered query. The names
+	have travelled through pure ranking code by this point, and "the list I was handed was
+	already filtered" is the assumption that becomes a leak the day some intermediate step
+	starts merging in a second source.
+	"""
+	if not names:
+		return []
+	scope = permissions.membership_filter_sql(f"{_CHUNK_TABLE}.`room`", _acting_user())
+	rooms = _room_list_sql(allowed_rooms)
+	placeholders = ", ".join(frappe.db.escape(name) for name in names)
+	rows = frappe.db.sql(
+		f"""
+		select `name`, `room`, `thread_root`, `first_seq`, `last_seq`, `body`,
+			`token_count`, `participants`, `first_message`, `last_message`,
+			`first_message_at`, `last_message_at`
+		from {_CHUNK_TABLE}
+		where `name` in ({placeholders})
+			and `room` in {rooms}
+			and {scope}
+			and `is_stale` = 0
+		""",
+		as_dict=True,
+	)
+	return list(rows or [])
+
+
+def _room_digest_rows(allowed_rooms: frozenset[str]) -> list[dict[str, Any]]:
+	"""Room digests in scope, **excluding stale and poisoned ones**.
+
+	Excluded rather than served with a caveat, and that is the invalidation contract rather
+	than caution: a stale digest may summarise a message somebody deleted, ERPNext holds the
+	only copy of that text, and a summary cannot unsay it. Skipping costs a less complete
+	answer; serving costs the delete.
+	"""
+	scope = permissions.membership_filter_sql(f"{_ROOM_DIGEST_TABLE}.`room`", _acting_user())
+	rooms = _room_list_sql(allowed_rooms)
+	rows = frappe.db.sql(
+		f"""
+		select `name`, `room`, `summary_text`, `token_count`, `digest_version`,
+			`covered_from`, `covered_to`, `generated_at`
+		from {_ROOM_DIGEST_TABLE}
+		where `room` in {rooms}
+			and {scope}
+			and `is_stale` = 0
+			and `poisoned` = 0
+			and `summary_text` is not null
+			and `summary_text` != ''
+		""",
+		as_dict=True,
+	)
+	return list(rows or [])
+
+
+def _thread_digest_row(allowed_rooms: frozenset[str], *, thread_root: str) -> dict[str, Any] | None:
+	"""The digest for one thread, if it exists and is usable. Rung 4's substitute."""
+	if not thread_root:
+		return None
+	scope = permissions.membership_filter_sql(f"{_THREAD_DIGEST_TABLE}.`room`", _acting_user())
+	rooms = _room_list_sql(allowed_rooms)
+	rows = frappe.db.sql(
+		f"""
+		select `name`, `room`, `thread_root`, `summary_text`, `token_count`, `digest_version`
+		from {_THREAD_DIGEST_TABLE}
+		where `thread_root` = %(thread_root)s
+			and `room` in {rooms}
+			and {scope}
+			and `is_stale` = 0
+			and `poisoned` = 0
+		limit 1
+		""",
+		{"thread_root": thread_root},
+		as_dict=True,
+	)
+	return (rows or [None])[0]
+
+
+def _thread_messages(
+	allowed_rooms: frozenset[str],
+	*,
+	room: str,
+	thread_root: str | None,
+	limit: int,
+) -> list[dict[str, Any]]:
+	"""T1 — the current thread, or the room's tail when the mention is not in a thread.
+
+	**Ordered by ``seq``, never by a timestamp.** ``seq`` is immutable once assigned and is
+	never renumbered; ``creation`` is site-local while an origin timestamp is UTC, and sorting
+	a mixed-origin transcript by either produces an order that is wrong by the site offset in
+	the direction that always favours one origin.
+
+	Deleted rows are excluded. This path returns **bodies**, and the tombstone rule is that
+	only the oversight surface sees through a delete.
+	"""
+	if room not in allowed_rooms:
+		# Not a filter refinement — a caller asking for a room outside the derived set is a
+		# bug, and answering it from the other rooms would hide the bug behind a plausible
+		# answer.
+		return []
+	scope = permissions.membership_filter_sql(f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq")
+	rooms = _room_list_sql(allowed_rooms)
+	thread_clause = "and `thread_root` = %(thread_root)s" if thread_root else ""
+	rows = frappe.db.sql(
+		f"""
+		select `name`, `room`, `seq`, `sender`, `sender_email`, `text`, `thread_root`,
+			`creation`, `origin_timestamp`
+		from {_MESSAGE_TABLE}
+		where `room` = %(room)s
+			and `room` in {rooms}
+			and {scope}
+			and `is_deleted` = 0
+			{thread_clause}
+		order by `seq` desc
+		limit %(limit)s
+		""",
+		{"room": room, "thread_root": thread_root, "limit": max(cint(limit), 0)},
+		as_dict=True,
+	)
+	# Fetched newest-first so the LIMIT keeps the most recent, returned oldest-first so the
+	# model reads the conversation in the order it happened.
+	return list(reversed(rows or []))
+
+
+def _authored_messages(
+	allowed_rooms: frozenset[str],
+	*,
+	user: str,
+	expression: str,
+	limit: int,
+) -> list[dict[str, Any]]:
+	"""T3 — what the asking person said themselves, matching the query.
+
+	This tier exists because "what did I agree to" is the commonest question a chat assistant
+	is asked, and the person's own messages are the answer. It is scoped to the same derived
+	room set as everything else: authorship is not a permission, and a message you wrote in a
+	room you have since left is not readable because you wrote it.
+	"""
+	if not expression:
+		return []
+	scope = permissions.membership_filter_sql(f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq")
+	rooms = _room_list_sql(allowed_rooms)
+	rows = frappe.db.sql(
+		f"""
+		select `name`, `room`, `seq`, `sender`, `text`, `thread_root`, `creation`
+		from {_MESSAGE_TABLE}
+		where `sender` = %(user)s
+			and `room` in {rooms}
+			and {scope}
+			and `is_deleted` = 0
+			and match(`text_plain`) against (%(expression)s in boolean mode)
+		order by `seq` desc
+		limit %(limit)s
+		""",
+		{"user": user, "expression": expression, "limit": max(cint(limit), 0)},
+		as_dict=True,
+	)
+	return list(rows or [])
+
+
+def _room_watermarks(allowed_rooms: frozenset[str], *, room: str) -> tuple[int, int, str]:
+	"""The **three-value watermark** for one room: ``(max(seq), count(*), max(modified))``.
+
+	All three, because each catches something the others cannot: ``seq`` catches a new
+	message, ``modified`` catches an **edit**, and ``count`` catches a **hard delete** which
+	moves neither. A cache key built on ``seq`` alone is unchanged by a delete, so the cached
+	context containing the deleted message is served again.
+
+	``max(modified)`` is formatted rather than returned as a datetime, because it goes into a
+	cache **key** and a key must be a stable string. Frappe writes ``modified`` in site-local
+	time and this value is only ever compared against itself, so no conversion is needed here
+	— but nothing may compare it to SQL ``NOW()``, which is UTC on this host and six hours
+	adrift.
+	"""
+	if room not in allowed_rooms:
+		return (0, 0, "")
+	scope = permissions.membership_filter_sql(f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq")
+	rooms = _room_list_sql(allowed_rooms)
+	rows = frappe.db.sql(
+		f"""
+		select coalesce(max(`seq`), 0), count(*), coalesce(max(`modified`), '1970-01-01')
+		from {_MESSAGE_TABLE}
+		where `room` = %(room)s
+			and `room` in {rooms}
+			and {scope}
+		""",
+		{"room": room},
+	)
+	if not rows:
+		return (0, 0, "")
+	seq, count, modified = rows[0]
+	return (cint(seq), cint(count), str(modified))
+
+
+# ---------------------------------------------------------------------------- the entry point
+
+
+def retrieve(
+	*,
+	query: str,
+	user: str | None = None,
+	room: str | None = None,
+	thread_root: str | None = None,
+	restrict_to: list[str] | None = None,
+	purpose: str = "mention",
+	request_id: str | None = None,
+	system_prompt: str = "",
+	glossary_lines: list[str] | None = None,
+	user_card_lines: list[str] | None = None,
+) -> RetrievalResult:
+	"""Retrieve and assemble chat context **as ``user``**, from the rooms they are in.
+
+	There is no ``allowed_rooms`` parameter and there must never be one. ``restrict_to``
+	narrows by intersection.
+
+	Raises:
+		RetrievalRefused: for ``Administrator``, ``Guest``, an unresolvable user, retrieval
+			paused by the kill switch, or an audit row that could not be written.
+	"""
+	acting = _assert_real_user(user)
+	_assert_retrieval_enabled()
+
+	with _acting_as(acting):
+		allowed_rooms = _visible_room_ids(acting, restrict_to)
+		if not allowed_rooms:
+			# A person in no rooms is not an error and not an empty search: there is
+			# genuinely nothing to search. Still audited, because "Triton read nothing on
+			# your behalf" is a fact worth being able to prove afterwards.
+			return _empty_result(acting, query, purpose, request_id)
+
+		return _run(
+			allowed_rooms,
+			acting=acting,
+			query=query,
+			room=room,
+			thread_root=thread_root,
+			purpose=purpose,
+			request_id=request_id,
+			system_prompt=system_prompt,
+			glossary_lines=glossary_lines or [],
+			user_card_lines=user_card_lines or [],
+			actor_type="Triton",
+		)
+
+
+def retrieve_for_oversight(
+	*,
+	query: str,
+	rooms: list[str],
+	reason: str,
+	user: str | None = None,
+	request_id: str | None = None,
+) -> RetrievalResult:
+	"""The oversight read: named rooms the auditor is **not** in, and it costs a reason.
+
+	A separate function rather than a flag on :func:`retrieve`, because a boolean is one typo
+	from being ``True`` while a distinctly named function cannot be reached by a caller who
+	did not mean to reach it — and it appears as itself in a stack trace and in a grep.
+
+	Three things it does that :func:`retrieve` does not, and each is a deliberate cost:
+
+	* it requires the configured oversight role, read from settings and never a literal role
+	  name;
+	* it requires an explicit, non-trivial ``reason``, which is **refused** when too short
+	  rather than accepted-and-blanked;
+	* it takes ``rooms`` explicitly. Nothing is inferred. An oversight read of "everything" is
+	  not expressible here, because the audit row has to name what was read.
+	"""
+	acting = _assert_real_user(user)
+	_assert_retrieval_enabled()
+
+	if not permissions._has_oversight(acting):
+		raise RetrievalRefused(
+			"Oversight retrieval requires the role named in Chat Settings → Admin Oversight "
+			"Role. That field ships blank, so this path fails closed until somebody "
+			"deliberately configures it."
+		)
+
+	cleaned_reason = (reason or "").strip()
+	if len(cleaned_reason) < _MIN_OVERSIGHT_REASON:
+		raise RetrievalRefused(
+			f"An oversight read needs a stated reason of at least {_MIN_OVERSIGHT_REASON} "
+			"characters. The reason is the thing that makes this read defensible later; an "
+			"empty one is refused rather than recorded as blank."
+		)
+
+	named = frozenset(str(r).strip() for r in (rooms or []) if str(r or "").strip())
+	if not named:
+		raise RetrievalRefused("An oversight read must name the rooms it reads.")
+
+	with _acting_as(acting):
+		return _run(
+			_cap_rooms(named),
+			acting=acting,
+			query=query,
+			room=None,
+			thread_root=None,
+			purpose="oversight",
+			request_id=request_id,
+			system_prompt="",
+			glossary_lines=[],
+			user_card_lines=[],
+			actor_type="Admin",
+			reason=cleaned_reason,
+		)
+
+
+#: An oversight reason shorter than this is refused. Long enough to be a sentence, short
+#: enough that a legitimate one-line justification passes.
+_MIN_OVERSIGHT_REASON: int = 12
+
+
+def _run(
+	allowed_rooms: frozenset[str],
+	*,
+	acting: str,
+	query: str,
+	room: str | None,
+	thread_root: str | None,
+	purpose: str,
+	request_id: str | None,
+	system_prompt: str,
+	glossary_lines: list[str],
+	user_card_lines: list[str],
+	actor_type: str,
+	reason: str | None = None,
+) -> RetrievalResult:
+	"""Fetch → rank → budget → **audit** → assemble. The order of the last two is the rule.
+
+	``allowed_rooms`` is the first positional parameter here too, even though this function
+	runs no SQL itself: it is the value every function it calls needs, and a signature that
+	makes it optional here would make forgetting it possible one level down.
+	"""
+	settings = _settings_dict()
+	expression = lexical.build_boolean_query(query)
+	dropped = lexical.dropped_terms(query)
+
+	# --- fetch, already filtered -------------------------------------------------------
+	semantic_order: list[str] = []
+	candidate_rows: list[tuple[str, str, str, int]] = []
+	if _truthy(settings.get("semantic_tier_enabled"), default=True):
+		candidate_rows = _semantic_candidate_rows(
+			allowed_rooms, limit=cint(settings.get("max_candidate_chunks")) or 8_000
+		)
+		semantic_order = _score_semantic(allowed_rooms, query=query, rows=candidate_rows)
+
+	lexical_order: list[str] = []
+	if _truthy(settings.get("lexical_tier_enabled"), default=True):
+		lexical_order = _lexical_chunk_order(
+			allowed_rooms,
+			expression=expression,
+			limit=cint(settings.get("retrieval_top_k")) or 24,
+		)
+
+	top_k = cint(settings.get("retrieval_top_k")) or 24
+	fused_keys = _fused_keys(semantic_order, lexical_order, settings, top_k)
+	chunk_rows = _chunk_rows(allowed_rooms, names=fused_keys)
+
+	digest_rows = _room_digest_rows(allowed_rooms)
+	thread_rows = (
+		_thread_messages(allowed_rooms, room=room, thread_root=thread_root, limit=MAX_THREAD_MESSAGES)
+		if room
+		else []
+	)
+	authored_rows = _authored_messages(
+		allowed_rooms, user=acting, expression=expression, limit=MAX_AUTHORED_MESSAGES
+	)
+
+	# --- rank, on already-filtered rows ------------------------------------------------
+	ranked = rank.rank(
+		[_as_candidate(row) for row in chunk_rows],
+		semantic_order=semantic_order,
+		lexical_order=lexical_order,
+		user=acting,
+		current_room=room,
+		current_thread=thread_root,
+		rrf_k=cint(settings.get("rrf_k")) or rank.DEFAULT_RRF_K,
+		half_life_days=float(cint(settings.get("recency_half_life_days")) or 30),
+		limit=top_k,
+	)
+
+	# --- budget ------------------------------------------------------------------------
+	resolved_budget = budget.budget_from_settings(settings)
+	digest_by_room = {row["room"]: row for row in digest_rows}
+	items = _budget_items(ranked, thread_rows, authored_rows, digest_rows, digest_by_room)
+	fitted = budget.plan(items, resolved_budget)
+
+	# --- audit BEFORE content is returned ----------------------------------------------
+	# record_or_refuse commits the row and raises if it cannot be written. Nothing below this
+	# line may move above it: the whole trade decision #12 makes is a non-participant read in
+	# exchange for a record of it, and a read that happened without the record is the half of
+	# that trade nobody agreed to.
+	audit_row = _write_audit(
+		allowed_rooms,
+		acting=acting,
+		query=query,
+		purpose=purpose,
+		actor_type=actor_type,
+		request_id=request_id,
+		reason=reason,
+		plan=fitted,
+		thread_rows=thread_rows,
+		authored_rows=authored_rows,
+		chunk_rows=chunk_rows,
+	)
+
+	# --- assemble ----------------------------------------------------------------------
+	manifest_entries, t0_lines, t2_t3_lines, thread_lines = _render(fitted, digest_by_room, thread_rows)
+	manifest = citations.resolve_urls(citations.build_manifest(manifest_entries))
+
+	assembly = assemble.assemble(
+		system_prompt=system_prompt,
+		glossary_lines=glossary_lines,
+		user_card_lines=user_card_lines,
+		t0_lines=t0_lines,
+		t2_t3_lines=t2_t3_lines,
+		thread_lines=thread_lines,
+		question=query,
+		context_truncated=fitted.context_truncated,
+	)
+
+	return RetrievalResult(
+		assembly=assembly,
+		manifest=manifest,
+		plan=fitted,
+		rooms_searched=tuple(sorted(allowed_rooms)),
+		chunks_considered=len(candidate_rows) or len(chunk_rows),
+		chunks_returned=len([item for item in fitted.kept if item.tier == budget.TIER_T2]),
+		digests_used=len(digest_rows),
+		context_tokens=fitted.total_tokens,
+		context_truncated=fitted.context_truncated,
+		degradation_rung=fitted.rung,
+		tiers_used=fitted.tiers_used,
+		audit_row=audit_row,
+		dropped_terms=tuple(dropped),
+	)
+
+
+# ------------------------------------------------------------------------------- internals
+
+
+def _score_semantic(
+	allowed_rooms: frozenset[str],
+	*,
+	query: str,
+	rows: list[tuple[str, str, str, int]],
+) -> list[str]:
+	"""Chunk names in cosine order, or ``[]`` when the semantic tier cannot run.
+
+	The vector backend is constructed with a loader over rows this module already fetched and
+	filtered, which is why no SQL lives in :mod:`chat.retrieval.vectors`. It re-checks the
+	room of every row anyway, because from that module's point of view "the caller filtered"
+	is an assumption rather than a fact.
+
+	A failure here degrades to the lexical tier rather than failing the turn: an answer from
+	exact matches beats no answer, and the embedding provider being unavailable is an
+	operational event rather than a security one.
+	"""
+	if not rows:
+		return []
+	try:
+		from erpnext_enhancements.chat.indexing import embed
+
+		query_vector = embed.embed_query(query)
+	except Exception:
+		return []
+	if not query_vector:
+		return []
+
+	backend = vectors.NumpyVectorBackend(
+		candidate_loader=lambda: rows,
+		expected_dim=len(query_vector),
+	)
+	try:
+		hits = backend.search(allowed_rooms, query_vector, limit=len(rows))
+	except vectors.VectorBackendError:
+		return []
+	return [hit.chunk for hit in hits]
+
+
+def _fused_keys(
+	semantic_order: list[str],
+	lexical_order: list[str],
+	settings: dict[str, Any],
+	top_k: int,
+) -> list[str]:
+	"""The union of both tiers' top slices, fused, then truncated.
+
+	Fusing here rather than after loading bodies means the expensive read — the one that
+	fetches conversation text — is over ``top_k`` rows rather than over every candidate.
+	"""
+	fused = rank.rrf_scores(
+		[semantic_order, lexical_order], k=cint(settings.get("rrf_k")) or rank.DEFAULT_RRF_K
+	)
+	ordered = sorted(fused.items(), key=lambda pair: (-pair[1], pair[0]))
+	return [key for key, _ in ordered[: max(top_k, 0)]]
+
+
+def _as_candidate(row: dict[str, Any]) -> rank.Candidate:
+	import json
+
+	try:
+		participants = tuple(json.loads(row.get("participants") or "[]"))
+	except Exception:
+		participants = ()
+	return rank.Candidate(
+		key=row["name"],
+		room=row["room"],
+		age_days=_age_days(row.get("last_message_at") or row.get("first_message_at")),
+		thread_root=row.get("thread_root"),
+		participants=participants,
+		tokens=cint(row.get("token_count")),
+		payload=row,
+	)
+
+
+def _age_days(value: Any) -> float:
+	"""Age in days, computed **here** and passed into the pure ranker.
+
+	The clock read lives in this module on purpose: :mod:`chat.retrieval.rank` and
+	:mod:`chat.retrieval.assemble` must contain no ``now()`` at all, because a clock read
+	above the volatile segment invalidates the whole cached prefix on every request —
+	silently, with no error and no log line.
+
+	``now_datetime()`` rather than SQL ``NOW()``: the database runs UTC and Frappe writes
+	site-local, so mixing them reports a row written a minute ago as six hours old.
+	"""
+	if not value:
+		return 0.0
+	try:
+		delta = now_datetime() - get_datetime(value)
+	except Exception:
+		return 0.0
+	return max(delta.total_seconds() / 86_400.0, 0.0)
+
+
+def _budget_items(
+	ranked: list[rank.Candidate],
+	thread_rows: list[dict[str, Any]],
+	authored_rows: list[dict[str, Any]],
+	digest_rows: list[dict[str, Any]],
+	digest_by_room: dict[str, dict[str, Any]],
+) -> list[budget.Item]:
+	"""Map fetched rows onto budget items, tier by tier, best-ranked first within each."""
+	items: list[budget.Item] = []
+
+	for row in digest_rows:
+		items.append(
+			budget.Item(
+				key=f"digest:{row['room']}",
+				tier=budget.TIER_T0,
+				tokens=cint(row.get("token_count")) or _estimate(row.get("summary_text")),
+				payload=row,
+			)
+		)
+
+	for row in thread_rows:
+		items.append(
+			budget.Item(
+				key=f"msg:{row['name']}",
+				tier=budget.TIER_T1,
+				tokens=_estimate(row.get("text")),
+				payload=row,
+			)
+		)
+
+	for candidate in ranked:
+		digest = digest_by_room.get(candidate.room)
+		items.append(
+			budget.Item(
+				key=candidate.key,
+				tier=budget.TIER_T2,
+				tokens=candidate.tokens or _estimate((candidate.payload or {}).get("body")),
+				score=candidate.score,
+				digest_key=f"digest:{candidate.room}" if digest else None,
+				digest_tokens=cint((digest or {}).get("token_count")),
+				payload=candidate.payload,
+			)
+		)
+
+	for row in authored_rows:
+		items.append(
+			budget.Item(
+				key=f"mine:{row['name']}",
+				tier=budget.TIER_T3,
+				tokens=_estimate(row.get("text")),
+				payload=row,
+			)
+		)
+
+	return items
+
+
+def _render(
+	fitted: budget.Plan,
+	digest_by_room: dict[str, dict[str, Any]],
+	thread_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, object]], list[str], list[str], list[str]]:
+	"""Turn the surviving items into manifest entries and labelled context lines.
+
+	Manifest numbering follows **assembly order**, which is why this function builds both at
+	once: numbering in one place and rendering in another is how the model ends up citing
+	``[[ref:1]]`` for the third thing it read.
+	"""
+	manifest_entries: list[dict[str, object]] = []
+	t0_lines: list[str] = []
+	t2_t3_lines: list[str] = []
+	thread_lines: list[str] = []
+
+	ref = 0
+	for item in fitted.kept:
+		payload = item.payload or {}
+		if item.tier == budget.TIER_T0:
+			row = payload or digest_by_room.get(str(item.key).removeprefix("digest:"), {})
+			t0_lines.append(f"[room summary: {row.get('room', '')}] {row.get('summary_text', '')}")
+			continue
+
+		ref += 1
+		if item.tier == budget.TIER_T1:
+			entry = {
+				"room": payload.get("room"),
+				"message": payload.get("name"),
+				"label": _message_label(payload),
+				"kind": "message",
+				"thread_root": payload.get("thread_root"),
+			}
+			thread_lines.append(
+				citations.context_line(
+					citations.Citation(
+						ref=ref, room=str(payload.get("room") or ""), message=payload.get("name"), label=""
+					),
+					author=str(payload.get("sender") or payload.get("sender_email") or ""),
+					timestamp=str(payload.get("origin_timestamp") or payload.get("creation") or ""),
+					body=str(payload.get("text") or ""),
+				)
+			)
+		elif item.tier == budget.TIER_T2 and item.payload is None and item.digest_key:
+			# Rung 3 replaced this body with its room digest line.
+			room = str(item.digest_key).removeprefix("digest:")
+			row = digest_by_room.get(room, {})
+			entry = {
+				"room": room,
+				"message": None,
+				"label": f"summary of {room}",
+				"kind": "digest",
+			}
+			t2_t3_lines.append(f"⟦ref:{ref}⟧ [room summary: {room}] {row.get('summary_text', '')}")
+		else:
+			entry = {
+				"room": payload.get("room"),
+				"message": payload.get("first_message") or payload.get("name"),
+				"label": _chunk_label(payload),
+				"kind": "chunk" if item.tier == budget.TIER_T2 else "message",
+				"thread_root": payload.get("thread_root"),
+			}
+			t2_t3_lines.append(
+				citations.context_line(
+					citations.Citation(ref=ref, room=str(payload.get("room") or ""), message=None, label=""),
+					author=str(payload.get("sender") or "conversation"),
+					timestamp=str(payload.get("last_message_at") or payload.get("creation") or ""),
+					body=str(payload.get("body") or payload.get("text") or ""),
+				)
+			)
+		manifest_entries.append(entry)
+
+	if not thread_lines and thread_rows:
+		# The thread was dropped entirely by the hard floor. Say so rather than silently
+		# presenting no thread at all, which reads to the model as "there is no conversation".
+		thread_lines.append("[the current thread was omitted to fit the context limit]")
+
+	return manifest_entries, t0_lines, t2_t3_lines, thread_lines
+
+
+def _message_label(row: dict[str, Any]) -> str:
+	sender = row.get("sender") or row.get("sender_email") or "someone"
+	return f"{sender} in {row.get('room', '')}"
+
+
+def _chunk_label(row: dict[str, Any]) -> str:
+	return f"conversation in {row.get('room', '')} (seq {row.get('first_seq')}-{row.get('last_seq')})"
+
+
+def _write_audit(
+	allowed_rooms: frozenset[str],
+	*,
+	acting: str,
+	query: str,
+	purpose: str,
+	actor_type: str,
+	request_id: str | None,
+	reason: str | None,
+	plan: budget.Plan,
+	thread_rows: list[dict[str, Any]],
+	authored_rows: list[dict[str, Any]],
+	chunk_rows: list[dict[str, Any]],
+) -> str:
+	"""Write the fail-closed audit row. Raises through :func:`audit.record_or_refuse`.
+
+	One child row per room actually read, with the seq range — not one per room the person
+	*could* have read. "Triton looked at these four rooms" is the auditable fact; "Triton was
+	allowed to look at forty" is noise that makes the log unreadable and hides the four.
+	"""
+	rooms_touched: dict[str, dict[str, Any]] = {}
+
+	def _touch(room: str, seq: Any, count: int = 1) -> None:
+		if not room:
+			return
+		bucket = rooms_touched.setdefault(
+			room, {"room": room, "messages_read": 0, "first_seq": None, "last_seq": None}
+		)
+		bucket["messages_read"] += count
+		value = cint(seq)
+		if value:
+			if bucket["first_seq"] is None or value < bucket["first_seq"]:
+				bucket["first_seq"] = value
+			if bucket["last_seq"] is None or value > bucket["last_seq"]:
+				bucket["last_seq"] = value
+
+	for row in thread_rows:
+		_touch(row.get("room"), row.get("seq"))
+	for row in authored_rows:
+		_touch(row.get("room"), row.get("seq"))
+	for row in chunk_rows:
+		_touch(row.get("room"), row.get("last_seq"), count=1)
+		_touch(row.get("room"), row.get("first_seq"), count=0)
+
+	return audit.record_or_refuse(
+		user=acting,
+		purpose=purpose,
+		actor_type=actor_type,
+		rooms=list(rooms_touched.values()),
+		query=query,
+		reason=reason,
+		request_id=request_id,
+		message_count=len(thread_rows) + len(authored_rows),
+		chunk_count=len(chunk_rows),
+		token_count=plan.total_tokens,
+		tiers_used=",".join(plan.tiers_used),
+		context_truncated=1 if plan.context_truncated else 0,
+	)
+
+
+def _empty_result(acting: str, query: str, purpose: str, request_id: str | None) -> RetrievalResult:
+	"""A person in no rooms. Audited anyway, because "nothing was read" is also a fact."""
+	audit_row = audit.record_or_refuse(
+		user=acting,
+		purpose=purpose,
+		actor_type="Triton",
+		rooms=[],
+		query=query,
+		request_id=request_id,
+		message_count=0,
+		chunk_count=0,
+		token_count=0,
+		tiers_used="",
+		context_truncated=0,
+	)
+	return RetrievalResult(audit_row=audit_row)
+
+
+def _assert_retrieval_enabled() -> None:
+	"""Both kill switches, checked before anything is read.
+
+	``pause_retrieval`` is the incident control and ``enabled`` is the rollout one; either
+	being off refuses the turn with a sentence rather than returning an empty result, because
+	"chat retrieval is switched off" and "there is nothing relevant in your history" must not
+	look the same to the person asking.
+	"""
+	if not cint(_setting("enabled")):
+		raise RetrievalRefused("Chat is switched off (Chat Settings → Enable Chat).")
+	if cint(_setting("pause_retrieval")):
+		raise RetrievalRefused("Chat retrieval is paused (Chat Settings → Pause Retrieval).")
+
+
+def _settings_dict() -> dict[str, Any]:
+	try:
+		return dict(frappe.get_cached_doc("Chat Settings").as_dict())
+	except Exception:
+		return {}
+
+
+def _setting(fieldname: str) -> Any:
+	try:
+		return frappe.db.get_single_value("Chat Settings", fieldname)
+	except Exception:
+		return None
+
+
+def _truthy(value: Any, *, default: bool) -> bool:
+	if value is None:
+		return default
+	return bool(cint(value))
+
+
+def _estimate(text: Any) -> int:
+	from erpnext_enhancements.chat.doctype.chat_context_chunk.chat_context_chunk import estimate_tokens
+
+	return estimate_tokens(str(text or ""))
+
+
+# --------------------------------------------------------------- acting-as, for the filter
+
+
+class _acting_as:
+	"""Run a block with ``frappe.session.user`` set to the acting person.
+
+	This exists because of where retrieval runs. The handler is a **background job**, and a
+	background job's session user is ``Administrator`` — for which
+	``permissions.membership_filter_sql`` returns ``1 = 1``. Passing the user explicitly to
+	every helper is necessary and not sufficient: the shared fragment resolves its own default
+	from the session, and a helper added later that forgets the argument would silently widen
+	to every room.
+
+	So the session is set for the duration, and :func:`_acting_user` reads it back. Restored in
+	``finally``, including on the exception path, because a job that leaves the session
+	pointing at a coworker would attribute everything it does afterwards to them.
+	"""
+
+	def __init__(self, user: str) -> None:
+		self._user = user
+		self._previous: str | None = None
+
+	def __enter__(self) -> str:
+		self._previous = frappe.session.user
+		frappe.set_user(self._user)
+		return self._user
+
+	def __exit__(self, *_exc: object) -> None:
+		if self._previous:
+			frappe.set_user(self._previous)
+
+
+def _acting_user() -> str:
+	"""The user every membership fragment is built for. Never defaulted to the session
+	implicitly — read explicitly here so the one place it comes from is greppable."""
+	return frappe.session.user

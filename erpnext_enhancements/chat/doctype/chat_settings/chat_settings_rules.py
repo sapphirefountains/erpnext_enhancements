@@ -182,6 +182,117 @@ def validate_retention(
 	return errors
 
 
+def validate_retrieval(
+	*,
+	retrieval_top_k: float,
+	max_candidate_chunks: float,
+	max_rooms_per_retrieval: float,
+	rrf_k: float,
+	recency_half_life_days: float,
+	embedding_dim: float,
+	chunk_seal_tokens: float,
+	chunk_seal_messages: float,
+	chunk_seal_gap_minutes: float,
+	chunk_idle_tail_minutes: float,
+	digest_dirty_message_threshold: float,
+	digest_dirty_minutes: float,
+	digest_batch_rooms: float,
+	thread_digest_min_messages: float,
+	digest_max_rebuild_failures: float,
+	digest_staleness_alert_minutes: float,
+	context_token_ceiling: float,
+	semantic_tier_enabled: bool,
+	lexical_tier_enabled: bool,
+) -> list[str]:
+	"""Check the Phase 5 retrieval and indexing dials. Returns error strings.
+
+	Keyword-only, unlike :func:`validate_budgets`, because there are nineteen of them and a
+	positional call would be nineteen chances to transpose two integers that are both
+	plausible in either position — ``chunk_seal_messages`` and ``chunk_seal_tokens`` are the
+	obvious pair, and a swap makes chunks a twentieth of the intended size with no error
+	anywhere.
+
+	Only the combinations that mean something wrong are checked. A dial being unusual is the
+	operator's business; a dial being *incoherent with another dial* is what a form should
+	refuse, because the result is not a bad answer but a silently disabled feature.
+	"""
+	errors: list[str] = []
+
+	positive: tuple[tuple[str, float], ...] = (
+		("Retrieval Top K", retrieval_top_k),
+		("Max Candidate Chunks", max_candidate_chunks),
+		("RRF K", rrf_k),
+		("Recency Half-Life (days)", recency_half_life_days),
+		("Embedding Dim", embedding_dim),
+		("Chunk Seal Tokens", chunk_seal_tokens),
+		("Chunk Seal Messages", chunk_seal_messages),
+		("Chunk Seal Gap (min)", chunk_seal_gap_minutes),
+		("Chunk Idle Tail (min)", chunk_idle_tail_minutes),
+		("Digest Dirty Messages", digest_dirty_message_threshold),
+		("Digest Dirty Age (min)", digest_dirty_minutes),
+		("Digest Batch Rooms", digest_batch_rooms),
+		("Thread Digest Min Messages", thread_digest_min_messages),
+		("Max Rebuild Failures", digest_max_rebuild_failures),
+		("Digest Staleness Alert (min)", digest_staleness_alert_minutes),
+	)
+	for label, value in positive:
+		if value <= 0:
+			errors.append(
+				f"{label} must be greater than zero (got {value}). There is no 'unlimited' "
+				"reading of this dial — a zero disables the behaviour it sizes, silently."
+			)
+
+	# Max Rooms Per Retrieval is the one dial where 0 legitimately means "no cap".
+	if max_rooms_per_retrieval < 0:
+		errors.append(
+			f"Max Rooms Per Retrieval cannot be negative (got {max_rooms_per_retrieval}). "
+			"Use 0 for no cap."
+		)
+
+	if retrieval_top_k > 0 and max_candidate_chunks > 0 and retrieval_top_k > max_candidate_chunks:
+		errors.append(
+			f"Retrieval Top K ({retrieval_top_k}) exceeds Max Candidate Chunks "
+			f"({max_candidate_chunks}). The ranker cannot return more chunks than the "
+			"permission filter admitted, so this asks for a top-K that can never be filled."
+		)
+
+	if chunk_seal_tokens > 0 and context_token_ceiling > 0 and chunk_seal_tokens > context_token_ceiling:
+		errors.append(
+			f"Chunk Seal Tokens ({chunk_seal_tokens}) exceeds the Context Token Ceiling "
+			f"({context_token_ceiling}). A single chunk would then be too large to fit in "
+			"any assembly, so it could be retrieved and never used — retrieval would look "
+			"like it was working and every answer would be missing its best source."
+		)
+
+	if chunk_idle_tail_minutes > 0 and chunk_seal_gap_minutes > 0:
+		if chunk_idle_tail_minutes > chunk_seal_gap_minutes:
+			errors.append(
+				f"Chunk Idle Tail ({chunk_idle_tail_minutes} min) is longer than Chunk Seal "
+				f"Gap ({chunk_seal_gap_minutes} min). The gap rule would already have sealed "
+				"the chunk before the idle rule could, so the idle rule never fires and the "
+				"tail of a quiet room is never indexed."
+			)
+
+	if digest_staleness_alert_minutes > 0 and digest_dirty_minutes > 0:
+		if digest_staleness_alert_minutes <= digest_dirty_minutes:
+			errors.append(
+				f"Digest Staleness Alert ({digest_staleness_alert_minutes} min) is not longer "
+				f"than Digest Dirty Age ({digest_dirty_minutes} min). The alarm would fire "
+				"during normal operation, every time — an alert that is always on is an "
+				"alert nobody reads, which is worse than not having one."
+			)
+
+	if not semantic_tier_enabled and not lexical_tier_enabled:
+		errors.append(
+			"Both the Semantic Tier and the Lexical Tier are switched off. Retrieval would "
+			"return nothing at all, and Triton would answer every chat question from the "
+			"current thread alone while appearing to work. Turn one on, or switch chat "
+			"Triton off with Pause Retrieval so the refusal is explicit."
+		)
+
+	return errors
+
+
 def validate_endpoint_url(url: str) -> list[str]:
 	"""Check the JWT audience URL for the two mistakes that present as universal 401s.
 

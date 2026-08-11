@@ -1,0 +1,228 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "autoname": "field:thread_root",
+ "creation": "2026-08-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "thread_root",
+  "room",
+  "digest_version",
+  "generation_count",
+  "column_break_head",
+  "is_stale",
+  "stale_since",
+  "message_count",
+  "watermark_section",
+  "watermark_seq",
+  "watermark_count",
+  "column_break_watermark",
+  "watermark_modified",
+  "coverage_section",
+  "covered_from",
+  "covered_to",
+  "column_break_coverage",
+  "covered_from_at",
+  "covered_to_at",
+  "summary_section",
+  "summary_text",
+  "token_count",
+  "generation_meta_section",
+  "model_used",
+  "generated_at",
+  "generation_ms",
+  "column_break_generation",
+  "rebuild_failures",
+  "poisoned",
+  "last_error"
+ ],
+ "fields": [
+  {
+   "description": "The thread this summarises, and the docname. A thread root is a Chat Message name, which is already globally unique, so one digest per thread is enforced by the primary key rather than by a rule somebody has to remember.",
+   "fieldname": "thread_root",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Thread Root",
+   "options": "Chat Message",
+   "reqd": 1,
+   "set_only_once": 1,
+   "unique": 1
+  },
+  {
+   "description": "Denormalised from the thread root, for the same reason Chat Attachment.room is: the retrieval gate filters on room in the WHERE clause, and it must not have to join through Chat Message to find out which room a digest belongs to. Backfilled by the controller so a caller cannot get it wrong.",
+   "fieldname": "room",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Room",
+   "options": "Chat Room",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "description": "Monotonic, bumped on every republish, and part of every cache key derived from this digest.",
+   "fieldname": "digest_version",
+   "fieldtype": "Int",
+   "label": "Digest Version"
+  },
+  {
+   "fieldname": "generation_count",
+   "fieldtype": "Int",
+   "label": "Generation Count"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Same contract as the room digest: an edit or delete inside the covered span sets this, retrieval skips a stale digest outright, and the rebuild is full rather than incremental.",
+   "fieldname": "is_stale",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Is Stale"
+  },
+  {
+   "fieldname": "stale_since",
+   "fieldtype": "Datetime",
+   "label": "Stale Since"
+  },
+  {
+   "description": "Replies in the thread at generation time. A thread only earns a digest once it exceeds the configured length - below it, the thread tier carries the whole thing verbatim and a summary would be strictly worse than the text it replaces.",
+   "fieldname": "message_count",
+   "fieldtype": "Int",
+   "label": "Message Count"
+  },
+  {
+   "fieldname": "watermark_section",
+   "fieldtype": "Section Break",
+   "label": "Watermark"
+  },
+  {
+   "description": "The three-value watermark's first value. See Chat Room Digest for why one value is not enough: an edit and a delete both leave seq untouched.",
+   "fieldname": "watermark_seq",
+   "fieldtype": "Int",
+   "label": "Watermark Seq"
+  },
+  {
+   "fieldname": "watermark_count",
+   "fieldtype": "Int",
+   "label": "Watermark Count"
+  },
+  {
+   "fieldname": "column_break_watermark",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "watermark_modified",
+   "fieldtype": "Datetime",
+   "label": "Watermark Modified"
+  },
+  {
+   "fieldname": "coverage_section",
+   "fieldtype": "Section Break",
+   "label": "Coverage"
+  },
+  {
+   "fieldname": "covered_from",
+   "fieldtype": "Int",
+   "label": "Covered From"
+  },
+  {
+   "fieldname": "covered_to",
+   "fieldtype": "Int",
+   "label": "Covered To"
+  },
+  {
+   "fieldname": "column_break_coverage",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "covered_from_at",
+   "fieldtype": "Datetime",
+   "label": "Covered From At"
+  },
+  {
+   "fieldname": "covered_to_at",
+   "fieldtype": "Datetime",
+   "label": "Covered To At"
+  },
+  {
+   "fieldname": "summary_section",
+   "fieldtype": "Section Break",
+   "label": "Summary"
+  },
+  {
+   "description": "The thread summary. Used by the degradation ladder: when the thread tier will not fit, the middle of the thread is replaced by this while the root and the last few replies stay verbatim.",
+   "fieldname": "summary_text",
+   "fieldtype": "Long Text",
+   "label": "Summary Text"
+  },
+  {
+   "fieldname": "token_count",
+   "fieldtype": "Int",
+   "label": "Token Count"
+  },
+  {
+   "fieldname": "generation_meta_section",
+   "fieldtype": "Section Break",
+   "label": "Generation"
+  },
+  {
+   "fieldname": "model_used",
+   "fieldtype": "Data",
+   "label": "Model Used",
+   "length": 140
+  },
+  {
+   "fieldname": "generated_at",
+   "fieldtype": "Datetime",
+   "label": "Generated At"
+  },
+  {
+   "fieldname": "generation_ms",
+   "fieldtype": "Int",
+   "label": "Generation (ms)"
+  },
+  {
+   "fieldname": "column_break_generation",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "rebuild_failures",
+   "fieldtype": "Int",
+   "label": "Rebuild Failures"
+  },
+  {
+   "default": "0",
+   "fieldname": "poisoned",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Poisoned"
+  },
+  {
+   "description": "The last failure, scrubbed. Never a message body.",
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Thread Digest",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}
