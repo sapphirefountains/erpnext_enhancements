@@ -190,6 +190,73 @@ NAME_ONLY_EXEMPTIONS: dict[tuple[str, str], str] = {
 	),
 }
 
+#: The one *package* permitted to name the index tables besides the gate, and the four
+#: properties it must keep to hold that permission.
+#:
+#: Rule A is not "only one file may mention these tables" — something has to **write** them.
+#: It is "the only place a person can cause one of these tables to be read is the gate". The
+#: indexing package is the writer: it runs on the scheduler with no session user, it reads
+#: across every room by design, and its output is governed at the point of *consumption*
+#: rather than production.
+#:
+#: That permission is worth exactly as much as the properties below, which is why they are
+#: asserted rather than described.
+WRITER_PACKAGE: str = "chat/indexing"
+
+WRITER_PACKAGE_REASON: str = (
+	"The indexer, the summariser and the invalidation writer. Something must write the index, "
+	"and it cannot be the gate: the gate exists to answer one person from their own rooms, "
+	"while these read every room and belong to nobody.\n"
+	"What makes that safe is not this exemption, it is the four properties asserted below — "
+	"no whitelisted method anywhere in the package, so no HTTP request can ask it for "
+	"anything; every public entry point named and justified individually; every one of them "
+	"either a registered scheduler job or the staleness seam's writer; and no endpoint "
+	"importing it. The gate is still the only way a person's question reaches a chunk body."
+)
+
+#: ``{file: {public function: reason}}`` — the public surface of the writer package. Anything
+#: else in it must be underscore-private.
+#:
+#: Named individually rather than by pattern, because "public function in the indexing
+#: package" is exactly the shape somebody would add a convenient cross-room reader as.
+WRITER_ENTRY_POINTS: dict[str, dict[str, str]] = {
+	"chat/indexing/indexer.py": {
+		"sweep_chunks": (
+			"Scheduler job, every ten minutes. Reads messages past each room's derived "
+			"watermark and writes sealed chunks. No network I/O and no caller-supplied input "
+			"of any kind — its only argument is the clock."
+		),
+		"sweep_embeddings": (
+			"Scheduler job. Reads sealed chunk bodies and sends them to the embedding "
+			"provider. This is the one place a chunk body legitimately leaves the database "
+			"outside the gate, and it goes to the model that indexes it rather than to a "
+			"reader."
+		),
+	},
+	"chat/indexing/digest.py": {
+		"sweep_digests": (
+			"Scheduler job, every five minutes. Selects rooms by a derived dirty predicate "
+			"and rewrites their summaries. Reads across every room, which is precisely why "
+			"its OUTPUT is behind the same gate as the messages it summarises."
+		),
+		"check_digest_staleness": (
+			"Scheduler job, hourly. Reads one aggregate — the newest generated_at anywhere — "
+			"and alerts if the summariser has stopped. No room, no body, no identifiers."
+		),
+	},
+	"chat/indexing/invalidate.py": {
+		"invalidate_span": (
+			"The staleness seam's writer, and the one entry point here that is NOT a "
+			"scheduler job: it is called from the edit and delete paths, synchronously, "
+			"because a digest covering a message somebody just deleted must stop being "
+			"served now rather than at the next pass.\n"
+			"It only ever sets is_stale. It selects no column, returns no content, and its "
+			"three statements are UPDATEs — so the widest thing it can do wrong is "
+			"invalidate too much, which costs a recomputation."
+		),
+	},
+}
+
 _TAB_RE = re.compile(r"`tab([^`]+)`")
 _MIN_REASON = 120
 
@@ -474,7 +541,9 @@ class TestRuleATheIndexTablesHaveOneDoor(unittest.TestCase):
 		offenders = sorted(
 			str(use)
 			for use in _app_table_uses()
-			if use.file != GATE_REL and (use.file, use.function) not in NAME_ONLY_EXEMPTIONS
+			if use.file != GATE_REL
+			and not use.file.startswith(f"{WRITER_PACKAGE}/")
+			and (use.file, use.function) not in NAME_ONLY_EXEMPTIONS
 		)
 		self.assertFalse(
 			offenders,
@@ -677,6 +746,142 @@ class TestRuleDTheEntryPointDerivesItsOwnRoomSet(unittest.TestCase):
 			"offender — or worse, there are none yet and the package is being assembled "
 			"somewhere else.",
 		)
+
+
+class TestTheWriterPackagePaysForItsExemption(unittest.TestCase):
+	"""The indexing package may name the index tables. These four assertions are the price.
+
+	Without them the exemption reads as "except over there", which is how a fence acquires a
+	gate nobody remembers installing.
+	"""
+
+	WRITER_DIR = APP_DIR / WRITER_PACKAGE
+
+	def _writer_files(self):
+		if not self.WRITER_DIR.is_dir():
+			return []
+		return [(_rel(path), _parse(path)) for path in _python_files(self.WRITER_DIR)]
+
+	def test_the_exemption_is_justified_in_writing(self):
+		self.assertGreaterEqual(len(WRITER_PACKAGE_REASON.strip()), _MIN_REASON)
+
+	def test_the_writer_package_exposes_no_whitelisted_method(self):
+		"""The property that matters most: **no HTTP request can ask this package for
+		anything.** Everything else here is defence in depth around it."""
+		offenders: list[str] = []
+		for rel, tree in self._writer_files():
+			for node in ast.walk(tree):
+				if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+					continue
+				for decorator in node.decorator_list:
+					target = decorator.func if isinstance(decorator, ast.Call) else decorator
+					if ".".join(_dotted(target)[-2:]) == "frappe.whitelist":
+						offenders.append(f"{rel}:{node.lineno} {node.name}")
+		self.assertFalse(
+			offenders,
+			f"these functions in {WRITER_PACKAGE}/ are whitelisted: {offenders}.\n\n"
+			"This package reads every room with permissions ignored, because it runs on the "
+			"scheduler with no session user. A whitelisted method here is a cross-room reader "
+			"reachable over HTTP — which is the exact thing the retrieval gate exists to be "
+			"the only instance of.",
+		)
+
+	def _files_naming_an_index_table(self) -> set[str]:
+		"""The subset of the package the public-surface rule applies to.
+
+		Scoped to files that actually name one of the tables, deliberately. ``chunker.py`` is
+		pure boundary arithmetic and ``embed.py`` talks to a model — neither can reach a chunk
+		row, so requiring their helpers to be private would be ceremony, and ceremony is what
+		makes a reviewer stop reading a rule.
+		"""
+		return {use.file for use in _app_table_uses() if use.file.startswith(f"{WRITER_PACKAGE}/")}
+
+	def test_every_public_function_in_the_writer_package_is_named_and_justified(self):
+		"""A public function in a file that reaches the index must be one somebody
+		deliberately made public. Anything else is private, so it cannot be imported and
+		called from an endpoint."""
+		in_scope = self._files_naming_an_index_table()
+		offenders: list[str] = []
+		for rel, tree in self._writer_files():
+			if rel not in in_scope:
+				continue
+			declared = WRITER_ENTRY_POINTS.get(rel, {})
+			for node in tree.body:  # module level only; nested helpers are not a surface
+				if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+					continue
+				if node.name.startswith("_"):
+					continue
+				if node.name in declared:
+					continue
+				offenders.append(f"{rel}:{node.lineno} {node.name}")
+		self.assertFalse(
+			offenders,
+			f"these public functions in {WRITER_PACKAGE}/ are not in WRITER_ENTRY_POINTS: "
+			f"{offenders}.\n\n"
+			"Either make it private — the default here, because this package's callers are "
+			"the scheduler and one seam — or add it with the reason it needs to be reachable "
+			"and what it does NOT return.",
+		)
+
+	def test_every_declared_entry_point_still_exists(self):
+		"""A stale entry justifies nothing today and whatever takes that name tomorrow."""
+		live: set[tuple[str, str]] = set()
+		for rel, tree in self._writer_files():
+			for node in tree.body:
+				if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+					live.add((rel, node.name))
+		stale = sorted(
+			f"{rel}:{name}"
+			for rel, names in WRITER_ENTRY_POINTS.items()
+			for name in names
+			if (rel, name) not in live
+		)
+		if not self.WRITER_DIR.is_dir():
+			self.skipTest(f"{WRITER_PACKAGE}/ does not exist yet")
+		self.assertFalse(stale, f"stale WRITER_ENTRY_POINTS: {stale}")
+
+	def test_every_declared_entry_point_states_what_it_does_not_return(self):
+		for rel, names in sorted(WRITER_ENTRY_POINTS.items()):
+			for name, reason in sorted(names.items()):
+				with self.subTest(entry=f"{rel}:{name}"):
+					self.assertGreaterEqual(
+						len(reason.strip()),
+						_MIN_REASON,
+						f"WRITER_ENTRY_POINTS[{rel!r}][{name!r}] has no real justification. Say "
+						"who calls it, and say what it reads and what it cannot return.",
+					)
+
+	def test_the_scheduler_owns_every_entry_point_but_the_seam_writer(self):
+		"""The declared surface must actually be the scheduler's, not merely claimed to be.
+
+		``invalidate_span`` is the one exception and is checked by name: it is called
+		synchronously from the edit and delete paths, because a digest covering a message
+		somebody just deleted has to stop being served *now*.
+		"""
+		if not self.WRITER_DIR.is_dir():
+			self.skipTest(f"{WRITER_PACKAGE}/ does not exist yet")
+		hooks = (APP_DIR / "hooks.py").read_text(encoding="utf-8")
+		for rel, names in sorted(WRITER_ENTRY_POINTS.items()):
+			module = rel.removesuffix(".py").replace("/", ".")
+			for name in sorted(names):
+				if name == "invalidate_span":
+					self.assertIn(
+						"invalidate.invalidate_span",
+						(APP_DIR / "chat" / "seams.py").read_text(encoding="utf-8"),
+						"invalidate_span is declared as the seam's writer but chat/seams.py "
+						"does not call it. Then nothing invalidates a digest on an edit or a "
+						"delete, and a summary of a deleted message keeps being served — "
+						"silently, because a stale digest still answers.",
+					)
+					continue
+				self.assertIn(
+					f"erpnext_enhancements.{module}.{name}",
+					hooks,
+					f"{rel}:{name} is declared as a scheduler entry point and hooks.py does "
+					"not register it. Either it is dead code, or the index has silently "
+					"stopped being maintained — and the second one looks exactly like chat "
+					"being quiet.",
+				)
 
 
 class TestRuleETheWireSurfaceIsOneMethodAndItGates(unittest.TestCase):

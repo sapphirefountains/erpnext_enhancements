@@ -647,13 +647,40 @@ scheduler_events = {
 		# v16 also wires no RQ retries at all. So the queue is a latency optimisation and THIS
 		# is the delivery guarantee: it re-drives `Pending` rows past `available_at` and returns
 		# `In Progress` rows whose lease expired (a crashed worker) to `Pending`.
-		"*/5 * * * *": ["erpnext_enhancements.chat.sync.outbound.sweep_relay_jobs"],
+		"*/5 * * * *": [
+			"erpnext_enhancements.chat.sync.outbound.sweep_relay_jobs",
+			# chat Phase 5: the rolling summariser. APPENDED to this key rather than given a
+			# new one -- scheduler_events is one dict literal and a duplicate key silently
+			# replaces the earlier entry, which would have deleted the relay sweeper above.
+			#
+			# A five-minute BATCH over a dirty predicate, and never a per-message enqueue.
+			# The natural design -- enqueue per message with deduplicate=True so repeats
+			# collapse -- is silently broken: `deduplicate` drops the new enqueue when an
+			# existing job is QUEUED *or STARTED*, so a digest job that is currently running
+			# swallows every message arriving while it runs, which is exactly the set of
+			# messages that made the digest stale. In a busy room the job is always running,
+			# the drop is always happening, and the digest never advances. One ERROR line, a
+			# return, and for weeks it reads as "summaries are a bit behind".
+			#
+			# Five minutes plus the 15-minute dirty-age threshold is what bounds staleness at
+			# roughly twenty minutes.
+			"erpnext_enhancements.chat.indexing.digest.sweep_digests",
+		],
 		# Provisioning and attachments: both are prerequisite work for a relay that is already
 		# queued and waiting, so they are frequent but cheap -- each returns immediately when
 		# its table has nothing pending.
+		#
+		# The two Phase 5 indexing passes join them, and are SEPARATE jobs on purpose. Chunking
+		# is cheap, local and always correct; embedding is a paid external call that can fail,
+		# rate-limit or hang. Fused, an embedding outage stops the index advancing and a room's
+		# history silently stops being searchable AT ALL rather than only semantically. Split,
+		# chunk rows keep landing, the lexical tier keeps finding them, and the vectors backfill
+		# when the provider returns.
 		"*/10 * * * *": [
 			"erpnext_enhancements.chat.sync.provisioning.sweep_pending_provisioning",
 			"erpnext_enhancements.chat.sync.attachments.sweep_pending_attachments",
+			"erpnext_enhancements.chat.indexing.indexer.sweep_chunks",
+			"erpnext_enhancements.chat.indexing.indexer.sweep_embeddings",
 		],
 		# Subscription renewal. An expired Workspace Events subscription is DELETED and cannot
 		# be renewed -- only recreated -- and the failure is completely silent, so this is the
@@ -690,6 +717,15 @@ scheduler_events = {
 		# reactivated by its next registration and the history survives somebody asking why
 		# their phone stopped buzzing.
 		"45 3 * * *": ["erpnext_enhancements.chat.notifications.webpush.subscriptions.prune_stale"],
+		# chat Phase 5: the digest staleness alarm. Hourly at a minute nothing else owns --
+		# QuickBooks has :00/:20/:40, chat sync has :25/:50, and this takes :35.
+		#
+		# The failure it watches for is not an error, it is SILENCE. Every other failure in
+		# this package announces itself; a summariser that has quietly stopped produces no log
+		# line, no exception and no user complaint, because stale summaries keep answering.
+		# The first symptom otherwise is somebody noticing weeks later that Triton's answers
+		# stopped mentioning anything recent.
+		"35 * * * *": ["erpnext_enhancements.chat.indexing.digest.check_digest_staleness"],
 		# Semi-monthly commission report — 07:00 site TZ, DAILY on purpose even
 		# though it only emails on the 1st and the 16th. The job also owns the
 		# saved date window on the "Brian's Closed Won" Report Builder report, and

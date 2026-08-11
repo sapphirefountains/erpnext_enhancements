@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.275.0] - 2026-08-11
+
+The index writer. Until this, the retrieval gate had nothing to search — chunks and digests
+were tables nothing filled, and `@triton` would have answered from the current thread alone
+while appearing to have searched.
+
+### Added
+
+- **`chat/indexing/indexer.py`** — `sweep_chunks` (every 10 min) reads messages past each
+  room's derived watermark and writes sealed chunks; `sweep_embeddings` backfills vectors.
+- **`chat/indexing/digest.py`** — `sweep_digests` (every 5 min) rewrites room summaries for
+  rooms matching a **derived** dirty predicate, and summarises threads past the length
+  threshold; `check_digest_staleness` (hourly at `:35`) alerts when the newest digest anywhere
+  is older than the window.
+- **`chat/indexing/invalidate.py`** — the staleness writer the Phase 2 seam has been waiting
+  for. `chat.seams.mark_room_context_stale` now calls it, so an edit or delete marks every
+  overlapping chunk and digest stale immediately.
+- Four scheduler entries, **appended** to the existing `*/5` and `*/10` keys rather than given
+  new ones — `scheduler_events` is one dict literal and a duplicate key silently replaces the
+  earlier entry, which would have deleted the relay sweeper.
+- `SYSTEM_CONTEXT_PACKAGES` in the raw-SQL guard and `WRITER_PACKAGE` / `WRITER_ENTRY_POINTS`
+  in the gate scan, with the four assertions that make the writer package's exemption
+  structural.
+
+### Notes
+
+- **Chunking and embedding are separate jobs, and that is the load-bearing decision here.**
+  Chunking is cheap, local and always correct; embedding is a paid external call that can
+  fail, rate-limit or hang. Fused, an embedding outage stops the index advancing and a room's
+  history silently stops being searchable **at all** rather than only semantically. Split,
+  chunk rows keep landing, the lexical tier keeps finding them, and the vectors backfill.
+- **Both watermarks are derived rather than stored.** "Where did indexing get to" is
+  `max(last_seq)` over that room's chunks; "how far behind is the digest" is
+  `Chat Room.seq_high_water - digest.watermark_seq`. No cursor column, no counter on the
+  message write path. Derived is self-correcting — delete a chunk or a digest and the next
+  pass rebuilds it — and a `coalesce(..., 0)` makes a room with *nothing* indexed dirty by
+  definition, so the first pass needs no backfill script.
+- **Only sealed chunks are written; the open tail is left on the floor and re-read.** Writing
+  the tail unsealed and updating it per message gives the row a `content_hash` that changes
+  under a reader and reintroduces exactly the per-message cost the tail rule exists to avoid.
+- **A chunk insert colliding on `unique(room, first_seq)` is success**, not an error. Another
+  worker built the same chunk from the same messages, which is what a deterministic pure
+  chunker buys. Logging it would turn normal operation into noise.
+- **Invalidation is by overlap, not containment** — `first_seq <= to and last_seq >= from`.
+  Containment misses the case that actually happens: a multi-message delete spanning two
+  chunks contains neither. Rows are **marked, never deleted**: a deleted row still tells the
+  indexer that span is covered, so removing it silently re-opens a gap the watermark thinks is
+  closed.
+- **Thread digests are generated, not just read.** Leaving the gate reading a table nothing
+  writes would be the same defect as the four audit columns this phase just filled — a
+  feature that reads as "this never happens" rather than "nobody built the other half".
+- **Every freshness predicate binds `now_datetime()` rather than calling SQL `NOW()`.** The
+  database runs UTC and Frappe writes site-local, so `NOW()` here would make every room look
+  permanently dirty, the pass would rebuild everything every five minutes, and the only
+  symptom would be the model bill.
+- **The writer package is exempted from both source guards as a package, and pays four
+  prices**, each asserted in both files so deleting one guard does not silently remove the
+  other's precondition: no `@frappe.whitelist()` anywhere in it, every public function named
+  and justified individually, every one of those a registered scheduler job (bar the seam's
+  writer), and nothing under `chat/api/` importing it. Twenty per-function entries all making
+  the same argument would be twenty entries nobody re-reads, which is worse for a security
+  list than one entry somebody does.
+- `invalidate._rows_affected` exists as one helper rather than `select row_count()` inlined
+  three times, so the unresolved-target exemption is one entry rather than three copies of one
+  argument — and the count itself matters: an invalidation reporting nothing is
+  indistinguishable from one that matched nothing, and those need different responses.
+
 ## [1.274.0] - 2026-08-11
 
 One `@triton` handler, reached from both origins, that physically cannot see which client

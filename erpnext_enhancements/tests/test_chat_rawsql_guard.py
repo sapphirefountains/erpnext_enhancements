@@ -626,6 +626,49 @@ SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
 	),
 }
 
+#: The one *package* exempted as a whole rather than per triple, and the properties that make
+#: that defensible.
+#:
+#: Everything under ``chat/indexing/`` is the index **writer**: the chunker's pass, the
+#: summariser and the invalidation writer. Every function in it makes the same argument —
+#: scheduler job, no session user, reads across every room by design — and twenty copies of one
+#: argument is twenty entries nobody reads, which is worse for a security list than one entry
+#: somebody does.
+#:
+#: What replaces the per-triple discipline is structural rather than trusted, and is asserted
+#: by :class:`TestTheWriterPackageIsUnreachableFromARequest` below and, independently, by
+#: ``tests/test_chat_gate_source_scan.py``:
+#:
+#: * **no ``@frappe.whitelist()`` anywhere in the package** — no HTTP request can ask it for
+#:   anything, which is the property that actually matters;
+#: * **every public function in it is named and justified individually** (in the gate scan's
+#:   ``WRITER_ENTRY_POINTS``), so the "next function somebody adds" risk lands on a list that
+#:   is short enough to read;
+#: * **every one of those is a registered scheduler job**, bar the staleness seam's writer.
+#:
+#: The reads it performs are the ones the design requires it to perform. Scoping them by
+#: membership would be incoherent: there is no session user, and a summariser that only saw
+#: the rooms of whoever happened to trigger it would produce a different index every run.
+SYSTEM_CONTEXT_PACKAGES: dict[str, str] = {
+	"indexing/": (
+		"Phase 5's index writer — the chunker's pass, the rolling summariser, the thread "
+		"summariser and the invalidation writer. All of it runs on the scheduler with no "
+		"session user, and all of it reads across every room deliberately: an index scoped to "
+		"one person's membership would be a different index for every person.\n\n"
+		"This is exactly the read the retrieval gate and the MCP denylist exist to contain. "
+		"The containment is at the point of CONSUMPTION rather than production: the gate is "
+		"the only way a person's question reaches a chunk body, and no generic tool can reach "
+		"the tables at all. This package holds no user-facing surface of its own — no "
+		"whitelisted method, and every public function named and justified in the gate scan's "
+		"WRITER_ENTRY_POINTS.\n\n"
+		"Exempted as a package rather than per triple because every function makes the same "
+		"argument, and twenty copies of one argument is twenty entries nobody re-reads. The "
+		"protection a per-triple list buys — that the next function added is not silently "
+		"covered — is bought here instead by the public-surface rule, which fails the build on "
+		"a new public function in any file that names an index table."
+	),
+}
+
 #: ``frappe.db.sql`` call sites whose query argument cannot be resolved at this call site,
 #: with the reason that is acceptable. **Not a place to put a query you did not want to
 #: name** — the entry has to explain how the real tables are still covered.
@@ -658,6 +701,19 @@ UNRESOLVED_QUERY_EXEMPTIONS: dict[tuple[str, str], str] = {
 		"audit.py",
 		"_release_chain_lock",
 	): ("`select release_lock(%s)`. The other half of the advisory lock above; touches no table."),
+	(
+		"indexing/invalidate.py",
+		"_rows_affected",
+	): (
+		"`select row_count()` — MariaDB reporting how many rows the preceding UPDATE changed. "
+		"It names no table and reads none; it is the return value of a write that has already "
+		"happened. The three UPDATEs whose effect it reports each name their table in a module "
+		"constant and ARE covered, in this file, as indexing/ package reads.\n"
+		"It exists as one helper rather than the same statement inlined three times "
+		"specifically so this exemption is one entry rather than three copies of one argument "
+		"— and the count matters: an invalidation that reports nothing is indistinguishable "
+		"from one that matched nothing, and those need different responses."
+	),
 }
 
 _TAB_RE = re.compile(r"`tab([^`]+)`")
@@ -887,6 +943,11 @@ def collect_from_source(source: str, rel: str, globals_: dict[str, str]) -> Iter
 					yield QueryUse(rel, where, node.lineno, "sql-literal", table)
 
 
+def _in_system_context_package(rel: str) -> bool:
+	"""Is this file inside a package exempted as a whole? See :data:`SYSTEM_CONTEXT_PACKAGES`."""
+	return any(rel.startswith(prefix) for prefix in SYSTEM_CONTEXT_PACKAGES)
+
+
 def _applies_the_filter(rel: str, function: str) -> bool:
 	"""Does the enclosing function reference (or provide) the shared membership fragment?
 
@@ -1095,6 +1156,8 @@ class TestEveryQueryIsScopedOrJustified(unittest.TestCase):
 				continue
 			if use.key in SYSTEM_CONTEXT_READS:
 				continue
+			if _in_system_context_package(use.file):
+				continue
 			if _applies_the_filter(use.file, use.function):
 				continue
 			offenders.append(str(use))
@@ -1141,6 +1204,91 @@ class TestEveryQueryIsScopedOrJustified(unittest.TestCase):
 			"reader, gated on the configured oversight role and paying for the read with an "
 			"audit row (permissions.note_privileged_read). If that is what you are building, "
 			"change this test deliberately and say so in the changelog.",
+		)
+
+
+class TestTheWriterPackageIsUnreachableFromARequest(unittest.TestCase):
+	"""The price of the one package-level exemption in this file.
+
+	``SYSTEM_CONTEXT_PACKAGES`` waives the per-triple rule for the index writer, on the
+	grounds that it has no user-facing surface. These assertions are what make that a fact
+	rather than a claim — and they are duplicated in ``test_chat_gate_source_scan.py`` on
+	purpose, because the two files police different rules and either one being deleted should
+	not silently remove the other's precondition.
+	"""
+
+	def test_every_exempted_package_states_why(self) -> None:
+		for prefix, reason in sorted(SYSTEM_CONTEXT_PACKAGES.items()):
+			with self.subTest(package=prefix):
+				self.assertGreaterEqual(
+					len(reason.strip()),
+					_MIN_REASON,
+					f"SYSTEM_CONTEXT_PACKAGES[{prefix!r}] has no real justification. A "
+					"package-level waiver is broader than anything else in this file; say why "
+					"a per-triple list would be worse, and say what replaces it.",
+				)
+
+	def test_every_exempted_package_exists_and_is_not_empty(self) -> None:
+		for prefix in sorted(SYSTEM_CONTEXT_PACKAGES):
+			with self.subTest(package=prefix):
+				directory = CHAT_DIR / prefix.rstrip("/")
+				self.assertTrue(directory.is_dir(), f"{directory} does not exist")
+				self.assertTrue(
+					[p for p in directory.glob("*.py") if p.name != "__init__.py"],
+					f"{directory} holds no modules, so this waiver covers nothing today and "
+					"whatever is put there tomorrow.",
+				)
+
+	def test_no_exempted_package_exposes_a_whitelisted_method(self) -> None:
+		"""The property the waiver actually rests on. Everything else is defence in depth.
+
+		A whitelisted method in the index writer would be a cross-room reader reachable over
+		HTTP by any signed-in user — which is precisely the one thing the retrieval gate
+		exists to be the only instance of.
+		"""
+		offenders: list[str] = []
+		for prefix in sorted(SYSTEM_CONTEXT_PACKAGES):
+			for path in sorted((CHAT_DIR / prefix.rstrip("/")).rglob("*.py")):
+				tree = _parse(path)
+				for node in ast.walk(tree):
+					if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+						continue
+					for decorator in node.decorator_list:
+						target = decorator.func if isinstance(decorator, ast.Call) else decorator
+						if ".".join(_dotted(target)[-2:]) == "frappe.whitelist":
+							offenders.append(f"{_rel(path)}:{node.lineno} {node.name}")
+		self.assertFalse(
+			offenders,
+			f"these functions are whitelisted inside a package this file exempts wholesale: "
+			f"{offenders}.\n\n"
+			"The exemption is granted because the package has no user-facing surface and its "
+			"reads are scheduler-context reads. That is no longer true. Either move the "
+			"endpoint out, or remove the package waiver and justify every read in it per "
+			"(file, function, table) like everything else here.",
+		)
+
+	def test_no_exempted_package_is_imported_by_the_request_surface(self) -> None:
+		"""The second door: reachable *indirectly* from an endpoint is still reachable.
+
+		``chat/api/`` is the request surface. The one legitimate crossing is the retrieval
+		gate importing the embedding client, which names no chat table and cannot reach a row
+		— so the check is on the three modules that can.
+		"""
+		reachable = ("indexer", "digest", "invalidate")
+		offenders: list[str] = []
+		for path in sorted((CHAT_DIR / "api").rglob("*.py")):
+			source = path.read_text(encoding="utf-8")
+			for module in reachable:
+				if f"indexing.{module}" in source or f"indexing import {module}" in source:
+					offenders.append(f"{_rel(path)} imports chat.indexing.{module}")
+		self.assertFalse(
+			offenders,
+			f"{offenders}\n\nA module under chat/api/ answers HTTP requests. Importing the "
+			"index writer there puts a cross-room reader one call away from a request "
+			"handler, which is the whole thing the package waiver assumes cannot happen. The "
+			"staleness seam is the one intended synchronous caller, and it lives in "
+			"chat/seams.py rather than in an endpoint precisely so this check can be this "
+			"blunt.",
 		)
 
 

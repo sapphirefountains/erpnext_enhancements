@@ -369,13 +369,39 @@ def mark_room_context_stale(room: str, from_seq: int, to_seq: int) -> None:
 
 		bump(COUNTER_CONTEXT_STALE)
 
+		# Phase 5 filled this in. Imported inside the function, not at module scope, for the
+		# reason every enqueue in this package is a dotted string: the write path may not
+		# depend on the retrieval stack, and a module-level import here would make every
+		# message insert load it.
+		#
+		# Still never raises. Wrapping it separately from the counter above is deliberate —
+		# an invalidation failure must not also lose the metric that says invalidation was
+		# attempted, which is the only thing that would distinguish "the seam never fired"
+		# from "the seam fired and could not write".
+		counts: dict[str, int] = {}
+		try:
+			from erpnext_enhancements.chat.indexing import invalidate
+
+			counts = invalidate.invalidate_span(room_name, low, high)
+		except Exception:
+			log = _logger()
+			if log is not None:
+				log.warning(
+					"chat seam mark_room_context_stale could not invalidate room %s seq %s..%s; "
+					"a digest or chunk covering that span may still be served",
+					room_name or "<unknown>",
+					low,
+					high,
+				)
+
 		log = _logger()
 		if log is not None:
 			log.debug(
-				"chat seam mark_room_context_stale room=%s seq=%s..%s",
+				"chat seam mark_room_context_stale room=%s seq=%s..%s invalidated=%s",
 				room_name or "<unknown>",
 				low,
 				high,
+				counts or "none",
 			)
 	except Exception:
 		pass
