@@ -143,11 +143,17 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip httpx pytest jinja2
       - run: python -m unittest test_sync_time_kiosk.py -v
+      # test_chat_mcp_denylist is APPENDED here rather than given its own step, and it is
+      # the one place in this file where appending is right rather than wrong: it exercises
+      # _gate.py under the sys.modules stub set that test_assistant_tools_schema installs,
+      # so it needs to share a process with it. Every other bench-free suite gets its own
+      # step precisely so the stub sets cannot cross-talk.
       - name: AI gate + assistant-tool contract + integrations health + device mgmt
         run: >-
           python -m unittest
           erpnext_enhancements.tests.test_assistant_tools_schema
           erpnext_enhancements.tests.test_ai_gate_unit
+          erpnext_enhancements.tests.test_chat_mcp_denylist
           erpnext_enhancements.tests.test_integrations_health
           erpnext_enhancements.tests.test_device_management
           erpnext_enhancements.tests.test_mdm_integration
@@ -654,6 +660,20 @@ jobs:
       # turns it red and naming the offender, and the same query with the filter turns it green.
       - name: Chat raw-SQL membership guard (the likeliest route to a real data leak)
         run: python -m unittest erpnext_enhancements.tests.test_chat_rawsql_guard -v
+      # Phase 5's fence, and it lands before the code it polices -- a scan written after
+      # the search functions exist is a scan that gets argued with, one exemption at a
+      # time, by an author who has already written the query. Four rules: the index tables
+      # (Chat Context Chunk and the two digests) are named from exactly one file; every
+      # query builder in chat/retrieval/ takes `allowed_rooms` as a REQUIRED FIRST
+      # POSITIONAL parameter, so omitting it is a TypeError in development rather than an
+      # unfiltered query in production; the package exports exactly two symbols; and the
+      # entry point has no parameter at all by which a caller supplies room ids.
+      #
+      # The failure this guards is the only one in Phase 5 that nobody notices: every other
+      # bug here produces a wrong answer, and this one produces a correct answer delivered
+      # to somebody who is not in the room.
+      - name: Chat retrieval gate has one door (the ungated-SQL source scan)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_gate_source_scan -v
       # Decision #12 buys a non-participant read with a record of it, and that trade only holds
       # while the record cannot be quietly altered afterwards. Immutability has to be argued in
       # layers because each mechanism is bypassed by the next one down: DocPerm is bypassed by

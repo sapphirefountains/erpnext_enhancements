@@ -46,6 +46,49 @@ desk; ask the assistant to check the action → it reports the created doc.
 Note: a desk-side "test tool" execution of a mutating FAC tool is gated too —
 any `_safe_execute` of a mutating tool counts as an assistant-channel write.
 
+## Chat denylist (v1.271.0) — the one refusal that no flag can switch off
+
+Employee chat content is **unreadable through every generic FAC tool**, by every
+role, with the write gate on or off. `CHAT_DENYLIST_DOCTYPES` names every DocType
+under `chat/doctype/`, and the branch that reads it is the **first** thing
+`_gated_execute` does — above the confirm-flow bypass, above the settings check.
+
+**Why it is not just "withhold DocPerm".** That closes `get_document` and
+`list_documents` and does nothing to the third surface.
+`run_database_query`'s own stated security model is *"Restricted to SELECT
+statements only. Requires System Manager role for security"* — a role check and a
+read-only-SQL check. Raw SQL sits *underneath* DocPerm,
+`permission_query_conditions` and `has_permission`, so no Frappe permission
+mechanism touches it, and a System Manager would otherwise be one
+``select text, sender from `tabChat Message` `` away from every private message on
+the site, delivered into a model's context window. Note that
+`run_database_query` is exempt from *confirmation* (above) and is **not** exempt
+from this.
+
+Two shapes, because the tools come in two shapes:
+
+- **a `doctype` argument** in the denylist → refuse. Applied to *every* tool
+  rather than a named list, so a tool added to FAC tomorrow that takes a
+  `doctype` is covered the day it appears.
+- **free text** (`run_database_query`'s `query`, `run_python_code`'s `code`) →
+  case-fold, strip SQL comments, drop every non-word character, and refuse if any
+  chat table name survives as a contiguous needle. **Do not try to allow "safe"
+  queries.** The rule is coarse and absolute: over-refusal costs an analyst one
+  rephrase, under-refusal costs the invariant with no symptom at all.
+
+Every refusal names `chat.retrieval.gate.retrieve` — the one door, which runs as
+the asking person, derives the rooms they are in rather than accepting a room
+list, and records the read — and writes an `AI Action Log` row, so the attempt is
+evidence rather than silence.
+
+`tests/test_chat_mcp_denylist.py` asserts the denylist equals the filesystem by
+**set equality**, so a chat DocType added later fails the build by default rather
+than escaping the denylist silently. That is the same failure mode
+`test_every_registered_tool_is_classified` exists to prevent. It also asserts the
+branch ordering *on the source*, because a passing call cannot reveal it: both
+orders refuse while gating is on, and only one refuses while it is off — which is
+the shipped state.
+
 ## The FAC-optional invariant
 
 **Nothing inside erpnext_enhancements may import this package.** The import

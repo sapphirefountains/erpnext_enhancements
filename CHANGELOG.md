@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.271.0] - 2026-08-11
+
+Phase 5 of the chat work begins with a commit that adds no capability: the two
+fences that ADR 0009 Appendix B requires green **before any search function
+exists**. A scan written after the code it polices is a scan that gets argued
+with, one exemption at a time, by an author who has already written the query.
+
+The security fix in here is live today and does not wait for the rest of Phase 5.
+
+### Added
+
+- **The generic AI tools now refuse every chat DocType, and the refusal cannot be
+  switched off.** `assistant_tools/_gate.py` gains `CHAT_DENYLIST_DOCTYPES` and a
+  new **first** branch in `_gated_execute` — above the confirm-flow bypass and
+  above the `ai_write_gating_enabled` check. Refusals name the one supported door
+  (`chat.retrieval.gate.retrieve`) rather than merely denying, and each one writes
+  an `AI Action Log` row, so an attempt to read chat through a generic tool is
+  evidence rather than silence.
+- `tests/test_chat_mcp_denylist.py` — bench-free, appended to the existing
+  multi-module unittest step because it needs the stub set
+  `test_assistant_tools_schema` installs. Four assertions: no chat DocType carries
+  a DocPerm row except the three documented exceptions; the denylist equals the
+  filesystem by **set equality**; the gate refuses with gating off, with the
+  bypass flag on, and never calls the underlying tool, including for eight
+  evasions of the SQL match; and the seam is still named `_safe_execute`.
+- `tests/test_chat_gate_source_scan.py` — bench-free, its own step. The Phase 5
+  index tables are nameable from exactly one file; every query builder in
+  `chat/retrieval/` must take `allowed_rooms` as a required first positional
+  parameter; the package exports exactly two symbols; and the entry point has no
+  parameter by which a caller supplies room ids.
+
+### Notes
+
+- **Withholding DocPerm closes two of the three surfaces and the third is the one
+  that matters.** `run_database_query`'s own stated security model is *"Restricted
+  to SELECT statements only. Requires System Manager role for security"* — a role
+  check and a read-only-SQL check, and nothing else. Raw SQL sits *underneath*
+  DocPerm, `permission_query_conditions` and `has_permission`, so no Frappe
+  permission mechanism touches it. Any answer that stops at "no DocPerm" leaves a
+  System Manager one ``select text, sender from `tabChat Message` `` away from
+  every private message on the site, delivered into a model's context window.
+- **"No DocPerm" is also not "unreachable" — it is "unreachable by everyone
+  except Administrator."** `frappe/permissions.py` short-circuits
+  `if user == "Administrator"` and allows everything, so a zero-DocPerm DocType
+  is still fully readable through the desk, `/api/resource` and `get_document`.
+- **Order is the invariant, and it is asserted on the source** because there is no
+  way to observe it from a passing call: both orders refuse while gating is on,
+  and only one refuses while it is off — which is the shipped state.
+  `ai_write_gating_enabled` defaults dormant, so a denylist below that check would
+  be off in production today. A refusal that a settings checkbox can disable is
+  not an invariant.
+- **The SQL match is coarse on purpose and over-refuses.** String-matching SQL
+  loses to backticks, case, comments, whitespace, `information_schema` and joins
+  in subqueries *if it tries to parse*. So it does not: the text is case-folded,
+  comments are stripped, everything that is not a word character is dropped, and
+  any chat table name appearing in the result refuses the whole call. Over-refusal
+  costs an analyst one rephrase. Under-refusal costs the invariant, silently.
+- **Appendix B's wording for the source scan is not the wording enforced, and the
+  divergence is deliberate.** The appendix says *"every SQL literal under
+  `chat/**` lives in `gate.py`"*. That was written before Phase 3 existed and is
+  now false by construction — `api/history.py`, `api/search.py`, `permissions.py`
+  and `health.py` all hold chat SQL legitimately, and
+  `tests/test_chat_rawsql_guard.py` already polices them per `(file, function,
+  table)` triple with a written justification each. Enforcing the sentence
+  literally would mean deleting that guard or exempting the whole package. What is
+  kept is the half carrying the security weight: **the retrieval path has one
+  door.** The general "is every chat query scoped or justified" question stays
+  where it already works.
+- Three tests in the source scan skip until `chat/retrieval/` exists. They are the
+  package-shaped rules; the app-wide rule and the analyser's own positive and
+  negative controls run now, and the controls are what make the suite able to fail
+  at all before the package lands.
+
 ## [1.270.2] - 2026-08-11
 
 Make the two chat retention settings actually retain anything. They have been on

@@ -29,6 +29,7 @@ BaseTool has no ``_safe_execute``.
 import functools
 import hashlib
 import json
+import re
 
 import frappe
 
@@ -129,9 +130,154 @@ LOW_RISK = {
 # allowlist; privileged/irreversible tools never skip confirmation.
 EXEMPTABLE_TOOLS = {"create_document", "update_document"}
 
+# ------------------------------------------------------------ chat denylist
+#
+# Employee chat content is unreachable through the generic FAC tools, and the
+# refusal lives HERE rather than in the permission stack because one of those
+# tools sits underneath the permission stack entirely.
+#
+# `run_database_query` states its own security model as "Restricted to SELECT
+# statements only. Requires System Manager role for security." — a role check
+# and a read-only-SQL check, and nothing else. Raw SQL never consults DocPerm,
+# `permission_query_conditions` or `has_permission`, so the chat DocTypes'
+# zero-DocPerm posture closes `get_document` and `list_documents` and does
+# nothing at all to this one. A System Manager is otherwise one
+# `select text, sender from `tabChat Message`` away from every private message
+# on the site, delivered into a model's context window.
+#
+# Nor is "no DocPerm" the same as "unreachable": frappe/permissions.py
+# short-circuits `if user == "Administrator"` and allows everything, so the
+# desk, /api/resource and `get_document` all still read a zero-DocPerm DocType
+# as Administrator.
+#
+# The seam is `_gated_execute`, which already sees every FAC tool call
+# including FAC's own built-ins. The branch is the FIRST thing that function
+# does — above the confirm-flow bypass and above the settings check — because
+# `ai_write_gating_enabled` ships dormant, and a denylist that can be switched
+# off from a settings form is not an invariant. Chat retrieval has exactly one
+# supported door and it is named in the refusal message.
+#
+# Set equality against the filesystem is asserted by
+# tests/test_chat_mcp_denylist.py, so a chat DocType added later fails the
+# build by default instead of quietly escaping the denylist. That is the same
+# failure mode `test_every_registered_tool_is_classified` exists to prevent.
+CHAT_DENYLIST_DOCTYPES = frozenset(
+    {
+        "Chat Allowed User",
+        "Chat Attachment",
+        "Chat Event Subscription",
+        "Chat Inbound Event",
+        "Chat Mention",
+        "Chat Message",
+        "Chat Message Revision",
+        "Chat Provisioning Run",
+        "Chat Push Subscription",
+        "Chat Relay Job",
+        "Chat Retrieval Audit",
+        "Chat Retrieval Audit Room",
+        "Chat Room",
+        "Chat Room Member",
+        "Chat Settings",
+    }
+)
+
+# The one supported door, named in every refusal so the model redirects itself
+# instead of trying a different spelling of the same query.
+CHAT_RETRIEVAL_ENDPOINT = "erpnext_enhancements.chat.retrieval.gate.retrieve"
+
+# Arguments whose *text* is searched for a chat table name, per tool. A SQL
+# string and a Python program are both free text: there is no `doctype`
+# argument to compare, so the table name has to be matched inside the payload.
+CHAT_TEXT_ARGUMENTS = {
+    "run_database_query": ("query", "sql"),
+    "run_python_code": ("code",),
+}
+
+_SQL_COMMENT_BLOCK = re.compile(r"/\*.*?\*/", re.DOTALL)
+_SQL_COMMENT_LINE = re.compile(r"(--|#)[^\n]*")
+_NON_WORD = re.compile(r"[^a-z0-9_]+")
+
 
 # ------------------------------------------------------------- pure helpers
 # (unit-tested bench-free in tests/test_ai_gate_unit.py)
+
+
+def _normalise_for_denylist(text):
+    """Case-fold, strip comments, and drop everything that is not a word
+    character, so a table name is one contiguous needle.
+
+    ``select text from `tabChat Message` `` and
+    ``SELECT/*x*/ text FROM tab_Chat__Message`` both reduce to a string
+    containing ``tabchatmessage``. Backticks, quoting, whitespace, casing, SQL
+    comments and `information_schema` filters all stop mattering, because none
+    of them survive the reduction.
+
+    The rule this serves is coarse and absolute on purpose: **do not attempt to
+    allow "safe" queries.** String-matching SQL loses to every one of the
+    tricks above if it tries to parse; it wins only if it refuses on contact.
+    Over-refusal costs an analyst one rephrase. Under-refusal costs the
+    invariant, silently, with a correct answer delivered to the wrong reader.
+    """
+    if not isinstance(text, str):
+        return ""
+    lowered = text.lower()
+    lowered = _SQL_COMMENT_BLOCK.sub(" ", lowered)
+    lowered = _SQL_COMMENT_LINE.sub(" ", lowered)
+    return _NON_WORD.sub("", lowered)
+
+
+def _denylist_needles():
+    """``{"chatmessage": "Chat Message", …}`` — the normalised needle for every
+    denylisted DocType, longest first so a refusal names the most specific
+    table it matched rather than its prefix (``Chat Room Member`` before
+    ``Chat Room``)."""
+    pairs = ((_normalise_for_denylist(dt), dt) for dt in CHAT_DENYLIST_DOCTYPES)
+    return sorted((needle, dt) for needle, dt in pairs if needle)
+
+
+def chat_denylist_hit(tool_name, arguments):
+    """The denylisted DocType this call would reach, or ``None``.
+
+    Two shapes, because the tools come in two shapes. ``get_document`` /
+    ``list_documents`` / ``search_documents`` and friends take a literal
+    ``doctype`` argument, so that half is a string comparison rather than a
+    parse. ``run_database_query`` and ``run_python_code`` take free text, so
+    that half is the contact match described on
+    :func:`_normalise_for_denylist`.
+
+    The ``doctype`` check is applied to **every** tool rather than to a named
+    list: a tool added to FAC tomorrow that takes a ``doctype`` is covered the
+    day it appears, which is the opposite of how an allowlist of tool names
+    would age.
+    """
+    args = arguments or {}
+    if not isinstance(args, dict):
+        return None
+
+    target = args.get("doctype")
+    if isinstance(target, str) and target.strip() in CHAT_DENYLIST_DOCTYPES:
+        return target.strip()
+
+    needles = _denylist_needles()
+    for key in CHAT_TEXT_ARGUMENTS.get(tool_name, ()):
+        haystack = _normalise_for_denylist(args.get(key))
+        if not haystack:
+            continue
+        for needle, doctype in reversed(needles):
+            if needle in haystack:
+                return doctype
+    return None
+
+
+def _chat_refusal_message(doctype):
+    return (
+        f"Refused: {doctype} is employee-private chat data and is not readable "
+        "through the generic Frappe tools, by any role, with AI gating on or "
+        f"off. Chat context has exactly one door — {CHAT_RETRIEVAL_ENDPOINT} — "
+        "which runs as the asking person, derives the rooms they are actually "
+        "in rather than accepting a room list, and records the read. Ask "
+        "through that, or ask the person."
+    )
 
 
 def classify_risk(tool_name, category=None):
@@ -498,6 +644,30 @@ def _error_response(message):
 
 
 def _gated_execute(tool, original, arguments):
+    # 0) Chat data is refused outright, and this branch is first for a reason.
+    #    Everything below it can be switched off — the confirm-flow bypass by a
+    #    flag, the rest by `ai_write_gating_enabled`, which ships dormant. A
+    #    refusal reachable only while a settings checkbox is ticked is not an
+    #    invariant, and this one is: no role, no flag and no confirmation makes
+    #    a coworker's private message readable through a generic tool.
+    denied = chat_denylist_hit(getattr(tool, "name", ""), arguments)
+    if denied:
+        message = _chat_refusal_message(denied)
+        # Evidence, not silence. An attempt to read chat through a generic tool
+        # is exactly the event an operator wants to find later, and AI Action
+        # Log is already append-only and already purged on a schedule.
+        insert_action_log(
+            user=getattr(getattr(frappe, "session", None), "user", None),
+            tool_name=getattr(tool, "name", ""),
+            arguments=arguments,
+            success=False,
+            risk="High",
+            summary=f"Refused a generic-tool read of chat data ({denied}).",
+            error=message,
+            error_type="AIGateError",
+        )
+        return _error_response(message)
+
     # 1) Confirm-flow re-execution: run for real (gating_api logs the outcome).
     if getattr(frappe.flags, "ai_gate_bypass", False):
         return original(tool, arguments)
