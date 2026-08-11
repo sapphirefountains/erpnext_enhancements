@@ -171,6 +171,11 @@ def _rebuild_room_digest(room: str) -> bool:
 		previous=None if full else (existing or {}).get("summary_text"),
 	)
 	if not summary:
+		# The summariser reports its own reason and returns None rather than raising, so this
+		# is NOT reached by the caller's except - and without counting it here the ceiling can
+		# never be reached, which is the other half of the forever-retry. A model that is down
+		# is precisely the failure that repeats.
+		_record_failure(room, "the summariser returned nothing")
 		return False
 
 	covered_from = cint((existing or {}).get("covered_from")) or cint(messages[0].get("seq"))
@@ -330,11 +335,18 @@ def _summarise(*, room: str, messages: list[dict[str, Any]], previous: str | Non
 	)
 	prompt = _prompt(previous=previous, transcript=transcript, target=target)
 
+	summariser = _summariser_user()
+	if not summariser:
+		# No bot identity configured. Refusing beats falling back to Administrator, and
+		# beats a silent skip: the reason names the field somebody has to fill in.
+		_note(f"no digest for room {room}: Chat Settings has no Chat App Service Account")
+		return None
+
 	try:
 		from erpnext_enhancements.chat.invoke import triton_client
 
 		answer = triton_client.ask(
-			user=_summariser_user(),
+			user=summariser,
 			question=prompt,
 			context="",
 			request_id=f"digest:{room}",
@@ -366,13 +378,24 @@ def _prompt(*, previous: str | None, transcript: str, target: int) -> str:
 
 
 def _summariser_user() -> str:
-	"""Whose Triton identity the summariser borrows.
+	"""Whose Triton identity the summariser borrows. **Empty when it has nobody to borrow.**
 
 	The bot's, never a coworker's. Borrowing a person's identity for a job that reads every
 	room would attribute a cross-room read to somebody who did not ask for it, and would put
 	their name on the audit trail of a machine's work.
+
+	**It used to fall back to ``Administrator``, which is worse than borrowing a coworker's.**
+	:func:`~chat.invoke.triton_client.ask` sets the session before minting, and the token
+	cache is keyed on the session user — so an unset service account would have handed Triton
+	a **superuser** token, on a schedule, unattended. That is the exact failure the
+	two-identity rule exists to prevent, arriving through a default rather than through a
+	decision. It went unnoticed on production only because Triton was unconfigured and the
+	call failed before the token could be used.
+
+	So there is no fallback. An unconfigured summariser builds no digests, which is a missing
+	feature; the fallback was a privilege escalation, which is not.
 	"""
-	return frappe.db.get_single_value("Chat Settings", "chat_app_service_account") or "Administrator"
+	return frappe.db.get_single_value("Chat Settings", "chat_app_service_account") or ""
 
 
 # ------------------------------------------------------------------------------- queries
@@ -566,6 +589,14 @@ def _record_failure(room: str, reason: str) -> None:
 	The poison-pill guard is what stops a permanently failing room being retried every five
 	minutes forever until the Error Log is all one message and nobody reads any of it.
 
+	**The counter has to be able to exist before the first success, or it guards nothing.**
+	This was an ``UPDATE`` alone, and an update matches no rows for a room whose digest has
+	never been built — while :func:`_dirty_rooms` treats a room with no digest as dirty *by
+	definition*, so it is selected again on the next sweep. A room whose very first build
+	fails therefore retried every five minutes forever and could never be poisoned: the guard
+	was defeated in exactly the case it was written for, and production ran that way from the
+	Phase 5 deploy until v1.277.5. So a miss now inserts the row that carries the count.
+
 	The table is a module constant rather than a parameter, deliberately: a doctype passed in
 	makes the query's target unresolvable from the source, and a query whose table nobody can
 	name by reading it is one no static check can protect. The thread digest has its own
@@ -584,9 +615,30 @@ def _record_failure(room: str, reason: str) -> None:
 			""",
 			{"room": room, "reason": reason[:500], "ceiling": ceiling},
 		)
+		if not _rows_affected():
+			# No digest row yet, so there was nothing to count on. Insert the row that holds
+			# the count. It is created stale and unbuilt — `summary` stays empty and
+			# `watermark_seq` stays 0 — so it is never *served*; it exists only to be counted
+			# on, and to be poisoned once the ceiling is reached.
+			digest = frappe.new_doc(ROOM_DIGEST_DOCTYPE)
+			digest.room = room
+			digest.is_stale = 1
+			digest.rebuild_failures = 1
+			digest.last_error = reason[:500]
+			digest.poisoned = 1 if ceiling <= 1 else 0
+			digest.insert(ignore_permissions=True)
 		frappe.db.commit()
 	except Exception:
 		pass
+
+
+def _rows_affected() -> int:
+	"""How many rows the statement just run touched. One helper, so the raw-SQL guard has one
+	entry to exempt rather than an unresolvable count at every call site."""
+	try:
+		return cint(frappe.db._cursor.rowcount)
+	except Exception:
+		return 0
 
 
 # ------------------------------------------------------------------------------- helpers
