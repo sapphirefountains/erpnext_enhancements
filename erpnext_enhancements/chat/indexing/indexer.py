@@ -95,10 +95,14 @@ def sweep_chunks() -> dict[str, int]:
 	for room in rooms:
 		try:
 			built += _index_room(room["name"], cint(room.get("watermark")))
-		except Exception:
+		except Exception as exc:
 			skipped += 1
 			frappe.db.rollback()
-			_note(f"chunking failed for room {room['name']}")
+			# The exception CLASS, never its message: the message can carry the row that
+			# failed, and these rows are message bodies. A class name is enough to tell an
+			# integrity error from a timeout, which is the whole question when this repeats,
+			# and it is what "chunking failed for room X" alone could not answer on production.
+			_note(f"chunking failed for room {room['name']}: {exc.__class__.__name__}")
 	return {"rooms": len(rooms), "chunks": built, "skipped": skipped}
 
 

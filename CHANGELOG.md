@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.5] - 2026-08-11
+
+Three defects found by watching the Phase 5 jobs run on production for the first time. Chat
+is enabled there (Phases 1-4), so the indexer and digest sweepers began working real rooms as
+soon as the code deployed, and they failed every cycle.
+
+### Fixed
+
+- **The digest summariser fell back to `Administrator` when no Chat App Service Account was
+  set.** `triton_client.ask` sets the session before minting and the token cache is keyed on
+  the session user, so that fallback would have handed Triton a **superuser token, on a
+  schedule, unattended** — the exact failure the two-identity rule exists to prevent, arriving
+  through a default rather than a decision. It never fired only because Triton was
+  unconfigured and the call failed first. There is now no fallback: an unconfigured summariser
+  builds no digests and says so, naming the field to fill in.
+- **A room whose digest had never built retried forever, every five minutes.** Two independent
+  causes, both needed fixing: `_record_failure` was an `UPDATE`, which matches nothing when no
+  digest row exists yet — so the counter could not exist before the first success, and
+  `_dirty_rooms` treats a room with no digest as dirty *by definition*; and `_summarise`
+  reports its own reason and returns `None` rather than raising, so the sweep's `except` never
+  saw it and never counted it. The poison-pill guard was defeated in exactly the case it was
+  written for.
+- **`chunking failed for room X` recorded no cause at all.** Now carries the exception
+  **class** — never its message, which can contain the row that failed, and those rows are
+  message bodies. A class name distinguishes an integrity error from a timeout, which is the
+  entire question when it repeats.
+
+### Notes
+
+- **These are all "first run" bugs, and none of them could fail in a test.** Each needs a real
+  room, a real scheduler, and a dependency that is genuinely missing — the conditions that
+  only exist the first time the jobs meet production. The bench suite asserts the permission
+  boundary and the ladder; it cannot assert what happens when the model is down for an hour.
+- The `Administrator` fallback is the one to take seriously. It was written as a convenience
+  default in a helper whose own docstring argues against exactly that, which is worth noticing:
+  the reasoning was right there in the function and the code still did the other thing.
+
 ## [1.277.4] - 2026-08-11
 
 ### Changed
