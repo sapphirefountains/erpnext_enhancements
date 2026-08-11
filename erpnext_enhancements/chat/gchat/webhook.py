@@ -630,16 +630,18 @@ def _unauthorized(reason: str, detail: str = "") -> dict[str, Any]:
 
 
 def _verified_payload() -> Optional[dict[str, Any]]:
-	"""The whole request body as a dict, **strictly after verification**.
+	"""The whole request body as a dict, **strictly after verification**. Read **once**.
 
-	Phase 5's dispatch needs the message and the space, not just the event type. Kept as a
-	separate function from :func:`_peek_event_type` so the Phase 1 reasoning above stays
-	readable: the peek is deliberately minimal and this is deliberately not, and merging them
-	would make the minimal one look like an accident.
+	Phase 5 needs the message and the space, not just the event type, so the body is parsed
+	here and both the log line and the dispatch work from the result. It reads
+	``request.get_data()` exactly one time, and ``tests/test_chat_webhook_verify.py`` asserts
+	that by tracing every touch of the request — a second read on a world-reachable endpoint
+	is a second copy of an attacker-sized body, and the trace is the only thing that would
+	ever notice one appearing.
 
-	Same caveat as the peek: Frappe populates ``form_dict`` from the request before any app
-	code runs, so "after verification" means after *ours*. Nothing here can move the
-	framework's own pre-parse.
+	Caveat worth stating once: Frappe populates ``form_dict`` from the request before any app
+	code runs, so "after verification" means after *ours*. Nothing in this module can move the
+	framework's own pre-parse, and no app-level check can either.
 	"""
 	request = getattr(frappe, "request", None)
 	raw = request.get_data() if request is not None else b""
@@ -652,27 +654,17 @@ def _verified_payload() -> Optional[dict[str, Any]]:
 	return payload if isinstance(payload, dict) else None
 
 
-def _peek_event_type() -> Optional[str]:
-	"""The event `type`, for the Phase 1 log line. None when the body is not a JSON object.
+def _event_type_of(payload: dict[str, Any]) -> Optional[str]:
+	"""The event ``type``, for the log line. Pure — it takes the already-parsed body.
 
-	The only read of the request body in Phase 1, and it happens strictly after
-	verification. It extracts one short string and dispatches on nothing — parsing,
-	dedupe and dispatch are Phase 2 (ADR §G.4).
+	Phase 1 had this read the request itself, which was right when it was the *only* read.
+	Phase 5 added a second consumer, and two readers each calling ``get_data()`` is two body
+	copies on an endpoint anybody on the internet can post to. Taking the parsed dict makes
+	the number of reads a property of :func:`_verified_payload` alone.
 
-	Caveat worth stating once: Frappe populates `form_dict` from the request before any
-	app code runs, so "before body parsing" means before *ours*. Nothing in this module
-	can move the framework's own pre-parse, and no app-level check can either.
+	It still dispatches on nothing: it extracts one short string, and returns ``None`` for a
+	non-string ``type`` so a malformed body is treated the same way it always was.
 	"""
-	request = getattr(frappe, "request", None)
-	raw = request.get_data() if request is not None else b""
-	if not raw:
-		return None
-	try:
-		payload = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
-	except (UnicodeDecodeError, ValueError):
-		return None
-	if not isinstance(payload, dict):
-		return None
 	event_type = payload.get("type") or payload.get("eventType") or ""
 	if not isinstance(event_type, str):
 		return None
@@ -701,7 +693,12 @@ def handle() -> dict[str, Any]:
 	if not result.ok:
 		return _unauthorized(result.reason, result.detail)
 
-	event_type = _peek_event_type()
+	# ONE read of the request body, shared by the log line and the dispatch below. Two
+	# readers each calling get_data() is two copies of an attacker-sized body on an endpoint
+	# anybody on the internet can post to; tests/test_chat_webhook_verify.py traces every
+	# touch of the request and fails if a second one appears.
+	payload = _verified_payload()
+	event_type = _event_type_of(payload) if payload is not None else None
 	if event_type is None:
 		# A verified caller sending a body that is not a JSON object is not a well-formed
 		# Chat request. Phase 1 treats it as unauthenticated rather than as a client error
@@ -724,11 +721,9 @@ def handle() -> dict[str, Any]:
 	# Imported inside the function so this module stays importable — and its verifier stays
 	# testable — without pulling in the retrieval stack.
 	try:
-		payload = _verified_payload()
-		if payload is not None:
-			from erpnext_enhancements.chat.invoke import dispatch
+		from erpnext_enhancements.chat.invoke import dispatch
 
-			dispatch.dispatch_chat_interaction(payload)
+		dispatch.dispatch_chat_interaction(payload)
 	except Exception:
 		try:
 			frappe.log_error(

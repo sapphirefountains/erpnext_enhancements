@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.1] - 2026-08-11
+
+### Fixed
+
+- **The interaction webhook read the request body twice.** v1.274.0 added Phase 5's dispatch
+  by calling a new `_verified_payload()` beside the existing `_peek_event_type()`, and both
+  called `request.get_data()`. Two body copies on an endpoint anybody on the internet can post
+  to, on the request path where the payload is attacker-sized by definition.
+- Collapsed into one read: `_verified_payload()` parses once, and `_event_type_of(payload)` is
+  now pure and takes the parsed dict.
+
+### Notes
+
+- **Caught by `tests/test_chat_webhook_verify.py`, which traces every touch of the request and
+  asserts the sequence is exactly `["settings", "verify", "body"]`.** That test was written in
+  Phase 1 to pin *ordering* — verify before any body access, no database write on the way out —
+  and it caught a second read four phases later because it asserts the whole trace rather than
+  the property it was aimed at. Worth noting as a pattern: the assertion that pins the shape
+  catches the regression the assertion that pins the rule would have missed.
+- It also caught a process failure of mine: I ran a chosen subset of the chat suites locally
+  rather than the full CI set, and this one was not in the subset. The set is 32 pytest steps
+  and several unittest steps; running them selectively is how a regression reaches CI.
+
 ## [1.277.0] - 2026-08-11
 
 The bench suite that carries Phase 5's security claims, and the addendum recording what the
