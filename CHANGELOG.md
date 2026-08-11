@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.8] - 2026-08-11
+
+### Fixed
+
+- **The summariser discarded the one fact needed to diagnose it.** Every failure logged
+  `the model was unavailable`, whatever had actually happened. `TritonUnavailable`'s messages
+  are **content-free by construction** — a status code, a path, an exception class name —
+  which is the reason that type exists, so they are now logged verbatim. Anything else is a
+  bug rather than an outage and still records only its class.
+- **`sweep_digests` reported `failed: 0` while failures were being recorded.** `failed`
+  counted only raised exceptions, and a room that reports its own reason and returns `None`
+  raises nothing. The pass returned `{"rooms": 1, "rebuilt": 0, "failed": 0}` while
+  `rebuild_failures` climbed to the ceiling and the room was poisoned. There is now a
+  `not_rebuilt` count.
+- `triton_client` is imported above the `try` rather than inside it: the `except` clause names
+  it, so a failed import would have raised `NameError` while handling the error — an error
+  path that breaks only when taken.
+
+### Notes
+
+- **Confirmed working on production: the chunker.** A sealed chunk covering `seq 1–5` of a
+  real room — the first message this feature has ever indexed, on any site. v1.277.7 was the
+  fix; before it, `_messages_after` had never once returned a row anywhere.
+- **Three separate faults today were slow to diagnose because the log threw the cause away** —
+  `chunking failed` with no class, then `OperationalError` with no errno, now `the model was
+  unavailable` with no reason. All mine, and all the same instinct: strip the detail to protect
+  message content, applied without asking whether the particular string could contain any. The
+  rule that survives is narrower and worth stating — *a message is safe to log verbatim when a
+  type guarantees it carries no content, and not otherwise.*
+- The poison pill also worked exactly as designed and produced a misleading silence: the
+  `model was unavailable` errors stopped at 04:56 not because anything was fixed but because
+  the room hit the ceiling and was excluded. Bounding a failure and reporting it are different
+  jobs, and doing the first well made the second worse.
+
 ## [1.277.7] - 2026-08-11
 
 ### Fixed
