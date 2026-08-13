@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.14] - 2026-08-13
+
+### Changed
+
+- **`actions/checkout@v4` → `@v5` and `actions/setup-python@v5` → `@v6`** across all workflows.
+  Both targeted Node 20, which GitHub is retiring; runners are already force-upgrading them to
+  Node 24 and warning about it. This is the item on that CI report that will actually break —
+  the lint findings beside it are advisory and cannot fail a job.
+- Fixed the ten lint findings the run reported: trailing whitespace and a bare `except` in
+  `api/telephony.py`, two one-line compound statements in `api/procurement.py`, two
+  `isinstance` tuples in `api/inventory_scanner.py` and `api/call_intelligence.py`, and four
+  `zip()` calls in `api/analytics.py`.
+
+### Notes
+
+- **The `zip()` fixes use `strict=True`, which is a behaviour change and the right one.** Each
+  list is appended to exactly once per row of the same loop, so a length mismatch is a bug —
+  and today it would silently truncate a chart rather than say anything. `strict=False` would
+  have preserved that silence.
+- **GitHub caps annotations at ten per run, so that report was truncated.** The repo-wide count
+  is **146**, and the lint job will still be red. It is `continue-on-error` by design, per the
+  gotcha list, so red there is not a failing build.
+- **Deliberately not swept.** ~90 of the remainder are mechanical and safe (`UP038` ×35,
+  `RUF100` ×16, `UP007` ×15, `RUF005` ×13, `UP030` ×11) but `B905` ×9 and `UP031` ×14 need
+  case-by-case judgement — a `zip` that *should* be strict and one that legitimately truncates
+  look identical to a fixer. A blanket `--fix` is what the gotcha warns against, and it would
+  bury a real change in an unrelated diff.
+
 ## [1.277.13] - 2026-08-13
 
 Three faults found by the first real `@triton` round trip. **The mention itself worked** —

@@ -168,9 +168,11 @@ def get_ga4_data():
 			traffic_active_users.append(int(row.metric_values[0].value))
 			traffic_sessions.append(int(row.metric_values[1].value))
 
-		combined_traffic = sorted(zip(traffic_labels, traffic_active_users, traffic_sessions))
+		combined_traffic = sorted(
+			zip(traffic_labels, traffic_active_users, traffic_sessions, strict=True)
+		)
 		if combined_traffic:
-			traffic_labels, traffic_active_users, traffic_sessions = zip(*combined_traffic)
+			traffic_labels, traffic_active_users, traffic_sessions = zip(*combined_traffic, strict=True)
 			traffic_labels = list(traffic_labels)
 			traffic_active_users = list(traffic_active_users)
 			traffic_sessions = list(traffic_sessions)
@@ -340,9 +342,11 @@ def get_gsc_data():
 			timeline_clicks.append(row["clicks"])
 			timeline_impressions.append(row["impressions"])
 
-		combined_timeline = sorted(zip(timeline_labels, timeline_clicks, timeline_impressions))
+		combined_timeline = sorted(
+			zip(timeline_labels, timeline_clicks, timeline_impressions, strict=True)
+		)
 		if combined_timeline:
-			timeline_labels, timeline_clicks, timeline_impressions = zip(*combined_timeline)
+			timeline_labels, timeline_clicks, timeline_impressions = zip(*combined_timeline, strict=True)
 			timeline_labels = list(timeline_labels)
 			timeline_clicks = list(timeline_clicks)
 			timeline_impressions = list(timeline_impressions)
