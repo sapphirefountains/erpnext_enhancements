@@ -67,8 +67,41 @@ SESSION_CACHE_TTL: int = 30 * 24 * 3600
 SESSION_TITLE: str = "Google Chat"
 
 
+#: What Triton's structured error codes mean **for a chat turn**, in the words the person
+#: reading an Error Log needs.
+#:
+#: Triton answers a handled failure with ``{"message", "request_id", "code"}`` and the ``code``
+#: is a fixed vocabulary of its own making — an enum, not a sentence, and in particular not
+#: anything derived from the prompt. That is what makes it the one part of an error body this
+#: module is willing to repeat. See :func:`_error_fields`.
+_ERROR_CODE_MEANINGS: dict[str, str] = {
+	# The 401 that cost a week. It is NOT a rejection of our token: Triton authenticated the
+	# identity fine, then tried to make its own ERPNext tool calls *as* them and found no OAuth
+	# grant to make them with. Triton refuses to fall back to its system key there — correctly,
+	# since that would silently answer with service-account permissions instead of the person's.
+	# Whoever the turn runs as, human or bot, has to click 'Link ERPNext' in Triton once.
+	"erpnext_link_required": (
+		"this identity has not linked ERPNext inside Triton, so Triton has no grant to run its "
+		"ERPNext tool calls with — that person (or the bot account, for a digest) must click "
+		"'Link ERPNext' in Triton once; it is not a problem with the token we sent"
+	),
+}
+
+
 class TritonUnavailable(Exception):
-	"""Triton could not be reached or refused the turn. Never carries a token."""
+	"""Triton could not be reached or refused the turn. Never carries a token.
+
+	Carries ``status`` (the HTTP status, ``0`` when the failure was before or after the
+	response) and ``code`` (Triton's structured error code, ``""`` when it gave none). Both are
+	machine-readable on purpose: ``ask`` retries a stale session on a 404 by looking at
+	``status``, and a caller that wants to distinguish "Triton is down" from "this person needs
+	to link ERPNext" should not have to parse the message to do it.
+	"""
+
+	def __init__(self, message: str, *, status: int = 0, code: str = "") -> None:
+		super().__init__(message)
+		self.status = status
+		self.code = code
 
 
 def ask(*, user: str, question: str, context: str, request_id: str = "", room: str = "") -> dict[str, Any]:
@@ -111,13 +144,34 @@ def ask(*, user: str, question: str, context: str, request_id: str = "", room: s
 		# whose session is Administrator. Minting without setting this would hand Triton a
 		# superuser token — the two-identity rule defeated by a cache key.
 		frappe.set_user(user)
-		session_id = _session_for(base_url, user=user, room=room, timeout=timeout)
-		body = _post(
-			base_url,
-			QUERY_PATH_TEMPLATE.format(session_id=session_id),
-			{"prompt": _prompt(question, context)},
-			timeout=timeout,
-		)
+		session_id, from_cache = _session_for(base_url, user=user, room=room, timeout=timeout)
+		try:
+			body = _post(
+				base_url,
+				QUERY_PATH_TEMPLATE.format(session_id=session_id),
+				{"prompt": _prompt(question, context)},
+				timeout=timeout,
+			)
+		except TritonUnavailable as exc:
+			# The cached id is a hint, and this is where it gets verified — by use, which is the
+			# only way to verify it. Triton answers 404 for a session it does not have *or* does
+			# not own, so a person deleting the thread from Triton's web app lands here. Until
+			# now `_session_for`'s docstring promised the recovery and no code performed it: the
+			# stale id stayed cached for its full thirty days and `@triton` was dead in that room
+			# for a month with no way back.
+			#
+			# Only when the id came from cache. A session created seconds ago that 404s is a
+			# real fault, and retrying it would create a second orphan per turn forever.
+			if exc.status != 404 or not from_cache:
+				raise
+			_forget_session(user=user, room=room)
+			session_id, _ = _session_for(base_url, user=user, room=room, timeout=timeout)
+			body = _post(
+				base_url,
+				QUERY_PATH_TEMPLATE.format(session_id=session_id),
+				{"prompt": _prompt(question, context)},
+				timeout=timeout,
+			)
 
 		# `ChatMessage` on the wire: {role, content, id, session_id, tokens, ui_metadata,
 		# created_at}. The answer is `content` — NOT `response` or `text`, which is what the
@@ -173,7 +227,12 @@ def _post(base_url: str, path: str, payload: dict[str, Any], *, timeout: int) ->
 		raise TritonUnavailable(f"Could not reach Triton: {exc.__class__.__name__}") from None
 
 	if response.status_code >= 400:
-		raise TritonUnavailable(f"Triton returned HTTP {response.status_code} for {path}") from None
+		code, upstream_request_id = _error_fields(response)
+		raise TritonUnavailable(
+			_error_detail(response.status_code, path, code, upstream_request_id),
+			status=response.status_code,
+			code=code,
+		) from None
 
 	try:
 		return response.json() or {}
@@ -181,15 +240,80 @@ def _post(base_url: str, path: str, payload: dict[str, Any], *, timeout: int) ->
 		raise TritonUnavailable("Triton returned a body that is not JSON") from None
 
 
-def _session_for(base_url: str, *, user: str, room: str, timeout: int) -> int:
+def _error_fields(response: Any) -> tuple[str, str]:
+	"""``code`` and ``request_id`` off an error body, and **nothing else, ever**.
+
+	The rule this module works to is not "never repeat a response body" — it is *repeat only
+	what a type guarantees is content-free*. ``message`` fails that test: it is ``str(exc)`` at
+	the other end and can be any string the failing code chose. ``code`` and ``request_id``
+	pass it: an enum Triton picked from a fixed list, and a uuid.
+
+	This function is the correction of a real cost. ``_post`` discarded the whole body, so a
+	string that already said ``erpnext_link_required`` reached the Error Log as "Triton
+	returned HTTP 401" — and a week went into the wrong question, *why is our token being
+	rejected*, when the answer was that it wasn't. Protecting message content is right;
+	throwing away the diagnosis with it is not the same act, and I had them fused.
+
+	Both values are type-checked and truncated rather than trusted, so a server that put a dict
+	where the enum goes cannot smuggle anything through this seam.
+	"""
+	try:
+		body = response.json()
+	except Exception:
+		return "", ""
+	if not isinstance(body, dict):
+		return "", ""
+	code = body.get("code")
+	request_id = body.get("request_id")
+	return (
+		code[:64] if isinstance(code, str) else "",
+		request_id[:64] if isinstance(request_id, str) else "",
+	)
+
+
+def _error_detail(status: int, path: str, code: str, upstream_request_id: str) -> str:
+	"""The sentence that goes in the log. Pure, so its wording is under test.
+
+	``request_id`` is included because it is the only handle that ties this failure to the line
+	in Triton's own logs — without it, correlating the two sides means guessing by timestamp
+	across a UTC/site-local boundary this repository has already been bitten by.
+	"""
+	detail = f"Triton returned HTTP {status} for {path}"
+	if code:
+		meaning = _ERROR_CODE_MEANINGS.get(code)
+		detail += f" ({code}: {meaning})" if meaning else f" ({code})"
+	if upstream_request_id:
+		detail += f" [Triton request {upstream_request_id}]"
+	return detail
+
+
+def _session_cache_key(*, user: str, room: str) -> str:
+	return f"triton:chat_session:{user}:{room or 'global'}"
+
+
+def _forget_session(*, user: str, room: str) -> None:
+	"""Drop a cached session id that Triton no longer recognises. Never raises."""
+	try:
+		frappe.cache().delete_value(_session_cache_key(user=user, room=room))
+	except Exception:
+		# Worst case the next turn 404s and retries again — one wasted request, not a failure.
+		pass
+
+
+def _session_for(base_url: str, *, user: str, room: str, timeout: int) -> tuple[int, bool]:
 	"""The Triton session this room's mentions continue in. Created on first use, then cached.
+
+	Returns ``(session_id, came_from_cache)``. The flag is not decoration: it is what lets
+	``ask`` tell a stale cached id (retry once, transparently) from a session Triton rejected
+	the moment after creating it (a real fault, and retrying would mint an orphan per turn).
 
 	A **404 on a cached id is expected**, not exceptional: the person can delete the session
 	from the Triton web app at any time, and a client that treated that as an outage would
 	break `@triton` for them permanently with no way back. So the cached id is a hint —
-	verified by use, discarded on a miss, and recreated.
+	verified by use, discarded on a miss, and recreated. The verification happens in ``ask``,
+	because using it *is* the only verification available.
 	"""
-	key = f"triton:chat_session:{user}:{room or 'global'}"
+	key = _session_cache_key(user=user, room=room)
 	try:
 		cached = frappe.cache().get_value(key)
 	except Exception:
@@ -197,7 +321,7 @@ def _session_for(base_url: str, *, user: str, room: str, timeout: int) -> int:
 
 	if cached:
 		try:
-			return int(cached)
+			return int(cached), True
 		except (TypeError, ValueError):
 			pass
 
@@ -216,7 +340,7 @@ def _session_for(base_url: str, *, user: str, room: str, timeout: int) -> int:
 	except Exception:
 		# A deploy FLUSHDBs this cache, so a miss is normal and costs one extra session.
 		pass
-	return session_id
+	return session_id, False
 
 
 def _prompt(question: str, context: str) -> str:

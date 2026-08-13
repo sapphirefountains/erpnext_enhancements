@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.16] - 2026-08-13
+
+### Fixed
+
+- **The summariser's HTTP 401 was never an authentication failure, and our own error handling
+  is why that took a week.** Triton answers a handled failure with
+  `{"message", "request_id", "code"}`; `_post` discarded the body and raised
+  `Triton returned HTTP 401 for /api/v1/assistant/sessions/115/query`. The body said
+  `erpnext_link_required`. Triton had authenticated the identity perfectly well, then tried to
+  make its *own* ERPNext tool calls as that person and found no OAuth grant to make them with —
+  and it refuses to fall back to its system key there, correctly, because that would answer
+  with service-account permissions instead of the person's. So the fault was never on the wire
+  we kept staring at.
+- `_post` now reads **`code` and `request_id` only** off an error body, and glosses the codes
+  it knows. The 401 now reads: *this identity has not linked ERPNext inside Triton … that
+  person (or the bot account, for a digest) must click 'Link ERPNext' in Triton once; it is not
+  a problem with the token we sent.* `request_id` is included because it is the only handle
+  tying our log line to Triton's, and correlating by timestamp crosses the UTC/site-local
+  boundary this repo has already been bitten by.
+- **`_session_for`'s docstring described a recovery that no code performed.** It promised a
+  cached session id was "verified by use, discarded on a miss, and recreated"; nothing
+  discarded it. Someone deleting the thread from Triton's web app cached a dead id for its full
+  thirty-day TTL, and `@triton` was dead in that room until it expired. `ask` now retries once
+  on a 404 — and only when the id came from cache, since a session that 404s seconds after
+  being created is a real fault and retrying it would mint an orphan session per turn forever.
+- `TritonUnavailable` carries `status` and `code`, so a caller can tell "Triton is down" from
+  "this person needs to link ERPNext" without parsing a sentence.
+
+### Added
+
+- `tests/test_chat_triton_client.py` (own CI step): asserts `message` is never returned from an
+  error body, that a non-string `code` is dropped rather than `str()`-ed into the log, and all
+  three arms of the retry decision. Each guard was mutation-checked — removing the orphan guard,
+  widening the retry past 404, or skipping the cache invalidation each fails a specific test.
+
+### Notes
+
+- **The rule I had was right and I applied it to the wrong unit.** "Never repeat a response
+  body" was protecting real content — the body can echo the prompt, and the prompt is the
+  transcript. But the correct rule, the one already written down for `TritonUnavailable`, is
+  *repeat what a type guarantees is content-free*. `message` fails that test; `code` (an enum
+  Triton picks from a fixed list) and `request_id` (a uuid) pass it. Discarding the diagnosis
+  and protecting the content are two different acts, and they had been fused into one.
+- This is the same shape as three faults earlier in the phase: the information needed to
+  diagnose the problem existed, arrived at our process, and was thrown away by a guard of mine
+  before anything logged it.
+- **The 401 is a configuration finding, not a code one.** The fix above makes it legible; it
+  does not resolve it. Whoever the turn runs as still has to link ERPNext in Triton once — for
+  the digest summariser that is the bot account in `Chat Settings.bot_user`.
+
 ## [1.277.15] - 2026-08-13
 
 ### Fixed

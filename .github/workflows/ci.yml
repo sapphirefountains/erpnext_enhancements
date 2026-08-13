@@ -158,6 +158,15 @@ jobs:
           erpnext_enhancements.tests.test_device_management
           erpnext_enhancements.tests.test_mdm_integration
           erpnext_enhancements.tests.test_drive_match -v
+      # Its own step, and not appended above, because it installs its own `frappe` stub —
+      # the rule every bench-free suite here follows except the one noted above.
+      #
+      # It guards two things that failed silently in production: that a Triton error body
+      # gives up its `code` and `request_id` and NEVER its `message` (the message can quote
+      # the prompt, and the prompt is the transcript), and that a cached Triton session id
+      # Triton no longer has costs one retry rather than thirty days of a dead room.
+      - name: Triton chat client (error codes, stale-session retry)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_triton_client -v
       # The A1 read tools each wrap a function that returns more than a reader
       # should see: a live billable Google Maps browser key, the e-signature
       # evidence (token hashes, the agreement text as signed, signature image,
