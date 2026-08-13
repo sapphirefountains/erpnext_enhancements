@@ -1864,28 +1864,38 @@ def drain_room(room: str, *, max_jobs: int = MAX_JOBS_PER_RUN, max_seconds: floa
 	return summary
 
 
-def run_relay_job(job_name: str) -> dict:
+def run_relay_job(job: str) -> dict:
 	"""The enqueued entry point for one outbox row. Enqueue this, never :func:`drain_room`.
 
-	It does **not** simply run ``job_name``. If an earlier ``job_seq`` in the same room is
-	still live, Rule 1 says this job is deferred — and then, rather than going back to sleep,
-	the worker drains the room from its head. A woken worker that declines to do the room's
-	oldest work is a worker that leaves nine of ten burst messages waiting for the next
-	five-minute sweep.
-	"""
-	job = load_job(job_name)
-	if job is None:
-		return {"job": job_name, "result": "missing"}
+	**The parameter is ``job`` and must never be ``job_name``.** ``job_name`` is one of
+	``frappe.enqueue``'s *own* parameters, so a kwarg by that name is consumed by the enqueue
+	machinery and never reaches this function — the worker then dies with "missing 1 required
+	positional argument", having been handed nothing at all. It spent a spell named
+	``job_name`` while the caller correctly passed ``job=``, which failed the other way round
+	("unexpected keyword argument"), and the fix in v1.277.13 changed the caller to match this
+	name and so swapped one failure for the other. ``tests/test_chat_outbox.py`` now asserts
+	both halves: the caller passes this parameter's name, *and* that name is not one frappe
+	reserves.
 
-	room = str(job.get("room") or "")
+	It does **not** simply run ``job``. If an earlier ``job_seq`` in the same room is still
+	live, Rule 1 says this job is deferred — and then, rather than going back to sleep, the
+	worker drains the room from its head. A woken worker that declines to do the room's oldest
+	work is a worker that leaves nine of ten burst messages waiting for the next five-minute
+	sweep.
+	"""
+	row = load_job(job)
+	if row is None:
+		return {"job": job, "result": "missing"}
+
+	room = str(row.get("room") or "")
 	if not room:
-		return {"job": job_name, "result": "no room"}
+		return {"job": job, "result": "no room"}
 
 	head = open_jobs(room, limit=1)
-	blocker = blocking_predecessor(head, job_name)
-	if blocker is not None and str(job.get("status") or "") == RelayState.PENDING.value:
+	blocker = blocking_predecessor(head, job)
+	if blocker is not None and str(row.get("status") or "") == RelayState.PENDING.value:
 		_defer(
-			job,
+			row,
 			seconds=DEFER_SECONDS,
 			reason=(
 				f"Rule 1 CREATE-BEFORE-EDIT: job_seq {blocker.get('job_seq')} in this room is "

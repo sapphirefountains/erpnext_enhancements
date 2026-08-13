@@ -184,9 +184,10 @@ OPERATION_MESSAGE_DELETE: Final[str] = "Message Delete"
 #: The relay worker's dotted path. A string rather than an import: importing
 #: :mod:`erpnext_enhancements.chat.sync.outbound` here would pull the Google transport into
 #: the module that document events load, which is exactly what the AST guard forbids.
-#: ``outbound.run_relay_job(job_name: str)`` is the agreed entry point. The signature is
-#: copied from the worker deliberately: this comment said ``job:`` while the function said
-#: ``job_name:``, and the enqueue below was written from the comment.
+#: ``outbound.run_relay_job(job: str)`` is the agreed entry point — and ``job``, not
+#: ``job_name``, because ``frappe.enqueue`` takes a ``job_name`` of its own and would swallow
+#: it. This comment was right and the worker had drifted; v1.277.13 read it the other way
+#: round and changed the caller. The test now checks both sides rather than either comment.
 RELAY_WORKER_PATH: Final[str] = "erpnext_enhancements.chat.sync.outbound.run_relay_job"
 
 #: ``long``, not ``default``: a relay attempt is an HTTP call to Google with a 30-second
@@ -1383,10 +1384,12 @@ def enqueue_relay_job(job: str) -> None:
 			enqueue_after_commit=True,
 			job_id=relay_job_id(job),
 			deduplicate=True,
-			# `job_name`, matching the worker's signature. This said `job=` and every enqueue
-			# died with TypeError before doing anything — invisible because the sweeper, not
-			# the queue, is the delivery guarantee, so messages still went out one sweep late.
-			job_name=job,
+			# `job`, and it MUST NOT be `job_name`: that is one of frappe.enqueue's own
+			# parameters, so a kwarg by that name is eaten by the enqueue machinery and the
+			# worker is handed nothing. v1.277.13 renamed this to `job_name` to match the
+			# worker and traded "unexpected keyword argument" for "missing 1 required
+			# positional argument" — the worker was the side that had drifted.
+			job=job,
 		)
 	except Exception as exc:
 		frappe.log_error(

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.15] - 2026-08-13
+
+### Fixed
+
+- **v1.277.13 fixed the relay enqueue backwards and swapped one failure for another.**
+  `job_name` is one of **`frappe.enqueue`'s own parameters**, so a kwarg by that name is
+  consumed by the enqueue machinery and never reaches the worker. The original mismatch failed
+  with *unexpected keyword argument*; renaming the caller to match the worker made it fail with
+  *missing 1 required positional argument*. The **worker** was the side that had drifted.
+- `run_relay_job(job_name: str)` → `run_relay_job(job: str)`, caller restored to `job=job`, and
+  the comment in `outbox.py` — which was correct, and which the last release "corrected" — put
+  back.
+
+### Notes
+
+- **The guard I added last release would have blessed the regression.** It asserted the caller
+  passes the worker's parameter name, which is true when both sides say `job_name` and both are
+  wrong. The missing invariant is that the name must not collide with a parameter `frappe`
+  reserves. It now checks both, and is verified against all three arrangements: the original
+  bug, this regression, and the fix.
+- `_ENQUEUE_OPTIONS` is now `frappe.enqueue`'s real signature rather than the eight names I
+  remembered — read off the running framework rather than recalled.
+- **`job_name` is a good trap.** It reads exactly like what a relay worker's argument should be
+  called, and the failure it produces names the *caller*, which is the side that is right.
+
 ## [1.277.14] - 2026-08-13
 
 ### Changed
