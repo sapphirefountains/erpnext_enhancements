@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.280.6] - 2026-08-13
+
+### Fixed
+
+- **The heading-colour comment closed early, leaving six lines of prose outside any comment —
+  directly above the rule they describe.** `bench build` printed two `css-syntax-error`
+  warnings and **emitted the bundle anyway**, so malformed CSS shipped. A recovering CSS parser
+  consumes forward to the next `{`, which is exactly where that rule's selector list is, so
+  this is the likeliest reason the headings stayed black after a rebuild.
+- `scripts/test_chat_source_rules.js` now checks the stylesheet's comment delimiters are
+  balanced, and that stripping every well-formed comment leaves neither delimiter behind.
+  Mutation-checked against both an early close and an unclosed opener.
+
+### Notes
+
+- **esbuild only warns.** A CSS syntax error does not fail `bench build`, does not fail CI, and
+  changes the content hash exactly as a successful edit would — so every signal an operator
+  normally trusts said the deploy worked. The one place it was visible was 200 lines up in the
+  build output, above a wall of translation lines.
+- **I saw this and dismissed it.** Immediately after making the edit I printed a check that
+  reported `comment closes once: 3` — an anomaly, in a block that should have contained one —
+  and moved on because the file parsed as "balanced overall". Counting the totals was the wrong
+  question; the totals *were* balanced. What mattered was that a delimiter survived stripping.
+
 ## [1.280.5] - 2026-08-13
 
 ### Fixed

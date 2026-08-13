@@ -103,7 +103,7 @@ body,
  * Both mount points are needed: the overlays are `document.body.appendChild`-ed and are
  * therefore **outside** `.ee-chat-root`, so a single descendant selector on the root would fix
  * the two that were reported and miss the ones that were not.
- */
+ *
  * Named classes AND mount points, which is redundant on purpose. The mount-point halves cover
  * a heading added tomorrow, including one with no class at all (the fatal `h1` has none). The
  * named halves are what `scripts/test_chat_source_rules.js` can actually check: it reads every
