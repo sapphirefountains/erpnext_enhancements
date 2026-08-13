@@ -885,6 +885,54 @@ function stripComments(source) {
 	}
 }
 
+/*
+ * Every titled heading carries an explicit colour.
+ *
+ * Frappe's website stylesheet colours `h1`-`h6` with its own `--heading-color`, a fixed
+ * near-black that does not follow `prefers-color-scheme`. An explicit colour beats
+ * inheritance, so the `color: var(--ee-text)` on `.ee-chat-root` never reaches a heading and
+ * every one of them rendered black on the dark theme -- while every element around it was
+ * correct, which is why it read as a styling slip rather than a whole class of bug.
+ *
+ * It was reported for the two headings that are always on screen. The modal and thread titles
+ * had it too and were waiting for somebody to open a dialog. So this scan is over ALL of
+ * them: it reads each `el("hN", { class })` out of app.js and requires the class to appear in
+ * a rule that sets `color`.
+ */
+{
+	const cssPath = path.join(ROOT, 'erpnext_enhancements', 'public', 'css', 'chat.bundle.css');
+	const css = must(cssPath).replace(/\/\*[\s\S]*?\*\//g, '');
+	const appPath = path.join(ROOT, 'erpnext_enhancements', 'public', 'js', 'chat', 'app.js');
+	const appSrc = must(appPath);
+
+	const headings = [...appSrc.matchAll(/el\(\s*"h[1-6]"\s*,\s*\{[^}]*?class:\s*"([a-z0-9-]+)"/g)]
+		.map((m) => m[1]);
+	const unique = [...new Set(headings)];
+
+	// Non-vacuity: if the shape of the call changes and this stops matching, the scan must say
+	// so rather than pass with nothing to check.
+	if (unique.length < 3) {
+		console.error('MARKERS NOT FOUND: only ' + unique.length + ' classed headings found in app.js.');
+		process.exit(2);
+	}
+
+	const coloured = new Set();
+	for (const m of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+		if (!/(^|[;\s])color\s*:/.test(m[2])) continue;
+		for (const cls of m[1].matchAll(/\.([a-z0-9-]+)/g)) coloured.add(cls[1]);
+	}
+
+	const uncoloured = unique.filter((cls) => !coloured.has(cls));
+	if (uncoloured.length) {
+		fail(
+			'these heading classes have no explicit `color`, so Frappe\'s --heading-color wins ' +
+			'and they render black on the dark theme:\n        ' + uncoloured.join('\n        ')
+		);
+	} else {
+		pass(`every titled heading sets its own colour (${unique.length} checked)`);
+	}
+}
+
 console.log('');
 if (failures) {
 	console.error(failures + ' assertion(s) failed');

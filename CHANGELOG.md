@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.279.3] - 2026-08-13
+
+### Fixed
+
+- **Every heading in the chat SPA rendered black on the dark theme.** Frappe's website
+  stylesheet colours `h1`–`h6` explicitly, with its own `--heading-color` — a fixed near-black
+  that does not follow `prefers-color-scheme`. An explicit colour beats inheritance, so the
+  `color: var(--ee-text)` set on `.ee-chat-root` never reached them, while every element around
+  them inherited correctly. That is why it read as a styling slip on two elements rather than
+  what it was.
+- Reported for `.ee-conv-title` and `.ee-sidebar-title`, which are simply the headings that are
+  always on screen. `.ee-modal-title`, `.ee-thread-title` and the fatal-error `h1` had exactly
+  the same bug and were three more reports waiting for somebody to open a dialog. All five are
+  fixed.
+
+### Notes
+
+- The rule is scoped **by class and by mount point**, which is redundant on purpose. The
+  mount-point halves cover a heading added tomorrow, including one with no class (the fatal
+  `h1`). The named halves are what a scan can check. Both mount points are needed because the
+  modal and lightbox overlays are `document.body.appendChild`-ed and therefore sit *outside*
+  `.ee-chat-root` — a single descendant selector would have fixed the two that were reported
+  and missed the ones that were not.
+- `scripts/test_chat_source_rules.js` now reads every `el("hN", {class})` out of `app.js` and
+  fails if that class has no explicit `color` anywhere in the bundle. Mutation-checked: removing
+  either title class from the rule fails it. **A rule that is correct but unverifiable is how
+  this one came to be missing.**
+- Needs `bench build` — the bundle is content-hashed at build time, and editing the source
+  alone changes nothing that a browser will fetch.
+
 ## [1.279.2] - 2026-08-13
 
 ### Fixed

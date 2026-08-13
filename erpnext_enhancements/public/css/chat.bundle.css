@@ -85,6 +85,41 @@ body,
 	background: var(--ee-bg);
 	color: var(--ee-text);
 }
+
+/*
+ * Headings do not inherit the line above, and that is not obvious from reading it.
+ *
+ * Frappe's website stylesheet colours `h1`–`h6` explicitly, with its own `--heading-color`
+ * token — which is a fixed near-black and does **not** follow `prefers-color-scheme`. So every
+ * heading in this SPA rendered black on the dark theme while every element around it inherited
+ * `--ee-text` correctly. An explicit colour beats inheritance, always, and the `color` set on
+ * the root never reaches them.
+ *
+ * Reported as "ee-conv-title and ee-sidebar-title are black". Those two are simply the headings
+ * that are always on screen — the modal, thread and fatal titles had exactly the same bug and
+ * were three more reports waiting for somebody to open a dialog. So this is scoped by mount
+ * point rather than by listing the four class names, and it covers a heading added tomorrow.
+ *
+ * Both mount points are needed: the overlays are `document.body.appendChild`-ed and are
+ * therefore **outside** `.ee-chat-root`, so a single descendant selector on the root would fix
+ * the two that were reported and miss the ones that were not.
+ */
+ * Named classes AND mount points, which is redundant on purpose. The mount-point halves cover
+ * a heading added tomorrow, including one with no class at all (the fatal `h1` has none). The
+ * named halves are what `scripts/test_chat_source_rules.js` can actually check: it reads every
+ * `el("hN", {class})` out of `app.js` and fails if the class is missing here, so a new titled
+ * heading cannot ship uncoloured. A rule that is correct but unverifiable is how this one was
+ * missing in the first place.
+ */
+.ee-sidebar-title,
+.ee-conv-title,
+.ee-modal-title,
+.ee-thread-title,
+.ee-chat-root :is(h1, h2, h3, h4, h5, h6),
+.ee-modal :is(h1, h2, h3, h4, h5, h6),
+.ee-lightbox :is(h1, h2, h3, h4, h5, h6) {
+	color: var(--ee-text);
+}
 body > .main-section,
 body .page_content,
 body .container {
