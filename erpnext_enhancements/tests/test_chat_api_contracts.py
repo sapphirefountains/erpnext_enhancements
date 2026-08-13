@@ -1019,3 +1019,45 @@ def _sql_literals(module: Any) -> list[str]:
 
 
 import ast  # noqa: E402  (used by the two helpers above; imported late to keep the stub first)
+
+
+# ---------------------------------------------------------------------------
+# The bot's own User is not a mentionable person (v1.280.7)
+# ---------------------------------------------------------------------------
+
+
+def _picker_results(monkeypatch, *, members, bot):
+	"""Drive ``search_mention_targets`` with the three seams replaced and nothing else."""
+	monkeypatch.setattr(mentions, "require_room", lambda room: ("someone@example.com", room))
+	monkeypatch.setattr(mentions, "_member_candidates", lambda room, pattern: list(members))
+	monkeypatch.setattr(mentions, "_other_candidates", lambda pattern, exclude, room_type_limit: [])
+	monkeypatch.setattr(mentions, "_bot_user_id", lambda: bot)
+	return mentions.search_mention_targets("ROOM-1", "")["results"]
+
+
+def test_the_bot_user_is_never_offered_as_a_mention_target(monkeypatch) -> None:
+	"""Mentioning it does nothing at all, silently — which is the worst shape a failure takes.
+
+	``dispatch_spa_message`` gates on a ``Chat Mention`` row of type ``Triton``, which only the
+	picker's sentinel produces. A mention of the bot's *User* is an ordinary ``User`` mention:
+	the turn is never dispatched, nothing is enqueued, and nothing is logged. On the day the
+	bot became a real ERPNext account the menu offered "Triton" and "Triton Chat Bot" side by
+	side — one worked, the other produced no answer and no error.
+	"""
+	members = [
+		{"kind": "user", "user": "alice@example.com", "label": "Alice", "is_member": True},
+		{"kind": "user", "user": "chatbot@example.com", "label": "Triton Chat Bot", "is_member": True},
+	]
+	results = _picker_results(monkeypatch, members=members, bot="chatbot@example.com")
+
+	assert [row["user"] for row in results if row["kind"] == "user"] == ["alice@example.com"]
+	# The assistant is still offered — by the sentinel, which is the entry that works.
+	assert any(row["user"] == mentions.TRITON_KEY for row in results)
+
+
+def test_an_unset_bot_user_hides_nobody(monkeypatch) -> None:
+	"""A settings page mid-configuration must not empty the mention menu."""
+	members = [{"kind": "user", "user": "alice@example.com", "label": "Alice", "is_member": True}]
+	results = _picker_results(monkeypatch, members=members, bot="")
+
+	assert "alice@example.com" in [row["user"] for row in results]

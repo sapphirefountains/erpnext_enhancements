@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.280.7] - 2026-08-13
+
+### Fixed
+
+- **The bot's own ERPNext User was offered in the mention picker, and mentioning it did
+  nothing — silently.** `dispatch_spa_message` gates on a `Chat Mention` row of type `Triton`,
+  which only the picker's sentinel produces. A mention of the bot's *User* is an ordinary
+  `User` mention: the turn is never dispatched, nothing is enqueued, and nothing is logged.
+- On production the menu offered **"Triton"** and **"Triton Chat Bot"** side by side. One
+  worked; the other produced no answer and no error, which is the worst shape a failure can
+  take — there is nothing to search for. The bot's User is now excluded from the picker, so the
+  only way to mention the assistant is the entry that works.
+
+### Notes
+
+- **This is a footgun that only existed after the bot became a real account.** For as long as
+  `bot_user` pointed at a Google group with no ERPNext presence, it could not appear in a
+  mention menu. Giving the bot a proper zero-role User — the right call, and what made the
+  digests work — put a decoy next to the real thing.
+- `_bot_user_id` reads the field directly rather than through `handler._bot_user`, which
+  **raises** on an empty value by design. Correct there, because a turn that cannot name its
+  bot must not proceed; wrong here, where the answer only hides a row and a settings page
+  mid-configuration must not take the mention menu down with it.
+- The Google Chat side is unaffected: it dispatches through `from_chat_interaction`, which does
+  its own detection and never consults the mention rows.
+
 ## [1.280.6] - 2026-08-13
 
 ### Fixed

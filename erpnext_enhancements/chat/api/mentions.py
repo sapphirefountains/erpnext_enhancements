@@ -57,8 +57,18 @@ def search_mention_targets(room: str, query: str | None = None) -> dict[str, Any
 	term = (query or "").strip()
 	pattern = "%" + term.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_") + "%"
 
-	members = _member_candidates(name, pattern)
-	seen = {row["user"] for row in members}
+	# The bot's own ERPNext User is not a person and must never be offered as one.
+	#
+	# **Mentioning it does nothing at all, silently.** ``dispatch_spa_message`` gates on a
+	# ``Chat Mention`` row with ``mention_type = "Triton"``, which only the sentinel below
+	# produces; a mention of the bot's User is an ordinary ``User`` mention, so the turn is
+	# never dispatched, nothing is enqueued, and nothing is logged. That is the worst shape a
+	# failure can take, and it cost an hour of production debugging on the day the bot became
+	# a real account: the menu offered "Triton" and "Triton Chat Bot" side by side, one of them
+	# worked, and the other produced no answer and no error.
+	bot = _bot_user_id()
+	members = [row for row in _member_candidates(name, pattern) if row["user"] != bot]
+	seen = {row["user"] for row in members} | ({bot} if bot else set())
 	others = _other_candidates(pattern, exclude=seen, room_type_limit=MAX_RESULTS - len(members))
 
 	results = members + others
@@ -86,6 +96,20 @@ def _triton_matches(term: str) -> bool:
 	time somebody mentioned a colleague with a ``t`` in their name.
 	"""
 	return not term or "triton".startswith(term.lower())
+
+
+def _bot_user_id() -> str:
+	"""``Chat Settings.bot_user``, or ``""``.
+
+	Read directly rather than through ``handler._bot_user``, which **raises** when the field is
+	empty by design — correct there, because a turn that cannot name its bot must not proceed.
+	Here the answer is only used to hide a row, and a settings page mid-configuration must not
+	take the mention menu down with it.
+	"""
+	try:
+		return str(frappe.db.get_single_value("Chat Settings", "bot_user") or "")
+	except Exception:
+		return ""
 
 
 def _member_candidates(room: str, pattern: str) -> list[dict[str, Any]]:
