@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.280.5] - 2026-08-13
+
+### Fixed
+
+- **The relay sweeper wrote a fresh `Error Log` row for every blocked job on every pass — 305
+  identical rows in a day.** Eleven jobs stuck behind one head-of-line blocker, re-reported
+  every few minutes, for six hours. A real `403 PERMISSION_DENIED` from Google sat in the
+  middle of that and took a query grouped by title to find. **An alert channel that repeats a
+  known fact faster than anybody reads it is not an alert channel; it is where alerts go to be
+  missed.**
+- One alert per job per reason, for six hours. The `dependency_stale` **counter** still rises
+  every pass, because that is a measurement of what is blocked; the alert does not, because
+  that is a notification.
+
+### Notes
+
+- **Keyed on the job *and* its note**, so a reason that changes — "waiting on provisioning"
+  becoming "not a joined member" — announces itself again. The reason changing is the news, and
+  suppressing it is the failure mode of every dedupe ever written.
+- **It fails open**, which is the opposite of every other dedupe in this module and the one
+  direction that is not a judgement call: a duplicate row costs noise, a swallowed one costs an
+  outage nobody is told about. Tested with a cache that raises, because the mutation check
+  showed the ordinary path never exercises it.
+- A deploy flushes this Redis, so everything still blocked re-alerts once afterwards. That is
+  correct — a deploy is exactly when you want to know what is stuck.
+
 ## [1.280.4] - 2026-08-13
 
 ### Fixed
