@@ -191,23 +191,36 @@ def clear_digest_poison(room: str = "") -> dict[str, int]:
 	frappe.only_for("System Manager")
 
 	values = {"poisoned": 0, "rebuild_failures": 0}
-	cleared: dict[str, int] = {}
+	filters: dict[str, Any] = {"poisoned": 1}
+	if room:
+		filters["room"] = room
 
-	for doctype, key in ((ROOM_DIGEST_DOCTYPE, "room"), (THREAD_DIGEST_DOCTYPE, "room")):
-		filters: dict[str, Any] = {"poisoned": 1}
-		if room:
-			filters[key] = room
-		names = [
-			str(row["name"])
-			for row in frappe.get_all(doctype, filters=filters, fields=["name"], limit_page_length=0)
-		]
-		for name in names:
-			# `update_modified=False` to match how every other write in this module touches a
-			# digest row: `modified` is the staleness signal the sweeper reads, and an operator
-			# clearing a flag must not look like a rebuild.
-			frappe.db.set_value(doctype, name, values, update_modified=False)
-		cleared[doctype] = len(names)
+	# The two tiers are written out rather than looped over a `(doctype, ...)` tuple, and that
+	# is not a style preference. `tests/test_chat_rawsql_guard.py` resolves every chat query's
+	# target statically and **fails anything it cannot pin to a literal** — because a query
+	# whose table comes from a variable is one assignment away from reading `Chat Message`, and
+	# a check that cannot see the target is a check that has stopped protecting it. The loop
+	# version was rejected on exactly that ground. `limit_page_length=0` because `get_all`
+	# otherwise stops at 20, which would silently half-clear a site and look like success.
+	room_names = frappe.get_all(
+		ROOM_DIGEST_DOCTYPE, filters=filters, pluck="name", limit_page_length=0
+	)
+	for name in room_names:
+		# `update_modified=False` to match how every other write in this module touches a digest
+		# row: `modified` is the staleness signal the sweeper reads, and an operator clearing a
+		# flag must not look like a rebuild.
+		frappe.db.set_value(ROOM_DIGEST_DOCTYPE, name, values, update_modified=False)
 
+	thread_names = frappe.get_all(
+		THREAD_DIGEST_DOCTYPE, filters=filters, pluck="name", limit_page_length=0
+	)
+	for name in thread_names:
+		frappe.db.set_value(THREAD_DIGEST_DOCTYPE, name, values, update_modified=False)
+
+	cleared = {
+		ROOM_DIGEST_DOCTYPE: len(room_names),
+		THREAD_DIGEST_DOCTYPE: len(thread_names),
+	}
 	frappe.db.commit()
 	_note(
 		f"cleared digest poisoning on {sum(cleared.values())} row(s)"

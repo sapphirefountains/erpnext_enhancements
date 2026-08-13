@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.278.3] - 2026-08-13
+
+### Fixed
+
+- **`clear_digest_poison` built its query target from a loop variable, and the raw-SQL guard
+  refused it** — `frappe.get_all(doctype, ...)` resolves to `<unresolved>`, and an unresolved
+  target is not a small gap: it is a query whose table nobody can name from the source, one
+  assignment away from reading `Chat Message`. The two tiers are now written out with literal
+  constants.
+- Both reads registered in `SYSTEM_CONTEXT_READS` with their reason. They project primary keys
+  of rows already marked broken — no `summary_text`, no message, no room title — and membership
+  is not a meaningful filter on them: the caller is a System Manager at a bench prompt with no
+  session user, and scoping to "rooms the operator is in" would leave every other room latched
+  off forever with nothing to say so.
+
+### Notes
+
+- **Three source-level guards cover this package and I checked two.** `test_chat_gate_source_scan`
+  caught the whitelist, `test_chat_sql_columns` passed, and `test_chat_rawsql_guard` — the one
+  the module header calls *the likeliest route to a real data leak* — I never ran, because I had
+  already found a failure and fixed it. Finding one guard's objection is not evidence about the
+  others. Every bench-free chat suite now runs before this ships, each in its own process, the
+  way CI runs them.
+
 ## [1.278.2] - 2026-08-13
 
 ### Added
