@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.17] - 2026-08-13
+
+### Added
+
+- **`docs/marketing-platform-plan.md`** — the build plan for a `marketing/` module covering
+  social publishing (Facebook, Instagram, LinkedIn, YouTube via direct APIs), read-only paid-ads
+  attribution (Google, Meta, LinkedIn), demand capture, and content supply. Documents the twelve
+  decisions taken on 2026-08-13 so they are not re-litigated, and the four open questions.
+
+### Notes
+
+- **The plan opens with a production measurement, because it inverts the obvious build order.**
+  WP-1 lead attribution (v1.241.0) and WP-4 marketing spend (v1.243.0) both shipped and both are
+  starved: `lead_attribution_enabled = 0`, the web-lead ingress off with no secret set, **0 of 225
+  Leads carrying a UTM source, 0 of 819 Opportunities carrying a gclid, and 0 `Marketing Spend`
+  rows ever created**. 809 of 819 Opportunities are the `Unknown (pre-Aug 2026)` backfill bucket.
+  Search Console has returned 403 on all 40+ runs since 2026-06-26, so organic has always read 0.
+  A publishing tool built on this would produce posts nobody could attribute, so Phase 1 connects
+  existing pipes rather than adding features.
+- **Nothing has created a Lead since 2026-08-01, against 23 Opportunities in the same window.**
+  Sales works Opportunities directly, so an attribution model hanging off `Lead` has nothing to
+  hang on. The decision was to keep the Lead stage and fix the process — which makes the process
+  work a prerequisite for the funnel metrics, not a nice-to-have.
+- **The critical path is platform approval, not code.** Meta App Review, LinkedIn Community
+  Management *and* Marketing Developer Platform, the YouTube Data API audit, the Google Ads
+  developer token and GBP API access all have multi-week lead times and start on day one.
+- **A service account cannot own or post to a YouTube channel, a Google Ads account, or a GBP
+  location.** Only GA4 and Search Console work service-account style, and both already do. So the
+  auth pattern for this module is QuickBooks' authorization-code OAuth, **not** the keyless
+  domain-wide delegation in `chat/gchat/auth.py` — worth stating because that file is otherwise
+  the house reference for a new Google integration.
+- The plan carries the traps forward explicitly: the `Module Def` row a new module needs on an
+  installed site, the Single-defaults backfill patch that must ship in the same PR as
+  `Marketing Settings`, and the outbox-plus-sweeper that a deploy-time `FLUSHDB` makes mandatory
+  for scheduled posts.
+- Docs-only. No executable behaviour changes.
+
 ## [1.277.16] - 2026-08-13
 
 ### Fixed
