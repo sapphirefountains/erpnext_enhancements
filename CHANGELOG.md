@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.280.3] - 2026-08-13
+
+### Fixed
+
+- **`backfill_relay_auth_identity` (v1.279.2) matched zero rows and recorded itself as run.**
+  It keyed on `coalesce(auth_identity, '') = ''` — "only fill what nobody decided", which was
+  the right shape and the wrong fact. `Chat Relay Job.auth_identity` declares
+  `"default": "USER"`, and adding a column with a default writes it into **every existing row**
+  as part of the `ALTER`. The schema change filled the column before the patch could look at
+  it. Confirmed on production: both head-of-line jobs read `auth_identity: USER`.
+- `patches/restamp_triton_relay_auth_identity.py` keys on the **writer's own rule** instead —
+  `sync_origin = 'Triton'` means the app identity, which is exactly what
+  `outbox.auth_identity_for_origin` decides for every job written since. Overwriting `USER` is
+  safe inside that predicate: the case the original guard protected — a coworker's message
+  re-stamped as the app — cannot occur, because a Triton-origin row is a bot reply by
+  construction.
+
+### Notes
+
+- **This was the whole outbound blockage, and it was one job per room.** `m88i2dbue7` seq 2 and
+  `e0c9csbl5k` seq 4 are both authored by `triton@sapphirefountains.com`, which can never be a
+  joined member because it is a Google group — so each deferred forever, and Rule 1
+  (CREATE-BEFORE-EDIT) correctly held the other nine behind them. `attempts 0` after six hours
+  read like a dead worker and was the opposite: every deferral is a worker that ran and chose
+  to wait.
+- **`CLAUDE.md` gains the mirror of a gotcha it already carried.** A `default` on a new field
+  of a **Single** never reaches the existing row; on a **normal** doctype it reaches every row.
+  Opposite answers, same question, and both have now cost a release. Prefer a backfill keyed on
+  the rule the writer applies over one keyed on emptiness — emptiness is a fact about the schema
+  migration, not about the data.
+- A patch that matches nothing is indistinguishable from a patch that worked: it commits, it
+  logs to `tabPatch Log`, and it returns. Both new backfills return counts for that reason.
+
 ## [1.280.2] - 2026-08-13
 
 ### Fixed

@@ -621,3 +621,11 @@ erpnext_enhancements.patches.backfill_marketing_settings_defaults
 # their room unblocked. Only rewrites rows with no gchat_message_name - never relayed, so
 # nothing at Google points at the old id. Does NOT requeue dead jobs. Safe twice.
 erpnext_enhancements.patches.backfill_spa_client_message_id
+
+# The re-run of backfill_relay_auth_identity, which was a no-op and logged as a success. That
+# patch matched an EMPTY auth_identity, and the column was never empty: the field declares
+# default "USER", and adding a column with a default writes it into every existing row as part
+# of the ALTER. This one matches the writer's own rule instead - sync_origin = 'Triton' means
+# the app identity - which is safe to apply over USER because a Triton-origin row is a bot
+# reply by construction and never a coworker's message. Dead jobs untouched. Safe twice.
+erpnext_enhancements.patches.restamp_triton_relay_auth_identity
