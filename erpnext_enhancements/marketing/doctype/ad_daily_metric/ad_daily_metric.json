@@ -1,0 +1,138 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:ADM-{campaign}-{metric_date}",
+ "creation": "2026-08-13 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "campaign",
+  "metric_date",
+  "column_break_key",
+  "ad_account",
+  "platform",
+  "metrics_section",
+  "impressions",
+  "clicks",
+  "column_break_metrics",
+  "spend",
+  "currency",
+  "conversions"
+ ],
+ "fields": [
+  {
+   "description": "Half of the natural key. The record name is derived from campaign and date, so re-pulling a day upserts the same row instead of duplicating it — which is what makes restating a trailing window safe.",
+   "fieldname": "campaign",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Campaign",
+   "options": "Ad Campaign",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "The other half of the natural key. The platform's own reporting date, in the account's reporting timezone — not converted, because a converted date cannot be reconciled against the platform's own UI.",
+   "fieldname": "metric_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Date",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "column_break_key",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "campaign.ad_account",
+   "fieldname": "ad_account",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Ad Account",
+   "options": "Ad Account",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "campaign.platform",
+   "fieldname": "platform",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Platform",
+   "read_only": 1
+  },
+  {
+   "fieldname": "metrics_section",
+   "fieldtype": "Section Break",
+   "label": "Metrics"
+  },
+  {
+   "fieldname": "impressions",
+   "fieldtype": "Int",
+   "label": "Impressions"
+  },
+  {
+   "fieldname": "clicks",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Clicks"
+  },
+  {
+   "fieldname": "column_break_metrics",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "As reported by the platform, in the account's own currency. Never converted on ingest.",
+   "fieldname": "spend",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Spend",
+   "options": "currency"
+  },
+  {
+   "fetch_from": "ad_account.currency",
+   "fieldname": "currency",
+   "fieldtype": "Link",
+   "label": "Currency",
+   "options": "Currency",
+   "read_only": 1
+  },
+  {
+   "description": "Platform-reported conversions. A Float, not an Int, because attribution models report fractional credit. This is the platform's own count and is NOT the number this project exists to produce — the figure that matters is booked revenue joined through the pipeline.",
+   "fieldname": "conversions",
+   "fieldtype": "Float",
+   "label": "Conversions (platform-reported)",
+   "precision": "2"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-13 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Ad Daily Metric",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "metric_date",
+ "sort_order": "DESC",
+ "states": []
+}

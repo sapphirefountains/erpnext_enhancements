@@ -1,0 +1,166 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:MKT-SYNC-{YYYY}-{#####}",
+ "creation": "2026-08-13 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "platform",
+  "sync_type",
+  "status",
+  "column_break_head",
+  "ad_account",
+  "started_at",
+  "finished_at",
+  "window_section",
+  "window_from",
+  "column_break_window",
+  "window_to",
+  "counts_section",
+  "created_count",
+  "updated_count",
+  "column_break_counts",
+  "failed_count",
+  "retry_count",
+  "error_section",
+  "error_message"
+ ],
+ "fields": [
+  {
+   "fieldname": "platform",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Platform",
+   "options": "Google Ads\nMeta Ads\nLinkedIn Ads"
+  },
+  {
+   "fieldname": "sync_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Sync Type",
+   "options": "Campaigns\nDaily Metrics\nBackfill"
+  },
+  {
+   "default": "Queued",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Queued\nRunning\nCompleted\nFailed"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "ad_account",
+   "fieldtype": "Link",
+   "label": "Ad Account",
+   "options": "Ad Account"
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At"
+  },
+  {
+   "fieldname": "finished_at",
+   "fieldtype": "Datetime",
+   "label": "Finished At"
+  },
+  {
+   "fieldname": "window_section",
+   "fieldtype": "Section Break",
+   "label": "Window Covered"
+  },
+  {
+   "description": "The date range this run actually covered, which is the restate window rather than just the new day. Recorded so a gap in the data can be traced to a run that never covered it.",
+   "fieldname": "window_from",
+   "fieldtype": "Date",
+   "label": "From"
+  },
+  {
+   "fieldname": "column_break_window",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "window_to",
+   "fieldtype": "Date",
+   "label": "To"
+  },
+  {
+   "fieldname": "counts_section",
+   "fieldtype": "Section Break",
+   "label": "Counters"
+  },
+  {
+   "fieldname": "created_count",
+   "fieldtype": "Int",
+   "label": "Created"
+  },
+  {
+   "fieldname": "updated_count",
+   "fieldtype": "Int",
+   "label": "Updated"
+  },
+  {
+   "fieldname": "column_break_counts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "failed_count",
+   "fieldtype": "Int",
+   "label": "Failed"
+  },
+  {
+   "fieldname": "retry_count",
+   "fieldtype": "Int",
+   "label": "Retries"
+  },
+  {
+   "fieldname": "error_section",
+   "fieldtype": "Section Break",
+   "label": "Error"
+  },
+  {
+   "description": "Never store a token, a secret or an Authorization header here. This doctype is readable by Sales Manager.",
+   "fieldname": "error_message",
+   "fieldtype": "Long Text",
+   "label": "Error Message"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-13 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Marketing Sync Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

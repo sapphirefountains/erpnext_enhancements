@@ -219,6 +219,14 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_payment_followup_wire -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
+      # Filesystem + ast only, its own step like every other bench-free suite that
+      # installs no stub set. Guards the marketing data model's three silent-failure
+      # promises: POSITIVE_DIALS agreeing with the JSON defaults it heals to, the
+      # identity fields the record names are built from staying set_only_once (the
+      # restate-as-upsert guarantee), and no credential-shaped field appearing on a
+      # doctype Sales Manager can read.
+      - name: Marketing settings dials + ad-model identity
+        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings -v
       # The placement test above says a DocType is in the right folder. This one says the
       # folder gets INSTALLED. Adding a module to modules.txt is not sufficient on an
       # already-installed site: frappe.model.sync.sync_for() iterates

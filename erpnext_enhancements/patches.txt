@@ -606,3 +606,11 @@ erpnext_enhancements.patches.set_chat_bot_user
 # release was written to unblock, which sit deferred against a membership row the app will never
 # have. Only fills empty values, only Pending/Failed, never rewrites a USER. Safe twice.
 erpnext_enhancements.patches.backfill_relay_auth_identity
+# Fills the defaults the Marketing Settings fields were declared with into the EXISTING row.
+# A `default` on a new field of a Single never reaches the row that already exists -- tabSingles
+# gets no row on migrate and load_from_db applies no defaults -- and this module ships DORMANT,
+# which is the shape that bites: the first save of a dormant feature's settings page is the one
+# you need and the one that fails (Chat Settings, v1.277.3). MarketingSettings.validate repairs a
+# missing dial in-place as well, so the page cannot brick even if this has not run.
+# Fills missing rows only, never over a stored falsy value. Safe twice.
+erpnext_enhancements.patches.backfill_marketing_settings_defaults
