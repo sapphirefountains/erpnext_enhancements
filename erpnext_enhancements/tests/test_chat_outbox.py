@@ -2006,3 +2006,35 @@ def test_the_spa_prefix_backfill_only_touches_never_relayed_messages() -> None:
 	# already has one queued, which is how a repair becomes a duplicate.
 	assert "frappe.db.set_value" in source
 	assert ".save(" not in source and "get_doc(" not in source
+
+
+def test_the_triton_restamp_is_keyed_on_origin_and_matches_the_writer() -> None:
+	"""The re-run of a backfill that matched nothing and reported success.
+
+	Two properties:
+
+	* it keys on ``sync_origin = 'Triton'`` — the *same* rule
+	  :func:`outbox.auth_identity_for_origin` applies to every job written since, so the patch
+	  and the writer cannot disagree about what a row should have been;
+	* it is therefore allowed to overwrite ``USER``, and must still never touch a row that is
+	  not Triton-origin. That restriction is the whole safety argument, because the case the
+	  original guard protected — a coworker's message re-stamped as the app — cannot occur
+	  inside this predicate.
+	"""
+	root = pathlib.Path(__file__).resolve().parents[1]
+	registered = (root / "patches.txt").read_text(encoding="utf-8")
+	assert "erpnext_enhancements.patches.restamp_triton_relay_auth_identity" in registered
+
+	source = (root / "patches" / "restamp_triton_relay_auth_identity.py").read_text(encoding="utf-8")
+	update = source.split("set j.`auth_identity` = %(app)s", 1)[1].split('"""', 1)[0]
+	assert "m.`sync_origin` = %(origin)s" in update, (
+		"the restamp must be restricted to Triton-origin rows; without that it can re-attribute "
+		"a coworker's own message to the app."
+	)
+	assert "j.`status` in ('Pending', 'Failed')" in update
+	assert source.count('ORIGIN_TRITON = "Triton"') == 1
+
+	# It must agree with the writer, not merely look similar to it: the patch hardcodes the
+	# origin string, so this pins that string to the one the writer actually branches on.
+	assert outbox.auth_identity_for_origin(outbox.ORIGIN_TRITON) == states.AUTH_IDENTITY_APP
+	assert f'ORIGIN_TRITON = "{outbox.ORIGIN_TRITON}"' in source

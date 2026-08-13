@@ -70,6 +70,17 @@ Verified, and all of them expensive to rediscover:
   that bite are the settings for **dormant** features, where the first save is the one you
   need and the one that fails. Ship a backfill patch with the fields; there are 20 Singles in
   this app. See [`patches/backfill_chat_settings_defaults.py`](erpnext_enhancements/patches/backfill_chat_settings_defaults.py).
+- **On a *normal* doctype the same `default` reaches every existing row — the exact opposite
+  — and a backfill patch written for the Single behaviour will silently match nothing.**
+  Adding a column with a default is one `ALTER`, and MariaDB writes the default into every row
+  as part of it. So `Chat Relay Job.auth_identity` (`default: "USER"`) was `USER` on the entire
+  existing queue before any patch could look at it, and the patch keyed on
+  `coalesce(auth_identity, '') = ''` matched zero rows, committed, and recorded itself in
+  `tabPatch Log` — which is indistinguishable from a successful run (v1.280.3). **"New field,
+  existing rows" has two opposite answers depending on the storage model, and neither is the
+  one you assume.** Check which you are on before choosing the predicate, and prefer a
+  backfill keyed on the *rule the writer applies* over one keyed on emptiness: emptiness is a
+  fact about the schema migration, not about the data.
 - **A `www/` controller whose filename contains a hyphen is never imported by Frappe**, so
   its `get_context()` silently never runs. `stripe-return.py` was broken this way from the
   day it was written. `scripts/check_www_controllers.py` guards it in CI.
