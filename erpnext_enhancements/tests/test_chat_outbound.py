@@ -1728,6 +1728,60 @@ class TestSweeper(RelayTestCase):
 		self.assertEqual(summary["failed_routed"], 1)
 		self.assertEqual(self.job("JOB-1")["status"], "Pending")
 
+	def test_a_room_whose_provisioning_failed_is_skipped_not_deferred_forever(self) -> None:
+		"""\"Not yet\" and \"never\" are different answers, and only one of them is a wait.
+
+		``sweep_pending_provisioning`` selects only ``Pending`` and ``Provisioning``, so
+		``Failed`` is terminal — no space will ever appear. Deferring against it is a promise
+		the system cannot keep: the job waits, the sweeper re-defers it every pass, and every
+		later message in the room queues behind it under Rule 1, forever.
+
+		Production hit this within an hour of the DM feature being used. The message carried
+		"provisioning has not completed", which reads as *in progress*. It had completed.
+		"""
+		self.db.insert(
+			"Chat Room",
+			{
+				"name": "ROOM-0001",
+				"gchat_space_name": "",
+				"provisioning_state": "Failed",
+				"provisioning_error": "spaces.setup returned HTTP 400 INVALID_ARGUMENT",
+			},
+		)
+		self.db.insert(
+			"Chat Room Member",
+			{"name": "M1", "room": "ROOM-0001", "user": ALICE, "gchat_member_state": "JOINED"},
+		)
+		self.make_message(name="MSG-0001")
+		self.make_job(name="JOB-1", job_seq=1)
+
+		outbound.drain_room("ROOM-0001")
+
+		job = self.job("JOB-1")
+		self.assertEqual(job["status"], "Skipped", "a room that will never provision must not wait")
+		# The room's own reason has to travel with the job, or the operator gets "skipped" and
+		# no way to find out why.
+		self.assertIn("INVALID_ARGUMENT", str(job["last_error"]))
+
+	def test_a_room_still_provisioning_is_still_deferred(self) -> None:
+		"""The distinction has to cut both ways or it is just a broken gate."""
+		self.db.insert(
+			"Chat Room",
+			{"name": "ROOM-0001", "gchat_space_name": "", "provisioning_state": "Pending"},
+		)
+		self.db.insert(
+			"Chat Room Member",
+			{"name": "M1", "room": "ROOM-0001", "user": ALICE, "gchat_member_state": "JOINED"},
+		)
+		self.make_message(name="MSG-0001")
+		self.make_job(name="JOB-1", job_seq=1)
+
+		outbound.drain_room("ROOM-0001")
+
+		job = self.job("JOB-1")
+		self.assertEqual(job["status"], "Pending")
+		self.assertEqual(job["attempts"], 0, "a deferral is not an attempt")
+
 	def test_a_job_blocked_on_provisioning_for_too_long_is_alerted(self) -> None:
 		"""Driven through the real gate, not a hand-written ``last_error``.
 
