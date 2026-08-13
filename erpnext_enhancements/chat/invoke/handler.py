@@ -252,17 +252,27 @@ def _bot_user() -> str:
 	Falls back to the mentioning-agnostic ``Administrator`` **never** — that would attribute
 	Triton's answers to a superuser and make the two-identity rule invisible in the transcript.
 	A missing bot user is a configuration failure and is raised as one.
+
+	**One field owns this, as of v1.277.12.** It used to read ``chat_app_service_account``,
+	which is a *Google* service account — the JWT issuer ``gchat/auth.py`` authenticates with.
+	That is not an ERPNext User and never can be, so the lookup always missed and the reply
+	path worked only because the next line hard-coded an address. Two identities in one field,
+	and the one that mattered was the fallback.
+
+	It surfaced through the summariser, which borrowed the same resolution and handed the
+	Google service account to Triton's bridge — answered, correctly, with
+	``rejected non-domain email``.
 	"""
-	user = frappe.db.get_single_value("Chat Settings", "chat_app_service_account") or ""
+	user = frappe.db.get_single_value("Chat Settings", "bot_user") or ""
 	if user and frappe.db.exists("User", user):
 		return user
-	if frappe.db.exists("User", "triton@sapphirefountains.com"):
-		return "triton@sapphirefountains.com"
 	raise RuntimeError(
-		"No bot User is configured for Triton's chat replies. The reply must be posted by a "
-		"distinct identity, not by the mentioning person and not by Administrator — that "
-		"separation is what stops Triton's posting identity and Triton's permissions becoming "
-		"the same thing."
+		"Chat Settings has no Bot User, so Triton's replies have nobody to be posted by. Set "
+		"'Bot User (posts Triton's replies)' to an ERPNext User — not the Chat App Service "
+		"Account, which is a Google identity rather than a User here. The reply must come from "
+		"a distinct identity, not the mentioning person and not Administrator: that separation "
+		"is what stops Triton's posting identity and Triton's permissions becoming the same "
+		"thing."
 	)
 
 

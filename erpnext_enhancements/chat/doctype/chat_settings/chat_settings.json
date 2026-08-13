@@ -12,6 +12,7 @@
   "column_break_rollout",
   "relay_identity_mode",
   "allowed_users",
+  "bot_user",
   "google_section",
   "google_project_id",
   "gcp_project_number",
@@ -195,6 +196,13 @@
    "options": "Chat Allowed User"
   },
   {
+   "description": "The ERPNext User that Triton's replies are posted as. NOT the Chat App Service Account below — that is a Google service account and is not a User here. Two different identities: this one authors the Chat Message, that one authenticates to Google. They shared a field until v1.277.12 and the reply path only worked because the resolver fell through to a hard-coded address. It must not be the mentioning person and must not be Administrator: separating who Triton posts as from whose permissions it reads with is what stops those becoming the same thing.",
+   "fieldname": "bot_user",
+   "fieldtype": "Link",
+   "label": "Bot User (posts Triton's replies)",
+   "options": "User"
+  },
+  {
    "fieldname": "google_section",
    "fieldtype": "Section Break",
    "label": "Google Connection (identifiers only)"
@@ -246,7 +254,7 @@
    "length": 255
   },
   {
-   "description": "The EMAIL ADDRESS of the Chat app's own service account. Used only for Triton's replies, which post under the bot identity; human messages never use it.",
+   "description": "The EMAIL ADDRESS of the Chat app's own Google service account. Used to authenticate to Google (it is the JWT issuer) — it is NOT an ERPNext User and is not who replies are posted as. See Bot User above for that.",
    "fieldname": "chat_app_service_account",
    "fieldtype": "Data",
    "label": "Chat App Service Account (email)",

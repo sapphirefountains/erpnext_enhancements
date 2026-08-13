@@ -592,3 +592,10 @@ erpnext_enhancements.patches.add_chat_phase5_indexes
 # numeric dials read 0 on production and validation refused every save of the settings page.
 # Fills missing rows only, never over a stored falsy value. Safe twice.
 erpnext_enhancements.patches.backfill_chat_settings_defaults
+
+# Populates the new Chat Settings.bot_user with whatever the old resolver actually returned,
+# so splitting the field off chat_app_service_account does not take @triton down on deploy.
+# The field is new, so it is empty everywhere, and _bot_user now raises on empty by design.
+# In patches.txt rather than only on after_migrate because patches run BEFORE sync_fixtures,
+# and sync_fixtures is the half currently dying on this deployment. Safe twice.
+erpnext_enhancements.patches.set_chat_bot_user
