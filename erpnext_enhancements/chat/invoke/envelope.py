@@ -165,3 +165,59 @@ def strip_mention(text: str, handle: str = TRITON_HANDLE) -> str:
 	# so two spellings of the same question would hash differently.
 	separator = "" if after[0] in ",.;:!?)]}" else " "
 	return f"{before}{separator}{after}".strip()
+
+
+#: MariaDB error numbers whose message names **schema objects only** — a column, a table, an
+#: index, a collation — and can never contain row data.
+#:
+#: This list is the whole reason the driver's message may be repeated at all. `OperationalError`
+#: on its own is not actionable: it covers a missing column, a missing table, a missing FULLTEXT
+#: index, a collation mismatch and a lock wait, which want five different responses. Production
+#: spent an afternoon on `retrieval failed: OperationalError` — every `@triton` turn dying
+#: before the model, with the reason discarded at exactly this line.
+#:
+#: **1062 is deliberately absent.** A duplicate-entry error quotes the offending *value*, and in
+#: this package a value is somebody's message. So is 1406 (data too long). The rule is the same
+#: one the rest of this feature works to: repeat what a type guarantees is content-free, and
+#: nothing else.
+SCHEMA_ERRNOS: frozenset[int] = frozenset(
+	{
+		1054,  # Unknown column
+		1109,  # Unknown table
+		1146,  # Table doesn't exist
+		1176,  # Key does not exist in table
+		1191,  # Can't find FULLTEXT index matching the column list
+		1205,  # Lock wait timeout exceeded
+		1213,  # Deadlock found
+		1267,  # Illegal mix of collations
+	}
+)
+
+
+def db_cause(exc: Exception) -> str:
+	"""The exception class, its database errno, and the driver's message when that is safe.
+
+	Three tiers, narrowing as the guarantee weakens:
+
+	* not a database error — the class name, as before;
+	* a database error — the class and the **errno**, which is a number and therefore cannot
+	  carry a row;
+	* an errno in :data:`SCHEMA_ERRNOS` — the message too, because at that point it is known
+	  to name a schema object rather than data.
+
+	The middle tier is the one that was missing, and it is the one that would have turned an
+	afternoon into a minute.
+
+	Lives here, in the module that imports nothing but the standard library, so it can be
+	tested without a ``frappe`` stub — ``handler`` cannot be imported without one, and a helper
+	whose whole job is to be correct about eight magic numbers should not need a bench to check.
+	"""
+	name = exc.__class__.__name__
+	args = getattr(exc, "args", None) or ()
+	if not args or not isinstance(args[0], int):
+		return name
+
+	errno = args[0]
+	if errno in SCHEMA_ERRNOS and len(args) > 1 and isinstance(args[1], str):
+		return f"{name}({errno}): {args[1][:200]}"
+	return f"{name}({errno})"

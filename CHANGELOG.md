@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.280.9] - 2026-08-13
+
+### Fixed
+
+- **`retrieval failed: OperationalError` was the whole of what every failed `@triton` turn
+  recorded.** The invocation log showed three turns `Failed`, `model_used: null`,
+  `total_ms: 0` — dying in retrieval, before Triton is called at all — and the reason was
+  discarded at the line that logged it. `OperationalError` covers a missing column, a missing
+  table, a missing FULLTEXT index, a collation mismatch and a lock wait. Those want five
+  different responses.
+- `envelope.db_cause` records three tiers, narrowing as the guarantee weakens: the class for a
+  non-database error; the class **and errno** for a database one, because a number cannot carry
+  a row; and the driver's message as well when the errno is one whose text names a *schema
+  object* rather than data.
+
+### Notes
+
+- **1062 is deliberately absent from that allowlist, and it is asserted.** A duplicate-entry
+  error quotes the offending **value**, and in this package a value is somebody's message. So
+  does 1406. The fix for the next unhelpful error will be to add an errno to that set, so the
+  test names both exclusions rather than trusting the comment above them.
+- Lives in `chat/invoke/envelope.py` — the module that imports nothing but the standard library
+  — so it is testable without a `frappe` stub. `handler` cannot be imported without one, and a
+  helper whose entire job is to be right about eight magic numbers should not need a bench.
+- This is the **fifth** place today where a report gave a category and dropped the evidence
+  beside it. The others: the digest sweeper's poisoned rooms, the soak's dead jobs, the relay's
+  dead jobs, and a room's `provisioning_error`.
+
 ## [1.280.8] - 2026-08-13
 
 ### Fixed

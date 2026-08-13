@@ -771,3 +771,54 @@ def _manifest_entry(*, kind: str = "message", message: str | None = "MSG-1") -> 
 	return citations.build_manifest(
 		[{"room": "R1", "message": message, "label": "Jane in #riverwalk", "kind": kind}]
 	)[0].as_dict()
+
+
+# --------------------------------------------------------------------------- database causes
+
+
+class _OperationalError(Exception):
+	"""Shaped like the driver's: ``args = (errno, message)``."""
+
+
+def test_a_plain_exception_is_still_just_its_class() -> None:
+	assert envelope.db_cause(ValueError("boom")) == "ValueError"
+
+
+def test_a_database_error_carries_its_errno() -> None:
+	"""A number cannot contain a message body, which is the whole argument for printing it.
+
+	Production spent an afternoon on ``retrieval failed: OperationalError`` — every ``@triton``
+	turn dying before the model, with the reason discarded at the line that logged it.
+	``OperationalError`` covers a missing column, a missing table, a missing FULLTEXT index, a
+	collation mismatch and a lock wait; those want five different responses and the errno
+	separates them exactly.
+	"""
+	assert envelope.db_cause(_OperationalError(1305, "PROCEDURE does not exist")) == (
+		"_OperationalError(1305)"
+	)
+
+
+def test_a_schema_errno_also_carries_the_drivers_message() -> None:
+	"""At that point the message names a column, not a row."""
+	detail = envelope.db_cause(_OperationalError(1054, "Unknown column 'origin_timestamp' in 'field list'"))
+	assert "1054" in detail
+	assert "origin_timestamp" in detail
+
+
+def test_a_duplicate_entry_never_carries_its_message() -> None:
+	"""1062's absence from the allowlist is the load-bearing part of the design.
+
+	A duplicate-entry error quotes the offending **value**, and in this package a value is
+	somebody's message. Asserted rather than left to a comment, because the fix for the next
+	unhelpful error will be to add an errno to that set.
+	"""
+	said = "the thing a coworker actually said"
+	detail = envelope.db_cause(_OperationalError(1062, f"Duplicate entry '{said}' for key 'x'"))
+	assert detail == "_OperationalError(1062)"
+	assert said not in detail
+	assert 1062 not in envelope.SCHEMA_ERRNOS
+	assert 1406 not in envelope.SCHEMA_ERRNOS
+
+
+def test_a_long_schema_message_is_truncated() -> None:
+	assert len(envelope.db_cause(_OperationalError(1054, "x" * 900))) <= 240

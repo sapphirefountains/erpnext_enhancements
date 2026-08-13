@@ -64,7 +64,7 @@ from erpnext_enhancements.chat.doctype.triton_invocation_log.triton_invocation_l
 	STATUS_REFUSED,
 	STATUS_RETRIEVING,
 )
-from erpnext_enhancements.chat.invoke.envelope import Envelope, from_job_kwargs
+from erpnext_enhancements.chat.invoke.envelope import Envelope, db_cause, from_job_kwargs
 from erpnext_enhancements.chat.retrieval import gate
 
 LOG_DOCTYPE = "Triton Invocation Log"
@@ -143,7 +143,7 @@ def handle(envelope: Envelope, *, origin: str = "") -> str | None:
 		return log_name
 	except Exception as exc:
 		# `from None` discipline applies to the log too: never publish frame locals.
-		_close_log(log_name, STATUS_FAILED, error=f"retrieval failed: {exc.__class__.__name__}")
+		_close_log(log_name, STATUS_FAILED, error=f"retrieval failed: {db_cause(exc)}")
 		_reply(envelope, FAILED_REPLY, log_name=log_name)
 		return log_name
 	retrieval_ms = int((time.monotonic() - retrieval_started) * 1000)
