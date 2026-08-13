@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.279.1] - 2026-08-13
+
+### Added
+
+- **`docs/website-capture/` — the WordPress half of lead attribution, which has been the
+  missing half since v1.241.0.** A mu-plugin, a first-touch capture script, the Fluent Forms
+  field list and the webhook mapping. The ERPNext endpoint has existed for months and has
+  never been called; nothing about it needed changing, only something to call it.
+- **The trap that wastes an afternoon is written down at the top of that README: only fields
+  that exist in the Fluent Forms builder reach ERPNext.** The webhook serialises Fluent Forms'
+  own submission data, not the raw POST, so a hidden input injected by JavaScript is sent to
+  WordPress and then dropped. The symptom is a Lead with every attribution field blank while
+  the cookie is visibly correct in the browser — the fields must be created in the builder and
+  filled by the script, and neither half works alone.
+- Capture includes `gbraid` / `wbraid` alongside `gclid`. Google Ads sends those instead when
+  iOS blocks the usual click ID, so a capture reading only `gclid` silently loses that traffic.
+
+### Changed
+
+- **`docs/attribution-runbook.md`: both halves of the pre-flight's premise were wrong.**
+  Investigated against production 2026-08-13 (TASK-2026-01478):
+  - **There is no Cloudflare in front of the ERP host.** `erp.sapphirefountains.com` answers
+    `via: 1.1 google` + `server: nginx/1.22.1` with no `cf-ray` — the chain is **GCLB → nginx
+    → bench**. Only `www` (WordPress/WP Engine) is Cloudflare-fronted. Every doc describing
+    the ERP host as Cloudflare-fronted was wrong.
+  - **The recorded client IP is already wrong, spoofing aside.** Since ~2026-07-18
+    `frappe.local.request_ip` has logged the load balancer's own address rather than the
+    visitor's for most traffic: **0/79** of May's logins in GCP LB ranges, **0/252** of June's,
+    then **79/94 in July** and **41/84 in August** — including ordinary staff logins, each from
+    a different `35.191.x`, which is how a GCLB fleet behaves. All three `Fountain Move Request`
+    rows recorded `submitter_ip_peer = 127.0.0.1`, `submitter_ip_claimed = 35.191.x`.
+
+### Notes
+
+- **The question the plan asked was "is the header spoofable"; the answer that matters is that
+  it is already wrong.** Every IP-keyed rate limit is closer to a global budget than a
+  per-caller one, since the key is a rotating pool of load-balancer addresses shared by all
+  visitors — so one abusive caller can exhaust the budget for everyone. That is a
+  denial-of-service shape rather than the auth bypass the pre-flight was worried about.
+- **This does not block the ingress, because `web_lead.py` was already written not to trust
+  it.** The IP is advisory, no decision is made on it, and the bearer secret is the control
+  and fails closed on an unset value. The standing rule earns its keep here: the thing to fix
+  is the rate limiter's key, not the endpoint.
+- **A live spoofing demonstration was attempted and is not possible from outside.** Password
+  login is disabled site-wide (SSO-only — *"Login with username and password is not allowed"*),
+  so a failed-login probe writes no Activity Log row to read back, and frappe emits no
+  `X-RateLimit-*` headers to compare buckets against. The only remaining test would exhaust a
+  bucket keyed on the office IP that several staff share, which is not worth it to confirm
+  GCLB's documented append behaviour.
+- **IP forensics are degraded as a consequence**: the 2026-08-02 Administrator logins carry
+  load-balancer addresses and therefore no attributable source. Recorded as a fact about the
+  logs; it reopens no settled remediation decision.
+- Still open and needing infrastructure rather than app access: the exact nginx directive
+  putting the LB address into the first `X-Forwarded-For` entry, and what changed on 2026-07-18.
+
 ## [1.279.0] - 2026-08-13
 
 ### Added
