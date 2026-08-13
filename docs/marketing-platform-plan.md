@@ -48,22 +48,34 @@ compressed by writing code faster. **These start on day one, in parallel with Ph
 | Gate | For | Notes |
 |---|---|---|
 | Meta App Review — `pages_manage_posts`, `pages_read_engagement`, `instagram_content_publish`, `instagram_manage_insights`, `ads_read` | FB + IG publishing, Meta ads reporting | Request the ads and publishing scopes in **one** submission. Requires Business Verification first. |
-| LinkedIn Community Management API (`w_organization_social`, `r_organization_social`) | LinkedIn publishing | App must be verified against the Company Page by a Page admin. |
-| LinkedIn Marketing Developer Platform | LinkedIn ads reporting | Separate application, historically the slowest of the set. |
-| YouTube Data API audit | YouTube uploads | Until the project passes audit, API-uploaded videos are locked to private/unlisted regardless of the `privacyStatus` requested. |
+| LinkedIn Community Management API (`w_organization_social`, `r_organization_social`) | LinkedIn publishing | App must be verified against the Company Page by a Page **super** admin. Dev Tier can only be requested on a **brand-new app holding no other API product** — so file this *before* the ads application, on its own app. |
+| LinkedIn Marketing Developer Platform | LinkedIn ads reporting | **A second, separate app.** Historically the slowest of the set, and a rejection cannot be re-filed on the same app. |
+| YouTube Data API audit | YouTube uploads | Until the project passes audit, API-uploaded videos are locked private **and the lock cannot be appealed** — they must be re-uploaded. Do not bulk-upload a back catalogue first. |
 | Google Ads developer token (basic access) | Google Ads reporting | Applied for from a manager (MCC) account. |
 | Google Business Profile API access | GBP reviews + posts | Access-request form, reviewed by Google. |
 | Search Console property grant | fixes the standing 403 | Not an approval — a config grant. See Phase 1. |
 
+The submission packets, the pre-flight checklist and the filing order live in
+[marketing-platform-approvals.md](marketing-platform-approvals.md), which also carries the
+status table a human updates as each gate clears.
+
 Confirm each platform's current quota and scope names at build time; these change without
-notice and the numbers below are the shape of the constraint, not a contract.
+notice and the numbers below are the shape of the constraint, not a contract. Two of the three
+below had already moved by 2026-08-13, within weeks of this plan being written — which is the
+argument for reading live quota rather than trusting any constant, including these.
 
 **Quotas that constrain the design, not just the runtime:**
 
-- **Instagram content publishing: 25 posts per rolling 24 h, per IG account.** This is a
-  product constraint, not just a retry concern — the calendar must surface remaining quota.
-- **YouTube Data API: 10,000 units/day, and a video insert costs 1,600.** That is roughly
-  six uploads per day for the whole app. Uploads must be queued and quota-aware.
+- **Instagram content publishing: 100 posts per rolling 24 h, per IG account** in the current
+  documentation — which also says 50 elsewhere in the same file, while the widely-cited 25 this
+  plan originally carried appears nowhere. Do not hardcode a number: read
+  `GET /<IG_USER_ID>/content_publishing_limit`. The calendar must still surface remaining
+  quota; it just has to source it from the API.
+- **YouTube Data API: `videos.insert` and `search.list` now have dedicated buckets of 100
+  calls/day each, with 10,000 units/day for everything else.** An upload costs 1 unit, not
+  1,600, so the ceiling is ~100 uploads/day rather than ~6. Uploads stay queued and quota-aware,
+  but the binding constraint has moved: **`search.list` at 100 calls/day is now the tight one**,
+  so read known IDs with `videos.list` and never build discovery on search.
 - **Meta** returns `X-App-Usage` / `X-Business-Use-Case-Usage` headers; treat them as the
   authoritative signal and back off on them rather than guessing.
 

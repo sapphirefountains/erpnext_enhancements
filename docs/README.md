@@ -26,6 +26,7 @@ anything.
 | [field-photos-and-payroll-runbook.md](field-photos-and-payroll-runbook.md) | The job-photo capture gate, where photos are routed, and the Shaw & Nielsen payroll workbook |
 | [marketing-spend-runbook.md](marketing-spend-runbook.md) | Loading marketing spend, the value-stream dashboard, and the four KPIs that were measuring a dead column |
 | [marketing-platform-plan.md](marketing-platform-plan.md) | The `marketing/` module build plan: why WP-1 and WP-4 are starved of input, the platform approvals that are the real critical path, and the four phases |
+| [marketing-platform-approvals.md](marketing-platform-approvals.md) | Phase 0: the six external approval packets, the pre-flight checklist, the quota sheet, and the LinkedIn filing order that a rejection makes expensive |
 | [industry-type-proposal.md](industry-type-proposal.md) | Proposed keep/merge/retire list for the 89 Industry Type values, from live usage counts. A proposal — nothing executed |
 | [opportunity-field-guide.md](opportunity-field-guide.md) | Field-by-field guide to the Opportunity form |
 | [pick-routing-map-po-details.md](pick-routing-map-po-details.md) | Spike: three ways to show PO item detail on the Pick Routing Map, and why the inline one wins |
