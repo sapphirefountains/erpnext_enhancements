@@ -614,3 +614,10 @@ erpnext_enhancements.patches.backfill_relay_auth_identity
 # missing dial in-place as well, so the page cannot brick even if this has not run.
 # Fills missing rows only, never over a stored falsy value. Safe twice.
 erpnext_enhancements.patches.backfill_marketing_settings_defaults
+
+# Re-prefixes the spa- client message ids the SPA minted before v1.277.x. Google owns that
+# namespace and requires client-, so the relay's own pre-flight rejects them and dead-letters
+# the job. 11 rows on production: 3 already dead, 8 still queued and certain to die the moment
+# their room unblocked. Only rewrites rows with no gchat_message_name - never relayed, so
+# nothing at Google points at the old id. Does NOT requeue dead jobs. Safe twice.
+erpnext_enhancements.patches.backfill_spa_client_message_id

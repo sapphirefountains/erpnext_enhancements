@@ -1977,3 +1977,32 @@ def test_a_dead_job_with_no_recorded_error_still_prints_a_row() -> None:
 	assert "(none recorded)" in text
 	# No `auth_identity` key at all — a site that has not migrated must render, not crash.
 	assert "as None" not in text and "as USER" not in text
+
+
+def test_the_spa_prefix_backfill_only_touches_never_relayed_messages() -> None:
+	"""``client_message_id`` is an identity, and rewriting one is only safe in one case.
+
+	The guard that matters is ``gchat_message_name`` being empty — never relayed, so Google has
+	never seen the id and no Chat resource points at it. Rewrite one that *has* relayed and both
+	directions break at once: inbound echo suppression infers "our own echo" from a ``client-``
+	id we issued (invariant I3), and a later edit or delete addressed by client alias misses.
+
+	Source-level, because the behaviour is a SQL predicate against a real table. What can be
+	checked without a bench is that the predicate is still there, and that is the half a
+	refactor silently drops.
+	"""
+	root = pathlib.Path(__file__).resolve().parents[1]
+	registered = (root / "patches.txt").read_text(encoding="utf-8")
+	assert "erpnext_enhancements.patches.backfill_spa_client_message_id" in registered
+
+	source = (root / "patches" / "backfill_spa_client_message_id.py").read_text(encoding="utf-8")
+	select = source.split("select `name`, `client_message_id`", 1)[1].split('"""', 1)[0]
+	assert "coalesce(`gchat_message_name`, '') = ''" in select, (
+		"the backfill must only select messages that never relayed — rewriting the id of one "
+		"that did breaks echo suppression and every later edit or delete of it."
+	)
+
+	# A save would re-enter the outbox and enqueue a SECOND relay job for a message that
+	# already has one queued, which is how a repair becomes a duplicate.
+	assert "frappe.db.set_value" in source
+	assert ".save(" not in source and "get_doc(" not in source
