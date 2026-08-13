@@ -19,6 +19,7 @@
   "column_break_reference",
   "request_id",
   "impersonate_user",
+  "auth_identity",
   "payload_section",
   "payload",
   "outcome_section",
@@ -130,11 +131,20 @@
    "read_only": 1
   },
   {
-   "description": "Which human this call is made as, under domain-wide delegation. The relay authors messages as the real person, so this is never empty for a message operation.",
+   "description": "Which human this call is made as, under domain-wide delegation. The relay authors messages as the real person, so this is never empty for a message operation made as USER. Empty when Auth Identity is APP.",
    "fieldname": "impersonate_user",
    "fieldtype": "Link",
    "label": "Impersonate User",
    "options": "User",
+   "read_only": 1
+  },
+  {
+   "default": "USER",
+   "description": "Which Google identity this call is made as. USER is domain-wide delegation of Impersonate User - the coworker mirror, which needs a licensed Workspace account that is a joined member of the space. APP is the registered Chat app, used for Triton's own replies: no impersonation, no membership row, an App badge on the message, and Google only permits patch/delete of messages the app itself created. Decided when the job is written and frozen on the row, so a retry cannot drift to a different identity.",
+   "fieldname": "auth_identity",
+   "fieldtype": "Select",
+   "label": "Auth Identity",
+   "options": "USER\nAPP",
    "read_only": 1
   },
   {

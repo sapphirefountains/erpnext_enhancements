@@ -1003,7 +1003,24 @@ def evaluate(harness: Any, driver: SoakDriver, *, title: str) -> SoakReport:
 		)
 	)
 	dead = [j for j in jobs if str(j.get("status") or "") == "Dead"]
-	report.add(Check.compare("state: relay jobs Dead", len(dead), 0))
+	report.add(
+		Check.compare(
+			"state: relay jobs Dead",
+			len(dead),
+			0,
+			# The same truncated note the open-jobs check carries, and for a better reason: a
+			# Dead job is the one an operator can no longer interrogate by re-running anything.
+			# Without this the report says "130 dead" and nothing else, and the failure it
+			# produces upstream — `erpnext-origin reached Chat: 0` — reads like an auth or quota
+			# fault. It was a test double one signature behind.
+			note=str(
+				[
+					(j.get("operation"), str(j.get("last_error") or "")[:200])
+					for j in dead[:3]
+				]
+			),
+		)
+	)
 	open_jobs = [j for j in jobs if str(j.get("status") or "") in {"Pending", "In Progress", "Failed"}]
 	report.add(
 		Check.compare(
@@ -1610,7 +1627,7 @@ class _BenchHarness:
 		uploads = [c for c in self.fake.calls if getattr(c, "google_method", "") == "media.upload"]
 		return len(uploads) == 1
 
-	def build_client(self, subject: str) -> Any:
+	def build_client(self, subject: str, *, identity: str = "USER") -> Any:
 		client = self._client_cls(
 			subject=subject,
 			identity=self._identity.USER,

@@ -586,8 +586,10 @@ def _step_5_human_authorship(state: SmokeState) -> str:
 	if not _is_yes(answer):
 		raise StepFailed(
 			f"human observation was {answer!r}, not yes. If an App badge is present the relay "
-			"is posting under app authentication, which contradicts CQ-1's human-attribution "
-			"decision and is an auth-layer defect, not a rendering one."
+			"is posting this COWORKER MIRROR under app authentication, which contradicts CQ-1's "
+			"human-attribution decision and is an auth-layer defect, not a rendering one. "
+			"(Triton's own replies are app-badged on purpose — `auth_identity=APP` — so an App "
+			"badge is only wrong on a message a person wrote.)"
 		)
 	return f"human confirmed: {answer!r} — real person, no App badge"
 

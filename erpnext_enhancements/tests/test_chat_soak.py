@@ -314,7 +314,9 @@ class SoakHarness:
 		self.limiter = _Limiter(self.clock, ratelimit)
 		self.quota = _Quota(self.clock, ratelimit)
 		self._saved = (outbound.build_client, outbound.space_limiter, outbound.project_quota)
-		outbound.build_client = lambda subject, *, correlation_id="": self.build_client(subject)
+		outbound.build_client = lambda subject, *, identity="USER", correlation_id="": (
+			self.build_client(subject, identity=identity)
+		)
 		outbound.space_limiter = lambda: self.limiter
 		outbound.project_quota = lambda: self.quota
 
@@ -340,8 +342,14 @@ class SoakHarness:
 
 	# -- the contract ----------------------------------------------------------------
 
-	def build_client(self, subject: str) -> Any:
+	def build_client(self, subject: str, *, identity: str = "USER") -> Any:
 		"""The real client, wrapped in :class:`soak._ResourceOverlay`.
+
+		``identity`` is accepted and **ignored**: this harness only drives the coworker mirror,
+		which is `USER` throughout. It is in the signature because the worker passes it now, and
+		a harness that did not accept it failed all 130 jobs with a `TypeError` that surfaced as
+		*erpnext-origin reached Chat: 0* — a shape that reads like an auth or quota fault rather
+		than a test double one signature behind.
 
 		The overlay is shared with the bench harness rather than duplicated here, so both entry
 		points hand the pipeline identically shaped resources; read its docstring for why an

@@ -119,6 +119,9 @@ from erpnext_enhancements.chat.gchat.client import (
 )
 from erpnext_enhancements.chat.sync import attachments, budget, ratelimit
 from erpnext_enhancements.chat.sync.states import (
+	AUTH_IDENTITIES,
+	AUTH_IDENTITY_APP,
+	AUTH_IDENTITY_USER,
 	IllegalTransition,
 	RelayState,
 	assert_transition,
@@ -409,8 +412,10 @@ def circuit_decision(
 # --------------------------------------------------------------------------------------
 
 
-def build_client(subject: str, *, correlation_id: str = "") -> GoogleChatClient:
-	"""The impersonated Chat client for one job. **The injection point for the fake harness.**
+def build_client(
+	subject: str, *, identity: str = AUTH_IDENTITY_USER, correlation_id: str = ""
+) -> GoogleChatClient:
+	"""The Chat client for one job. **The injection point for the fake harness.**
 
 	``subject`` is the human this write is made as, and it comes from
 	``Chat Relay Job.impersonate_user`` — recorded on the row rather than resolved at run
@@ -418,7 +423,21 @@ def build_client(subject: str, *, correlation_id: str = "") -> GoogleChatClient:
 	only lets you patch or delete messages the *app* created, so editing or deleting a
 	coworker's message means being that coworker; drifting to another one is a 403 that reads
 	like a scope problem and sends the next person to the wrong file.
+
+	``identity`` comes from the row too, for that same reason. ``APP`` carries **no subject**:
+	the app-identity grant is the two-legged service-account flow with no ``sub`` claim, so
+	passing one would be meaningless at best. Asserted rather than ignored — a subject that
+	silently does nothing is how somebody later concludes the reply is attributed to a person.
 	"""
+	if identity == AUTH_IDENTITY_APP:
+		if subject:
+			raise ValueError(
+				f"an APP-identity relay was given subject={subject!r}. App authentication does "
+				"not impersonate anybody — there is no `sub` claim in the grant — so a subject "
+				"here means the job was written by two minds about who is speaking."
+			)
+		return GoogleChatClient(identity=AuthIdentity.APP, correlation_id=correlation_id or None)
+
 	return GoogleChatClient(
 		subject=subject, identity=AuthIdentity.USER, correlation_id=correlation_id or None
 	)
@@ -655,6 +674,7 @@ _JOB_FIELDS: Final[tuple[str, ...]] = (
 	"reference_name",
 	"request_id",
 	"impersonate_user",
+	"auth_identity",
 	"payload",
 	"creation",
 )
@@ -822,7 +842,28 @@ def _require_space(room: str) -> str:
 	return str(space)
 
 
-def _require_joined_author(room: str, user: str) -> None:
+def _identity_of(job: Mapping[str, Any]) -> str:
+	"""``Chat Relay Job.auth_identity``, defaulting to ``USER``.
+
+	The default is what makes this safe to deploy over a queue that predates the column: every
+	job already in flight was written for the human relay, and an empty value must therefore
+	mean ``USER``. Defaulting the other way would silently re-attribute a backlog of coworker
+	messages to the app.
+
+	An unrecognised value is **not** coerced to the default. A column that grows a third state
+	somebody forgot to handle should stop the job, not pick an identity on its behalf.
+	"""
+	identity = str(job.get("auth_identity") or "").strip() or AUTH_IDENTITY_USER
+	if identity not in AUTH_IDENTITIES:
+		raise ValueError(
+			f"Chat Relay Job.auth_identity is {identity!r}, which is neither "
+			f"{AUTH_IDENTITY_USER!r} nor {AUTH_IDENTITY_APP!r}. Refusing to guess which Google "
+			"identity this write is made as."
+		)
+	return identity
+
+
+def _require_joined_author(room: str, user: str, identity: str) -> None:
 	"""Refuse to relay until the author is a **joined** member of the space.
 
 	Under the DWD human-relay model the write is made *as the author*, so an author who is
@@ -834,7 +875,16 @@ def _require_joined_author(room: str, user: str) -> None:
 	``gchat_member_state`` empty is treated as *not joined*: on a room whose membership sync
 	has not run, nothing has confirmed the person is in the space, and guessing yes is the
 	direction that produces the 403.
+
+	**It does not apply to the app.** A Chat app is *installed* in a space, not a member of it
+	— there is no ``Chat Room Member`` row for it and there never will be, so this check would
+	defer every Triton reply forever while reporting a membership sync that is not late for
+	anybody. The app's equivalent failure is a 404 on first post if it was never added to the
+	space, which the retry classifier already handles as non-retryable.
 	"""
+	if identity == AUTH_IDENTITY_APP:
+		return
+
 	state = frappe.db.get_value(CHAT_ROOM_MEMBER, {"room": room, "user": user}, "gchat_member_state") or ""
 	if str(state) != "JOINED":
 		raise Deferred(
@@ -853,13 +903,20 @@ def _subject_for(job: Mapping[str, Any]) -> str:
 	writer**, not a transient condition, so it fails rather than defers — a message-relay job
 	with no principal can never be executed and deferring it forever would hide it.
 	"""
+	if _identity_of(job) == AUTH_IDENTITY_APP:
+		# The app-identity grant has no `sub` claim, so there is no subject to resolve and an
+		# empty `impersonate_user` is the correct state rather than a missing one.
+		return ""
+
 	user = str(job.get("impersonate_user") or "").strip()
 	if not user:
 		raise ValueError(
-			"Chat Relay Job.impersonate_user is empty. Every message operation is written as the "
-			"real author under domain-wide delegation — there is no app-identity fallback, because "
-			"app auth may only patch or delete messages the app itself created, and using it would "
-			"stamp the message with an App badge (CQ-1)."
+			"Chat Relay Job.impersonate_user is empty on a USER-identity job. A coworker mirror is "
+			"written as the real author under domain-wide delegation and there is no app-identity "
+			"fallback for it: app auth may only patch or delete messages the app itself created, "
+			"and using it would stamp somebody's message with an App badge (CQ-1). Triton's own "
+			"replies are the APP case and are written with auth_identity=APP at enqueue time — a "
+			"USER job with no author is a bug in the writer, not that."
 		)
 	if "@" in user:
 		return user
@@ -1006,6 +1063,7 @@ class _MessageContext:
 	truncated: bool
 	stored_google_name: str
 	subject: str
+	identity: str
 	request_id: str
 
 
@@ -1050,8 +1108,9 @@ def _message_context(job: Mapping[str, Any], settings: Any, *, need_text: bool) 
 
 	room = str(row.get("room") or job.get("room") or "")
 	space = _require_space(room)
+	identity = _identity_of(job)
 	subject = _subject_for(job)
-	_require_joined_author(room, str(job.get("impersonate_user") or ""))
+	_require_joined_author(room, str(job.get("impersonate_user") or ""), identity)
 
 	text = ""
 	truncated = False
@@ -1069,6 +1128,7 @@ def _message_context(job: Mapping[str, Any], settings: Any, *, need_text: bool) 
 		truncated=truncated,
 		stored_google_name=str(row.get("gchat_message_name") or ""),
 		subject=subject,
+		identity=identity,
 		request_id=str(job.get("request_id") or "")
 		or ids.request_id(reference, str(job.get("operation") or ""), site=frappe.local.site),
 	)
@@ -1211,7 +1271,7 @@ def _resolve_duplicate(
 	)
 
 	try:
-		build_client(ctx.subject, correlation_id=f"dedupe-{ctx.message}").delete_message(created, force=True)
+		build_client(ctx.subject, identity=ctx.identity, correlation_id=f"dedupe-{ctx.message}").delete_message(created, force=True)
 	except GoogleChatAPIError as exc:
 		if exc.status == 404:
 			return "duplicate_already_gone"
@@ -1307,7 +1367,7 @@ def _handle_message_create(job: dict[str, Any], settings: Any) -> dict[str, Any]
 	plan = _outbound_attachment_plan(ctx, settings)
 	_charge_message_write(settings, ctx.space, attachment_count=len(plan.upload))
 
-	client = build_client(ctx.subject, correlation_id=str(job.get("name") or ""))
+	client = build_client(ctx.subject, identity=ctx.identity, correlation_id=str(job.get("name") or ""))
 	result = attachments.upload_outbound_attachments(client, space=ctx.space, message=ctx.message, plan=plan)
 
 	text, truncated = _text_with_attachment_notice(ctx, settings, plan.skipped + result.failed)
@@ -1426,7 +1486,7 @@ def _handle_message_update(job: dict[str, Any], settings: Any) -> dict[str, Any]
 	_charge_message_write(settings, ctx.space)
 
 	alias = message_alias(ctx.space, ctx.client_message_id)
-	client = build_client(ctx.subject, correlation_id=str(job.get("name") or ""))
+	client = build_client(ctx.subject, identity=ctx.identity, correlation_id=str(job.get("name") or ""))
 	response = client.patch_message(alias, text=ctx.text, allow_missing=True)
 
 	if ctx.truncated:
@@ -1462,7 +1522,7 @@ def _handle_message_delete(job: dict[str, Any], settings: Any) -> dict[str, Any]
 	_charge_message_write(settings, ctx.space)
 
 	alias = message_alias(ctx.space, ctx.client_message_id)
-	client = build_client(ctx.subject, correlation_id=str(job.get("name") or ""))
+	client = build_client(ctx.subject, identity=ctx.identity, correlation_id=str(job.get("name") or ""))
 	try:
 		client.delete_message(alias, force=True)
 	except GoogleChatAPIError as exc:

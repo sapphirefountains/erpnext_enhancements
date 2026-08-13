@@ -664,7 +664,7 @@ class RelayTestCase(unittest.TestCase):
 
 		fake_settings = FakeChatSettings(**self.fake_settings_kwargs)
 
-		def _build_client(subject: str, *, correlation_id: str = "") -> Any:
+		def _build_client(subject: str, *, identity: str = "USER", correlation_id: str = "") -> Any:
 			return GoogleChatClient(
 				subject=subject,
 				identity=AuthIdentity.USER,
@@ -1092,7 +1092,7 @@ class TestOutboundAttachments(RelayTestCase):
 
 		settings = FakeChatSettings()
 
-		def _build_client(subject: str, *, correlation_id: str = "") -> Any:
+		def _build_client(subject: str, *, identity: str = "USER", correlation_id: str = "") -> Any:
 			return GoogleChatClient(
 				subject=subject,
 				identity=AuthIdentity.USER,
@@ -1839,3 +1839,61 @@ class TestTransitionGate(RelayTestCase):
 
 if __name__ == "__main__":  # pragma: no cover
 	unittest.main()
+
+
+class TestAuthIdentity(RelayTestCase):
+	"""Which Google identity the worker writes as, and the two guards that stop applying.
+
+	This is the change that lets Triton reply without a Workspace licence, and every assertion
+	here is about *not* doing something the USER path must always do. That asymmetry is the
+	risk: a bug in this direction does not fail, it silently posts a coworker's message as the
+	app — so each test names which side it is pinning.
+	"""
+
+	def test_a_missing_column_reads_as_the_human(self):
+		"""Deployable over a queue that predates the column.
+
+		Every job already in flight was written for the coworker mirror. Defaulting the other
+		way would re-attribute a backlog of people's own messages to the app, silently.
+		"""
+		self.assertEqual(outbound._identity_of({}), "USER")
+		self.assertEqual(outbound._identity_of({"auth_identity": ""}), "USER")
+
+	def test_an_unrecognised_identity_stops_the_job(self):
+		"""Not coerced to the default. A third state nobody handled should stop, not be guessed."""
+		with self.assertRaises(ValueError) as caught:
+			outbound._identity_of({"auth_identity": "SERVICE"})
+		self.assertIn("SERVICE", str(caught.exception))
+
+	def test_the_app_needs_no_author_and_the_human_still_does(self):
+		app = {"auth_identity": "APP", "impersonate_user": ""}
+		self.assertEqual(outbound._subject_for(app), "")
+
+		with self.assertRaises(ValueError) as caught:
+			outbound._subject_for({"auth_identity": "USER", "impersonate_user": ""})
+		# The message has to send the reader to the writer, not to the auth layer.
+		self.assertIn("bug in the writer", str(caught.exception))
+
+	def test_the_app_is_not_required_to_be_a_joined_member(self):
+		"""The behaviour change. A Chat app is installed in a space, not a member of it.
+
+		There is no `Chat Room Member` row for the app and there never will be, so the
+		membership guard would defer every Triton reply forever while reporting a sync that is
+		not late for anybody — which is exactly what production showed.
+		"""
+		# No member row exists for this room at all; the USER path must still refuse.
+		with self.assertRaises(outbound.Deferred):
+			outbound._require_joined_author("room-1", "nobody@example.com", "USER")
+		# And the APP path must not even look.
+		self.assertIsNone(outbound._require_joined_author("room-1", "", "APP"))
+
+	def test_an_app_client_is_never_given_a_subject(self):
+		"""A subject that silently does nothing is how somebody later concludes the reply is
+		attributed to a person. The app grant has no `sub` claim at all."""
+		# `self._saved[0]` is the REAL `build_client`: this suite replaces it with the fake
+		# harness in setUp, and asserting against the fake would assert nothing about the seam
+		# the worker actually calls in production.
+		real_build_client = self._saved[0]
+		with self.assertRaises(ValueError) as caught:
+			real_build_client("someone@example.com", identity="APP")
+		self.assertIn("does not impersonate", str(caught.exception))
