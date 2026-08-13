@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.280.0] - 2026-08-13
+
+### Added
+
+- **The `marketing` module — data model only, and dormant.** `Marketing Settings.enabled = 0`
+  with every per-platform flag independently `0`; the master switch alone turns nothing on.
+  Nothing writes to any of it yet: the connectors are TASK-2026-01476 and are blocked on the
+  Phase 0 platform approvals.
+- Six DocTypes: `Ad Account`, `Ad Campaign`, `Ad Daily Metric`, `Marketing Sync Log`,
+  `Marketing Raw Payload`, `Marketing Settings`.
+- **`Ad Daily Metric` is deterministically named — `format:ADM-{campaign}-{metric_date}` —
+  and that is correctness, not cosmetics.** Platforms revise spend and conversion figures for
+  days that have already closed, so a correct connector re-pulls a trailing window every run
+  rather than only fetching yesterday. Under a hash or serial name that window would deposit
+  a fresh set of rows nightly and every spend total downstream would drift upward for as long
+  as nobody checked. The identity fields are `set_only_once` for the same reason: editing one
+  would orphan the row from its own name.
+- `ad_daily_metric.upsert()`, which catches **both** `DuplicateEntryError` and
+  `UniqueValidationError`. Frappe raises the first for a primary-key clash and the second for
+  a non-primary unique index; code that catches only one treats "no exception" as "inserted
+  cleanly" and quietly stops de-duplicating.
+- `patches/backfill_marketing_settings_defaults.py`, in `patches.txt` **and** on
+  `after_migrate`, plus `tests/test_marketing_settings.py` (9 tests, filesystem + `ast` only).
+
+### Changed
+
+- **Corrected trap #1 in `docs/marketing-platform-plan.md`, which was wrong about why a new
+  module fails to install.** The plan said the `Module Def` row is missing and needs a patch.
+  It is not: `Module Def` is created by `DocType.on_update` → `make_module_and_roles`, so it
+  is a **consequence** of the DocType import, never a precondition for it. The real hazard is
+  that `sync_for()` iterates `frappe.local.app_modules` — a snapshot taken once in
+  `frappe.init()` from redis that nothing in `bench migrate` rebuilds — so a stale snapshot
+  walks the *previous* release's module list, skips the whole new folder, and **exits 0**.
+  That is how v1.261.0 shipped ten Chat DocTypes and installed none of them. It is already
+  handled by `setup/module_map.py` on `before_migrate`, so this module needed no patch of its
+  own and ships without one.
+
+### Notes
+
+- **This module deliberately has no `module_def/marketing.json`, unlike four older modules
+  that carry one.** That file does nothing: `module_def` is not in Frappe's
+  `IMPORTABLE_DOCTYPES`, so it is never imported — and it would in any case have to be
+  discovered by walking the very folder that the failure it appears to guard against is
+  skipping. One was written here and then deleted rather than propagate the pattern; the
+  module README says so, so the next person does not re-add it.
+- **The Single-defaults trap gets two defences, because this module is exactly the shape that
+  gets bitten.** A `default` on a new field of a Single never reaches the row that already
+  exists, and saving a Single deletes and re-inserts every field row — so a page people
+  actually use self-heals on the next save. The ones that bite are the settings for **dormant**
+  features, where the first save is the one you need and the one that fails (Chat Settings,
+  v1.277.3). So the backfill patch fills the missing rows, *and* `MarketingSettings.validate`
+  repairs a missing or non-positive dial in place rather than raising — the page cannot brick
+  even on a site restored from a backup older than the fields.
+- **Coercion applies only to the positive-integer dials, never to the `Check` fields**, and
+  the distinction is the safety argument. A dial of `0` is meaningless — zero retries, a
+  zero-second timeout. A checkbox of `0` is somebody deliberately switching a connector off,
+  and restoring it to `1` would turn a platform back on behind their back, which is precisely
+  what the draft/approve design exists to prevent. `test_marketing_settings` fails if a
+  `Check` ever enters the dial set, and fails on a *new* `Int` that has not been classified
+  either way.
+- **Spend is stored exactly as reported, never converted on ingest.** A rate applied at ingest
+  cannot be corrected afterwards; the reporting layer is where a rate belongs.
+- **`Marketing Spend` stays in `kpi_dashboards` and is not superseded.** It holds *offline*
+  spend — trade shows, print, sponsorship — and both roll into one report. It is also the
+  fallback if LinkedIn's Marketing Developer Platform access never clears, which is why the
+  approvals doc treats that gate as the one that may simply not arrive.
+- `Marketing Sync Log` and `Marketing Raw Payload` are readable by Sales Manager, so no token,
+  secret or `Authorization` header may reach either. A test fails on any credential-shaped
+  fieldname appearing on a widely-readable doctype — this app has published private key
+  material to a log before.
+
 ## [1.279.3] - 2026-08-13
 
 ### Fixed

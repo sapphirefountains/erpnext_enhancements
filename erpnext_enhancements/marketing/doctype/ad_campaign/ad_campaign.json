@@ -1,0 +1,121 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:ADCMP-{ad_account}-{external_id}",
+ "creation": "2026-08-13 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "ad_account",
+  "external_id",
+  "campaign_name",
+  "column_break_ident",
+  "platform",
+  "objective",
+  "platform_status",
+  "dates_section",
+  "start_date",
+  "column_break_dates",
+  "end_date"
+ ],
+ "fields": [
+  {
+   "fieldname": "ad_account",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Ad Account",
+   "options": "Ad Account",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "The platform's own campaign identifier. Part of the record name together with the account, so a re-pull upserts.",
+   "fieldname": "external_id",
+   "fieldtype": "Data",
+   "label": "External ID",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "campaign_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Campaign Name"
+  },
+  {
+   "fieldname": "column_break_ident",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "ad_account.platform",
+   "fieldname": "platform",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Platform",
+   "read_only": 1
+  },
+  {
+   "fieldname": "objective",
+   "fieldtype": "Data",
+   "label": "Objective"
+  },
+  {
+   "description": "The platform's own status string, stored verbatim. Deliberately a Data rather than a Select: each platform uses its own vocabulary and a constrained list would reject a value we have never seen, failing an ingest over a label.",
+   "fieldname": "platform_status",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Status (as reported)"
+  },
+  {
+   "fieldname": "dates_section",
+   "fieldtype": "Section Break",
+   "label": "Flight"
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "label": "Start Date"
+  },
+  {
+   "fieldname": "column_break_dates",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "end_date",
+   "fieldtype": "Date",
+   "label": "End Date"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-13 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Ad Campaign",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "campaign_name"
+}

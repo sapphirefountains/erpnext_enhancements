@@ -1022,6 +1022,13 @@ after_migrate = [
 	# the DOC-0028 starter pump catalog, so the design spine resolves a pump. Runs
 	# on every migrate (idempotent + guarded) — Frappe Cloud gets it on deploy with
 	# no shell needed.
+	# marketing: fill the Marketing Settings defaults into the EXISTING tabSingles row.
+	# A `default` on a new field of a Single never reaches a row that already exists, and
+	# this module ships dormant -- the shape where the first save of the settings page is
+	# the one you need and the one that fails (Chat Settings, v1.277.3). Also in
+	# patches.txt; here as the backstop for a site whose Patch Log already has the entry.
+	# Idempotent, fills missing rows only, and must never raise.
+	"erpnext_enhancements.patches.backfill_marketing_settings_defaults.backfill_marketing_settings_defaults",
 	"erpnext_enhancements.water_engineering.setup.ensure_pump_catalog",
 	# water_engineering: generic starter Nozzle Profiles so orifice nozzles compute
 	# immediately (idempotent + guarded; flagged generic — replace with cut-sheet data).

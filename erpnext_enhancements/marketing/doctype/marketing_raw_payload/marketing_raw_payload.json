@@ -1,0 +1,92 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:MKT-RAW-{YYYY}-{#####}",
+ "creation": "2026-08-13 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "platform",
+  "endpoint",
+  "response_code",
+  "column_break_head",
+  "sync_log",
+  "fetched_at",
+  "payload_section",
+  "payload"
+ ],
+ "fields": [
+  {
+   "fieldname": "platform",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Platform",
+   "options": "Google Ads\nMeta Ads\nLinkedIn Ads"
+  },
+  {
+   "description": "Which call produced this. Path only — never include a query string carrying a token.",
+   "fieldname": "endpoint",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Endpoint"
+  },
+  {
+   "fieldname": "response_code",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "HTTP Status"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sync_log",
+   "fieldtype": "Link",
+   "label": "Sync Log",
+   "options": "Marketing Sync Log"
+  },
+  {
+   "fieldname": "fetched_at",
+   "fieldtype": "Datetime",
+   "label": "Fetched At"
+  },
+  {
+   "fieldname": "payload_section",
+   "fieldtype": "Section Break",
+   "label": "Payload"
+  },
+  {
+   "description": "The response body verbatim, for debugging a mapper against what the platform actually sent rather than what we believe it sends. Append-only and pruned on the retention set in Marketing Settings — this is a debugging archive, not a data store, and it grows fast. NEVER write request headers here: an Authorization header in a doctype Sales Manager can read is a credential leak, and this app has published key material to a log before.",
+   "fieldname": "payload",
+   "fieldtype": "Long Text",
+   "label": "Response Body"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-13 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Marketing Raw Payload",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

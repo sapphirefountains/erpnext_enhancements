@@ -142,8 +142,18 @@ marketing/
 
 All of these are documented elsewhere in the repo and all of them have bitten before:
 
-1. **`modules.txt` is not enough on an installed site.** Adding the module to the file does
-   not create the `Module Def` row on production. That needs a patch.
+1. **`modules.txt` is not enough on an installed site — but the reason is not the one this
+   plan originally gave.** *(Corrected 2026-08-13 while building the module.)* It is not that
+   the `Module Def` row is missing and needs a patch: `Module Def` is created by
+   `DocType.on_update` → `make_module_and_roles`, so it is a **consequence** of the DocType
+   import, not a precondition for it. The real hazard is that `frappe.model.sync.sync_for()`
+   iterates `frappe.local.app_modules` — a snapshot taken once in `frappe.init()` from redis
+   and never rebuilt by `bench migrate` — so a migrate starting with a stale snapshot walks
+   the *previous* release's module list, silently skips the whole new folder, and **exits 0**.
+   That is how v1.261.0 shipped ten Chat DocTypes and installed none of them.
+   **This is already handled**: `setup/module_map.py` rebuilds the map on `before_migrate`,
+   which is the only window that helps. A new module needs no patch of its own — just the
+   `modules.txt` line, and optionally a `module_def/<module>.json` as several modules carry.
 2. **A `default` on a new field of a Single never reaches the existing row.** `Marketing
    Settings` ships with a large number of flags and thresholds; **it must ship with a
    backfill patch in the same PR**, modelled on

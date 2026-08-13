@@ -109,6 +109,7 @@ The app ships the Frappe modules registered in [`modules.txt`](erpnext_enhanceme
 | **MDM Integration** (`mdm_integration/`) | Mobile device management (locate / lock / wipe / patch) | [README](erpnext_enhancements/mdm_integration/README.md) |
 | **Offsite Backup** (`offsite_backup/`) | Verified nightly/weekly backups to a Google Drive Shared Drive, with retention and a staleness watchdog | [README](erpnext_enhancements/offsite_backup/README.md) |
 | **Chat** (`chat/`) | Employee chat mirrored bidirectionally with Google Chat: rooms, threaded messages, the transactional-outbox relay, the inbound Workspace Events pipeline, and (Phase 3) the SPA at `/chat` plus the coworker surface in the floating bubble. **Ships dormant** — `Chat Settings.enabled = 0` on every site. See [ADR 0009](decisions/adr/0009-erpnext-google-chat-triton.md). | [README](erpnext_enhancements/chat/README.md) |
+| **Marketing** (`marketing/`) | Read-only paid-ads reporting and the spend ↔ pipeline join: `Ad Account` / `Ad Campaign` / `Ad Daily Metric` (campaign × day, deterministically named so a restate upserts rather than duplicates), plus the sync log, raw-payload archive and settings Single. **Ships dormant** — `Marketing Settings.enabled = 0`, and as of v1.280.0 it is data model only. See [the plan](docs/marketing-platform-plan.md). | [README](erpnext_enhancements/marketing/README.md) |
 
 Shared / cross-cutting code (not a Frappe module):
 

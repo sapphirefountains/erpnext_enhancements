@@ -1,0 +1,174 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-13 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "master_section",
+  "enabled",
+  "platforms_section",
+  "google_ads_enabled",
+  "meta_ads_enabled",
+  "column_break_platforms",
+  "linkedin_ads_enabled",
+  "sync_section",
+  "restate_days",
+  "initial_backfill_days",
+  "max_retries",
+  "column_break_sync",
+  "request_timeout_seconds",
+  "sync_batch_size",
+  "raw_payload_retention_days",
+  "status_section",
+  "last_sync_started_at",
+  "column_break_status",
+  "last_sync_status"
+ ],
+ "fields": [
+  {
+   "fieldname": "master_section",
+   "fieldtype": "Section Break",
+   "label": "Master"
+  },
+  {
+   "default": "0",
+   "description": "Master switch for the whole marketing module. While off, no connector runs and no scheduled job does any work. Every per-platform flag below is additionally required — this one alone turns nothing on.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enable Marketing Module"
+  },
+  {
+   "fieldname": "platforms_section",
+   "fieldtype": "Section Break",
+   "label": "Ad Platforms (read-only reporting)"
+  },
+  {
+   "default": "0",
+   "description": "Pull campaigns and daily metrics from Google Ads. Requires an approved developer token with Basic Access — see docs/marketing-platform-approvals.md.",
+   "fieldname": "google_ads_enabled",
+   "fieldtype": "Check",
+   "label": "Google Ads"
+  },
+  {
+   "default": "0",
+   "description": "Pull campaigns and daily metrics from Meta Ads. Requires the ads_read permission from Meta App Review.",
+   "fieldname": "meta_ads_enabled",
+   "fieldtype": "Check",
+   "label": "Meta Ads"
+  },
+  {
+   "fieldname": "column_break_platforms",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Pull campaigns and daily metrics from LinkedIn Ads. Requires Marketing Developer Platform access, historically the slowest approval of the set — if it never clears, LinkedIn spend goes in as offline Marketing Spend rows instead.",
+   "fieldname": "linkedin_ads_enabled",
+   "fieldtype": "Check",
+   "label": "LinkedIn Ads"
+  },
+  {
+   "fieldname": "sync_section",
+   "fieldtype": "Section Break",
+   "label": "Sync Behaviour"
+  },
+  {
+   "default": "7",
+   "description": "How many trailing days to re-pull on every run. Platforms revise spend and conversion figures after the fact, so the last complete day is not final. The (campaign, date) key makes a re-pull an upsert rather than a duplicate.",
+   "fieldname": "restate_days",
+   "fieldtype": "Int",
+   "label": "Restate Trailing Days"
+  },
+  {
+   "default": "90",
+   "description": "How far back to reach on an account's first sync, when it has no cursor yet.",
+   "fieldname": "initial_backfill_days",
+   "fieldtype": "Int",
+   "label": "Initial Backfill Days"
+  },
+  {
+   "default": "3",
+   "description": "Attempts per request before a run is marked Failed. Applies to retryable responses only — 429 and 5xx. A 403 is a configuration fault and is never retried.",
+   "fieldname": "max_retries",
+   "fieldtype": "Int",
+   "label": "Max Retries"
+  },
+  {
+   "fieldname": "column_break_sync",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "30",
+   "description": "Per-request HTTP timeout in seconds.",
+   "fieldname": "request_timeout_seconds",
+   "fieldtype": "Int",
+   "label": "Request Timeout (seconds)"
+  },
+  {
+   "default": "500",
+   "description": "Rows written per commit when ingesting daily metrics.",
+   "fieldname": "sync_batch_size",
+   "fieldtype": "Int",
+   "label": "Sync Batch Size"
+  },
+  {
+   "default": "90",
+   "description": "How long to keep Marketing Raw Payload rows. The archive is for debugging a mapper against what the platform actually sent; it is not a data store and it grows quickly.",
+   "fieldname": "raw_payload_retention_days",
+   "fieldtype": "Int",
+   "label": "Raw Payload Retention (days)"
+  },
+  {
+   "fieldname": "status_section",
+   "fieldtype": "Section Break",
+   "label": "Status"
+  },
+  {
+   "fieldname": "last_sync_started_at",
+   "fieldtype": "Datetime",
+   "label": "Last Sync Started",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Summary of the most recent run. Per-account connection state lives on Ad Account, and the per-run detail is in Marketing Sync Log.",
+   "fieldname": "last_sync_status",
+   "fieldtype": "Data",
+   "label": "Last Sync Status",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-08-13 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Marketing Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
