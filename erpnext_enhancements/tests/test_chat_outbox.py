@@ -900,10 +900,30 @@ def test_job_seq_allocation_takes_the_room_row_lock() -> None:
 	)
 
 
-#: `frappe.enqueue`'s own keyword arguments. Everything else in the call is forwarded to the
-#: worker verbatim, which is what makes a wrong name a TypeError rather than a no-op.
+#: `frappe.enqueue`'s own parameters, taken from its signature. Everything else in the call is
+#: forwarded to the worker verbatim — so a worker parameter that collides with one of these is
+#: never passed anything, and a name that is not in the call at all is passed nothing either.
+#: Both failures are a TypeError at run time, in a worker, where only the Error Log sees them.
+#:
+#: `job_name` is the trap: it reads like "the name of the job" and is exactly what a relay
+#: worker wants to be called. It cost two releases — one failure mode each.
 _ENQUEUE_OPTIONS = frozenset(
-	{"queue", "timeout", "enqueue_after_commit", "job_id", "deduplicate", "is_async", "now", "at_front"}
+	{
+		"method",
+		"queue",
+		"timeout",
+		"event",
+		"is_async",
+		"job_name",
+		"now",
+		"enqueue_after_commit",
+		"on_success",
+		"on_failure",
+		"at_front",
+		"job_id",
+		"deduplicate",
+		"at_front_when_starved",
+	}
 )
 
 
@@ -947,6 +967,12 @@ def test_the_enqueue_is_after_commit_and_deduplicated_by_job_id() -> None:
 	match = re.search(r"^def run_relay_job\(\s*(\w+)", worker_src, re.M)
 	assert match, "run_relay_job has moved or changed shape; this guard needs updating"
 	parameter = match.group(1)
+	assert parameter not in _ENQUEUE_OPTIONS, (
+		f"run_relay_job's parameter is {parameter!r}, which frappe.enqueue takes as its own — so "
+		"the kwarg is consumed by the enqueue machinery and the worker is handed nothing. It "
+		"fails with 'missing 1 required positional argument', which reads like a caller bug and "
+		"is not one. Rename the worker's parameter."
+	)
 	assert parameter in call, (
 		f"the enqueue passes {sorted(k for k in call if k not in _ENQUEUE_OPTIONS)!r} but the "
 		f"worker takes {parameter!r}. frappe.enqueue forwards kwargs verbatim, so this is a "
