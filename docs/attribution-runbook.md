@@ -157,10 +157,26 @@ every submission with a 401 until both sides agree.
    closed, which is correct but looks like a broken integration if you have not read this.
 2. `web_lead_default_owner` set, or accept that submissions arrive unassigned (they will
    still show up in Attribution Gaps).
-3. **Confirm the Cloudflare → GCLB → bench chain OVERWRITES `X-Forwarded-For` rather than
-   appending.** `auth.py` takes the first entry unconditionally, so with an appending proxy
-   every IP-keyed rate limit in the app is spoofable. This is the same pre-flight the
-   fountain-move public form carries and it has never been formally verified.
+3. **Understand that the IP-keyed rate limit is not a per-client control.** Investigated
+   2026-08-13 (TASK-2026-01478), and both halves of the original premise were wrong:
+
+   - **There is no Cloudflare in front of the ERP host.** `erp.sapphirefountains.com`
+     answers with `via: 1.1 google` and `server: nginx/1.22.1` and no `cf-ray` — the chain is
+     **GCLB → nginx → bench**. Only `www.sapphirefountains.com` (WordPress/WP Engine) is
+     Cloudflare-fronted.
+   - **The recorded address is already wrong, spoofing aside.** Since ~2026-07-18
+     `frappe.local.request_ip` has been logging the load balancer's own address rather than
+     the visitor's for most traffic — 0/79 of May's logins, 0/252 of June's, then **79/94 in
+     July and 41/84 in August** fall in GCP LB ranges, including ordinary staff logins. All
+     three `Fountain Move Request` rows recorded `submitter_ip_peer = 127.0.0.1` and
+     `submitter_ip_claimed = 35.191.x`.
+
+   So `@rate_limit(limit=120, seconds=3600)` is closer to a global budget than a per-caller
+   one, and GCLB's documented append behaviour means a caller who sets their own header can
+   very likely choose their bucket. **This does not block the ingress** — `web_lead.py` treats
+   the IP as advisory, never decides on it, and gates on the bearer secret, which fails closed.
+   It does mean: do not read 120/hour as per-client, and never add a control that depends on
+   the address. Fixing the derivation needs infrastructure access, not app changes.
 4. Decide what the WordPress form does when ERPNext is unreachable. It should keep its own
    copy — this endpoint is not a queue.
 
@@ -182,10 +198,13 @@ Ingress failures land in the Error Log under `Web Lead ingress: insert failed`.
 
 ## Known gaps
 
-- **The WordPress capture script does not exist yet.** Until it does, the ingress works but
-  nothing calls it, and the only attribution arriving is whatever is typed by hand. The
-  end-to-end acceptance test ("a UTM-tagged link through to a submitted form produces a Lead
-  carrying the full attribution set") cannot be demonstrated until then.
+- ~~**The WordPress capture script does not exist yet.**~~ **Written 2026-08-13** — see
+  [`website-capture/`](website-capture/) for the mu-plugin, the first-touch capture script, the
+  Fluent Forms field list and the webhook mapping. It is **not installed yet**: until someone
+  uploads it and wires the webhook, the ingress still works and nothing still calls it, and the
+  only attribution arriving is whatever is typed by hand. The acceptance test ("a UTM-tagged
+  link through to a submitted form produces a Lead carrying the full attribution set") is
+  step 5 of that README and has not yet been run.
 - **Google Search Console has never worked.** `Marketing Web Snapshot` has pulled nightly
   since 2026-06-26: GA4 succeeded 40/40 days, GSC failed 40/40 with `HTTP 403` on
   `searchconsole.googleapis.com`. Organic clicks and impressions have been 0 for the entire
