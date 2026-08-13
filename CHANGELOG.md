@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.279.2] - 2026-08-13
+
+### Fixed
+
+- **v1.279.0 unblocked every future Triton reply and left the stuck ones stuck.** Its default —
+  an empty `auth_identity` reads as `USER` — was justified with *"every job already in flight
+  was written for the coworker mirror"*. The direction is right and stays. The factual half was
+  never checked and is false: the replies deferring against
+  `triton@… is not a JOINED member of room …` are **exactly** the jobs the release was written
+  to unblock, and the default hands each of them the one identity that cannot post. They would
+  have deferred forever, against a membership row the app will never have.
+- `patches/backfill_relay_auth_identity.py` stamps `APP` on them.
+
+### Notes
+
+- **This is the second release in three where the repair did not reach the rows it was for.**
+  The digest `poisoned` flag was the first. Neither announced itself: a latched flag and a
+  politely deferring queue both look like a system with nothing to do, and the metric that
+  would show otherwise (`rooms: 0`, `messages_relayed: 0`) is the same number a healthy idle
+  system reports. Worth stating as a pattern rather than twice as a coincidence — *when a fix
+  changes how new rows are written, the old rows are a separate deliverable*.
+- The backfill only fills an **empty** column, never rewrites a `USER`, and skips
+  `In Progress`. Both guards are mutation-tested. A backfill able to rewrite a `USER` could
+  re-attribute a coworker's own message to the app — the single outcome CQ-1 exists to prevent —
+  and it would do it to a whole queue at once, on deploy, silently.
+
 ## [1.279.1] - 2026-08-13
 
 ### Added
