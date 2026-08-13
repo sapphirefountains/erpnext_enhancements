@@ -239,6 +239,12 @@ WRITER_ENTRY_POINTS: dict[str, dict[str, str]] = {
 			"and rewrites their summaries. Reads across every room, which is precisely why "
 			"its OUTPUT is behind the same gate as the messages it summarises."
 		),
+		"clear_digest_poison": (
+			"Operator recovery, `bench execute` only. Clears the latching `poisoned` flag so "
+			"the sweeper will retry a room whose *cause* has been fixed. Writes two integer "
+			"columns and returns two counts — it reads no message, no summary and no room "
+			"name it was not given, and returns none of them."
+		),
 		"check_digest_staleness": (
 			"Scheduler job, hourly. Reads one aggregate — the newest generated_at anywhere — "
 			"and alerts if the summariser has stopped. No room, no body, no identifiers."
@@ -851,6 +857,15 @@ class TestTheWriterPackagePaysForItsExemption(unittest.TestCase):
 						"who calls it, and say what it reads and what it cannot return.",
 					)
 
+	#: Entry points that are neither the scheduler's nor the seam's: an operator runs them by
+	#: hand, from `bench execute`, to recover from something. Listed **by name**, deliberately,
+	#: so that "it is an operator tool" cannot become the cover story under which a cross-room
+	#: reader is added to this package. Adding a name here is a reviewable act, and each one
+	#: still has to pass every other rule in this file — in particular it may not be whitelisted.
+	OPERATOR_ENTRY_POINTS: frozenset = frozenset(
+		{("chat/indexing/digest.py", "clear_digest_poison")}
+	)
+
 	def test_the_scheduler_owns_every_entry_point_but_the_seam_writer(self):
 		"""The declared surface must actually be the scheduler's, not merely claimed to be.
 
@@ -872,6 +887,19 @@ class TestTheWriterPackagePaysForItsExemption(unittest.TestCase):
 						"does not call it. Then nothing invalidates a digest on an edit or a "
 						"delete, and a summary of a deleted message keeps being served — "
 						"silently, because a stale digest still answers.",
+					)
+					continue
+				if (rel, name) in self.OPERATOR_ENTRY_POINTS:
+					# Assert the category is honest rather than skipping: an operator tool that
+					# HAS been wired to the scheduler is a job nobody knows is running, on a
+					# package whose whole exemption rests on knowing exactly what runs here.
+					self.assertNotIn(
+						f"erpnext_enhancements.{module}.{name}",
+						hooks,
+						f"{rel}:{name} is declared as an operator-only entry point but "
+						"hooks.py schedules it. Either it is a scheduler job and belongs in "
+						"the list above with the rest, or it is running unattended and "
+						"nobody has said so.",
 					)
 					continue
 				self.assertIn(

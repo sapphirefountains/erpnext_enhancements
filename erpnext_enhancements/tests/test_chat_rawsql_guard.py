@@ -390,6 +390,28 @@ SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
 		"makes the same statement safe on the oversight path where the fragment returns "
 		"`1 = 1`."
 	),
+	# --- chat/indexing/digest.py: an operator unlatching a flag, reading no content --------
+	(
+		"indexing/digest.py",
+		"clear_digest_poison",
+		"Chat Room Digest",
+	): (
+		"Selects the `name` of every row where `poisoned = 1` so an operator can clear the "
+		"flag after fixing whatever caused it, and writes two integer columns. It reads no "
+		"summary_text, no message, no room title — only primary keys of rows already marked "
+		"broken — and returns two counts. Membership is not a meaningful filter here: the "
+		"caller is a System Manager at a bench prompt with no session user, recovering a "
+		"scheduler job, and scoping to 'rooms the operator is in' would leave the other "
+		"rooms latched off forever with nothing to say so."
+	),
+	(
+		"indexing/digest.py",
+		"clear_digest_poison",
+		"Chat Thread Digest",
+	): (
+		"The thread tier of the same clear, with the same filter, the same two columns and "
+		"the same content-free projection."
+	),
 	(
 		"retrieval/gate.py",
 		"<module>",

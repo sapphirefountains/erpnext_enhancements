@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.278.3] - 2026-08-13
+
+### Fixed
+
+- **`clear_digest_poison` built its query target from a loop variable, and the raw-SQL guard
+  refused it** — `frappe.get_all(doctype, ...)` resolves to `<unresolved>`, and an unresolved
+  target is not a small gap: it is a query whose table nobody can name from the source, one
+  assignment away from reading `Chat Message`. The two tiers are now written out with literal
+  constants.
+- Both reads registered in `SYSTEM_CONTEXT_READS` with their reason. They project primary keys
+  of rows already marked broken — no `summary_text`, no message, no room title — and membership
+  is not a meaningful filter on them: the caller is a System Manager at a bench prompt with no
+  session user, and scoping to "rooms the operator is in" would leave every other room latched
+  off forever with nothing to say so.
+
+### Notes
+
+- **Three source-level guards cover this package and I checked two.** `test_chat_gate_source_scan`
+  caught the whitelist, `test_chat_sql_columns` passed, and `test_chat_rawsql_guard` — the one
+  the module header calls *the likeliest route to a real data leak* — I never ran, because I had
+  already found a failure and fixed it. Finding one guard's objection is not evidence about the
+  others. Every bench-free chat suite now runs before this ships, each in its own process, the
+  way CI runs them.
+
+## [1.278.2] - 2026-08-13
+
+### Added
+
+- **`digest.clear_digest_poison(room="")` — the unlatch for a flag that could only latch.**
+  Three consecutive failures poison a room's digest, and that is right: retrying every five
+  minutes forever burns a paid model call to reproduce a known failure. But nothing could clear
+  it. The shape of the bug: **fix the actual cause and the feature stays dead anyway**, with
+  `sweep_digests` reporting `rooms: 0`, which reads exactly like "nothing to do".
+- Not hypothetical — the summariser's 401 poisoned a room at three failures. The 401 is fixed
+  and that room would never have been summarised again. The only recourse was an ad-hoc
+  `set_value` typed against a doctype the operator has to know the schema of, which is a
+  recovery procedure in the same sense that a docstring is a mechanism.
+- It clears `poisoned` **and** `rebuild_failures` together. Leaving the counter at the ceiling
+  re-poisons the room on its very next failure, so one transient blip after a repair puts it
+  straight back and the operator concludes the repair did not work.
+
+### Notes
+
+- **The gate scan caught me shipping this whitelisted.** The first version carried
+  `@frappe.whitelist()` for convenience; `test_chat_gate_source_scan.py` failed it. Nothing in
+  `chat/indexing/` may be reachable over HTTP — the package reads every room with no session
+  user, so a whitelisted method there is a cross-room reader one argument away. That test was
+  written to catch exactly this and it caught its author.
+- The scan needed a third category to stay honest. It knew about scheduler jobs and one seam
+  writer; an operator command was neither. `OPERATOR_ENTRY_POINTS` lists them **by name**, so
+  "it is an operator tool" cannot become the cover story for adding a reader here — and rather
+  than skipping the check, it asserts the opposite property: an operator tool that *is* wired
+  to the scheduler fails, because that is a job running unattended that nobody declared.
+
 ## [1.278.1] - 2026-08-13
 
 ### Security

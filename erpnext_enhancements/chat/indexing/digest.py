@@ -154,6 +154,81 @@ def check_digest_staleness() -> dict[str, Any]:
 	return {"ok": False, "age_minutes": round(age, 1), "threshold_minutes": window}
 
 
+def clear_digest_poison(room: str = "") -> dict[str, int]:
+	"""Un-poison digests so the sweeper will try them again. Returns what it cleared.
+
+	--------------------------------------------------------------------------------------
+	Why this had to exist, having been missing
+	--------------------------------------------------------------------------------------
+
+	Poisoning is right: three consecutive failures on one room means retrying every five
+	minutes forever is burning a paid model call to reproduce a known failure, and the flag
+	stops that. But it is **latching**, and until now nothing could unlatch it. So the shape of
+	the bug was: fix the actual cause, and the feature stays dead anyway — with
+	``sweep_digests`` reporting ``rooms: 0``, which reads exactly like "nothing to do".
+
+	That is not hypothetical. The summariser's 401 poisoned a room at three failures; the 401
+	is fixed, and the room would still never have been summarised again. The only recourse was
+	an ad-hoc ``set_value`` typed from memory against a doctype the operator has to know the
+	schema of — which is a recovery procedure in the same sense that a docstring is a
+	mechanism.
+
+	Clearing both counters together is deliberate. Leaving ``rebuild_failures`` at the ceiling
+	would re-poison the room on its very next failure, so one transient blip after a repair
+	puts it straight back where it was, and the operator concludes the repair did not work.
+
+	**Deliberately not whitelisted, and the guard caught me trying.** The first version of this
+	carried ``@frappe.whitelist()`` for convenience; ``tests/test_chat_gate_source_scan.py``
+	failed it, correctly. Nothing in this package may be reachable over HTTP — it reads every
+	room with no session user, so a whitelisted method here is a cross-room reader one argument
+	away. It runs from ``bench execute``, like every other entry point in this module, and the
+	role check below is defence in depth rather than the boundary.
+
+	Args:
+		room: clear one room's digest and its threads. Empty clears **everything poisoned**,
+			which is the normal case after fixing a fault that was never room-specific.
+	"""
+	frappe.only_for("System Manager")
+
+	values = {"poisoned": 0, "rebuild_failures": 0}
+	filters: dict[str, Any] = {"poisoned": 1}
+	if room:
+		filters["room"] = room
+
+	# The two tiers are written out rather than looped over a `(doctype, ...)` tuple, and that
+	# is not a style preference. `tests/test_chat_rawsql_guard.py` resolves every chat query's
+	# target statically and **fails anything it cannot pin to a literal** — because a query
+	# whose table comes from a variable is one assignment away from reading `Chat Message`, and
+	# a check that cannot see the target is a check that has stopped protecting it. The loop
+	# version was rejected on exactly that ground. `limit_page_length=0` because `get_all`
+	# otherwise stops at 20, which would silently half-clear a site and look like success.
+	room_names = frappe.get_all(
+		ROOM_DIGEST_DOCTYPE, filters=filters, pluck="name", limit_page_length=0
+	)
+	for name in room_names:
+		# `update_modified=False` to match how every other write in this module touches a digest
+		# row: `modified` is the staleness signal the sweeper reads, and an operator clearing a
+		# flag must not look like a rebuild.
+		frappe.db.set_value(ROOM_DIGEST_DOCTYPE, name, values, update_modified=False)
+
+	thread_names = frappe.get_all(
+		THREAD_DIGEST_DOCTYPE, filters=filters, pluck="name", limit_page_length=0
+	)
+	for name in thread_names:
+		frappe.db.set_value(THREAD_DIGEST_DOCTYPE, name, values, update_modified=False)
+
+	cleared = {
+		ROOM_DIGEST_DOCTYPE: len(room_names),
+		THREAD_DIGEST_DOCTYPE: len(thread_names),
+	}
+	frappe.db.commit()
+	_note(
+		f"cleared digest poisoning on {sum(cleared.values())} row(s)"
+		+ (f" for room {room}" if room else " across all rooms")
+	)
+	return cleared
+
+
 # --------------------------------------------------------------------------- one room
 
 
