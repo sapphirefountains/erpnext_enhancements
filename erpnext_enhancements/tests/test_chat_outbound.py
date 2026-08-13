@@ -1757,6 +1757,92 @@ class TestSweeper(RelayTestCase):
 		self.assertTrue(self.alerts(outbound.ALERT_DEPENDENCY_STALE))
 		self.assertEqual(self.job("JOB-1")["status"], "Pending")
 
+	def test_a_job_blocked_for_the_same_reason_is_not_re_alerted_every_pass(self) -> None:
+		"""One blocked job, one alert — not one per sweep.
+
+		Eleven jobs stuck behind a single head-of-line blocker wrote **305 identical Error Log
+		rows in a day** on production. A real 403 from Google sat in the middle of them and
+		took a query grouped by title to find. The count still rises every pass, because that
+		is a measurement; the alert does not, because that is a notification.
+		"""
+		self.db.insert("Chat Room", {"name": "ROOM-0001", "gchat_space_name": ""})
+		self.db.insert(
+			"Chat Room Member",
+			{"name": "M1", "room": "ROOM-0001", "user": ALICE, "gchat_member_state": "JOINED"},
+		)
+		self.make_message(name="MSG-0001")
+		self.make_job(name="JOB-1", job_seq=1)
+		outbound.drain_room("ROOM-0001")
+		self.db.set_value(
+			"Chat Relay Job",
+			"JOB-1",
+			{"creation": _now() - timedelta(seconds=outbound.DEPENDENCY_STALE_SECONDS + 60)},
+		)
+
+		first = outbound.sweep_relay_jobs()
+		alerts_after_first = len(self.alerts(outbound.ALERT_DEPENDENCY_STALE))
+		second = outbound.sweep_relay_jobs()
+		alerts_after_second = len(self.alerts(outbound.ALERT_DEPENDENCY_STALE))
+
+		self.assertEqual(alerts_after_first, 1)
+		self.assertEqual(alerts_after_second, 1, "the second pass must not re-alert")
+		# The counter is a measurement of what is blocked and must keep counting.
+		self.assertEqual(first["dependency_stale"], 1)
+		self.assertEqual(second["dependency_stale"], 1)
+
+	def test_a_cache_that_cannot_answer_still_alerts(self) -> None:
+		"""Fails **open**, and this is the one direction that is not a judgement call.
+
+		A duplicate Error Log row costs noise. A swallowed one costs an outage nobody is told
+		about. Every other dedupe in this module fails closed; this one must not, and the
+		difference is worth a test rather than a comment.
+		"""
+		import frappe
+
+		class _BrokenCache:
+			def get_value(self, *args, **kwargs):
+				raise RuntimeError("redis is down")
+
+			def set_value(self, *args, **kwargs):
+				raise RuntimeError("redis is down")
+
+		saved = frappe.cache
+		frappe.cache = lambda: _BrokenCache()
+		try:
+			self.assertTrue(outbound._stale_alert_is_new("JOB-1", "Deferred: anything"))
+			self.assertTrue(outbound._stale_alert_is_new("JOB-1", "Deferred: anything"))
+		finally:
+			frappe.cache = saved
+
+	def test_a_blocked_job_whose_reason_changes_alerts_again(self) -> None:
+		"""The reason changing is the news.
+
+		"waiting on provisioning" becoming "not a joined member" is a different fact about the
+		world, and suppressing it would be the failure mode of every dedupe ever written.
+		"""
+		self.db.insert("Chat Room", {"name": "ROOM-0001", "gchat_space_name": ""})
+		self.db.insert(
+			"Chat Room Member",
+			{"name": "M1", "room": "ROOM-0001", "user": ALICE, "gchat_member_state": "JOINED"},
+		)
+		self.make_message(name="MSG-0001")
+		self.make_job(name="JOB-1", job_seq=1)
+		outbound.drain_room("ROOM-0001")
+		self.db.set_value(
+			"Chat Relay Job",
+			"JOB-1",
+			{"creation": _now() - timedelta(seconds=outbound.DEPENDENCY_STALE_SECONDS + 60)},
+		)
+
+		outbound.sweep_relay_jobs()
+		self.assertEqual(len(self.alerts(outbound.ALERT_DEPENDENCY_STALE)), 1)
+
+		self.db.set_value(
+			"Chat Relay Job", "JOB-1", {"last_error": "Deferred: something else entirely"}
+		)
+		outbound.sweep_relay_jobs()
+		self.assertEqual(len(self.alerts(outbound.ALERT_DEPENDENCY_STALE)), 2)
+
 
 class TestManualRetry(RelayTestCase):
 	def test_it_requires_system_manager(self) -> None:

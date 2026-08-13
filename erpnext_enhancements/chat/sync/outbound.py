@@ -89,6 +89,7 @@ import json
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any, Final
 
 import frappe
@@ -470,6 +471,42 @@ def _log(level: str, message: str, **fields: Any) -> None:
 		getattr(log, level, log.info)(json.dumps(record, sort_keys=True, default=str))
 	except Exception:
 		return
+
+
+#: How long one blocked job stays "already reported" before it announces itself again.
+#:
+#: The sweeper re-evaluates every blocked job on every pass, and it used to write a fresh
+#: ``Error Log`` row each time. Eleven jobs stuck behind one head-of-line blocker produced
+#: **305 identical rows in a day** — a real 403 from Google sat in the middle of them, and it
+#: took a query grouped by title to see it at all. An alert channel that repeats a known fact
+#: faster than anybody reads it is not an alert channel; it is where alerts go to be missed.
+#:
+#: Long enough to stop the flood, short enough that something still stuck says so a few times
+#: a day rather than once and never again.
+STALE_ALERT_REPEAT_SECONDS: Final[int] = 6 * 3600
+
+
+def _stale_alert_is_new(job_name: str, note: str) -> bool:
+	"""Whether this blocked job has already been reported for **this** reason recently.
+
+	Keyed on the job *and* its note, so a job whose reason changes — "waiting on provisioning"
+	becoming "not a joined member" — announces itself again. The reason changing is the news.
+
+	**Fails open.** A cache that cannot answer means the alert is written, because the cost of
+	a duplicate Error Log row is noise and the cost of a swallowed one is an outage nobody is
+	told about. Note that a deploy flushes this Redis, so every still-blocked job re-alerts
+	once after one — which is correct: a deploy is exactly when you want to know what is stuck.
+	"""
+	if not job_name:
+		return True
+	key = f"chat:relay:stale-alert:{job_name}:{sha256(note.encode('utf-8')).hexdigest()[:16]}"
+	try:
+		if frappe.cache().get_value(key):
+			return False
+		frappe.cache().set_value(key, 1, expires_in_sec=STALE_ALERT_REPEAT_SECONDS)
+	except Exception:
+		return True
+	return True
 
 
 def _alert(title: str, context: Mapping[str, Any]) -> None:
@@ -2129,7 +2166,8 @@ def sweep_relay_jobs() -> dict:
 		if not note.startswith(("Deferred:", "Released:")):
 			continue
 		summary["dependency_stale"] += 1
-		_alert(ALERT_DEPENDENCY_STALE, dict(row))
+		if _stale_alert_is_new(str(row.get("name") or ""), note):
+			_alert(ALERT_DEPENDENCY_STALE, dict(row))
 
 	if summary["paused"]:
 		_log("warning", "relay_sweep_paused", reason=summary["paused"])
