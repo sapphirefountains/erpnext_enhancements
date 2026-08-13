@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.280.4] - 2026-08-13
+
+### Fixed
+
+- **App-identity relaying dead-lettered six text-only messages over an upload they were never
+  going to make.** `upload_outbound_attachments` asserted `identity is AuthIdentity.USER`
+  *before* looking at the plan, so a Triton reply — app identity, and text-only by construction
+  — was refused for the auth of `media.upload` while carrying no files at all. The check now
+  runs after the plan: **no files, no upload requirement**, whatever the identity.
+- **An app-identity message that does carry files no longer loses its text.** Every file comes
+  back in `failed` with the reason and the caller appends the standard notice, which is this
+  module's own rule — *losing the mirror of a file must never lose the message*. Raising there
+  dead-lettered the whole thing, and the words were never the problem.
+
+### Notes
+
+- **The guard was right; its position was wrong.** Its own comment said it "should never fire —
+  which is exactly the kind that catches the change that breaks it", and it did catch mine. An
+  assertion about *how to upload* had been placed where it also governed *whether there was
+  anything to upload*.
+- **`APP` and "no identity at all" are now different things, deliberately.** `APP` is a declared
+  mode and degrades; an identity that is neither USER nor APP was never *set*, which is a
+  programming error, and degrading it would hide the bug behind a plausible notice. That one
+  still raises.
+- Three tests asserted the old behaviour by passing an **empty** plan — which is precisely what
+  let the guard sit in front of the emptiness question. They now use a one-file plan, and a new
+  test covers the empty case for both a declared and an undeclared identity.
+- Two of the four mutation checks initially reported "not caught" and both were **weak
+  assertions, not weak code**: one branch happened to produce the same result as another, and
+  `assert "identity" in str(exc)` matched a *different* error that also says "identity". Pinned
+  on branch-unique wording. A mutation that passes is only evidence if you know which line it
+  changed and why the test should have minded.
+
 ## [1.280.3] - 2026-08-13
 
 ### Fixed

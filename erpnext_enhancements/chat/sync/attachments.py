@@ -1462,24 +1462,60 @@ def upload_outbound_attachments(
 	``raw_bytes`` as a length and ``GoogleCall.raw_body`` is unreachable from every logging
 	path in the transport by construction — that is why it is a separate field from ``body``.
 	"""
+	resolved = (
+		plan
+		if plan is not None
+		else plan_outbound_attachments(collect_outbound_attachments(message), resolve_limits())
+	)
+
+	# --- the identity checks, and they run AFTER the plan on purpose -----------------------
+	#
+	# **A message with no files has no upload requirement.** This function used to assert the
+	# identity before looking at the plan, so a Triton reply — app-identity, and text-only by
+	# construction — was refused for the auth of an upload it was never going to make. Six of
+	# them dead-lettered on production the hour app-identity relaying shipped, with an error
+	# about `media.upload` on messages that carried nothing to upload.
+	#
+	# The check itself was right and stays exactly as strict for the case it was written for.
+	# What was wrong was its position: an assertion about *how to upload* placed where it also
+	# governed *whether there was anything to upload*.
+	if not resolved.upload:
+		return OutboundUploadResult()
+
 	identity = getattr(client, "identity", None)
-	if identity is not AuthIdentity.USER:
-		raise AttachmentError(
+	if identity is AuthIdentity.APP:
+		# Not raised, and the distinction from the check below is the whole point. **APP is a
+		# declared mode**: Triton's replies are relayed that way on purpose, so "this client
+		# cannot upload" is an expected fact about a working system, and the right response is
+		# the one this module already has for a file that will not go — record it and relay the
+		# text. Raising dead-lettered the message, and the words were never the problem.
+		reason = (
 			"media.upload does not accept app authentication — chat.bot is not in its scope "
-			"list, so no app-auth token can create an attachment. Upload as the sending author."
+			"list, so no app-auth token can create an attachment. This message was relayed as "
+			"the Chat app, which cannot carry files; the text was mirrored and the files were "
+			"not."
 		)
+		return OutboundUploadResult(
+			failed=tuple((item, reason) for item in resolved.upload)
+		)
+
+	if identity is not AuthIdentity.USER:
+		# Still positive, still raising, and for the reason it always was: an identity that is
+		# neither USER nor APP was never *set*, which is a programming error rather than a mode.
+		# Degrading it the way APP degrades would hide the bug behind a plausible notice, and
+		# the 403 it eventually produces reads like a DWD misconfiguration.
+		raise AttachmentError(
+			"media.upload requires the USER identity and this client declares none. A client "
+			"whose identity was never set mints an app token in practice and fails the same way "
+			"an app-auth upload does, four steps further from the cause."
+		)
+
 	if not str(getattr(client, "subject", "") or "").strip():
 		raise AttachmentError(
 			"media.upload must be made as a real Workspace user. The client carries the USER "
 			"identity but no subject to impersonate, which mints an app token in practice and "
 			"fails the same way an app-auth upload does."
 		)
-
-	resolved = (
-		plan
-		if plan is not None
-		else plan_outbound_attachments(collect_outbound_attachments(message), resolve_limits())
-	)
 	uploads: list[OutboundUpload] = []
 	failed: list[tuple[OutboundAttachment, str]] = []
 	for candidate in resolved.upload:

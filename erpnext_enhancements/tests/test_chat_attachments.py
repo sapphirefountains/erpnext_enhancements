@@ -598,36 +598,100 @@ def test_media_download_round_trips_bytes_through_the_real_client() -> None:
 	assert served_type
 
 
-def test_an_app_identity_client_cannot_upload() -> None:
-	"""``chat.bot`` is absent from ``media.upload``'s scope list, so this is impossible, not
-	merely disallowed. Refusing here names the impossibility instead of surfacing a 403 four
-	steps later that reads like a DWD misconfiguration."""
+def _one_file_plan():
+	"""A plan with something in it.
+
+	These identity tests used to pass an **empty** plan, which is what let the guard sit in
+	front of the question "is there anything to upload at all?" — see
+	:func:`test_a_message_with_no_files_needs_no_upload_identity` below for the six production
+	messages that cost.
+	"""
+	return attachments.OutboundPlan(
+		upload=(
+			attachments.OutboundAttachment(
+				file="FILE-1",
+				file_name="site-photo.png",
+				content_type="image/png",
+				byte_size=len(PNG_BYTES),
+				is_private=True,
+			),
+		)
+	)
+
+
+def test_a_message_with_no_files_needs_no_upload_identity() -> None:
+	"""No files, no upload requirement — whatever the identity is.
+
+	The check used to run before the plan, so a Triton reply (app identity, text-only by
+	construction) was refused for the auth of an upload it was never going to make. Six of them
+	dead-lettered the hour app-identity relaying shipped, with an error naming ``media.upload``
+	on messages that carried nothing to upload.
+	"""
 
 	class _AppClient:
 		identity = AuthIdentity.APP
 
-	with pytest.raises(attachments.AttachmentError) as caught:
-		attachments.upload_outbound_attachments(
-			_AppClient(), space="spaces/AAAA1", message="MSG-1", plan=attachments.OutboundPlan()
-		)
-	assert "chat.bot" in str(caught.value)
+	result = attachments.upload_outbound_attachments(
+		_AppClient(), space="spaces/AAAA1", message="MSG-1", plan=attachments.OutboundPlan()
+	)
+	assert result.tokens == []
+	assert result.failed == ()
+
+	# The one that actually pins the ordering. A client with no identity at all is a *fatal*
+	# case below — so if this returns cleanly, the empty-plan check genuinely runs first rather
+	# than the APP branch happening to produce the same answer.
+	class _NoIdentity:
+		pass
+
+	nothing = attachments.upload_outbound_attachments(
+		_NoIdentity(), space="spaces/AAAA1", message="MSG-1", plan=attachments.OutboundPlan()
+	)
+	assert nothing.tokens == []
+	assert nothing.failed == ()
+
+
+def test_an_app_identity_client_records_its_files_as_failed_rather_than_losing_the_message() -> None:
+	"""``chat.bot`` is absent from ``media.upload``'s scope list, so this is impossible.
+
+	Impossible is not the same as fatal. This module's own rule is that losing the mirror of a
+	*file* must never lose the *message*, and raising here dead-lettered the whole thing — the
+	words were never the problem. Every file comes back in ``failed`` with the reason, the
+	caller appends the standard notice, and the text still reaches the space.
+	"""
+
+	class _AppClient:
+		identity = AuthIdentity.APP
+
+	result = attachments.upload_outbound_attachments(
+		_AppClient(), space="spaces/AAAA1", message="MSG-1", plan=_one_file_plan()
+	)
+	assert result.tokens == []
+	assert len(result.failed) == 1
+	assert "chat.bot" in result.failed[0][1]
 
 
 def test_an_identity_less_client_is_refused_rather_than_assumed_to_be_a_user() -> None:
 	"""The check is positive — ``is AuthIdentity.USER`` — and not "not APP".
 
-	A client whose identity was never set would sail through a negative check and fail at
-	Google with a 403 that reads like a DWD misconfiguration, which is the exact outcome this
-	guard exists to prevent. ``PHASE2_VERIFIED.md`` §4 says assert it; this is the assert.
+	``APP`` is a **declared mode** and degrades gracefully above. An identity that is neither
+	was never *set*, which is a programming error, and degrading it the same way would hide the
+	bug behind a plausible notice. It still raises, for the reason it always did: the 403 it
+	would otherwise produce reads like a DWD misconfiguration. ``PHASE2_VERIFIED.md`` §4 says
+	assert it; this is the assert.
 	"""
 
 	class _NoIdentity:
 		pass
 
-	with pytest.raises(attachments.AttachmentError):
+	with pytest.raises(attachments.AttachmentError) as caught:
 		attachments.upload_outbound_attachments(
-			_NoIdentity(), space="spaces/AAAA1", message="MSG-1", plan=attachments.OutboundPlan()
+			_NoIdentity(), space="spaces/AAAA1", message="MSG-1", plan=_one_file_plan()
 		)
+	# It must raise for the IDENTITY, not fall through to the subject check and raise there.
+	# Both are AttachmentError and both mention "identity", so asserting the type — or that
+	# word — let a mutation deleting this branch pass: the next check caught the same client
+	# and reported the wrong cause. Pinned on wording unique to this branch.
+	assert "declares none" in str(caught.value)
 
 
 def test_a_user_identity_with_no_subject_is_refused() -> None:
@@ -644,7 +708,7 @@ def test_a_user_identity_with_no_subject_is_refused() -> None:
 
 	with pytest.raises(attachments.AttachmentError) as caught:
 		attachments.upload_outbound_attachments(
-			_NoSubject(), space="spaces/AAAA1", message="MSG-1", plan=attachments.OutboundPlan()
+			_NoSubject(), space="spaces/AAAA1", message="MSG-1", plan=_one_file_plan()
 		)
 	assert "subject" in str(caught.value)
 
