@@ -72,11 +72,25 @@ def setUpModule() -> None:
 		def delete_value(self, key, *args, **kwargs):
 			self.store.pop(key, None)
 
+	class _ThrowError(Exception):
+		pass
+
+	def throw(message, exc=None):
+		raise _ThrowError(message)
+
 	cache = _Cache()
 	frappe.session = _Session()
 	frappe.cache = lambda: cache
 	frappe.set_user = lambda user: setattr(frappe.session, "user", user)
 	frappe.utils = utils
+	# `triton_link` needs these at import and on its guard path.
+	frappe._ = lambda text: text
+	frappe.only_for = lambda *roles: None
+	frappe.throw = throw
+	frappe.ThrowError = _ThrowError
+	# The real decorator registers the function and returns it unchanged; only the second half
+	# matters here, and a stub that dropped it would make every whitelisted function `None`.
+	frappe.whitelist = lambda *args, **kwargs: (lambda fn: fn)
 
 	sys.modules["frappe"] = frappe
 	sys.modules["frappe.utils"] = utils
@@ -291,6 +305,65 @@ class StaleSessionRetryTest(unittest.TestCase):
 		with self.assertRaises(triton_client.TritonUnavailable):
 			triton_client.ask(user="a@b.c", question="q", context="", room="room4")
 
+		self.assertEqual(frappe.session.user, "Administrator")
+
+
+class BotCredentialTest(unittest.TestCase):
+	"""``triton_link``: the bot cannot click 'Link ERPNext', so it is credentialled by API key.
+
+	Only the parts that do not need the whole ``handler`` import graph. What is asserted is the
+	three-state answer, because collapsing it to a boolean is the specific mistake that was in
+	this code for about ten minutes and would have printed *re-credential this account* every
+	time the gateway hiccuped.
+	"""
+
+	def setUp(self):
+		from erpnext_enhancements.chat.invoke import triton_link
+
+		self.triton_link = triton_link
+		self._saved = triton_link._request
+
+	def tearDown(self):
+		self.triton_link._request = self._saved
+
+	def test_a_stored_credential_reads_as_true(self):
+		self.triton_link._request = lambda *a, **k: {"frappe_api_key_configured": True}
+		self.assertEqual(self.triton_link.remote_key_configured("bot@x.y"), (True, ""))
+
+	def test_a_missing_credential_reads_as_false(self):
+		self.triton_link._request = lambda *a, **k: {"frappe_api_key_configured": False}
+		self.assertEqual(self.triton_link.remote_key_configured("bot@x.y"), (False, ""))
+
+	def test_an_unreachable_triton_reads_as_unknown_not_missing(self):
+		"""``None``, never ``False``. The two send an admin to different screens."""
+		from erpnext_enhancements.chat.invoke import triton_client
+
+		def _boom(*a, **k):
+			raise triton_client.TritonUnavailable("Triton returned HTTP 502 for /p", status=502)
+
+		self.triton_link._request = _boom
+		stored, error = self.triton_link.remote_key_configured("bot@x.y")
+		self.assertIsNone(stored)
+		self.assertIn("502", error)
+		# The distinction the caller relies on, spelled out: `None` is falsy, so a caller that
+		# tests truthiness rather than identity gets the wrong answer silently.
+		self.assertIsNot(stored, False)
+
+	def test_an_unexpected_error_reports_only_its_class(self):
+		def _boom(*a, **k):
+			raise RuntimeError("a secret-shaped string")
+
+		self.triton_link._request = _boom
+		stored, error = self.triton_link.remote_key_configured("bot@x.y")
+		self.assertIsNone(stored)
+		self.assertEqual(error, "RuntimeError")
+
+	def test_the_session_user_is_restored_after_asking_as_the_bot(self):
+		import frappe
+
+		frappe.set_user("Administrator")
+		self.triton_link._request = lambda *a, **k: {"frappe_api_key_configured": True}
+		self.triton_link.remote_key_configured("bot@x.y")
 		self.assertEqual(frappe.session.user, "Administrator")
 
 
