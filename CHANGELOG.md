@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.280.1] - 2026-08-13
+
+### Changed
+
+- **`chat.health.report` now says why dead jobs died.** It reported `jobs dead: 3` with the note
+  *"gave up permanently; the two sides are divergent"* — accurate, and it sent us looking at
+  auth and space membership. The cause was in `last_error` on all three rows:
+  `messageId rejected: clientAssignedMessageId must begin with 'client-'`. A settled,
+  self-explaining, one-release-old fault, one column away from a line that said only "3".
+- Grouped by cause, so N jobs of one reason read as one finding rather than burying the rest of
+  the report. Capped at five, truncated at 200 characters. `auth_identity` is shown when the
+  column exists, since which identity a write was made as is now half the diagnosis.
+
+### Notes
+
+- **`last_error` is safe to print, and that is a property rather than a hope.** It is scrubbed
+  where it is written — `client.build_log_record` strips anything bearer-shaped, and the relay
+  never puts a message body in it. The soak report relies on the same guarantee.
+- **Third time today a report gave a count where the reason was one column away.** The digest
+  sweeper's `poisoned` rooms, the soak's dead jobs, and now this. The pattern is not "nobody
+  logged it" — every one of them had the reason on the row — it is a *renderer* that aggregated
+  the finding and dropped the evidence, which is what makes the resulting number so persuasive
+  and so useless.
+- A mutation test that looked like it proved the guard actually mutated the **wrong** line: the
+  same `if status == "Dead" and count:` appears twice, and `replace(..., 1)` hit the ALARM flag
+  rather than the new rows. Re-targeted; the guard does hold. Worth recording because a
+  mis-aimed mutation reports exactly what a weak assertion reports.
+
 ## [1.280.0] - 2026-08-13
 
 ### Added

@@ -326,6 +326,35 @@ def _collect_relay(data: dict[str, Any], errors: list[str], *, now: Any, room_fi
 		)
 	}
 
+	# --- why the dead ones died ----------------------------------------------------------
+	#
+	# A count of dead jobs with no reason beside it is the shape of report that reads as
+	# actionable and is not. Three of them today said `messageId rejected: … must begin with
+	# 'client-'` — a settled, self-explaining fault, one release old, sitting one column away
+	# from a line that said only "3" and "the two sides are divergent". The reason was in the
+	# row the whole time.
+	#
+	# **Safe to print.** `last_error` is scrubbed at the point it is written —
+	# `client.build_log_record` strips anything bearer-shaped and the relay never puts a message
+	# body in it — which is the same guarantee the soak report relies on. Truncated anyway at
+	# 200 characters: a report block is a thing people paste into tickets, and length is its own
+	# hazard.
+	#
+	# Grouped, because N jobs dead of one cause is one finding. Ungrouped, a room that
+	# dead-lettered forty messages for the same reason buries every other line in the report.
+	identity_col = ", auth_identity" if _has_column(_RELAY_JOB, "auth_identity") else ""
+	data["dead_reasons"] = _sql(
+		errors,
+		"dead relay job reasons",
+		f"""select count(*) as n, min(room) as room, operation{identity_col},
+				substring(coalesce(last_error, '(none recorded)'), 1, 200) as reason
+			from `tab{_RELAY_JOB}`
+			where status = 'Dead'{where_room}
+			group by operation{identity_col}, reason
+			order by n desc limit 5""",
+		params,
+	)
+
 	oldest = _sql(
 		errors,
 		"oldest Pending relay job",
@@ -616,6 +645,16 @@ def _render_queue(lines: list[str], data: dict[str, Any]) -> None:
 		elif status == "Failed" and count:
 			flag, note = _WARN, "- will retry; check attempts and last_error"
 		lines.append(_line(f"jobs {status.lower()}", f"{count} job(s)", flag, note))
+		if status == "Dead" and count:
+			for row in data.get("dead_reasons") or []:
+				identity = row.get("auth_identity")
+				lines.append(
+					_line(
+						f"  {_as_int(row.get('n'), 0)}x {row.get('operation') or '?'}"
+						+ (f" as {identity}" if identity else ""),
+						f"room {row.get('room')}: {row.get('reason')}",
+					)
+				)
 
 	due = _as_int(data.get("due_pending_count"), 0)
 	lines.append(_line("of which due now", f"{due} job(s)", "", "- available_at has passed"))
