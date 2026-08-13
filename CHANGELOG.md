@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.278.1] - 2026-08-13
+
+### Security
+
+- **`link_bot_credentials` now refuses an account holding `System Manager`, `Script Manager` or
+  `Administrator`, and the version shipped an hour ago would have caused a real escalation.**
+  On this deployment `Chat Settings.bot_user` points at `triton@sapphirefountains.com` — which
+  is *also* Triton's shared `FRAPPE_API_KEY` system account (`last_active` today, syncing sales,
+  projects, maintenance and the wiki), and holds System Manager. Credentialling "the bot" would
+  therefore have taken a **live System Manager API key** and stored it as a per-user credential
+  on the path a chat message can reach.
+- Nothing about that step looks dangerous, which is the point worth keeping: you are copying a
+  key that already exists to a service that already has one. The escalation is entirely in
+  *which account* the two identities happen to share, and it is invisible in the diff.
+- There is deliberately **no override flag** — the fix is a separate account with no roles, and
+  a boolean is one typo from being `True`. `bot_credential_status()` reports `unsafe_roles` even
+  when everything else is green, because "it works" is exactly the state in which nobody checks
+  what the credential can do.
+
+### Notes
+
+- **An API key is not an OAuth grant, and the difference lands on the account.** It does not
+  expire and the holder cannot rotate it, so the blast radius is whatever that user can do, for
+  as long as the key exists. Triton's own ADR 0004 keeps the shared key narrow *because* it is
+  unattributed; widening it to the chat path is the opposite of that.
+- The role check reads `frappe.get_roles`, not `tabHas Role`, so an account that is a System
+  Manager via a role profile is caught too. It **fails closed**: a lookup that raises reports
+  every unsafe role rather than none.
+
+## [1.278.0] - 2026-08-13
+
+### Added
+
+- **`chat/invoke/triton_link.py` — credentials the chat bot inside Triton, which cannot be done
+  the way a human does it.** `triton@sapphirefountains.com` is a Google **group**, not a mailbox
+  anyone can sign into, so the browser "Link ERPNext" flow that fixes `erpnext_link_required`
+  for a person has no session to run in and never will. Triton's `FrappeClient` documents a
+  per-user **API key/secret** fallback and honours it end to end (`Authorization: token
+  key:secret`, no refresh, no expiry), and the credential is written by `PUT
+  /api/v1/assistant/profile` — which takes a bearer token, and minting one for the bot is
+  machine-to-machine through the existing bridge. No browser anywhere in the chain.
+  - `link_bot_credentials()` pushes the bot's existing key, then **re-reads Triton to verify**.
+    A write that returned 200 and a write that is stored are not the same claim, and the
+    difference here is silent until a digest fails at 3am.
+  - `bot_credential_status()` answers from both sides, because either alone misleads: ERPNext
+    can see the key exists, Triton can see it stored one, and the state production was actually
+    in is *generated here, never sent there*.
+- Bench-free coverage for both, mutation-checked.
+
+### Changed
+
+- `chat/rollout.py`'s `summariser_ready` no longer means "can mint a token". Minting is
+  necessary and **not sufficient** — Triton builds its ERPNext client for the identity eagerly,
+  before the model runs, so an account it cannot call ERPNext back as fails every turn while
+  passing every check this report used to make. It now asks Triton what it holds, and prints the
+  exact command when the answer is no.
+
+### Notes
+
+- **`summariser_credential` is three-state, and that is load-bearing.** `True` stored, `False`
+  absent, `None` *could not ask*. Collapsing the last two prints "re-credential this account"
+  during a gateway outage — confidently, and at the worst possible moment. The first draft of
+  this had `bool(...)` in that path; a mutation test now fails if it comes back.
+- **Keys are never generated from code.** `frappe.core.doctype.user.user.generate_keys` resets
+  `api_secret` unconditionally and `save()`s the whole `User` — so it silently invalidates
+  whatever is already using the credential, and for a user carrying a role profile it rebuilds
+  roles from the profile and drops every directly-assigned one. Generation stays a deliberate
+  act in the Desk; this module only forwards what is already there.
+- **What this credential can do, stated rather than discovered.** An API key carries the ERPNext
+  user's own permissions — the same breadth the OAuth grant would have carried for the same
+  account, so this is not a widening. Two honest differences from OAuth: an API key does not
+  expire and does not rotate. The bot currently holds 83 roles, which is worth narrowing on the
+  **User** (where it applies to every path at once) rather than working around here.
 ## [1.277.17] - 2026-08-13
 
 ### Added
