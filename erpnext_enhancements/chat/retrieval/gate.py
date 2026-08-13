@@ -380,7 +380,7 @@ def _thread_messages(
 	rows = frappe.db.sql(
 		f"""
 		select `name`, `room`, `seq`, `sender`, `sender_email`, `text`, `thread_root`,
-			`creation`, `origin_timestamp`
+			`creation`, `gchat_create_time`
 		from {_MESSAGE_TABLE}
 		where `room` = %(room)s
 			and `room` in {rooms}
@@ -906,7 +906,7 @@ def _render(
 						ref=ref, room=str(payload.get("room") or ""), message=payload.get("name"), label=""
 					),
 					author=str(payload.get("sender") or payload.get("sender_email") or ""),
-					timestamp=str(payload.get("origin_timestamp") or payload.get("creation") or ""),
+					timestamp=str(payload.get("gchat_create_time") or payload.get("creation") or ""),
 					body=str(payload.get("text") or ""),
 				)
 			)
