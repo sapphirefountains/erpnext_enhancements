@@ -933,6 +933,40 @@ function stripComments(source) {
 	}
 }
 
+/*
+ * The stylesheet's comments are balanced.
+ *
+ * esbuild only *warns* on a CSS syntax error and emits the bundle anyway, so a broken comment
+ * ships. That is not hypothetical: an edit closed one comment early and left six lines of prose
+ * sitting outside any comment, directly above the heading-colour rule. The build printed two
+ * warnings, the bundle was produced, the hash changed, and the rule that follows an unparsable
+ * run is exactly the kind a recovering parser drops.
+ *
+ * A count of `/*` against `*\/` catches it, and so does the stronger check: stripping every
+ * well-formed comment must leave neither delimiter behind.
+ */
+{
+	const cssPath = path.join(ROOT, 'erpnext_enhancements', 'public', 'css', 'chat.bundle.css');
+	const raw = must(cssPath);
+
+	const opens = (raw.match(/\/\*/g) || []).length;
+	const closes = (raw.match(/\*\//g) || []).length;
+	const residue = raw.replace(/\/\*[\s\S]*?\*\//g, '');
+
+	if (opens !== closes) {
+		fail(`chat.bundle.css has ${opens} comment openers and ${closes} closers.`);
+	} else if (residue.includes('*/') || residue.includes('/*')) {
+		const line = raw.slice(0, raw.search(/\*\//)).split('\n').length;
+		fail(
+			'chat.bundle.css has a comment delimiter outside any comment (near line ' + line + '). ' +
+			'esbuild only warns about this and still emits the bundle, so it reaches production ' +
+			'as unparsable CSS and takes the next rule with it.'
+		);
+	} else {
+		pass(`the stylesheet's comments are balanced (${opens} blocks)`);
+	}
+}
+
 console.log('');
 if (failures) {
 	console.error(failures + ' assertion(s) failed');
