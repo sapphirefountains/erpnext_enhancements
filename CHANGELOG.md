@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.12] - 2026-08-13
+
+### Added
+
+- **`Chat Settings.bot_user`** — the ERPNext User that Triton's replies are posted as, split
+  out of `chat_app_service_account`. A `Link` to `User`, in the Rollout section.
+- `patches/set_chat_bot_user.py`, registered in `patches.txt` and on both hooks, populating the
+  new field with exactly what the old resolver returned.
+
+### Changed
+
+- `handler._bot_user()` reads `bot_user` and nothing else, raising a message that names the
+  field when it is empty.
+- `chat_app_service_account`'s description no longer claims the reply job. It is the Chat app's
+  **Google** service account — the JWT issuer `gchat/auth.py` authenticates with.
+
+### Notes
+
+- **One field held two identities, and the one that worked was the fallback.**
+  `chat_app_service_account` is a Google service account, so it can never name an ERPNext User;
+  the lookup always missed and replies worked only because the next line hard-coded
+  `triton@sapphirefountains.com`. Correct output, for a reason nobody could read off the field.
+- It surfaced through the summariser, which borrowed the same resolution and handed the Google
+  service account to Triton's bridge — answered, correctly, with `rejected non-domain email`.
+- **The patch is the point, not a convenience.** The new field is empty on every existing site
+  and `_bot_user` now raises on empty by design, so without it the split would take `@triton`
+  down on deploy. A split that needs a manual step to avoid an outage is not a split, it is a
+  trap with documentation.
+- It is registered in `patches.txt` rather than only on `after_migrate` because patches run
+  **before** `sync_fixtures`, and `sync_fixtures` is the half currently dying on this
+  deployment — an `after_migrate` hook is exactly the part that would not run.
+
 ## [1.277.11] - 2026-08-11
 
 ### Fixed

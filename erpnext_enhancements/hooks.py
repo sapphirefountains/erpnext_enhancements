@@ -983,6 +983,10 @@ after_install = [
 	# the Phase 5 dials read 0 on any pre-existing site and validation refused every save
 	# of the settings page. Fills missing rows only. Safe twice.
 	"erpnext_enhancements.patches.backfill_chat_settings_defaults.backfill_chat_settings_defaults",
+	# Splitting the bot User off the Google service-account field leaves the new field empty
+	# on every existing site, and _bot_user raises on empty by design. Freezes the old
+	# resolver's answer into data so the split does not take @triton down. Safe twice.
+	"erpnext_enhancements.patches.set_chat_bot_user.set_chat_bot_user",
 	# Phase 4's Notification Type records. Notification Log.type is a LINK on v16, so
 	# without these two rows every chat bell notification fails link validation on insert --
 	# one Error Log per message and a bell that never lights.
@@ -1145,6 +1149,10 @@ after_migrate = [
 	# the Phase 5 dials read 0 on any pre-existing site and validation refused every save
 	# of the settings page. Fills missing rows only. Safe twice.
 	"erpnext_enhancements.patches.backfill_chat_settings_defaults.backfill_chat_settings_defaults",
+	# Splitting the bot User off the Google service-account field leaves the new field empty
+	# on every existing site, and _bot_user raises on empty by design. Freezes the old
+	# resolver's answer into data so the split does not take @triton down. Safe twice.
+	"erpnext_enhancements.patches.set_chat_bot_user.set_chat_bot_user",
 	# chat Phase 4 (notifications): the two `Notification Type` records, plus the presence
 	# retune. Both need the after_migrate half specifically, for opposite reasons.
 	#
