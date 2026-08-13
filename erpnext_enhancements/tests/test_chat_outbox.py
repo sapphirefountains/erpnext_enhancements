@@ -1887,3 +1887,93 @@ def test_the_auth_identity_backfill_is_registered_and_cannot_overrule_the_writer
 		"the backfill must not touch In Progress: a worker has already read that row and built "
 		"its client, so changing the identity underneath it makes the two disagree."
 	)
+
+
+# --------------------------------------------------------------------------------------
+# The report says WHY a job is dead (v1.279.4)
+# --------------------------------------------------------------------------------------
+#
+# Lives in this file rather than its own: `_render_queue` is the relay-queue section of the
+# report, this is the relay-queue suite, and a new bench-free suite means a new CI step whose
+# only job would be one assertion. `chat/health.py` imports nothing this suite's stub does not
+# already provide.
+
+
+def test_the_report_names_why_dead_jobs_died() -> None:
+	"""A count with no reason reads as actionable and is not.
+
+	Production reported `jobs dead: 3` with the note "the two sides are divergent" — true, and
+	it sent us looking at auth and space membership. The actual cause was sitting in
+	`last_error` on all three rows: a settled, self-explaining, one-release-old client-id
+	prefix rejection. The number was right; the silence next to it was the defect.
+	"""
+	from erpnext_enhancements.chat import health
+
+	lines: list[str] = []
+	health._render_queue(
+		lines,
+		{
+			"relay_ready": True,
+			"relay_by_status": {"Dead": 3},
+			"dead_reasons": [
+				{
+					"n": 3,
+					"room": "e0c9csbl5k",
+					"operation": "Message Create",
+					"auth_identity": "USER",
+					"reason": "ValueError: messageId rejected: must begin with 'client-'",
+				}
+			],
+			"due_pending_count": 0,
+			"oldest_pending": None,
+			"oldest_pending_age": None,
+			"oldest_due_pending": None,
+			"oldest_due_pending_age": None,
+			"expired_lease_count": 0,
+			"expired_leases": [],
+			"inbound_by_status": {},
+			"oldest_inbound_age": None,
+			"lease_column": True,
+		},
+	)
+	text = "\n".join(lines)
+
+	assert "must begin with 'client-'" in text, "the reason must reach the report"
+	assert "3x Message Create" in text, "identical causes are grouped, so N jobs read as one finding"
+	assert "as USER" in text, "which identity it was written as is half the diagnosis now"
+	assert "e0c9csbl5k" in text
+
+
+def test_a_dead_job_with_no_recorded_error_still_prints_a_row() -> None:
+	"""Silence must be reported as silence, not as an absent section.
+
+	A dead job whose `last_error` never got written is a *worse* finding than one with a
+	reason, and the shape that hides it is a renderer that skips falsy rows.
+	"""
+	from erpnext_enhancements.chat import health
+
+	lines: list[str] = []
+	health._render_queue(
+		lines,
+		{
+			"relay_ready": True,
+			"relay_by_status": {"Dead": 1},
+			"dead_reasons": [
+				{"n": 1, "room": "r1", "operation": "Message Delete", "reason": "(none recorded)"}
+			],
+			"due_pending_count": 0,
+			"oldest_pending": None,
+			"oldest_pending_age": None,
+			"oldest_due_pending": None,
+			"oldest_due_pending_age": None,
+			"expired_lease_count": 0,
+			"expired_leases": [],
+			"inbound_by_status": {},
+			"oldest_inbound_age": None,
+			"lease_column": True,
+		},
+	)
+	text = "\n".join(lines)
+	assert "(none recorded)" in text
+	# No `auth_identity` key at all — a site that has not migrated must render, not crash.
+	assert "as None" not in text and "as USER" not in text
