@@ -599,3 +599,10 @@ erpnext_enhancements.patches.backfill_chat_settings_defaults
 # In patches.txt rather than only on after_migrate because patches run BEFORE sync_fixtures,
 # and sync_fixtures is the half currently dying on this deployment. Safe twice.
 erpnext_enhancements.patches.set_chat_bot_user
+
+# Stamps APP on the Triton replies already queued when Chat Relay Job.auth_identity arrived in
+# v1.279.0. That release defaulted an empty column to USER on the stated grounds that every job
+# in flight was a coworker mirror - true of most of them and false of exactly the ones the
+# release was written to unblock, which sit deferred against a membership row the app will never
+# have. Only fills empty values, only Pending/Failed, never rewrites a USER. Safe twice.
+erpnext_enhancements.patches.backfill_relay_auth_identity

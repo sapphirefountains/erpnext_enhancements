@@ -1859,3 +1859,31 @@ def test_an_unknown_or_missing_origin_defaults_to_the_human() -> None:
 	"""
 	for origin in ("", None, "Something New"):
 		assert outbox.auth_identity_for_origin(origin) == states.AUTH_IDENTITY_USER
+
+
+def test_the_auth_identity_backfill_is_registered_and_cannot_overrule_the_writer() -> None:
+	"""The patch that unblocks the replies queued before ``auth_identity`` existed.
+
+	Two properties, and the second is the one worth a test rather than a code review:
+
+	* it is in ``patches.txt`` — an unregistered patch is a file, not a migration;
+	* its Triton update is guarded on the column being **empty**, so it can only ever fill a
+	  row nobody decided. A backfill able to rewrite a ``USER`` is a backfill able to
+	  re-attribute a coworker's own message to the app, which is the single outcome CQ-1
+	  exists to prevent — and it would do it to a whole queue at once, on deploy, silently.
+	"""
+	root = pathlib.Path(__file__).resolve().parents[1]
+	registered = (root / "patches.txt").read_text(encoding="utf-8")
+	assert "erpnext_enhancements.patches.backfill_relay_auth_identity" in registered
+
+	source = (root / "patches" / "backfill_relay_auth_identity.py").read_text(encoding="utf-8")
+	triton_update = source.split("set j.`auth_identity` = 'APP'", 1)[1].split('"""', 1)[0]
+	assert "coalesce(j.`auth_identity`, '') = ''" in triton_update
+	assert "'USER'" not in triton_update, (
+		"the Triton backfill's WHERE clause mentions USER. It must match only rows with an "
+		"EMPTY identity — anything else can overrule a decision the writer already made."
+	)
+	assert "j.`status` in ('Pending', 'Failed')" in triton_update, (
+		"the backfill must not touch In Progress: a worker has already read that row and built "
+		"its client, so changing the identity underneath it makes the two disagree."
+	)
