@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.278.1] - 2026-08-13
+
+### Security
+
+- **`link_bot_credentials` now refuses an account holding `System Manager`, `Script Manager` or
+  `Administrator`, and the version shipped an hour ago would have caused a real escalation.**
+  On this deployment `Chat Settings.bot_user` points at `triton@sapphirefountains.com` — which
+  is *also* Triton's shared `FRAPPE_API_KEY` system account (`last_active` today, syncing sales,
+  projects, maintenance and the wiki), and holds System Manager. Credentialling "the bot" would
+  therefore have taken a **live System Manager API key** and stored it as a per-user credential
+  on the path a chat message can reach.
+- Nothing about that step looks dangerous, which is the point worth keeping: you are copying a
+  key that already exists to a service that already has one. The escalation is entirely in
+  *which account* the two identities happen to share, and it is invisible in the diff.
+- There is deliberately **no override flag** — the fix is a separate account with no roles, and
+  a boolean is one typo from being `True`. `bot_credential_status()` reports `unsafe_roles` even
+  when everything else is green, because "it works" is exactly the state in which nobody checks
+  what the credential can do.
+
+### Notes
+
+- **An API key is not an OAuth grant, and the difference lands on the account.** It does not
+  expire and the holder cannot rotate it, so the blast radius is whatever that user can do, for
+  as long as the key exists. Triton's own ADR 0004 keeps the shared key narrow *because* it is
+  unattributed; widening it to the chat path is the opposite of that.
+- The role check reads `frappe.get_roles`, not `tabHas Role`, so an account that is a System
+  Manager via a role profile is caught too. It **fails closed**: a lookup that raises reports
+  every unsafe role rather than none.
+
 ## [1.278.0] - 2026-08-13
 
 ### Added

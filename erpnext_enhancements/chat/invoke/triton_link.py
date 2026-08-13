@@ -72,6 +72,33 @@ from frappe.utils import cint
 #: never the credential — which is what makes the write verifiable from here.
 PROFILE_PATH: str = "/api/v1/assistant/profile"
 
+#: Roles that make an ERPNext API key too powerful to hand to a chat path.
+#:
+#: **This guard exists because the first version of this module would have caused a real
+#: privilege escalation, and it looked like configuration.** On this deployment
+#: ``Chat Settings.bot_user`` pointed at ``triton@sapphirefountains.com`` — which is *also*
+#: Triton's shared ``FRAPPE_API_KEY`` system account, holds **System Manager**, and is actively
+#: syncing. Credentialling "the bot" would therefore have taken a live System Manager API key
+#: and stored it as a per-user credential on the path a chat message can reach. Nothing about
+#: that step looks dangerous: you are copying a key that already exists to a service that
+#: already has one.
+#:
+#: An API key does not expire and does not rotate, which is exactly why the account behind one
+#: matters more than it would for an OAuth grant. Triton's own ADR 0004 says the shared key is
+#: "the weak point — keep its use narrow"; widening it to the chat path is the opposite.
+#:
+#: There is deliberately **no override flag**. The fix is a separate account with no roles,
+#: which takes a minute, and a boolean is one typo from being ``True``.
+UNSAFE_BOT_ROLES: frozenset[str] = frozenset(
+	{
+		"System Manager",
+		# Server Scripts are arbitrary code execution in the site's own process. This is not
+		# hypothetical here: the 2026-08-02 intrusion planted miner Server Scripts.
+		"Script Manager",
+		"Administrator",
+	}
+)
+
 
 @frappe.whitelist()
 def bot_credential_status() -> dict[str, Any]:
@@ -99,6 +126,9 @@ def bot_credential_status() -> dict[str, Any]:
 		"erpnext_api_key": bool(api_key),
 		"erpnext_api_secret": has_secret,
 		"erpnext_oauth_link": has_erpnext_link(bot),
+		#: Reported even when everything else is green, because "it works" is exactly the state
+		#: in which nobody looks at what the credential can do.
+		"unsafe_roles": unsafe_roles(bot),
 		"triton_reports_key": remote,
 		"triton_error": remote_error,
 		"ready": bool(api_key) and has_secret and remote is True,
@@ -135,6 +165,19 @@ def link_bot_credentials() -> dict[str, Any]:
 			).format(bot)
 		)
 
+	unsafe = unsafe_roles(bot)
+	if unsafe:
+		frappe.throw(
+			_(
+				"Refusing to credential {0} for Triton: it holds {1}. An ERPNext API key carries "
+				"that account's full permissions, does not expire and cannot be rotated by the "
+				"holder — so this would put a privileged, non-expiring credential on the path a "
+				"chat message can reach. Point Chat Settings → Bot User at a dedicated account "
+				"with no roles, generate its API key, add it to Triton Assistant Settings → "
+				"Allowed Users, and run this again."
+			).format(bot, ", ".join(unsafe))
+		)
+
 	secret = _erpnext_api_secret(bot)
 	_as_bot(
 		bot,
@@ -151,6 +194,22 @@ def link_bot_credentials() -> dict[str, Any]:
 # --------------------------------------------------------------------------------------
 # internals
 # --------------------------------------------------------------------------------------
+
+
+def unsafe_roles(user: str) -> list[str]:
+	"""Which of :data:`UNSAFE_BOT_ROLES` ``user`` holds. Sorted, so the message is stable.
+
+	Reads ``frappe.get_roles`` rather than ``tabHas Role`` directly: role profiles and the
+	implicit roles are part of the answer, and a check that missed them would pass an account
+	that is a System Manager by another route.
+	"""
+	if not user:
+		return []
+	try:
+		return sorted(set(frappe.get_roles(user)) & UNSAFE_BOT_ROLES)
+	except Exception:
+		# Cannot tell — treat as unsafe by naming the condition, never by returning "clean".
+		return sorted(UNSAFE_BOT_ROLES)
 
 
 def remote_key_configured(bot: str) -> tuple[bool | None, str]:

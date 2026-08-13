@@ -318,13 +318,23 @@ class BotCredentialTest(unittest.TestCase):
 	"""
 
 	def setUp(self):
+		import frappe
+
 		from erpnext_enhancements.chat.invoke import triton_link
 
 		self.triton_link = triton_link
 		self._saved = triton_link._request
+		self._saved_roles = getattr(frappe, "get_roles", None)
 
 	def tearDown(self):
+		import frappe
+
 		self.triton_link._request = self._saved
+		if self._saved_roles is None:
+			if hasattr(frappe, "get_roles"):
+				del frappe.get_roles
+		else:
+			frappe.get_roles = self._saved_roles
 
 	def test_a_stored_credential_reads_as_true(self):
 		self.triton_link._request = lambda *a, **k: {"frappe_api_key_configured": True}
@@ -365,6 +375,61 @@ class BotCredentialTest(unittest.TestCase):
 		self.triton_link._request = lambda *a, **k: {"frappe_api_key_configured": True}
 		self.triton_link.remote_key_configured("bot@x.y")
 		self.assertEqual(frappe.session.user, "Administrator")
+
+	def test_a_privileged_account_is_named_as_unsafe(self):
+		"""The escalation guard.
+
+		The account this shipped pointing at is *also* Triton's shared system key and holds
+		System Manager, so credentialling "the bot" would have put a live System Manager API key
+		— non-expiring, unrotatable — on the path a chat message can reach. It reads like
+		copying a key that already exists to a service that already has one.
+		"""
+		import frappe
+
+		frappe.get_roles = lambda user: ["Sales User", "System Manager", "Script Manager"]
+		self.assertEqual(
+			self.triton_link.unsafe_roles("bot@x.y"), ["Script Manager", "System Manager"]
+		)
+
+	def test_an_account_with_ordinary_roles_is_clean(self):
+		import frappe
+
+		frappe.get_roles = lambda user: ["Sales User", "Projects User"]
+		self.assertEqual(self.triton_link.unsafe_roles("bot@x.y"), [])
+
+	def test_linking_a_privileged_account_is_refused_outright(self):
+		"""And refused *before* the credential is read, let alone transmitted."""
+		import frappe
+
+		triton_link = self.triton_link
+		frappe.get_roles = lambda user: ["System Manager"]
+		triton_link._bot_user = lambda: "triton@x.y"
+		triton_link._erpnext_credential = lambda user: ("KEY", True)
+		read = []
+		triton_link._erpnext_api_secret = lambda user: read.append(user) or "SECRET"
+		self.triton_link._request = lambda *a, **k: self.fail("must not reach Triton")
+
+		try:
+			with self.assertRaises(frappe.ThrowError) as caught:
+				triton_link.link_bot_credentials()
+			self.assertIn("System Manager", str(caught.exception))
+			self.assertEqual(read, [], "the secret must not even be decrypted on a refused link")
+		finally:
+			for name in ("_bot_user", "_erpnext_credential", "_erpnext_api_secret"):
+				delattr(triton_link, name)
+
+	def test_an_unanswerable_role_lookup_is_treated_as_unsafe(self):
+		"""Fails closed. "I could not check" must never read as "nothing to worry about"."""
+		import frappe
+
+		def _boom(user):
+			raise RuntimeError("no db")
+
+		frappe.get_roles = _boom
+		self.assertEqual(
+			self.triton_link.unsafe_roles("bot@x.y"),
+			sorted(self.triton_link.UNSAFE_BOT_ROLES),
+		)
 
 
 if __name__ == "__main__":
