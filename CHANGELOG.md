@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.280.8] - 2026-08-13
+
+### Fixed
+
+- **A room whose provisioning permanently failed accumulated an undrainable queue, forever.**
+  `_require_space` deferred on any room with no space, saying *"provisioning has not
+  completed"* — which reads as *in progress*. But `provisioning_state = Failed` is **terminal**:
+  `sweep_pending_provisioning` selects only `Pending` and `Provisioning`, so nothing retries it
+  and no space will ever appear. The job waited, the sweeper re-deferred it every pass, and
+  every later message in the room queued behind it under Rule 1.
+- Such a job is now **skipped terminally**, carrying the room's own `provisioning_error`. `Skip`
+  rather than a dead letter because the fault is the *room*, not the message — the report
+  already ALARMs on a room in `Failed`, and one alarm per stuck message would bury it. Nothing
+  is lost: the ERPNext message is intact and readable either way.
+- `chat.health.report` now prints the room's `provisioning_error` under a non-Ready state, and
+  says `terminal; nothing retries this` rather than `nothing relays until the space exists` when
+  the state is `Failed`.
+
+### Notes
+
+- **Found within an hour of the DM feature being used.** A Direct Message whose peer was
+  `triton@sapphirefountains.com` — a Google **group** — failed `spaces.setup` with
+  `INVALID_ARGUMENT: Invalid membership state, user, or request ID`. A group cannot be a DM
+  member, so that room can never be mirrored, and three messages were queued behind it.
+- **The reason was one column away again.** `provisioning_error` held Google's verbatim
+  complaint while the queue reported "provisioning has not completed". That is the fourth
+  report today whose green-or-waiting line was hiding an adjacent column that named the fault.
+- The distinction cuts both ways and both are tested: a room in `Pending` still defers, with
+  `attempts` untouched, because a deferral is not an attempt.
+
 ## [1.280.7] - 2026-08-13
 
 ### Fixed

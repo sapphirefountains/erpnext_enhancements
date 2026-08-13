@@ -498,6 +498,7 @@ def _collect_rooms(
 		errors,
 		"room metadata",
 		f"""select name, title, room_type, provisioning_state, gchat_space_name,
+				substring(coalesce(provisioning_error, ''), 1, 200) as provisioning_error,
 				ifnull(is_archived, 0) as is_archived, last_message_at
 			from `tab{_ROOM}` where name in ({placeholders})""",
 		tuple(names),
@@ -759,9 +760,19 @@ def _render_rooms(lines: list[str], data: dict[str, Any]) -> None:
 					"  provisioning state",
 					state,
 					_ALARM if state == "Failed" else _WARN,
-					"- nothing relays until the space exists",
+					# `Failed` is terminal — `sweep_pending_provisioning` selects only `Pending`
+					# and `Provisioning` — so "not yet" is the wrong thing to tell an operator
+					# about it. Nothing will relay here again without a human.
+					"- terminal; nothing retries this and no space will appear"
+					if state == "Failed"
+					else "- nothing relays until the space exists",
 				)
 			)
+			# The reason, which sat one column away in `provisioning_error` while three
+			# messages queued behind this room saying only "provisioning has not completed".
+			reason = str(meta.get("provisioning_error") or "")
+			if reason:
+				lines.append(_line("    why", reason))
 		else:
 			lines.append(_line("  provisioning state", state, _OK))
 		lines.append(

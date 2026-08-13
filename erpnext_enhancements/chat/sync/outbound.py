@@ -135,6 +135,11 @@ CHAT_MESSAGE: Final[str] = "Chat Message"
 CHAT_ROOM: Final[str] = "Chat Room"
 CHAT_ROOM_MEMBER: Final[str] = "Chat Room Member"
 
+#: ``Chat Room.provisioning_state`` when provisioning gave up. Restated here rather than
+#: imported from ``chat.sync.provisioning``: ``tests/test_chat_guardrails.py`` asserts the
+#: write path cannot reach that module transitively, and this is the write path.
+PROVISIONING_FAILED: Final[str] = "Failed"
+
 #: How far forward a Rule 1 / dependency / bucket deferral pushes ``available_at``.
 #: Short, because these are all "come back in a moment" conditions and the row is not
 #: consuming anything while it waits. Long enough that a wedged room does not spin.
@@ -870,13 +875,48 @@ def _require_space(room: str) -> str:
 	against the 60-space-writes-per-minute project bucket, with no row to retry from if it
 	half-succeeded. So the message waits, visibly, and says what it is waiting for.
 	"""
-	space = frappe.db.get_value(CHAT_ROOM, room, "gchat_space_name") or ""
-	if not space:
-		raise Deferred(
-			f"room {room} has no gchat_space_name yet; provisioning has not completed",
-			seconds=DEPENDENCY_DEFER_SECONDS,
+	row = (
+		frappe.db.get_value(
+			CHAT_ROOM,
+			room,
+			["gchat_space_name", "provisioning_state", "provisioning_error"],
+			as_dict=True,
 		)
-	return str(space)
+		or {}
+	)
+	space = str(row.get("gchat_space_name") or "")
+	if space:
+		return space
+
+	# --- "not yet" and "never" are different answers ---------------------------------------
+	#
+	# `provisioning_state = Failed` is **terminal**: `sweep_pending_provisioning` selects only
+	# `Pending` and `Provisioning`, so nothing ever retries it and no space will ever appear.
+	# Deferring against it is a promise the system cannot keep — the job waits, the sweeper
+	# re-defers it every pass, and every later message in the room queues behind it under Rule
+	# 1, forever.
+	#
+	# Production hit this within an hour of the DM feature being used: a Direct Message whose
+	# peer was a Google *group* failed `spaces.setup` with `INVALID_ARGUMENT` (a group cannot be
+	# a DM member), and three messages sat deferring behind it saying "provisioning has not
+	# completed" — which reads as *in progress*. It had completed. It had failed.
+	#
+	# So it is skipped, terminally, carrying the room's own `provisioning_error`. `Skip` rather
+	# than a dead letter because the fault is the **room**, not this message: the health report
+	# already ALARMs on a room in `Failed`, and one alarm per stuck message would bury it.
+	# Nothing is lost either way — the ERPNext message is intact and readable.
+	state = str(row.get("provisioning_state") or "")
+	if state == PROVISIONING_FAILED:
+		reason = str(row.get("provisioning_error") or "no reason was recorded")
+		raise Skip(
+			f"room {room} will not be mirrored: provisioning failed and is not retried. {reason}"
+		)
+
+	raise Deferred(
+		f"room {room} has no gchat_space_name yet; provisioning has not completed "
+		f"(state={state or 'unset'})",
+		seconds=DEPENDENCY_DEFER_SECONDS,
+	)
 
 
 def _identity_of(job: Mapping[str, Any]) -> str:
