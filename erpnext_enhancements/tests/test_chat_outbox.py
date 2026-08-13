@@ -38,6 +38,7 @@ import copy
 import html
 import importlib.util
 import json
+import pathlib
 import re
 import sys
 import types
@@ -899,6 +900,13 @@ def test_job_seq_allocation_takes_the_room_row_lock() -> None:
 	)
 
 
+#: `frappe.enqueue`'s own keyword arguments. Everything else in the call is forwarded to the
+#: worker verbatim, which is what makes a wrong name a TypeError rather than a no-op.
+_ENQUEUE_OPTIONS = frozenset(
+	{"queue", "timeout", "enqueue_after_commit", "job_id", "deduplicate", "is_async", "now", "at_front"}
+)
+
+
 def test_the_enqueue_is_after_commit_and_deduplicated_by_job_id() -> None:
 	send(text="hello")
 
@@ -917,7 +925,34 @@ def test_the_enqueue_is_after_commit_and_deduplicated_by_job_id() -> None:
 	)
 	assert call["deduplicate"] is True
 	assert call["job_id"], "deduplicate=True REQUIRES job_id and frappe.enqueue throws without it"
-	assert call["job"] == relay_jobs()[0]["name"]
+	# The kwarg is asserted against the WORKER'S SIGNATURE, not against a literal.
+	#
+	# This said `call["job"]`, matching a comment in outbox.py — while the worker has always
+	# been `run_relay_job(job_name: str)`. So every enqueue died with TypeError before doing
+	# anything, and this test stayed green because it was checking the enqueue against the
+	# same wrong belief the enqueue was written from. A test that restates the code's
+	# assumption cannot detect that the assumption is false; it has to reach the other side.
+	#
+	# Nothing noticed for weeks because the sweeper, not the queue, is the delivery guarantee
+	# — messages went out one sweep late and looked fine.
+	# Read from the worker's SOURCE rather than imported: this suite runs on a frappe stub, and
+	# importing `outbound` pulls in the real framework. Source-level is also how the other
+	# cross-module guards here work, and it is enough — the point is to consult the other side
+	# of the contract instead of restating this side of it.
+	import re
+
+	worker_src = (
+		pathlib.Path(__file__).resolve().parent.parent / "chat" / "sync" / "outbound.py"
+	).read_text(encoding="utf-8")
+	match = re.search(r"^def run_relay_job\(\s*(\w+)", worker_src, re.M)
+	assert match, "run_relay_job has moved or changed shape; this guard needs updating"
+	parameter = match.group(1)
+	assert parameter in call, (
+		f"the enqueue passes {sorted(k for k in call if k not in _ENQUEUE_OPTIONS)!r} but the "
+		f"worker takes {parameter!r}. frappe.enqueue forwards kwargs verbatim, so this is a "
+		"TypeError on every job — and one that only shows up in the Error Log of a worker."
+	)
+	assert call[parameter] == relay_jobs()[0]["name"]
 
 
 def test_a_send_also_schedules_the_notification_fan_out_exactly_once() -> None:

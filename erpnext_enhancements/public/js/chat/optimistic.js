@@ -56,7 +56,12 @@ export function newClientMessageId() {
 			return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
 		});
 	}
-	return "spa-" + uuid;
+	// `client-`, not `spa-`, because this id becomes Google Chat's clientAssignedMessageId
+	// when the message is mirrored, and Google requires that prefix. Ours was rejected by our
+	// own pre-flight check before the request was sent, which dead-lettered every outbound
+	// mirror as non-retryable — messages_relayed sat at 0 while ERPNext looked perfectly fine.
+	// The prefix is not matched on anywhere; it is a namespace, and Google gets to name it.
+	return "client-" + uuid;
 }
 
 /**

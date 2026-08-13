@@ -184,7 +184,9 @@ OPERATION_MESSAGE_DELETE: Final[str] = "Message Delete"
 #: The relay worker's dotted path. A string rather than an import: importing
 #: :mod:`erpnext_enhancements.chat.sync.outbound` here would pull the Google transport into
 #: the module that document events load, which is exactly what the AST guard forbids.
-#: ``outbound.run_relay_job(job: str)`` is the agreed entry point.
+#: ``outbound.run_relay_job(job_name: str)`` is the agreed entry point. The signature is
+#: copied from the worker deliberately: this comment said ``job:`` while the function said
+#: ``job_name:``, and the enqueue below was written from the comment.
 RELAY_WORKER_PATH: Final[str] = "erpnext_enhancements.chat.sync.outbound.run_relay_job"
 
 #: ``long``, not ``default``: a relay attempt is an HTTP call to Google with a 30-second
@@ -1381,7 +1383,10 @@ def enqueue_relay_job(job: str) -> None:
 			enqueue_after_commit=True,
 			job_id=relay_job_id(job),
 			deduplicate=True,
-			job=job,
+			# `job_name`, matching the worker's signature. This said `job=` and every enqueue
+			# died with TypeError before doing anything — invisible because the sweeper, not
+			# the queue, is the delivery guarantee, so messages still went out one sweep late.
+			job_name=job,
 		)
 	except Exception as exc:
 		frappe.log_error(

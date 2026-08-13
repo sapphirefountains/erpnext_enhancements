@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.13] - 2026-08-13
+
+Three faults found by the first real `@triton` round trip. **The mention itself worked** —
+retrieval, the model turn under the asking person's identity, and the in-thread reply all ran.
+These are what surrounded it.
+
+### Fixed
+
+- **No message had ever been mirrored to Google.** The SPA's client message id began `spa-`;
+  Google requires `clientAssignedMessageId` to begin with `client-`. Our own pre-flight check
+  rejected it before the request was sent, so every mirror dead-lettered as non-retryable with
+  `messages_relayed` sitting at 0. The prefix is a namespace and is matched on nowhere.
+- **Every relay enqueue died with `TypeError`.** `outbox.py` passed `job=`; the worker is
+  `run_relay_job(job_name: str)`. Invisible in behaviour because the **sweeper, not the queue,
+  is the delivery guarantee** — messages went out one sweep late and looked fine.
+- **No notification row was ever written.** `bell.py` passed the sender's *display name* to
+  `from_user`, which is a `Link` to `User`, so every insert failed link validation with
+  `Could not find From User: Triton`. The label stays correct for the subject line; one value
+  cannot be both, so `sender_user` now carries the id.
+
+### Notes
+
+- **The test asserted the bug.** `test_the_enqueue_is_after_commit_and_deduplicated_by_job_id`
+  checked `call["job"]` — the same wrong belief the enqueue was written from, which came from a
+  comment in `outbox.py` that stated the worker's signature incorrectly. A test that restates
+  the code's assumption cannot discover the assumption is false. It now reads the worker's real
+  parameter name from source and asserts against that; reverting the fix makes it fail with the
+  name mismatch spelled out.
+- Three of these are one value standing in for another — a display name for a key, a namespace
+  Google owns, a keyword copied from prose. None is visible in a diff, and each needs the other
+  side of a boundary to notice.
+
 ## [1.277.12] - 2026-08-13
 
 ### Added

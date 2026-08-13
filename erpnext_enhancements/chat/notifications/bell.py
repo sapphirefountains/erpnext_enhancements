@@ -150,6 +150,7 @@ def notify_room(
 	room: str,
 	room_label: str,
 	sender_label: str,
+	sender_user: str = "",
 	message: str | None = None,
 ) -> bool:
 	"""One bell row saying "this conversation wants you". Returns whether a row was written.
@@ -165,7 +166,11 @@ def notify_room(
 		document_name=room,
 		subject=frappe._("New messages in {0}").format(room_label or room),
 		link=links.build_message_deep_link(room, message=message),
-		from_user=sender_label,
+		# The User ID, never `sender_label` — `from_user` is a Link and a display name is not
+		# a key. It was the label, so every row failed link validation with "Could not find
+		# From User: Triton" and no bell was ever written. The label is still correct for the
+		# subject line above; one value cannot be both.
+		from_user=sender_user,
 		dedupe_unread=True,
 	)
 
@@ -177,6 +182,7 @@ def notify_mention(
 	room_label: str,
 	message: str,
 	sender_label: str,
+	sender_user: str = "",
 ) -> bool:
 	"""One bell row for a direct mention. Per message, and deliberately so.
 
@@ -197,7 +203,11 @@ def notify_mention(
 		document_name=message,
 		subject=frappe._("{0} mentioned you in {1}").format(sender_label, room_label or room),
 		link=links.build_message_deep_link(room, message=message),
-		from_user=sender_label,
+		# The User ID, never `sender_label` — `from_user` is a Link and a display name is not
+		# a key. It was the label, so every row failed link validation with "Could not find
+		# From User: Triton" and no bell was ever written. The label is still correct for the
+		# subject line above; one value cannot be both.
+		from_user=sender_user,
 		dedupe_unread=False,
 	)
 
