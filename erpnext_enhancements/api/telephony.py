@@ -108,7 +108,7 @@ def validate_webhook_secret(func):
         try:
             settings = frappe.get_doc("Triton Settings")
             secret = getattr(settings, "admin_webhook_secret", "")
-        except:
+        except Exception:
             secret = ""
 
         auth_header = frappe.request.headers.get("Authorization", "")
@@ -220,7 +220,7 @@ def _get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=Tr
     display_name = None
 
     contacts = frappe.db.sql("""
-        SELECT name, first_name, last_name FROM `tabContact` 
+        SELECT name, first_name, last_name FROM `tabContact`
         WHERE custom_phone_number REGEXP %s 
         LIMIT 1""", (fuzzy_regex,), as_dict=True)
 

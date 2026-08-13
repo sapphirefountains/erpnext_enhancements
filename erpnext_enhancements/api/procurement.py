@@ -38,7 +38,8 @@ def get_item_links(item_codes, supplier=None):
     # Group by Item Code
     grouped_links = {}
     for link in links:
-        if not link.purchase_url: continue
+        if not link.purchase_url:
+            continue
 
         if link.parent not in grouped_links:
             grouped_links[link.parent] = []
@@ -55,7 +56,8 @@ def save_item_link(item_code, supplier, url):
     """
     Updates or creates an Item Supplier row with the given URL.
     """
-    if not url: return
+    if not url:
+        return
 
     # Check if this supplier already exists for the item
     exists = frappe.db.exists("Item Supplier", {"parent": item_code, "supplier": supplier})

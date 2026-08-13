@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (with tags)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # Fetch full history + tags so the "already released?" check below
           # can see existing vX.Y.Z tags.

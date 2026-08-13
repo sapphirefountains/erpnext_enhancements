@@ -69,7 +69,7 @@ def _as_list(value):
     array string, or a plain newline-separated string."""
     if not value:
         return []
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [str(v).strip() for v in value if str(v).strip()]
     if isinstance(value, str):
         text = value.strip()

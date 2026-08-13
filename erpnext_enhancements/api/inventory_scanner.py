@@ -386,7 +386,7 @@ def _qty_and_rate(item_code, warehouse):
 	from erpnext.stock.utils import get_stock_balance
 
 	result = get_stock_balance(item_code, warehouse, with_valuation_rate=True)
-	if isinstance(result, (list, tuple)):
+	if isinstance(result, list | tuple):
 		return flt(result[0]), flt(result[1])
 	return flt(result), 0.0
 
