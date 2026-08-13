@@ -159,6 +159,7 @@ def run_fanout(message: str) -> dict[str, Any]:
 					room_label=room_label,
 					message=message,
 					sender_label=sender_label,
+					sender_user=sender,
 				)
 				if decision.reason is policy.Reason.MENTION
 				else bell.notify_room(
@@ -166,6 +167,7 @@ def run_fanout(message: str) -> dict[str, Any]:
 					room=room,
 					room_label=room_label,
 					sender_label=sender_label,
+					sender_user=sender,
 					message=message,
 				)
 			)
