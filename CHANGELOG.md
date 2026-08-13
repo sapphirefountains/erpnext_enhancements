@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.280.2] - 2026-08-13
+
+### Fixed
+
+- **Eleven messages carry a `spa-` client id Google will never accept, and eight of them were
+  queued to fail.** `client_message_id` becomes Google's `clientAssignedMessageId`, which must
+  begin with `client-` — their namespace, not ours. The SPA minted `spa-` until v1.277.x, the id
+  is derived once in `before_insert` and stored forever, so fixing the minting fixed every
+  message composed since and reached none of these.
+- Three were already dead. The other eight sit in the queue looking like they are waiting on
+  something fixable; they are waiting to fail, the moment their room's membership unblocks.
+- `patches/backfill_spa_client_message_id.py` re-prefixes them.
+
+### Notes
+
+- **Only messages with no `gchat_message_name`** — never relayed, so Google has never seen the
+  id and no Chat resource points at it. That is what makes rewriting an otherwise-immutable
+  identity safe here rather than reckless. Rewrite one that *has* relayed and both directions
+  break at once: inbound echo suppression infers "our own echo" from a `client-` id we issued
+  (invariant I3), and any later edit or delete addressed by client alias misses. There is no
+  safe repair for that case, so the patch does not attempt one.
+- **`db.set_value`, never a document save.** A save re-enters the outbox and enqueues a *second*
+  relay job for a message that already has one queued — which is how a repair becomes a
+  duplicate. Both guards are mutation-tested.
+- **It does not requeue the three dead jobs.** Reviving a dead-lettered job is an operator
+  decision with a button already built for it; a patch that silently re-drove traffic to Google
+  during `bench migrate` would be acting at the one moment nobody is watching. The eight pending
+  need nothing — the worker reads `client_message_id` when it builds the request.
+- **Fourth repair in this feature that did not reach the rows it was for**, after the digest
+  `poisoned` flag and the relay `auth_identity` default. The through-line is now unmistakable:
+  a fix to how new rows are written is not a fix, and the queue's own metrics cannot tell you
+  otherwise — 8 Pending reads identically whether the work is waiting or doomed.
+
 ## [1.280.1] - 2026-08-13
 
 ### Changed
