@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.280.10] - 2026-08-13
+
+### Fixed
+
+- **`gate._recent_messages` selected `origin_timestamp` from `Chat Message`, which does not
+  exist there.** MariaDB 1054, every execution — so **every `@triton` turn died in retrieval,
+  before Triton was called at all**: `model_used: null`, `total_ms: 0` on every invocation log
+  row. The real column is `gchat_create_time`. `origin_timestamp` is a field of
+  `Chat Message Revision`, which is what makes the name so plausible.
+- **The same column, the second time.** It was fixed in `indexing/indexer.py` this morning and
+  `tests/test_chat_sql_columns.py` was written to stop it recurring. It recurred anyway, in a
+  statement that guard was not looking at.
+
+### Changed
+
+- **The column guard was silently skipping 33 of the package's 49 SQL statements**, including
+  all eight in `retrieval/gate.py`. It resolved a table only when written as a backticked
+  `tab` + braced constant interpolating a doctype *name*; `gate.py` interpolates a constant that
+  already holds the whole backticked table, and other modules write it out literally. Neither
+  matched, and `if not doctypes: continue` excused the statement.
+- All three naming forms now resolve, annotated constants included — `NAME: Final[str] = "..."`
+  did not match either, which is most of them. Table aliases are no longer mistaken for
+  columns, and the handful of core Frappe columns this package joins to are listed explicitly.
+  **49 of 49 statements are now checked.**
+- **An unresolvable table is a failure, not a skip** — the rule `test_chat_rawsql_guard.py`
+  already applies. A checker that skips what it cannot parse reports the same green as one that
+  verified everything.
+
+### Notes
+
+- Verified by mutation against the real bug: restoring `origin_timestamp` fails the widened
+  guard and **passes** the old one, which is exactly what happened.
+- The new "unresolvable is a failure" assertion found a real gap the moment it went live
+  (`SUBSCRIPTION_DOCTYPE: Final[str]`), and I had shipped that assertion **populated but never
+  checked** because a scripted edit silently failed to apply. The same defect as the one being
+  fixed, inside the fix for it, caught only because a mutation run reported *not caught* where
+  it should have reported *caught*.
+- The version bump for this release also landed without its changelog entry for the same
+  reason — a script that failed partway and still committed. `version-sync` compares only
+  `__init__.py` and `package.json`, so it has nothing to say about the third file the rule
+  names.
+
 ## [1.280.9] - 2026-08-13
 
 ### Fixed
