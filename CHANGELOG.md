@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.279.0] - 2026-08-13
+
+### Added
+
+- **Triton's replies are relayed under the Chat app identity, so the bot needs no Google
+  Workspace licence.** `Chat Relay Job.auth_identity` (`USER` | `APP`) is decided from
+  `sync_origin` when the job is written and frozen on the row — the same anti-drift reasoning
+  that put `impersonate_user` there, since a retry that re-derived it could change who is
+  speaking.
+
+### Changed
+
+- Two guards stop applying to `APP`, and both are the point rather than a concession:
+  - **No subject.** The app grant is the two-legged service-account flow with no `sub` claim.
+    Passing one now *raises* instead of being ignored — a subject that silently does nothing is
+    how somebody later concludes the reply is attributed to a person.
+  - **No membership row.** A Chat app is *installed* in a space, not a member of it, so
+    `_require_joined_author` would defer every Triton reply forever while reporting a membership
+    sync that is not late for anybody. That is exactly what production showed.
+- `_identity_of` defaults a missing column to `USER`, which is what makes this deployable over a
+  queue that predates the field: every job already in flight is a coworker mirror, and
+  defaulting the other way would silently re-attribute a backlog of people's own messages to the
+  app. An **unrecognised** value raises rather than falling back — a third state nobody handled
+  should stop the job, not have an identity picked on its behalf.
+- The soak report now prints the first dead jobs' `last_error`, truncated like the open-jobs
+  note beside it.
+
+### Notes
+
+- **This was designed in Phase 1 and only half-built.** `AuthIdentity.APP` has been documented
+  in `gchat/client.py` as *"Triton's replies, and nothing else (CQ-1)"* since the beginning, and
+  `auth.get_app_token` was written for it and never called. The relay hardcoded `USER`, and
+  `_subject_for` said *"there is no app-identity fallback"* — true of a **coworker mirror**, and
+  read for months as though it were true of all outbound. The plan it produced was to buy a
+  Workspace seat so a message nobody attributes to a person could be posted by a fake person.
+- **The App badge is not a cost here.** CQ-1 chose human attribution for *coworker messages*,
+  where an App badge is a lie about who spoke. On a bot reply it is the truth, and it unlocks
+  `cardsV2` and `createMessageNotificationOptions`, both of which require app auth.
+- **A test double one signature behind failed 130 jobs and looked like an outage.** The soak
+  harness's seam lambda did not accept `identity`, so every relay died with a `TypeError` that
+  surfaced as *erpnext-origin reached Chat: 0* — indistinguishable in the report from an auth or
+  quota fault, because the Dead check printed a count and no reason. It prints the reason now.
+
 ## [1.278.4] - 2026-08-13
 
 ### Added

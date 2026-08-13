@@ -1099,6 +1099,27 @@ Two more consequences of user authentication, worth knowing before they surprise
   only touch messages the app itself created. An edit retry that drifts to a different
   principal fails with a 403 that reads like a scope problem.
 
+**The second half arrived in v1.279.0.** Everything above described two identities, and the
+relay implemented one: `build_client` hardcoded `AuthIdentity.USER` and `_subject_for` said
+*"there is no app-identity fallback"* — true of a coworker mirror, and read for months as
+though it were true of all outbound. Triton's replies now carry
+`Chat Relay Job.auth_identity = APP`, decided from `sync_origin` at enqueue time and frozen on
+the row like `impersonate_user`, for the same anti-drift reason.
+
+Two guards stop applying to `APP`, and both are the point rather than a concession:
+
+- **No subject.** The app grant is the two-legged service-account flow with no `sub` claim.
+  Passing one now raises rather than being ignored — a subject that silently does nothing is
+  how somebody later concludes the reply is attributed to a person.
+- **No membership row.** A Chat app is *installed* in a space, not a member of it, so
+  `_require_joined_author` would defer every Triton reply forever while reporting a membership
+  sync that is not late for anybody. That is exactly what production showed.
+
+**What this buys is a Workspace licence.** A `USER` write needs a real, licensed account that
+has joined the space. The bot has neither, and the previous plan — create one — meant paying a
+seat so a message nobody attributes to a person could be posted by a fake person. The App badge
+is the price, and on a bot reply it is not a price at all.
+
 ---
 
 ## The module-map trap: `modules.txt` is not enough on an installed site

@@ -1289,6 +1289,38 @@ def _enforce_oversized_policy(doc: Any, settings: Any) -> None:
 # --- the outbox row ------------------------------------------------------------
 
 
+def auth_identity_for_origin(origin: str) -> str:
+	"""Which Google identity a job of this origin is written as. **The whole decision.**
+
+	--------------------------------------------------------------------------------------
+	Two identities, and only one of them costs a Workspace seat
+	--------------------------------------------------------------------------------------
+
+	``USER`` is domain-wide delegation of a named human. It is what the coworker mirror needs
+	and it is not negotiable there: a mirrored message *is* that person's, an App badge on it
+	would be a lie about who spoke, and Google only lets app auth patch or delete messages the
+	app itself created — so editing a coworker's message means being that coworker. CQ-1.
+
+	``APP`` is the registered Chat app, and it is right for exactly one thing: **Triton's own
+	replies**. ``gchat/client.py`` has said so since Phase 1 — ``AuthIdentity.APP`` is
+	documented there as "Triton's replies, and nothing else" — and ``auth.get_app_token`` was
+	written for it. The relay simply never grew the second half, and hardcoded ``USER``.
+
+	The practical difference is a licence. A ``USER`` write needs a real, licensed Workspace
+	account that is a **joined member** of the space; the bot has neither and buying one for a
+	reply nobody attributes to a person is paying for the wrong thing. A Chat app is *added*
+	to a space, not licensed. What it costs instead is the App badge — which for a bot reply
+	is not a cost at all, it is the truth.
+
+	Derived once at write time and frozen on the row, for the same reason ``impersonate_user``
+	is: a retry that re-derived it could drift to a different identity, and the resulting 403
+	reads like a scope problem and sends the next person to the wrong file.
+	"""
+	return (
+		states.AUTH_IDENTITY_APP if (origin or "") == ORIGIN_TRITON else states.AUTH_IDENTITY_USER
+	)
+
+
 def create_relay_job(
 	*,
 	room: str,
@@ -1319,6 +1351,8 @@ def create_relay_job(
 	``(room, seq)`` does: the number is an ordering position, not an identity, so losing a
 	race for one means taking the next.
 	"""
+	identity = auth_identity_for_origin(origin)
+
 	if (origin or "") == ORIGIN_GOOGLE_CHAT:
 		raise RelayRefused(
 			f"refusing to create a {operation!r} relay job for {reference_doctype} "
@@ -1344,6 +1378,7 @@ def create_relay_job(
 				"reference_name": reference_name or None,
 				"request_id": request_id or None,
 				"impersonate_user": impersonate_user or None,
+				"auth_identity": identity,
 				"payload": body,
 			}
 		)

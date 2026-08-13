@@ -548,7 +548,7 @@ from erpnext_enhancements.chat.doctype.chat_message.chat_message import ChatMess
 from erpnext_enhancements.chat.doctype.chat_room.chat_room import ChatRoom  # noqa: E402
 from erpnext_enhancements.chat.doctype.chat_room_member import chat_room_member  # noqa: E402
 from erpnext_enhancements.chat.gchat import ids  # noqa: E402
-from erpnext_enhancements.chat.sync import outbox  # noqa: E402
+from erpnext_enhancements.chat.sync import outbox, states  # noqa: E402
 
 ROOM = "room0000000000000000000000001"
 USER = "coworker@example.invalid"
@@ -1830,3 +1830,32 @@ def test_the_ast_guard_is_not_vacuous(tmp_path: Path) -> None:
 	offender.write_text("import requests\nHOST = 'chat.googleapis.com'\n", encoding="utf-8")
 	found = google_surface_violations((offender,))
 	assert len(found) == 2, found
+
+
+# --------------------------------------------------------------------------------------
+# Which Google identity a job is written as (v1.279.0)
+# --------------------------------------------------------------------------------------
+#
+# The decision is one line of code and the whole reason Triton can reply without anybody
+# buying a Workspace seat, so it is asserted rather than left to the caller's memory.
+
+
+def test_a_triton_reply_is_written_as_the_app() -> None:
+	"""The app is *added* to a space, not licensed. That is the entire point of this branch."""
+	assert outbox.auth_identity_for_origin(outbox.ORIGIN_TRITON) == states.AUTH_IDENTITY_APP
+
+
+def test_a_coworker_mirror_is_written_as_the_human() -> None:
+	"""CQ-1. An App badge on somebody's own message is a lie about who spoke, and app auth
+	cannot patch or delete a message the app did not create — so an edit would fail later."""
+	assert outbox.auth_identity_for_origin(outbox.ORIGIN_ERPNEXT) == states.AUTH_IDENTITY_USER
+
+
+def test_an_unknown_or_missing_origin_defaults_to_the_human() -> None:
+	"""Fails towards the identity that cannot silently re-attribute anybody.
+
+	Defaulting to APP would turn any origin nobody thought about into a message stamped as the
+	app — which is a wrong author, applied quietly, to a coworker's words.
+	"""
+	for origin in ("", None, "Something New"):
+		assert outbox.auth_identity_for_origin(origin) == states.AUTH_IDENTITY_USER

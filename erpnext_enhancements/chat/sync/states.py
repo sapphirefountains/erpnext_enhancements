@@ -90,6 +90,18 @@ MESSAGE_OPERATIONS: Final[frozenset[str]] = frozenset({"Message Create", "Messag
 #: forever; see :func:`project_to_message_state`.
 ORIGIN_GOOGLE_CHAT: Final[str] = "Google Chat"
 
+#: ``Chat Relay Job.auth_identity``. Which of Google's two identities a write is made as.
+#:
+#: Spelled here, in the module that imports nothing but the standard library, because both
+#: sides of the relay need the vocabulary and neither may reach the other: the writer
+#: (``sync/outbox.py``) decides it, the worker (``sync/outbound.py``) obeys it, and
+#: ``tests/test_chat_guardrails.py`` asserts — transitively — that no write path can import
+#: ``gchat/client.py``, where the matching :class:`~gchat.client.AuthIdentity` enum lives.
+#: Two spellings of one vocabulary, kept honest by ``tests/test_chat_sync_states.py``.
+AUTH_IDENTITY_USER: Final[str] = "USER"
+AUTH_IDENTITY_APP: Final[str] = "APP"
+AUTH_IDENTITIES: Final[frozenset[str]] = frozenset({AUTH_IDENTITY_USER, AUTH_IDENTITY_APP})
+
 #: ``2 ** attempts`` with an unbounded ``attempts`` is an ``OverflowError`` waiting for a bad
 #: caller. Clamped well past the point where ``min(cap, …)`` has already saturated. Same
 #: constant, same reasoning, as ``gchat/backoff.py``.
