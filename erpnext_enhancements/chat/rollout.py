@@ -93,7 +93,20 @@ def erpnext_link_report(as_dict: bool = False) -> Any:
 	from erpnext_enhancements.chat.indexing.digest import _summariser_user
 
 	summariser = _summariser_user()
-	summariser_ready = bool(summariser) and _has_triton_access(summariser)
+
+	# Minting a token is necessary and **not sufficient**, and the gap between those two is a
+	# week of production this report was silent through. Triton builds its ERPNext client for
+	# the identity eagerly, before the model runs, so an account Triton cannot call ERPNext back
+	# as fails every turn with a 401 while passing every check this report used to make.
+	#
+	# The bot cannot close that gap the way a person does: `triton@sapphirefountains.com` is a
+	# Google **group**, so there is no browser session to complete the OAuth flow in. It is
+	# credentialled with an API key instead — see `chat/invoke/triton_link.py` — which is why
+	# this asks Triton what it holds rather than looking for an `OAuth Bearer Token` row here.
+	summariser_credential = _summariser_credential(summariser)
+	summariser_ready = (
+		bool(summariser) and _has_triton_access(summariser) and summariser_credential is True
+	)
 
 	report = {
 		"roster_source": source,
@@ -103,6 +116,10 @@ def erpnext_link_report(as_dict: bool = False) -> Any:
 		"no_triton_access": sorted(no_triton_access),
 		"summariser_account": summariser,
 		"summariser_ready": summariser_ready,
+		#: ``True`` stored, ``False`` absent, ``None`` **unknown** — Triton could not be asked.
+		#: Three states because two would make "the gateway is down" indistinguishable from "the
+		#: credential is missing", and those send an admin to different screens.
+		"summariser_credential": summariser_credential,
 		"ready": not unlinked and not no_triton_access and bool(roster),
 		"triton_enabled": _flag("triton_enabled"),
 		"chat_enabled": _flag("enabled"),
@@ -114,6 +131,26 @@ def erpnext_link_report(as_dict: bool = False) -> Any:
 		return report
 	_print(report)
 	return None
+
+
+def _summariser_credential(user: str) -> bool | None:
+	"""Whether **Triton** holds an ERPNext credential for ``user``. ``None`` when unreachable.
+
+	Asked of Triton rather than inferred from this database, because this is the one fact
+	ERPNext genuinely cannot see. ``has_erpnext_link`` can answer for the OAuth path — ERPNext
+	is the OAuth provider, so the grant is a row here — but an API-key credential lives only in
+	Triton's ``APIKey`` table, and the bot has no other kind. Inferring it from the presence of
+	an ``api_key`` on the ``User`` would report ready for a key that was generated and never
+	sent, which is precisely the state production was in.
+	"""
+	if not user:
+		return False
+	from erpnext_enhancements.chat.invoke import triton_link
+
+	# The three-state answer is passed through, not coerced. `bool(None)` here would print
+	# "re-credential this account" during a gateway outage.
+	stored, _error = triton_link.remote_key_configured(user)
+	return stored
 
 
 def _has_triton_access(user: str) -> bool:
@@ -244,9 +281,26 @@ def _print(report: dict[str, Any]) -> None:
 	if not report["summariser_ready"]:
 		print("\n" + "-" * 78)
 		account = report["summariser_account"] or "(not set)"
-		print(f"The digest summariser account {account} cannot mint a token either, so")
-		print("rolling summaries will not build. Retrieval still works without them — chunks")
-		print("are the primary tier and digests are the compression layer for long history.")
+		credential = report["summariser_credential"]
+		if credential is False:
+			# The 401 that read as an authentication failure for a week and never was one.
+			print(f"The digest summariser account {account} can mint a token, but Triton")
+			print("holds no ERPNext credential for it — so every turn dies as HTTP 401")
+			print("erpnext_link_required before the model is even called, and rolling summaries")
+			print("will not build.")
+			print("\nWhat an admin does: bench execute")
+			print("  erpnext_enhancements.chat.invoke.triton_link.link_bot_credentials")
+			print("That account is a Google group, so the browser 'Link ERPNext' flow humans use")
+			print("is not available to it and never will be — it is credentialled with an API key")
+			print("instead. Generate the keys first in the Desk (User -> API Access) if it has none.")
+		elif credential is None:
+			print(f"Could not ask Triton what credential it holds for {account}, so summariser")
+			print("readiness is unknown rather than bad. Check the gateway before chasing this.")
+		else:
+			print(f"The digest summariser account {account} cannot mint a token either, so")
+			print("rolling summaries will not build.")
+		print("\nRetrieval still works without digests — chunks are the primary tier and digests")
+		print("are the compression layer for long history.")
 
 	if report["roster_size"] and not report["unlinked"] and not report["no_triton_access"]:
 		print("\nEveryone on the roster has linked and can reach Triton. Nothing to chase.")
