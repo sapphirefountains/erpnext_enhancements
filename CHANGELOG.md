@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.278.4] - 2026-08-13
+
+### Added
+
+- **`docs/marketing-platform-approvals.md`** — the Phase 0 submission packets for the six
+  external gates: scopes to request, use-case text in each platform's expected voice, screencast
+  scripts, pre-flight checklist, quota sheet, and a status table a human updates. Nothing here is
+  submitted by an agent; creating developer apps, accepting platform terms and entering
+  credentials are human actions.
+
+### Changed
+
+- **Two of the three quota figures in the marketing plan were already wrong**, three weeks after
+  it was written, and both are corrected in `marketing-platform-plan.md`:
+  - **Instagram publishing is documented at 100 posts per rolling 24 h, not 25.** Meta's own
+    documentation says *both* 100 and 50 in different places and the widely-cited 25 is not in
+    the current docs at all. The fix is not a better constant — it is to stop using one and read
+    `GET /<IG_USER_ID>/content_publishing_limit`, which is authoritative where the docs
+    demonstrably are not.
+  - **The YouTube quota model is no longer one pool.** `videos.insert` and `search.list` each
+    have a dedicated 100 calls/day bucket, with 10,000 units/day for everything else, and an
+    upload costs 1 unit rather than 1,600. So the ceiling is ~100 uploads/day, not ~6 — the
+    figure that made upload volume look like a design constraint. The real constraint moved:
+    **`search.list` at 100 calls/day is now the tight one**, so read known IDs with `videos.list`
+    and build no discovery feature on search.
+
+### Notes
+
+- **Half of Phase 0 cannot be filed on day one, and the plan implied all of it could.** LinkedIn
+  Standard Tier wants a screencast of a *fully integrated* app, Meta rejects a submission
+  outright if reviewers cannot reach a working build, and the YouTube audit reviews a live
+  integration. What is genuinely day-one is the wave whose queues are longest anyway — Meta
+  Business Verification, the Google Ads token, GBP access, and LinkedIn **Development** Tier —
+  and each is the documented prerequisite for its wave-two counterpart. The critical path is
+  unchanged; the expectation is.
+- **Filing order is load-bearing on LinkedIn.** Community Management Development Tier can only
+  be requested on a **new app that holds no other API product** — the option is greyed out
+  otherwise. Take the Advertising API on that app first and recovery means a throwaway second
+  app, a screencast filmed against it, and a client-ID cross-reference. Two apps from the start
+  costs nothing and avoids it entirely.
+- **A LinkedIn rejection burns the app.** Their documentation is explicit for both tiers: you
+  cannot re-apply with the existing app, you must create a new one. The first submission is the
+  only cheap one.
+- **The YouTube gate destroys work rather than delaying it.** Videos uploaded through an
+  unaudited project are locked private with **no appeal** — the only remedy is to upload them
+  again through an audited project. So the back catalogue does not get bulk-uploaded before the
+  audit clears, and the feature stays gated rather than shipping dormant where someone could
+  switch it on early.
+- **GBP reviews are provisional.** Reviews and local posts never moved to the purpose-built APIs
+  — they remain on the legacy Google My Business v4.9, which Google's reference marks as needing
+  *additional* allowlisting beyond the standard grant. Reviews are the whole reason that gate is
+  on the list, so the access request has to say so, and it is not real until one v4.9 call
+  succeeds against non-zero quota.
+
 ## [1.278.3] - 2026-08-13
 
 ### Fixed
