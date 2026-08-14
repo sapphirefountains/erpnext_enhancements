@@ -1220,6 +1220,90 @@ class TestOutboundAttachments(RelayTestCase):
 		self.assertIn("[[ref:25]]", str(stored["text"]))
 		self.assertIn("[[ref:25]]", str(stored["text_plain"]))
 
+	def test_the_relay_learns_the_author_google_user_id(self) -> None:
+		"""The one fact inbound is missing, on a response the relay already has.
+
+		Google's inbound message carries ``sender.name = users/{id}`` and **no email**, so
+		``_sender_identity`` maps the id back through ``Chat Room Member.gchat_membership_name``
+		— whose member segment *is* that id. Rooms created by ``spaces.setup`` never learn those
+		names, so every message a real coworker sent from Google Chat was stored against
+		``chat-user-{id}@unresolved.invalid`` and flagged EXTERNAL.
+
+		This write is made under DWD **as** that human, so the sender on the response is
+		definitionally their identity. No matching, no display-name guess, no second call.
+		"""
+		space = self.make_room()
+		self.db.set_value("Chat Room Member", "ROOM-0001-M0", {"gchat_membership_name": ""})
+		self.make_message(name="MSG-0001")
+		self.make_job(name="JOB-1", job_seq=1)
+
+		outbound.drain_room("ROOM-0001")
+
+		learned = self.db.get_value("Chat Room Member", "ROOM-0001-M0", "gchat_membership_name")
+		self.assertTrue(learned, "the relay must bind the author's Google id")
+		self.assertTrue(str(learned).startswith(f"{space}/members/"))
+		# The id has to be the one Google reported, not one we invented. `FakeCall` is body-free
+		# by construction, so this asserts against the harness's own deterministic mapping —
+		# which is numeric and opaque precisely so a test cannot pass by matching an email.
+		from erpnext_enhancements.chat.testing.fake_chat import _user_id_for
+
+		self.assertEqual(str(learned), f"{space}/members/{_user_id_for(ALICE)}")
+
+	def _ctx(self, *, subject: str, identity: str = "USER", space: str = "spaces/S") -> Any:
+		return outbound._MessageContext(
+			message="MSG-0001",
+			room="ROOM-0001",
+			space=space,
+			client_message_id="client-x",
+			text="hi",
+			truncated=False,
+			stored_google_name="",
+			subject=subject,
+			identity=identity,
+			request_id="req-1",
+		)
+
+	def test_an_app_identity_relay_binds_nobody(self) -> None:
+		"""The bot is not a ``Chat Room Member`` and has no Google user to learn.
+
+		Driven directly rather than through the harness: an APP relay reaches here with **no
+		subject at all**, because ``build_client`` refuses an APP client that was given one — so
+		the empty-subject guard is the only thing standing between "the bot replied" and a
+		binding written against whichever member row happened to match.
+		"""
+		self.make_room()
+		outbound._learn_member_id(
+			self._ctx(subject="", identity="APP"),
+			{"sender": {"name": "users/999"}},
+		)
+		self.assertFalse(
+			self.db.get_value("Chat Room Member", "ROOM-0001-M0", "gchat_membership_name")
+		)
+
+	def test_a_response_with_no_sender_binds_nothing(self) -> None:
+		"""Google not telling us who sent it is not a licence to guess."""
+		self.make_room()
+		outbound._learn_member_id(self._ctx(subject=ALICE), {})
+		self.assertFalse(
+			self.db.get_value("Chat Room Member", "ROOM-0001-M0", "gchat_membership_name")
+		)
+
+	def test_an_already_bound_member_is_never_overwritten(self) -> None:
+		"""A bound row is a fact something already established, and a relay does not revise it."""
+		self.make_room()
+		self.db.set_value(
+			"Chat Room Member", "ROOM-0001-M0", {"gchat_membership_name": "spaces/S/members/999"}
+		)
+		self.make_message(name="MSG-0001")
+		self.make_job(name="JOB-1", job_seq=1)
+
+		outbound.drain_room("ROOM-0001")
+
+		self.assertEqual(
+			self.db.get_value("Chat Room Member", "ROOM-0001-M0", "gchat_membership_name"),
+			"spaces/S/members/999",
+		)
+
 	def test_a_standalone_attachment_upload_job_is_skipped_not_dead_lettered(self) -> None:
 		"""The chosen design registers a handler rather than leaving the operation undispatched.
 

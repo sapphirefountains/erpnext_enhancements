@@ -1469,6 +1469,7 @@ def _handle_message_create(job: dict[str, Any], settings: Any) -> dict[str, Any]
 	google_name = str(response.get("name") or "")
 	outcome = _bind_google_name(ctx, google_name, response)
 	_record_google_timestamps(ctx.message, response)
+	_learn_member_id(ctx, response)
 	return {
 		"outcome": outcome,
 		"gchat_message_name": google_name,
@@ -1476,6 +1477,78 @@ def _handle_message_create(job: dict[str, Any], settings: Any) -> dict[str, Any]
 		"attachments_uploaded": len(result.uploads),
 		"attachments_not_relayed": len(plan.skipped) + len(result.failed),
 	}
+
+
+def _learn_member_id(ctx: _MessageContext, response: Mapping[str, Any]) -> None:
+	"""Bind the author's Google user id to their ``Chat Room Member`` row. **Never raises.**
+
+	--------------------------------------------------------------------------------------
+	The gap this closes, which had nothing to do with the relay
+	--------------------------------------------------------------------------------------
+
+	Inbound has exactly one way to answer "who sent this": Google's message carries
+	``sender.name = users/{id}`` and **no email**, so ``_sender_identity`` maps the id back
+	through ``Chat Room Member.gchat_membership_name``, whose member segment *is* that id.
+
+	Rooms created by ``spaces.setup`` never learn those names — setup does not return the
+	membership resources it creates, which ``diff_membership``'s ``present`` parameter already
+	documents for a different reason. So the rows exist and say ``JOINED``, with the one column
+	inbound needs left empty. Every message a real coworker sends from Google Chat is then
+	stored against ``chat-user-{id}@unresolved.invalid`` and flagged **EXTERNAL** — wrong
+	attribution in the transcript, and a row the retrieval gate treats as an outsider's.
+
+	--------------------------------------------------------------------------------------
+	Why the relay response is the right place to learn it
+	--------------------------------------------------------------------------------------
+
+	This write is made under domain-wide delegation **as a named human**, so the ``sender`` on
+	the response is definitionally that human's Google identity. No matching, no display-name
+	heuristic, no second API call — the one fact inbound is missing is a field on a response we
+	already have.
+
+	It only fires for people who have sent a message *from ERPNext*, which is the honest limit:
+	somebody who has only ever typed in Google Chat stays unbound until they do. The
+	alternative — matching live memberships by ``displayName`` — is a guess that attributes a
+	coworker's words to a colleague when two names are close, and this package's stance on
+	heuristic binding is that it ships disabled and alarmed.
+
+	Only fills an **empty** column, and never overwrites: a bound row is a fact somebody or
+	something already established, and a relay is not the place to revise it.
+	"""
+	try:
+		# No explicit APP guard, and none is needed twice over: an APP write reaches here with
+		# no subject (`build_client` refuses an APP client that was given one), and the member
+		# lookup below is keyed on that subject, so an empty one matches nothing. Two earlier
+		# drafts had an `identity != USER` check and an empty-subject check in front of this;
+		# both were branches no test could distinguish from their absence, which in this package
+		# is a reason to delete a guard rather than to keep it.
+		user = str(ctx.subject or "").strip()
+
+		sender = str((response.get("sender") or {}).get("name") or "")
+		user_id = sender.rpartition("/")[2].strip()
+		if not user_id:
+			return
+
+		member = frappe.db.get_value(
+			CHAT_ROOM_MEMBER,
+			{"room": ctx.room, "user": user},
+			["name", "gchat_membership_name"],
+			as_dict=True,
+		)
+		if not member or str(member.get("gchat_membership_name") or "").strip():
+			return
+
+		frappe.db.set_value(
+			CHAT_ROOM_MEMBER,
+			member["name"],
+			"gchat_membership_name",
+			f"{ctx.space}/members/{user_id}",
+			update_modified=False,
+		)
+		_log("info", "member_id_learned", room=ctx.room, user=user)
+	except Exception:
+		# A relay that succeeded must not fail over bookkeeping it performed as a side effect.
+		pass
 
 
 def _create_message(client: Any, ctx: _MessageContext, text: str, tokens: Sequence[str]) -> dict[str, Any]:
