@@ -313,6 +313,8 @@ def membership_filter_sql(
 	room_column: str,
 	user: str | None = None,
 	seq_column: str | None = None,
+	*,
+	allow_oversight: bool = False,
 ) -> str:
 	"""The membership filter, for the raw SQL that these hooks do **not** protect.
 
@@ -320,6 +322,22 @@ def membership_filter_sql(
 	the retrieval candidate scan — must AND this into its ``WHERE``. Reuse rather than
 	re-derivation is the only thing that keeps the raw paths and the hook paths from
 	drifting apart, and a drift here is a data leak, not a bug.
+
+	**``allow_oversight`` defaults to ``False``, and that default is the decision.** The
+	oversight escape hatch is opt-in per call site rather than a property of the caller's
+	roles, so a query is unrestricted only where somebody wrote down that it should be.
+
+	This makes the fragment agree with its own Python twin at last. :func:`visible_room_names`
+	has never short-circuited for the oversight role, on the stated grounds that *"every room
+	in the system is a different query with a different audit obligation, and it must be
+	written where that obligation is visible"* — and this function did the opposite, silently,
+	for every caller. An auditor is also an ordinary employee, and their ordinary scrollback
+	ran unrestricted and wrote an audit row about their own reading.
+
+	§4.B's *"the gate has exactly two doors"* is the same rule stated from the other end: the
+	employee surface scopes to membership, and oversight reads happen through the audited
+	surface built for them, which is also the only place a mandatory ``reason`` can be
+	collected. Settled with the human 2026-08-13.
 
 	Args:
 		room_column: the already-backticked SQL expression naming the room column of the
@@ -330,6 +348,8 @@ def membership_filter_sql(
 			Both are active membership only today — the departed-member bound is closed
 			pending CQ-10 (see :func:`_message_scope_sql`) — so the two currently produce
 			the same fragment, and the column is not read.
+		allow_oversight: whether this call site is one of the two doors. Keyword-only, so it
+			can never be passed by accident in the ``seq_column`` position.
 
 	Returns:
 		A SQL boolean expression. Unlike a ``permission_query_conditions`` hook this
@@ -341,7 +361,7 @@ def membership_filter_sql(
 	user = _resolve_user(user)
 	if not _is_scopable(user):
 		return "1 = 0"
-	if user == "Administrator" or _has_oversight(user):
+	if allow_oversight and (user == "Administrator" or _has_oversight(user)):
 		note_privileged_read("Chat Message", None, user, "read")
 		return "1 = 1"
 	if seq_column:

@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.284.0] - 2026-08-13
+
+**The gate has exactly two doors, and the employee chat app is no longer one of them.** A
+governance decision, settled with Nikolas on 2026-08-13, not an agent's tidy-up.
+
+### Changed
+
+- **`membership_filter_sql` now takes `allow_oversight`, defaulting to `False`.** Only
+  `chat/retrieval/gate.py` passes `True`. Every other caller — history paging, search, the room
+  list, notification fan-out, read state — scopes to membership for **everybody, auditors
+  included**.
+
+  It used to short-circuit on the caller's *roles*, so an oversight-role holder got the
+  unrestricted `1 = 1` fragment on every query they made, all day, including their own ordinary
+  scrollback. That wrote a `Chat Retrieval Audit` row about a person reading their own
+  conversations, which is noise in the one table whose signal is `was_participant = 0`.
+
+  **The function now agrees with its own Python twin.** `visible_room_names` has never
+  short-circuited for the oversight role, on stated grounds: *"every room in the system is a
+  different query with a different audit obligation, and it must be written where that
+  obligation is visible."* That reasoning was right and this function was doing the opposite,
+  silently, for thirty call sites.
+
+  The parameter is **keyword-only**, so it can never be passed by accident in the `seq_column`
+  position.
+
+- `gate.py`'s nine call sites pass `allow_oversight=True`, preserving its behaviour **exactly**.
+  Splitting `retrieve()` from `retrieve_for_oversight()` — which share those private helpers, so
+  today an auditor's ordinary Triton turn is also unrestricted — belongs with the oversight read
+  path, where `retrieve_for_oversight` gets its first caller and its behaviour can be tested
+  rather than assumed.
+
+### Added
+
+- `TestTheGateHasExactlyTwoDoors` in `tests/test_chat_audit_immutability.py`: a call site
+  outside the gate opening the hatch fails the build, and so does flipping the default. Both
+  verified by doing each and watching CI go red — the default matters more than it looks,
+  because a truthy default restores the old behaviour everywhere at once with no diff at any
+  call site.
+
+### Notes
+
+- **This is what makes §4.D.2's mandatory `reason` implementable rather than aspirational.**
+  A reason can be collected once per oversight session by the surface built for it; there is now
+  nowhere else an oversight read can happen. v1.283.3 shipped the audit rows with `reason` null
+  precisely because the SPA had no way to ask, and the answer turned out to be that the SPA
+  should not have been asking.
+- **The recording added in v1.283.3 stays**, and it is not dead code. It is what fires if a
+  future call site opts in, and the source rule requires any function that branches on the
+  unrestricted scope to record. What changed is that the branch is now never taken from the
+  employee surface — which is a stronger form of I9 than auditing those reads was.
+- **What an auditor loses**: cross-room search from the ordinary chat UI. That is the point.
+  They get it back through the oversight viewer, with a reason attached and a record written.
+
 ## [1.283.3] - 2026-08-13
 
 Invariant **I9** — *every non-participant read is audited* — was false. Three endpoints returned

@@ -992,6 +992,22 @@ already having a bad one.
 
 ### The one thing never to do
 
+**The gate has exactly two doors, and the employee app is not one of them.** Since
+v1.284.0 `membership_filter_sql` takes `allow_oversight`, defaulting to **False**, and only
+`chat/retrieval/gate.py` passes `True`. Everywhere else — history, search, the room list,
+notification fan-out — scopes to membership for **everybody, auditors included**.
+
+Before that it short-circuited on the caller's *roles*, so an auditor's ordinary scrollback ran
+unrestricted and wrote a `Chat Retrieval Audit` row about their own reading. Its Python twin
+`visible_room_names` had always refused to do that, on exactly these grounds: *"every room in
+the system is a different query with a different audit obligation, and it must be written where
+that obligation is visible."* The two now agree.
+
+This is also what makes the mandatory `reason` (ADR §4.D.2) implementable: a reason can be
+collected once per oversight session by the surface built for it, and there is nowhere else an
+oversight read can happen. `tests/test_chat_audit_immutability.py` fails the build if any call
+site outside the gate opens the hatch, or if the default is ever flipped.
+
 **Do not fill `Chat Settings.admin_oversight_role` casually.** It ships **blank**, and
 while it is blank there is *no role in the system* that can read a room it is not a member
 of — `permissions._oversight_role()` returns `""`, `_has_oversight()` returns `False`, and
