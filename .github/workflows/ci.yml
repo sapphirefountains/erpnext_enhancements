@@ -861,6 +861,25 @@ jobs:
       # Own step: no frappe import needed, the modules are only ever parsed.
       - name: Chat alert surface (logged first, never raises, no membership bypass)
         run: python -m unittest erpnext_enhancements.tests.test_chat_alerts_surface -v
+      # What counts as drift, and what merely counts as SWITCHED OFF. This app ships dormant
+      # - enabled=0, dry_run_mode=1, relay_outbound_enabled=0, relay_inbound_enabled=0 - so on
+      # a shipped-state site every message has an empty gchat_message_name and no Google
+      # resource has an ERPNext row. A detector keyed on ABSENCE reports the entire corpus as
+      # drifted, forever, and cannot tell "the mirror drifted" from "the mirror was never
+      # turned on". DormantSiteTest is that scenario run against the real classifier: the
+      # verdict must flip on one affirmative fact (a relay job completed) and on nothing else.
+      #
+      # Pure: drift_rules.py imports nothing at all, which PurityTest asserts.
+      - name: Chat drift rules (evidence the mirror ran, never an empty column)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_drift_rules -v
+      # The promises the census makes that no unit test can see: it issues NO Google call of
+      # any kind, it repairs nothing, it never selects a body column, it refuses on the master
+      # switch before the feature switch, and it CLEARS findings it stops observing - a census
+      # that can only open findings produces a board of things that were once true.
+      #
+      # Own step: no frappe import needed, the modules are only ever parsed.
+      - name: Chat drift surface (no Google call, no repair, no bodies)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_drift_surface -v
       # The SPA received NO realtime events at all - not another person's message, not
       # @triton's reply, not even its own - and looked healthy doing it, because every symptom
       # pointed away from the cause. Frappe's socket server namespaces connections by site and

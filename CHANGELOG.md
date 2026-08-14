@@ -7,6 +7,155 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.292.0] - 2026-08-15
+
+**Every drift detector written against absence is a configuration detector wearing a
+costume.** Phase 6 §4.I, and that sentence is the whole change. Closes the drift half of
+TASK-2026-01316.
+
+The obvious question — *"is there a Google message with no ERPNext row?"*, *"an ERPNext
+message with no Google name?"* — has **the same answer on a site that drifted and on a site
+where the mirror was never switched on.** And this app ships switched off: `enabled = 0`,
+`dry_run_mode = 1`, `relay_outbound_enabled = 0`, `relay_inbound_enabled = 0`, the last one
+described in its own settings field as *"inbound events are still received and stored, but
+never turned into messages"*. So on a shipped-state site the naive detector reports the
+entire corpus as drifted, forever, and cannot tell the two apart.
+
+**This repository has already learned this once, about backfill patches, and wrote it down:**
+*prefer a backfill keyed on the rule the writer applies over one keyed on emptiness —
+emptiness is a fact about the schema migration, not about the data.* The same sentence holds
+here with two words changed. Emptiness is a fact about the **configuration**.
+
+So every class obeys one rule, and `drift_rules.EVIDENCE` states it per class — enforced, not
+documented: a class with no entry cannot produce a report key and cannot be written.
+
+> **A class may fire only on positive evidence that the mirror *acted* on this object and the
+> two sides then disagreed. Never on the absence of a value.**
+
+### Added
+
+- **`chat/governance/drift_rules.py`** — pure, imports nothing at all. Five classes, each
+  paired with the affirmative fact it fires on: a `Chat Relay Job` that reached `Dead`; one
+  that reached `Done` while the message still carries no resource name; a `Chat Inbound
+  Event` that settled `Failed` and produced nothing; a mirrored room the sweep has not
+  reached; and a mirrored room with **no active member at all**.
+
+  That last one is the finding that makes the others trustworthy. `spaces.messages.list` is
+  user-authenticated, so a room with nobody to impersonate contributes nothing to every other
+  class — **it is indistinguishable from a clean room** — and the reconciliation sweep skips
+  exactly this case with a reason string and *no alert*, which is why it has been invisible.
+
+  `reconcile_stale_hours` also fixes a threshold that was right and would have aged badly. The
+  ADR specifies the `chat_reconcile_stale` alarm at seven days; the sweep takes 25 rooms per
+  hourly pass, so on an N-room site every room is legitimately `ceil(N/25)` hours stale. At
+  200 rooms that is 8 hours and seven days is fine. At 5,000 it is 200 hours, and a flat
+  seven-day threshold would alarm on the entire estate for behaving exactly as designed. The
+  floor is raised to twice the rotation — twice, because a threshold at exactly the interval
+  alarms on whichever room is last in it, every pass.
+
+- **`chat/governance/drift.py`** and **`Chat Drift Report`** — the nightly census, at
+  `25 4 * * *`, and the findings it records. Zero DocPerm, on the MCP denylist, classified in
+  the raw-SQL guard.
+
+  **It makes no Google call of any kind** — not a listing, not a `get`, not a write. Every
+  class here is answerable from ERPNext's own tables, which is what makes it cheap enough to
+  run nightly and impossible to get wrong through a partial listing.
+
+  **It clears findings it stops observing.** A census that can only open them produces a board
+  of things that were once true, and a board nobody trusts is one nobody reads — the same end
+  state as no census, reached by a longer road.
+
+  **It refuses on the master switch before the feature switch.** With `enabled = 0` no relay
+  job and no inbound event has ever been written, so every class is vacuously empty and a scan
+  would report a clean estate: a *true* answer that reads as reassurance about a mirror that
+  does not exist.
+
+- **`tests/test_chat_drift_rules.py`** (47, executed) and **`tests/test_chat_drift_surface.py`**
+  (27, AST). `DormantSiteTest` is the shipped-state scenario run against the real classifier:
+  the verdict must flip on one affirmative fact and on nothing else. Four mutations were run
+  against the surface suite — a `gchat` import, a repair call, a `text` column added to a
+  select, a reordered gate — and each is caught.
+
+### Changed
+
+- **`subscriptions.raise_operator_alert` also records on the §4.H alert board.** Additive:
+  nothing loses a channel. This was the **sixth** private way to tell somebody in this
+  package and the one v1.291.0's inventory missed — that entry said "five", and it was wrong.
+
+  It is also the best of the six, which is why it stays rather than being replaced: it already
+  had a deduplication key, and the desk bell menu is a channel the governance path does not
+  have. **The two cooldowns are not equivalent, which is the reason for keeping both.** A flat
+  six-hour Redis claim re-announces at hour seven whatever has happened in between; the
+  governance path counts occurrences on one row, re-notifies on a doubling schedule, and —
+  the part a cooldown structurally cannot do — **resolves**, so a subscription that starts
+  renewing again leaves the board. It is called *above* the claim, deliberately, so one
+  channel's suppression cannot silently govern the other's record — a count that is really a
+  delivery count would make the doubling schedule meaningless.
+
+  **Its own `Error Log` row moved rather than being duplicated.** `test_chat_subscriptions`
+  caught that: the naive version wrote two rows in one table for one event, which is the
+  duplication this consolidation exists to remove. The governance path already writes a
+  desk-visible row on notification steps, carrying the alert name and key — so the legacy one
+  is now written only when the board could **not** record, which is the single case where
+  dropping it would lose the event. The test that caught it gained a sibling for the fallback,
+  and both now stub the board rather than measuring `raise_alert`'s failure path under a
+  frappe stub.
+
+  `reconcile.py` injects the same sink, so a `reconcile-…` key is filed under `inbound` rather
+  than `subscriptions`. Both are self-delivering, which is correct in both cases: an alert
+  saying inbound is not arriving must not be posted into a chat space.
+
+- **`Chat Settings`** gains a Drift Reconciliation section: `drift_detection_enabled`,
+  `drift_settling_minutes`, `drift_max_findings_per_run`, `drift_reconcile_stale_hours`.
+  No new backfill patch — `backfill_chat_settings_defaults` walks `get_meta().fields` on
+  `after_migrate` — and every numeric field falls back in code when it reads 0.
+
+### Not done here, and each is named rather than implied
+
+- **Repair. Nothing in this change repairs anything, and there is deliberately no
+  `drift_repair_enabled` field** — a switch with no implementation behind it reads as a safety
+  net that exists. Three independent reviews of a design that *did* repair the one class that
+  looked safe each killed it, on grounds checked against the source:
+
+  - **Its detection cannot separate itself from the class it refused.** An ERPNext-authored
+    message whose Google binding was lost is present in Google and absent by
+    `gchat_message_name`, satisfying the predicate exactly. Replaying it reaches
+    `classify_inbound`, which needs `is_client_message_id(facts.client_message_id)` true to
+    reach `ECHO` at all — and whether Google returns `clientAssignedMessageId` on a read is an
+    open `VERIFY:` in this repo. If it does not, the replay classifies `NEW` and inserts a row
+    whose `client_message_id` carries the `inbound-` prefix, which does **not** collide on
+    `unique(room, client_message_id)`. **Two live rows for one Google message, created by the
+    repairer**, and no shipped path can merge or relay them away.
+  - **Its repair is a guaranteed no-op on the population that most needs it.** The synthetic
+    delivery id keys on the resource name alone and `pubsub_message_id` is unique, so a
+    resource whose first replay settled `Failed` — never re-driven, never purged — collides
+    and returns "duplicate". Nothing happens, three nights running, and the per-object cap
+    then records a permanent verdict on a message a one-line `status` reset would fix.
+  - **Its findings are a subset of what the hourly sweep already recovers** through the same
+    ingest path.
+
+  A repair path that ships disabled *and* cannot be shown safe is strictly worse than none.
+
+- **The per-object cap.** The specification asks for three guards; everything here is
+  report-only, so the cap has nothing to demote and is not built. A vestigial one would put a
+  dial in the settings form that does nothing. It arrives with repair. The two that *do* apply
+  are both moved onto **findings** rather than repairs, which is where the worst case lives: a
+  mass false positive in a report-only class is invisible to a cap that counts repairs. The
+  run cap **halts rather than trims** — the first 200 of a suspect ten thousand is a table
+  that looks like a small, credible problem.
+
+- **Every class needing a Google read** — a Chat-side tombstone ERPNext never applied, a body
+  that diverged, an ERPNext tombstone Google never applied. Their prerequisite is
+  `reconcile._list_window` no longer hardcoding `show_deleted=False`, which is a change to the
+  sweep with its own test surface.
+
+- **D1–D7.** The seven classes this task names are **not enumerated anywhere in this
+  repository** — `PHASE_6_governance_audit_rollout.md` has never been committed on any branch,
+  and the only references are two pointers. Rather than invent them, the classes here are
+  slugs derived from what the codebase can actually observe. The tokens `D1`–`D7` are
+  deliberately not reused: shipped code in `audit.py`, `tombstone.py` and `export.py` already
+  cites that numbering with a *different* meaning.
+
 ## [1.291.0] - 2026-08-15
 
 **Chat already alerted. It did it five different ways, and all five ended in the Error Log.**

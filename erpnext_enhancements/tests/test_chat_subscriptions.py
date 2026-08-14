@@ -954,7 +954,7 @@ def test_an_active_subscription_that_has_never_delivered_is_alerted() -> None:
 	assert alerts.with_prefix("subscription-silent:"), alerts.keys()
 
 
-def test_the_default_alert_sink_writes_a_notification_and_respects_the_cooldown() -> None:
+def _seed_system_managers() -> None:
 	for name, parent in (("hr1", "manager@example.invalid"), ("hr2", "Administrator")):
 		STORE.table("Has Role")[name] = {
 			"name": name,
@@ -962,6 +962,28 @@ def test_the_default_alert_sink_writes_a_notification_and_respects_the_cooldown(
 			"parenttype": "User",
 			"parent": parent,
 		}
+
+
+def _patch_governance_sink(monkeypatch, *, recorded: bool) -> list:
+	"""Stand in for the §4.H alert board, which needs a database this suite does not have.
+
+	Patched rather than left live so this test stays about what its name says — the *legacy*
+	sink's cooldown and its one delivery. With the real path in place every assertion here
+	would instead be measuring `raise_alert`'s own failure fallback under a frappe stub.
+	"""
+	calls: list = []
+
+	def fake(alert):
+		calls.append(alert)
+		return recorded
+
+	monkeypatch.setattr(subscriptions, "_to_governance_alerts", fake)
+	return calls
+
+
+def test_the_default_alert_sink_writes_a_notification_and_respects_the_cooldown(monkeypatch) -> None:
+	_seed_system_managers()
+	calls = _patch_governance_sink(monkeypatch, recorded=True)
 	alert = subscriptions.SyncAlert(
 		key="unit-test", severity=subscriptions.ALERT_SEVERITY_ALARM, subject="s", message="m"
 	)
@@ -974,7 +996,33 @@ def test_the_default_alert_sink_writes_a_notification_and_respects_the_cooldown(
 		"one delivery, to the one System Manager who is not Administrator — a repeat every hour "
 		"is unsubscribed from within a week and then the next real outage is invisible"
 	)
+	assert len(ERROR_LOG) == 0, (
+		"the Error Log row moved to the §4.H alert path in v1.292.0. Writing one here as well "
+		"would put two rows in the same table for one event, which is the duplication that "
+		"consolidation exists to remove"
+	)
+	assert len(calls) == 2, (
+		"the alert board is fed ABOVE the six-hour cooldown, deliberately. Below it, the "
+		"legacy claim would decide how many occurrences the board counted — and an occurrence "
+		"count that is really a delivery count makes the doubling schedule meaningless"
+	)
+
+
+def test_the_error_log_is_written_when_the_alert_board_could_not_record(monkeypatch) -> None:
+	"""The fallback, and the only case where dropping the Error Log would lose the event."""
+	_seed_system_managers()
+	_patch_governance_sink(monkeypatch, recorded=False)
+	alert = subscriptions.SyncAlert(
+		key="unit-test-fallback",
+		severity=subscriptions.ALERT_SEVERITY_ALARM,
+		subject="s",
+		message="m",
+	)
+
+	subscriptions.raise_operator_alert(alert)
+
 	assert len(ERROR_LOG) == 1
+	assert "unit-test-fallback" in ERROR_LOG[0][1]
 
 
 def test_delivery_bookkeeping_increments_the_event_count() -> None:

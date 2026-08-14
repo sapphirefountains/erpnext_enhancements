@@ -173,6 +173,12 @@ CHAT_DENYLIST_DOCTYPES = frozenset(
         # not a derived artefact needing lighter handling — it is the transcript,
         # pre-assembled into prose, which is easier to read than the transcript.
         "Chat Context Chunk",
+        # Phase 6 §4.I. No message text by schema — a class slug, identifiers, counts and
+        # timestamps. On the list anyway, because it is a per-room census of exactly where
+        # the mirror is broken: which rooms nobody can read, which messages Google accepted
+        # and ERPNext lost track of, which inbound events were abandoned. That is the map
+        # you would want before deciding where a gap would go unnoticed.
+        "Chat Drift Report",
         "Chat Event Subscription",
         # Phase 6 §4.C. Holds no message text itself — rooms, a reason, counts and hashes —
         # but it is the index of every bundle ever produced, and a bundle IS the transcript.
