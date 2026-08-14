@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.283.1] - 2026-08-13
+
+Phase 6 §4.G.6 asks what headers Frappe's private-file route actually sets, and says to settle
+it against the installed source rather than assume. Settling it moved the work: the case the
+section is most worried about is **already defended twice over**, and the real gap is sitting
+next to it.
+
+### Fixed
+
+- **Seven file extensions were served inline from our own origin with a scriptable
+  content type.** Frappe v16 force-downloads exactly four — `.svg`, `.html`, `.htm`, `.xml` —
+  and serves everything else `Content-Disposition: inline`. Frappe's own `develop` branch
+  widened that list to fourteen. The seven in the gap are `.xhtml`, `.svgz`, `.shtml`,
+  `.mhtml`, `.xsl`, `.xslt` and `.swf`.
+
+  A private `evil.xhtml` therefore came back as `application/xhtml+xml`, inline, from the
+  ERPNext origin — stored XSS with the viewer's session cookies attached. **This is not a chat
+  finding**: anyone who can attach a file to anything reaches it, and the SPA renders chat
+  attachments straight off `file_url`, so chat is a consumer rather than the cause.
+
+  `X-Content-Type-Options: nosniff` goes on the same responses. Frappe sets that header nowhere
+  in v16, and it covers the case the extension list structurally cannot: a file whose extension
+  is unremarkable and whose *bytes* are HTML.
+
+  Both live in `monkeypatches.py`, which is where this app already carries framework patches so
+  they survive `bench update`.
+
+### Notes
+
+- **Why not an nginx rule.** `infra/configs/startup_script.sh` runs `bench setup production` on
+  every boot, which regenerates the nginx config from bench's own template — a hand-edited
+  location block is erased at the next reboot. Fifteen lines of Python that survive an update
+  beat infra work that does not survive a restart.
+- **What this deliberately does not fix, and cannot.** *Public* files (`is_private = 0`) never
+  reach Python at all; nginx serves them off disk with `try_files`. No application code can
+  defend them, and nginx's own regex covers only the same four extensions. That is the argument
+  for chat attachments being private without exception, which `chat/api/compose.py` already
+  enforces server-side — recorded here because the reason is easy to lose and the rule looks
+  like belt-and-braces without it.
+- **One nginx trap worth knowing, because it points the wrong way.** `add_header` inheritance is
+  all-or-nothing per level, so the `/private/files/*` location that defines its own header
+  **drops** the server-level `nosniff`, `X-Frame-Options` and HSTS. The responses that most need
+  hardening are the ones that lose it — a second reason to set the header in Python, where it
+  rides on the upstream response nginx forwards.
+- **The already-defended case, stated so nobody re-fixes it.** `.svg` and `.html` are
+  force-downloaded by Frappe *and* by nginx's own regex, on every v16 tag we run. The §4.G.6
+  work there is a regression test, not a change.
+- `tests/test_private_file_serving.py` (bench-free, unittest, its own `ci.yml` step). Nine
+  assertions, verified non-vacuous against three deliberate breaks: an extension trimmed from
+  the list → red; the idempotency guard removed → red (a doubly-wrapped function grows a frame
+  per call for the life of the process); `setdefault` changed to assignment → red, which is the
+  one that matters if a future Frappe sets the header itself. The suite asserts **the patch**,
+  not Frappe: an upstream fix makes it pass trivially rather than fail.
+
 ## [1.283.0] - 2026-08-13
 
 Phase 6 §4.G.4–G.5 asked for an inventory of every whitelisted method in the chat package,

@@ -281,6 +281,19 @@ jobs:
       # share a process with the other bench-free suites.
       - name: Administrator login alerts (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_security_alerts -v
+      # Frappe v16 force-downloads FOUR extensions from /private/files/ and serves everything
+      # else inline; frappe's own develop branch widened that list to fourteen. The seven in
+      # the gap (.xhtml .svgz .shtml .mhtml .xsl .xslt .swf) are served from OUR origin with a
+      # scriptable Content-Type and Content-Disposition: inline - stored XSS with the viewer's
+      # session cookies. Anyone who can attach a file to anything can upload one.
+      #
+      # Fixed in monkeypatches.py rather than nginx because startup_script.sh runs
+      # `bench setup production` on every boot, which regenerates the nginx config from bench's
+      # template - a hand-edited rule is erased at the next reboot.
+      #
+      # Own step: installs its own frappe stub in setUpModule.
+      - name: Private files are never served inline (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_private_file_serving -v
       # Guards the "routes the truck to the wrong address, confidently" class of
       # bug: the supplier pick-up address fallback order, our own yard never
       # becoming a stop, and the PO -> Project union that either link alone drops.

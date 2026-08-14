@@ -1696,9 +1696,14 @@ assistant_skills = [
 # first time it loads hooks, so this runs once per process before any patched
 # path is reached. `_load_app_hooks` skips functions and `_`-prefixed names, so
 # neither the import alias nor the call is mistaken for a hook. See
-# monkeypatches.py for what/why — currently: stop a cached `None` (e.g. the
-# `telephony` Module Def query) from crashing get_modules_from_all_apps and the
-# app switcher.
+# monkeypatches.py for what/why — currently two:
+#   1. stop a cached `None` (e.g. the `telephony` Module Def query) from crashing
+#      get_modules_from_all_apps and the app switcher;
+#   2. force-download every executable attachment type from /private/files/ and
+#      set `nosniff`. v16's list is four extensions; frappe's develop widened it
+#      to fourteen, and the seven in the gap are served INLINE from our own
+#      origin with a scriptable Content-Type. nginx cannot hold this fix —
+#      startup_script.sh regenerates its config from bench's template on boot.
 from erpnext_enhancements.monkeypatches import apply as _apply_monkeypatches
 
 _apply_monkeypatches()
