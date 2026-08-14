@@ -15,24 +15,23 @@ queues measured in weeks and half of them gate the other half.
 
 ## 0. What changed today, before you read the rest
 
-**Six pull requests are open. None is merged; `main` auto-deploys to production, so merging is
-yours.**
+**Five pull requests are open. None is merged; `main` auto-deploys to production, so merging is
+yours.** (#828 merged while this was being written, taking `1.288.3`.)
 
 | Order | PR | Repo | Version | What it is |
 |---|---|---|---|---|
 | 1 | [#340](https://github.com/sapphirefountains/triton/pull/340) | triton | 0.68.0 | The cached-token share, from provider to response |
 | 2 | [#341](https://github.com/sapphirefountains/triton/pull/341) | triton | 0.68.1 | A drift guard that had skipped for its entire life |
 | 3 | [#342](https://github.com/sapphirefountains/triton/pull/342) | triton | 0.68.2 | Two claims that were written down and never asserted |
-| — | [#828](https://github.com/sapphirefountains/erpnext_enhancements/pull/828) | erpnext_enhancements | 1.288.3 | Pre-existing — a failed Triton turn recorded *that* it failed, not why |
 | 4 | [#829](https://github.com/sapphirefountains/erpnext_enhancements/pull/829) | erpnext_enhancements | 1.288.4 | The invocation log's cost columns were confidently wrong |
-| — | [#830](https://github.com/sapphirefountains/erpnext_enhancements/pull/830) | erpnext_enhancements | 1.288.5 | This document |
+| any | [#830](https://github.com/sapphirefountains/erpnext_enhancements/pull/830) | erpnext_enhancements | 1.288.5 | This document |
 
 **The order is load-bearing for the three Triton ones.** `#342` is stacked on `#341`, which is
 stacked on `#340` — merging out of order shows the wrong diff. `#829` is harmless alone but only
-*does* anything once `#340` is **deployed**, because it reads a field Triton does not publish
-until then; until it lands, those columns read zero, which is the intended visible-absence state
-rather than a wrong number. `#828`, `#829` and `#830` picked non-colliding version numbers
-deliberately, so they can merge in any order relative to each other.
+*does* anything once `#340` is **deployed**, not merely merged, because it reads a field Triton
+does not publish until then; until that happens the cost columns read zero, which is the intended
+visible-absence state rather than a wrong number. `#829` and `#830` picked non-colliding version
+numbers deliberately, so they can merge in any order relative to each other.
 
 **The task board was reconciled.** 57 tasks that had already shipped were sitting at *Overdue* or
 *Pending Review*; they are now Completed with `completed_on` set to the **actual release date from
