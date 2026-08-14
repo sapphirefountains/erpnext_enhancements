@@ -846,29 +846,38 @@ def verify_all_chains() -> dict:
 	break, and its own hash will verify against the new head, so the record survives and the
 	break stays visible behind it.
 
-	Wired to a nightly cron in ``hooks.py``. Until Phase 6's alerting lands (§4.H) the Error Log
-	is the delivery channel, which is *necessary and not sufficient* — nobody reads it
-	unprompted, and that gap is stated rather than implied.
+	Wired to a nightly cron in ``hooks.py``. Delivery is §4.H's alert path as of v1.291.0 —
+	the ``Error Log`` alone was *necessary and not sufficient*, because nobody reads it
+	unprompted. Each chain alerts under **its own scope**, so a broken retrieval chain and a
+	broken governance chain are two incidents rather than one row that keeps changing its
+	mind about which chain it is describing.
 	"""
+	from erpnext_enhancements.chat.governance import alert_rules, alerts
+
 	results = {"retrieval": verify_chain(), "governance": verify_governance_chain()}
 	broken = [name for name, result in results.items() if not result.get("ok")]
+
+	for name, result in results.items():
+		alerts.check(
+			bool(result.get("ok")),
+			subsystem="audit",
+			kind="chain_verification_failed",
+			scope=name,
+			severity=alert_rules.SEVERITY_CRITICAL,
+			summary=f"the {name} audit chain does not verify",
+			detail=(
+				f"First break {result.get('first_break')} at {result.get('at')}. Every row "
+				f"after the break is suspect and every row before it is not. A break is "
+				f"tampering or corruption; it is not something the application can cause."
+			),
+			first_break=result.get("first_break"),
+		)
 
 	if broken:
 		detail = "; ".join(
 			f"{name}: first break {results[name].get('first_break')} at {results[name].get('at')}"
 			for name in broken
 		)
-		try:
-			frappe.log_error(
-				title="chat audit: CHAIN VERIFICATION FAILED",
-				message=(
-					f"{detail}\n\nEvery row after the break is suspect and every row before it is "
-					f"not. A break is tampering or corruption; it is not something the "
-					f"application can cause."
-				),
-			)
-		except Exception:
-			pass
 		record_governance_event(
 			event_type="chain_verification_failed",
 			actor="Administrator",

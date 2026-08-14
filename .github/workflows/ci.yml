@@ -838,6 +838,29 @@ jobs:
       # Own step: no frappe import needed, the module is only ever parsed.
       - name: Chat tombstone expand (recorded before revealed, or refused)
         run: python -m unittest erpnext_enhancements.tests.test_chat_tombstone -v
+      # The alert path's JUDGEMENT, executed rather than inspected - alert_rules.py imports
+      # nothing, which was the point of splitting it out. The property that most wants a real
+      # test: the deduplication key never carries a measurement. A key holding the queue depth
+      # changes every time the depth does, so nothing matches its predecessor and the table
+      # grows exactly as fast as it would with no deduplication at all - while the code, the
+      # schema and the dashboard all claim the alerts are deduplicated. Invisible until
+      # somebody counts rows.
+      #
+      # Pure: no frappe stub needed.
+      - name: Chat alert rules (dedup, doubling schedule, terminal resolve)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_alert_rules -v
+      # The SHAPE of the module that performs those decisions, which no unit test can see:
+      # the log-file line happens before any database work (the failure class where an alert
+      # matters most is the one where a database-backed alert is least likely to survive),
+      # nothing raises, the ops-space post passes no ignore_permissions, and email is
+      # frappe.sendmail and never a Notification Log row (G6-18).
+      #
+      # Scans DOCSTRING-STRIPPED source. Six text-matching assertions in this series flagged
+      # prose rather than code, and both new files discuss the forbidden name at length.
+      #
+      # Own step: no frappe import needed, the modules are only ever parsed.
+      - name: Chat alert surface (logged first, never raises, no membership bypass)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_alerts_surface -v
       # The SPA received NO realtime events at all - not another person's message, not
       # @triton's reply, not even its own - and looked healthy doing it, because every symptom
       # pointed away from the cause. Frappe's socket server namespaces connections by site and

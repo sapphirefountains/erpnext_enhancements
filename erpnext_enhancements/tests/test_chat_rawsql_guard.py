@@ -213,6 +213,23 @@ UNSCOPED_TABLES: dict[str, str] = {
 		"exists so an interrupted run resumes rather than restarts, so the resuming worker "
 		"needs the row regardless of who started it. It references org units, never messages."
 	),
+	"Chat Ops Alert": (
+		"Phase 6 §4.H's alert board: a subsystem, a failure kind, a scope, counts, "
+		"timestamps and a lifecycle. It holds no message text in any field by schema, and "
+		"there is nothing for membership to mean on it — an alert is about the machinery "
+		"rather than about anything anybody said.\n\n"
+		"UNSCOPED rather than a per-call-site exemption, and the readers are the reason: "
+		"every one of them is a scheduler, a worker or a `bench execute` command with no "
+		"session user. `_live_alerts` is the deduplication lookup that runs inside whatever "
+		"job noticed the problem, and `open_alerts` feeds the health report. A membership "
+		"filter on either would return nothing and look correct doing it — which is exactly "
+		"how the oversight read path stayed useless for a whole phase.\n\n"
+		"What keeps it closed is what closes the queue tables: zero DocPerm — off the desk, "
+		"out of /api/resource, away from the generic MCP tools — plus an entry in the shared "
+		"MCP denylist. It is on that denylist despite holding no content, because it names "
+		"rooms, which is a room census by another route, and because an alert board is a map "
+		"of what is currently broken."
+	),
 }
 
 #: Tables that DO carry, or join straight to, what a coworker said. A query touching one of
@@ -1590,6 +1607,12 @@ class TestTheAllowlistsAreHonest(unittest.TestCase):
 				"Chat Audit Log",
 				"Chat Event Subscription",
 				"Chat Inbound Event",
+				# Phase 6 §4.H's alert board. Unscoped because every reader is a scheduler, a
+				# worker or a `bench execute` command with no session user — and a membership
+				# filter on the deduplication lookup would return nothing and look correct
+				# doing it, which is the failure that made the oversight read path useless for
+				# a whole phase.
+				"Chat Ops Alert",
 				"Chat Provisioning Run",
 				# Phase 4. A device registry, not a conversation table: endpoint, keys, user
 				# agent and delivery health, and no room or message reaches it at all. Its two
