@@ -321,6 +321,38 @@ FOREIGN_TABLES: dict[str, str] = {
 #: bounded by something other than the reader's identity, and no column selected is a body.**
 #: A read that answers an HTTP request fails all three and does not belong here.
 SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
+	# --- chat/governance/tombstone.py: seeing through a delete (Phase 6 §4.E) ------------
+	#
+	# Both reads are bounded to ONE named message and gated identically. The membership
+	# filter is not merely unnecessary here but wrong: the auditor is not a participant, so
+	# it would return nothing and look correct doing it.
+	#
+	# Eligible on all three counts the rule names. NO SESSION USER: there is one, and it is
+	# checked FIRST — `_require_auditor` refuses anyone without the configured oversight role
+	# before either query runs. BOUNDED BY SOMETHING OTHER THAN THE READER: a single named
+	# message. NO BODY COLUMN: these DO read the body, which is the entire point of an
+	# expansion — the price is a chained, reason-required `tombstone_expanded` row written
+	# BEFORE the body is returned, and a failure to write it refuses the read outright.
+	# `_message` deliberately has NO entry: it reads one row with `frappe.db.get_value`,
+	# which this scanner does not collect (it walks `frappe.get_all`, `frappe.db.sql`,
+	# `frappe.qb` and SQL literals). An exemption for it would match no query and this file's
+	# own staleness check refuses that — correctly, since a waiver covering nothing today
+	# silently covers whatever later takes the name.
+	#
+	# Noting the gap rather than quietly benefiting from it: a `db.get_value` on a body
+	# column is a real read path and is not scanned here. Widening the collector is its own
+	# change with its own backlog of pre-existing hits, so it is filed rather than smuggled
+	# into this one.
+	(
+		"governance/tombstone.py",
+		"_revisions",
+		"Chat Message Revision",
+	): (
+		"The edit trail for that one message, oldest first. A message deleted after three "
+		"edits has four bodies in its past, and returning only the last answers 'what did it "
+		"say' with the least interesting of them while reading as though it were the whole "
+		"story. Same gate, same audit row, same single-message bound as the entry above."
+	),
 	# --- chat/governance/export_runner.py: the export bundle (Phase 6 §4.C) --------------
 	#
 	# All three share one argument, so it is written once here rather than three times below.
@@ -1370,7 +1402,15 @@ class TestEveryQueryIsScopedOrJustified(unittest.TestCase):
 		memory, whereas ``request_export`` writes an ``export_requested`` row to
 		``Chat Audit Log`` — chained, reason-required, and refused below twelve characters.
 		"""
-		allowed = {("governance/export_runner.py", "_revisions")}
+		allowed = {
+			("governance/export_runner.py", "_revisions"),
+			# Phase 6 §4.E. Seeing through a tombstone IS reading this table — the deleted
+			# body lives here and on `Chat Message.text`, and an expansion that could not
+			# show the edit history would answer "what did it say" with only the version
+			# current when somebody removed it. Paid for with a `tombstone_expanded` row
+			# that is chained, reason-required, and whose failure refuses the read.
+			("governance/tombstone.py", "_revisions"),
+		}
 		offenders = sorted(
 			{
 				str(use)

@@ -110,6 +110,11 @@ NON_MUTATING: Final[dict[str, str]] = {
 		"to NAVIGATE for response.type='download' to reach a file, and an XHR would receive "
 		"the bytes and drop them"
 	),
+	f"{DOTTED_ROOT}.governance.tombstone.expand": (
+		"returns a deleted message's retained body and its revision trail. Writes a "
+		"tombstone_expanded row, which is a record OF the read rather than an effect the "
+		"caller wants. POST because the reason travels in the body"
+	),
 	f"{DOTTED_ROOT}.governance.viewer.search": (
 		"the oversight read. Writes a Chat Retrieval Audit row, which is a record OF the read "
 		"rather than an effect the caller wants — the same reasoning search_messages carries. "
