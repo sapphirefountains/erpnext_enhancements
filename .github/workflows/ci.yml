@@ -587,6 +587,14 @@ jobs:
       # Field, and nothing may target the removed `source` field.
       - name: Lead/Opportunity attribution (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_lead_attribution.py -q
+      # Its own step: installs a frappe stub in sys.modules, so it must not share a
+      # process with another stub-installing suite. Guards the distinction the
+      # won-date backfill turns on — an audit-trail status transition is evidence of
+      # a win only when it isn't part of a bulk edit. 197 of the 220 candidates on
+      # this instance were flipped on one day, and trusting those rebuilds the fake
+      # revenue spike the sales dashboard was fixed to stop showing.
+      - name: Opportunity won-date backfill (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_opportunity_won_date_backfill.py -q
       - name: Fountain move intake (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_fountain_move.py -q
       # Field systems (WP-2/3/8). Its own step because it installs a frappe stub in
