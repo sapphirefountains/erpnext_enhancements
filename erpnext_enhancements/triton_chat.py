@@ -31,7 +31,12 @@ from werkzeug.wrappers import Response
 _TOKEN_REFRESH_MARGIN_SEC = 120
 
 # Default model new chats open with when nothing is configured.
-_DEFAULT_MODEL = "gemini-3.5-flash"
+#
+# Empty means Auto: Triton picks a tier per message from the prompt, which for
+# ordinary questions is the same Flash this used to pin (`model_router`'s fast
+# tier), while a research-shaped question gets Pro and a trivial one gets Lite.
+# Pinning Flash here bought nothing over Auto and cost the two other tiers.
+_DEFAULT_MODEL = ""
 
 # Curated model choices shown in the widget's header picker. Values are the
 # Gemini model ids Triton routes to (see backend app/core/model_router.py); an
@@ -57,12 +62,11 @@ def get_settings() -> dict:
     """
     behavior = frappe.get_cached_doc("Triton Assistant Settings")
 
-    base_url, secret, conn_model = "", None, None
+    base_url, secret = "", None
     try:
         conn = frappe.get_cached_doc("Triton Settings")
         base_url = (conn.get("gateway_url") or "").strip().rstrip("/")
         secret = conn.get_password("admin_webhook_secret") if conn.get("admin_webhook_secret") else None
-        conn_model = conn.get("chat_model_id")
     except Exception:
         # erpnext_enhancements / Triton Settings not present — assistant stays off.
         pass
@@ -71,7 +75,15 @@ def get_settings() -> dict:
         "enabled": bool(behavior.enabled),
         "base_url": base_url,
         "gateway_secret": secret,
-        "default_model": (behavior.default_model or conn_model or _DEFAULT_MODEL),
+        # Auto unless this widget is deliberately pinned.
+        #
+        # `Triton Settings.chat_model_id` used to sit in this chain, which made
+        # Auto impossible to reach: it is set on every real site, and an empty
+        # `default_model` — which is exactly how Auto is spelled — is falsy, so
+        # it fell straight through to the pinned id. `chat_model_id` still
+        # serves `get_gateway_config()`; it just no longer decides what the
+        # widget's picker opens on.
+        "default_model": (behavior.default_model or _DEFAULT_MODEL),
         "timeout": int(behavior.request_timeout or 120),
         "enable_page_context": bool(behavior.enable_page_context),
         "enable_write_actions": bool(behavior.enable_write_actions),

@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.281.0] - 2026-08-13
+
+### Changed
+
+- **The Triton widget now opens on Auto instead of Flash.** Auto lets Triton pick a tier per
+  message from the prompt: `gemini-3.5-flash` for ordinary questions — the same model this
+  used to pin, so the common case is unchanged — `gemini-3.1-pro-preview` for research-shaped
+  ones, and `gemini-3.1-flash-lite` for trivial ones. Pinning Flash bought nothing over Auto
+  and cost the two other tiers.
+
+### Fixed
+
+- **Auto was not reachable as a default at all, and could not have been configured.** The
+  resolution chain was
+
+  ```python
+  behavior.default_model or conn_model or _DEFAULT_MODEL
+  ```
+
+  and **Auto is spelled as the empty string**, which is falsy. So an operator setting
+  *Triton Assistant Settings → Default Model* to blank meaning "Auto" got the exact opposite:
+  the value fell straight through to `Triton Settings.chat_model_id`, which is set on every
+  real site (`gemini-3.5-flash` on ours). Blank was already documented as "inherit from Triton
+  Settings", so there was no spelling of Auto left.
+
+  `chat_model_id` is out of the widget's chain now. It still serves `get_gateway_config()`,
+  which is its actual job — it just no longer decides what the picker opens on. A site that
+  wants the widget pinned sets *Default Model* explicitly, which is what that field is for.
+
+- The widget's last-resort fallback was a hardcoded `"gemini-3.5-flash"`, commented as the
+  "requested default". Removed: Auto is always the first entry in both the live list and the
+  offline fallback, so `models[0]` already is Auto.
+
+### Added
+
+- `tests/test_triton_widget_defaults.py` — five bench-free tests, reusing the frappe stubs
+  from `test_triton_personas`. Two of them reproduce the bug exactly: with `chat_model_id`
+  pinned and `default_model` blank (this site's real configuration) the resolved default must
+  be `""`. Both were confirmed failing against the old `or` chain before being kept. The
+  failure mode is silent — the picker just opens on Flash — so it needs a test rather than
+  review to catch.
+- Wired into `ci.yml` on its own step. This repo names every pytest suite explicitly, and the
+  comment above the persona step records what happens otherwise: `test_triton_personas.py`
+  shipped and then never ran in CI at all. A new suite that is not added there is a suite that
+  does not exist.
+
+### Notes
+
+- **Nobody's explicit choice is disturbed.** `applyModels()` reads the saved pick with
+  `saved !== null` rather than a truthiness test, precisely so that a deliberate Auto is not
+  mistaken for "unset" — and `applyModels()` never writes to `localStorage`, only `setModel()`
+  on a real change does. So users who have picked a model keep it, and users who never touched
+  the picker have no stored value and get the new default.
+- No migration and no site configuration needed: *Default Model* is already blank here, and
+  blank now means Auto.
+- Field description updated to match, since it documented the old inherit-from-`chat_model_id`
+  behaviour that no longer exists.
+
+
 ## [1.280.11] - 2026-08-13
 
 ### Fixed

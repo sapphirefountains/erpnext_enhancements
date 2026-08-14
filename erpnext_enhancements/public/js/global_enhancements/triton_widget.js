@@ -582,7 +582,16 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			sel.appendChild(o);
 		});
 		// Selection priority: current pick (if still listed) > saved choice >
-		// configured default > Flash (requested default) > first option.
+		// configured default > first option (Auto).
+		//
+		// `saved !== null` rather than a truthiness check, because Auto is the
+		// empty string: a user who deliberately chose Auto must not be treated
+		// as having chosen nothing and pushed back onto the configured default.
+		//
+		// The last resort used to be a hardcoded "gemini-3.5-flash". Auto is
+		// always first in both the live list and the fallback, so `models[0]`
+		// already is Auto — and Auto routes ordinary prompts to that same Flash
+		// anyway, while leaving Pro and Lite reachable.
 		const values = models.map((m) => m.value);
 		const saved = localStorage.getItem(LS_MODEL);
 		let initial;
@@ -592,8 +601,6 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			initial = saved;
 		} else if (values.includes(state.config.default_model)) {
 			initial = state.config.default_model;
-		} else if (values.includes("gemini-3.5-flash")) {
-			initial = "gemini-3.5-flash";
 		} else {
 			initial = models[0].value;
 		}

@@ -810,6 +810,14 @@ jobs:
       # net under them first (ADR 0009 Appendix B §12, C1).
       - name: Triton persona proxy + SSE relay (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_triton_personas.py -q
+      # Same module, separate suite because it guards a different thing: the
+      # widget's default model. Auto is spelled as the empty string, so the old
+      # `behavior.default_model or conn_model or _DEFAULT_MODEL` chain could
+      # never resolve to it -- blank fell through to Triton Settings'
+      # chat_model_id, which is set on every real site. The failure is silent
+      # (the picker just opens on Flash), so it needs a test rather than review.
+      - name: Triton widget default model (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_triton_widget_defaults.py -q
       # The repo's first JavaScript test, and it needs no runner beyond the node
       # already on the GitHub image — deliberately not a new framework.
       #
