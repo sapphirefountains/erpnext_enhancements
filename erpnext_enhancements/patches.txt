@@ -629,3 +629,10 @@ erpnext_enhancements.patches.backfill_spa_client_message_id
 # the app identity - which is safe to apply over USER because a Triton-origin row is a bot
 # reply by construction and never a coworker's message. Dead jobs untouched. Safe twice.
 erpnext_enhancements.patches.restamp_triton_relay_auth_identity
+
+# The FULLTEXT index on Chat Message.text_plain that gate._authored_by has been querying
+# without. add_chat_phase5_indexes created one for the gate's OTHER match() (Chat Context
+# Chunk.body) and not for this one, so MariaDB answered 1191 - Can't find FULLTEXT index
+# matching the column list - on every @triton turn. Reuses that patch's _apply_fulltext, which
+# already handles missing table, missing column and index-already-present. Safe twice.
+erpnext_enhancements.patches.add_chat_message_fulltext_index

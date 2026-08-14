@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.280.11] - 2026-08-13
+
+### Fixed
+
+- **`gate._authored_by` full-text-searches `Chat Message.text_plain`, and no FULLTEXT index
+  exists for it.** MariaDB answers **1191, Can't find FULLTEXT index matching the column list**
+  on every execution — the next failure after the 1054, and the same class: SQL naming
+  something the schema does not have.
+- `add_chat_phase5_indexes` created a FULLTEXT index for the gate's *other* `MATCH`
+  (`Chat Context Chunk.body`) and not for this one, so exactly one of the two full-text
+  searches had an index behind it.
+- New patch creates it, reusing that patch's `_apply_fulltext` — which already handles a
+  missing table, a missing column, and an index that is already there.
+
+### Added
+
+- **A guard: every ``match(`col`)`` in chat SQL must have a FULLTEXT index some patch declares.**
+  Verified by mutation — removing the new declaration reports
+  `chat/retrieval/gate.py: match(text_plain)`, which is exactly the production failure.
+
+### Notes
+
+- **Two defensible decisions with no edge between them.** `chat/api/search.py` says in writing
+  that this column has no FULLTEXT index and that adding one *"is a migration with its own
+  rollout"* — a considered Phase 1 choice. Phase 5's gate then queried it as though the
+  migration had happened. Neither module is wrong on its own.
+- **The cost, stated rather than discovered:** `ALTER TABLE … ADD FULLTEXT` builds over every
+  existing row and holds the table while it does. `Chat Message` is small here and it is
+  imperceptible; on years of history it would not be, which is why Phase 1 deferred it. The
+  fallback if that ever bites is `LIKE` in `_authored_by`, losing relevance ordering on one
+  tier that is already bounded by `seq desc`.
+- Third schema-shaped fault in one afternoon — a missing column, a guard that skipped two
+  thirds of the package, and now a missing index. All three were invisible to every test that
+  does not connect to a database, and all three are now checked by tests that do not.
+
 ## [1.280.10] - 2026-08-13
 
 ### Fixed
