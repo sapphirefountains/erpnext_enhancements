@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.288.4] - 2026-08-14
+
+**The invocation log's three cost columns were confidently wrong, and now they are either
+right or visibly empty.** `Triton Invocation Log.prompt_tokens` held the turn's **total**
+token count, and `completion_tokens` was hard-coded to `0`. Nothing about that was
+careless — Triton's answer carried a single `tokens` number and no split, so there was
+nothing else to write. But the Phase 6 cost dashboard reads these columns, and input and
+output price roughly an order of magnitude apart: a total labelled as the prompt count is
+not an approximation of the cost, it is a **different number wearing its name**. A
+dashboard built on it would have reported a plausible figure nobody would think to check.
+
+Triton v0.68.0 (PR #340) publishes `ui_metadata.usage` —
+`{model_name, prompt_tokens, candidates_tokens, cached_tokens, total_tokens}` — on all
+three of its answer routes. `chat/invoke/triton_client.py` now reads it. `handler.py`
+already wrote whatever `ask()` returned into the right columns, so this is the whole
+change on this side.
+
+**`cached_content_tokens` is a subset of `prompt_tokens`, not an addition to it.** The two
+columns do not sum to anything. It is the share of the prompt served from the provider's
+prompt cache, and it earns a column because it is the fingerprint of the failure where
+something volatile creeps above the stable-prefix boundary and collapses the cache — until
+now a warm cache and a collapsed one produced identical rows.
+
+**Against a Triton older than 0.68.0 the columns read zero rather than the old number, and
+that is deliberate.** Dropping a measurement we cannot label correctly is a real loss, and
+it is the right trade: a plausible wrong figure reads as data and is never questioned,
+where a zero column gets investigated. The turn itself still answers — an absent cost
+block must never fail a turn that otherwise worked. `model_name` is read off the block
+first, because spend cannot be estimated without knowing which model answered.
+
+### Fixed
+
+- `chat/invoke/triton_client.py::ask` reads the prompt/completion split and the cached
+  share from `ui_metadata.usage`, falling back to the flat `cached_content_token_count`
+  key so nothing is lost during a window where one repo is deployed ahead of the other.
+
+### Changed
+
+- `erpnext_enhancements/tests/test_chat_triton_client.py` — seven new assertions in a new
+  `UsageBlockTest`, including the regression itself (`tokens` is 1250, so `prompt_tokens`
+  must not be 1250) and the older-Triton case. The fake-`_post` fixture was lifted out of
+  `StaleSessionRetryTest` into a plain `_FakeTritonHarness` mixin: a harness that is itself
+  a `TestCase` has its tests re-run under every subclass, which is how a suite quietly
+  starts reporting more passes than it has assertions. Suite goes 21 → 28 tests, all of
+  them distinct.
+
+### Notes
+
+- This release was authored as `1.288.4` while `1.288.3` was still an open PR (#828), rather
+  than as `1.288.3` — two branches picking the same number is a merge conflict in the one file
+  CI hard-gates. #828 has since merged and taken it, so the numbering is contiguous after all.
+- Closes the ERPNext half of TASK-2026-01511. The Triton half is its prerequisite: until
+  v0.68.0 is deployed, this code finds no `usage` block and the columns stay at zero.
+- **Reads cleanly against #828's changes to the same file.** That release added
+  `_model_failure_detail()` to `chat/invoke/handler.py`'s *error* path; this one changes what
+  `triton_client.ask()` returns on the *success* path, which `handler.py` was already writing
+  into the right columns unmodified. The two do not overlap.
+
 ## [1.288.3] - 2026-08-14
 
 **The reason a `@triton` turn failed was being thrown away one line before it was written
