@@ -15,6 +15,7 @@ from erpnext_enhancements.feature_flags import (
 	contract_esign_public_page_enabled,
 	document_merge_enabled,
 	field_description_icons_enabled,
+	field_text_wrap_enabled,
 	fountain_move_intake_enabled,
 	fountain_move_public_form_enabled,
 	package_dispatch_enabled,
@@ -43,6 +44,12 @@ def boot_session(bootinfo):
 	``frappe.boot.ee_field_description_icons`` gates the global desk script that
 	renders field descriptions as hover ⓘ icons (see
 	``public/js/global_enhancements/field_description_icons.js``).
+
+	``frappe.boot.ee_field_text_wrap`` gates the global desk script and stylesheet
+	that wrap long field values to three lines instead of truncating them, in
+	child-table rows and on forms (see
+	``public/js/global_enhancements/field_text_wrap.js``). Purely cosmetic — no
+	server-side behaviour depends on it.
 
 	``frappe.boot.ee_merge_tool`` gates the global "Merge into…" form button and
 	list-view bulk action (see ``public/js/merge_tool/merge_tool.js``); the
@@ -87,6 +94,7 @@ def boot_session(bootinfo):
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
 	bootinfo.ee_desk_shortcuts = get_visible_shortcuts_for_user()
 	bootinfo.ee_field_description_icons = 1 if field_description_icons_enabled() else 0
+	bootinfo.ee_field_text_wrap = 1 if field_text_wrap_enabled() else 0
 	bootinfo.ee_merge_tool = 1 if document_merge_enabled() else 0
 	bootinfo.ee_contacts_ux = 1 if contacts_ux_enabled() else 0
 	bootinfo.ee_product_configurator = 1 if product_configurator_enabled() else 0

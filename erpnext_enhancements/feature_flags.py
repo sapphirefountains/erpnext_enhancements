@@ -73,6 +73,30 @@ def field_description_icons_enabled():
 	)
 
 
+def field_text_wrap_enabled():
+	"""True when long field values wrap instead of truncating to one line.
+
+	Drives the global desk script in
+	``public/js/global_enhancements/field_text_wrap.js`` and its stylesheet via
+	``frappe.boot.ee_field_text_wrap`` (see boot.py). Default ON: the Check field
+	ships ``default "1"`` (applied when a new site first creates the Settings
+	Single) and the ``default_field_text_wrap_on`` patch writes 1 on existing
+	installs; a user who unchecks it is then respected.
+
+	Missing-field-safe, unlike its older sibling
+	:func:`field_description_icons_enabled`: this runs inside ``boot_session`` on
+	every desk page load, and v16's ``db.get_single_value`` THROWS when the field
+	is not yet in the Settings meta (new code live before migrate has synced the
+	doctype) — which would 500 every desk page. Treated as OFF until the field
+	exists.
+	"""
+	if not frappe.get_meta("ERPNext Enhancements Settings").has_field("field_text_wrap_enabled"):
+		return False
+	return bool(
+		cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "field_text_wrap_enabled"))
+	)
+
+
 def contacts_ux_enabled():
 	"""True when the Contacts & Addresses quick-entry UX is switched on.
 

@@ -52,6 +52,11 @@ import "./filter_help.js";
 import "./global_enhancements/global_search_doctypes.js";
 // Field help text as a hover "ⓘ" icon (gated by frappe.boot.ee_field_description_icons)
 import "./global_enhancements/field_description_icons.js";
+// Long values wrap to three lines instead of truncating, in child-table rows and
+// on forms (gated by frappe.boot.ee_field_text_wrap). Mostly CSS — this half sets
+// the body class, swaps an editable Data <input> for a <textarea>, and shows the
+// remainder of a still-clipped cell on hover.
+import "./global_enhancements/field_text_wrap.js";
 // Show the activity feed on the first tab only. Frappe renders the timeline into
 // `.form-footer`, a SIBLING of the tab panes, so it follows you onto every tab and
 // pushes the thing you came for off the screen. One shared script rather than a
