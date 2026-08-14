@@ -795,6 +795,19 @@ jobs:
       # explanation from a call gets satisfied by deleting the explanation.
       - name: Chat oversight viewer (the reason gate, and the absent socket)
         run: python -m unittest erpnext_enhancements.tests.test_chat_oversight_viewer -v
+      # The export bundle - the artefact that LEAVES the building, so its contents are a
+      # legal question wearing a serialization costume. Two G6-9 properties:
+      #
+      #  * the deleted body is in revisions.jsonl and NOT in messages.jsonl. That is a
+      #    DECISION, not a filter: on this schema an is_deleted=1 row RETAINS its text
+      #    (divergence D4), so a naive dump hands over every deleted message in the file a
+      #    reader opens first. Verified to bite - removing the redaction fails two tests.
+      #  * a re-export is byte-identical apart from the timestamp and the export id, which
+      #    is what makes the manifest worth anything.
+      #
+      # Pure: chat/governance/export.py imports nothing from Frappe, so no stub is needed.
+      - name: Chat export (what leaves the building, and what does not)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_export -v
       # The SPA received NO realtime events at all - not another person's message, not
       # @triton's reply, not even its own - and looked healthy doing it, because every symptom
       # pointed away from the cause. Frappe's socket server namespaces connections by site and
