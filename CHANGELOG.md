@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.287.0] - 2026-08-14
+
+A long value in a `Data` field, or in a child-table cell, has been unreadable without
+clicking into it and scrolling. In a read-only grid it has been unreadable full stop.
+
+### Added
+
+- **Long field values now wrap to three lines instead of truncating to one**, in child-table
+  rows and on forms, reading and typing. Anything still too long shows in full on hover.
+  Gated by a new **ERPNext Enhancements Settings → Desk Experience → Field Text Wrapping**
+  switch (default ON), shipped to the client as `frappe.boot.ee_field_text_wrap` — toggling
+  needs no deploy; clients pick it up on their next page load.
+
+  New global desk script `public/js/global_enhancements/field_text_wrap.js` and stylesheet
+  `public/css/global_enhancements/field_text_wrap.css` (via `desk_addons.bundle.scss`,
+  theme-aware through Frappe's own CSS variables, so Timeless Night needs no separate rules).
+
+### Notes
+
+- **Why a stylesheet was needed at all: frappe wrote this hook and never finished wiring it.**
+  `grid_row.js::_get_fieldtype_class()` already tags Text and Small Text cells with
+  `grid-overflow-no-ellipsis`, and `grid.scss:722` gives that class `word-wrap: break-word`.
+  It is inert. `make_column()` builds the inner `.static-area` with the `ellipsis` class
+  **unconditionally**, and `global.scss:596` defines `.ellipsis { white-space: nowrap }` — the
+  child always wins, so the parent's wrapping has never applied to anything. **Re-check this
+  on every Frappe upgrade**: if upstream ever drops that unconditional class, most of the CSS
+  here becomes redundant rather than merely harmless.
+
+- **An `<input>` cannot wrap, so an editable plain `Data` field becomes a `<textarea>.`** v16's
+  `ControlData` builds its element from a `static html_element`, so the swap flips that static
+  for the duration of one synchronous `make_input()` call and restores it in a `finally`. The
+  `finally` is the whole safety argument: without it, one control that throws inside that
+  window leaves the static flipped and turns every `Link`, `Date`, `Int` and `Password` field
+  rendered afterwards into a textarea — with nothing thrown and nothing logged. It is also why
+  the swap is far narrower than replacing the class would be: every subclass was bound to the
+  original `ControlData` at definition time, long before this bundle runs, and an exact
+  `df.fieldtype === "Data"` test keeps them out of the branch they all reach through
+  `super.make_input()`.
+
+- **The swapped textarea is sized by its `rows` attribute, never an inline height.** frappe
+  sets `.editable-row textarea { height: 43px !important }` (`grid.scss:312`) and an inline
+  `style.height` loses to `!important`. The stylesheet wins that back with an `!important` of
+  its own — which also neutralises the inline heights `ControlText` and `ControlSmallText` set
+  (300px / 150px), so Text and Small Text cells being edited in a grid get the same treatment
+  without their own special case.
+
+- **Enter is refused on a swapped `Data` field and kept on Small Text.** A `Data` column is a
+  varchar and the `<input>` it replaced could not produce a newline; a Small Text is genuinely
+  multi-line and taking its Enter away would flatten every note typed in a grid. The two live
+  in separate functions for exactly that reason, and `scripts/test_field_text_wrap.js` fails
+  the build if they are merged.
+
+- **Grid arrow-key row navigation is preserved.** `grid_row.js:1282` binds its own keydown on
+  the control and `:1392` reads `e.which === 40` to move between rows; in a soft-wrapped
+  textarea the caret would move as well, so the row changed and the caret jumped at once.
+  Inside a grid the caret move is prevented and propagation deliberately left alone, so
+  frappe's handler still runs and arrow keys behave exactly as before.
+
+- **The fieldtype list is an allowlist, not a set of exclusions.** Rich text (Text Editor, HTML
+  Editor, Markdown Editor, Code), Check and Rating already have per-cell rules upstream
+  (`grid.scss:377-409`), and the numeric types read worse wrapped than clipped. A `:not()`
+  formulation would fight all of them; the allowlist cannot.
+
+- **The sticky left-hand grid columns are in the row-height rule on purpose.** `.data-row` is a
+  flex row, so `.row-index` and `.row-check` left holding frappe's fixed 43px do not stretch —
+  the checkbox and row number would float at the top of every wrapped row.
+
+- **Read-only `Data` on a form already wrapped and is untouched** — it renders into
+  `.control-value`, a `<div>`, and `form.scss:14` sets no `white-space` on
+  `.like-disabled-input`. List View and Report View rows use the same `.ellipsis` utility and
+  are deliberately **out of scope**: row height there is load-bearing for scanning density,
+  which is a separate decision rather than a free extension of this one.
+
+- **Ships with a backfill patch (`default_field_text_wrap_on`), and it is not optional.** A
+  `default` on a **new** field of a *Single* never reaches the row that already exists —
+  `bench migrate` adds no row to `tabSingles`, so the field reads 0 on every existing site
+  while the JSON says 1. Note this is the opposite of a normal doctype, where the `ALTER`
+  writes the default into every existing row and a patch keyed on emptiness matches nothing.
+
+- **The server-side flag checks `has_field()` before reading the value.** It is read inside
+  `boot_session` on every desk page load, and v16's `db.get_single_value` throws when the field
+  is not yet in the Settings meta — the window between a deploy and its migrate would otherwise
+  be a 500 on every desk page, for every user.
+
 ## [1.286.3] - 2026-08-14
 
 The hand-off buttons were already in the tab (v1.263.0) but still in a row *underneath* the

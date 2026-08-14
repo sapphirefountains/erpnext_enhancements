@@ -908,6 +908,21 @@ jobs:
       # no manifest sees -- which is every turn until Phase 5 ships.
       - name: Triton widget source guards (streaming, keyboard, preserved behaviour)
         run: node scripts/test_triton_widget_guards.js
+      # Field text wrapping. Same shape, same reason: every rule it covers fails
+      # silently. The sharpest is the `finally` around the ControlData.html_element
+      # swap -- that static is flipped to "textarea" for the duration of one
+      # synchronous make_input() call, so a control that throws inside the window
+      # leaves it flipped and turns every Link, Date and Int field rendered
+      # afterwards into a textarea, with nothing thrown and nothing logged. The
+      # rest: global assets stay bundled rather than raw /assets paths (ADR 0008),
+      # the SCSS import stays extension-less (a .css suffix becomes a runtime
+      # import that 404s), the swap keeps its exact `!== "Data"` fieldtype test so
+      # ControlData's subclasses cannot leak in, Data refuses Enter while Small
+      # Text keeps it (two functions, deliberately not merged), and the server
+      # flag checks has_field() before get_single_value -- it runs in boot_session
+      # on every desk load, and v16 throws there between a deploy and its migrate.
+      - name: Field text wrapping source guards (bundle wiring, gating, control swap)
+        run: node scripts/test_field_text_wrap.js
       # ------------------------------------------------------------------
       # Phase 3's chat client. Three node steps, no runner and no npm install --
       # the same shape as the three guards above, and for the same reason: a test

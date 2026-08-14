@@ -636,3 +636,10 @@ erpnext_enhancements.patches.restamp_triton_relay_auth_identity
 # matching the column list - on every @triton turn. Reuses that patch's _apply_fulltext, which
 # already handles missing table, missing column and index-already-present. Safe twice.
 erpnext_enhancements.patches.add_chat_message_fulltext_index
+
+# Defaults the new "Field Text Wrapping" toggle ON for existing installs. The Check field
+# ships default "1", but a Single applies field defaults only when the doc is first created,
+# so on an existing site the new field has no row in tabSingles and reads 0 while the JSON
+# says 1. Writes 1 once, and only when nothing was ever stored, so a later manual un-tick is
+# respected. Safe twice.
+erpnext_enhancements.patches.default_field_text_wrap_on

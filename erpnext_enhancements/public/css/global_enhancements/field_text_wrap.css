@@ -1,0 +1,174 @@
+/*
+ * field_text_wrap.css — long field values wrap to three lines instead of
+ * truncating to one.
+ *
+ * Behaviour lives in public/js/global_enhancements/field_text_wrap.js.
+ * Shipped via desk_addons.bundle.scss. Theme-aware through Frappe's own CSS
+ * variables, so Timeless Night needs no [data-theme="dark"] overrides.
+ *
+ * WHY THIS FILE EXISTS (the upstream story, verified against Frappe v16):
+ * grid_row.js `_get_fieldtype_class()` already tags Text / Small Text cells
+ * with `grid-overflow-no-ellipsis`, and grid.scss:722 gives that class
+ * `word-wrap: break-word`. It is inert. `make_column()` builds the inner
+ * `.static-area` with the `ellipsis` class UNCONDITIONALLY, and global.scss:596
+ * defines `.ellipsis { white-space: nowrap }` — the child always wins, so the
+ * parent's wrapping never applies to anything. Frappe wrote the hook and never
+ * finished wiring it. Re-check this on every Frappe upgrade: if upstream ever
+ * drops the unconditional `ellipsis`, most of section 1 becomes redundant.
+ *
+ * Everything is scoped to `body.ee-wrap`, a class the JS sets from
+ * frappe.boot.ee_field_text_wrap. Unticking the settings toggle removes the
+ * class and the desk returns to the stock layout with no other moving parts —
+ * and devtools shows plainly whether the feature is on.
+ *
+ * NOT styled here, deliberately:
+ *   - Read-only Data on a FORM. It renders into `.control-value`, a <div>, and
+ *     form.scss:14 sets no white-space on `.like-disabled-input` — so it
+ *     already wraps. Nothing to fix.
+ *   - Text Editor / HTML Editor / Markdown Editor / Code cells: frappe ships
+ *     bespoke rules for them at grid.scss:387-409, and clamping rich-text HTML
+ *     to three lines fights that CSS instead of helping.
+ *   - Check / Rating (own `.static-area` rules at grid.scss:377 and :382) and
+ *     the numeric types, where wrapping a figure reads worse than clipping it.
+ *   - List View / Report View rows. They use the same `.ellipsis` utility and
+ *     would wrap with one more rule, but row height there is load-bearing for
+ *     scanning density — a separate decision, not a free extension of this one.
+ */
+
+:root {
+	/* The single tuning knob: how many lines a clamped value may occupy.
+	 * Deliberately a CSS variable and not a second settings field — every new
+	 * field on a Single doctype carries its own backfill trap. */
+	--ee-wrap-lines: 3;
+}
+
+/* ==========================================================================
+   1. STATIC (READ) CELLS IN CHILD TABLES
+   ========================================================================== */
+
+/* An allowlist of fieldtypes rather than :not() exclusions, so this can never
+ * collide with the per-fieldtype cell rules frappe already ships. `:is()` keeps
+ * the list readable and fails safe: a browser that cannot parse it drops the
+ * whole rule and gets today's single-line truncation back.
+ *
+ * `.grid-body` scopes this to data rows — the column headers live in a sibling
+ * `.grid-heading-row` (grid.js:78-80) and must keep truncating, or a long
+ * column label would make every grid header three lines tall. */
+body.ee-wrap .grid-body .grid-static-col:is(
+	[data-fieldtype="Data"],
+	[data-fieldtype="Small Text"],
+	[data-fieldtype="Text"],
+	[data-fieldtype="Long Text"],
+	[data-fieldtype="Link"],
+	[data-fieldtype="Dynamic Link"],
+	[data-fieldtype="Select"],
+	[data-fieldtype="Autocomplete"],
+	[data-fieldtype="Read Only"],
+	[data-fieldtype="Attach"],
+	[data-fieldtype="Attach Image"]
+) .static-area.ellipsis {
+	white-space: normal;
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: var(--ee-wrap-lines);
+	line-clamp: var(--ee-wrap-lines);
+	overflow: hidden;
+	/* Attach/URL/opaque-ID values are single unbreakable tokens; without this
+	 * they overflow the cell rather than wrapping inside it. */
+	overflow-wrap: anywhere;
+}
+
+/* `white-space: pre-wrap` would be the obvious way to bring back the newlines
+ * that Small Text loses in a grid (frappe has no `formatters.SmallText`, so it
+ * falls back to `formatters.Data`, which does not convert \n to <br> the way
+ * `formatters.Text` does). It is still wrong: static cells receive FORMATTED
+ * HTML from frappe.format, and pre-wrap would render that markup's own
+ * indentation as blank space. */
+
+/* Let the row grow to fit the tallest cell. frappe sets a flat
+ * `height: 43px; max-height: 200px` on `.grid-static-col, .row-index`
+ * (grid.scss:174); `height: auto` with the same value as `min-height` renders
+ * identically for single-line content, and the 200px cap stays as frappe's
+ * runaway guard.
+ *
+ * The sticky left-hand columns MUST be in this list. `.data-row` is a flex row,
+ * so a child holding a fixed 43px will not stretch — leave `.row-index` and
+ * `.row-check` out and the checkbox and row number float in a short box at the
+ * top of every grown row. */
+body.ee-wrap .form-grid .grid-body .data-row .grid-static-col,
+body.ee-wrap .form-grid .grid-body .data-row .row-index,
+body.ee-wrap .form-grid .grid-body .data-row .row-check {
+	height: auto;
+	min-height: 43px;
+}
+
+/* ==========================================================================
+   2. THE EDITING CONTROL
+
+   field_text_wrap.js swaps a plain Data <input> for a <textarea> and marks it
+   `ee-wrap-input`. Height is driven by the `rows` ATTRIBUTE, not an inline
+   style, so these rules have to clear the fixed heights frappe sets — an
+   inline `style.height` would lose to grid.scss:312's `!important`.
+   ========================================================================== */
+
+/* In a grid: beats `.editable-row textarea { height: 43px !important }`
+ * (grid.scss:312) and `.data-row textarea { height: 38px }` (grid.scss:97). */
+body.ee-wrap .editable-row textarea.ee-wrap-input,
+body.ee-wrap .data-row textarea.ee-wrap-input {
+	height: auto !important;
+	min-height: 0;
+}
+
+/* On a form: beats `textarea.form-control { height: 120px }`
+ * (controls.scss:323), which would otherwise make every Data field 120px tall
+ * the moment it became a textarea. */
+body.ee-wrap .form-control.ee-wrap-input {
+	height: auto;
+}
+
+body.ee-wrap textarea.ee-wrap-input {
+	/* The grip would fight the automatic row sizing, and a Data value has no
+	 * business being taller than the clamp. Past `--ee-wrap-lines` rows the
+	 * textarea scrolls instead. */
+	resize: none;
+	overflow-y: auto;
+	overflow-wrap: anywhere;
+}
+
+/* ==========================================================================
+   3. HOVER PANEL — whatever did not fit in `--ee-wrap-lines` lines
+
+   Body-appended and position: fixed so it is never clipped by a section's or
+   the grid's own overflow. Same structural pattern as the ⓘ tooltip in
+   field_description_icons.css; kept separate because that one's content is
+   sourced from the live `.help-box` and does not generalise.
+   ========================================================================== */
+
+.ee-wrap-panel {
+	position: fixed;
+	z-index: 1100;
+	display: none;
+	max-width: 420px;
+	max-height: 50vh;
+	overflow-y: auto;
+	padding: 8px 12px;
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--text-color);
+	background: var(--popover-bg, var(--card-bg));
+	border: 1px solid var(--border-color);
+	border-radius: 6px;
+	box-shadow: var(--shadow-md, 0 2px 10px rgba(0, 0, 0, 0.15));
+	/* The panel shows the cell's own formatted HTML (links stay clickable), so
+	 * normal white-space handling — see the pre-wrap note in section 1. */
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
+.ee-wrap-panel.ee-visible {
+	display: block;
+}
+
+.ee-wrap-panel a {
+	color: var(--primary);
+}

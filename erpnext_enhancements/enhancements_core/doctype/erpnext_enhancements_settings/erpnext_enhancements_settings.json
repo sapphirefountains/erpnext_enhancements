@@ -69,6 +69,7 @@
   "kpi_snapshot_retention_days",
   "desk_ux_section",
   "field_description_icons_enabled",
+  "field_text_wrap_enabled",
   "contacts_ux_section",
   "contacts_ux_enabled",
   "document_merge_section",
@@ -610,6 +611,13 @@
    "fieldname": "field_description_icons_enabled",
    "fieldtype": "Check",
    "label": "Field Description Info Icons"
+  },
+  {
+   "default": "1",
+   "description": "Wrap long field values onto up to three lines instead of cutting them off at one, in child-table rows and on forms. A value still too long to fit shows in full when you hover it, and an editable text field grows as you type. Applies on each user's next page load. Turn off to restore the standard single-line truncation.",
+   "fieldname": "field_text_wrap_enabled",
+   "fieldtype": "Check",
+   "label": "Field Text Wrapping"
   },
   {
    "fieldname": "contacts_ux_section",
