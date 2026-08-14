@@ -822,3 +822,39 @@ def test_a_duplicate_entry_never_carries_its_message() -> None:
 
 def test_a_long_schema_message_is_truncated() -> None:
 	assert len(envelope.db_cause(_OperationalError(1054, "x" * 900))) <= 240
+
+
+# --------------------------------------------------------------------------- citation flattening
+
+
+def test_a_citation_marker_flattens_to_a_bracketed_number() -> None:
+	"""``[[ref:7]]`` → ``[7]`` for a surface with no chip and no manifest.
+
+	Google Chat received the raw marker and displayed ``[[ref:25]]`` verbatim, which reads as a
+	bug in the bot rather than as a citation. ``[25]`` is what the SPA's chip shows, so the two
+	surfaces now agree.
+	"""
+	assert citations.flatten_refs("errors [[ref:25]], [[ref:12]].") == "errors [25], [12]."
+
+
+def test_it_tolerates_the_spacing_the_model_actually_produces() -> None:
+	"""Same tolerance as ``REF_PATTERN`` itself — a model will write ``[[ref: 3 ]]`` eventually."""
+	assert citations.flatten_refs("a [[ref: 3 ]] b") == "a [3] b"
+
+
+def test_text_with_no_markers_is_returned_unchanged() -> None:
+	for text in ("no refs here", "", "brackets [25] already flat", "[[notaref:1]]"):
+		assert citations.flatten_refs(text) == text
+
+
+def test_flattening_keeps_the_sentence_intact() -> None:
+	"""The judgement call, asserted so it is not silently reversed later.
+
+	Stripping gives cleaner prose but *"errors [[ref:25]], [[ref:12]]"* becomes *"errors ,"* —
+	these sentences are written around the markers. ``strip_unknown_refs`` exists for the other
+	job (a marker that resolves to nothing) and is deliberately not what the relay uses.
+	"""
+	flattened = citations.flatten_refs("running tests [[ref:25]] and hitting errors [[ref:12]]")
+	assert "[[" not in flattened
+	assert flattened.count("[") == 2
+	assert "running tests [25] and hitting errors [12]" == flattened
