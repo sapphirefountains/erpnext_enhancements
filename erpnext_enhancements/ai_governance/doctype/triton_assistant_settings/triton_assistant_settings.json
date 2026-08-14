@@ -36,7 +36,7 @@
    "label": "Enable Triton Assistant"
   },
   {
-   "description": "Default model new chats open with. Leave blank to use the Chat Model ID from Triton Settings. Triton may auto-route to a stronger model per request.",
+   "description": "Pin the widget's model picker to one model. Leave blank (the default) for Auto, where Triton chooses a tier per message from the prompt — Flash for ordinary questions, Pro for research-shaped ones, Lite for trivial ones.",
    "fieldname": "default_model",
    "fieldtype": "Data",
    "label": "Default Model"
