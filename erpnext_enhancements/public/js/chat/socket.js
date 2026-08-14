@@ -63,11 +63,25 @@ export class ChatSocket {
 		}
 
 		const url = socketUrl(b);
+		if (!url) {
+			// No site name on the boot payload, so there is no namespace to join and every
+			// connection would be refused as "Invalid namespace". Failing here, loudly, beats
+			// connecting to a namespace the server will reject in silence.
+			console.error(
+				"[chat] no site_name in EE_CHAT_BOOT, so realtime cannot connect. " +
+					"Check www/chat.py's boot payload."
+			);
+			this._status("unavailable");
+			return null;
+		}
+
 		this.io = io;
 		this.socket = io(url, {
 			withCredentials: true,
-			// The site name is how the Node server namespaces rooms; a multi-site bench serves
-			// every site from one socket process and gets this wrong silently without it.
+			// The site is carried by the NAMESPACE in `url`, not by this query parameter — the
+			// server's auth middleware compares `socket.nsp.name` and never reads the query.
+			// Kept because `get_site_name` consults it as one of its fallbacks, so the two
+			// agreeing costs nothing and disagreeing would be a puzzle.
 			query: { site: b.site_name || "" },
 			transports: ["websocket", "polling"],
 			reconnection: true,
@@ -92,7 +106,14 @@ export class ChatSocket {
 			this._status("disconnected");
 		});
 
-		this.socket.on("connect_error", () => this._status("error"));
+		// A connect error used to set a status nobody surfaces, which is how a chat app ran for
+		// weeks receiving no realtime events at all while looking healthy. The server's reason
+		// is the whole diagnosis — "Invalid namespace", "Invalid origin", "Missing cookie" each
+		// point at a different file — so it goes to the console rather than being swallowed.
+		this.socket.on("connect_error", (err) => {
+			this._status("error");
+			console.error("[chat] realtime connection refused:", (err && err.message) || err);
+		});
 
 		for (const name of EVENT_NAMES) {
 			this.socket.on(name, (payload) => {
@@ -169,14 +190,50 @@ export const EVENT_NAMES = [
 	"chat_notification_state",
 ];
 
-function socketUrl(b) {
+/**
+ * Where to connect, **including the site namespace**.
+ *
+ * THE NAMESPACE IS NOT DECORATION — IT IS THE AUTHENTICATION CHECK
+ * ===============================================================
+ *
+ * Frappe's socket server namespaces every connection by site, and its middleware compares the
+ * namespace against the site it resolved from the request:
+ *
+ *     let namespace = socket.nsp.name.slice(1);      // "" for the default namespace
+ *     if (namespace != get_site_name(socket)) next(new Error("Invalid namespace"));
+ *
+ * So a client that connects to the bare origin lands in `/`, the comparison is
+ * `"" != "erp.example.com"`, and the connection is **rejected**. This function used to return
+ * the bare origin and pass the site as a *query parameter* instead — which that check never
+ * consults.
+ *
+ * **The failure was completely silent, and each symptom pointed away from the cause.** The
+ * engine.io handshake succeeds, because it runs before any namespace middleware — so
+ * `/socket.io/?EIO=4&transport=polling` answers with a real `sid` and the transport looks
+ * healthy. The rejection happens inside the Node process, so nothing reaches ERPNext's Error
+ * Log. And the SPA's own `connect_error` handler only sets a status nobody surfaces. The
+ * observable result was a chat app that never received a single realtime event — not another
+ * person's message, not `@triton`'s reply, **not even its own** — and looked fine doing it.
+ *
+ * Matching `frappe/public/js/frappe/socketio_client.js`'s `get_host()` exactly, because the
+ * two clients talk to the same server and a hand-rolled variant is how they drift apart.
+ */
+export function socketUrl(b, loc) {
 	// Same host, framework port. Behind the Google load balancer /socket.io/ is proxied on
 	// 443 and the explicit port is wrong, so an explicit port is used only when the page
 	// itself is on a dev port.
-	const { protocol, hostname, port } = window.location;
+	const { protocol, hostname, host, port } = loc || window.location;
 	const devPort = port && port !== "80" && port !== "443";
-	if (devPort && b.socketio_port) return `${protocol}//${hostname}:${b.socketio_port}`;
-	return `${protocol}//${window.location.host}`;
+	const origin =
+		devPort && b.socketio_port
+			? `${protocol}//${hostname}:${b.socketio_port}`
+			: `${protocol}//${host}`;
+
+	// No site name means no namespace to join. Returning the bare origin would connect to `/`
+	// and be refused; returning `origin + "/"` would be refused the same way with an uglier
+	// URL. Either is broken, so `connect()` refuses to try and says so.
+	const site = (b && b.site_name) || "";
+	return site ? `${origin}/${site}` : "";
 }
 
 let _socketIoPromise = null;

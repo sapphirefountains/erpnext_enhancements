@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.288.1] - 2026-08-14
+
+**The chat SPA has never received a single realtime event.** Not another person's message, not
+`@triton`'s reply, not even its own. Every message required a manual refresh, and the app looked
+completely healthy doing it.
+
+### Fixed
+
+- **The realtime connection omitted the site namespace, so the server refused it.**
+
+  Frappe's socket server namespaces every connection by site, and its auth middleware does:
+
+  ```js
+  let namespace = socket.nsp.name.slice(1);   // "" for the default namespace
+  if (namespace != get_site_name(socket)) next(new Error("Invalid namespace"));
+  ```
+
+  `socketUrl` returned the bare origin, so the client landed in `/`, the comparison was
+  `"" != "erp.sapphirefountains.com"`, and every connection was rejected. The site was being
+  passed as a **query parameter** instead — which that check never reads.
+
+  It now returns `origin + "/" + site_name`, matching `frappe/public/js/frappe/socketio_client.js`'s
+  `get_host()` exactly. Two clients talking to one server, and a hand-rolled variant is how they
+  drift apart.
+
+### Why it took a HAR file to find
+
+Worth writing down, because **every symptom pointed away from the cause**:
+
+- **The engine.io handshake succeeds.** It runs *before* namespace middleware, so
+  `/socket.io/?EIO=4&transport=polling` answers with a real `sid` and the transport looks fine.
+  Checked that first; it proved nothing.
+- **Nothing is logged.** The rejection happens inside the Node process, so ERPNext's Error Log
+  is clean — zero rows in the whole incident window.
+- **`connect_error` set a status nobody surfaced.** The one place the server's reason was
+  available threw it away.
+- The obvious suspects were all healthy: the socket.io asset exists (v4.7.2), the load balancer
+  proxies `/socket.io/`, the URL and port logic are right for production, `site_name` is present
+  and correct on the boot payload, and the publish path fires from `Chat Message.after_insert`.
+
+The decisive evidence was a HAR showing **no `get_messages` call after a send** — the fetch
+`onMessageCreated` would have made — across a window that covered both the question and the
+reply.
+
+### Changed
+
+- **`connect_error` now logs the server's reason.** It is the entire diagnosis: "Invalid
+  namespace", "Invalid origin" and "Missing cookie" each point at a different file. Swallowing
+  it is how this ran silently for as long as it did.
+- **A missing `site_name` now refuses to connect and says so**, rather than building a URL the
+  server will reject. Every value it could produce without one is broken; failing where the
+  reason is still known beats failing where it is not.
+
+### Notes
+
+- `socketUrl` takes an injectable location so it can be asserted under plain `node`. The whole
+  bug was one missing path segment in a pure function, and it was untestable only because
+  nothing called it in isolation.
+- The five new assertions all fail against the previous implementation — verified by reverting
+  it, not by inspection.
+- **This does not explain the other half of the report.** `@triton` also answered with the
+  generic failure message, which means retrieval or the model turn raised; that error is on the
+  newest `Triton Invocation Log` row and is a separate bug.
+
 ## [1.288.0] - 2026-08-14
 
 Phase 6 §6 step 5 continues. v1.285.0 built the vault — `Chat Audit Log` with its four
