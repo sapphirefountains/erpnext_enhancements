@@ -91,6 +91,98 @@ clicking into it and scrolling. In a read-only grid it has been unreadable full 
   is not yet in the Settings meta — the window between a deploy and its migrate would otherwise
   be a 500 on every desk page, for every user.
 
+## [1.286.3] - 2026-08-14
+
+The hand-off buttons were already in the tab (v1.263.0) but still in a row *underneath* the
+step bar, which left every button a lookup: read the button, find the step it belongs to,
+read that step's state. Now each button renders inside its step's own box.
+
+### Changed
+
+- **Hand-off buttons moved into the step box they act on**, on both forms.
+
+  On the **Project** bar, each actionable step's two buttons — the one that starts the work
+  ("Send to Billing", "Open Tasks", "Schedule Launch Meeting", "Set Follow-Up Reminder") and
+  the one that records it — sit under that step's due date. **This is what deletes the step
+  title prefix the old row needed.** Steps 5 and 6 (and then 7) can be actionable at the same
+  time, so a shared row had to print `Outline Tasks & Responsibilities in PM System:` in front
+  of its own buttons to say which of the highlighted boxes they belonged to; in the box, the
+  box says it. For the same reason "Mark Step 6 Complete" is now just **"Mark Complete"** —
+  the number is two lines above the button.
+
+  On the **Opportunity** tab, the meeting buttons (Schedule / Hand-Off Meeting Finished /
+  Re-schedule / Skip) render in step 2, and *Create Project in PM System* in step 3. The
+  narrative status line — booked-for, past-SLA, skipped-by-and-why — stays beneath the bar,
+  where it reads as a sentence rather than a caption.
+
+### Notes
+
+- **Opportunity buttons are mapped to steps by `step_number`, not by position or title.** That
+  bar renders the *linked Project's* real tracker rows once one exists, and the derived
+  three-step view before that; step numbers are the one thing common to both, and the titles
+  are editable site-side on Process Step Template. A button whose step number is absent from
+  the rendered rows falls back to a row beneath the bar — it must never be the case that the
+  only way to advance a step vanishes because the row it was pinned to did.
+- Boxes carrying buttons get a wider flex basis (`.has-actions`) and stack their buttons
+  full-width. Seven boxes on one row is already tight on a laptop, and a button that clips its
+  own label is worse than a taller bar.
+
+## [1.286.2] - 2026-08-14
+
+**v1.286.0 and v1.286.1 shipped a markdown renderer that never ran.** Both releases were green,
+both were deployed, and every Triton answer still arrived as raw CommonMark.
+
+The gate was `sender_kind == "Triton"` — **a value nothing in this codebase has ever written.**
+`sender_kind` is only ever assigned `"Human"` (the composer, the inbound ingest) or `"System"`
+(the bench verifier). Triton's reply path set `sync_origin = "Triton"` and left `sender_kind` at
+its `Human` default.
+
+### Fixed
+
+- **`chat/invoke/handler.py` now sets `sender_kind = "Triton"` as well as `sync_origin`**, and
+  the two fields answer different questions: `sync_origin` is *where the write came from* (the
+  relay reads it to choose the Google identity), `sender_kind` is *what kind of author this is*.
+
+  **Five reader-side behaviours had been silently doing nothing**, not one. The SPA's 🔱 avatar,
+  its "assistant" badge, its "Triton" display name, its markdown rendering, and the Google Chat
+  relay's markdown conversion all key on `sender_kind === "Triton"`. Four of those five predate
+  this week and had never worked — Triton's answers rendered as if a coworker had typed them.
+
+- **The relay gate now reads `sync_origin`**, which is the field `_auth_identity_for` already
+  consults 200 lines below to make the *same* fork — Triton posts under the app identity,
+  everyone else under the human's. One fact, one source, inside one module.
+
+### Added
+
+- `TheGateCanActuallyMatch` in `tests/test_chat_gchat_markdown.py` — **the class that would have
+  caught this.**
+
+  Why the bug shipped green is the point. The converter had 19 correct assertions. A call-site
+  test asserted the gate *existed*. **Nothing asserted the gate could ever be satisfied** — that
+  the value being compared against is one some writer actually produces. A gate keyed on an
+  unreachable value is dead code wearing a feature's clothes, and it is invisible to any test
+  that exercises only one side of it.
+
+  So the new tests read *both* sides: they extract the discriminator field and its constant out
+  of `relay_text`, resolve the constant to its literal, then walk the chat package for a module
+  that assigns that field that value. Re-point the gate at another field and it stays red until
+  a writer exists. A separate test does the same for `sender_kind = "Triton"` on behalf of the
+  five reader-side surfaces.
+
+  All four fail against the v1.286.0 tree and pass after the fix — verified by reverting both
+  changes and running them.
+
+### Notes
+
+- **The Google Chat display name is not a code fix.** Triton's replies post under the **app**
+  identity (verified: `sync_origin == "Triton"` → `AUTH_IDENTITY_APP`, and the origin is
+  threaded through to the relay job), and Google renders app-posted messages with the Chat app's
+  configured **App name** — `RUNBOOK_google_cloud_setup.md` value #12, recorded there as "Not
+  stored; used to find the app in Chat". Showing `chatbot@sapphirefountains.com` means that
+  console field is unset or set to the service account. Changing it is Google Cloud Console work
+  in the Chat API configuration; no code in this repo can set it, and `messages.create` offers
+  no per-message sender name.
+
 ## [1.286.1] - 2026-08-13
 
 The two constructs v1.286.0 left out. Triton emits tables whenever it is asked to compare
@@ -858,7 +950,6 @@ the new one, and the path that was live was not.**
   blank now means Auto.
 - Field description updated to match, since it documented the old inherit-from-`chat_model_id`
   behaviour that no longer exists.
-
 
 ## [1.280.11] - 2026-08-13
 
@@ -14128,7 +14219,6 @@ Maintenance UX overhaul (pre-deployment, so schema moved freely): the contract f
 ### Fixed
 - `Serial No` picks on contract feature rows now also filter to the selected Project's serials.
 
-
 ### Fixed
 - **`bench migrate` crashed in `drop_legacy_travel_trips`** (`Unknown column 'custom_travel_trip' in 'WHERE'`, seen twice on the test site — the fix was pushed to the #408 branch minutes after the PR merged, so main never got it; re-landed here). Root cause: `frappe.delete_doc` in a **pre-model-sync** patch loads the document with the NEW controller and meta against the OLD schema — `get_doc` queries child tables model sync hasn't created yet (`tabTrip Traveler`, …) and the new `on_trash` filters on the `custom_travel_trip` Custom Field that fixtures only create later in the same migrate. The patch now deletes **raw rows only** (the two legacy trips, their old child-table rows, and the sidecars `delete_doc` would have cleaned: Comments, Versions, ToDos, DocShares, Workflow Actions).
 - `retire_travel_trip_workflow` deleted Workflow Action rows by a `workflow` column that does not exist (verified live) — the same 1054 crash waiting one patch later. It now clears them by `reference_doctype`.
@@ -14676,4 +14766,3 @@ Deploy-staleness audit, kiosk edition. Verified first that the **server and desk
 - **Travel Management**: Custom "Travel Trip" workflow and enhancements for Expense Claims.
 - **Dashboard Overrides**: Custom dashboard data logic for Projects and Employees.
 - **Comment Enhancements**: Custom Vue.js components for improved commenting experience on various doctypes.
-

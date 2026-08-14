@@ -7,6 +7,10 @@
  *  - ✓ completed steps (with who/when), every *actionable* step highlighted
  *    with its due date and a one-click "Mark Complete" action, upcoming steps
  *    muted, skipped steps struck through.
+ *  - **A step's buttons render inside that step's box**, under its due date,
+ *    rather than in a shared row beneath the bar. Several steps can be
+ *    actionable at once, so the old row had to label every button with its
+ *    step title to say which one it advanced; in the box that is self-evident.
  *  - Steps 6 (Outline Tasks) and 7 (Hold Launch Meeting) don't wait on step 5
  *    (Initial Payment From Customer) — payment can take weeks, and neither is
  *    money-dependent — so 5 and 6 (and, once 6 is done, 7) can all be
@@ -47,7 +51,12 @@
 			.ee-process-step.current.overdue { border-color: #dc2626; box-shadow: 0 0 0 1px #dc2626, 0 0 8px rgba(220, 38, 38, 0.4); }
 			.ee-process-step.current .ee-step-no { background: var(--primary, #2490ef); border-color: var(--primary, #2490ef); color: #fff; }
 			.ee-process-step.current.overdue .ee-step-no { background: #dc2626; border-color: #dc2626; }
-			.ee-process-actions { margin-top: 6px; }
+			/* A step's buttons live in the step's own box. Wider basis so the
+			   labels fit, stacked and full-width so they stay readable when the
+			   bar is squeezed down to seven cards on a laptop. */
+			.ee-process-step.has-actions { flex-basis: 150px; min-width: 132px; }
+			.ee-process-step .ee-step-actions { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+			.ee-process-step .ee-step-actions .btn { width: 100%; white-space: normal; }
 		</style>
 	`;
 
@@ -263,6 +272,29 @@
 	}
 
 	/**
+	 * The buttons for one actionable step, rendered inside its own box: the
+	 * action that starts the work (where the step has one) and the one that
+	 * records it. "Mark Complete" rather than "Mark Step N Complete" — the
+	 * number is in the same box, an arm's length above the button.
+	 */
+	function step_actions_html(step) {
+		const esc = frappe.utils.escape_html;
+		const action = STEP_ACTIONS[step.step_number];
+		return `
+			<div class="ee-step-actions">
+				${
+					action
+						? `<button class="btn btn-xs btn-default ee-step-action" data-step="${esc(step.name)}">${__(action.label)}</button>`
+						: ""
+				}
+				<button class="btn btn-xs btn-primary ee-complete-step" data-step="${esc(step.name)}">
+					${__("Mark Complete")}
+				</button>
+			</div>
+		`;
+	}
+
+	/**
 	 * The 7-business-day Closed-Won -> Launch goal, shown beside step 7.
 	 *
 	 * Deliberately separate from the step's own due date: a step can be on time
@@ -351,35 +383,23 @@
 			} else if (is_actionable && step.due_by) {
 				meta = `${esc(step.responsible_role || "")} · ${overdue ? __("OVERDUE") : __("due")} ${frappe.datetime.str_to_user(step.due_by)}`;
 			}
+			// The buttons for a step go inside that step's box — several steps can
+			// be actionable at once (5 and 6, then 7), and a shared row underneath
+			// had to re-print the step title on every button just to say which box
+			// it belonged to. In the box, the box says it.
+			const actions = is_actionable ? step_actions_html(step) : "";
 			html += `
-				<div class="ee-process-step ${cls}" data-step="${esc(step.name)}">
+				<div class="ee-process-step ${cls}${actions ? " has-actions" : ""}" data-step="${esc(step.name)}">
 					<span class="ee-step-no">${step.status === "Completed" ? "✓" : esc(String(step.step_number || ""))}</span>
 					<div class="ee-step-title">${esc(step.step_title || "")}</div>
 					<div class="ee-step-meta">${meta}</div>
 					<div class="ee-step-extra" data-extra="${esc(step.name)}"></div>
+					${actions}
 				</div>
 			`;
 		});
 		html += "</div>";
 
-		// One action row per actionable step — usually one, but e.g. 5
-		// (Payment) and 6 (Outline Tasks) can both show at once.
-		actionable.forEach((step) => {
-			const action = STEP_ACTIONS[step.step_number];
-			html += `
-				<div class="ee-process-actions" data-actions-for="${esc(step.name)}">
-					<span class="text-muted" style="font-size:11px; margin-right:6px;">${esc(step.step_title || "")}:</span>
-					${
-						action
-							? `<button class="btn btn-xs btn-default ee-step-action" data-step="${esc(step.name)}">${__(action.label)}</button>`
-							: ""
-					}
-					<button class="btn btn-xs btn-primary ee-complete-step" data-step="${esc(step.name)}">
-						${__("Mark Step {0} Complete", [step.step_number])}
-					</button>
-				</div>
-			`;
-		});
 		if (actionable.length) {
 			html += `
 				<div class="text-muted" style="font-size:11px; margin-top:4px;">

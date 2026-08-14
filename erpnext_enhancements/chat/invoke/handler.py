@@ -277,6 +277,20 @@ def _reply(
 		doc.sender = _bot_user()
 		doc.text = text
 		doc.thread_root = envelope.thread_root
+		# BOTH fields, and they answer different questions. `sync_origin` is *where the write
+		# came from* — the relay reads it to decide the Google identity (Triton replies post as
+		# the app, coworker messages as the human). `sender_kind` is *what kind of author this
+		# is*, and it is what every reader keys on: the SPA's avatar, its "assistant" badge, its
+		# display name, and both markdown renderers.
+		#
+		# Only `sync_origin` was set, so `sender_kind` fell to its `Human` default and **five
+		# reader-side behaviours silently did nothing** — the 🔱 avatar, the badge, the name, and
+		# markdown rendering on both the SPA and the Google Chat relay. Nothing threw; Triton's
+		# answers just arrived looking like a coworker's, with the asterisks showing.
+		#
+		# The lesson worth keeping: a message's *transport* and a message's *authorship* are two
+		# facts, and writing one is not writing the other.
+		doc.sender_kind = "Triton"
 		doc.sync_origin = "Triton"
 		outbox.insert_message(doc)
 		return doc.name

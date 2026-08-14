@@ -17,6 +17,7 @@ The first test is that sentence as an assertion.
 from __future__ import annotations
 
 import pathlib
+import re
 import unittest
 
 from erpnext_enhancements.chat.gchat.markdown import to_google_chat as md
@@ -199,7 +200,7 @@ class TheCallSiteIsWhatKeepsItSafe(unittest.TestCase):
 		)
 		self.assertIn("to_google_chat", source, "relay_text no longer converts markdown at all")
 		self.assertIn(
-			'!= "Triton"',
+			"!= ORIGIN_TRITON",
 			source,
 			"the Triton gate is gone — a coworker's literal asterisks would now be rewritten",
 		)
@@ -208,6 +209,103 @@ class TheCallSiteIsWhatKeepsItSafe(unittest.TestCase):
 			source,
 			"the conversion moved out of relay_text; check it still runs before the byte budget",
 		)
+
+
+class TheGateCanActuallyMatch(unittest.TestCase):
+    """**The test class that would have caught the bug the first version shipped.**
+
+    v1.286.0 gated the conversion on ``sender_kind == "Triton"`` — a value **nothing in the
+    codebase ever wrote**. `sender_kind` is only ever assigned "Human" or "System". So the
+    conversion never ran once, and every Triton answer reached Google Chat as raw CommonMark
+    while CI stayed green.
+
+    Why it stayed green is the interesting part, and it is the reason for this class. The
+    converter had 19 passing assertions and they were all correct. A call-site test asserted the
+    gate *existed*. Nothing asserted the gate could ever be *satisfied* — that the value being
+    compared against is a value some writer actually produces.
+
+    So these tests read both sides: the discriminator the relay compares, and the assignments
+    the reply path makes. A gate keyed on an unreachable value is dead code that looks like a
+    feature, and it is invisible to any test that only exercises one side of it.
+    """
+
+    CHAT = pathlib.Path(__file__).resolve().parents[1] / "chat"
+
+    def _source(self, *parts: str) -> str:
+        return (self.CHAT.joinpath(*parts)).read_text(encoding="utf-8")
+
+    def test_the_reply_path_sets_both_fields(self) -> None:
+        """`sync_origin` is transport, `sender_kind` is authorship. Writing one is not the other.
+
+        The relay keys on the first (it is what decides the Google identity); the SPA's avatar,
+        badge, display name and markdown rendering all key on the second. Setting only
+        `sync_origin` left five reader-side behaviours silently doing nothing.
+        """
+        handler = self._source("invoke", "handler.py")
+        self.assertIn(
+            'doc.sync_origin = "Triton"',
+            handler,
+            "the reply no longer marks its transport, so the relay will post it as a human",
+        )
+        self.assertIn(
+            'doc.sender_kind = "Triton"',
+            handler,
+            "the reply no longer marks its authorship, so the SPA renders it as a coworker's "
+            "message: no avatar, no badge, no name, and raw markdown",
+        )
+
+    def test_the_relay_gate_compares_against_a_value_something_writes(self) -> None:
+        """The reachability check itself, generalised beyond the one field that broke.
+
+        Reads the discriminator out of `_formatted_for_chat` and then proves some module in the
+        chat package assigns that field that value. If the gate is ever re-pointed at another
+        field, this fails until a writer for it exists.
+        """
+        outbox = self._source("sync", "outbox.py")
+        gate = re.search(
+            r'getattr\(message, "(?P<field>\w+)", ""\) or ""\)\s*!=\s*(?P<value>\w+)',
+            outbox,
+        )
+        self.assertIsNotNone(gate, "could not find the conversion gate in outbox.relay_text")
+        field = gate.group("field")
+        constant = gate.group("value")
+
+        # The gate compares against a module constant; resolve it to its literal.
+        literal = re.search(rf'^{constant}: Final\[str\] = "(?P<v>[^"]+)"', outbox, re.M)
+        self.assertIsNotNone(literal, f"{constant} is not a string constant in outbox.py")
+        value = literal.group("v")
+
+        writers = []
+        for path in sorted(self.CHAT.rglob("*.py")):
+            if "testing" in path.parts:
+                continue
+            body = path.read_text(encoding="utf-8")
+            if re.search(rf'\.{field}\s*=\s*"{re.escape(value)}"', body):
+                writers.append(path.name)
+
+        self.assertTrue(
+            writers,
+            f"the relay converts markdown when {field} == {value!r}, and NO module in the chat "
+            f"package ever assigns that. The gate cannot match, so the conversion is dead code "
+            f"that looks like a feature — which is exactly how v1.286.0 shipped green while "
+            f"every Triton answer reached Google Chat as raw CommonMark.",
+        )
+
+    def test_sender_kind_triton_is_reachable_for_the_readers(self) -> None:
+        """The SPA keys on `sender_kind === "Triton"` in five places. One writer is enough; zero
+        is what it had, and zero fails silently on every one of them."""
+        writers = [
+            path.name
+            for path in sorted(self.CHAT.rglob("*.py"))
+            if "testing" not in path.parts
+            and re.search(r'\.sender_kind\s*=\s*"Triton"', path.read_text(encoding="utf-8"))
+        ]
+        self.assertTrue(
+            writers,
+            "nothing sets sender_kind = 'Triton'. The SPA's Triton avatar, its assistant badge, "
+            "its display name and its markdown rendering all key on that value and will all "
+            "silently do nothing.",
+        )
 
 
 if __name__ == "__main__":
