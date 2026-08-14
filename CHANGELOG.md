@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.288.6] - 2026-08-14
+
+**Phase 6 §4.D — the unified access report.** The plan's own sequence puts this before the
+oversight read path, the viewer and the export, and the reason is that all three need to agree
+on what a read *is*. Two audit tables exist and both are correct: `Chat Retrieval Audit`
+records anything that reached content, `Chat Audit Log` records governance events. ADR 0009
+addendum 2 is explicit that neither migrates into the other and no third table appears.
+**Two tables is acceptable; two definitions of a read is not.**
+
+### Added
+
+- **`chat/governance/access_report.py`** — the union, and the single definition every
+  downstream consumer in this phase reads.
+
+  **The unit is `(reader, room, occasion)`, not `(row)`.** `Chat Retrieval Audit` is one row
+  per *request* and its child is one row per *room touched*, so a request that reached four
+  rooms — three of which the reader was a member of — is **one** non-participant read. A
+  consumer querying the parent table directly counts it as four, or as one with the wrong room
+  attached, and G6-7's "exactly one record per non-participant read" stops meaning anything.
+  The `was_participant = 0` filter is applied in SQL so `limit` bounds the answer rather than
+  the candidate set.
+
+- **`reason_quality()` grades a reason; it does not merely count one.** Three failure modes,
+  kept distinct because they need three different fixes: `missing` is a caller that never
+  collected one, `too_short` is a human in a hurry, and `placeholder` is a human who has
+  worked out that the field is not read. The third is the one that matters — it means the
+  control has already decayed into a formality, and it is invisible to any check that counts
+  non-empty strings.
+
+  Graded **word-wise**, which the first version got wrong. Padding a placeholder with spaces
+  fails the length check anyway (the string is stripped before measuring), so the way to clear
+  both bars is to *repeat* it — `test test test`, `n/a n/a n/a n/a` — and reducing the whole
+  string to one token missed exactly the form somebody would actually type.
+
+- **`redact_for_subject()`** — the employee-facing projection, carrying three decisions from
+  §A2.4 together because they only make sense together: the admin is **named** (D-2), the
+  reason is the **category and never the free text** (D-3), and Triton's reads are **shown**
+  with their `actor_type` so they can have their own tab rather than burying admin reads
+  (D-5). It is a strict allowlist rather than a blocklist, so a future column on the audit
+  table is private by default — a leak does not have to arrive through the field called
+  `reason`, and `query_text` is as revealing as anything in it.
+
+- **`reason_category`** on both audit doctypes, with **no default**. Decision D-3 is
+  schema-affecting and answering it late costs a migration, so the column lands now, before
+  rows accumulate. No default is load-bearing on a *normal* doctype: MariaDB writes a column
+  default into every existing row as part of the `ALTER`, which would claim a category for
+  rows that never had one. The Select offers a blank, because "not recorded" is a real state.
+
+### Changed
+
+- **`reason_category` is chained — optionally.** The obvious move was to leave it unsigned,
+  on the grounds that adding a key to a chained tuple re-serialises every row ever written and
+  makes the verifier report the whole log as tampered. That is true of a **mandatory** key and
+  false of an optional one, and the difference buys both properties at once: a row with no
+  category serialises byte for byte as it did before this release and still verifies, while a
+  row with one is fully covered. Tamper-evident in both directions — removing a category drops
+  a key from the payload, adding one to a row that had none adds a key, and neither hash
+  matches. An unsigned field here is one an operator could rewrite in SQL to reclassify why
+  they read somebody's messages.
+
+  The value is **stripped before the emptiness test**, and that is not cosmetic: `"   "` is
+  truthy, so without it two rows that both mean "no category" would hash differently and the
+  verifier would report tampering that did not happen. Found by the test, not by review.
+
+### Notes
+
+- **The category vocabulary is a proposal and needs confirming.** D-3 settled that the subject
+  sees a *category*; it did not settle *which*. Seven are proposed in `audit.REASON_CATEGORIES`.
+  Wrong now is a one-line change; wrong once rows carry values is a data migration.
+- **Reason is graded here and enforced elsewhere, deliberately.** Refusing a read for a bad
+  reason belongs with the surface that can *collect* one (§4.B). Enforcing it in this release
+  would fail `Administrator`'s existing privileged reads — which are live today and have no
+  field to type a reason into — and a governance control whose first act is to break the admin
+  is one that gets switched off.
+- Two existing guards were extended rather than exempted: `test_chat_governance_audit`'s
+  signed-field scan now counts optionally-chained fields as signed, and
+  `test_chat_rawsql_guard` gains a justification for `subject_rows`' membership read — which
+  *is* the membership filter for that query, spelled as an equality on the subject rather than
+  on the session user.
+
 ## [1.288.5] - 2026-08-14
 
 **Docs only. No executable change.**

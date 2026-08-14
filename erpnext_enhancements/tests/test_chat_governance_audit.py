@@ -191,7 +191,13 @@ class EveryDataFieldIsSigned(unittest.TestCase):
 			for f in json.loads(path.read_text(encoding="utf-8"))["fields"]
 			if f.get("fieldtype") not in self.LAYOUT
 		}
-		signed = set(audit._GOVERNANCE_CHAINED_FIELDS)
+		# Optionally-chained fields count as signed. They are omitted from the payload when
+		# empty — which is what lets a column be added to an already-hashed log without
+		# re-serialising every historical row and reporting the lot as tampered — and are
+		# signed whenever they carry a value. Both directions of edit change the hash:
+		# removing a category drops a key, adding one to a row that had none adds a key. So
+		# the property this test protects holds. See `audit._OPTIONAL_CHAINED_FIELDS`.
+		signed = set(audit._GOVERNANCE_CHAINED_FIELDS) | set(audit._OPTIONAL_CHAINED_FIELDS)
 
 		unsigned = sorted(fields - signed - set(self.NOT_SIGNED))
 		self.assertFalse(
