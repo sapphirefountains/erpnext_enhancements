@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.288.5] - 2026-08-14
+
+**Docs only. No executable change.**
+
+### Added
+
+- **`docs/nik-runbook.md`** — the human-only remainder of PRJ-00580 and PRJ-00755, ordered by
+  lead time rather than by importance, because the items at the top have queues measured in
+  weeks and half of them gate the other half.
+
+  It exists because a reconciliation of all 149 open task records against the actual code on
+  `main` in both repositories found that the two categories had become mixed up. Work that was
+  finished sat at *Overdue*; work that needed a person sat at *Pending Review*, which reads as
+  "waiting for a reviewer" when it is really waiting for someone to hold a phone, run a bench,
+  or file an application. Separating them is the point of the file.
+
+  §5 is the reconciliation itself, one row per task, generated from the verdict data rather
+  than retyped: 58 shipped, 32 partial, 30 not started, 28 human-only, 1 superseded. Every
+  "shipped" verdict was re-checked by a second pass whose instructions were to **refute** it,
+  and **11 were overturned** — those rows are marked `↺` and carry the specific gap. Without
+  that pass, eleven tasks with real residual work would have been closed as done.
+
+### Notes
+
+- Authored as `1.288.5` while `1.288.3` and `1.288.4` were still open PRs (#828, #829), rather
+  than reusing either — two branches picking the same number is a merge conflict in the one file
+  CI hard-gates. #828 has since merged and taken `1.288.3`, so the numbering is contiguous.
+
 ## [1.288.4] - 2026-08-14
 
 **The invocation log's three cost columns were confidently wrong, and now they are either
