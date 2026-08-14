@@ -178,14 +178,29 @@ def ask(*, user: str, question: str, context: str, request_id: str = "", room: s
 		# first version of this read and which would have produced an empty reply on every
 		# turn while looking like the model had nothing to say.
 		meta = body.get("ui_metadata") or {}
+		# Triton >= 0.68.0 publishes the turn's cost as one block, on every answer route.
+		# Before that there was only `tokens` — the turn TOTAL — and this function wrote it
+		# into `prompt_tokens` with a hard-coded zero for completion. That is the shape
+		# being corrected here: input and output price roughly an order of magnitude
+		# apart, so a total labelled as the prompt count is not an approximation of the
+		# cost, it is a different number wearing its name.
+		usage = meta.get("usage") or {}
 		return {
 			"text": str(body.get("content") or "").strip(),
-			"model": str(meta.get("model") or meta.get("model_name") or ""),
-			# One number upstream, and it is the turn's total. Recorded as the prompt count
-			# rather than split across two columns that would then both be guesses.
-			"prompt_tokens": cint(body.get("tokens")),
-			"completion_tokens": 0,
-			"cached_content_tokens": cint(meta.get("cached_content_token_count")),
+			"model": str(usage.get("model_name") or meta.get("model") or meta.get("model_name") or ""),
+			# Zero rather than the total when the block is absent — i.e. against a Triton
+			# older than 0.68.0. Dropping a number we cannot label correctly is the
+			# deliberate choice: a plausible wrong figure reads as a measurement and never
+			# gets questioned, where a zero column gets investigated. `cint(None)` is 0, so
+			# the absent case needs no branch.
+			"prompt_tokens": cint(usage.get("prompt_tokens")),
+			"completion_tokens": cint(usage.get("candidates_tokens")),
+			# A SUBSET of prompt_tokens upstream, never an addition to it — these two
+			# columns do not sum to anything. Read from the block first, falling back to
+			# the flat key, which is where an older Triton would have put it if it ever had.
+			"cached_content_tokens": cint(
+				usage.get("cached_tokens") or meta.get("cached_content_token_count")
+			),
 		}
 	finally:
 		# Restored on every path including the exception one. A job that left the session

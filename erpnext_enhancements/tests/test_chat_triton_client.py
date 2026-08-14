@@ -189,8 +189,13 @@ class ErrorDetailTest(unittest.TestCase):
 		self.assertEqual(triton_client._error_detail(503, "/p", "", ""), "Triton returned HTTP 503 for /p")
 
 
-class StaleSessionRetryTest(unittest.TestCase):
-	"""A cached session id Triton no longer has must cost one retry, not one dead room."""
+class _FakeTritonHarness:
+	"""Shared fixture: a fake ``_post``, fake Triton Settings, and a cleared cache.
+
+	Deliberately **not** a ``TestCase``. A harness that is one has its own tests re-run
+	under every subclass, which is how a suite quietly starts reporting more passes
+	than it has assertions.
+	"""
 
 	def setUp(self):
 		import erpnext_enhancements
@@ -223,6 +228,10 @@ class StaleSessionRetryTest(unittest.TestCase):
 			return script(path)
 
 		self.triton_client._post = _post
+
+
+class StaleSessionRetryTest(_FakeTritonHarness, unittest.TestCase):
+	"""A cached session id Triton no longer has must cost one retry, not one dead room."""
 
 	def test_a_stale_cached_id_is_discarded_and_the_turn_still_answers(self):
 		triton_client = self.triton_client
@@ -306,6 +315,105 @@ class StaleSessionRetryTest(unittest.TestCase):
 			triton_client.ask(user="a@b.c", question="q", context="", room="room4")
 
 		self.assertEqual(frappe.session.user, "Administrator")
+
+
+class UsageBlockTest(_FakeTritonHarness, unittest.TestCase):
+	"""What ``ask`` reports as the turn's cost, and what it refuses to report.
+
+	The columns this feeds — ``Triton Invocation Log.prompt_tokens`` /
+	``completion_tokens`` / ``cached_content_tokens`` — read as plausible and were
+	wrong: the turn **total** went into ``prompt_tokens`` and ``completion_tokens``
+	was hard-coded to zero, because the response carried no split to read. Input and
+	output price roughly an order of magnitude apart, so a total labelled as the
+	prompt count is not an approximation of the cost — it is a different number
+	wearing its name.
+
+	Uses the fake-``_post`` harness above; none of these tests exercise the session
+	retry path.
+	"""
+
+	def _answer(self, body):
+		self._install(lambda path: {"id": 3} if path == self.triton_client.SESSIONS_PATH else body)
+		return self.triton_client.ask(user="a@b.c", question="q", context="", room="usage")
+
+	def test_the_split_is_read_from_the_usage_block(self):
+		answer = self._answer(
+			{
+				"content": "hi",
+				"tokens": 1250,
+				"ui_metadata": {
+					"usage": {
+						"model_name": "gemini-2.5-pro",
+						"prompt_tokens": 1000,
+						"candidates_tokens": 250,
+						"cached_tokens": 800,
+						"total_tokens": 1250,
+					}
+				},
+			}
+		)
+		self.assertEqual(answer["model"], "gemini-2.5-pro")
+		self.assertEqual(answer["prompt_tokens"], 1000)
+		self.assertEqual(answer["completion_tokens"], 250)
+		self.assertEqual(answer["cached_content_tokens"], 800)
+
+	def test_the_turn_total_is_never_reported_as_the_prompt_count(self):
+		"""The regression itself. ``tokens`` is 1250; ``prompt_tokens`` must not be 1250."""
+		answer = self._answer(
+			{
+				"content": "hi",
+				"tokens": 1250,
+				"ui_metadata": {"usage": {"prompt_tokens": 1000, "candidates_tokens": 250}},
+			}
+		)
+		self.assertNotEqual(answer["prompt_tokens"], 1250)
+		self.assertEqual(answer["prompt_tokens"], 1000)
+
+	def test_cached_is_not_added_into_the_prompt_count(self):
+		"""``cached_tokens`` is a subset upstream. Summing it here would double-count."""
+		answer = self._answer(
+			{
+				"content": "hi",
+				"ui_metadata": {"usage": {"prompt_tokens": 1000, "cached_tokens": 800}},
+			}
+		)
+		self.assertEqual(answer["prompt_tokens"], 1000)
+		self.assertLessEqual(answer["cached_content_tokens"], answer["prompt_tokens"])
+
+	def test_an_older_triton_yields_zeros_rather_than_a_plausible_wrong_number(self):
+		"""No usage block — a Triton before 0.68.0.
+
+		Dropping a number we cannot label correctly is the deliberate choice. A
+		plausible wrong figure reads as a measurement and never gets questioned; a
+		zero column gets investigated. The turn still answers.
+		"""
+		answer = self._answer({"content": "hi", "tokens": 1250, "ui_metadata": {}})
+		self.assertEqual(answer["text"], "hi")
+		self.assertEqual(answer["prompt_tokens"], 0)
+		self.assertEqual(answer["completion_tokens"], 0)
+
+	def test_a_missing_ui_metadata_does_not_raise(self):
+		"""A turn that answers must not be failed by an absent cost block."""
+		answer = self._answer({"content": "hi", "tokens": 5})
+		self.assertEqual(answer["text"], "hi")
+		self.assertEqual(answer["prompt_tokens"], 0)
+
+	def test_the_flat_cached_key_is_still_honoured(self):
+		"""The pre-0.68.0 spelling, kept so an in-flight deploy loses nothing."""
+		answer = self._answer(
+			{"content": "hi", "ui_metadata": {"cached_content_token_count": 42}}
+		)
+		self.assertEqual(answer["cached_content_tokens"], 42)
+
+	def test_the_model_name_comes_off_the_block_first(self):
+		"""Spend cannot be estimated without knowing which model answered."""
+		answer = self._answer(
+			{
+				"content": "hi",
+				"ui_metadata": {"model": "stale-value", "usage": {"model_name": "claude-opus-5"}},
+			}
+		)
+		self.assertEqual(answer["model"], "claude-opus-5")
 
 
 class BotCredentialTest(unittest.TestCase):
