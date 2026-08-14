@@ -15,23 +15,30 @@ queues measured in weeks and half of them gate the other half.
 
 ## 0. What changed today, before you read the rest
 
-**Five pull requests are open. None is merged; `main` auto-deploys to production, so merging is
-yours.** (#828 merged while this was being written, taking `1.288.3`.)
+**Already merged while this was being written:** erpnext `#828` (1.288.3) and `#829` (1.288.4),
+and triton `#340` (0.68.0).
 
-| Order | PR | Repo | Version | What it is |
-|---|---|---|---|---|
-| 1 | [#340](https://github.com/sapphirefountains/triton/pull/340) | triton | 0.68.0 | The cached-token share, from provider to response |
-| 2 | [#341](https://github.com/sapphirefountains/triton/pull/341) | triton | 0.68.1 | A drift guard that had skipped for its entire life |
-| 3 | [#342](https://github.com/sapphirefountains/triton/pull/342) | triton | 0.68.2 | Two claims that were written down and never asserted |
-| 4 | [#829](https://github.com/sapphirefountains/erpnext_enhancements/pull/829) | erpnext_enhancements | 1.288.4 | The invocation log's cost columns were confidently wrong |
-| any | [#830](https://github.com/sapphirefountains/erpnext_enhancements/pull/830) | erpnext_enhancements | 1.288.5 | This document |
+**Three remain open. None is merged; `main` auto-deploys to production, so merging is yours.**
 
-**The order is load-bearing for the three Triton ones.** `#342` is stacked on `#341`, which is
-stacked on `#340` — merging out of order shows the wrong diff. `#829` is harmless alone but only
-*does* anything once `#340` is **deployed**, not merely merged, because it reads a field Triton
-does not publish until then; until that happens the cost columns read zero, which is the intended
-visible-absence state rather than a wrong number. `#829` and `#830` picked non-colliding version
-numbers deliberately, so they can merge in any order relative to each other.
+| PR | Repo | Version | What it is |
+|---|---|---|---|
+| [#343](https://github.com/sapphirefountains/triton/pull/343) | triton | 0.68.2 | The drift guard, and two claims that were written down and never asserted |
+| [#831](https://github.com/sapphirefountains/erpnext_enhancements/pull/831) | erpnext_enhancements | 1.288.6 | Phase 6 §4.D — the unified access report |
+| [#830](https://github.com/sapphirefountains/erpnext_enhancements/pull/830) | erpnext_enhancements | 1.288.5 | This document |
+
+They are independent — no stacking, no required order.
+
+> **Why `#343` exists, because the failure is worth knowing about.** Its contents were
+> originally `#341` and `#342`, each stacked on the branch below it. When `#340` merged, GitHub
+> deleted its branch and **closed both stacked PRs marked `MERGED`** — while their commits had
+> never entered `main`. The PR list showed two merged PRs and the code was simply gone; it was
+> caught by checking `git merge-base --is-ancestor` rather than by reading the list. `#343` is
+> both commits rebased onto `main` directly, so the trap cannot repeat.
+
+**`#829` is merged but not yet doing anything.** It reads a field Triton only publishes from
+0.68.0, so it needs `#340` **deployed**, not merely merged. Until that happens the invocation
+log's cost columns read zero — which is the intended visible-absence state rather than a wrong
+number, and is the whole point of the pair.
 
 **The task board was reconciled.** 57 tasks that had already shipped were sitting at *Overdue* or
 *Pending Review*; they are now Completed with `completed_on` set to the **actual release date from
