@@ -321,6 +321,53 @@ FOREIGN_TABLES: dict[str, str] = {
 #: bounded by something other than the reader's identity, and no column selected is a body.**
 #: A read that answers an HTTP request fails all three and does not belong here.
 SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
+	# --- chat/governance/export_runner.py: the export bundle (Phase 6 §4.C) --------------
+	#
+	# All three share one argument, so it is written once here rather than three times below.
+	# This is decision #12's privileged read at its WIDEST, and the membership filter is not
+	# merely unnecessary — it is wrong. The auditor is a participant in NONE of the rooms
+	# being exported, so applying the shared fragment returns an empty bundle and looks
+	# correct doing it.
+	#
+	# Eligible on all three counts the rule names. NO SESSION USER: this runs in a background
+	# worker, because a room with a year of history exceeds any request timeout and a partial
+	# download is worse than none. BOUNDED BY SOMETHING OTHER THAN THE READER: bounded by the
+	# rooms named on the Chat Export Request, frozen at insert and restated in both
+	# `manifest.json` and the `export_requested` audit row — three records that cannot drift
+	# apart. NO BODY COLUMN: this one DOES read bodies, and that is what an export is; the
+	# gate is the configured oversight role plus a reason graded by
+	# `access_report.reason_quality`, checked in `request_export` before the row exists, and
+	# the read is paid for with a chained `export_requested` governance row rather than an
+	# in-memory marker.
+	(
+		"governance/export_runner.py",
+		"_messages",
+		"Chat Message",
+	): (
+		"The export bundle's message file. See the block comment above this entry for the "
+		"full argument. Ordered by room then seq, so a re-export is byte-identical (G6-9)."
+	),
+	(
+		"governance/export_runner.py",
+		"_revisions",
+		"Chat Message Revision",
+	): (
+		"The export bundle's revision file, and the reason the bundle exists at all: G6-9 "
+		"requires a deleted body to appear HERE and not in messages.jsonl. An export that "
+		"could not read this table would record that a message was deleted and never be able "
+		"to say what it said, which is a gap rather than a redaction. See the block comment "
+		"above, and the matching deliberate waiver in "
+		"test_chat_message_revision_is_never_read_by_a_bare_query."
+	),
+	(
+		"governance/export_runner.py",
+		"_attachments",
+		"Chat Attachment",
+	): (
+		"The export bundle's attachment list. Metadata only — the bytes come from the File "
+		"doc — and bounded by TOTAL SIZE rather than by count, because one 400 MB video is "
+		"the case a count limit does not see. See the block comment above this entry."
+	),
 	# --- chat/governance/access_report.py: the subject reading their own membership ------
 	(
 		"governance/access_report.py",
@@ -1310,8 +1357,27 @@ class TestEveryQueryIsScopedOrJustified(unittest.TestCase):
 		this is asserted separately from the general rule and with no exemption mechanism:
 		the day a Phase 6 oversight endpoint needs it, it should have to change this test on
 		purpose.
+
+		**That day arrived, and this is the deliberate change it asked for** (v1.289.5). The
+		export bundle exists precisely so a deleted body appears in ``revisions.jsonl`` and
+		*not* in ``messages.jsonl`` (G6-9) — so the exporter must read this table. An export
+		that could not would record *that* a message was deleted and never be able to say what
+		it said, which is not a redaction but a gap.
+
+		The waiver is one function, named, keyed on ``file:function`` so a second function in
+		the same module does not inherit it. And it pays for the read in a **stronger**
+		currency than the docstring above asks for: ``note_privileged_read`` only marks
+		memory, whereas ``request_export`` writes an ``export_requested`` row to
+		``Chat Audit Log`` — chained, reason-required, and refused below twelve characters.
 		"""
-		offenders = sorted({str(use) for use in USES if use.table == "Chat Message Revision"})
+		allowed = {("governance/export_runner.py", "_revisions")}
+		offenders = sorted(
+			{
+				str(use)
+				for use in USES
+				if use.table == "Chat Message Revision" and (use.file, use.function) not in allowed
+			}
+		)
 		self.assertFalse(
 			offenders,
 			"these queries read Chat Message Revision directly:\n  "

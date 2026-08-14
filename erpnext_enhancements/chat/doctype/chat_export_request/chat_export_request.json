@@ -1,0 +1,205 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "autoname": "hash",
+ "creation": "2026-08-14 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "request_section",
+  "status",
+  "requested_by",
+  "requested_at",
+  "column_break_head",
+  "subject_user",
+  "completed_at",
+  "scope_section",
+  "rooms",
+  "include_deleted_content",
+  "reason_section",
+  "reason",
+  "reason_category",
+  "result_section",
+  "bundle_file",
+  "bundle_sha256",
+  "bundle_bytes",
+  "column_break_result",
+  "message_count",
+  "revision_count",
+  "attachment_count",
+  "download_count",
+  "error"
+ ],
+ "fields": [
+  {
+   "fieldname": "request_section",
+   "fieldtype": "Section Break",
+   "label": null
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Pending\nIn Progress\nComplete\nFailed",
+   "default": "Pending",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "Written by the job with db.set_value, which skips validate() — the transition table in the controller is the backstop for desk and console edits, not the enforcement point."
+  },
+  {
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "options": "User",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "requested_at",
+   "fieldtype": "Datetime",
+   "label": "Requested At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break",
+   "label": null
+  },
+  {
+   "fieldname": "subject_user",
+   "fieldtype": "Link",
+   "label": "Subject",
+   "options": "User",
+   "read_only": 1,
+   "description": "Who the export is ABOUT, when it is about a person. Optional: 'everything said about the Henderson contract' is a legitimate request with no subject."
+  },
+  {
+   "fieldname": "completed_at",
+   "fieldtype": "Datetime",
+   "label": "Completed At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "scope_section",
+   "fieldtype": "Section Break",
+   "label": "Scope"
+  },
+  {
+   "fieldname": "rooms",
+   "fieldtype": "Small Text",
+   "label": "Rooms",
+   "reqd": 1,
+   "read_only": 1,
+   "description": "Comma-separated room names. Frozen once requested — the manifest names what was exported, so editing the scope afterwards would make the manifest describe a different bundle."
+  },
+  {
+   "fieldname": "include_deleted_content",
+   "fieldtype": "Check",
+   "label": "Include Deleted Message Bodies",
+   "default": "0",
+   "read_only": 1,
+   "description": "Decision D-9. OFF by default. When off, a deleted message appears in messages.jsonl as a tombstone and its text is in revisions.jsonl. Turning it on is recorded in the export_requested audit row."
+  },
+  {
+   "fieldname": "reason_section",
+   "fieldtype": "Section Break",
+   "label": "Reason"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "reqd": 1,
+   "read_only": 1,
+   "description": "Refused below 12 characters, and refused if it is a placeholder. Graded by chat.governance.access_report.reason_quality, the same grader the compliance report uses."
+  },
+  {
+   "fieldname": "reason_category",
+   "fieldtype": "Select",
+   "label": "Reason Category",
+   "reqd": 1,
+   "read_only": 1,
+   "options": "\nHR or personnel matter\nLegal, regulatory or compliance\nSecurity investigation\nSafety or site incident\nCustomer or contract dispute\nRequested by the employee\nTechnical maintenance\nOther",
+   "description": "What the subject may be shown, per decision D-3. Never the free text above."
+  },
+  {
+   "fieldname": "result_section",
+   "fieldtype": "Section Break",
+   "label": "Result"
+  },
+  {
+   "fieldname": "bundle_file",
+   "fieldtype": "Link",
+   "label": "Bundle",
+   "options": "File",
+   "read_only": 1,
+   "description": "A private File attached to THIS request. Chat Export Request ships zero DocPerm, and Frappe's private-file check delegates to the attached document's has_permission — so /private/files/ is closed to everyone but Administrator and the only way to the bytes is the audited download endpoint."
+  },
+  {
+   "fieldname": "bundle_sha256",
+   "fieldtype": "Data",
+   "label": "Bundle SHA256",
+   "read_only": 1,
+   "length": 64
+  },
+  {
+   "fieldname": "bundle_bytes",
+   "fieldtype": "Int",
+   "label": "Bundle Size (bytes)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_result",
+   "fieldtype": "Column Break",
+   "label": null
+  },
+  {
+   "fieldname": "message_count",
+   "fieldtype": "Int",
+   "label": "Messages",
+   "read_only": 1
+  },
+  {
+   "fieldname": "revision_count",
+   "fieldtype": "Int",
+   "label": "Revisions",
+   "read_only": 1
+  },
+  {
+   "fieldname": "attachment_count",
+   "fieldtype": "Int",
+   "label": "Attachments",
+   "read_only": 1
+  },
+  {
+   "fieldname": "download_count",
+   "fieldtype": "Int",
+   "label": "Downloads",
+   "read_only": 1,
+   "description": "Every download also writes its own export_downloaded audit row; this is the cheap counter, not the record."
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-14 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Export Request",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

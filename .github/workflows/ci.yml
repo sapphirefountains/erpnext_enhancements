@@ -808,6 +808,16 @@ jobs:
       # Pure: chat/governance/export.py imports nothing from Frappe, so no stub is needed.
       - name: Chat export (what leaves the building, and what does not)
         run: python -m unittest erpnext_enhancements.tests.test_chat_export -v
+      # The export runner's WIRING - the things a database hides rather than reveals:
+      # the frappe.enqueue kwarg name (this package has been bitten twice, once by a kwarg
+      # called `event` that the enqueue machinery ate before the job saw it), that the
+      # download endpoint writes its audit row BEFORE the bytes are attached and fails
+      # closed when that write does not happen, and that the job cannot strand a row in
+      # "In Progress".
+      #
+      # Own step: installs its own frappe stub in setUpModule.
+      - name: Chat export runner (the queue contract, and the download that records itself)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_export_runner -v
       # The SPA received NO realtime events at all - not another person's message, not
       # @triton's reply, not even its own - and looked healthy doing it, because every symptom
       # pointed away from the cause. Frappe's socket server namespaces connections by site and
