@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.288.7] - 2026-08-14
+
+**Phase 6 §4.B, the read half. `retrieve_for_oversight()` had zero callers for its whole
+life, and carried two defects that only a caller would ever have surfaced.** The viewer is
+built on this function, so they are fixed before it rather than discovered through it.
+
+### Fixed
+
+- **The verbatim tier never ran on an oversight read.** T1 was gated on a single `room` being
+  supplied — the mention path has one, and often a thread. The oversight path names a *set*
+  of rooms and no thread, so the gate was never satisfied and the tier returned nothing.
+
+  An oversight read therefore came back with chunks and digests and **not one actual
+  message**, while looking complete. That is the part that matters: a read which answers with
+  summaries when it was asked for a transcript does not get reported as broken, it gets
+  believed. New `_oversight_room_messages()` returns verbatim messages across the named set,
+  ordered by `seq` — matching the query when there is one, and the tail when there is not,
+  because "show me this conversation" is a legitimate oversight request and returning nothing
+  for it pushes the auditor towards a *broader* read rather than a narrower one.
+
+- **The authored tier returned the auditor their own messages.** It ran as `acting`, which is
+  right for an ordinary retrieve — "what did I agree to" is the commonest question a chat
+  assistant is asked — and exactly inverted for oversight, where it handed back content the
+  auditor could already read in place of the content they had just stated a reason to see.
+
+  `retrieve_for_oversight()` gains an optional `subject`: the person the read is *about*.
+  When given, the authored tier is theirs; when absent there is no authored tier. Optional
+  because not every oversight read has a subject — "what was said about the Henderson
+  contract" is a legitimate question about a room rather than a person.
+
+### Changed
+
+- **`_run()`'s `authored_user` is required and has no default.** The tier used to default to
+  `acting` implicitly, which is how the oversight path inherited a decision nobody made for
+  it. A required keyword-only argument turns that into a question each caller answers out
+  loud, and `None` now means "no such tier" rather than "the obvious person". The two call
+  sites now say different things, visibly, at the call.
+
+### Notes
+
+- **Deleted rows stay excluded on every tier, including this one.** Seeing through a
+  tombstone is its own act with its own audit event (`tombstone_expanded`, §4.E). Folding it
+  into the ordinary oversight read would make every such read an expansion and erase the
+  distinction the export's `include_deleted_content` flag depends on.
+- `tests/test_chat_oversight_read.py` — 12 assertions, AST rather than behaviour, because the
+  rows need a bench and **the wiring is what regressed**. Verified to bite: reintroducing
+  either defect fails the suite. Its own CI step.
+- The raw-SQL guard accepted the new query without an exemption, because it applies
+  `membership_filter_sql` like every other content read in the package.
+
 ## [1.288.6] - 2026-08-14
 
 **Phase 6 §4.D — the unified access report.** The plan's own sequence puts this before the
