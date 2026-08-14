@@ -34,8 +34,10 @@
  * failure mode. An unhandled construct rendering as the characters the model typed is a
  * cosmetic miss; an unhandled construct rendering as markup is a vulnerability.
  *
- * Tables and blockquotes are deliberately **not** supported (settled 2026-08-13). Add them by
- * extending `renderBlocks`, with corpus rows, never by reaching for a general parser.
+ * Tables and blockquotes are supported as of v1.286.1 — Triton emits tables whenever it is
+ * asked to compare things, and a comparison arriving as pipe characters is the same class of
+ * miss as the raw asterisks this module was written for. Both are still built as nodes; a
+ * table is not an excuse for a parser.
  */
 
 import { isSafeUrl } from "./citations.js";
@@ -51,6 +53,19 @@ const BULLET_RE = /^(\s*)[-*+]\s+(.*)$/;
 
 /** `1. ` / `1) `, same shape. */
 const ORDERED_RE = /^(\s*)(\d{1,9})[.)]\s+(.*)$/;
+
+/** `> quoted`. One level; nested quotes flatten, which is what a chat bubble has room for. */
+const QUOTE_RE = /^\s*>\s?(.*)$/;
+
+/** A table row: at least one pipe, and not a line that merely mentions one. */
+const TABLE_ROW_RE = /^\s*\|(.+)\|\s*$/;
+
+/**
+ * The alignment row — `|---|:--:|` — which is what actually distinguishes a table from two
+ * consecutive lines that happen to contain pipes. Markdown requires it, and requiring it here
+ * means a message about `a | b` is never silently reinterpreted as a one-column table.
+ */
+const TABLE_DIVIDER_RE = /^\s*\|(?:\s*:?-{1,}:?\s*\|)+\s*$/;
 
 /**
  * Inline constructs, in the order they are tried. **Order is load-bearing**: `**` must be
@@ -165,6 +180,31 @@ export function renderBlocks(doc, source) {
 			continue;
 		}
 
+		// A table needs its alignment row present *and* on the next line. Checking both here,
+		// before the paragraph branch, is what stops a sentence containing a pipe from being
+		// swallowed as a malformed table.
+		if (TABLE_ROW_RE.test(line) && i + 1 < lines.length && TABLE_DIVIDER_RE.test(lines[i + 1])) {
+			const [table, consumed] = renderTable(doc, lines, i);
+			out.push(table);
+			i = consumed;
+			continue;
+		}
+
+		if (QUOTE_RE.test(line) && line.trim().startsWith(">")) {
+			const quoted = [];
+			while (i < lines.length && lines[i].trim().startsWith(">")) {
+				quoted.push(lines[i].match(QUOTE_RE)[1]);
+				i += 1;
+			}
+			const quote = doc.createElement("blockquote");
+			quote.className = "ee-md-quote";
+			// The quoted run is rendered as blocks, so a quoted list stays a list. Recursion is
+			// bounded by the fact that the `>` prefixes have already been stripped.
+			for (const node of renderBlocks(doc, quoted.join("\n"))) quote.appendChild(node);
+			out.push(quote);
+			continue;
+		}
+
 		if (BULLET_RE.test(line) || ORDERED_RE.test(line)) {
 			const [list, consumed] = renderList(doc, lines, i);
 			out.push(list);
@@ -200,6 +240,61 @@ export function renderBlocks(doc, source) {
 	}
 
 	return out;
+}
+
+/** The cells of one `| a | b |` row, trimmed. */
+function tableCells(line) {
+	return line
+		.trim()
+		.replace(/^\||\|$/g, "")
+		.split("|")
+		.map((cell) => cell.trim());
+}
+
+/**
+ * One table, from `start`, returning `[element, indexAfter]`.
+ *
+ * Wrapped in a scrolling container rather than left to size itself: a table wide enough to need
+ * it would otherwise widen the bubble and push the whole transcript sideways on a phone. The
+ * CSS puts `overflow-x` on the wrapper for that reason.
+ *
+ * Ragged rows are padded rather than rejected. The model does occasionally emit a row with a
+ * cell missing, and a table that renders with one blank cell is readable where a table that
+ * silently becomes a paragraph of pipes is not.
+ */
+function renderTable(doc, lines, start) {
+	const header = tableCells(lines[start]);
+	const wrap = doc.createElement("div");
+	wrap.className = "ee-md-table-wrap";
+	const table = doc.createElement("table");
+	table.className = "ee-md-table";
+
+	const thead = doc.createElement("thead");
+	const headRow = doc.createElement("tr");
+	for (const cell of header) {
+		const th = doc.createElement("th");
+		appendInline(doc, th, cell);
+		headRow.appendChild(th);
+	}
+	thead.appendChild(headRow);
+	table.appendChild(thead);
+
+	const tbody = doc.createElement("tbody");
+	let i = start + 2; // the header and its alignment row
+	while (i < lines.length && TABLE_ROW_RE.test(lines[i]) && !TABLE_DIVIDER_RE.test(lines[i])) {
+		const cells = tableCells(lines[i]);
+		const row = doc.createElement("tr");
+		for (let c = 0; c < header.length; c += 1) {
+			const td = doc.createElement("td");
+			appendInline(doc, td, cells[c] == null ? "" : cells[c]);
+			row.appendChild(td);
+		}
+		tbody.appendChild(row);
+		i += 1;
+	}
+	table.appendChild(tbody);
+	wrap.appendChild(table);
+	return [wrap, i];
 }
 
 /**

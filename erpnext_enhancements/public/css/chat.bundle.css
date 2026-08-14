@@ -1196,3 +1196,45 @@ body .container {
 	text-decoration: underline dotted;
 	cursor: not-allowed;
 }
+
+/* A table wide enough to need it scrolls inside its own wrapper. Letting the table size the
+   bubble would push the whole transcript sideways on a phone, which is the failure mode that
+   makes a table worse than the pipes it replaced. */
+.ee-msg-text .ee-md-table-wrap {
+	margin: 0 0 0.5em;
+	overflow-x: auto;
+	max-width: 100%;
+}
+.ee-msg-text .ee-md-table-wrap:last-child {
+	margin-bottom: 0;
+}
+.ee-msg-text .ee-md-table {
+	border-collapse: collapse;
+	font-size: 0.94em;
+}
+.ee-msg-text .ee-md-table th,
+.ee-msg-text .ee-md-table td {
+	padding: 0.25em 0.6em;
+	border: 1px solid var(--ee-border, rgba(128, 128, 128, 0.35));
+	text-align: left;
+	vertical-align: top;
+	white-space: nowrap;
+}
+.ee-msg-text .ee-md-table th {
+	font-weight: 600;
+	background: var(--ee-bg-alt);
+}
+/* The bar is the whole affordance: without it a quote reads as ordinary text that happens to
+   be indented, which is exactly what dropping the `>` marker would have done. */
+.ee-msg-text .ee-md-quote {
+	margin: 0 0 0.5em;
+	padding: 0.1em 0 0.1em 0.7em;
+	border-left: 3px solid var(--ee-border, rgba(128, 128, 128, 0.35));
+	color: var(--ee-text-muted, inherit);
+}
+.ee-msg-text .ee-md-quote:last-child {
+	margin-bottom: 0;
+}
+.ee-msg-text .ee-md-quote > :last-child {
+	margin-bottom: 0;
+}

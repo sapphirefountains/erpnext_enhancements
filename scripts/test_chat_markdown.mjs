@@ -296,6 +296,73 @@ test("empty, null and whitespace input render nothing and do not throw", () => {
 	}
 });
 
+// --------------------------------------------------------------- tables and quotes
+
+const TABLE = [
+	"| Nozzle | Flow | Notes |",
+	"|---|---|---|",
+	"| Laminar | 10 gpm | **glass-like** |",
+	"| Aerating | 40 gpm | frothy |",
+].join("\n");
+
+test("a table renders as a real table, not a paragraph of pipes", () => {
+	const out = render(TABLE);
+	assert.equal(out.length, 1);
+	assert.equal(out[0].tag, "div", "the table is wrapped so a wide one scrolls inside the bubble");
+	const table = out[0].children[0];
+	assert.equal(table.tag, "table");
+	const [thead, tbody] = table.children;
+	assert.equal(thead.children[0].children.length, 3, "three header cells");
+	assert.equal(thead.children[0].children[0].tag, "th");
+	assert.equal(tbody.children.length, 2, "two body rows");
+	assert.ok(!flatText(out).includes("|"), "a pipe survived into the visible text");
+});
+
+test("inline markdown inside a cell still renders", () => {
+	assert.ok(tags(render(TABLE)).includes("strong"), "**glass-like** did not become bold");
+});
+
+test("a ragged row is padded to the header width rather than dropped", () => {
+	const out = render("| a | b |\n|---|---|\n| only |");
+	const tbody = out[0].children[0].children[1];
+	assert.equal(tbody.children[0].children.length, 2, "the missing cell was not padded");
+	assert.ok(flatText(out).includes("only"));
+});
+
+test("PIPES WITHOUT AN ALIGNMENT ROW ARE NOT A TABLE", () => {
+	// Otherwise a sentence about `a | b` is silently reinterpreted as a one-column table,
+	// which is a worse failure than not rendering one at all.
+	for (const source of ["choose a | b | c", "| not a table |", "a | b\nc | d"]) {
+		const out = render(source);
+		assert.ok(
+			!tags(out).includes("table"),
+			`rendered a table from ${JSON.stringify(source)}`,
+		);
+		assert.ok(flatText(out).includes("|"), "the pipes must survive as literal text");
+	}
+});
+
+test("a blockquote is a blockquote, and a quoted list stays a list", () => {
+	const simple = render("> quoted text");
+	assert.equal(simple[0].tag, "blockquote");
+	assert.ok(flatText(simple).includes("quoted text"));
+	assert.ok(!flatText(simple).includes(">"), "the marker leaked into the text");
+
+	const quotedList = render("> - one\n> - two");
+	assert.equal(quotedList[0].tag, "blockquote");
+	assert.ok(tags(quotedList).includes("ul"), "a quoted list flattened into a paragraph");
+});
+
+test("a table cell cannot smuggle markup in", () => {
+	const out = render("| a |\n|---|\n| <img src=x onerror=alert(1)> |");
+	for (const tag of tags(out)) {
+		assert.ok(
+			["div", "table", "thead", "tbody", "tr", "th", "td", "#text", "strong", "em", "code", "s", "a", "span", "br", "p"].includes(tag),
+			`the renderer created a <${tag}> from a hostile cell`,
+		);
+	}
+});
+
 console.log("");
 if (failures) {
 	console.error(`chat markdown renderer: ${failures} of ${checks} FAILED`);

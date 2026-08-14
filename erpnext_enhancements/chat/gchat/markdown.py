@@ -24,6 +24,8 @@ fenced block           unchanged                 already Chat's syntax
 ``- item``             ``• item``                Chat has no list syntax; the bullet is text
 ``1. item``            unchanged                 already reads as a list
 ``[label](url)``       ``label: url``            Chat autolinks bare URLs; ``<u|l>`` is Slack
+``> quoted``           ``> quoted``              no blockquote in Chat; the prefix is the cue
+a table                a monospace block         no table syntax; the block keeps the columns
 ===================  ==========================  ==========================================
 
 WHY THIS IS A TOKENISER AND NOT A CHAIN OF ``re.sub`` CALLS
@@ -72,6 +74,13 @@ _INLINE_RULES: Final = (
 _LINK_RE: Final = re.compile(r"\[([^\]\n]*)\]\(([^)\s]+)\)")
 
 _HEADING_RE: Final = re.compile(r"^(#{1,6})\s+(.*)$")
+_QUOTE_RE: Final = re.compile(r"^\s*>\s?(.*)$")
+_TABLE_ROW_RE: Final = re.compile(r"^\s*\|(.+)\|\s*$")
+
+#: The alignment row is what distinguishes a table from two lines that happen to contain
+#: pipes. Markdown requires it; requiring it here means a message about ``a | b`` is never
+#: silently reinterpreted as a one-column table.
+_TABLE_DIVIDER_RE: Final = re.compile(r"^\s*\|(?:\s*:?-{1,}:?\s*\|)+\s*$")
 _BULLET_RE: Final = re.compile(r"^(\s*)[-*+]\s+(.*)$")
 
 #: What a bullet becomes. A real bullet character rather than ``-``, because the point is that
@@ -101,6 +110,7 @@ def to_google_chat(source: str | None) -> str:
 		return f"\x00{len(spans) - 1}\x00"
 
 	text = _CODE_RE.sub(_stash, text)
+	text = _convert_tables(text)
 	text = "\n".join(_convert_line(line) for line in text.split("\n"))
 
 	for index, span in enumerate(spans):
@@ -108,7 +118,84 @@ def to_google_chat(source: str | None) -> str:
 	return text
 
 
+def _convert_tables(text: str) -> str:
+	"""Markdown tables → a monospace block with padded columns.
+
+	**Google Chat has no table syntax**, so the choice is between losing the structure and
+	faking it. It has a monospace block, which preserves the one thing a table is *for*:
+	columns that line up. Padding the cells and wrapping the result in a fence is the closest
+	Chat can get, and it reads correctly on a phone where a wide table would not anyway.
+
+	The header separator becomes a row of dashes rather than being dropped, because without it
+	the header stops looking like a header.
+
+	A table is recognised only when the alignment row is present and immediately follows the
+	header — markdown requires it, and requiring it here means a message about ``a | b`` is
+	never silently reinterpreted as a one-column table.
+	"""
+	lines = text.split("\n")
+	out: list[str] = []
+	index = 0
+
+	while index < len(lines):
+		is_table = (
+			_TABLE_ROW_RE.match(lines[index])
+			and index + 1 < len(lines)
+			and _TABLE_DIVIDER_RE.match(lines[index + 1])
+		)
+		if not is_table:
+			out.append(lines[index])
+			index += 1
+			continue
+
+		rows = [_table_cells(lines[index])]
+		index += 2  # the header and its alignment row
+		while index < len(lines) and _TABLE_ROW_RE.match(lines[index]) and not _TABLE_DIVIDER_RE.match(lines[index]):
+			rows.append(_table_cells(lines[index]))
+			index += 1
+
+		width = max(len(row) for row in rows)
+		rows = [row + [""] * (width - len(row)) for row in rows]
+		# The emphasis inside a cell is stripped rather than converted: a monospace block in
+		# Chat renders its contents literally, so `*bold*` inside one is asterisks on screen.
+		rows = [[_strip_emphasis(cell) for cell in row] for row in rows]
+		sizes = [max(len(row[col]) for row in rows) for col in range(width)]
+
+		rendered = ["```"]
+		for position, row in enumerate(rows):
+			rendered.append("  ".join(cell.ljust(sizes[col]) for col, cell in enumerate(row)).rstrip())
+			if position == 0:
+				rendered.append("  ".join("-" * sizes[col] for col in range(width)))
+		rendered.append("```")
+		out.extend(rendered)
+
+	return "\n".join(out)
+
+
+def _table_cells(line: str) -> list[str]:
+	return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _strip_emphasis(cell: str) -> str:
+	"""Remove emphasis delimiters from a cell bound for a monospace block.
+
+	Converting them would be worse than dropping them: Chat renders a monospace block
+	literally, so a converted ``*bold*`` arrives as two visible asterisks inside a table that
+	is trying to line its columns up.
+	"""
+	for pattern in (r"\*\*(.+?)\*\*", r"__(.+?)__", r"~~(.+?)~~", r"\*(.+?)\*", r"`(.+?)`"):
+		cell = re.sub(pattern, r"\1", cell)
+	return cell
+
+
 def _convert_line(line: str) -> str:
+	quote = _QUOTE_RE.match(line)
+	if quote:
+		# Chat renders no blockquote. The `>` prefix is kept as literal text because it is the
+		# convention every reader already knows, and dropping it would silently merge quoted
+		# text into the surrounding message — which is the one thing a quote must not do.
+		return f"> {_convert_inline(quote.group(1))}" if quote.group(1).strip() else ">"
+
 	heading = _HEADING_RE.match(line)
 	if heading:
 		# Chat has no headings. Bold is the closest thing it has, and a heading rendered as

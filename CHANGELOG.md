@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.286.1] - 2026-08-13
+
+The two constructs v1.286.0 left out. Triton emits tables whenever it is asked to compare
+things, and a comparison arriving as pipe characters is the same class of miss as the raw
+asterisks the renderer was written for.
+
+### Added
+
+- **Tables and blockquotes, in both renderers.**
+
+  In the browser they are a real `<table>` and `<blockquote>`, still built as nodes. The table
+  sits in a scrolling wrapper: letting it size the bubble would push the whole transcript
+  sideways on a phone, which is a worse outcome than the pipes it replaced.
+
+  **In Google Chat a table becomes a monospace block with padded columns.** Chat has no table
+  syntax, so the choice is between losing the structure and faking it — and its monospace block
+  preserves the one thing a table is *for*, columns that line up. The header separator is kept
+  as a row of dashes, because without it the header stops looking like one.
+
+  Emphasis inside a cell is **stripped rather than converted** on the Chat side. A monospace
+  block renders literally, so a converted `*bold*` would be two visible asterisks inside a table
+  that is trying to align itself.
+
+  A blockquote keeps its `>` marker in Chat. It renders no blockquote, and dropping the marker
+  would silently merge quoted text into the surrounding message — the one thing a quote must not
+  do.
+
+### Notes
+
+- **A table is recognised only when the alignment row is present and immediately follows the
+  header.** Markdown requires it, and requiring it here is what stops a sentence about `a | b`
+  being silently reinterpreted as a one-column table. Both suites assert that directly, because
+  over-recognising is the failure that would be blamed on the model rather than on the renderer.
+- Ragged rows are padded, not rejected. The model does emit a row with a cell missing, and a
+  table with one blank cell is readable where a paragraph of pipes is not.
+- The hostile-input assertion extends to cells: a table cell cannot introduce a tag the renderer
+  does not itself construct.
+
 ## [1.286.0] - 2026-08-13
 
 Triton's answers rendered as raw markdown. Reported as one bug across three surfaces; it was

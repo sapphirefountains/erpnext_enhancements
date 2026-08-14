@@ -126,6 +126,59 @@ class TheRestOfTheTable(unittest.TestCase):
 		self.assertEqual(md(once), "_bold_", "the collision changed shape — re-read the docstring")
 
 
+class TablesAndQuotes(unittest.TestCase):
+	"""Chat has neither. The question is what to lose, not whether to convert."""
+
+	TABLE = (
+		"| Nozzle | Flow | Notes |\n"
+		"|---|---|---|\n"
+		"| Laminar | 10 gpm | **glass-like** |\n"
+		"| Aerating | 40 gpm | frothy |"
+	)
+
+	def test_a_table_becomes_a_monospace_block_with_aligned_columns(self) -> None:
+		"""Chat has no table syntax, but its monospace block preserves the one thing a table is
+		*for*: columns that line up. Triton emits tables whenever it is asked to compare
+		things, and a comparison arriving as pipe characters is the same class of miss as the
+		raw asterisks this module was written for."""
+		out = md(self.TABLE)
+		lines = out.split("\n")
+		self.assertEqual(lines[0], "```")
+		self.assertEqual(lines[-1], "```")
+		self.assertIn("Nozzle", lines[1])
+		self.assertIn("---", lines[2], "the header separator keeps the header looking like one")
+		body = [line for line in lines[3:-1] if line.strip()]
+		self.assertEqual(len(body), 2)
+		# Alignment is the whole point: every data row starts its second column at one offset.
+		self.assertEqual(body[0].index("10 gpm"), body[1].index("40 gpm"))
+
+	def test_emphasis_inside_a_cell_is_stripped_not_converted(self) -> None:
+		"""A monospace block renders literally, so a converted `*bold*` is two visible
+		asterisks inside a table trying to line its columns up."""
+		self.assertNotIn("*", md(self.TABLE).replace("```", ""))
+		self.assertIn("glass-like", md(self.TABLE))
+
+	def test_a_ragged_row_is_padded_rather_than_rejected(self) -> None:
+		"""The model does emit a row with a cell missing, and one blank cell is readable where
+		a paragraph of pipes is not."""
+		out = md("| a | b |\n|---|---|\n| only |")
+		self.assertIn("```", out)
+		self.assertIn("only", out)
+
+	def test_pipes_without_an_alignment_row_are_left_alone(self) -> None:
+		"""Otherwise a sentence about `a | b` becomes a one-column table."""
+		for text in ("choose a | b | c", "| not a table |", "a | b\nc | d"):
+			with self.subTest(text=text):
+				self.assertEqual(md(text), text)
+
+	def test_a_blockquote_keeps_its_marker(self) -> None:
+		"""Chat renders no blockquote. The `>` prefix stays because it is the convention every
+		reader knows, and dropping it would silently merge quoted text into the surrounding
+		message — the one thing a quote must not do."""
+		self.assertEqual(md("> **quoted** text"), "> *quoted* text")
+		self.assertEqual(md("> one\n> two"), "> one\n> two")
+
+
 class TheCallSiteIsWhatKeepsItSafe(unittest.TestCase):
 	"""The conversion is not idempotent, so where it runs matters as much as what it does."""
 
