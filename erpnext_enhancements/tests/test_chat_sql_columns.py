@@ -192,6 +192,63 @@ class TestEveryColumnInChatSqlExists(unittest.TestCase):
             + "\n  ".join(unresolved),
         )
 
+#: ``match(`col`) against (…)`` — a full-text search, which needs a FULLTEXT index on exactly
+#: that column. ``frappe.db.add_index`` cannot emit one, so they are created by patch.
+MATCH_COLUMN = re.compile(r"match\s*\(\s*`([a-z_][a-z0-9_]*)`\s*\)\s*against", re.I)
+
+
+def _declared_fulltext_columns() -> set[str]:
+    """Columns some chat patch declares a FULLTEXT index for.
+
+    Read out of the patch *sources* rather than imported: importing a patch pulls in ``frappe``,
+    and this suite deliberately runs without one.
+    """
+    columns: set[str] = set()
+    for path in (APP / "patches").glob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        # ("Chat Context Chunk", "body", "chunk_body_fulltext")
+        columns |= set(re.findall(r'\(\s*"[^"]+"\s*,\s*"([a-z_]+)"\s*,\s*"[a-z_]+"\s*\)', text))
+        # COLUMN = "text_plain"
+        columns |= set(re.findall(r'^COLUMN\s*=\s*"([a-z_]+)"', text, re.M))
+    return columns
+
+
+class TestEveryFulltextSearchHasAnIndex(unittest.TestCase):
+    """A ``MATCH`` with no FULLTEXT index behind it is MariaDB 1191, every execution, forever.
+
+    The same failure class as the missing column above, and it cost the same afternoon.
+    ``gate._recent_chunks`` matches ``Chat Context Chunk.body``, which
+    ``add_chat_phase5_indexes`` creates. ``gate._authored_by`` matches
+    ``Chat Message.text_plain``, which nothing created — so exactly one of the gate's two
+    full-text searches had an index behind it, and the other killed every ``@triton`` turn.
+
+    ``chat/api/search.py`` had even written down that this column has no index and that adding
+    one *"is a migration with its own rollout"*. Phase 5 then queried it as though the migration
+    had happened. Two defensible decisions with no edge between them.
+    """
+
+    def test_every_matched_column_has_a_declared_fulltext_index(self) -> None:
+        declared = _declared_fulltext_columns()
+        self.assertTrue(
+            declared, "no FULLTEXT declarations found at all — the scan has stopped matching"
+        )
+
+        missing: list[str] = []
+        for source in sorted(CHAT.rglob("*.py")):
+            text = source.read_text(encoding="utf-8")
+            for match in SQL_CALL.finditer(text):
+                for column in sorted(set(MATCH_COLUMN.findall(match.group(1)))):
+                    if column not in declared:
+                        missing.append(f"{source.relative_to(APP)}: match(`{column}`)")
+
+        self.assertEqual(
+            sorted(set(missing)),
+            [],
+            "SQL full-text-searches a column that no patch indexes. MariaDB answers 1191 on "
+            "every execution, and no test that avoids a database can see it: "
+            + "; ".join(sorted(set(missing))),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
