@@ -83,7 +83,10 @@ module [`process_steps.py`](../process_steps.py):
   records it: step 4 opens a billing email (or a draft Sales Invoice, per the
   `handoff_invoice_flow` setting — ERPNext is not the accounting system yet), step 6 the
   task list, step 7 the meeting scheduler shared with step 2
-  (`public/js/crm_enhancements/handoff_meeting_dialog.js`).
+  (`public/js/crm_enhancements/handoff_meeting_dialog.js`). Both buttons render **inside
+  that step's box in the bar** (v1.286.2), under its due date, rather than in a shared row
+  beneath it — several steps can be actionable at once (5 and 6, then 7), and the shared
+  row had to reprint each step's title on its buttons to say which box they belonged to.
 - **Notifications** — completing a step notifies the *new* current step's responsible
   person (SMS + Notification Log via `status_alerts._deliver`); the last completion
   posts a "process complete" comment instead. Roles resolve per project at send time:

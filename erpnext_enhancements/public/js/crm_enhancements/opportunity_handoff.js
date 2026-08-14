@@ -17,12 +17,17 @@
  * a project that starts today, and making it do so was teaching people to tick
  * "held" for meetings still in the diary. See `crm_enhancements/handoff.py`.
  *
- * **The buttons live in the tab, not the toolbar.** They are the tab's content,
- * next to the step they advance, rather than five entries in a form menu that is
- * shared with every other thing an Opportunity can do. They are also convenience
- * only — `process_steps.enforce_handoff_gate` on Project `before_insert` is the
- * enforcement, because the audit found 8 of 28 projects created through paths no
- * button controls.
+ * **The buttons live in the tab, not the toolbar** — they are the tab's content,
+ * rather than five entries in a form menu shared with every other thing an
+ * Opportunity can do. **And inside the tab they live in the step's own box**, not
+ * in a row underneath it: the meeting buttons sit in step 2, "Create Project" in
+ * step 3, so the button and the state it acts on are read together. Buttons are
+ * mapped to steps by number (`STEP_MEETING` / `STEP_PROJECT`), which is what lets
+ * the mapping survive the bar switching to the Project's real rows.
+ *
+ * They are convenience only — `process_steps.enforce_handoff_gate` on Project
+ * `before_insert` is the enforcement, because the audit found 8 of 28 projects
+ * created through paths no button controls.
  *
  * Steps 4-7 continue on the Project once it exists.
  *
@@ -64,11 +69,17 @@
 			.ee-process-status.green { color: #16a34a; }
 			.ee-process-status.orange { color: #d97706; }
 			.ee-process-status.red { color: #dc2626; font-weight: 600; }
+			/* A step's buttons live in the step's own box. Wider basis so the
+			   labels fit, stacked and full-width so they stay readable when the
+			   bar is squeezed. */
+			.ee-process-step.has-actions { flex-basis: 170px; min-width: 150px; }
+			.ee-process-step .ee-step-actions { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+			.ee-process-step .ee-step-actions .btn { width: 100%; white-space: normal; }
 			.ee-process-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 		</style>
 	`;
 
-	function step_html(s) {
+	function step_html(s, buttons) {
 		const esc = frappe.utils.escape_html;
 		const cls =
 			s.status === "Completed"
@@ -78,20 +89,36 @@
 					: s.current
 						? "current"
 						: "";
+		const actions =
+			buttons && buttons.length ? `<div class="ee-step-actions">${buttons.join("")}</div>` : "";
 		return `
-			<div class="ee-process-step ${cls}">
+			<div class="ee-process-step ${cls}${actions ? " has-actions" : ""}">
 				<span class="ee-step-no">${s.status === "Completed" ? "✓" : esc(String(s.no))}</span>
 				<div class="ee-step-title">${esc(s.title)}</div>
 				<div class="ee-step-meta">${esc(s.meta || "")}</div>
+				${actions}
 			</div>`;
 	}
 
-	function paint(field, steps, footer, extra) {
+	function paint(field, steps, by_step, footer, status) {
+		const placed = new Set();
 		let html = `${STYLE}<div class="ee-process-bar">`;
-		steps.forEach((s) => (html += step_html(s)));
+		steps.forEach((s) => {
+			const buttons = by_step[Number(s.no)] || [];
+			if (buttons.length) placed.add(Number(s.no));
+			html += step_html(s, buttons);
+		});
 		html += "</div>";
 		if (footer) html += footer;
-		if (extra) html += extra;
+		if (status) html += status;
+		// A button whose step isn't among the rendered rows still has to appear —
+		// the rows can come from the Project's own tracker, which this file does
+		// not control. Losing the button would leave the step with no way to
+		// advance it at all, so it falls back to a row beneath the bar.
+		const orphans = Object.keys(by_step)
+			.filter((no) => !placed.has(Number(no)))
+			.reduce((all, no) => all.concat(by_step[no]), []);
+		if (orphans.length) html += `<div class="ee-process-actions">${orphans.join("")}</div>`;
 		field.$wrapper.html(html);
 	}
 
@@ -255,40 +282,48 @@
 		return `<div class="ee-process-status ${cls}">${frappe.utils.escape_html(text)}</div>`;
 	}
 
-	function actions_html(f) {
-		if (!f.won) return "";
-		const buttons = [];
+	// Every button belongs to one of the steps in the bar, and is rendered in
+	// that step's box. The step numbers are the process's own and match the
+	// Project tracker's, so the mapping holds whether the bar is showing the
+	// derived three steps or the project's real rows.
+	const STEP_MEETING = 2;
+	const STEP_PROJECT = 3;
+
+	function step_buttons(f) {
+		const by_step = {};
+		if (!f.won) return by_step;
+		const at = (no, html) => (by_step[no] = by_step[no] || []).push(html);
 
 		// Booking is step 2 and comes first. On a gate-exempt legacy deal the two
 		// can be offered together, and then this one still leads — one primary
 		// button, pointing at the step the process actually wants next.
 		const booking_first = !f.held && !f.scheduled;
 		if (booking_first) {
-			buttons.push(button("schedule", __("Schedule Hand-Off Meeting"), "primary"));
+			at(STEP_MEETING, button("schedule", __("Schedule Hand-Off Meeting"), "primary"));
 		}
 		// Offered strictly on the server's own predicate, so the tab can never
 		// show a button whose insert is guaranteed to be refused.
 		if (!f.project && (f.gate_open || !f.gate_applies)) {
-			buttons.push(
+			at(
+				STEP_PROJECT,
 				button("create", __("Create Project in PM System"), booking_first ? "default" : "primary")
 			);
 		}
 		// Secondary on purpose: closing step 2 is bookkeeping the process needs,
 		// not the thing standing between the user and their project.
 		if (!f.held && (f.scheduled || !f.gate_applies)) {
-			buttons.push(button("finish", __("Hand-Off Meeting Finished"), "default"));
+			at(STEP_MEETING, button("finish", __("Hand-Off Meeting Finished"), "default"));
 		}
 		// A meeting that moved is a normal thing to happen, just no longer the
 		// primary action once one is on the calendar.
 		if (!f.held && f.scheduled) {
-			buttons.push(button("reschedule", __("Re-schedule Meeting"), "default"));
+			at(STEP_MEETING, button("reschedule", __("Re-schedule Meeting"), "default"));
 		}
 		if (!f.held && f.gate_applies && f.can_skip) {
-			buttons.push(button("skip", __("Skip Hand-Off"), "default"));
+			at(STEP_MEETING, button("skip", __("Skip Hand-Off"), "default"));
 		}
 
-		if (!buttons.length) return "";
-		return `<div class="ee-process-actions">${buttons.join("")}</div>`;
+		return by_step;
 	}
 
 	function schedule_meeting(frm, reschedule) {
@@ -450,7 +485,7 @@
 					);
 				}
 				return step_view(frm, f).then((view) => {
-					paint(field, view.steps, view.footer, status_html(f) + actions_html(f));
+					paint(field, view.steps, step_buttons(f), view.footer, status_html(f));
 					bind(frm, field);
 				});
 			});

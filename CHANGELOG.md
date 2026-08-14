@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.286.2] - 2026-08-14
+
+The hand-off buttons were already in the tab (v1.263.0) but still in a row *underneath* the
+step bar, which left every button a lookup: read the button, find the step it belongs to,
+read that step's state. Now each button renders inside its step's own box.
+
+### Changed
+
+- **Hand-off buttons moved into the step box they act on**, on both forms.
+
+  On the **Project** bar, each actionable step's two buttons — the one that starts the work
+  ("Send to Billing", "Open Tasks", "Schedule Launch Meeting", "Set Follow-Up Reminder") and
+  the one that records it — sit under that step's due date. **This is what deletes the step
+  title prefix the old row needed.** Steps 5 and 6 (and then 7) can be actionable at the same
+  time, so a shared row had to print `Outline Tasks & Responsibilities in PM System:` in front
+  of its own buttons to say which of the highlighted boxes they belonged to; in the box, the
+  box says it. For the same reason "Mark Step 6 Complete" is now just **"Mark Complete"** —
+  the number is two lines above the button.
+
+  On the **Opportunity** tab, the meeting buttons (Schedule / Hand-Off Meeting Finished /
+  Re-schedule / Skip) render in step 2, and *Create Project in PM System* in step 3. The
+  narrative status line — booked-for, past-SLA, skipped-by-and-why — stays beneath the bar,
+  where it reads as a sentence rather than a caption.
+
+### Notes
+
+- **Opportunity buttons are mapped to steps by `step_number`, not by position or title.** That
+  bar renders the *linked Project's* real tracker rows once one exists, and the derived
+  three-step view before that; step numbers are the one thing common to both, and the titles
+  are editable site-side on Process Step Template. A button whose step number is absent from
+  the rendered rows falls back to a row beneath the bar — it must never be the case that the
+  only way to advance a step vanishes because the row it was pinned to did.
+- Boxes carrying buttons get a wider flex basis (`.has-actions`) and stack their buttons
+  full-width. Seven boxes on one row is already tight on a laptop, and a button that clips its
+  own label is worse than a taller bar.
+
 ## [1.286.1] - 2026-08-13
 
 The two constructs v1.286.0 left out. Triton emits tables whenever it is asked to compare

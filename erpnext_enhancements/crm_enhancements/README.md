@@ -152,9 +152,14 @@ cannot be a participant row at all; those attendees get the invite email, which 
 that matters.
 
 The buttons live on the Opportunity's **Hand-Off Process** tab, rendered into the
-`custom_process_progress` HTML field beneath the step bar rather than added to the form
-toolbar (`public/js/crm_enhancements/opportunity_handoff.js`) — they are steps in a process,
-and they read as one next to the step they advance. The Closed-Won prompt
+`custom_process_progress` HTML field rather than added to the form toolbar
+(`public/js/crm_enhancements/opportunity_handoff.js`) — they are steps in a process, and
+they read as one next to the step they advance. Since v1.286.2 that is literal: each button
+renders **inside its step's box** in the bar — the meeting buttons in step 2, *Create
+Project in PM System* in step 3 — mapped by step *number*, so the mapping still holds when
+the bar swaps the derived three steps for the linked Project's real tracker rows. A button
+whose step is missing from those rows falls back to a row beneath the bar rather than
+disappearing. The Closed-Won prompt
 (`create_project_prompt.js`, global) asks for whichever of those steps is next, and shares
 the booking dialog with the tab; that is why `handoff_meeting_dialog.js` loads from
 `erpnext_enhancements.bundle.js` rather than as a `doctype_js` — the prompt also fires on
