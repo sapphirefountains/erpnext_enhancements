@@ -63,7 +63,9 @@ _RECORDING_CALLS: frozenset[str] = frozenset(
 _SCOPE_RULE_EXEMPT: frozenset[str] = frozenset({_CLASSIFIER})
 
 #: The audit tables, as they appear in SQL and as DocType names.
-AUDIT_DOCTYPES: frozenset[str] = frozenset({"Chat Retrieval Audit", "Chat Retrieval Audit Room"})
+AUDIT_DOCTYPES: frozenset[str] = frozenset(
+	{"Chat Audit Log", "Chat Retrieval Audit", "Chat Retrieval Audit Room"}
+)
 AUDIT_TABLES: frozenset[str] = frozenset({f"tab{name}" for name in AUDIT_DOCTYPES})
 
 #: The one module allowed to write these rows, and the controller that guards them. Any other

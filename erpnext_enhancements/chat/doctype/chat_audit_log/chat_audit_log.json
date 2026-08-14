@@ -1,0 +1,165 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-13 21:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "event_type",
+  "actor",
+  "column_break_who",
+  "recorded_at",
+  "subject_user",
+  "section_break_what",
+  "room",
+  "reference_doctype",
+  "column_break_ref",
+  "reference_name",
+  "reason",
+  "section_break_scope",
+  "affected_count",
+  "first_seq",
+  "column_break_scope",
+  "last_seq",
+  "detail",
+  "section_break_chain",
+  "chain_hash"
+ ],
+ "fields": [
+  {
+   "description": "What happened. Governance events only — this table records acts of administration over chat, never chat content. A message body must never appear in any field here.",
+   "fieldname": "event_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Event Type",
+   "options": "oversight_role_granted\noversight_role_revoked\noversight_config_changed\ntombstone_expanded\nexport_requested\nexport_downloaded\nretention_run\nchain_verification_failed",
+   "reqd": 1
+  },
+  {
+   "description": "The named human who did it. Never a service account and never a shared login — an act of oversight that cannot be attributed to a person is not oversight.",
+   "fieldname": "actor",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Actor",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_who",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "This app's own timestamp, and the one the hash chain signs. NOT `creation`: Document.insert() overwrites `creation` unconditionally, so a chain signing it signs a value the database never stored — which reported the very first row as tampered in v1.268.0.",
+   "fieldname": "recorded_at",
+   "fieldtype": "Datetime",
+   "label": "Recorded At",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "The person the event was about, when that differs from the actor — who was granted the oversight role, whose messages a retention run reached.",
+   "fieldname": "subject_user",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Subject User",
+   "options": "User"
+  },
+  {
+   "fieldname": "section_break_what",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "room",
+   "fieldtype": "Link",
+   "label": "Room",
+   "options": "Chat Room"
+  },
+  {
+   "description": "Plain Data rather than a Dynamic Link, deliberately: this row must survive the deletion of whatever it points at. A Link would either block that delete or be nulled by it, and an audit row that loses its subject when the subject is removed is exactly the record somebody would remove it to destroy.",
+   "fieldname": "reference_doctype",
+   "fieldtype": "Data",
+   "label": "Reference DocType"
+  },
+  {
+   "fieldname": "column_break_ref",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Data",
+   "label": "Reference Name"
+  },
+  {
+   "description": "Why. Required by the controller for the actor-initiated events — collected once per oversight session by the surface performing the read, never per scroll.",
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason"
+  },
+  {
+   "fieldname": "section_break_scope",
+   "fieldtype": "Section Break"
+  },
+  {
+   "description": "How many rows the event touched. Counts and ranges only — what a retention run destroyed is recorded as a scale, never as content, because a log of what was deleted that contains what was deleted has not deleted anything.",
+   "fieldname": "affected_count",
+   "fieldtype": "Int",
+   "label": "Affected Count"
+  },
+  {
+   "fieldname": "first_seq",
+   "fieldtype": "Int",
+   "label": "First Seq"
+  },
+  {
+   "fieldname": "column_break_scope",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_seq",
+   "fieldtype": "Int",
+   "label": "Last Seq"
+  },
+  {
+   "description": "Human-readable context: which role, which setting changed from what to what, which drift class. Never message text.",
+   "fieldname": "detail",
+   "fieldtype": "Small Text",
+   "label": "Detail"
+  },
+  {
+   "fieldname": "section_break_chain",
+   "fieldtype": "Section Break"
+  },
+  {
+   "description": "sha256 over the previous row's chain_hash and this row's signed fields. Its own stream, separate from Chat Retrieval Audit: one chain per table, because interleaving two writers into one chain makes every concurrent write a fork. Tamper-EVIDENT, not tamper-proof — anyone with database write access can rewrite a row and recompute the tail.",
+   "fieldname": "chain_hash",
+   "fieldtype": "Data",
+   "label": "Chain Hash",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-13 21:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Audit Log",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

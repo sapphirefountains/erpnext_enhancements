@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.285.0] - 2026-08-13
+
+**Build the vault before filling it.** Phase 6 §6 step 5 sequences audit immutability before any
+new writer exists, and this release is that step: the DocType, its four immutability layers and
+their tests, with **nothing writing to it yet**.
+
+### Added
+
+- **`Chat Audit Log`**, reversing ADR 0009's X-1 by explicit amendment
+  (`decisions/adr/0009-addendum-2-phase-6-decisions.md`), approved 2026-08-13. Not an agent
+  deciding the ADR was inconvenient.
+
+  X-1 was right about the principle — *two audit tables is acceptable, two definitions of "a
+  read" is not* — and wrong about the shape. `Chat Retrieval Audit` is read-shaped all the way
+  down: required `accessed_by`/`actor_type`/`purpose`, a child row per *room read* with a `seq`
+  range, and `was_participant` as the field that gives the table its value. A role grant has no
+  room, no range and no participation; stored there it is a row with every load-bearing field
+  null, and the compliance query — *"child rows where `was_participant = 0`"* — stops being one
+  line.
+
+  The two do not overlap, which is the test of whether X-1's principle survived: nothing
+  recorded here returns message content, and nothing that returns message content is recorded
+  here.
+
+  **One rule this table has that its sibling does not: message text must never appear in any
+  field.** A retention run records how many rows it destroyed and over which `seq` range, never
+  what they said. A log of what was deleted that contains what was deleted has not deleted
+  anything — it has moved it somewhere with weaker permissions and called that an audit trail.
+
+- **A conditional `reason` requirement, in the controller rather than the JSON.** The deliberate
+  acts — expanding a tombstone, requesting an export, downloading one — need a reason of at
+  least 12 characters, and are **refused** without one rather than accepted and blanked (G6-10).
+  A `reqd` on the field could not express the condition, and would demand a reason from the
+  retention scheduler too — producing a constant string that teaches everyone the field means
+  nothing.
+
+### Changed
+
+- The three source-level guards now cover the new table: the MCP denylist (set equality against
+  the filesystem, so it had to land in this commit or CI goes red), the zero-DocPerm doctrine's
+  exemption list, and — the one that matters — **layer 3's app-wide scan** for `set_value` /
+  `db_set` / `delete_doc` / raw `UPDATE` against `tabChat Audit Log`. Verified by adding a
+  `frappe.db.set_value` against it in an unrelated module and watching the build go red.
+
+### Notes
+
+- **Nothing writes to this table yet, and that is the point.** §6 step 5 is explicit that
+  immutability comes before any writer, because a vault built around existing rows is a vault
+  built around rows that were unprotected while it was under construction. The writers — the
+  role-grant hook, the audited tombstone expand, the retention run record — come next.
+- **Two holes in layer 2 are named rather than papered over**, both verified against frappe
+  v16.9.0's `delete_doc.py`: `on_trash` fires only when `not for_reload and not
+  ignore_on_trash`, so `frappe.delete_doc(..., ignore_on_trash=True)` and `for_reload=True` each
+  delete a row with the controller never consulted — and `for_reload` suppresses the
+  `Deleted Document` copy too, so the row leaves no trace but the chain break. **An
+  `after_delete` guard does not close this**: it runs after the rows are gone, so throwing there
+  rolls back a delete that already happened rather than preventing one. Layer 3 covers both
+  inside this repo; from `bench console`, another app, or the desk they are open, and layer 4 is
+  what remains.
+- **`chain_hash` is declared and not yet computed.** It gets its own stream, separate from
+  `Chat Retrieval Audit` — one chain per table, because interleaving two writers into one chain
+  makes every concurrent write a fork, which `verify_chain` reports as permanent tampering. The
+  computation lands with the first writer, so the genesis row is signed rather than backfilled.
+
 ## [1.284.0] - 2026-08-13
 
 **The gate has exactly two doors, and the employee chat app is no longer one of them.** A

@@ -94,6 +94,16 @@ DOCPERM_EXCEPTIONS = {
 		"that ships off. An audit log nobody can look at is not an audit log, which is "
 		"why this one inverts the doctrine rather than escaping it."
 	),
+	"Chat Audit Log": (
+		"Phase 6's governance log: System Manager, read and report only, and the same "
+		"inversion Chat Retrieval Audit makes for the same reason — an audit log nobody "
+		"can look at is not an audit log. It records acts of administration OVER chat "
+		"(who was granted oversight, who expanded a tombstone, what a retention run "
+		"destroyed as a count and a seq range) and by design holds no message text in any "
+		"field, because a log of what was deleted that contains what was deleted has not "
+		"deleted anything. Its controller refuses every update and every delete, so read "
+		"is the only operation the row supports from any path."
+	),
 	"Chat Settings": (
 		"The Single: identifiers, feature flags, kill switches, quotas and budgets, and "
 		"no message content. It also holds no credential and must never hold one — the "
