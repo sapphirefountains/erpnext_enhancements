@@ -1518,6 +1518,11 @@ permission_query_conditions = {
 	"Chat Room Member": "erpnext_enhancements.chat.permissions.chat_room_member_query",
 	"Chat Message": "erpnext_enhancements.chat.permissions.chat_message_query",
 	"Chat Attachment": "erpnext_enhancements.chat.permissions.chat_attachment_query",
+	# Phase 6 §4.A: `Chat Auditor` holds read on both audit tables, which fires §F.18.4.
+	# These scope by ROLE rather than by room — a membership filter on an audit trail hides
+	# exactly the non-participant reads it exists to surface.
+	"Chat Audit Log": "erpnext_enhancements.chat.permissions.chat_audit_log_query",
+	"Chat Retrieval Audit": "erpnext_enhancements.chat.permissions.chat_retrieval_audit_query",
 }
 
 has_permission = {
@@ -1548,6 +1553,8 @@ has_permission = {
 	"Chat Room Member": "erpnext_enhancements.chat.permissions.chat_room_member_has_permission",
 	"Chat Message": "erpnext_enhancements.chat.permissions.chat_message_has_permission",
 	"Chat Attachment": "erpnext_enhancements.chat.permissions.chat_attachment_has_permission",
+	"Chat Audit Log": "erpnext_enhancements.chat.permissions.chat_audit_log_has_permission",
+	"Chat Retrieval Audit": "erpnext_enhancements.chat.permissions.chat_retrieval_audit_has_permission",
 }
 
 # Chat notifications (ADR 0009 Phase 4) may NEVER be emailed, and this hook is what makes

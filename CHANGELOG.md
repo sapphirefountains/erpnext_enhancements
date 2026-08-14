@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.289.2] - 2026-08-14
+
+**The auditor can now read the trail, and knows what to say about why.** Two halves of
+Phase 6 §4.A that only make sense together.
+
+### Added
+
+- **`Chat Auditor` gets `read` + `report` on `Chat Audit Log` and `Chat Retrieval Audit`,
+  and on nothing else.** Until now the role existed and held read on *neither* audit table,
+  so the person appointed to review non-participant reads could not see them.
+
+  **G6-2 and G6-7 pull in opposite directions here, and this is the resolution.** G6-2 asks
+  for the oversight role to hold `read` on every chat DocType. G6-7 asks for exactly one
+  audit record per non-participant read *through every path*. Granting `Chat Message` a read
+  DocPerm satisfies the first and breaks the second: it opens `/api/resource`, the desk list
+  view and the desk report view, **none of which writes an audit row**. The auditor would be
+  able to read every message in the company with no record of having done so — the precise
+  outcome decision #12 trades away.
+
+  So: **the auditor reads the record, not the content.** Message bodies come only through
+  the audited viewer. `test_chat_access_report.py` pins both halves — the grant is read-only
+  (an auditor who can edit what they are auditing is not an auditor), and no content-bearing
+  chat DocType grants the role anything. Recorded loudly because it diverges from G6-2's
+  literal wording and the next reader will otherwise "fix" it.
+
+- **`category_summary()`** — the share of reads landing on each category, with `Other`
+  tracked against a review threshold. A category list nobody measures drifts into a single
+  value, and that failure is invisible because every individual row still looks correctly
+  filled in. `uncategorised` is counted separately from `Other` because they have different
+  fixes: `Other` is a person saying "none of these fit", which is information about the
+  list; uncategorised is a path that never collected one, which is a gap in the plumbing.
+
+### Changed
+
+- **Both permission hooks for both audit tables**, because §F.18.4's standing obligation
+  fires "the moment a narrower role is granted read here" — and `test_chat_guardrails`
+  anticipated this exact commit, exempting the tables *conditionally* with a note saying the
+  exemption evaporates when Phase 6 grants the oversight role read. It did, and it did.
+
+  **They scope by role, not by room, and that is the point rather than an omission.** Every
+  other hook in the module narrows a content table to the caller's own rooms. An audit trail
+  narrowed that way would hide precisely the non-participant reads it was written to surface
+  — the auditor is not a participant in any of them, so a membership filter returns an empty
+  log and looks correct doing it. What the pair adds over the DocPerm is the single-document
+  path: the DocPerm governs the list, `has_permission` governs `/app/<doctype>/<name>`,
+  `frappe.get_doc` and the socket callback. Every path returns a real boolean, and a
+  non-read `ptype` is refused explicitly rather than relying on the DocPerm — the
+  `ptype`-blind hatch of v1.283.2 is why that line exists.
+
+  Reading the trail is deliberately **not** recorded as a privileged read. It is not a read
+  of chat content, and marking it as one would put the auditor's own review into the log they
+  are reviewing — a trail that grows every time somebody looks at it.
+
+- **The `reason_category` vocabulary is decided.** Eight values, written for the employee
+  reading them rather than for the compliance file:
+
+  > HR or personnel matter · Legal, regulatory or compliance · Security investigation ·
+  > Safety or site incident · Customer or contract dispute · Requested by the employee ·
+  > Technical maintenance · Other
+
+  Deliberately broader than the obvious list. "HR or personnel matter" rather than "HR
+  Investigation", because a reference check and a grievance are not the same event and
+  filing both under *Investigation* tells an employee something untrue about their own
+  standing. **"Safety or site incident" is here because of what this company does** —
+  fountain construction and service is physical work on customer sites, and reconstructing
+  who said what after something goes wrong is a safety review, not an HR one.
+
+  **A consequence worth stating plainly:** decision D-4 declined an investigation exemption,
+  so an employee under HR or security investigation **will** see that category appear against
+  a read of their messages. That is the accepted cost of D-1 and D-4 together, not a gap in
+  the list — and it is why the list does not sub-classify further. The more precise the
+  category, the more the transparency view becomes a briefing.
+
 ## [1.289.1] - 2026-08-14
 
 **The Quotation, Sales Order and Sales Invoice now carry the same contact block the

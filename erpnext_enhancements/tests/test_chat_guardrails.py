@@ -80,13 +80,39 @@ EXPECTED_DOCPERMS: dict[str, dict[str, frozenset[str]]] = {
 	# kill switch for the entire feature.
 	"Chat Settings": {"System Manager": frozenset({"read", "write"})},
 	# §F.12/§F.18.4: an audit log nobody can read is not an audit log.
-	"Chat Retrieval Audit": {"System Manager": frozenset({"read", "report"})},
+	#
+	# `Chat Auditor` added in Phase 6 §4.A, and it is the exemption's whole point: the role
+	# appointed to review non-participant reads held `read` on NEITHER audit table, so it could
+	# not see the thing it exists to see.
+	#
+	# **Read and report only, and on the audit tables only.** G6-2 asks for the oversight role
+	# to hold `read` on every chat DocType; G6-7 asks for exactly one audit record per
+	# non-participant read through EVERY path. Those pull against each other, and granting
+	# `Chat Message` a read row resolves it the wrong way — it re-opens the desk, /api/resource
+	# and the report view, none of which writes an audit row, so the auditor could read the
+	# whole company with no record of having done so. The auditor reads the RECORD; message
+	# bodies come only through the audited viewer.
+	#
+	# **No row-level hook, deliberately, and this is the one place that is correct.** §F.18.4's
+	# standing obligation exists because a content DocType needs its rows scoped to the reader.
+	# The audit trail is the opposite: scoping it would hide exactly the rows an auditor is
+	# there to find, and a "who read what" report filtered to what the reader may see is not a
+	# report. Global by design — which is why the grant is read-only and the table stays
+	# append-only to everyone, including its readers.
+	"Chat Retrieval Audit": {
+		"System Manager": frozenset({"read", "report"}),
+		"Chat Auditor": frozenset({"read", "report"}),
+	},
 	# Phase 6, and an explicit ADR amendment (addendum 2) reversing X-1's rejection of this
 	# DocType. Same inversion as its sibling for the same reason, and the same shape: read and
 	# report, nothing else. It records acts of administration OVER chat — who was granted
 	# oversight, who expanded a tombstone, what a retention run destroyed as a count and a
 	# range — and holds no message text in any field by design.
-	"Chat Audit Log": {"System Manager": frozenset({"read", "report"})},
+	# `Chat Auditor` for the same reason as its sibling above, and on the same terms.
+	"Chat Audit Log": {
+		"System Manager": frozenset({"read", "report"}),
+		"Chat Auditor": frozenset({"read", "report"}),
+	},
 }
 
 #: The DocPerm keys that grant something. Everything else on a perm row (``role``,

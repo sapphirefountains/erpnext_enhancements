@@ -643,3 +643,80 @@ def chat_attachment_has_permission(
 	if not row:
 		return False
 	return _may_read_message((row.get("room") or "").strip(), cint(row.get("seq")), user)
+
+
+# --------------------------------------------------------------------------------------
+# The two audit tables. Phase 6 §4.A.
+# --------------------------------------------------------------------------------------
+#
+# These exist because `Chat Auditor` gained a read DocPerm on both, and §F.18.4's standing
+# obligation fires "the moment a narrower role is granted read here". Until then the tables
+# carried `System Manager` alone, which `test_chat_guardrails` exempted **conditionally** —
+# and that exemption said, in as many words, that it evaporates on this commit.
+#
+# **They do not scope by room, and that is the point rather than an omission.** Every other
+# hook in this module narrows a content table to the caller's own rooms. An audit trail
+# narrowed that way would hide precisely the non-participant reads it was written to
+# surface — the auditor is not a participant in any of them, so a membership filter would
+# return an empty log and look correct doing it. The rule these encode is a different one:
+# *who may read the trail at all*, which is a role question, not a row question.
+#
+# What they add over the DocPerm alone is the single-document path. The DocPerm governs the
+# list; `has_permission` governs `/app/<doctype>/<name>`, `frappe.get_doc` and the socket
+# callback. Parity is house doctrine here and the register is at ten for ten.
+
+
+def _may_read_audit(user: str) -> bool:
+	"""Who may read an audit table at all. Role, never row."""
+	return user == "Administrator" or "System Manager" in set(frappe.get_roles(user)) or _has_oversight(user)
+
+
+def chat_audit_log_query(user: str | None = None) -> str:
+	"""List scoping for ``Chat Audit Log``: all rows, or none."""
+	user = _resolve_user(user)
+	if not _is_scopable(user):
+		return "1 = 0"
+	# Not `note_privileged_read`: reading the record of reads is not itself a read of chat
+	# content, and marking it as one would put the auditor's own review into the log they
+	# are reviewing — an audit trail that grows every time somebody looks at it.
+	return "" if _may_read_audit(user) else "1 = 0"
+
+
+def chat_audit_log_has_permission(
+	doc: Any, ptype: str | None = None, user: str | None = None
+) -> bool:
+	"""Single-document twin of :func:`chat_audit_log_query`.
+
+	Every path returns a real boolean. On v16 a single-document hook that falls off the end
+	returning ``None`` **denies**, so a missing explicit return is a silent lockout rather
+	than a silent widening — but relying on that would make the deny accidental.
+	"""
+	user = _resolve_user(user)
+	if not _is_scopable(user):
+		return False
+	if not _is_read_ptype(ptype):
+		# The DocPerm grants read and report and nothing else, so a write should never reach
+		# here. Refusing it explicitly is what stops that being true only by accident — the
+		# `ptype`-blind hatch of v1.283.2 is the reason this line exists.
+		return False
+	return _may_read_audit(user)
+
+
+def chat_retrieval_audit_query(user: str | None = None) -> str:
+	"""List scoping for ``Chat Retrieval Audit``. Same rule as its sibling."""
+	user = _resolve_user(user)
+	if not _is_scopable(user):
+		return "1 = 0"
+	return "" if _may_read_audit(user) else "1 = 0"
+
+
+def chat_retrieval_audit_has_permission(
+	doc: Any, ptype: str | None = None, user: str | None = None
+) -> bool:
+	"""Single-document twin of :func:`chat_retrieval_audit_query`."""
+	user = _resolve_user(user)
+	if not _is_scopable(user):
+		return False
+	if not _is_read_ptype(ptype):
+		return False
+	return _may_read_audit(user)

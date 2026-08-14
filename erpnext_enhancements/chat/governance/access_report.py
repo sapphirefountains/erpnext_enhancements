@@ -368,9 +368,48 @@ def compliance_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
 	return summary
 
 
+def category_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+	"""How the categories are actually being used, and whether the vocabulary is holding up.
+
+	The reason this exists rather than a plain count: **a category list nobody measures drifts
+	into a single value.** If most reads land on ``Other``, the list is wrong — and a wrong
+	list is invisible, because every individual row still looks correctly filled in. Reporting
+	the share lets the vocabulary be corrected by evidence rather than by somebody's
+	recollection of what people have been picking.
+
+	``uncategorised`` is counted separately from ``Other``, and the distinction has different
+	fixes behind it. ``Other`` is a person saying "none of these fit", which is information
+	about the list. Uncategorised is a row written by a path that never collected one, which
+	is a gap in the plumbing.
+	"""
+	counts: dict[str, int] = {name: 0 for name in REASON_CATEGORIES}
+	uncategorised = 0
+	for row in rows:
+		category = (row.get("reason_category") or "").strip()
+		if not category:
+			uncategorised += 1
+		elif category in counts:
+			counts[category] += 1
+		else:
+			# A value the Select cannot offer — written before this vocabulary, or around the
+			# writer. Counted as Other rather than dropped, so the total still reconciles.
+			counts["Other"] += 1
+
+	categorised = sum(counts.values())
+	other_share = (counts["Other"] / categorised) if categorised else 0.0
+	return {
+		"counts": counts,
+		"uncategorised": uncategorised,
+		"categorised": categorised,
+		"other_share": round(other_share, 3),
+		"review_vocabulary": other_share > audit.CATEGORY_OTHER_REVIEW_THRESHOLD,
+	}
+
+
 __all__ = [
 	"KIND_CONTENT",
 	"KIND_GOVERNANCE",
+	"category_summary",
 	"REASON_CATEGORIES",
 	"REASON_MIN_LENGTH",
 	"REASON_OK",

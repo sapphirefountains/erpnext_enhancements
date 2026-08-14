@@ -144,7 +144,7 @@ class SubjectProjectionTest(unittest.TestCase):
 			"messages_read": 42,
 			"purpose": "oversight",
 			"reason": "HR complaint 44 names Ada, reviewing the thread",
-			"reason_category": "HR Investigation",
+			"reason_category": "HR or personnel matter",
 			"audit_name": "AUD-1",
 			"request_id": "req-1",
 			"query_text": "salary",
@@ -181,7 +181,7 @@ class SubjectProjectionTest(unittest.TestCase):
 		self.assertEqual(self.mod.redact_for_subject(self.row)["actor"], "manager@example.com")
 
 	def test_the_category_is_shown(self):
-		self.assertEqual(self.mod.redact_for_subject(self.row)["reason_category"], "HR Investigation")
+		self.assertEqual(self.mod.redact_for_subject(self.row)["reason_category"], "HR or personnel matter")
 
 	def test_a_missing_category_is_none_not_empty_string(self):
 		"""So the view renders 'Not recorded' rather than a category called nothing."""
@@ -217,7 +217,7 @@ class VocabularyTest(unittest.TestCase):
 		self.assertIsNone(audit.normalise_reason_category("Because I felt like it"))
 		self.assertIsNone(audit.normalise_reason_category(""))
 		self.assertIsNone(audit.normalise_reason_category(None))
-		self.assertEqual(audit.normalise_reason_category("  Security Incident  "), "Security Incident")
+		self.assertEqual(audit.normalise_reason_category("  Security investigation  "), "Security investigation")
 
 	def test_the_doctype_select_matches_the_constant(self):
 		"""Both audit doctypes offer exactly these options, plus a blank for 'not recorded'.
@@ -302,24 +302,24 @@ class OptionalChainingTest(unittest.TestCase):
 	def test_setting_a_category_changes_the_hash(self):
 		"""The tamper-evidence half, forwards."""
 		self.assertNotEqual(
-			self._hash(dict(self.row, reason_category="HR Investigation")),
+			self._hash(dict(self.row, reason_category="HR or personnel matter")),
 			self._hash(dict(self.row)),
 		)
 
 	def test_reclassifying_a_read_is_detected(self):
 		"""The edit this actually guards against.
 
-		An operator with SQL access rewriting `reason_category` from 'HR Investigation' to
-		'System Health or Debugging' is re-labelling why they read somebody's messages. Two
+		An operator with SQL access rewriting `reason_category` from 'HR or personnel matter' to
+		'Technical maintenance' is re-labelling why they read somebody's messages. Two
 		different categories must not hash alike.
 		"""
-		a = self._hash(dict(self.row, reason_category="HR Investigation"))
-		b = self._hash(dict(self.row, reason_category="System Health or Debugging"))
+		a = self._hash(dict(self.row, reason_category="HR or personnel matter"))
+		b = self._hash(dict(self.row, reason_category="Technical maintenance"))
 		self.assertNotEqual(a, b)
 
 	def test_stripping_a_category_off_a_row_is_detected(self):
 		"""And backwards: removing the category cannot restore the un-categorised hash."""
-		with_category = self._hash(dict(self.row, reason_category="Security Incident"))
+		with_category = self._hash(dict(self.row, reason_category="Security investigation"))
 		without = self._hash(dict(self.row))
 		self.assertNotEqual(with_category, without)
 
@@ -331,6 +331,143 @@ class OptionalChainingTest(unittest.TestCase):
 		self.assertFalse(
 			set(self.audit._OPTIONAL_CHAINED_FIELDS) & set(self.audit._CHAINED_FIELDS)
 		)
+
+
+class AuditorPermissionBoundaryTest(unittest.TestCase):
+	"""What `Chat Auditor` may read, and — more importantly — what it may not.
+
+	**G6-2 and G6-7 pull in opposite directions, and this is where they are reconciled.**
+	G6-2 asks for the oversight role to hold `read` on every chat DocType. G6-7 asks for
+	exactly one audit record per non-participant read *through every path*. Granting
+	`Chat Message` a read DocPerm satisfies the first and breaks the second: it opens
+	`/api/resource`, the desk list view and the desk report view, none of which writes an
+	audit row. The auditor could read every message in the company with no record of having
+	done so — the precise outcome decision #12 trades away.
+
+	The resolution: **the auditor reads the record, not the content.** DocPerm on the two
+	audit tables so they can review the trail; message bodies only through the audited viewer.
+	Written down here because it diverges from G6-2's literal wording, and the next person to
+	read that line will otherwise "fix" it.
+	"""
+
+	CONTENT_DOCTYPES = (
+		"chat_message",
+		"chat_message_revision",
+		"chat_room_member",
+		"chat_context_chunk",
+		"chat_room_digest",
+		"chat_thread_digest",
+		"chat_attachment",
+		"chat_inbound_event",
+	)
+	AUDIT_DOCTYPES = ("chat_audit_log", "chat_retrieval_audit")
+
+	def _perms(self, name):
+		import json
+		import pathlib
+
+		root = pathlib.Path(__file__).resolve().parents[1] / "chat" / "doctype"
+		meta = json.loads((root / name / f"{name}.json").read_text(encoding="utf-8"))
+		return meta.get("permissions", [])
+
+	def _auditor_row(self, name):
+		return next((p for p in self._perms(name) if p.get("role") == "Chat Auditor"), None)
+
+	def test_the_auditor_can_read_both_audit_tables(self):
+		"""Otherwise they cannot review the trail they exist to review."""
+		for name in self.AUDIT_DOCTYPES:
+			row = self._auditor_row(name)
+			self.assertIsNotNone(row, f"{name} grants Chat Auditor nothing")
+			self.assertEqual(row.get("read"), 1, name)
+
+	def test_that_grant_is_read_only(self):
+		"""An auditor who can edit the record they are auditing is not an auditor."""
+		forbidden = ("write", "create", "delete", "submit", "cancel", "amend", "share", "email")
+		for name in self.AUDIT_DOCTYPES:
+			row = self._auditor_row(name)
+			for ptype in forbidden:
+				self.assertFalse(
+					row.get(ptype),
+					f"{name} grants Chat Auditor `{ptype}` — the audit trail is append-only "
+					"to everyone, including the person reading it",
+				)
+
+	def test_no_content_bearing_doctype_grants_the_auditor_anything(self):
+		"""The G6-7 half. A DocPerm here is an unaudited path to message bodies."""
+		offenders = [n for n in self.CONTENT_DOCTYPES if self._auditor_row(n) is not None]
+		self.assertEqual(
+			offenders,
+			[],
+			"these grant Chat Auditor a DocPerm, which opens /api/resource and the desk "
+			f"report view — both unaudited paths to message content: {offenders}",
+		)
+
+	def test_the_content_doctypes_still_ship_zero_docperms(self):
+		"""Layer 1, unchanged. Asserted here so this file notices if it is relaxed."""
+		for name in self.CONTENT_DOCTYPES:
+			self.assertEqual(
+				self._perms(name), [], f"{name} gained a DocPerm; Layer 1 says it has none"
+			)
+
+
+class CategorySummaryTest(unittest.TestCase):
+	"""The vocabulary is correctable by evidence, which requires measuring it."""
+
+	def setUp(self):
+		from erpnext_enhancements.chat.governance import access_report
+
+		self.mod = access_report
+
+	def test_it_separates_uncategorised_from_other(self):
+		"""Different failures with different fixes.
+
+		`Other` is a person saying "none of these fit" — information about the list.
+		Uncategorised is a path that never collected one — a gap in the plumbing.
+		"""
+		rows = [
+			{"reason_category": "Other"},
+			{"reason_category": ""},
+			{"reason_category": None},
+			{"reason_category": "Security investigation"},
+		]
+		out = self.mod.category_summary(rows)
+		self.assertEqual(out["counts"]["Other"], 1)
+		self.assertEqual(out["uncategorised"], 2)
+		self.assertEqual(out["categorised"], 2)
+
+	def test_an_unknown_value_reconciles_into_other_rather_than_vanishing(self):
+		"""A total that does not add up is worse than a value in the wrong bucket."""
+		out = self.mod.category_summary([{"reason_category": "Wrangling"}])
+		self.assertEqual(out["counts"]["Other"], 1)
+		self.assertEqual(out["categorised"], 1)
+
+	def test_a_high_other_share_asks_for_the_list_to_be_revisited(self):
+		rows = [{"reason_category": "Other"}] * 3 + [{"reason_category": "Technical maintenance"}]
+		self.assertTrue(self.mod.category_summary(rows)["review_vocabulary"])
+
+	def test_a_healthy_spread_does_not(self):
+		rows = [{"reason_category": "Technical maintenance"}] * 9 + [{"reason_category": "Other"}]
+		self.assertFalse(self.mod.category_summary(rows)["review_vocabulary"])
+
+	def test_no_rows_is_not_a_problem_to_report(self):
+		"""Zero reads must not read as a vocabulary failure."""
+		out = self.mod.category_summary([])
+		self.assertEqual(out["other_share"], 0.0)
+		self.assertFalse(out["review_vocabulary"])
+
+	def test_every_category_is_phrased_for_the_employee_not_the_file(self):
+		"""A weak check with a real purpose: these strings are read by the subject.
+
+		Sentence case rather than Title Case is the tell that they were written as answers to
+		"why?" rather than as filing labels.
+		"""
+		from erpnext_enhancements.chat import audit
+
+		for name in audit.REASON_CATEGORIES:
+			self.assertEqual(name, name[0].upper() + name[1:], name)
+			words = [w for w in name.split() if w.isalpha() and len(w) > 3]
+			capitalised = [w for w in words[1:] if w[0].isupper()]
+			self.assertEqual(capitalised, [], f"{name!r} reads like a filing label")
 
 
 class ComplianceSummaryTest(unittest.TestCase):

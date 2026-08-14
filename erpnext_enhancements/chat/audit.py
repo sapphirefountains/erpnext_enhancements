@@ -178,15 +178,48 @@ def _optional_chain_payload(row: dict[str, Any]) -> dict[str, Any]:
 #: leave it unsigned, on the grounds that adding a key to a chained tuple re-serialises every
 #: row ever written and reports the whole log as tampered. That is true of a *mandatory* key
 #: and is not true of an optional one, and the difference buys both properties at once.
+#: **Written for the employee, not for the compliance file.** These strings are read by
+#: somebody being told a colleague read their messages, so each is phrased as an answer to
+#: "why?" that a person can act on without knowing the org chart.
+#:
+#: Deliberately broader than the obvious list. "HR or personnel matter" rather than "HR
+#: Investigation", because a reference check and a grievance are not the same event, and
+#: filing both under *Investigation* tells an employee something untrue about their own
+#: standing. These are for orientation, not classification.
+#:
+#: **"Safety or site incident" is here because of what this company does.** Fountain
+#: construction and service is physical work on customer sites; when something goes wrong,
+#: reconstructing who said what is a safety review rather than an HR one, and mislabelling it
+#: as HR would frighten people for no reason.
+#:
+#: **A consequence worth stating plainly, because decision D-4 made it unavoidable.** There is
+#: no investigation exemption — the shapes on offer were "with a second named approver and a
+#: mandatory expiry" or "not at all", and not-at-all is the one that cannot rot. So an employee
+#: under an HR or security investigation **will** see that category appear against a read of
+#: their messages. That is the accepted cost of D-1 and D-4 together rather than a gap in this
+#: list, and it is the reason the list does not sub-classify further: the more precise the
+#: category, the more the transparency view becomes a briefing.
+#:
+#: **"Other" is a measurement, not an escape hatch.** Forcing a bad fit produces a *wrong*
+#: category, which is worse than an unspecific one — so it exists, and
+#: :func:`chat.governance.access_report.category_summary` reports its share. A sustained
+#: "Other" rate means this list is wrong, and this list being wrong is the failure nobody
+#: would otherwise notice.
 REASON_CATEGORIES: tuple[str, ...] = (
-	"HR Investigation",
-	"Legal or Compliance Hold",
-	"Security Incident",
-	"Customer or Contract Dispute",
-	"Requested by the Subject",
-	"System Health or Debugging",
+	"HR or personnel matter",
+	"Legal, regulatory or compliance",
+	"Security investigation",
+	"Safety or site incident",
+	"Customer or contract dispute",
+	"Requested by the employee",
+	"Technical maintenance",
 	"Other",
 )
+
+#: The share of ``Other`` above which the vocabulary should be revisited. Not enforced —
+#: there is nothing sensible to *do* at a threshold except look — but named so the number on
+#: the dashboard has something to be compared against.
+CATEGORY_OTHER_REVIEW_THRESHOLD = 0.20
 
 
 def normalise_reason_category(value: str | None) -> str | None:
