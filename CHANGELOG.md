@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.288.3] - 2026-08-14
+
+**The reason a `@triton` turn failed was being thrown away one line before it was written
+down.** The previous release made `Triton Invocation Log` readable; the first thing it showed
+was that the rows say nothing.
+
+### Fixed
+
+- **`model turn failed: TritonUnavailable` now carries the sentence that explains it.**
+  `chat/invoke/handler.py` recorded `exc.__class__.__name__` for a failed model turn, which
+  collapsed four unrelated causes — the assistant switched off in ERPNext, Triton Settings with
+  no Gateway URL, an unmintable token for that identity, an unreachable gateway — into one
+  word. Each points at a different file; the log named none of them.
+
+  The messages were already written to be safe to record. `TritonUnavailable`'s own comment
+  says why it exists: *"named, because 'the model was unavailable' for a permission problem
+  sent us looking at the model for an hour."* The author made the message loggable and the
+  logger dropped it. New `_model_failure_detail()` keeps it, and appends `status=` and `code=`
+  when the failure got far enough to have them — those two are what separate "Triton is down"
+  from "this person needs to link ERPNext". A zero `status` is omitted rather than printed, so
+  the field stays worth reading.
+
+  **Only that one class.** Its docstring guarantees it never carries a token and its messages
+  are content-free by construction; nothing else here makes that promise, and an arbitrary
+  exception's `str()` can carry the prompt, a database row, or a credential — into a table an
+  operator reads through the health report. Every other exception still records its class name
+  alone, and `test_ANY_OTHER_EXCEPTION_RECORDS_ONLY_ITS_CLASS` is the test that keeps it that
+  way. The retrieval branch two frames up already drew the same line with `db_cause`.
+
+  Worth naming the shape: a scrubbing rule applied one layer too high is indistinguishable
+  from a logging bug. The care that stops secrets reaching the log is the same care that
+  stopped the diagnosis reaching it, and only the second one is visible in an outage.
+
+### Added
+
+- `tests/test_chat_invoke_failure_detail.py` — bench-free `unittest`, its own stub set, its own
+  `ci.yml` step (the handler reaches the invocation-log controller at import, so it needs
+  `frappe.model.document` on top of what the client suite stubs). Six tests: the four real
+  messages survive, `status`/`code` are appended, a zero `status` is not, any other exception
+  records only its class, an empty message falls back to the class name, and the handler
+  actually calls the helper — that last one goes red if the `f"...{exc.__class__.__name__}"`
+  line ever comes back.
+
 ## [1.288.2] - 2026-08-14
 
 **`Triton Invocation Log` was write-only.** A failed `@triton` turn recorded its reason where

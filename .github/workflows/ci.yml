@@ -167,6 +167,16 @@ jobs:
       # Triton no longer has costs one retry rather than thirty days of a dead room.
       - name: Triton chat client + bot credential link
         run: python -m unittest erpnext_enhancements.tests.test_chat_triton_client -v
+      # Also its own step, and for the same reason: `chat/invoke/handler.py` reaches the
+      # invocation-log controller at import, so this one needs `frappe.model.document` on
+      # top of the client suite's stubs.
+      #
+      # It guards the *other* half of that message rule. The client is careful never to log
+      # a Triton error body; the handler was so careful it logged nothing at all, recording
+      # `model turn failed: TritonUnavailable` for four unrelated causes in four different
+      # files. The message that class carries is written to be safe — and only that class's.
+      - name: Triton model-failure detail (the reason survives, and only the safe one)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_invoke_failure_detail -v
       # The A1 read tools each wrap a function that returns more than a reader
       # should see: a live billable Google Maps browser key, the e-signature
       # evidence (token hashes, the agreement text as signed, signature image,
