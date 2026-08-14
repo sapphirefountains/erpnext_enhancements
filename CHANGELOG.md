@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.289.6] - 2026-08-14
+
+**Phase 6 §4.E — seeing through a delete, and the third declared-but-unwritten event gets a
+writer.** `Chat Audit Log` has declared `tombstone_expanded` since v1.285.0 with nothing able
+to produce it. That leaves `retention_run` as the last one, and it is deliberately last.
+
+### The thing the prompt gets wrong, and why it changes the design
+
+Phase 6's prompt says a user-facing delete *moves* the body off the live row and clears it.
+**It does not.** Divergence D4: `is_deleted = 1` and the body **stays** on
+`Chat Message.text` — argued in five places in the ADR, and stated in `api/compose.py`'s own
+comment. What changes is who can see it: `_common.message_payload` strips the text on read
+and `history` filters the row out.
+
+So the body is not somewhere else needing restoration; it is one column away, behind a read
+path that declines to return it. **Expanding a tombstone is therefore not a recovery
+operation — it is a decision to look**, and the only thing separating it from an ordinary
+read is that somebody is accountable for it afterwards. Every design choice below follows
+from that.
+
+### Added
+
+- **`chat/governance/tombstone.py`** — one POST endpoint, role-gated, reason-graded.
+
+- **The audit row is written before the body is returned, and a failed write refuses the
+  read.** `record_governance_event` swallows its own failures and returns `None`, so a caller
+  that ignores the return has assumed a record that does not exist. The first version of
+  v1.289.5's `request_export` made exactly that mistake; here the consequence would be an
+  unrecorded look through a tombstone, which is the one act this module exists to prevent.
+
+- **Only a deleted message.** A live one is refused and sent to the oversight viewer, which
+  records it there. Accepting either would make `tombstone_expanded` mean two different
+  things, and an event type with two meanings is one nobody can count.
+
+- **The whole revision trail, oldest first — not just the last body.** A message deleted
+  after three edits has four bodies in its past, and returning only the final one answers
+  *"what did it say"* with the version that happened to be current when somebody removed it:
+  the least interesting of the four, and it reads as though it were the whole story.
+
+- **19 tests**, its own CI step, all AST.
+
+### Changed
+
+- `test_chat_rawsql_guard` gains two justified reads and a second name on the
+  revision-table waiver — the same deliberate change its docstring asked for in v1.289.5.
+
+### Notes
+
+- **A gap in the raw-SQL scanner, filed rather than quietly used.** The guard's staleness
+  check refused an exemption for `_message`, because that read uses `frappe.db.get_value`,
+  which the collector does not walk (it covers `frappe.get_all`, `frappe.db.sql`,
+  `frappe.qb` and SQL literals). A `db.get_value` on a body column is a real read path and is
+  not scanned. Widening the collector is its own change with its own backlog of pre-existing
+  hits, so it is recorded in the exemption block rather than smuggled in here.
+- The staleness check is worth naming on its own: it refuses a waiver that matches no query,
+  because one covering nothing today silently covers whatever later takes the name.
+
 ## [1.289.4] - 2026-08-14
 
 **Phase 6 §4.C — the export bundle's decisions.** Everything else in this phase is read by

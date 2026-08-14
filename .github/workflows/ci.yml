@@ -818,6 +818,18 @@ jobs:
       # Own step: installs its own frappe stub in setUpModule.
       - name: Chat export runner (the queue contract, and the download that records itself)
         run: python -m unittest erpnext_enhancements.tests.test_chat_export_runner -v
+      # Seeing through a delete. `tombstone_expanded` was the third event Chat Audit Log
+      # had declared since v1.285.0 with nothing able to produce it.
+      #
+      # The property asserted: the audit row is written BEFORE the body is returned, and a
+      # failed write REFUSES the read - record_governance_event swallows its failures and
+      # returns None, so a caller that ignores the return has assumed a record that does not
+      # exist. Plus: only a deleted message (a live one goes through the viewer, so the
+      # event type keeps one meaning and stays countable), and one shared reason grader.
+      #
+      # Own step: no frappe import needed, the module is only ever parsed.
+      - name: Chat tombstone expand (recorded before revealed, or refused)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_tombstone -v
       # The SPA received NO realtime events at all - not another person's message, not
       # @triton's reply, not even its own - and looked healthy doing it, because every symptom
       # pointed away from the cause. Frappe's socket server namespaces connections by site and
