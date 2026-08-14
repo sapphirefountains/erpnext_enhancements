@@ -31,6 +31,7 @@ import {
 	orderManifestForDisplay,
 } from "../chat/citations.js";
 import { isComposingKey } from "../chat/dom.js";
+import { renderMarkdown } from "../chat/markdown.js";
 import { writeHandoff, readHandoff } from "../chat/handoff.js";
 import { buildRoute } from "../chat/routes.js";
 import { BubbleChatSurface } from "./chat_surface.js";
@@ -74,12 +75,21 @@ import { BubbleChatSurface } from "./chat_surface.js";
 	const esc = frappe.utils.escape_html;
 	const xcall = (m, args) => frappe.xcall(`${METHOD}.${m}`, args);
 
-	function md(text) {
-		try {
-			return frappe.markdown(text || "");
-		} catch (e) {
-			return esc(text || "").replace(/\n/g, "<br>");
-		}
+	// Renders markdown into `host` as NODES. Replaces `frappe.markdown` — an approved change to
+	// a "preserve exactly" surface (decision #7), settled 2026-08-13, for two reasons.
+	//
+	// It was WRONG on one of the two pages this widget runs on. `frappe.markdown` is `showdown`
+	// and lives in the Desk bundle; on `/chat`, where `frappe`/`showdown`/jQuery are absent, it
+	// threw and the old catch fell back SILENTLY to escaped raw text. Same widget, two different
+	// outputs, no error either way — which is why the formatting looked intermittent rather than
+	// broken.
+	//
+	// And it was UNSAFE on the page where it did work. v16's `frappe.markdown` is
+	// `new showdown.Converter()` with no sanitiser — the sanitising commit is on frappe's
+	// `develop` and is NOT in the v16 line — and its output went straight into `innerHTML`.
+	// That is a sink for model and tool output, on every Desk page.
+	function md(host, text) {
+		renderMarkdown(host, text || "");
 	}
 
 	function scrollDown() {
@@ -1236,7 +1246,7 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		if (live.manifest && live.shownLen < live.text.length) {
 			visible = visible.slice(0, visible.length - holdbackLength(visible));
 		}
-		live.bubble.innerHTML = md(visible);
+		md(live.bubble, visible);
 		// --- phase 3 --- inline citations, applied to the markdown renderer's OUTPUT rather
 		// than to its input. The sanitiser policy Appendix A records is load-bearing and is
 		// therefore untouched: it sees exactly the string it saw before this phase, and the
@@ -1337,7 +1347,7 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		// everything held. Forgetting the flush truncates the last few characters of every
 		// answer that happens to end near a token, which is maddening to diagnose.
 		live.shownLen = live.text.length;
-		if (live.thinkingEl) live.thinkingEl.innerHTML = md(live.thoughts);
+		if (live.thinkingEl) md(live.thinkingEl, live.thoughts);
 		collapseThinking(live);
 		markActiveStepsDone(live);
 		renderBubble(live);
@@ -1388,7 +1398,7 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		if (live.thoughtRaf == null) {
 			live.thoughtRaf = requestAnimationFrame(() => {
 				live.thoughtRaf = null;
-				if (live.thinkingEl) live.thinkingEl.innerHTML = md(live.thoughts);
+				if (live.thinkingEl) md(live.thinkingEl, live.thoughts);
 				scrollDown();
 			});
 		}

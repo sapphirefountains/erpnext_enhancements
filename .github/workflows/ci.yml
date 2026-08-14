@@ -710,6 +710,25 @@ jobs:
       # and the SQL that feeds it needs a database. A wrong column name is invisible to every
       # bench-free test, and review does not catch it either - the name was entirely
       # plausible. Both sides of the check are files, so it needs no bench.
+      # Triton's answers rendered three different ways on three surfaces, all wrong: the SPA
+      # showed literal **bold**, the widget's frappe.markdown lives in the Desk bundle and fell
+      # back SILENTLY to escaped text on /chat, and Google Chat got raw CommonMark whose double
+      # asterisks its single-asterisk bold turns into bold-plus-a-stray-character.
+      #
+      # The renderer builds NODES, never HTML strings, because the input is model output: it
+      # carries prompt-injected content and quotes employees' messages back verbatim. The suite
+      # asserts that directly - no innerHTML is ever assigned, and no element is created that
+      # the renderer does not itself construct - plus the §4.G.7 hostile corpus through every
+      # link path.
+      - name: Chat markdown renderer (browser half)
+        run: node scripts/test_chat_markdown.mjs
+      # The server half. Pure `re`, imports no frappe, so it gets its own step and can never
+      # cross-talk with another suite's stub set. The interesting assertion is that the
+      # conversion is NOT idempotent and that this is a property to know rather than a bug to
+      # fix: `*x*` is Chat's bold and CommonMark's italic, so no translator between them can be.
+      # What keeps it safe is the call site, which converts from the stored markdown every time.
+      - name: Chat markdown to Google Chat formatting (server half)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_gchat_markdown -v
       - name: Chat SQL only names columns that exist (the 1054 guard)
         run: python -m unittest erpnext_enhancements.tests.test_chat_sql_columns -v
       # Phase 6 §4.G.5. Two findings and one property.
