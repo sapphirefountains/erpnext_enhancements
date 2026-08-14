@@ -398,6 +398,61 @@ def _thread_messages(
 	return list(reversed(rows or []))
 
 
+def _oversight_room_messages(
+	allowed_rooms: frozenset[str],
+	*,
+	expression: str,
+	limit: int,
+) -> list[dict[str, Any]]:
+	"""T1 for the oversight path — verbatim messages across **all** the named rooms.
+
+	:func:`_thread_messages` cannot serve this, and the difference is not a detail. It takes
+	a single ``room`` and is gated on one being supplied, so the oversight caller — which
+	names a *set* of rooms and no thread — got an empty verbatim tier and never noticed:
+	chunks and digests still came back, so the answer looked complete while containing no
+	actual message the auditor asked to see. **A read that returns summaries when it was
+	asked for a transcript is worse than one that returns nothing**, because only the second
+	one gets reported.
+
+	Ordered by ``seq`` for the same reason as its sibling — immutable, never renumbered,
+	and immune to the site-local-vs-UTC skew that makes a mixed-origin transcript sort wrong
+	by the site offset.
+
+	**Deleted rows stay excluded here.** Seeing through a tombstone is its own audited act
+	with its own event type (``tombstone_expanded``, §4.E), and folding it into the ordinary
+	oversight read would make every such read an expansion — which is precisely the
+	distinction §4.E exists to preserve.
+	"""
+	if not allowed_rooms:
+		return []
+	scope = permissions.membership_filter_sql(
+		f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq", allow_oversight=True
+	)
+	rooms = _room_list_sql(allowed_rooms)
+	# With a query, the matching messages; without one, the tail. An oversight read with no
+	# search terms is a legitimate "show me this conversation" request, and returning nothing
+	# for it would push the auditor towards a broader read rather than a narrower one.
+	match_clause = (
+		"and match(`text_plain`) against (%(expression)s in boolean mode)" if expression else ""
+	)
+	rows = frappe.db.sql(
+		f"""
+		select `name`, `room`, `seq`, `sender`, `sender_email`, `text`, `thread_root`,
+			`creation`, `gchat_create_time`
+		from {_MESSAGE_TABLE}
+		where `room` in {rooms}
+			and {scope}
+			and `is_deleted` = 0
+			{match_clause}
+		order by `seq` desc
+		limit %(limit)s
+		""",
+		{"expression": expression, "limit": max(cint(limit), 0)},
+		as_dict=True,
+	)
+	return list(reversed(rows or []))
+
+
 def _authored_messages(
 	allowed_rooms: frozenset[str],
 	*,
@@ -516,6 +571,9 @@ def retrieve(
 			glossary_lines=glossary_lines or [],
 			user_card_lines=user_card_lines or [],
 			actor_type="Triton",
+			# "What did I agree to" is the commonest question asked of a chat assistant, and
+			# the asker's own messages are the answer. This is the tier that exists for it.
+			authored_user=acting,
 		)
 
 
@@ -524,6 +582,7 @@ def retrieve_for_oversight(
 	query: str,
 	rooms: list[str],
 	reason: str,
+	subject: str | None = None,
 	user: str | None = None,
 	request_id: str | None = None,
 ) -> RetrievalResult:
@@ -541,6 +600,17 @@ def retrieve_for_oversight(
 	  rather than accepted-and-blanked;
 	* it takes ``rooms`` explicitly. Nothing is inferred. An oversight read of "everything" is
 	  not expressible here, because the audit row has to name what was read.
+
+	``subject`` is who the read is *about*, and it is optional because not every oversight
+	read has one — "what was said in this room about the Henderson contract" is a legitimate
+	question with no subject. When given, the authored tier returns that person's messages;
+	when absent there is no authored tier. It was previously neither: the tier ran as the
+	auditor and returned **their own** messages, which they could already read, in place of
+	the ones they had just stated a reason to see.
+
+	**What this does not do: see through a delete.** Every tier here excludes ``is_deleted``.
+	Expanding a tombstone is its own act with its own audit event (§4.E), and folding it in
+	here would make every oversight read an expansion.
 	"""
 	acting = _assert_real_user(user)
 	_assert_retrieval_enabled()
@@ -578,6 +648,13 @@ def retrieve_for_oversight(
 			user_card_lines=[],
 			actor_type="Admin",
 			reason=cleaned_reason,
+			# The subject, or no authored tier at all. Never `acting`: that returned the
+			# auditor their own messages — content they could already read, in place of the
+			# content they came to audit.
+			authored_user=subject,
+			# T1 across the named rooms. `room` is None here and always will be, so the
+			# thread-shaped tier can never fire on this path.
+			verbatim_across_rooms=True,
 		)
 
 
@@ -600,12 +677,24 @@ def _run(
 	user_card_lines: list[str],
 	actor_type: str,
 	reason: str | None = None,
+	authored_user: str | None,
+	verbatim_across_rooms: bool = False,
 ) -> RetrievalResult:
 	"""Fetch → rank → budget → **audit** → assemble. The order of the last two is the rule.
 
 	``allowed_rooms`` is the first positional parameter here too, even though this function
 	runs no SQL itself: it is the value every function it calls needs, and a signature that
 	makes it optional here would make forgetting it possible one level down.
+
+	**``authored_user`` has no default, deliberately.** It used to be implicit — the tier
+	always ran as ``acting`` — which is right for an ordinary retrieve and silently wrong for
+	oversight, where it fed the auditor their *own* messages in place of the ones they were
+	auditing. A required keyword makes every caller answer "whose messages is this tier
+	about?" out loud, and ``None`` means "no such tier" rather than "the obvious person".
+
+	``verbatim_across_rooms`` picks T1's shape: a single room's thread or tail (the mention
+	path, which has a room and often a thread), or the named set (the oversight path, which
+	has neither).
 	"""
 	settings = _settings_dict()
 	expression = lexical.build_boolean_query(query)
@@ -633,13 +722,26 @@ def _run(
 	chunk_rows = _chunk_rows(allowed_rooms, names=fused_keys)
 
 	digest_rows = _room_digest_rows(allowed_rooms)
-	thread_rows = (
-		_thread_messages(allowed_rooms, room=room, thread_root=thread_root, limit=MAX_THREAD_MESSAGES)
-		if room
+	if verbatim_across_rooms:
+		thread_rows = _oversight_room_messages(
+			allowed_rooms, expression=expression, limit=MAX_THREAD_MESSAGES
+		)
+	elif room:
+		thread_rows = _thread_messages(
+			allowed_rooms, room=room, thread_root=thread_root, limit=MAX_THREAD_MESSAGES
+		)
+	else:
+		thread_rows = []
+	# `None` is "this read has no authored tier", not "default to whoever is asking". The
+	# oversight path passes the subject or nothing; passing `acting` there returned the
+	# auditor's own messages, which they could already read and which are not the ones under
+	# audit.
+	authored_rows = (
+		_authored_messages(
+			allowed_rooms, user=authored_user, expression=expression, limit=MAX_AUTHORED_MESSAGES
+		)
+		if authored_user
 		else []
-	)
-	authored_rows = _authored_messages(
-		allowed_rooms, user=acting, expression=expression, limit=MAX_AUTHORED_MESSAGES
 	)
 
 	# --- rank, on already-filtered rows ------------------------------------------------
