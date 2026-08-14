@@ -304,7 +304,76 @@ def collect(room: str | None = None, max_rooms: int = 20) -> dict[str, Any]:
 		data["counters_degraded"] = True
 		errors.append(f"counters: {type(exc).__name__}: {exc}")
 
+	_collect_triton(data, errors)
+
 	return data
+
+
+def _collect_triton(data: dict[str, Any], errors: list[str]) -> None:
+	"""Recent ``@triton`` turns — Phase 6 §4.H.1 panel 8, and the only way to read them.
+
+	**``Triton Invocation Log`` ships zero DocPerm** (ADR §F.18.1 Layer 1), which closes
+	``/api/resource``, the desk list view, the form view and the report view for *everybody*
+	except ``Administrator``. It is also on the MCP denylist. So until this panel existed the
+	table was **write-only**: a turn failed, the reason was recorded, and no operator could
+	reach it by any route. An administrator was told "an administrator can find it under Triton
+	Invocation Log" by a reply whose own error was, in practice, unreadable.
+
+	That is the gap §4.H.1 names — *"Phase 5 built ``Triton Invocation Log`` and a report over
+	it; surface it here rather than rebuilding it"* — and this is the smallest thing that closes
+	it without weakening the permission model: `frappe.get_all` with ``ignore_permissions``
+	inside the app's own audited health function, rather than a DocPerm that would reopen the
+	desk and the REST API on it.
+
+	**Content-free by construction, and it must stay that way.** This table holds ids, hashes,
+	counts, timings and scrubbed error strings — never message text, never the raw query (only
+	``query_hash``). The selected columns are enumerated rather than ``"*"`` so a future field
+	carrying content cannot silently join them.
+	"""
+	try:
+		rows = frappe.get_all(
+			"Triton Invocation Log",
+			fields=[
+				"name",
+				"creation",
+				"status",
+				"origin",
+				"asked_by",
+				"room",
+				"error",
+				"retrieval_ms",
+				"model_ms",
+				"total_ms",
+				"context_tokens",
+				"context_truncated",
+				"degradation_rung",
+				"citation_count",
+				"citation_miss_count",
+				"model_used",
+			],
+			order_by="creation desc",
+			limit_page_length=10,
+			ignore_permissions=True,
+		)
+	except Exception as exc:
+		errors.append(f"triton invocations: {type(exc).__name__}: {exc}")
+		data["triton_recent"] = []
+		data["triton_by_status"] = {}
+		return
+
+	data["triton_recent"] = [dict(row) for row in rows]
+
+	by_status: dict[str, int] = {}
+	for row in rows:
+		key = str(row.get("status") or "?")
+		by_status[key] = by_status.get(key, 0) + 1
+	data["triton_by_status"] = by_status
+
+	# The newest failure, hoisted so the operator does not have to scan the list for it. A
+	# failed turn is the only row anybody opens this panel to find.
+	data["triton_last_failure"] = next(
+		(dict(r) for r in rows if str(r.get("status") or "") in ("Failed", "Refused")), None
+	)
 
 
 def _collect_relay(data: dict[str, Any], errors: list[str], *, now: Any, room_filter: str | None) -> None:
@@ -579,6 +648,7 @@ def _render(data: dict[str, Any]) -> list[str]:
 	_render_rooms(lines, data)
 	_render_subscriptions(lines, data)
 	_render_counters(lines, data)
+	_render_triton(lines, data)
 	_render_errors(lines, data)
 	return lines
 
@@ -923,6 +993,48 @@ def _counter_line(name: str, value: int) -> str:
 	if count and name in COUNTER_WARN_IF_NONZERO:
 		return _line(f"  {name}", str(count), _WARN, f"- {COUNTER_WARN_IF_NONZERO[name]}")
 	return _line(f"  {name}", str(count))
+
+
+def _render_triton(lines: list[str], data: dict[str, Any]) -> None:
+	"""The last ten ``@triton`` turns, newest first, with the newest failure called out.
+
+	Printed by ``bench execute …chat.health.report`` because that is the surface an operator
+	has when the web UI is the broken thing — and, for this table, the only surface they have
+	at all.
+	"""
+	rows = data.get("triton_recent")
+	if rows is None:
+		return
+
+	lines.append("")
+	lines.append(_rule("-"))
+	lines.append("TRITON INVOCATIONS (last 10)")
+
+	by_status = data.get("triton_by_status") or {}
+	if not rows:
+		lines.append("  no @triton turns recorded")
+		return
+	for name, count in sorted(by_status.items()):
+		lines.append(_line(f"  {name}", str(count)))
+
+	failure = data.get("triton_last_failure")
+	if failure:
+		lines.append("")
+		lines.append("  NEWEST FAILURE")
+		lines.append(_line("    when", str(failure.get("creation"))))
+		lines.append(_line("    status", str(failure.get("status"))))
+		lines.append(_line("    asked by", str(failure.get("asked_by") or "?")))
+		lines.append(_line("    origin", str(failure.get("origin") or "?")))
+		# The whole reason somebody ran this command.
+		lines.append(f"    error: {failure.get('error') or '(none recorded)'}")
+
+	lines.append("")
+	for row in rows:
+		when = str(row.get("creation") or "")[:19]
+		lines.append(
+			f"  {when}  {str(row.get('status') or '?'):<10} "
+			f"{str(row.get('total_ms') or 0):>6}ms  {row.get('asked_by') or '?'}"
+		)
 
 
 def _render_errors(lines: list[str], data: dict[str, Any]) -> None:

@@ -737,6 +737,18 @@ jobs:
       # Own step: installs its own frappe stub in setUpModule.
       - name: Chat governance audit (the second chain, and the role-grant hook)
         run: python -m unittest erpnext_enhancements.tests.test_chat_governance_audit -v
+      # The SPA received NO realtime events at all - not another person's message, not
+      # @triton's reply, not even its own - and looked healthy doing it, because every symptom
+      # pointed away from the cause. Frappe's socket server namespaces connections by site and
+      # its auth middleware compares `socket.nsp.name` against the resolved site; connecting to
+      # the bare origin lands in `/`, so the comparison is "" != site and the connection is
+      # refused. The engine.io handshake still succeeds (it runs before namespace middleware),
+      # the rejection happens inside the Node process so nothing reaches ERPNext's Error Log,
+      # and connect_error only set a status nobody surfaced.
+      #
+      # socketUrl is pure, so the one thing that mattered is directly assertable.
+      - name: Chat realtime connection URL carries the site namespace
+        run: node scripts/test_chat_socket_url.mjs
       - name: Chat markdown renderer (browser half)
         run: node scripts/test_chat_markdown.mjs
       # The server half. Pure `re`, imports no frappe, so it gets its own step and can never

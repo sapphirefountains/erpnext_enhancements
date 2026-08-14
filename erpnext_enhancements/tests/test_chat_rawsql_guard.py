@@ -321,6 +321,29 @@ FOREIGN_TABLES: dict[str, str] = {
 #: bounded by something other than the reader's identity, and no column selected is a body.**
 #: A read that answers an HTTP request fails all three and does not belong here.
 SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
+	# --- chat/health.py: the only surface that can read the invocation log at all --------
+	(
+		"health.py",
+		"_collect_triton",
+		"Triton Invocation Log",
+	): (
+		"Phase 6 §4.H.1 panel 8, and it exists because the table was WRITE-ONLY. "
+		"`Triton Invocation Log` ships zero DocPerm (ADR §F.18.1 Layer 1), which closes "
+		"/api/resource, the desk list view, the form view and the report view for everybody "
+		"but Administrator — the desk answers 'Page triton-invocation-log not found' — and it "
+		"is also on the MCP denylist. So a failed @triton turn recorded its reason where no "
+		"operator could reach it, while the failure message in chat told them to go and look "
+		"there.\n"
+		"Eligible on all three counts the rule names. NO SESSION USER: `health.report` is "
+		"deliberately not whitelisted (see chat/health.py's header) so it has no HTTP surface "
+		"and answers no request; it is a bench/operator command. BOUNDED BY SOMETHING OTHER "
+		"THAN THE READER: newest ten by creation, which is a property of the table rather "
+		"than of who is asking — a membership filter would be meaningless here anyway, since "
+		"the rows worth reading are other people's failed turns. NO BODY COLUMN: this table "
+		"is content-free by construction (ids, hashes, counts, timings, scrubbed error "
+		"strings, `query_hash` and never the query text), and the fields are ENUMERATED "
+		"rather than '*' so a future column carrying content cannot silently join them."
+	),
 	# --- chat/notifications/fanout.py: deciding who to tell, with nobody logged in ------
 	(
 		"notifications/fanout.py",
