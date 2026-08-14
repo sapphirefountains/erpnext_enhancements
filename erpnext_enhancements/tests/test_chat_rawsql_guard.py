@@ -166,6 +166,17 @@ UNSCOPED_TABLES: dict[str, str] = {
 		"exists to surface. Per §F.12 it carries DocPerm rather than none — System Manager, "
 		"read and report only — because an audit log nobody can look at is not an audit log."
 	),
+	"Chat Audit Log": (
+		"Phase 6's governance log — acts of administration OVER chat rather than reads OF it: "
+		"who was granted the oversight role, who expanded a tombstone, what a retention run "
+		"destroyed as a count and a seq range. It holds **no message text in any field, by "
+		"design**, because a log of what was deleted that contains what was deleted has not "
+		"deleted anything. Unscoped for the same reason its sibling is: the rows worth reading "
+		"are the ones about somebody else, so a membership filter would hide exactly the "
+		"events the log exists to surface. Read only by the chain verifier, which must walk "
+		"EVERY row in insertion order — a scoped walk would report a break at the first row "
+		"the walker could not see. DocPerm is System Manager, read and report only."
+	),
 	"Chat Retrieval Audit Room": (
 		"The child of the above: one row per room touched by one privileged read, carrying "
 		"room, was_participant and the seq range. Same reasoning, and it holds no text either. "
@@ -749,6 +760,20 @@ UNRESOLVED_QUERY_EXEMPTIONS: dict[tuple[str, str], str] = {
 		"audit.py",
 		"_release_chain_lock",
 	): ("`select release_lock(%s)`. The other half of the advisory lock above; touches no table."),
+	(
+		"audit.py",
+		"_acquire_governance_lock",
+	): (
+		"`select get_lock(%s, %s)` — the governance chain's advisory lock, and the twin of "
+		"`_acquire_chain_lock` above. A SECOND lock rather than a shared one on purpose: one "
+		"chain per table, so sharing a lock would serialise two independent streams against "
+		"each other and make every governance write wait on an unrelated retrieval read. "
+		"Names no table; there is no row set to scope."
+	),
+	(
+		"audit.py",
+		"_release_governance_lock",
+	): ("`select release_lock(%s)`. The other half of the governance advisory lock; touches no table."),
 	(
 		"indexing/invalidate.py",
 		"_rows_affected",
@@ -1406,6 +1431,11 @@ class TestTheAllowlistsAreHonest(unittest.TestCase):
 		self.assertEqual(
 			sorted(UNSCOPED_TABLES),
 			[
+				# Phase 6's governance log. Listed here rather than waved through because it
+				# is the newest member of the audit family and the family is the reason this
+				# pin exists: these tables are unscoped precisely BECAUSE the rows worth
+				# reading are the ones about somebody else.
+				"Chat Audit Log",
 				"Chat Event Subscription",
 				"Chat Inbound Event",
 				"Chat Provisioning Run",

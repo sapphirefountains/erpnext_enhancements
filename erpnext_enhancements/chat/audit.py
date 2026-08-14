@@ -71,6 +71,59 @@ PRIVILEGED_SCOPE_FLAG = "chat_privileged_scope"
 _CHAIN_LOCK = "ee_chat_retrieval_audit_chain"
 _CHAIN_LOCK_TIMEOUT = 10
 
+#: The second audit table, and the second chain. Governance EVENTS — who was granted the
+#: oversight role, who expanded a tombstone, what a retention run destroyed — as opposed to
+#: ``Chat Retrieval Audit``, which records READS of chat content.
+#:
+#: **Its own chain, deliberately.** One chain per table: interleaving two writers into a single
+#: chain makes every concurrent write a fork, and ``verify_chain`` reports a fork as a permanent
+#: break indistinguishable from tampering. Two streams, two locks, two genesis strings.
+GOVERNANCE_DOCTYPE = "Chat Audit Log"
+
+_GOVERNANCE_CHAIN_LOCK = "ee_chat_audit_log_chain"
+_GOVERNANCE_GENESIS = "chat-audit-log-genesis"
+
+#: The fields the governance chain signs. Everything a reader would care about, and nothing
+#: Frappe rewrites on the way in — ``recorded_at`` rather than ``creation``, for the reason
+#: v1.268.0 learned the hard way: ``Document.insert()`` overwrites ``creation`` unconditionally,
+#: so signing it signs a value the database never stored and the first row reports as tampered.
+_GOVERNANCE_CHAINED_FIELDS = (
+	"event_type",
+	"actor",
+	"subject_user",
+	"room",
+	"reference_doctype",
+	"reference_name",
+	"reason",
+	"detail",
+	"recorded_at",
+	"affected_count",
+	"first_seq",
+	"last_seq",
+)
+
+#: Coerced through ``cint`` before hashing, so adding an integer column later stays
+#: backward-compatible: a row written before the column existed signed ``None`` while the
+#: verifier reads ``0`` back from MariaDB, and without the coercion every pre-existing row
+#: would report as tampered for a schema change.
+_GOVERNANCE_INT_FIELDS = frozenset({"affected_count", "first_seq", "last_seq"})
+
+#: The events ``Chat Audit Log.event_type`` accepts. Mirrors the Select, and is checked rather
+#: than trusted: an unknown value would be rejected by Frappe at save time, i.e. *after* the act
+#: it was supposed to record already happened.
+GOVERNANCE_EVENTS = frozenset(
+	{
+		"oversight_role_granted",
+		"oversight_role_revoked",
+		"oversight_config_changed",
+		"tombstone_expanded",
+		"export_requested",
+		"export_downloaded",
+		"retention_run",
+		"chain_verification_failed",
+	}
+)
+
 #: Purposes the ``purpose`` Select accepts.
 _PURPOSES = frozenset({"mention", "search", "briefing", "oversight", "attachment"})
 _DEFAULT_PURPOSE = "oversight"
@@ -505,3 +558,212 @@ def verify_chain(limit: int | None = None) -> dict[str, Any]:
 		checked += 1
 
 	return {"ok": True, "rows_checked": checked, "first_break": None}
+
+
+# ------------------------------------------------------------- the governance stream
+
+
+def compute_governance_chain_hash(row: dict, previous: str) -> str:
+	"""``sha256(previous | canonical(audited fields))`` for a ``Chat Audit Log`` row.
+
+	Shared by the writer and :func:`verify_governance_chain`, for the same reason its retrieval
+	sibling is: a verifier with its own idea of the payload reports false breaks, and an alarm
+	that always fires is worse than no alarm at all.
+
+	No child table here — governance events have no rooms child — so this is the simpler of the
+	two and takes no second argument. That asymmetry is why the two are separate functions
+	rather than one with an optional parameter: an optional argument silently defaulting to
+	``[]`` on the wrong stream is a hash that verifies against nothing.
+	"""
+	payload = {
+		key: (cint(row.get(key)) if key in _GOVERNANCE_INT_FIELDS else _chain_value(row.get(key)))
+		for key in _GOVERNANCE_CHAINED_FIELDS
+	}
+	return hashlib.sha256((previous + _canonical(payload)).encode("utf-8")).hexdigest()
+
+
+def record_governance_event(
+	*,
+	event_type: str,
+	actor: str,
+	subject_user: str = "",
+	room: str = "",
+	reference_doctype: str = "",
+	reference_name: str = "",
+	reason: str = "",
+	detail: str = "",
+	affected_count: int = 0,
+	first_seq: int = 0,
+	last_seq: int = 0,
+) -> str | None:
+	"""Record one act of administration over chat. Returns the row name, or ``None``.
+
+	**Swallows.** Every caller is an act that has already happened — a role granted, a
+	tombstone expanded, a retention run finished — and raising here would undo the act to
+	record it, which is the wrong trade for all of them. The retrieval writer makes the
+	opposite trade, and the difference is the direction of time: that one runs *before*
+	content is returned, so it can still refuse. This one runs after.
+
+	The failure is loud in the Error Log rather than silent, and the chain makes a *missing*
+	row detectable only by its absence — which is the honest limit of an append-only log that
+	cannot refuse the thing it describes.
+
+	**Never put message text in ``detail``.** A retention run records how many rows it
+	destroyed and over which ``seq`` range; a log of what was deleted that contains what was
+	deleted has not deleted anything.
+	"""
+	if event_type not in GOVERNANCE_EVENTS:
+		# Checked here rather than left to Frappe's Select validation, which would raise at
+		# save time — after the act being recorded already happened.
+		frappe.log_error(
+			title="chat audit: unknown governance event",
+			message=f"event_type={event_type!r} actor={actor!r}",
+		)
+		return None
+
+	row = {
+		"event_type": event_type,
+		"actor": actor,
+		"subject_user": (subject_user or "").strip() or None,
+		"room": (room or "").strip() or None,
+		"reference_doctype": (reference_doctype or "").strip()[:140] or None,
+		"reference_name": (reference_name or "").strip()[:140] or None,
+		"reason": (reason or "").strip() or None,
+		"detail": (detail or "").strip() or None,
+		"recorded_at": frappe.utils.now(),
+		"affected_count": cint(affected_count),
+		"first_seq": cint(first_seq),
+		"last_seq": cint(last_seq),
+	}
+
+	if not _acquire_governance_lock():
+		frappe.log_error(
+			title="chat audit: governance chain lock not obtained",
+			message=f"event_type={event_type} actor={actor}",
+		)
+		return None
+
+	try:
+		doc = frappe.new_doc(GOVERNANCE_DOCTYPE)
+		doc.update(row)
+		doc.chain_hash = compute_governance_chain_hash(row, _previous_governance_hash())
+		doc.insert(ignore_permissions=True)
+		frappe.db.commit()
+		return doc.name
+	except Exception as exc:
+		try:
+			frappe.log_error(
+				title="chat audit: governance event NOT recorded",
+				message=f"event_type={event_type} actor={actor} error={exc.__class__.__name__}",
+			)
+		except Exception:
+			pass
+		return None
+	finally:
+		_release_governance_lock()
+
+
+def _acquire_governance_lock() -> bool:
+	rows = frappe.db.sql("select get_lock(%s, %s)", (_GOVERNANCE_CHAIN_LOCK, _CHAIN_LOCK_TIMEOUT))
+	return bool(rows and rows[0][0] == 1)
+
+
+def _release_governance_lock() -> None:
+	try:
+		frappe.db.sql("select release_lock(%s)", (_GOVERNANCE_CHAIN_LOCK,))
+	except Exception:
+		# Connection-scoped, so a failure costs a lock held slightly too long, never forever.
+		pass
+
+
+def _previous_governance_hash() -> str:
+	"""The governance chain head. Called only while the governance lock is held."""
+	rows = frappe.db.sql(
+		"""select `chain_hash` from `tabChat Audit Log`
+			order by `recorded_at` desc, `name` desc limit 1"""
+	)
+	if rows and rows[0][0]:
+		return rows[0][0]
+	return _GOVERNANCE_GENESIS
+
+
+def verify_governance_chain(limit: int | None = None) -> dict:
+	"""Walk the governance chain and report the first break.
+
+	``bench --site <site> execute erpnext_enhancements.chat.audit.verify_governance_chain``
+
+	Same contract as :func:`verify_chain`, and the same honest limit: a break means a row no
+	longer matches what was signed. **No break does not mean no tampering** — anyone with
+	database write access can rewrite a row and recompute every hash after it. It raises the
+	cost from one ``UPDATE`` to a correct rewrite of the whole tail.
+	"""
+	fields = ", ".join(f"`{name}`" for name in _GOVERNANCE_CHAINED_FIELDS)
+	rows = frappe.db.sql(
+		f"""select `name`, `chain_hash`, {fields}
+			from `tabChat Audit Log`
+			order by `recorded_at` asc, `name` asc
+			limit %(limit)s""",
+		{"limit": cint(limit) or 100000000},
+		as_dict=True,
+	)
+	if not rows:
+		return {"ok": True, "rows_checked": 0, "first_break": None}
+
+	previous = _GOVERNANCE_GENESIS
+	checked = 0
+	for row in rows:
+		if compute_governance_chain_hash(dict(row), previous) != (row.get("chain_hash") or ""):
+			return {
+				"ok": False,
+				"rows_checked": checked,
+				"first_break": row["name"],
+				"at": str(row.get("recorded_at")),
+				"detail": "audited fields do not match the stored chain hash",
+			}
+		previous = row["chain_hash"]
+		checked += 1
+
+	return {"ok": True, "rows_checked": checked, "first_break": None}
+
+
+def verify_all_chains() -> dict:
+	"""Both chains, for the nightly scheduler. Returns a summary and records any break.
+
+	**A break is recorded as a governance event**, which is the only self-consistent place for
+	it: the audit log is what the system uses to say something happened, and "the audit log was
+	tampered with" is something that happened. The row is written to the governance stream even
+	when the governance stream is the one that broke — a later row cannot repair an earlier
+	break, and its own hash will verify against the new head, so the record survives and the
+	break stays visible behind it.
+
+	Wired to a nightly cron in ``hooks.py``. Until Phase 6's alerting lands (§4.H) the Error Log
+	is the delivery channel, which is *necessary and not sufficient* — nobody reads it
+	unprompted, and that gap is stated rather than implied.
+	"""
+	results = {"retrieval": verify_chain(), "governance": verify_governance_chain()}
+	broken = [name for name, result in results.items() if not result.get("ok")]
+
+	if broken:
+		detail = "; ".join(
+			f"{name}: first break {results[name].get('first_break')} at {results[name].get('at')}"
+			for name in broken
+		)
+		try:
+			frappe.log_error(
+				title="chat audit: CHAIN VERIFICATION FAILED",
+				message=(
+					f"{detail}\n\nEvery row after the break is suspect and every row before it is "
+					f"not. A break is tampering or corruption; it is not something the "
+					f"application can cause."
+				),
+			)
+		except Exception:
+			pass
+		record_governance_event(
+			event_type="chain_verification_failed",
+			actor="Administrator",
+			detail=detail[:1000],
+			affected_count=len(broken),
+		)
+
+	return {"ok": not broken, "broken": broken, "results": results}

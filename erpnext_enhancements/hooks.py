@@ -545,7 +545,18 @@ doc_events = {
 		# hook never sees. Compares the roles child table against
 		# get_doc_before_save() and returns immediately when unchanged; the sweep
 		# itself is enqueue_after_commit so it can never delay a login or a save.
-		"on_update": "erpnext_enhancements.training.assignment.on_user_roles_changed",
+		# A LIST, because two features need the same event and neither owns it. Frappe runs
+		# every entry; the order is not significant since neither writes what the other reads.
+		#
+		# The second is Phase 6 §4.A.4: granting the chat oversight role hands somebody every
+		# conversation in the company, a System Manager can grant it to themselves, and that
+		# is precisely why the grant is recorded. `Has Role` is a child table of `User` and
+		# Frappe fires no event for a child row alone, so the parent's on_update is the only
+		# place a role change is observable.
+		"on_update": [
+			"erpnext_enhancements.training.assignment.on_user_roles_changed",
+			"erpnext_enhancements.chat.governance.role_grants.on_user_roles_changed",
+		],
 	},
 	"Supplier": {
 		"after_insert": "erpnext_enhancements.accounting_intake.filing.enqueue_supplier_folder",
@@ -726,6 +737,19 @@ scheduler_events = {
 		# The first symptom otherwise is somebody noticing weeks later that Triton's answers
 		# stopped mentioning anything recent.
 		"35 * * * *": ["erpnext_enhancements.chat.indexing.digest.check_digest_staleness"],
+		# Nightly, and NIGHTLY rather than hourly on purpose: a chain break is a point in
+		# time, not a rate. Every row after it is suspect and every row before it is not, so
+		# checking twenty-four times a day finds the same break twenty-four times and tells
+		# nobody anything new. 03:10 is a quiet hour and an unused minute.
+		#
+		# It walks BOTH audit chains and records a break as a governance event — the audit log
+		# is what this system uses to say something happened, and "the audit log was tampered
+		# with" is something that happened.
+		#
+		# Until Phase 6's alerting lands (§4.H) the Error Log is the delivery channel, which is
+		# necessary and NOT sufficient: nobody reads it unprompted. Stated here rather than
+		# implied, because a verifier nobody hears from is a verifier nobody has.
+		"10 3 * * *": ["erpnext_enhancements.chat.audit.verify_all_chains"],
 		# Semi-monthly commission report — 07:00 site TZ, DAILY on purpose even
 		# though it only emails on the 1st and the 16th. The job also owns the
 		# saved date window on the "Brian's Closed Won" Report Builder report, and
