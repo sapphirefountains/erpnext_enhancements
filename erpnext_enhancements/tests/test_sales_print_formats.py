@@ -29,6 +29,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# Shared with the Purchase Order format. Importable without a bench: that module is pure
+# strings and never imports frappe.
+from erpnext_enhancements.enhancements_core.company_contact import (
+    COMPANY_ADDRESS_HTML,
+    COMPANY_PHONE,
+)
+
 MODULE_PATH = (
     REPO_ROOT
     / "erpnext_enhancements"
@@ -231,6 +238,84 @@ class TestTemplatesRender(unittest.TestCase):
             with self.subTest(name):
                 out = self._render(html, _sample(doctype, 2), letter_head=None)
                 self.assertIn("ITEM-1", out)
+
+
+class TestTheHeaderCarriesOurContactDetails(unittest.TestCase):
+    """The customer must be able to reach us from the page they are holding.
+
+    The letter head cannot do it -- `Sapphire Fountains Default` is a right-aligned logo
+    and nothing else -- so the template draws the name, address and phone beside it. The
+    block is shared with the Purchase Order format; these tests pin that it is wired to
+    the *sales* address field, which is not the one Purchase Order uses.
+    """
+
+    def setUp(self):
+        try:
+            import jinja2
+        except ImportError:  # pragma: no cover
+            self.skipTest("jinja2 not installed")
+
+    def render(self, html, doctype, letter_head="<div>LETTERHEAD</div>", **overrides):
+        from jinja2 import Environment
+
+        return Environment().from_string(html).render(
+            doc=_sample(doctype, 2, **overrides), frappe=_stub_frappe(), letter_head=letter_head
+        )
+
+    def test_no_placeholder_survives_composition(self):
+        for name, _doctype, html in formats():
+            for marker in ("__CONTACT_BLOCK__", "__ADDRESS_FIELD__", "__COMPANY_"):
+                with self.subTest(f"{name}/{marker}"):
+                    self.assertNotIn(marker, html)
+
+    def test_the_phone_is_printed_on_all_three(self):
+        for name, doctype, html in formats():
+            with self.subTest(name):
+                self.assertIn(COMPANY_PHONE, self.render(html, doctype))
+
+    def test_the_phone_is_never_conditional(self):
+        """It has no data source to be conditional on -- `Company.phone_no` and
+        `Address.phone` are both null on this site."""
+        for name, doctype, html in formats():
+            with self.subTest(name):
+                self.assertIn(
+                    COMPANY_PHONE, self.render(html, doctype, company_address_display=None)
+                )
+
+    def test_the_document_address_wins_when_it_has_one(self):
+        """657 of 657 Quotations and every Sales Invoice carry one."""
+        for name, doctype, html in formats():
+            with self.subTest(name):
+                self.assertIn("2 Other Street", self.render(html, doctype))
+
+    def test_the_constant_covers_a_document_without_one(self):
+        for name, doctype, html in formats():
+            with self.subTest(name):
+                out = self.render(html, doctype, company_address_display=None)
+                self.assertIn(COMPANY_ADDRESS_HTML, out)
+
+    def test_the_address_is_never_blank(self):
+        """Whichever source applies, something is always printed. The sample document's
+        own address is deliberately NOT our real one, so these three cases also prove
+        which source won rather than just that the words appeared."""
+        for name, doctype, html in formats():
+            for label, over, expected in (
+                ("present", {}, "2 Other Street"),
+                ("missing", {"company_address_display": None}, COMPANY_ADDRESS_HTML),
+                ("empty", {"company_address_display": ""}, COMPANY_ADDRESS_HTML),
+            ):
+                with self.subTest(f"{name}/{label}"):
+                    self.assertIn(expected, self.render(html, doctype, **over))
+
+    def test_it_reads_the_sales_address_field_not_the_purchase_one(self):
+        """Purchase Order calls the same thing `billing_address_display`. Wiring that
+        here prints nothing and raises nothing -- Jinja renders a missing attribute as
+        empty, so the block would silently fall back to the constant forever."""
+        self.assertEqual(_NAMESPACE["ADDRESS_FIELD"], "company_address_display")
+        for name, _doctype, html in formats():
+            with self.subTest(name):
+                self.assertIn("doc.company_address_display", html)
+                self.assertNotIn("billing_address_display", html)
 
 
 class TestSilentFailureModes(unittest.TestCase):

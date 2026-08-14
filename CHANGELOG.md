@@ -7,6 +7,182 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.289.1] - 2026-08-14
+
+**The Quotation, Sales Order and Sales Invoice now carry the same contact block the
+Purchase Order got in v1.288.8** — company name, street address and phone, beside the logo.
+Customers were in the same position suppliers had been: holding a branded page with no way
+to reach us on it, because `Sapphire Fountains Default` is a right-aligned logo and nothing
+else — no address, no phone, empty footer.
+
+**One copy, not two.** The block moved out to `enhancements_core/company_contact.py` and
+both format modules import it. A second copy in the sales file would have drifted on the
+first edit, which is the same reason that module already composes its line table and totals
+from single fragments rather than triplicating them across three documents. The Purchase
+Order template now substitutes `__CONTACT_BLOCK__` where it previously carried the markup
+inline; its rendered output is unchanged, and its suite proves that.
+
+**The two sides disagree on the field name, which is the part that would have failed
+silently.** Sales documents call the company address `company_address_display`; Purchase
+Order calls it `billing_address_display` and has no `company_address` at all. So
+`contact_block(address_field)` takes the name rather than assuming one — because getting it
+wrong prints nothing and raises nothing. Jinja renders a missing attribute as empty, so the
+wrong field would just fall through to the constant on every document, forever, looking
+exactly like a working feature. Both suites now pin their own field and assert the other
+one is absent.
+
+Populated on production for all three: 657 of 657 Quotations and every Sales Invoice carry
+`company_address_display`; there are no Sales Orders yet, and the constant covers them
+until there are.
+
+### Changed
+
+- `Quotation - Sapphire`, `Sales Order - Sapphire` and `Sales Invoice - Sapphire` render
+  the contact block in place of the bare letter head div.
+- `enhancements_core/company_contact.py` (new) holds `COMPANY_ADDRESS_HTML`,
+  `COMPANY_PHONE` and `contact_block`, moved out of `setup_print_formats`. Both format
+  modules and both test suites import from it.
+- Sales suite +8 tests, Purchase Order suite +1: the phone on all three sales documents,
+  the address in all three states (document's own, missing, empty string), no surviving
+  placeholder, and the right address field per doctype.
+
+Note the Sales Invoice now shows the address twice — in the header, and in the "How to pay"
+block as "Remit to". That is conventional on an invoice and was left alone deliberately, but
+it is one line to drop if it reads as repetition.
+
+## [1.289.0] - 2026-08-14
+
+**A Purchase Order can now say where it actually is.** Five stages in a new `Order Stage`
+field: **Created → Awaiting Confirmation → Waiting for Delivery │ Waiting for Pickup →
+Received**. The two waiting stages are siblings, not a sequence — an order is delivered or
+it is collected, never both.
+
+**Why this is a new field and not three more options on `status`.** That is the obvious
+thing to try and it does not work, in the quietest possible way. ERPNext's
+`Purchase Order.status` is *computed*, not stored-as-set:
+`erpnext.controllers.status_updater.status_map` recalculates it from `docstatus`,
+`per_received`, `per_billed` and `advance_payment_status` on every save and every receipt.
+Exactly three values survive a save — `Delivered`, `On Hold`, `Closed` — and only because
+their rule is self-referential (`eval:self.status=='Closed'`). An added option has no such
+rule, so it would be overwritten with whatever eval matched next, almost always
+`To Receive and Bill`. The dropdown would look right, the save would succeed, nothing would
+log, and the value would be gone. Checked against the live map on production rather than
+assumed.
+
+So the two fields answer different questions and both are real: `status` is *ERPNext's*
+account of the paperwork, and `custom_order_stage` is *ours* — have we actually placed this
+order, and are we driving to collect it or waiting on a truck. That is also why the stage is
+`allow_on_submit`: every transition worth tracking happens after the order is submitted.
+
+**Manual, with one automatic exception.** Submitting a PO here is approval — it is not the
+act of sending the order to a supplier — so nothing advances the stage on submit, and a test
+pins that no handler is ever attached to Purchase Order submission. A stage that lied about
+"Awaiting Confirmation" would be worse than one that is merely stale. The far end is
+different: full receipt is a fact ERPNext already has, so a Purchase Receipt that completes
+an order sets `Received` on its own.
+
+**The cancel path loses information rather than inventing it.** When a Purchase Receipt is
+cancelled, `Received` is no longer true, but nothing records which of the two waiting stages
+preceded it. Inferring it from the shipping address was the first idea and it is a coin flip
+wearing a lab coat — 147 of the 157 orders on this site carry one, so that rule answers
+"Waiting for Delivery" essentially always. It reverts to `Awaiting Confirmation` instead,
+which says strictly less rather than something false, and leaves a timeline comment naming
+the cancelled receipt so the specific stage can be restored in one click.
+
+**The backfill is the part most likely to have failed silently.** `Purchase Order` is a
+*normal* doctype, so adding a column with a `default` is one `ALTER` and MariaDB writes that
+default into every existing row as part of it — all 157 orders read `Created` before the
+backfill gets to look at them. A predicate keyed on emptiness would match zero rows, commit,
+and record itself in `tabPatch Log` as a success, which is exactly how
+`backfill_relay_auth_identity` failed in v1.280.3. So it keys on the writer's own rule
+instead (`docstatus` / `status` / `per_received`) and logs per-stage counts, because a
+backfill that matched nothing otherwise looks identical to one that worked. Dry-run against
+production: 32 `Created` (31 drafts + 1 cancelled), 42 `Awaiting Confirmation`, 83
+`Received`.
+
+One inference in that backfill is worth stating plainly: **`Closed` and `Completed` both map
+to `Received`**, because it is the only terminal stage and 81 of the 157 historical orders
+are `Closed` having never been receipted at all. It means "we are no longer waiting on this",
+inferred from ERPNext having closed the order — not evidence that goods physically arrived.
+Cancelled and draft orders keep the default; calling a cancelled order `Received` would be
+flatly untrue.
+
+### Added
+
+- `Purchase Order.custom_order_stage` (`add_po_order_stage_field`): Select of the five
+  stages, default `Created`, `allow_on_submit`, `no_copy`, and `in_standard_filter` — for a
+  list of 157 orders, "what am I waiting on" is a filter, not a scroll. Anchored on
+  `tracking_section` rather than `status`, which is already the anchor for
+  `custom_approval_stamp_section`; two custom fields sharing an anchor resolve in an order
+  nobody controls, and losing that race would bury this field in the collapsible Approval
+  section.
+- `po_order_stage.py`: the stage list, the pure backfill rule, and the two Purchase Receipt
+  handlers. Both swallow-and-log — a stage update must never be the reason a receipt cannot
+  be submitted — and both no-op when the column is missing, since they fire during ERPNext's
+  own test bootstrap before the patch has run.
+- `backfill_po_order_stage`: the historical pass described above. Only ever moves a row off
+  the default, so a hand-set stage survives a re-run.
+- `doc_events["Purchase Receipt"]`: `on_submit` → `advance_on_receipt`, `on_cancel` →
+  `revert_on_receipt_cancel`. This doctype had no hooks block before.
+- `tests/test_po_order_stage.py` (34 tests, bench-free, own CI step): the backfill rule
+  including `None` per_received and that every result is a real Select option; the advance
+  and revert paths; and the wiring — patch order, options built from one `STAGES` list,
+  `allow_on_submit`, nothing on PO submit, and the backfill never keying on emptiness.
+
+## [1.288.8] - 2026-08-14
+
+**The Purchase Order now tells a supplier how to reach us.** It went out carrying our logo
+and, for contact details, one email address in the "Questions to" cell — the buyer's, and
+only if they still work here. The letter head cannot help: `Sapphire Fountains Default` is
+a right-aligned logo and nothing else, no address, no phone, empty footer. So the header
+gains a contact block beside the logo: company name, street address, phone.
+
+The two details are there for opposite reasons, and the difference is the interesting part.
+
+The **address already exists as data** — 147 of the 157 Purchase Orders on this site carry
+`billing_address_display`, ERPNext's "Company Billing Address", rendering to exactly
+`85 W 300 S / Bountiful, UT 84010`. The template prefers it, so a document that names some
+other company address prints what it actually says rather than a constant contradicting it.
+The remaining ten carry no billing address at all, and *that* is what `COMPANY_ADDRESS_HTML`
+is for — a blank address block on a supplier-facing document is exactly the silent defect
+this format is careful about.
+
+The **phone exists nowhere in ERPNext**. `Company.phone_no` is null; so is `Address.phone`
+on `Sapphire Fountain-Billing`, the one company address record on the site. There is
+nothing to fall back *from*, so `COMPANY_PHONE` is not a fallback — it is the only copy of
+`+1 (801)-837-2199` anywhere, and the line to edit when the number changes. Fill in either
+of those two fields and the phone can become data-driven like the address; until then a
+test pins it as unconditional, because a phone number wrapped in an `{% if %}` against a
+field that is always null prints on nothing.
+
+The block is a two-cell table, not flexbox — the PDF backend on this host does not lay out
+flex or grid reliably (see `docs/pdf-generation.md`) — with the logo bottom-aligned in the
+second cell so the two read as one letterhead, and an absent letter head leaving that cell
+empty instead of collapsing the row. `{{ letter_head }}` is still rendered by the template
+itself, which remains the whole reason this format has a logo at all.
+
+`tests/test_purchase_order_print_formats.py` grows a rendering suite around this. It had
+only ever read the sources as text, which is enough for the delete-vs-disable split it was
+written for but cannot see a template that renders blank. It now execs the setup module
+against a `frappe` stub and renders the finished format against sample documents, with and
+without a billing address, with and without a letter head.
+
+### Added
+
+- Company address and phone in the `Purchase Order - Sapphire` header, beside the logo.
+  Address prefers `doc.billing_address_display` and falls back to `COMPANY_ADDRESS_HTML`;
+  phone is `COMPANY_PHONE`, which has no data source to prefer.
+- Rendering tests for the Purchase Order print format — placeholder substitution, the
+  address in all three states (present, absent, empty), the phone unconditionally, the
+  letter head, and no flex/grid.
+
+### Changed
+
+- `_HTML` in `enhancements_core/setup_print_formats.py` is now composed from `_TEMPLATE`
+  by `.replace()`. The template is full of Jinja braces, so f-strings and `%`/`.format`
+  are all unavailable; this is the same substitution the sales formats use.
+- CI step renamed to "Purchase Order print format (contents + delete vs disable)", since
+  the suite is no longer only about the purge.
 ## [1.288.7] - 2026-08-14
 
 **Phase 6 §4.B, the read half. `retrieve_for_oversight()` had zero callers for its whole
