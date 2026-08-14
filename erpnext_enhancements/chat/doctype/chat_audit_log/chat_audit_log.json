@@ -17,6 +17,7 @@
   "column_break_ref",
   "reference_name",
   "reason",
+  "reason_category",
   "section_break_scope",
   "affected_count",
   "first_seq",
@@ -97,6 +98,14 @@
    "fieldname": "reason",
    "fieldtype": "Small Text",
    "label": "Reason"
+  },
+  {
+   "fieldname": "reason_category",
+   "fieldtype": "Select",
+   "label": "Reason Category",
+   "options": "\nHR Investigation\nLegal or Compliance Hold\nSecurity Incident\nCustomer or Contract Dispute\nRequested by the Subject\nSystem Health or Debugging\nOther",
+   "read_only": 1,
+   "description": "What the SUBJECT is shown instead of the free-text reason (decision D-3). The free text is written for a compliance reviewer and can name a third party or an open investigation; this is the part an employee can be shown without the disclosure becoming the leak. NOT covered by chain_hash — adding a field to the chained tuple would re-hash every existing row and report the whole log as tampered. The authoritative, tamper-evident record is the free-text `reason`."
   },
   {
    "fieldname": "section_break_scope",
