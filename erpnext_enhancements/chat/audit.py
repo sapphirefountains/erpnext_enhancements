@@ -128,6 +128,77 @@ GOVERNANCE_EVENTS = frozenset(
 _PURPOSES = frozenset({"mention", "search", "briefing", "oversight", "attachment"})
 _DEFAULT_PURPOSE = "oversight"
 
+#: Fields signed by **both** chains, but only on rows that actually carry a value.
+#:
+#: This is how a governance column gets added to a live, already-hashed log without a
+#: migration and without a hole. A *mandatory* chained key would change the canonical JSON of
+#: every historical row — including the ones written before the column existed — and the
+#: verifier would report the entire log as tampered, which is the fork divergence D2 warns
+#: about. Omitting the key when the value is empty means a row without one serialises byte for
+#: byte as it did before this release, so it still verifies.
+#:
+#: **And it is still tamper-evident, in both directions.** Removing a category from a row that
+#: had one drops a key from the payload and changes the hash. *Adding* one to a row that had
+#: none adds a key and changes the hash. Neither edit passes the verifier, which is the whole
+#: requirement — an unsigned field is one an operator can rewrite in SQL to reclassify why
+#: they read somebody's messages, and that is exactly the edit this log exists to catch.
+_OPTIONAL_CHAINED_FIELDS = ("reason_category",)
+
+
+def _optional_chain_payload(row: dict[str, Any]) -> dict[str, Any]:
+	"""The optional chained fields this row actually carries. Empty ones are omitted.
+
+	**Stripped before the emptiness test, and that is not cosmetic.** ``"   "`` is truthy, so
+	without the strip a whitespace-only value would be signed as a category — and since
+	``None``, ``""`` and ``"   "`` all mean "no category", two rows that mean the same thing
+	would hash differently. MariaDB will hand back a padded string for a ``CHAR``-ish column,
+	and Frappe strips on save but not on every path, so the two spellings genuinely coexist.
+	A verifier that reported them as different would be reporting tampering that did not
+	happen, which is the failure mode that gets an alarm switched off.
+	"""
+	out: dict[str, Any] = {}
+	for key in _OPTIONAL_CHAINED_FIELDS:
+		value = _chain_value(row.get(key))
+		if isinstance(value, str):
+			value = value.strip()
+		if value:
+			out[key] = value
+	return out
+
+#: The ``reason_category`` Select, on both audit doctypes. Decision D-3 settled that the
+#: **subject** is shown a category rather than the free-text reason: the free text is written
+#: for a compliance reviewer and can name a third party or an open investigation, so showing
+#: it verbatim would make the transparency view the leak it exists to prevent.
+#:
+#: Lives here, beside the schema it validates, rather than in
+#: ``chat.governance.access_report`` — that module imports this one, and putting the
+#: vocabulary there would invert the dependency to define a constant.
+#:
+#: Chained, but **optionally** — see :data:`_OPTIONAL_CHAINED_FIELDS`. The obvious move was to
+#: leave it unsigned, on the grounds that adding a key to a chained tuple re-serialises every
+#: row ever written and reports the whole log as tampered. That is true of a *mandatory* key
+#: and is not true of an optional one, and the difference buys both properties at once.
+REASON_CATEGORIES: tuple[str, ...] = (
+	"HR Investigation",
+	"Legal or Compliance Hold",
+	"Security Incident",
+	"Customer or Contract Dispute",
+	"Requested by the Subject",
+	"System Health or Debugging",
+	"Other",
+)
+
+
+def normalise_reason_category(value: str | None) -> str | None:
+	"""An accepted category, or ``None``. Never raises, never guesses.
+
+	An unrecognised value becomes ``None`` rather than being stored: a category is only
+	worth showing a subject if it means something, and a free-text value that slipped in
+	through this field would be the un-reviewed text D-3 exists to keep away from them.
+	"""
+	text = (value or "").strip()
+	return text if text in REASON_CATEGORIES else None
+
 #: The fields the chain commits to.
 #:
 #: ``recorded_at`` and **not** ``creation``: ``Document.insert()`` calls
@@ -245,6 +316,7 @@ def compute_chain_hash(row: dict[str, Any], previous: str, rooms: list[dict[str,
 		k: (cint(row.get(k)) if k in _CHAINED_INT_FIELDS else _chain_value(row.get(k)))
 		for k in _CHAINED_FIELDS
 	}
+	payload.update(_optional_chain_payload(row))
 	payload["rooms"] = [
 		{
 			"room": r.get("room"),
@@ -271,6 +343,7 @@ def record_privileged_read(
 	rooms: list[dict[str, Any]] | None = None,
 	query: str | None = None,
 	reason: str | None = None,
+	reason_category: str | None = None,
 	request_id: str | None = None,
 	message_count: int = 0,
 	chunk_count: int = 0,
@@ -296,6 +369,7 @@ def record_privileged_read(
 			rooms=rooms,
 			query=query,
 			reason=reason,
+			reason_category=reason_category,
 			request_id=request_id,
 			message_count=message_count,
 			chunk_count=chunk_count,
@@ -370,6 +444,7 @@ def _write(
 	rooms: list[dict[str, Any]] | None,
 	query: str | None,
 	reason: str | None,
+	reason_category: str | None = None,
 	request_id: str | None,
 	message_count: int,
 	chunk_count: int = 0,
@@ -387,6 +462,7 @@ def _write(
 		"purpose": purpose if purpose in _PURPOSES else _DEFAULT_PURPOSE,
 		"request_id": (request_id or "")[:64] or None,
 		"reason": (reason or "").strip() or None,
+		"reason_category": normalise_reason_category(reason_category),
 		"query_hash": query_hash(query) if query is not None else None,
 		"message_count": cint(message_count) or sum(cint(r.get("messages_read")) for r in room_rows),
 		"recorded_at": stamp,
@@ -579,6 +655,7 @@ def compute_governance_chain_hash(row: dict, previous: str) -> str:
 		key: (cint(row.get(key)) if key in _GOVERNANCE_INT_FIELDS else _chain_value(row.get(key)))
 		for key in _GOVERNANCE_CHAINED_FIELDS
 	}
+	payload.update(_optional_chain_payload(row))
 	return hashlib.sha256((previous + _canonical(payload)).encode("utf-8")).hexdigest()
 
 

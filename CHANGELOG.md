@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.289.1] - 2026-08-14
 
 **The Quotation, Sales Order and Sales Invoice now carry the same contact block the
-Purchase Order got in v1.288.5** — company name, street address and phone, beside the logo.
+Purchase Order got in v1.288.8** — company name, street address and phone, beside the logo.
 Customers were in the same position suppliers had been: holding a branded page with no way
 to reach us on it, because `Sapphire Fountains Default` is a right-aligned logo and nothing
 else — no address, no phone, empty footer.
@@ -129,7 +129,7 @@ flatly untrue.
   and revert paths; and the wiring — patch order, options built from one `STAGES` list,
   `allow_on_submit`, nothing on PO submit, and the backfill never keying on emptiness.
 
-## [1.288.5] - 2026-08-14
+## [1.288.8] - 2026-08-14
 
 **The Purchase Order now tells a supplier how to reach us.** It went out carrying our logo
 and, for contact details, one email address in the "Questions to" cell — the buyer's, and
@@ -183,6 +183,163 @@ without a billing address, with and without a letter head.
   are all unavailable; this is the same substitution the sales formats use.
 - CI step renamed to "Purchase Order print format (contents + delete vs disable)", since
   the suite is no longer only about the purge.
+## [1.288.7] - 2026-08-14
+
+**Phase 6 §4.B, the read half. `retrieve_for_oversight()` had zero callers for its whole
+life, and carried two defects that only a caller would ever have surfaced.** The viewer is
+built on this function, so they are fixed before it rather than discovered through it.
+
+### Fixed
+
+- **The verbatim tier never ran on an oversight read.** T1 was gated on a single `room` being
+  supplied — the mention path has one, and often a thread. The oversight path names a *set*
+  of rooms and no thread, so the gate was never satisfied and the tier returned nothing.
+
+  An oversight read therefore came back with chunks and digests and **not one actual
+  message**, while looking complete. That is the part that matters: a read which answers with
+  summaries when it was asked for a transcript does not get reported as broken, it gets
+  believed. New `_oversight_room_messages()` returns verbatim messages across the named set,
+  ordered by `seq` — matching the query when there is one, and the tail when there is not,
+  because "show me this conversation" is a legitimate oversight request and returning nothing
+  for it pushes the auditor towards a *broader* read rather than a narrower one.
+
+- **The authored tier returned the auditor their own messages.** It ran as `acting`, which is
+  right for an ordinary retrieve — "what did I agree to" is the commonest question a chat
+  assistant is asked — and exactly inverted for oversight, where it handed back content the
+  auditor could already read in place of the content they had just stated a reason to see.
+
+  `retrieve_for_oversight()` gains an optional `subject`: the person the read is *about*.
+  When given, the authored tier is theirs; when absent there is no authored tier. Optional
+  because not every oversight read has a subject — "what was said about the Henderson
+  contract" is a legitimate question about a room rather than a person.
+
+### Changed
+
+- **`_run()`'s `authored_user` is required and has no default.** The tier used to default to
+  `acting` implicitly, which is how the oversight path inherited a decision nobody made for
+  it. A required keyword-only argument turns that into a question each caller answers out
+  loud, and `None` now means "no such tier" rather than "the obvious person". The two call
+  sites now say different things, visibly, at the call.
+
+### Notes
+
+- **Deleted rows stay excluded on every tier, including this one.** Seeing through a
+  tombstone is its own act with its own audit event (`tombstone_expanded`, §4.E). Folding it
+  into the ordinary oversight read would make every such read an expansion and erase the
+  distinction the export's `include_deleted_content` flag depends on.
+- `tests/test_chat_oversight_read.py` — 12 assertions, AST rather than behaviour, because the
+  rows need a bench and **the wiring is what regressed**. Verified to bite: reintroducing
+  either defect fails the suite. Its own CI step.
+- The raw-SQL guard accepted the new query without an exemption, because it applies
+  `membership_filter_sql` like every other content read in the package.
+
+## [1.288.6] - 2026-08-14
+
+**Phase 6 §4.D — the unified access report.** The plan's own sequence puts this before the
+oversight read path, the viewer and the export, and the reason is that all three need to agree
+on what a read *is*. Two audit tables exist and both are correct: `Chat Retrieval Audit`
+records anything that reached content, `Chat Audit Log` records governance events. ADR 0009
+addendum 2 is explicit that neither migrates into the other and no third table appears.
+**Two tables is acceptable; two definitions of a read is not.**
+
+### Added
+
+- **`chat/governance/access_report.py`** — the union, and the single definition every
+  downstream consumer in this phase reads.
+
+  **The unit is `(reader, room, occasion)`, not `(row)`.** `Chat Retrieval Audit` is one row
+  per *request* and its child is one row per *room touched*, so a request that reached four
+  rooms — three of which the reader was a member of — is **one** non-participant read. A
+  consumer querying the parent table directly counts it as four, or as one with the wrong room
+  attached, and G6-7's "exactly one record per non-participant read" stops meaning anything.
+  The `was_participant = 0` filter is applied in SQL so `limit` bounds the answer rather than
+  the candidate set.
+
+- **`reason_quality()` grades a reason; it does not merely count one.** Three failure modes,
+  kept distinct because they need three different fixes: `missing` is a caller that never
+  collected one, `too_short` is a human in a hurry, and `placeholder` is a human who has
+  worked out that the field is not read. The third is the one that matters — it means the
+  control has already decayed into a formality, and it is invisible to any check that counts
+  non-empty strings.
+
+  Graded **word-wise**, which the first version got wrong. Padding a placeholder with spaces
+  fails the length check anyway (the string is stripped before measuring), so the way to clear
+  both bars is to *repeat* it — `test test test`, `n/a n/a n/a n/a` — and reducing the whole
+  string to one token missed exactly the form somebody would actually type.
+
+- **`redact_for_subject()`** — the employee-facing projection, carrying three decisions from
+  §A2.4 together because they only make sense together: the admin is **named** (D-2), the
+  reason is the **category and never the free text** (D-3), and Triton's reads are **shown**
+  with their `actor_type` so they can have their own tab rather than burying admin reads
+  (D-5). It is a strict allowlist rather than a blocklist, so a future column on the audit
+  table is private by default — a leak does not have to arrive through the field called
+  `reason`, and `query_text` is as revealing as anything in it.
+
+- **`reason_category`** on both audit doctypes, with **no default**. Decision D-3 is
+  schema-affecting and answering it late costs a migration, so the column lands now, before
+  rows accumulate. No default is load-bearing on a *normal* doctype: MariaDB writes a column
+  default into every existing row as part of the `ALTER`, which would claim a category for
+  rows that never had one. The Select offers a blank, because "not recorded" is a real state.
+
+### Changed
+
+- **`reason_category` is chained — optionally.** The obvious move was to leave it unsigned,
+  on the grounds that adding a key to a chained tuple re-serialises every row ever written and
+  makes the verifier report the whole log as tampered. That is true of a **mandatory** key and
+  false of an optional one, and the difference buys both properties at once: a row with no
+  category serialises byte for byte as it did before this release and still verifies, while a
+  row with one is fully covered. Tamper-evident in both directions — removing a category drops
+  a key from the payload, adding one to a row that had none adds a key, and neither hash
+  matches. An unsigned field here is one an operator could rewrite in SQL to reclassify why
+  they read somebody's messages.
+
+  The value is **stripped before the emptiness test**, and that is not cosmetic: `"   "` is
+  truthy, so without it two rows that both mean "no category" would hash differently and the
+  verifier would report tampering that did not happen. Found by the test, not by review.
+
+### Notes
+
+- **The category vocabulary is a proposal and needs confirming.** D-3 settled that the subject
+  sees a *category*; it did not settle *which*. Seven are proposed in `audit.REASON_CATEGORIES`.
+  Wrong now is a one-line change; wrong once rows carry values is a data migration.
+- **Reason is graded here and enforced elsewhere, deliberately.** Refusing a read for a bad
+  reason belongs with the surface that can *collect* one (§4.B). Enforcing it in this release
+  would fail `Administrator`'s existing privileged reads — which are live today and have no
+  field to type a reason into — and a governance control whose first act is to break the admin
+  is one that gets switched off.
+- Two existing guards were extended rather than exempted: `test_chat_governance_audit`'s
+  signed-field scan now counts optionally-chained fields as signed, and
+  `test_chat_rawsql_guard` gains a justification for `subject_rows`' membership read — which
+  *is* the membership filter for that query, spelled as an equality on the subject rather than
+  on the session user.
+
+## [1.288.5] - 2026-08-14
+
+**Docs only. No executable change.**
+
+### Added
+
+- **`docs/nik-runbook.md`** — the human-only remainder of PRJ-00580 and PRJ-00755, ordered by
+  lead time rather than by importance, because the items at the top have queues measured in
+  weeks and half of them gate the other half.
+
+  It exists because a reconciliation of all 149 open task records against the actual code on
+  `main` in both repositories found that the two categories had become mixed up. Work that was
+  finished sat at *Overdue*; work that needed a person sat at *Pending Review*, which reads as
+  "waiting for a reviewer" when it is really waiting for someone to hold a phone, run a bench,
+  or file an application. Separating them is the point of the file.
+
+  §5 is the reconciliation itself, one row per task, generated from the verdict data rather
+  than retyped: 58 shipped, 32 partial, 30 not started, 28 human-only, 1 superseded. Every
+  "shipped" verdict was re-checked by a second pass whose instructions were to **refute** it,
+  and **11 were overturned** — those rows are marked `↺` and carry the specific gap. Without
+  that pass, eleven tasks with real residual work would have been closed as done.
+
+### Notes
+
+- Authored as `1.288.5` while `1.288.3` and `1.288.4` were still open PRs (#828, #829), rather
+  than reusing either — two branches picking the same number is a merge conflict in the one file
+  CI hard-gates. #828 has since merged and taken `1.288.3`, so the numbering is contiguous.
 
 ## [1.288.4] - 2026-08-14
 

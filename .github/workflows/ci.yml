@@ -759,6 +759,31 @@ jobs:
       # Own step: installs its own frappe stub in setUpModule.
       - name: Chat governance audit (the second chain, and the role-grant hook)
         run: python -m unittest erpnext_enhancements.tests.test_chat_governance_audit -v
+      # The unified access report - ONE definition of a non-participant read, over both audit
+      # tables. Two tables is acceptable; two definitions of a read is not, and a consumer
+      # querying either table directly counts a request that spanned four rooms as one read or
+      # as four depending which table it picked.
+      #
+      # The half asserted here is the pure half: how a reason is graded (the failure mode that
+      # matters is the placeholder that CLEARS the length bar, because that one only appears
+      # once somebody has worked out the field is unread), what the subject projection is
+      # allowed to contain, and that `reason_category` is signed only when present - which is
+      # what let a governance column join an already-hashed log without re-serialising every
+      # historical row into a false "tampered" verdict.
+      #
+      # Own step: installs its own frappe stub in setUpModule.
+      - name: Chat access report (the unified read record, and optional chaining)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_access_report -v
+      # The oversight read path. `retrieve_for_oversight()` had ZERO callers for its whole
+      # life, and two defects only a caller would have surfaced: T1 was gated on a single
+      # `room` (the oversight path names a SET and no thread, so the verbatim tier never ran
+      # and the read answered with summaries while looking complete), and the authored tier
+      # ran as the auditor, returning their OWN messages in place of the ones under audit.
+      #
+      # AST rather than behaviour, because the rows need a bench and the WIRING is what
+      # regressed. Verified to bite: reintroducing either defect fails this step.
+      - name: Chat oversight read (whose messages, and which tier)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_oversight_read -v
       # The SPA received NO realtime events at all - not another person's message, not
       # @triton's reply, not even its own - and looked healthy doing it, because every symptom
       # pointed away from the cause. Frappe's socket server namespaces connections by site and

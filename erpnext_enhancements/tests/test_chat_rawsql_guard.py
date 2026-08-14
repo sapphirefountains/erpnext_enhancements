@@ -321,6 +321,29 @@ FOREIGN_TABLES: dict[str, str] = {
 #: bounded by something other than the reader's identity, and no column selected is a body.**
 #: A read that answers an HTTP request fails all three and does not belong here.
 SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
+	# --- chat/governance/access_report.py: the subject reading their own membership ------
+	(
+		"governance/access_report.py",
+		"subject_rows",
+		"Chat Room Member",
+	): (
+		"The 'who read my messages' view (decision D-1), which answers for ONE named subject "
+		"and nobody else. The read is `filters={'user': subject}` — it returns the rooms that "
+		"person belongs to, which IS the membership filter for this query, spelled as an "
+		"equality on the very column the shared fragment exists to constrain. Applying "
+		"`membership_filter_sql` on top would ask 'which rooms is the SESSION user in' of a "
+		"query whose entire purpose is to ask it of the SUBJECT, and would return the wrong "
+		"answer every time those two differ — which is every time an auditor or a scheduled "
+		"digest builds the view on somebody else's behalf.\n"
+		"Eligible on all three counts the rule names. NO SESSION USER: this is a library "
+		"function with no HTTP door of its own — the module docstring says why, an endpoint "
+		"here would be a path that reads the access report while recording nothing — and it "
+		"is reached from a background job as well as from a request. BOUNDED BY SOMETHING "
+		"OTHER THAN THE READER: bounded by `subject`, explicitly and by construction. NO BODY "
+		"COLUMN: `pluck='parent'` returns room NAMES only, no message text and no membership "
+		"metadata; the rows it then fetches are audit records rather than conversation. "
+		"Establishing that the caller may answer for `subject` is the caller's job."
+	),
 	# --- chat/health.py: the only surface that can read the invocation log at all --------
 	(
 		"health.py",
