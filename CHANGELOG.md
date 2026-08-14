@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.282.2] - 2026-08-13
+
+### Fixed
+
+- **Inbound messages from real coworkers were attributed to
+  `chat-user-{id}@unresolved.invalid` and flagged EXTERNAL.** Google's inbound message carries
+  `sender.name = users/{id}` and **no email**, so `_sender_identity` maps the id back through
+  `Chat Room Member.gchat_membership_name`, whose member segment *is* that id. A room created by
+  `spaces.setup` never learns those names — setup does not return the membership resources it
+  creates — so the rows said `JOINED` with the one column inbound needs left empty.
+- The relay now learns it: an outbound write is made under domain-wide delegation **as** a named
+  human, so the `sender` on the response is definitionally that human's Google identity. No
+  matching, no display-name guess, no second API call — the fact inbound is missing is a field
+  on a response the relay already has.
+
+### Notes
+
+- **Wrong attribution was not the only cost.** An `@unresolved.invalid` sender is nobody's
+  `Chat Room Member`, so read state, mentions and the retrieval gate all treated a colleague's
+  own words as an outsider's. The membership dry run had been reporting the same fact for hours
+  as `unknown: [spaces/…/members/…]` and neither of us read it as "these are the people in the
+  room".
+- **Only fills an empty column, never overwrites.** A bound row is a fact something already
+  established, and a relay is not the place to revise it.
+- **It only binds people who have sent a message from ERPNext**, which is the honest limit —
+  somebody who has only ever typed in Google Chat stays unbound until they do. The alternative,
+  matching live memberships by `displayName`, attributes a coworker's words to a colleague when
+  two names are close, and this package's stance on heuristic binding is that it ships disabled
+  and alarmed.
+- **Two guards were written and then deleted** — an `identity != USER` check and an
+  empty-subject check. Both were branches no test could distinguish from their absence, because
+  an APP write carries no subject and an empty subject matches no member row. In this package
+  that is a reason to delete a guard, not to keep it.
+
 ## [1.282.1] - 2026-08-13
 
 ### Fixed
