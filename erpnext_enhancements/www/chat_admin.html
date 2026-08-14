@@ -1,0 +1,119 @@
+{% extends "templates/web.html" %}
+{# Phase 6 §4.B — the oversight viewer.
+
+   Server-rendered, no socket, no bundle. G6-6 is the reason rather than simplicity: a
+   realtime subscription to a room the auditor is not in is a read this page cannot audit,
+   because the audit row is written when the transcript is fetched.
+
+   Every read here goes through `chat.governance.viewer`, which refuses without a reason and
+   a category. The form cannot be submitted without both, but the *server* is the gate — a
+   required attribute is a courtesy to the auditor, not a control. #}
+
+{% block title %}Chat Oversight{% endblock %}
+
+{% block page_content %}
+<div class="ee-oversight">
+	<h1>Chat oversight</h1>
+	<p class="ee-oversight-lede">
+		Every read from this page is recorded against your name, with the reason you give.
+		The person whose messages you read may be shown that you read them, your name, and
+		the <em>category</em> you choose — never the reason text itself.
+	</p>
+
+	<form id="ee-oversight-form" autocomplete="off">
+		<fieldset>
+			<legend>What to read</legend>
+
+			<label for="ee-rooms">Rooms <span class="ee-req">required</span></label>
+			<input id="ee-rooms" name="rooms" type="text" required
+				placeholder="CHAT-ROOM-000123, CHAT-ROOM-000124">
+			<small>Comma-separated. An oversight read of &ldquo;everything&rdquo; is not expressible.</small>
+
+			<label for="ee-query">Search terms</label>
+			<input id="ee-query" name="query" type="text" placeholder="invoice 4471">
+			<small>Leave empty to read the recent conversation rather than search it.</small>
+
+			<label for="ee-subject">Whose messages is this about?</label>
+			<input id="ee-subject" name="subject" type="email" placeholder="ada@example.com">
+			<small>Optional. Not every read is about a person.</small>
+		</fieldset>
+
+		<fieldset>
+			<legend>Why</legend>
+
+			<label for="ee-category">Reason category <span class="ee-req">required</span></label>
+			<select id="ee-category" name="reason_category" required>
+				<option value="">Choose one&hellip;</option>
+				{% for category in reason_categories %}
+				<option value="{{ category }}">{{ category }}</option>
+				{% endfor %}
+			</select>
+			<small>This is the part the person may be shown.</small>
+
+			<label for="ee-reason">Reason <span class="ee-req">required</span></label>
+			<textarea id="ee-reason" name="reason" rows="3" required
+				minlength="{{ reason_min_length }}"
+				placeholder="HR asked me to review the Jones complaint thread"></textarea>
+			<small>
+				At least {{ reason_min_length }} characters, and it has to say something &mdash;
+				a placeholder is refused, not recorded as blank.
+			</small>
+		</fieldset>
+
+		<button type="submit" class="btn btn-primary">Read, and record it</button>
+	</form>
+
+	<div id="ee-oversight-error" class="ee-oversight-error" role="alert" hidden></div>
+	<div id="ee-oversight-result" class="ee-oversight-result" hidden></div>
+</div>
+
+<script>
+(function () {
+	"use strict";
+	// No socket, no polling, no subscription. See the controller docstring: G6-6.
+	var form = document.getElementById("ee-oversight-form");
+	var errorBox = document.getElementById("ee-oversight-error");
+	var resultBox = document.getElementById("ee-oversight-result");
+
+	function show(el, text) {
+		// textContent, never innerHTML: the reason and the transcript are user-authored, and
+		// this page renders them for an administrator with a live session.
+		el.textContent = text;
+		el.hidden = false;
+	}
+
+	form.addEventListener("submit", function (event) {
+		event.preventDefault();
+		errorBox.hidden = true;
+		resultBox.hidden = true;
+
+		var data = new FormData(form);
+		frappe.call({
+			method: "erpnext_enhancements.chat.governance.viewer.search",
+			type: "POST",
+			args: {
+				rooms: data.get("rooms") || "",
+				query: data.get("query") || "",
+				subject: data.get("subject") || "",
+				reason: data.get("reason") || "",
+				reason_category: data.get("reason_category") || ""
+			},
+			callback: function (response) {
+				var payload = response && response.message;
+				if (!payload) {
+					show(errorBox, "The server returned nothing. The read was not recorded.");
+					return;
+				}
+				show(resultBox, payload.text || "No matching messages.");
+			},
+			error: function (err) {
+				// The server's refusal text is written for the auditor and says which of the
+				// three gates refused — role, reason or category.
+				var message = (err && err.message) || "The read was refused and nothing was returned.";
+				show(errorBox, message);
+			}
+		});
+	});
+})();
+</script>
+{% endblock %}

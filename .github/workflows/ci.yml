@@ -784,6 +784,17 @@ jobs:
       # regressed. Verified to bite: reintroducing either defect fails this step.
       - name: Chat oversight read (whose messages, and which tier)
         run: python -m unittest erpnext_enhancements.tests.test_chat_oversight_read -v
+      # The oversight viewer's gates. Three properties make this surface safe to switch on:
+      # G6-10 (a bad reason is REFUSED, not accepted-and-blanked, graded by the same function
+      # the compliance report uses so there is one threshold rather than two), G6-6 (no
+      # realtime at all - a socket join on a room the auditor is not in is a read this module
+      # cannot audit), and that the free-text reason never reaches the subject.
+      #
+      # AST and comment-stripped text, because three separate text scans in this change
+      # flagged the prose explaining why a thing is absent. A guard that cannot tell an
+      # explanation from a call gets satisfied by deleting the explanation.
+      - name: Chat oversight viewer (the reason gate, and the absent socket)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_oversight_viewer -v
       # The SPA received NO realtime events at all - not another person's message, not
       # @triton's reply, not even its own - and looked healthy doing it, because every symptom
       # pointed away from the cause. Frappe's socket server namespaces connections by site and
