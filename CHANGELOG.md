@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.283.3] - 2026-08-13
+
+Invariant **I9** — *every non-participant read is audited* — was false. Three endpoints returned
+whole transcripts through the oversight escape hatch and recorded nothing at all.
+
+### Fixed
+
+- **`get_messages`, `get_thread` and `get_message_context` did not import `audit`.** An
+  oversight-role holder — or `Administrator`, who reaches the same branch even with the role
+  field blank — could read any room's full transcript, page by page, with zero audit rows.
+  Decision #12 permits a non-participant read **because** it is recorded; without the record it
+  is just access.
+
+  All three now write a `Chat Retrieval Audit` row, fail-closed: the row is committed before the
+  bodies are returned, and if it cannot be written the read does not happen.
+
+  Recorded **after** the query, never before. Before the query the rooms and `seq` ranges are
+  not known, and "somebody privileged read something" is a far weaker record than "they read
+  these rooms, over these ranges, and were a member of none of them". §4.D.2 asks for the range
+  specifically.
+
+- **The build-failing rule that should have caught this had a blind spot exactly where the
+  reads were.** It keys on the `"1 = 1"` literal — which *is* the unrestricted scope by
+  contract — and `history.py` never writes that literal; it gets the fragment from
+  `membership_filter_sql` and passes it to MariaDB. So the rule was green on three endpoints
+  that returned every message in the company to a privileged caller.
+
+  The rule now also treats **calling the named classifier** as branching on the unrestricted
+  scope. That is strictly stronger than the literal-only form: once a helper exists, a function
+  can ask the privilege question without the keyword appearing anywhere in it, which is the
+  same defect arriving through the front door.
+
+### Added
+
+- `_common.record_privileged_content_read` — the endpoint-facing recorder, and
+  `_common.is_privileged_scope` — the named predicate for "this scope is unrestricted".
+- `_common.audited_room_ranges`, moved out of `search.py` now that four readers need it.
+  "Which rooms did this read touch, over which `seq` range" is one question with one right
+  answer, and `was_participant` is still resolved by the writer rather than by whichever caller
+  thought about it.
+
+### Notes
+
+- **The recorder takes `privileged` as a parameter rather than working it out itself, and that
+  is the opposite of the obvious design.** Deciding it inside the helper would take every
+  endpoint out of the source rule's sight — the exact blind spot described above, rebuilt one
+  layer down. Keeping the branch at the call site costs a line per endpoint and is the only
+  reason the rule can see them. Verified by deleting the recording from `get_messages` and
+  watching CI go red; the first version of this change, which hid the branch in the helper, did
+  **not** go red, which is how the design was found to be wrong.
+- **`get_messages` was split** into a whitelisted wrapper and a private `_page`. `get_thread`
+  needs the same page plus its root row, and calling `get_messages` (as it did) would have
+  recorded the replies and not the root — from inside another endpoint's audit row. One call,
+  one record: two records for one read is as wrong as none, and wrong in the direction that
+  looks like more diligence.
+- **What this does not yet do: `reason`.** §4.D.2 requires a non-trivial, minimum-length reason
+  on every admin read, and these rows are written with none, because the SPA has no way to
+  collect one — §4.D.2 itself says the reason is collected "once per viewer session", and the
+  viewer does not exist yet.
+
+  There is a real design question underneath, and it is for the checkpoint rather than for a
+  commit: **should the employee SPA use the oversight hatch at all?** An auditor is also an
+  ordinary employee, and today their ordinary scrollback silently runs unrestricted and writes
+  an audit row about their own reading. The alternative — the SPA always scopes to membership,
+  and oversight lives only behind the audited viewer — matches §4.B's "the gate has exactly two
+  doors" and would make the reason requirement enforceable rather than aspirational. It is not
+  a change to make quietly.
+
 ## [1.283.2] - 2026-08-13
 
 Phase 6 §4.A.3 says the oversight role grants read and nothing else. It did not.

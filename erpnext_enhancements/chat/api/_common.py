@@ -170,6 +170,95 @@ def require_message(message: str, *, user: str | None = None) -> tuple[str, dict
 	return user, dict(row)
 
 
+def audited_room_ranges(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+	"""Collapse message rows into one audit entry per room, with the ``seq`` range read.
+
+	``was_participant`` is deliberately **not** set here. The writer resolves it against live
+	membership so the participation answer comes from one place rather than from whichever
+	caller happened to think about it — and that answer is the whole point of the record:
+	``was_participant = 0`` is precisely the oversight event decision #12 exists to make
+	visible.
+
+	Lives here rather than in the endpoint that first needed it because it is now needed by
+	four (search and the three history reads), and "which rooms did this read touch, over
+	which seq range" is one question with one right answer.
+	"""
+	by_room: dict[str, dict[str, Any]] = {}
+	for row in rows:
+		room = (row.get("room") or "").strip()
+		if not room:
+			continue
+		seq = cint(row.get("seq"))
+		entry = by_room.setdefault(
+			room, {"room": room, "messages_read": 0, "first_seq": seq, "last_seq": seq}
+		)
+		entry["messages_read"] += 1
+		entry["first_seq"] = min(entry["first_seq"], seq)
+		entry["last_seq"] = max(entry["last_seq"], seq)
+	return list(by_room.values())
+
+
+def is_privileged_scope(scope: str) -> bool:
+	"""Whether a ``membership_filter_sql`` fragment means "no restriction at all".
+
+	The unrestricted scope is the literal ``1 = 1`` **by contract** —
+	``permissions.membership_filter_sql`` returns exactly that string for ``Administrator``
+	and for the configured oversight role, and ``tests/test_chat_audit_immutability.py``
+	keys its build-failing rule on the same literal. Comparing against it here rather than
+	re-deriving the privilege question keeps one definition of "this read crossed the
+	membership boundary".
+	"""
+	return scope.strip() == "1 = 1"
+
+
+def record_privileged_content_read(
+	rows: list[dict[str, Any]],
+	*,
+	user: str,
+	privileged: bool,
+	purpose: str,
+	reason: str | None = None,
+) -> None:
+	"""Record a non-participant read of message bodies, or refuse the read. Invariant **I9**.
+
+	A no-op when ``privileged`` is false — a member reading their own room writes **zero**
+	audit rows, which is half of what I9 asserts and the half that makes the other half
+	meaningful.
+
+	**The caller decides ``privileged``, by calling :func:`is_privileged_scope` itself.** That
+	looks like an extra line at every call site and it is deliberate: the build-failing rule in
+	``tests/test_chat_audit_immutability.py`` recognises a function that branches on the
+	unrestricted scope, and if the branch happened *in here* every endpoint would drop out of
+	the rule's sight — which is the exact blind spot that let three transcript endpoints ship
+	with no audit row at all. The parameter keeps the branch where the scan can see it.
+
+	**Called after the query, never before.** Before the query the rooms and the seq ranges
+	are not known, and "somebody privileged read something" is a far weaker record than "they
+	read these rooms, over these ranges, and were a member of none of them". §4.D.2 asks for
+	the range specifically, and a record without it does not answer the question an audit
+	trail is opened to answer.
+
+	**Fail-closed**, via :func:`audit.record_or_refuse`: the caller is about to hand over
+	message bodies, so if the read cannot be recorded it does not happen. Safe to raise here
+	precisely because this is an endpoint rather than a permission hook — the v1.268.0 design
+	wrote from inside the hook, and every serious defect that release shipped came from that
+	one decision.
+	"""
+	if not privileged:
+		return
+
+	from erpnext_enhancements.chat import audit
+
+	audit.record_or_refuse(
+		user=user,
+		purpose=purpose,
+		actor_type="Admin",
+		rooms=audited_room_ranges(rows),
+		message_count=len(rows),
+		reason=reason,
+	)
+
+
 def page_size(limit: Any, default: int = DEFAULT_PAGE_SIZE) -> int:
 	"""Clamp a client-supplied page size into ``[1, MAX_PAGE_SIZE]``.
 

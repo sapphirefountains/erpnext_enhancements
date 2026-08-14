@@ -41,6 +41,27 @@ from pathlib import Path
 
 APP_DIR: Path = Path(__file__).resolve().parents[1]
 
+#: The named predicate for "this scope is unrestricted". Calling it counts as branching on the
+#: unrestricted scope, exactly as comparing to the literal does — otherwise the helper would be
+#: a way to ask the privilege question with the rule's keyword nowhere in sight.
+_CLASSIFIER: str = "is_privileged_scope"
+
+#: What counts as recording. ``record_privileged_content_read`` is the endpoint-facing wrapper:
+#: it is a no-op for an ordinary member and calls ``record_or_refuse`` for a privileged one, so
+#: a function that calls it has discharged the obligation.
+_RECORDING_CALLS: frozenset[str] = frozenset(
+	{"record_or_refuse", "record_privileged_read", "record_privileged_content_read"}
+)
+
+#: The single exemption, by function name, and it is the classifier itself. Its whole body is
+#: the comparison and it returns a bool — there is no content for it to record, and requiring
+#: an audit row from a predicate would mean writing one every time somebody *asks* whether a
+#: read is privileged rather than every time one happens.
+#:
+#: Keep this at one entry. A second name here is the moment this rule starts describing an
+#: aspiration instead of a property.
+_SCOPE_RULE_EXEMPT: frozenset[str] = frozenset({_CLASSIFIER})
+
 #: The audit tables, as they appear in SQL and as DocType names.
 AUDIT_DOCTYPES: frozenset[str] = frozenset({"Chat Retrieval Audit", "Chat Retrieval Audit Room"})
 AUDIT_TABLES: frozenset[str] = frozenset({f"tab{name}" for name in AUDIT_DOCTYPES})
@@ -260,6 +281,14 @@ class TestThePrivilegedReadIsRecordedAtTheEndpoint(unittest.TestCase):
 		Keyed on the ``"1 = 1"`` comparison, because that literal IS the unrestricted scope -
 		``membership_filter_sql`` returns it by contract and spells denial ``"1 = 0"`` so that
 		neither can be produced by accident.
+
+		**Calling the named classifier counts as branching on it.** Once
+		``_common.is_privileged_scope`` existed, a function could ask the privilege question
+		without the literal appearing anywhere in it - which is precisely the shape this rule
+		exists to catch, arriving through the front door. Widening it here is strictly
+		stronger than the literal-only form, and it is why the classifier itself is the one
+		exemption: its whole body IS the comparison, and it returns a bool rather than
+		content, so there is nothing for it to record.
 		"""
 		offenders: list[str] = []
 		chat_files = [p for p in _python_files() if p.parts[len(APP_DIR.parts)] == "chat"]
@@ -281,7 +310,12 @@ class TestThePrivilegedReadIsRecordedAtTheEndpoint(unittest.TestCase):
 				# not write (it runs inside the permission stack), and which matched the first
 				# version of this rule. Restricting to the chat package likewise stops an
 				# unrelated `1 = 1` in a SQL builder elsewhere in the app reading as a defect.
-				consumes = any(
+				calls = {
+					_dotted(c.func).rsplit(".", 1)[-1]
+					for c in ast.walk(node)
+					if isinstance(c, ast.Call)
+				}
+				compares = any(
 					isinstance(cmp_node, ast.Compare)
 					and any(
 						isinstance(c, ast.Constant) and c.value == "1 = 1"
@@ -289,14 +323,10 @@ class TestThePrivilegedReadIsRecordedAtTheEndpoint(unittest.TestCase):
 					)
 					for cmp_node in ast.walk(node)
 				)
-				if not consumes:
+				consumes = compares or _CLASSIFIER in calls
+				if not consumes or node.name in _SCOPE_RULE_EXEMPT:
 					continue
-				calls = {
-					_dotted(c.func).rsplit(".", 1)[-1]
-					for c in ast.walk(node)
-					if isinstance(c, ast.Call)
-				}
-				if not calls & {"record_or_refuse", "record_privileged_read"}:
+				if not calls & _RECORDING_CALLS:
 					offenders.append(f"{_rel(path)}:{node.lineno} {node.name}()")
 
 		self.assertFalse(
