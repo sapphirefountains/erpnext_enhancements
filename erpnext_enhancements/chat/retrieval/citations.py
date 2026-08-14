@@ -267,3 +267,26 @@ def strip_unknown_refs(text: str, manifest: list[Citation]) -> str:
 
 	cleaned = REF_PATTERN.sub(_replace, text or "")
 	return re.sub(r"[ \t]{2,}", " ", cleaned)
+
+def flatten_refs(text: str) -> str:
+	"""``[[ref:7]]`` → ``[7]``, for a surface that cannot render a chip.
+
+	The ERPNext SPA turns each marker into a clickable chip against the manifest. Google Chat
+	has neither the manifest nor a chip, so it received the raw marker and displayed
+	``[[ref:25]]`` verbatim — which reads as a bug in the bot rather than as a citation.
+
+	**Flattened rather than stripped, and that is the judgement call.** Removing them gives
+	cleaner prose, but *"encountering a series of invocation errors [[ref:25]], [[ref:12]]"*
+	becomes *"…errors ,"* — the sentence was written around the markers. Keeping the number
+	also keeps the two surfaces consistent for anyone reading both, and the same message in
+	ERPNext shows exactly ``[25]``.
+
+	What it cannot do is make the number resolvable *in Google Chat*: there is no sources list
+	there, so ``[25]`` is a pointer into something the reader has to open ERPNext to see. Making
+	it a real link would mean persisting the manifest on ``Chat Message``, which is a schema
+	change and a bigger decision than a rendering fix.
+
+	Pure, and applied at the relay boundary only — the stored ``text`` keeps the markers,
+	because the SPA needs them to place its chips.
+	"""
+	return REF_PATTERN.sub(lambda match: f"[{match.group(1)}]", text or "")

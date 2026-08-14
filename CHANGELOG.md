@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.282.1] - 2026-08-13
+
+### Fixed
+
+- **Citations rendered raw in Google Chat.** The answer arrived in the space as *"invocation
+  errors [[ref:25]], [[ref:12]]"* while the same message showed clickable `[25]` chips in
+  ERPNext. Google Chat has neither the manifest nor the SPA's chip renderer, so it displayed the
+  marker verbatim — which reads as a bug in the bot rather than as a citation.
+- `citations.flatten_refs` turns `[[ref:7]]` into `[7]`, applied at the **relay boundary only**.
+
+### Notes
+
+- **Flattened rather than stripped, and that is the judgement call.** Removing the markers gives
+  cleaner prose, but these sentences are written around them: *"errors [[ref:25]], [[ref:12]]"*
+  becomes *"errors ,"*. Keeping the number also keeps the two surfaces consistent for anyone
+  reading both. `strip_unknown_refs` exists for the other job — a marker resolving to nothing —
+  and is deliberately not what the relay uses.
+- **The stored text keeps its markers**, because the SPA places its chips from them. A transform
+  that reached storage would fix Google Chat by breaking ERPNext, and that is asserted rather
+  than left to care.
+- What this cannot do is make the number *resolvable* in Google Chat: there is no sources list
+  there, so `[25]` still points into something the reader opens ERPNext to see. A real link
+  would mean persisting the manifest on `Chat Message` — a schema change, and a bigger decision
+  than a rendering fix.
+- The write path may import `chat.retrieval.citations` because that module is stdlib-only; the
+  guardrail suites were run to confirm rather than assumed.
+
 ## [1.282.0] - 2026-08-13
 
 ### Added

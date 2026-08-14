@@ -118,6 +118,7 @@ from erpnext_enhancements.chat.gchat.client import (
 	message_alias,
 	scrub_secrets,
 )
+from erpnext_enhancements.chat.retrieval import citations
 from erpnext_enhancements.chat.sync import attachments, budget, ratelimit
 from erpnext_enhancements.chat.sync.states import (
 	AUTH_IDENTITIES,
@@ -1192,7 +1193,11 @@ def _message_context(job: Mapping[str, Any], settings: Any, *, need_text: bool) 
 	text = ""
 	truncated = False
 	if need_text:
-		raw = str(row.get("text_plain") or row.get("text") or "")
+		# `[[ref:7]]` → `[7]`. Google Chat has neither the manifest nor the SPA's chip, so the
+		# raw marker reached the space verbatim and read as a bug in the bot rather than as a
+		# citation. Flattened at this boundary and **not** in storage: the stored `text` keeps
+		# the markers because the SPA needs them to place its chips.
+		raw = citations.flatten_refs(str(row.get("text_plain") or row.get("text") or ""))
 		limit = _setting_int(settings, "message_byte_limit", budget.MESSAGE_BYTE_LIMIT_DEFAULT)
 		text, truncated = budget.fit_to_byte_budget(raw, limit, suffix=_deep_link(room, reference))
 

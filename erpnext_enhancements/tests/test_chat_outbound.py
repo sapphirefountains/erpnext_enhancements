@@ -1189,6 +1189,37 @@ class TestOutboundAttachments(RelayTestCase):
 		self.assertEqual([call.google_method for call in self.fake.calls], ["spaces.messages.create"])
 		self.assertEqual(self.relayed_texts(space), ["text only"])
 
+	def test_citation_markers_are_flattened_for_google(self) -> None:
+		"""Google Chat has no manifest and no chip, so it showed ``[[ref:25]]`` verbatim.
+
+		Production rendered a real answer as *"invocation errors [[ref:25]], [[ref:12]]"* in the
+		space while the same message showed clickable ``[25]`` chips in ERPNext. The raw marker
+		reads as a bug in the bot rather than as a citation.
+		"""
+		space = self.make_room()
+		self.make_message(name="MSG-0001", text="hit errors [[ref:25]], [[ref: 12 ]] earlier")
+		self.make_job(name="JOB-1", job_seq=1)
+
+		outbound.drain_room("ROOM-0001")
+
+		self.assertEqual(self.relayed_texts(space), ["hit errors [25], [12] earlier"])
+
+	def test_the_stored_text_keeps_its_markers(self) -> None:
+		"""Flattened at the relay boundary and nowhere else.
+
+		The SPA places its chips from these markers, so a transform that reached storage would
+		fix Google Chat by breaking ERPNext.
+		"""
+		self.make_room()
+		self.make_message(name="MSG-0001", text="hit errors [[ref:25]] earlier")
+		self.make_job(name="JOB-1", job_seq=1)
+
+		outbound.drain_room("ROOM-0001")
+
+		stored = self.db.get_value("Chat Message", "MSG-0001", ["text", "text_plain"], as_dict=True)
+		self.assertIn("[[ref:25]]", str(stored["text"]))
+		self.assertIn("[[ref:25]]", str(stored["text_plain"]))
+
 	def test_a_standalone_attachment_upload_job_is_skipped_not_dead_lettered(self) -> None:
 		"""The chosen design registers a handler rather than leaving the operation undispatched.
 
