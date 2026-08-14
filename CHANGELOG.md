@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.286.2] - 2026-08-14
+
+**v1.286.0 and v1.286.1 shipped a markdown renderer that never ran.** Both releases were green,
+both were deployed, and every Triton answer still arrived as raw CommonMark.
+
+The gate was `sender_kind == "Triton"` — **a value nothing in this codebase has ever written.**
+`sender_kind` is only ever assigned `"Human"` (the composer, the inbound ingest) or `"System"`
+(the bench verifier). Triton's reply path set `sync_origin = "Triton"` and left `sender_kind` at
+its `Human` default.
+
+### Fixed
+
+- **`chat/invoke/handler.py` now sets `sender_kind = "Triton"` as well as `sync_origin`**, and
+  the two fields answer different questions: `sync_origin` is *where the write came from* (the
+  relay reads it to choose the Google identity), `sender_kind` is *what kind of author this is*.
+
+  **Five reader-side behaviours had been silently doing nothing**, not one. The SPA's 🔱 avatar,
+  its "assistant" badge, its "Triton" display name, its markdown rendering, and the Google Chat
+  relay's markdown conversion all key on `sender_kind === "Triton"`. Four of those five predate
+  this week and had never worked — Triton's answers rendered as if a coworker had typed them.
+
+- **The relay gate now reads `sync_origin`**, which is the field `_auth_identity_for` already
+  consults 200 lines below to make the *same* fork — Triton posts under the app identity,
+  everyone else under the human's. One fact, one source, inside one module.
+
+### Added
+
+- `TheGateCanActuallyMatch` in `tests/test_chat_gchat_markdown.py` — **the class that would have
+  caught this.**
+
+  Why the bug shipped green is the point. The converter had 19 correct assertions. A call-site
+  test asserted the gate *existed*. **Nothing asserted the gate could ever be satisfied** — that
+  the value being compared against is one some writer actually produces. A gate keyed on an
+  unreachable value is dead code wearing a feature's clothes, and it is invisible to any test
+  that exercises only one side of it.
+
+  So the new tests read *both* sides: they extract the discriminator field and its constant out
+  of `relay_text`, resolve the constant to its literal, then walk the chat package for a module
+  that assigns that field that value. Re-point the gate at another field and it stays red until
+  a writer exists. A separate test does the same for `sender_kind = "Triton"` on behalf of the
+  five reader-side surfaces.
+
+  All four fail against the v1.286.0 tree and pass after the fix — verified by reverting both
+  changes and running them.
+
+### Notes
+
+- **The Google Chat display name is not a code fix.** Triton's replies post under the **app**
+  identity (verified: `sync_origin == "Triton"` → `AUTH_IDENTITY_APP`, and the origin is
+  threaded through to the relay job), and Google renders app-posted messages with the Chat app's
+  configured **App name** — `RUNBOOK_google_cloud_setup.md` value #12, recorded there as "Not
+  stored; used to find the app in Chat". Showing `chatbot@sapphirefountains.com` means that
+  console field is unset or set to the service account. Changing it is Google Cloud Console work
+  in the Chat API configuration; no code in this repo can set it, and `messages.create` offers
+  no per-message sender name.
+
 ## [1.286.1] - 2026-08-13
 
 The two constructs v1.286.0 left out. Triton emits tables whenever it is asked to compare
