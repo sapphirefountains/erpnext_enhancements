@@ -369,14 +369,62 @@ export function citationLabel(citation) {
 	return String(c.label || c.name || c.title || c.url || "source");
 }
 
-/** Whether a resolved URL is safe to put in an `href`. */
+/** The only two schemes that may reach an `href`. Everything else renders as inert text. */
+const SAFE_PROTOCOLS = new Set(["http:", "https:"]);
+
+/** Does the value carry its own scheme? Matches the URL spec's scheme grammar, not a guess. */
+const HAS_SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.\-]*:/;
+
+/**
+ * The origin a relative value is resolved against. Deliberately a `.invalid` host rather than
+ * the real site: this is a comparison base, not a place, and hardcoding it keeps the function
+ * pure — `scripts/test_chat_citations.mjs` runs it under plain `node` with no `location`.
+ */
+const RESOLVE_BASE = "https://url-safety-check.invalid";
+
+/**
+ * Whether a resolved URL is safe to put in an `href`.
+ *
+ * **Parse, do not pattern-match.** The previous implementation tested prefixes, and a prefix
+ * test cannot answer this question: `/\evil.example` starts with `/`, does not start with
+ * `//`, and every browser resolves it to `http://evil.example/` — a protocol-relative escape
+ * straight past the one line that existed to prevent it. Backslash is not the only such trick,
+ * which is the argument for handing the string to the same parser the browser will use rather
+ * than trying to enumerate them: `JaVaScRiPt:`, a leading space, an embedded tab and
+ * percent-encoded control characters are all normalised by the parser before we see a protocol.
+ *
+ * Three rules, in order:
+ *
+ * 1. **Scheme allowlist.** `http:` and `https:` only. `javascript:`, `data:`, `vbscript:`,
+ *    `blob:`, `file:` and anything unlisted fail closed. `mailto:` is deliberately absent —
+ *    see the note on `email` citations below.
+ * 2. **No credentials.** `https://evil.example@sapphirefountains.com/` reads as the second
+ *    host to a person and resolves to the first in some parsers. Nothing legitimate cites a
+ *    URL carrying userinfo, so the ambiguity is refused rather than rendered.
+ * 3. **A relative value must stay on our origin.** Relative means "starts with `/`", as
+ *    before; the parser then has to agree it did not leave. `//host`, `/\host` and `/\/host`
+ *    all resolve to a different origin, which is precisely the check a prefix test cannot make.
+ *
+ * `mailto:` is not allowed. Phase 6 §4.G.7 item 1 asks for the decision explicitly: an `email`
+ * citation's `url` is built by this app and points at the ERPNext document, so it is already a
+ * site-relative path; a user-typed `mailto:` gains nothing and widens the allowlist for it.
+ */
 export function isSafeUrl(url) {
 	const value = String(url == null ? "" : url).trim();
 	if (!value) return false;
-	// Same-origin relative paths are the common case (`/app/sales-order/SO-1`) and carry no
-	// scheme to validate.
-	if (value.startsWith("/") && !value.startsWith("//")) return true;
-	return /^https?:\/\//i.test(value);
+
+	let parsed;
+	try {
+		parsed = new URL(value, RESOLVE_BASE);
+	} catch {
+		// An unparseable value is not a link. `URL` throws only on genuinely malformed input.
+		return false;
+	}
+
+	if (!SAFE_PROTOCOLS.has(parsed.protocol)) return false;
+	if (parsed.username || parsed.password) return false;
+	if (HAS_SCHEME_RE.test(value)) return true;
+	return value.startsWith("/") && parsed.origin === RESOLVE_BASE;
 }
 
 // --------------------------------------------------------------------------- internals

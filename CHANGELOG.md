@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.282.3] - 2026-08-13
+
+Phase 6's security hardening pass (§4.G.7) opened by re-reading every place a URL reaches an
+`href`. It found two, and the shape of the pair is the finding: **the path that was checked was
+the new one, and the path that was live was not.**
+
+### Fixed
+
+- **`renderSources()` put model and tool output straight into `a.href` with no scheme check.**
+  This is the legacy sources row in `triton_widget.js` — the path taken whenever a turn has no
+  citation manifest, which is every turn on every site that has not enabled Phase 5 retrieval,
+  and every turn where retrieval returned nothing. So it is not a dormant path; it is the
+  normal one. A `javascript:` URL arriving in a tool result executed on click, on any Desk
+  page, under the reader's own session.
+
+  The manifest-backed row twelve lines below it has called `isSafeUrl` since Phase 3. Reviewing
+  the new renderer and not the one it falls back to is how this survived a checkpoint.
+
+  An unsafe URL now renders as the same chip minus the anchor: still listed, still labelled,
+  still hoverable, no longer clickable. Nothing legitimate loses a link, and the
+  preserved-behaviour guard (`scripts/test_triton_widget_guards.js`) still passes, because it
+  pins the row's rendering rather than the function's bytes.
+
+- **`isSafeUrl` tested prefixes, and a prefix test cannot answer the question it was asked.**
+  `/\evil.example` starts with `/`, does not start with `//`, and every browser resolves it to
+  `http://evil.example/` — a protocol-relative escape straight past the one line written to
+  prevent it. Confirmed against Node's WHATWG parser before the fix, not inferred.
+
+  It now hands the value to the same parser the browser will use, and asks three questions of
+  the result: is the protocol `http:`/`https:`, does it carry userinfo, and — for a relative
+  value — did it stay on our origin. That last one is what a prefix test structurally cannot
+  do, since "did this leave the site" is a fact about the *resolved* URL.
+
+  Two consequences worth stating rather than discovering later. `https://evil.example@sapphirefountains.com/`
+  is now **refused** rather than linked: the host a person reads and the host a browser resolves
+  are not the same one, and nothing legitimate cites a URL carrying credentials. And `mailto:`
+  is **not** on the allowlist — §4.G.7 item 1 asks for that decision explicitly, and an `email`
+  citation's `url` is built by this app as a site-relative path to the ERPNext document, so
+  allowing `mailto:` would widen the allowlist for a case that does not use it.
+
+### Added
+
+- The Phase 6 §4.G.7 hostile-input corpus as executable rows in
+  `scripts/test_chat_citations.mjs` — every disallowed scheme in each of its spellings (case,
+  leading space, embedded tab, encoded NUL), the origin-escape family, the credentials trick,
+  and the legitimate shapes that a stricter check usually breaks.
+
+  **Verified non-vacuous by reverting `isSafeUrl` to its previous implementation and observing
+  two rows go red** — the backslash escape and the credentials trick. The scheme rows passed
+  under the old implementation too; they are committed because "the regex happened to cover
+  it" is not the same as "a test says so".
+
+  The backslash is written `String.fromCharCode(92)` rather than as an escape. The row that
+  matters is the one a reviewer is most likely to mis-read in a diff, and spelling it out
+  removes the chance that a later edit tidies the escaping and silently changes the input.
+
+- `docs/chat-phase6-plan.md` — Phase 6's opening deliverable, and the reason these two fixes
+  exist. It records the twelve places where the phase prompt disagrees with the shipped code
+  (each resolved in the ADR's favour), the thirteen hardening findings, the eleven governance
+  decisions that are not the agent's to make, and what cannot be verified without a bench, a
+  browser, a phone or a second person. A working document: when the decisions are answered its
+  conclusions move into an ADR addendum and the file is deleted.
+
+### Notes
+
+- **Server-side URL validation is still absent**, and §4.G.7 item 1 requires it to be
+  authoritative. Both fixes here are client-side, which is where the sink is — but a client-side
+  allowlist is a rendering decision, not a boundary. The server-authoritative `safe_url` lands
+  with the rest of the hardening pass, together with the export's `transcript.html`, which is
+  the same renderer writing a file that leaves the building.
+- **No Content-Security-Policy exists anywhere in this app**, so there is no second line behind
+  either fix. Recorded here because it is the reason these two were worth their own release
+  rather than being folded into a larger Phase 6 change.
+
 ## [1.282.2] - 2026-08-13
 
 ### Fixed

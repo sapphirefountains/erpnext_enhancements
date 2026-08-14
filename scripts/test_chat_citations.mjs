@@ -177,6 +177,60 @@ test("a javascript: url is refused and the citation degrades to a flat pill", ()
 	assert.equal(isSafeUrl("//evil.example"), false, "protocol-relative is not same-origin");
 });
 
+// The Phase 6 §4.G.7 hostile-input corpus, as executable rows.
+//
+// A backslash is written as `BS` rather than as an escape, because the one row that matters
+// here is the one a reviewer is most likely to mis-read in a diff: `/\evil.example` looks like
+// a same-origin path and resolves to `http://evil.example/` in every browser. Spelling it out
+// removes the chance that a future edit "tidies" the escaping and silently changes the input.
+const BS = String.fromCharCode(92);
+
+test("§4.G.7 corpus: every disallowed scheme is refused, however it is spelled", () => {
+	for (const hostile of [
+		"javascript:alert(1)",
+		"JaVaScRiPt:alert(1)",
+		" javascript:alert(1)", // leading space
+		"java\tscript:alert(1)", // embedded tab
+		"java%00script:alert(1)", // encoded NUL
+		"data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+		"vbscript:msgbox(1)",
+		"blob:https://example.com/x",
+		"file:///etc/passwd",
+		"mailto:someone@example.com", // deliberately not allowed — see isSafeUrl's docstring
+	]) {
+		assert.equal(isSafeUrl(hostile), false, `must refuse: ${JSON.stringify(hostile)}`);
+	}
+});
+
+test("§4.G.7 corpus: a relative value that leaves our origin is refused", () => {
+	// Regression for the prefix-test bypass this suite shipped with. `//evil.example` was the
+	// only escape the old implementation knew about; the backslash forms are the same attack
+	// and passed it, because they start with `/` and do not start with `//`.
+	assert.equal(isSafeUrl("//evil.example/"), false);
+	assert.equal(isSafeUrl("/" + BS + "evil.example"), false, "backslash is an authority escape");
+	assert.equal(isSafeUrl("/" + BS + "/evil.example"), false);
+	assert.equal(isSafeUrl(BS + BS + "evil.example"), false);
+	// And the legitimate shapes still pass, which is the half a stricter check usually breaks.
+	assert.equal(isSafeUrl("/app/sales-order/SO-2026-00184"), true);
+	assert.equal(isSafeUrl("/chat/room/R1?message=M1"), true);
+	assert.equal(isSafeUrl("https://example.com/a?b=1#c"), true);
+	assert.equal(isSafeUrl("http://example.com"), true);
+});
+
+test("§4.G.7 corpus: a URL carrying credentials is refused, not rendered", () => {
+	// The host a person reads and the host the browser resolves are not the same one here.
+	assert.equal(isSafeUrl("https://evil.example.com@sapphirefountains.com/"), false);
+	assert.equal(isSafeUrl("https://user:pw@example.com/"), false);
+});
+
+test("§4.G.7 corpus: empty, null and unparseable values are not links", () => {
+	assert.equal(isSafeUrl(""), false);
+	assert.equal(isSafeUrl("   "), false);
+	assert.equal(isSafeUrl(null), false);
+	assert.equal(isSafeUrl(undefined), false);
+	assert.equal(isSafeUrl("app/item/X"), false, "a schemeless, slashless value is not a path");
+});
+
 test("a label containing markup is text, never HTML", () => {
 	// The label is user-authored: a document title, a filename, a coworker's message. The
 	// renderer builds nodes, so the only assertion that matters is that the raw string comes
