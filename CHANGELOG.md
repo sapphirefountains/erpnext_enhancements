@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.288.2] - 2026-08-14
+
+**`Triton Invocation Log` was write-only.** A failed `@triton` turn recorded its reason where
+nobody could read it — and the failure message in chat told the reader to go and look there.
+
+### Added
+
+- **A Triton panel in `chat/health.py`** (Phase 6 §4.H.1 panel 8): the last ten turns by status,
+  with the newest failure and its error hoisted to the top, in both the dict and the printed
+  report.
+
+  The table ships **zero DocPerm** (ADR §F.18.1 Layer 1), which closes `/api/resource`, the desk
+  list view, the form view and the report view for everybody but `Administrator` — opening it in
+  the desk answers *"Page triton-invocation-log not found"* — and it is also on the MCP
+  denylist. Both are correct and neither is the problem. The problem was that **no read path
+  existed at all**, so the one number an operator needs after a failed turn was unreachable by
+  every route the system offers.
+
+  §4.H.1 already called for this: *"Phase 5 built `Triton Invocation Log` and a report over it;
+  surface it here rather than rebuilding it."*
+
+```bash
+bench --site <site> execute erpnext_enhancements.chat.health.report
+```
+
+### Notes
+
+- **Fixed by adding a reader, not by weakening the permission model.** A DocPerm would have
+  reopened the desk and the REST API on it for whoever held the role; a read inside the app's
+  own non-whitelisted diagnostic reopens nothing.
+- **The raw-SQL guard refused this and was answered rather than worked around.** It classifies
+  the table as conversation-adjacent and demands either the membership filter or a written
+  justification. The read qualifies on all three of its tests — `health.report` is deliberately
+  not whitelisted so it answers no HTTP request; the rows are bounded by recency rather than by
+  the reader's identity (a membership filter would be meaningless, since the rows worth reading
+  are other people's failed turns); and the table is content-free by construction. The fields
+  are **enumerated rather than `"*"`** so a future column carrying content cannot silently join
+  them.
+- This surfaces the error; it does not fix whatever caused it. That comes next, once the row is
+  readable.
+
 ## [1.288.1] - 2026-08-14
 
 **The chat SPA has never received a single realtime event.** Not another person's message, not
