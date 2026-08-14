@@ -41,6 +41,25 @@ Phase 6 §4.A that only make sense together.
 
 ### Changed
 
+- **Both permission hooks for both audit tables**, because §F.18.4's standing obligation
+  fires "the moment a narrower role is granted read here" — and `test_chat_guardrails`
+  anticipated this exact commit, exempting the tables *conditionally* with a note saying the
+  exemption evaporates when Phase 6 grants the oversight role read. It did, and it did.
+
+  **They scope by role, not by room, and that is the point rather than an omission.** Every
+  other hook in the module narrows a content table to the caller's own rooms. An audit trail
+  narrowed that way would hide precisely the non-participant reads it was written to surface
+  — the auditor is not a participant in any of them, so a membership filter returns an empty
+  log and looks correct doing it. What the pair adds over the DocPerm is the single-document
+  path: the DocPerm governs the list, `has_permission` governs `/app/<doctype>/<name>`,
+  `frappe.get_doc` and the socket callback. Every path returns a real boolean, and a
+  non-read `ptype` is refused explicitly rather than relying on the DocPerm — the
+  `ptype`-blind hatch of v1.283.2 is why that line exists.
+
+  Reading the trail is deliberately **not** recorded as a privileged read. It is not a read
+  of chat content, and marking it as one would put the auditor's own review into the log they
+  are reviewing — a trail that grows every time somebody looks at it.
+
 - **The `reason_category` vocabulary is decided.** Eight values, written for the employee
   reading them rather than for the compliance file:
 
