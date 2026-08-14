@@ -174,6 +174,12 @@ CHAT_DENYLIST_DOCTYPES = frozenset(
         # pre-assembled into prose, which is easier to read than the transcript.
         "Chat Context Chunk",
         "Chat Event Subscription",
+        # Phase 6 §4.C. Holds no message text itself — rooms, a reason, counts and hashes —
+        # but it is the index of every bundle ever produced, and a bundle IS the transcript.
+        # Reading this table tells you which exports exist, who asked for them and what
+        # reason they gave: the shortest path from "I have raw SQL" to "I know which
+        # conversations have already left the building".
+        "Chat Export Request",
         "Chat Inbound Event",
         "Chat Mention",
         "Chat Message",

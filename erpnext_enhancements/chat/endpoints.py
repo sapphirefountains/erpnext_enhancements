@@ -94,12 +94,22 @@ MUTATING: Final[dict[str, str]] = {
 		"opens a Chat Provisioning Run which, with dry_run off, creates real Google spaces"
 	),
 	f"{DOTTED_ROOT}.sync.provisioning.create_document_room": "creates a Chat Room bound to a document",
+	f"{DOTTED_ROOT}.governance.export_runner.request_export": (
+		"inserts a Chat Export Request and queues the build; the bundle it produces is the "
+		"artefact that leaves the building"
+	),
 }
 
 #: Endpoints that only read. The value is the reason, and a reason that is merely "it is a
 #: getter" is not one — the entries that matter are the four that write something and are
 #: nonetheless classified here.
 NON_MUTATING: Final[dict[str, str]] = {
+	f"{DOTTED_ROOT}.governance.export_runner.download_export": (
+		"streams a bundle that was already built. Writes an export_downloaded audit row, "
+		"which is a record OF the read. NOT POST, uniquely on this surface: the browser has "
+		"to NAVIGATE for response.type='download' to reach a file, and an XHR would receive "
+		"the bytes and drop them"
+	),
 	f"{DOTTED_ROOT}.governance.viewer.search": (
 		"the oversight read. Writes a Chat Retrieval Audit row, which is a record OF the read "
 		"rather than an effect the caller wants — the same reasoning search_messages carries. "
