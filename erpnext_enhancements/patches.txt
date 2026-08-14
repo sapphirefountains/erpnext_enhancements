@@ -656,3 +656,14 @@ erpnext_enhancements.patches.add_po_order_stage_field
 # it, and an emptiness predicate would match nothing and log itself a success. Safe twice
 # - it only ever moves a row off the default, so a hand-set stage survives a re-run.
 erpnext_enhancements.patches.backfill_po_order_stage
+
+# Recovers the close dates that are genuinely recoverable for the 221 Closed-Won
+# opportunities that predate the stamp_won_date hook, reading status->"Closed Won"
+# transitions out of tabVersion. Critically it EXCLUDES bulk-edit days: 197 of the 220
+# candidates were flipped on 2025-08-20 during the post-migration cleanup, and stamping
+# those would rebuild the same fake revenue spike Triton's dashboard was fixed to stop
+# showing. Expect ~23 stamped and ~198 deliberately left blank -- those deals were won in
+# the previous CRM and their dates are not in this system. Keys on a blank date, which is
+# safe for this field precisely because a Date custom field carries no default -- see the
+# patch docstring, and backfill_po_order_stage for the opposite case. Safe twice.
+erpnext_enhancements.patches.backfill_opportunity_won_date

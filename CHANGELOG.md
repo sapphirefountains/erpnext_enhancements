@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.290.0] - 2026-08-14
+
+**The 197 wins that all closed on the same Wednesday.** Triton's sales dashboard reports
+booked revenue from `custom_date_closed_won`, and 221 of the 290 Closed-Won opportunities
+have it blank — `stamp_won_date` only fills it on save, so it covers deals won since the
+hook shipped and nothing before. This recovers the dates that can honestly be recovered,
+and — the part worth reading — deliberately declines to invent the rest.
+
+### Added
+
+- **`patches/backfill_opportunity_won_date.py`** — reads `status` → `Closed Won`
+  transitions out of `tabVersion` and stamps the blank dates from the audit trail. 220 of
+  the 221 blank opportunities have such a transition, so the naive version of this patch
+  reaches ~100% coverage, which is precisely what makes it dangerous.
+
+  **197 of those 220 transitions happened on a single day — 2025-08-20 — flipped by two
+  people during the post-migration cleanup.** Every other day in the candidate set carries
+  one or two, which is what genuine deal flow looks like. Stamping all 220 would therefore
+  have rebuilt the exact artifact this whole effort was about removing: Triton's old
+  bookings chart bucketed wins by `modified` and showed 187 in one month, 81 in another,
+  and seven empty months between — two bulk edits wearing the costume of a sales trend. A
+  backfill sourced from the audit trail would have produced the same lie with better
+  provenance and a harder-to-question date.
+
+  So a transition is trusted only when fewer than `BULK_EDIT_THRESHOLD` (20) opportunities
+  moved to Closed Won that day. The live data makes that cut obvious rather than arbitrary:
+  the excluded day carries 197, the busiest genuine day carries 2. Expect ~23 stamped and
+  ~198 left blank. **The blanks are the correct answer, not a shortfall** — those deals
+  were won in the previous CRM before the migration, their close dates are not in this
+  system, and Triton renders undated wins as undated rather than dating them by inference.
+  Its invoiced-revenue track (from Sales Invoice, which does have complete monthly history)
+  carries the long view instead.
+
+  Keys on a blank date, which is safe *here* for a reason this repo has been bitten by from
+  the other direction: the `backfill_relay_auth_identity` failure (v1.280.3) was a field
+  with a `default`, where the `ALTER` writes that default into every existing row and an
+  emptiness predicate matches nothing. `custom_date_closed_won` is a Date custom field with
+  no default, so its 221 NULLs are genuine — verified against the live instance rather than
+  assumed. Writes with `update_modified=False`, because bumping 200 rows' `modified` to
+  today would be one more bulk edit of exactly the kind this patch exists to stop
+  propagating. Safe twice.
+
+- **`tests/test_opportunity_won_date_backfill.py`** — nine bench-free guards on the
+  distinction above: bulk days excluded, organic days trusted, organic dates surviving
+  alongside a bulk day, a deal caught in the cleanup and later genuinely re-won taking the
+  later date, malformed audit rows not costing a document its real date, and a missing
+  column logging loudly instead of returning silently. Registered as its own CI step — it
+  installs a frappe stub in `sys.modules`, and per this repo's history a bench-free pytest
+  suite that isn't on a pytest step runs nowhere at all.
+
 ## [1.289.6] - 2026-08-14
 
 **Phase 6 §4.E — seeing through a delete, and the third declared-but-unwritten event gets a
@@ -63,6 +113,7 @@ from that.
   hits, so it is recorded in the exemption block rather than smuggled in here.
 - The staleness check is worth naming on its own: it refuses a waiver that matches no query,
   because one covering nothing today silently covers whatever later takes the name.
+
 
 ## [1.289.4] - 2026-08-14
 
