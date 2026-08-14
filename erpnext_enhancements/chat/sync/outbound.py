@@ -2340,7 +2340,7 @@ def _route_stranded_failure(job: dict[str, Any], *, settings: Any) -> None:
 	seams.bump(seams.COUNTER_RETRIES)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def retry_relay_job(name: str, reset_attempts: int = 1) -> dict:
 	"""Operator "try again". **System Manager only, and it re-enters the state machine.**
 

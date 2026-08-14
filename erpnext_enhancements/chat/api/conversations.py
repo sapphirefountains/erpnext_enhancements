@@ -55,7 +55,7 @@ MAX_INITIAL_MEMBERS = 50
 MAX_PEOPLE_RESULTS = 20
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_direct_message(user: str) -> dict[str, Any]:
 	"""Open the DM with ``user``, creating it only if it does not already exist.
 
@@ -108,7 +108,7 @@ def create_direct_message(user: str) -> dict[str, Any]:
 	return _room_result(room, created)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_group(title: str, members: Any = None) -> dict[str, Any]:
 	"""Create a named group room with the caller as its Manager.
 

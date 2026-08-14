@@ -214,7 +214,7 @@ def _linked_document_url(row: Any) -> str | None:
 		return None
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def set_last_open_room(room: str | None = None, thread: str | None = None) -> dict[str, Any]:
 	"""Remember where the caller was, for a cold load on another device (§4.3 tier 3).
 

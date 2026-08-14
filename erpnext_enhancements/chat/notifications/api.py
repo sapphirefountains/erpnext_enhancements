@@ -69,7 +69,7 @@ def push_config() -> dict[str, Any]:
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def subscribe(
 	endpoint: str, p256dh: str, auth: str, user_agent: str | None = None, device_label: str | None = None
 ) -> dict[str, Any]:
@@ -94,7 +94,7 @@ def subscribe(
 	return {"subscription": name}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def unsubscribe(endpoint: str) -> dict[str, Any]:
 	"""Drop this browser's subscription. What the client calls when somebody turns push off."""
 	require_session()
@@ -104,7 +104,7 @@ def unsubscribe(endpoint: str) -> dict[str, Any]:
 	return {"removed": subscriptions.unregister(endpoint)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def read_from_notification(room: str, message: str | None = None) -> dict[str, Any]:
 	"""A notification was clicked, so the room has been read. Runs the whole cross-surface sync.
 

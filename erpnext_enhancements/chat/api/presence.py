@@ -82,7 +82,7 @@ TYPING_EXPIRY_SECONDS = 5
 # --------------------------------------------------------------------------- typing
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def set_typing(room: str, thread: str | None = None, stopped: Any = 0) -> dict[str, Any]:
 	"""Publish a typing indicator to the room's document room. **No database write at all.**
 
@@ -111,7 +111,7 @@ def set_typing(room: str, thread: str | None = None, stopped: Any = 0) -> dict[s
 # --------------------------------------------------------------------------- presence
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def heartbeat(
 	client_id: str,
 	active_room: str | None = None,
@@ -199,7 +199,7 @@ def heartbeat(
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def goodbye(client_id: str) -> dict[str, Any]:
 	"""Expire one client's presence early, on ``pagehide``. **An optimisation, not a mechanism.**
 

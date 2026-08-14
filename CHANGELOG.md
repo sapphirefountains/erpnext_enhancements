@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.283.0] - 2026-08-13
+
+Phase 6 §4.G.4–G.5 asked for an inventory of every whitelisted method in the chat package,
+"derived by walking the AST" rather than typed. Walking it found two things.
+
+### Fixed
+
+- **`enroll_org_units` and `start_org_mirror` had no role gate at all** — no `frappe.only_for`,
+  no `require_session`, no role test anywhere in `sync/provisioning.py`. Any authenticated
+  System User could create `Chat Room` rows and open a `Chat Provisioning Run`.
+
+  The second one is why it mattered. `dry_run` defaults to 1, and that default is the whole
+  safety argument for an action that creates Google spaces which appear in every coworker's
+  client and cannot be undone — but `dry_run` is a **caller-supplied parameter**, so the
+  deliberate step was one query-string value away from being skipped. The
+  `org_structure_mirroring_enabled` kill switch is not a substitute either: it is a setting
+  somebody turns on *in order to do this work*, so the window where it is on is exactly the
+  window where an ungated endpoint is reachable.
+
+  Both now call `frappe.only_for("System Manager")`, which is what every other operator action
+  in the package already did — the relay retry, the digest rebuild, the bot-credential link.
+  These two were the ones that did not.
+
+- **42 of 43 chat endpoints declared no `methods=`**, so every state-changer answered GET. A
+  GET that mutates is CSRF-able regardless of token handling and cacheable by intermediaries
+  besides. Nineteen now declare `methods=["POST"]`.
+
+  This costs nothing at the client: `public/js/chat/transport.js` has always sent POST for
+  every call, so the declaration closes the hole for every *other* caller — a link, a
+  prefetch, an `<img src>`, a crawler.
+
+  **Two are deliberately left unconstrained, and both would be bugs to "fix".**
+  `sync.attachments.download` serves bytes to a URL a browser navigates to; POST-only would
+  break every attachment link and right-click Save As, and it would present as "attachments
+  are broken" rather than as a method restriction. `retrieval.api.get_chat_context` is a
+  cross-service contract with Triton, and pinning a method on it from one side is how the
+  contract breaks on a day nobody is deploying chat. A test pins the first of those so nobody
+  tidies it.
+
+### Added
+
+- **`erpnext_enhancements/chat/endpoints.py`** — the HTTP surface as data. Every
+  `@frappe.whitelist()` in the package, classified `MUTATING` or `NON_MUTATING` with a
+  one-line reason, plus `ADMIN_ONLY` naming the five that must hold a role.
+
+  **The set is compared to the AST by equality, so a new endpoint fails the build until
+  somebody classifies it.** That is the property the file exists for; a hardcoded list nothing
+  compares against the source is the same bug as no list, arriving later and with more
+  confidence. The precedent is the chat MCP denylist, checked the same way for the same reason.
+
+  The one judgement call is written down rather than left implicit. `search_messages` writes a
+  `Chat Retrieval Audit` row on a privileged read and is still classified non-mutating, because
+  that write is a **record of the read** rather than an effect a caller wants — forging it
+  against somebody's session accomplishes nothing except making their own snooping more
+  visible. The same reasoning explicitly does *not* extend to `heartbeat`: presence looks
+  incidental, but Phase 4's suppression rules read it, so a forged heartbeat silences
+  somebody's notifications for as long as it is repeated. That one is mutating.
+
+- `tests/test_chat_endpoint_surface.py` (bench-free, unittest, its own `ci.yml` step so no
+  other suite's `frappe` stub is in `sys.modules` — this one imports no frappe at all).
+
+  Ten assertions, each verified non-vacuous against a deliberately broken tree: the `only_for`
+  gate deleted → red; `methods=` deleted from `send_message` → red; an unclassified
+  `@frappe.whitelist()` added → red.
+
+  The role-gate check reads the **function's own body** for `frappe.only_for`. A gate performed
+  by a helper two frames up is invisible to it and reports as ungated — the safe direction,
+  since a false alarm costs one exemption with a reason while the opposite silently blesses
+  the shape the scan exists to catch. It also asserts equality *both* ways, so a gate quietly
+  removed from a listed endpoint fails too; a subset check would miss exactly that.
+
+### Notes
+
+- The guest-endpoint census is part of the same suite: there is **exactly one**
+  (`gchat.webhook.handle`), and the test fails if that changes. Every guest endpoint answers an
+  unauthenticated request, so each needs its own authenticity check and its own row in
+  §4.G.2's curl matrix — the census is what makes a new one impossible to add quietly.
+- Rate limiting is **not** in this release. It needs this classification first, and v16's
+  `frappe.rate_limiter.rate_limit` turns out to be per-**IP** with no per-user mode, which is a
+  design constraint rather than a detail. Next.
+
 ## [1.282.3] - 2026-08-13
 
 Phase 6's security hardening pass (§4.G.7) opened by re-reading every place a URL reaches an

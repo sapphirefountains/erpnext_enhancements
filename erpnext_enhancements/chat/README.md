@@ -333,14 +333,37 @@ change is `pubsub.run_pull_cycle`'s bound, not the ingest below it.
 
 ### Whitelisted endpoints
 
+**The list below is prose; [`endpoints.py`](endpoints.py) is the enforced one.** It names every
+`@frappe.whitelist()` in the package, classified `MUTATING` or `NON_MUTATING` with a reason, plus
+`ADMIN_ONLY` for the five that must hold a role — and
+`tests/test_chat_endpoint_surface.py` compares it to the AST **by set equality**, so a new
+endpoint fails the build until somebody classifies it. Add an endpoint, add a row there; this
+table is documentation and will drift, that file cannot.
+
+Three rules it enforces, each of which was a finding rather than a precaution:
+
+- **Every mutating endpoint declares `methods=["POST"]`.** 42 of 43 declared nothing, so every
+  state-changer answered GET — CSRF-able whatever the token handling does. The SPA has always
+  POSTed (`public/js/chat/transport.js`), so the declaration closes the hole for every *other*
+  caller: a link, a prefetch, an `<img src>`, a crawler.
+- **Every admin endpoint calls `frappe.only_for` in its own body.** `enroll_org_units` and
+  `start_org_mirror` had no gate at all. The check is body-local on purpose — a role check
+  performed by a helper two frames up reports as ungated, which is the safe direction.
+- **`allow_guest` is exactly one endpoint**, and the test fails if that changes. Each one
+  answers an unauthenticated request and therefore needs its own authenticity check.
+
+Two endpoints are deliberately **not** POST-only and both would be bugs to "fix":
+`sync.attachments.download` is a URL a browser navigates to, and `retrieval.api.get_chat_context`
+is a cross-service contract with Triton. A test pins the first so nobody tidies it.
+
 | Path | Guest? | What it does |
 |---|---|---|
 | `erpnext_enhancements.api.chat.get_settings_public` | no | Feature flags as booleans, from a positive allowlist. No identifier, no topic name, no service-account address — those are not secrets, but they are reconnaissance and a browser has no use for them. |
 | `erpnext_enhancements.chat.gchat.webhook.handle` | **yes** (`allow_guest=True`, POST only) | Google's inbound interaction events. World-reachable, so the JWT is the only thing between it and an open relay: signature, **issuer `chat@system.gserviceaccount.com`**, audience byte-exact against `Chat Settings.interaction_endpoint_url`, and expiry — all **before** body parsing and before any DB access. Anything else gets `401`. Phase 1's handler logs the event type and returns `200` empty; dispatch is Phase 5's. |
 | `erpnext_enhancements.chat.sync.attachments.download` | no | **The** byte path for a chat attachment, and it exists because the obvious one cannot work: `Chat Message` ships zero DocPerm, so `File.has_permission` denies `/private/files/…` to everyone but Administrator — members included. The alternative is a DocPerm on `Chat Message`, which would open the desk's report view onto every message body in the company. Decides with `permissions.chat_attachment_has_permission`, refuses `Guest` first, and returns the **same 403** whether the row is missing, unreadable or empty. |
 | `erpnext_enhancements.chat.sync.outbound.retry_relay_job` | no, `System Manager` | Operator "try again". Never calls Google — it writes a status through the same transition table the worker uses and wakes a worker. See [Dead](#dead-is-terminal-and-that-is-a-design-decision). |
-| `erpnext_enhancements.chat.sync.provisioning.enroll_org_units` | no | Creates `Chat Room` rows for named org units and performs **zero Google I/O**. This is the per-entity opt-in: enrolling a hundred departments creates zero spaces. |
-| `erpnext_enhancements.chat.sync.provisioning.start_org_mirror` | no | Opens a `Chat Provisioning Run`. `dry_run` defaults to **1** and the default is the point — the thing being planned creates spaces in twenty people's clients and cannot be undone without a call this codebase refuses to make. |
+| `erpnext_enhancements.chat.sync.provisioning.enroll_org_units` | no, `System Manager` | Creates `Chat Room` rows for named org units and performs **zero Google I/O**. This is the per-entity opt-in: enrolling a hundred departments creates zero spaces. |
+| `erpnext_enhancements.chat.sync.provisioning.start_org_mirror` | no, `System Manager` | Opens a `Chat Provisioning Run`. `dry_run` defaults to **1** and the default is the point — the thing being planned creates spaces in twenty people's clients and cannot be undone without a call this codebase refuses to make. |
 | `erpnext_enhancements.chat.sync.provisioning.create_document_room` | no | A per-document room, **user-initiated and registered in no hook.** Never automatic: 60 project-wide space writes per minute means a rule creating a space per Project would saturate the budget for hours and leave thousands of empty spaces behind. Permission is the *document's* permission, checked here — a room hung off a document must not be an easier door than the document. |
 
 **Phase 3's read/write surface — everything under `chat/api/`.** Every one begins with

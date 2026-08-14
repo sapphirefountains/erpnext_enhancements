@@ -37,7 +37,7 @@ from erpnext_enhancements.chat import permissions, realtime
 from erpnext_enhancements.chat.api._common import require_room, require_session
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def mark_read(room: str, up_to_seq: Any) -> dict[str, Any]:
 	"""Advance the caller's read mark in one room. Never moves it backwards.
 
@@ -79,7 +79,7 @@ def mark_read(room: str, up_to_seq: Any) -> dict[str, Any]:
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def mark_all_read() -> dict[str, Any]:
 	"""Advance every room's mark to its tail. The "clear the badge" affordance.
 

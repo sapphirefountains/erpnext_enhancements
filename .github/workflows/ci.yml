@@ -699,6 +699,25 @@ jobs:
       # plausible. Both sides of the check are files, so it needs no bench.
       - name: Chat SQL only names columns that exist (the 1054 guard)
         run: python -m unittest erpnext_enhancements.tests.test_chat_sql_columns -v
+      # Phase 6 §4.G.5. Two findings and one property.
+      #
+      # The findings: `enroll_org_units` and `start_org_mirror` shipped with NO role gate at
+      # all, so any authenticated System User could create Chat Room rows and open a
+      # provisioning run - and `dry_run` is a caller-supplied parameter, so the default that
+      # exists to make the irreversible half deliberate was one query-string value away from
+      # being skipped. And 42 of 43 chat endpoints declared no `methods=`, so every
+      # state-changer answered GET, which is CSRF-able whatever the token handling does.
+      #
+      # The property is the one that matters in a year: `chat/endpoints.py` is compared to
+      # the AST by SET EQUALITY, so a new @frappe.whitelist() in the package fails this suite
+      # until somebody classifies it as mutating or not. A hardcoded list nothing compares
+      # against the source is the same bug as no list, arriving later and with more
+      # confidence - the precedent is the chat MCP denylist, checked the same way.
+      #
+      # Its own step, like every other bench-free chat suite, so no other module's frappe
+      # stub is in sys.modules when it runs. This one imports no frappe at all.
+      - name: Chat HTTP surface is enumerated, POST-only where it mutates, role-gated where it must be
+        run: python -m unittest erpnext_enhancements.tests.test_chat_endpoint_surface -v
       # Five of the seven retrieval modules import nothing but the stdlib, and this is why:
       # what they decide fails SILENTLY when it is wrong. A chunker that is not deterministic
       # makes the content hash meaningless and re-running the indexer duplicative. A ranker
