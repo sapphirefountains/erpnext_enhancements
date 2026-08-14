@@ -357,8 +357,20 @@ def _formatted_for_chat(body: str, message: Any) -> str:
 	Converting **before** the byte budget is applied, not after, so the truncation point is
 	measured on the bytes that actually go on the wire. Doing it the other way can cut a
 	message inside a delimiter the conversion is about to rewrite.
+
+	**Keyed on ``sync_origin``, not ``sender_kind``, and the first version got this wrong.**
+	It gated on ``sender_kind == "Triton"`` — a value **nothing in the codebase ever wrote**, so
+	the conversion never ran once and every Triton answer reached Google Chat as raw CommonMark.
+	It shipped green, because the converter's own tests were thorough and the call-site test
+	only asserted that a gate existed rather than that it could ever match.
+
+	``sync_origin`` is the right field here specifically: it is what
+	:func:`_auth_identity_for` already reads two hundred lines below to make the *same* fork —
+	Triton's replies post under the app identity, everyone else's under the human's. One fact,
+	one source, inside one module. (``sender_kind`` is now also set, and is what the reader-side
+	surfaces key on; see ``chat/invoke/handler.py``.)
 	"""
-	if str(getattr(message, "sender_kind", "") or "") != "Triton":
+	if str(getattr(message, "sync_origin", "") or "") != ORIGIN_TRITON:
 		return body
 	from erpnext_enhancements.chat.gchat.markdown import to_google_chat
 

@@ -84,7 +84,7 @@ module [`process_steps.py`](../process_steps.py):
   `handoff_invoice_flow` setting — ERPNext is not the accounting system yet), step 6 the
   task list, step 7 the meeting scheduler shared with step 2
   (`public/js/crm_enhancements/handoff_meeting_dialog.js`). Both buttons render **inside
-  that step's box in the bar** (v1.286.2), under its due date, rather than in a shared row
+  that step's box in the bar** (v1.286.3), under its due date, rather than in a shared row
   beneath it — several steps can be actionable at once (5 and 6, then 7), and the shared
   row had to reprint each step's title on its buttons to say which box they belonged to.
 - **Notifications** — completing a step notifies the *new* current step's responsible
