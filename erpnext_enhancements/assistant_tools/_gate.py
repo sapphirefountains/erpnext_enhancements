@@ -165,6 +165,10 @@ CHAT_DENYLIST_DOCTYPES = frozenset(
     {
         "Chat Allowed User",
         "Chat Attachment",
+        # Phase 6's governance log. Holds no message text by design — counts, ranges
+        # and who did what — but it names who read what and when, which is exactly the
+        # map somebody would read before deciding what to tamper with.
+        "Chat Audit Log",
         # Phase 5's semantic index. `body` holds the messages verbatim, so this is
         # not a derived artefact needing lighter handling — it is the transcript,
         # pre-assembled into prose, which is easier to read than the transcript.

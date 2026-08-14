@@ -44,7 +44,93 @@ def _patch_get_modules_from_app_none_safe():
 	_frappe_modules.get_modules_from_app = get_modules_from_app
 
 
-_PATCHES = (_patch_get_modules_from_app_none_safe,)
+#: Extensions a browser will execute, or can be talked into executing, if the response says
+#: ``Content-Disposition: inline``. Taken verbatim from Frappe's own ``develop`` branch, which
+#: widened its v16 list of four to these fourteen. Everything here is HTML, XML-with-a-stylesheet,
+#: or Flash — formats whose defining property is that the *content* decides what runs.
+#:
+#: ``.svg`` and ``.svgz`` are on it because an SVG is an image that runs script. That surprises
+#: people, and it is the entry most likely to be removed by somebody tidying an image format out
+#: of a list of documents.
+_EXECUTABLE_ON_VIEW_EXTENSIONS = (
+    ".svg",
+    ".svgz",
+    ".html",
+    ".htm",
+    ".xhtml",
+    ".xht",
+    ".shtml",
+    ".shtm",
+    ".mhtml",
+    ".mht",
+    ".xml",
+    ".xsl",
+    ".xslt",
+    ".swf",
+)
+
+
+def _patch_private_files_are_never_served_inline():
+    """Force-download every executable attachment type, and stop content-type sniffing.
+
+    **The finding.** Frappe v16 force-downloads exactly four extensions from the
+    ``/private/files/…`` route — ``.svg``, ``.html``, ``.htm``, ``.xml`` — and serves everything
+    else ``inline``. Frappe's ``develop`` branch widened that list to fourteen. The seven in the
+    gap (``.xhtml``, ``.svgz``, ``.shtml``, ``.mhtml``, ``.xsl``, ``.xslt``, ``.swf``) are served
+    from **our own origin** with a scriptable ``Content-Type`` and ``Content-Disposition:
+    inline``, which is stored XSS with the viewer's session cookies attached. Anyone who can
+    attach a file to anything — a chat message, a Project, a Contract — can upload one.
+
+    ``nosniff`` is set for the case the list cannot cover: a file whose extension is unremarkable
+    but whose *bytes* are HTML. Without it a browser is free to sniff past a declared
+    ``text/plain`` and render markup. Frappe sets this header nowhere in v16.
+
+    **Why a monkeypatch and not an nginx rule.** ``infra/configs/startup_script.sh`` runs
+    ``bench setup production`` on every boot, which regenerates the nginx config from bench's
+    own template — a hand-edited rule is erased at the next reboot. This is fifteen lines that
+    survive ``bench update`` by living here, which is what this module is for.
+
+    **What it deliberately does not fix.** *Public* files (``is_private = 0``) never reach Python
+    at all: nginx serves them straight off disk with ``try_files``. No application code can
+    defend them, and the only control is nginx's own four-extension regex. That is the argument
+    for chat attachments being ``is_private = 1`` without exception, which
+    ``chat/api/compose.py`` already enforces server-side.
+
+    One further trap, recorded because it is invisible and points the wrong way: nginx's
+    ``add_header`` inheritance is all-or-nothing per level, so the ``/private/files/*`` location
+    that defines its own header **drops** the server-level ``nosniff``, ``X-Frame-Options`` and
+    HSTS. The responses that most need hardening are the ones that lose it — which is the second
+    reason to set the header here, where it rides on the upstream response nginx forwards.
+    """
+    import frappe.utils.response as _frappe_response
+
+    # The tuple is read as a module global inside `send_private_file` on every call, so widening
+    # it here is enough — no wrapper needed for the disposition half.
+    for extension in _EXECUTABLE_ON_VIEW_EXTENSIONS:
+        if extension not in _frappe_response.FORCE_DOWNLOAD_EXTENSIONS:
+            _frappe_response.FORCE_DOWNLOAD_EXTENSIONS += (extension,)
+
+    original = _frappe_response.send_private_file
+    if getattr(original, "_ee_nosniff", False):
+        return  # already applied in this process
+
+    @functools.wraps(original)
+    def send_private_file(*args, **kwargs):
+        response = original(*args, **kwargs)
+        # `setdefault`, not assignment: if a future Frappe sets this itself, ours must not be
+        # the value that wins — a patch that silently overrides an upstream fix is how the
+        # upstream fix gets blamed for behaviour it does not have.
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        return response
+
+    send_private_file._ee_nosniff = True
+    _frappe_response.send_private_file = send_private_file
+
+
+_PATCHES = (
+    _patch_get_modules_from_app_none_safe,
+    _patch_private_files_are_never_served_inline,
+)
 
 
 def apply():

@@ -333,15 +333,57 @@ change is `pubsub.run_pull_cycle`'s bound, not the ingest below it.
 
 ### Whitelisted endpoints
 
+**The list below is prose; [`endpoints.py`](endpoints.py) is the enforced one.** It names every
+`@frappe.whitelist()` in the package, classified `MUTATING` or `NON_MUTATING` with a reason, plus
+`ADMIN_ONLY` for the five that must hold a role — and
+`tests/test_chat_endpoint_surface.py` compares it to the AST **by set equality**, so a new
+endpoint fails the build until somebody classifies it. Add an endpoint, add a row there; this
+table is documentation and will drift, that file cannot.
+
+Three rules it enforces, each of which was a finding rather than a precaution:
+
+- **Every mutating endpoint declares `methods=["POST"]`.** 42 of 43 declared nothing, so every
+  state-changer answered GET — CSRF-able whatever the token handling does. The SPA has always
+  POSTed (`public/js/chat/transport.js`), so the declaration closes the hole for every *other*
+  caller: a link, a prefetch, an `<img src>`, a crawler.
+- **Every admin endpoint calls `frappe.only_for` in its own body.** `enroll_org_units` and
+  `start_org_mirror` had no gate at all. The check is body-local on purpose — a role check
+  performed by a helper two frames up reports as ungated, which is the safe direction.
+- **`allow_guest` is exactly one endpoint**, and the test fails if that changes. Each one
+  answers an unauthenticated request and therefore needs its own authenticity check.
+
+Two endpoints are deliberately **not** POST-only and both would be bugs to "fix":
+`sync.attachments.download` is a URL a browser navigates to, and `retrieval.api.get_chat_context`
+is a cross-service contract with Triton. A test pins the first so nobody tidies it.
+
 | Path | Guest? | What it does |
 |---|---|---|
 | `erpnext_enhancements.api.chat.get_settings_public` | no | Feature flags as booleans, from a positive allowlist. No identifier, no topic name, no service-account address — those are not secrets, but they are reconnaissance and a browser has no use for them. |
 | `erpnext_enhancements.chat.gchat.webhook.handle` | **yes** (`allow_guest=True`, POST only) | Google's inbound interaction events. World-reachable, so the JWT is the only thing between it and an open relay: signature, **issuer `chat@system.gserviceaccount.com`**, audience byte-exact against `Chat Settings.interaction_endpoint_url`, and expiry — all **before** body parsing and before any DB access. Anything else gets `401`. Phase 1's handler logs the event type and returns `200` empty; dispatch is Phase 5's. |
 | `erpnext_enhancements.chat.sync.attachments.download` | no | **The** byte path for a chat attachment, and it exists because the obvious one cannot work: `Chat Message` ships zero DocPerm, so `File.has_permission` denies `/private/files/…` to everyone but Administrator — members included. The alternative is a DocPerm on `Chat Message`, which would open the desk's report view onto every message body in the company. Decides with `permissions.chat_attachment_has_permission`, refuses `Guest` first, and returns the **same 403** whether the row is missing, unreadable or empty. |
 | `erpnext_enhancements.chat.sync.outbound.retry_relay_job` | no, `System Manager` | Operator "try again". Never calls Google — it writes a status through the same transition table the worker uses and wakes a worker. See [Dead](#dead-is-terminal-and-that-is-a-design-decision). |
-| `erpnext_enhancements.chat.sync.provisioning.enroll_org_units` | no | Creates `Chat Room` rows for named org units and performs **zero Google I/O**. This is the per-entity opt-in: enrolling a hundred departments creates zero spaces. |
-| `erpnext_enhancements.chat.sync.provisioning.start_org_mirror` | no | Opens a `Chat Provisioning Run`. `dry_run` defaults to **1** and the default is the point — the thing being planned creates spaces in twenty people's clients and cannot be undone without a call this codebase refuses to make. |
+| `erpnext_enhancements.chat.sync.provisioning.enroll_org_units` | no, `System Manager` | Creates `Chat Room` rows for named org units and performs **zero Google I/O**. This is the per-entity opt-in: enrolling a hundred departments creates zero spaces. |
+| `erpnext_enhancements.chat.sync.provisioning.start_org_mirror` | no, `System Manager` | Opens a `Chat Provisioning Run`. `dry_run` defaults to **1** and the default is the point — the thing being planned creates spaces in twenty people's clients and cannot be undone without a call this codebase refuses to make. |
 | `erpnext_enhancements.chat.sync.provisioning.create_document_room` | no | A per-document room, **user-initiated and registered in no hook.** Never automatic: 60 project-wide space writes per minute means a rule creating a space per Project would saturate the budget for hours and leave thousands of empty spaces behind. Permission is the *document's* permission, checked here — a room hung off a document must not be an easier door than the document. |
+
+**`require_room` asks one of two questions, and the difference is decision #12.**
+`intent="read"` (the default) asks *may this identity see the room* — which the oversight role
+and `Administrator` may, and which is the whole of what decision #12 grants. `intent="write"`
+asks *is this identity in the room*, which no amount of oversight makes true, and every
+mutating endpoint passes it.
+
+That distinction was missing until v1.283.2 and it was a real hole rather than a tidy-up.
+`require_room` passed `"read"` for every caller, writers included, and it calls the permission
+hook **directly** rather than through `frappe.has_permission` — so `Chat Room`'s read-only
+DocPerm, which the hook's own docstring named as the thing refusing writes "above us", was
+never consulted on that path. Filling `Chat Settings.admin_oversight_role` would have let every
+holder post into any conversation in the company, as themselves. An auditor who can post into
+the room they are auditing is not an auditor.
+
+`tests/test_chat_endpoint_surface.py` asserts it in both directions: a mutating endpoint that
+asks for `read` fails, and so does a reading one that demands `write` — the second because
+locking the oversight role out of a read presents as "the auditor cannot open a room", which
+reads as a bug rather than as an over-tightened gate.
 
 **Phase 3's read/write surface — everything under `chat/api/`.** Every one begins with
 `_common.require_session` or `require_room`, which resolves the caller, refuses Guest,
@@ -949,6 +991,22 @@ directly would be a second, untested relay path that only ever runs on a day som
 already having a bad one.
 
 ### The one thing never to do
+
+**The gate has exactly two doors, and the employee app is not one of them.** Since
+v1.284.0 `membership_filter_sql` takes `allow_oversight`, defaulting to **False**, and only
+`chat/retrieval/gate.py` passes `True`. Everywhere else — history, search, the room list,
+notification fan-out — scopes to membership for **everybody, auditors included**.
+
+Before that it short-circuited on the caller's *roles*, so an auditor's ordinary scrollback ran
+unrestricted and wrote a `Chat Retrieval Audit` row about their own reading. Its Python twin
+`visible_room_names` had always refused to do that, on exactly these grounds: *"every room in
+the system is a different query with a different audit obligation, and it must be written where
+that obligation is visible."* The two now agree.
+
+This is also what makes the mandatory `reason` (ADR §4.D.2) implementable: a reason can be
+collected once per oversight session by the surface built for it, and there is nowhere else an
+oversight read can happen. `tests/test_chat_audit_immutability.py` fails the build if any call
+site outside the gate opens the hatch, or if the default is ever flipped.
 
 **Do not fill `Chat Settings.admin_oversight_role` casually.** It ships **blank**, and
 while it is blank there is *no role in the system* that can read a room it is not a member

@@ -66,7 +66,9 @@ REQUIRED_DOCTYPES: frozenset[str] = frozenset(
 #: own rooms" is the wrong instinct: the rows worth reading are the ones where the reader was
 #: NOT a member. Named here so the exception below is a list of two rather than a predicate
 #: somebody has to re-derive.
-_AUDIT_DOCTYPES: frozenset[str] = frozenset({"Chat Retrieval Audit", "Chat Retrieval Audit Room"})
+_AUDIT_DOCTYPES: frozenset[str] = frozenset(
+	{"Chat Audit Log", "Chat Retrieval Audit", "Chat Retrieval Audit Room"}
+)
 
 EXPECTED_DOCPERMS: dict[str, dict[str, frozenset[str]]] = {
 	# §H.4.2: the socket join is keyed on the room, so this is the one DocType that MUST
@@ -79,6 +81,12 @@ EXPECTED_DOCPERMS: dict[str, dict[str, frozenset[str]]] = {
 	"Chat Settings": {"System Manager": frozenset({"read", "write"})},
 	# §F.12/§F.18.4: an audit log nobody can read is not an audit log.
 	"Chat Retrieval Audit": {"System Manager": frozenset({"read", "report"})},
+	# Phase 6, and an explicit ADR amendment (addendum 2) reversing X-1's rejection of this
+	# DocType. Same inversion as its sibling for the same reason, and the same shape: read and
+	# report, nothing else. It records acts of administration OVER chat — who was granted
+	# oversight, who expanded a tombstone, what a retention run destroyed as a count and a
+	# range — and holds no message text in any field by design.
+	"Chat Audit Log": {"System Manager": frozenset({"read", "report"})},
 }
 
 #: The DocPerm keys that grant something. Everything else on a perm row (``role``,
@@ -451,7 +459,7 @@ class TestZeroDocPerm(unittest.TestCase):
 					f"{name} ({data['__path__']}) has DocPerms {actual or '{}'}, expected "
 					f"{expected or '{} (an EMPTY permissions array)'}.\n"
 					"ADR §F.18.1 Layer 1: every chat content DocType ships zero DocPerm, and §H.4.2 "
-					"amends that to exactly three exemptions — Chat Room (minimal read, because the "
+					"amends that to exactly four exemptions — Chat Room (minimal read, because the "
 					"socket doc-room join is the only thing that must be permission-resolvable), "
 					"Chat Settings (a Single with no DocPerm cannot be opened) and Chat Retrieval "
 					"Audit (an audit log nobody can read is not an audit log).\n"

@@ -96,6 +96,12 @@ class StubDoesNotExistError(Exception):
 	pass
 
 
+class StubPermissionError(Exception):
+	"""What ``frappe.only_for`` raises. Frappe answers 403 for it; here it just has to be
+	distinguishable from a validation failure, so a refused *caller* cannot be mistaken for
+	refused *input*."""
+
+
 #: ``(doctype, tuple of fieldnames)`` the store enforces as unique, mirroring the indexes the
 #: Phase 2 patch creates. Only enforced when every field in the tuple is non-empty, which is
 #: MariaDB's own behaviour for a composite unique index containing a NULL.
@@ -468,6 +474,27 @@ def install_frappe_stub() -> types.ModuleType:
 	frappe.UniqueValidationError = StubUniqueValidationError
 	frappe.DuplicateEntryError = StubDuplicateEntryError
 	frappe.DoesNotExistError = StubDoesNotExistError
+	frappe.PermissionError = StubPermissionError
+
+	#: Roles the stubbed session holds. A list rather than a constant so a test can take a
+	#: role away — which is the only way `only_for` below is worth stubbing at all.
+	frappe.session_roles = ["System Manager", "Chat User"]
+
+	def _only_for(*roles: Any) -> None:
+		"""The real ``frappe.only_for``, near enough: raise unless the caller holds one.
+
+		**Stubbed with teeth rather than as a no-op**, and the difference is the point. Both
+		whitelisted functions in `chat/sync/provisioning.py` shipped with *no* role gate — any
+		authenticated System User could create `Chat Room` rows and open a provisioning run,
+		with `dry_run` a caller-supplied parameter away from creating real Google spaces. A
+		stub that swallowed `only_for` would let this suite pass whether the gate is there or
+		not, which is how the gate goes missing again.
+		"""
+		wanted = {r for arg in roles for r in ([arg] if isinstance(arg, str) else arg)}
+		if wanted and not wanted & set(frappe.session_roles):
+			raise StubPermissionError(f"not permitted: needs one of {sorted(wanted)}")
+
+	frappe.only_for = _only_for
 
 	def _translate(text: str) -> str:
 		return text
@@ -1123,6 +1150,37 @@ def test_enrolment_is_the_opt_in_and_creates_no_spaces(fake: FakeChatAPI) -> Non
 	assert result["created"] == []
 	assert sorted(result["existing"]) == sorted(units)
 	assert len(STORE.table("Chat Room")) == 5
+
+
+def test_both_provisioning_endpoints_refuse_a_caller_without_the_role(fake: FakeChatAPI) -> None:
+	"""Phase 6 §4.G.4. Both of these shipped with **no role gate at all**.
+
+	Any authenticated System User could create `Chat Room` rows and open a
+	`Chat Provisioning Run` — and `dry_run` is a *caller-supplied parameter*, so the default
+	that exists to make the irreversible half deliberate was one query-string value away from
+	being skipped. `org_structure_mirroring_enabled` is not a substitute either: it is a
+	setting somebody turns on **in order to do this work**, so the window where it is on is
+	exactly the window where an ungated endpoint is reachable.
+
+	Asserted here rather than only in the AST scan (`tests/test_chat_endpoint_surface.py`)
+	because the two answer different questions. That one asks *is a role check present in the
+	function body*; this one asks *does a caller without the role actually get refused*. A
+	gate placed after the first write would satisfy the first and fail this.
+	"""
+	frappe = sys.modules["frappe"]
+	original = list(frappe.session_roles)
+	frappe.session_roles = ["Chat User"]  # an ordinary employee
+	try:
+		with pytest.raises(StubPermissionError):
+			pv.enroll_org_units("Department", ["dept-nobody-asked-for"])
+		with pytest.raises(StubPermissionError):
+			pv.start_org_mirror("Department", dry_run=0)
+	finally:
+		frappe.session_roles = original
+
+	assert STORE.table("Chat Room") == {}, "a refused enrolment must leave no room behind"
+	assert STORE.table("Chat Provisioning Run") == {}, "a refused mirror must open no run"
+	assert fake.calls == [], "and neither may reach Google"
 
 
 def test_the_pending_sweep_is_mode_ones_durable_trigger() -> None:

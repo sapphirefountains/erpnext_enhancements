@@ -135,7 +135,7 @@ def bot_credential_status() -> dict[str, Any]:
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def link_bot_credentials() -> dict[str, Any]:
 	"""Push the bot's existing ERPNext API key/secret into Triton, as the bot. Idempotent.
 

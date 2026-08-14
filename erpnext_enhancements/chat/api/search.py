@@ -38,6 +38,7 @@ from frappe.utils import cint
 from erpnext_enhancements.chat import audit, permissions
 from erpnext_enhancements.chat.api._common import (
 	TOMBSTONE_TEXT,
+	audited_room_ranges,
 	dm_counterpart,
 	page_size,
 	require_room,
@@ -142,7 +143,7 @@ def search_messages(
 			purpose="search",
 			actor_type="Admin",
 			query=term,
-			rooms=_audited_rooms(rows),
+			rooms=audited_room_ranges(rows),
 			message_count=len(rows),
 		)
 
@@ -153,28 +154,6 @@ def search_messages(
 		"results": results,
 		"has_more": len(rows) >= size,
 	}
-
-
-def _audited_rooms(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-	"""Collapse the hit list into one audit entry per room, with the seq range actually read.
-
-	``was_participant`` is deliberately **not** set here — it is left for the writer to resolve
-	against live membership, so that the participation answer comes from one place rather than
-	from whichever caller happened to think about it.
-	"""
-	by_room: dict[str, dict[str, Any]] = {}
-	for row in rows:
-		room = row.get("room")
-		if not room:
-			continue
-		seq = cint(row.get("seq"))
-		entry = by_room.setdefault(
-			room, {"room": room, "messages_read": 0, "first_seq": seq, "last_seq": seq}
-		)
-		entry["messages_read"] += 1
-		entry["first_seq"] = min(entry["first_seq"], seq)
-		entry["last_seq"] = max(entry["last_seq"], seq)
-	return list(by_room.values())
 
 
 def _result(row: dict[str, Any], term: str, viewer: str) -> dict[str, Any]:

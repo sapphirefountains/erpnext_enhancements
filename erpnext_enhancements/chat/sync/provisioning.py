@@ -1120,7 +1120,7 @@ def _sync_members(room: str, *, client: Any | None) -> None:
 ORG_MODES: Final[frozenset[str]] = frozenset({"Department", "Team", "Project"})
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def enroll_org_units(mode: str, units: str | Sequence[str], title_field: str = "") -> dict[str, Any]:
 	"""Create ``Chat Room`` rows for named org units. **Zero Google I/O — this is the opt-in.**
 
@@ -1133,7 +1133,17 @@ def enroll_org_units(mode: str, units: str | Sequence[str], title_field: str = "
 	Idempotent: a unit that already has a room is counted as existing and left alone. The
 	room is created with ``provisioning_mode = On First Message`` so that enrolling a
 	hundred departments still creates zero spaces until somebody speaks.
+
+	**System Manager only.** It shipped with no gate at all until Phase 6's §4.G.4 inventory
+	walked the whole whitelist and found it — every other admin action in this package
+	(:func:`~erpnext_enhancements.chat.sync.outbound.retry_relay_job`, the digest rebuild, the
+	bot-credential link) declares ``frappe.only_for``, and the two functions in this file were
+	the ones that did not. The rooms it writes go in with ``ignore_permissions``, so nothing
+	downstream would have refused an ordinary System User; enrolling is cheap and reversible,
+	but it is the *set* :func:`start_org_mirror` then acts on, and that half is neither.
 	"""
+	frappe.only_for("System Manager")
+
 	slice_mode = _checked_mode(mode)
 	names = _as_list(units)
 	created, existing = [], []
@@ -1160,7 +1170,7 @@ def enroll_org_units(mode: str, units: str | Sequence[str], title_field: str = "
 	return {"mode": slice_mode, "created": created, "existing": existing}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def start_org_mirror(mode: str, dry_run: int | bool = 1) -> str:
 	"""Open a :class:`Chat Provisioning Run` over the enrolled rooms of one org slice.
 
@@ -1172,7 +1182,17 @@ def start_org_mirror(mode: str, dry_run: int | bool = 1) -> str:
 	One run is one mode. A row meaning "departments and then teams" could not be resumed
 	without re-deriving where the boundary fell, which is the exact question the cursor
 	exists to answer.
+
+	**System Manager only, and this is the one that made the missing gate matter.** Until
+	Phase 6 found it, any authenticated System User could open a run — and ``dry_run`` is a
+	*caller-supplied* parameter, so the default that exists to make the irreversible half
+	deliberate was one query-string value away from being skipped. The kill switch below is
+	not a substitute: ``org_structure_mirroring_enabled`` is a setting somebody turns on in
+	order to do this work, so the window where it is on is exactly the window where an
+	ungated endpoint is reachable.
 	"""
+	frappe.only_for("System Manager")
+
 	slice_mode = _checked_mode(mode)
 	if not _setting_int("org_structure_mirroring_enabled", 0):
 		frappe.throw(
@@ -1475,7 +1495,7 @@ def resume_provisioning_runs() -> dict[str, Any]:
 # --------------------------------------------------------------------------------------
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_document_room(
 	doctype: str,
 	docname: str,

@@ -38,7 +38,7 @@ Why the filter is applied twice
 --------------------------------------------------------------------------------------
 
 Every statement below constrains rooms **both** by ``room in (<derived set>)`` **and** by
-``permissions.membership_filter_sql(...)``. That is not redundancy for its own sake:
+``permissions.membership_filter_sql(..., allow_oversight=True)``. That is not redundancy for its own sake:
 
 * the derived set is the narrow bound, and it is what makes the candidate scan cheap;
 * the shared fragment is the *same expression* the ``permission_query_conditions`` hooks and
@@ -217,7 +217,7 @@ def _semantic_candidate_rows(
 	rather than an arbitrary slice. An arbitrary slice is the worse failure: retrieval would
 	work perfectly for old conversations and mysteriously not for this morning's.
 	"""
-	scope = permissions.membership_filter_sql(f"{_CHUNK_TABLE}.`room`", _acting_user())
+	scope = permissions.membership_filter_sql(f"{_CHUNK_TABLE}.`room`", _acting_user(), allow_oversight=True)
 	rooms = _room_list_sql(allowed_rooms)
 	rows = frappe.db.sql(
 		f"""
@@ -255,7 +255,7 @@ def _lexical_chunk_order(
 	"""
 	if not expression:
 		return []
-	scope = permissions.membership_filter_sql(f"{_CHUNK_TABLE}.`room`", _acting_user())
+	scope = permissions.membership_filter_sql(f"{_CHUNK_TABLE}.`room`", _acting_user(), allow_oversight=True)
 	rooms = _room_list_sql(allowed_rooms)
 	rows = frappe.db.sql(
 		f"""
@@ -283,7 +283,7 @@ def _chunk_rows(allowed_rooms: frozenset[str], *, names: list[str]) -> list[dict
 	"""
 	if not names:
 		return []
-	scope = permissions.membership_filter_sql(f"{_CHUNK_TABLE}.`room`", _acting_user())
+	scope = permissions.membership_filter_sql(f"{_CHUNK_TABLE}.`room`", _acting_user(), allow_oversight=True)
 	rooms = _room_list_sql(allowed_rooms)
 	placeholders = ", ".join(frappe.db.escape(name) for name in names)
 	rows = frappe.db.sql(
@@ -310,7 +310,7 @@ def _room_digest_rows(allowed_rooms: frozenset[str]) -> list[dict[str, Any]]:
 	only copy of that text, and a summary cannot unsay it. Skipping costs a less complete
 	answer; serving costs the delete.
 	"""
-	scope = permissions.membership_filter_sql(f"{_ROOM_DIGEST_TABLE}.`room`", _acting_user())
+	scope = permissions.membership_filter_sql(f"{_ROOM_DIGEST_TABLE}.`room`", _acting_user(), allow_oversight=True)
 	rooms = _room_list_sql(allowed_rooms)
 	rows = frappe.db.sql(
 		f"""
@@ -333,7 +333,7 @@ def _thread_digest_row(allowed_rooms: frozenset[str], *, thread_root: str) -> di
 	"""The digest for one thread, if it exists and is usable. Rung 4's substitute."""
 	if not thread_root:
 		return None
-	scope = permissions.membership_filter_sql(f"{_THREAD_DIGEST_TABLE}.`room`", _acting_user())
+	scope = permissions.membership_filter_sql(f"{_THREAD_DIGEST_TABLE}.`room`", _acting_user(), allow_oversight=True)
 	rooms = _room_list_sql(allowed_rooms)
 	rows = frappe.db.sql(
 		f"""
@@ -374,7 +374,7 @@ def _thread_messages(
 		# bug, and answering it from the other rooms would hide the bug behind a plausible
 		# answer.
 		return []
-	scope = permissions.membership_filter_sql(f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq")
+	scope = permissions.membership_filter_sql(f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq", allow_oversight=True)
 	rooms = _room_list_sql(allowed_rooms)
 	thread_clause = "and `thread_root` = %(thread_root)s" if thread_root else ""
 	rows = frappe.db.sql(
@@ -414,7 +414,7 @@ def _authored_messages(
 	"""
 	if not expression:
 		return []
-	scope = permissions.membership_filter_sql(f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq")
+	scope = permissions.membership_filter_sql(f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq", allow_oversight=True)
 	rooms = _room_list_sql(allowed_rooms)
 	rows = frappe.db.sql(
 		f"""
@@ -450,7 +450,7 @@ def _room_watermarks(allowed_rooms: frozenset[str], *, room: str) -> tuple[int, 
 	"""
 	if room not in allowed_rooms:
 		return (0, 0, "")
-	scope = permissions.membership_filter_sql(f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq")
+	scope = permissions.membership_filter_sql(f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq", allow_oversight=True)
 	rooms = _room_list_sql(allowed_rooms)
 	rows = frappe.db.sql(
 		f"""

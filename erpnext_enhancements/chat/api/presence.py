@@ -82,7 +82,7 @@ TYPING_EXPIRY_SECONDS = 5
 # --------------------------------------------------------------------------- typing
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def set_typing(room: str, thread: str | None = None, stopped: Any = 0) -> dict[str, Any]:
 	"""Publish a typing indicator to the room's document room. **No database write at all.**
 
@@ -98,7 +98,7 @@ def set_typing(room: str, thread: str | None = None, stopped: Any = 0) -> dict[s
 	relying only on the expiry makes indicators feel laggy, which is the whole reason
 	somebody asked for typing indicators in the first place.
 	"""
-	_user, name = require_room(room)
+	_user, name = require_room(room, intent="write")
 	event = realtime.EVENT_TYPING_STOPPED if cint(stopped) else realtime.EVENT_TYPING
 	payload: dict[str, Any] = {"room": name, "user": frappe.session.user}
 	if (thread or "").strip():
@@ -111,7 +111,7 @@ def set_typing(room: str, thread: str | None = None, stopped: Any = 0) -> dict[s
 # --------------------------------------------------------------------------- presence
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def heartbeat(
 	client_id: str,
 	active_room: str | None = None,
@@ -162,7 +162,7 @@ def heartbeat(
 		# Gated: "which room is this user looking at" is only reportable for a room they can
 		# read. Otherwise the focus record is a way to assert presence in someone else's room,
 		# and the notifier would then suppress that room's notifications on the strength of it.
-		_user, room = require_room(room, user=user)
+		_user, room = require_room(room, user=user, intent="write")
 
 	# The effective values, not the module constants: an operator may have retuned them, and a
 	# client beating on one cadence under a TTL sized for another drops to "absent" between
@@ -199,7 +199,7 @@ def heartbeat(
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def goodbye(client_id: str) -> dict[str, Any]:
 	"""Expire one client's presence early, on ``pagehide``. **An optimisation, not a mechanism.**
 

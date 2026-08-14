@@ -214,7 +214,7 @@ def _linked_document_url(row: Any) -> str | None:
 		return None
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def set_last_open_room(room: str | None = None, thread: str | None = None) -> dict[str, Any]:
 	"""Remember where the caller was, for a cold load on another device (§4.3 tier 3).
 
@@ -233,7 +233,7 @@ def set_last_open_room(room: str | None = None, thread: str | None = None) -> di
 		cache.hdel(_LAST_OPEN_KEY, user)
 		return {"stored": False}
 
-	_user, name = require_room(room, user=user)
+	_user, name = require_room(room, user=user, intent="write")
 
 	gate_key = f"{_LAST_OPEN_THROTTLE_KEY}:{user}"
 	if cache.get_value(gate_key):

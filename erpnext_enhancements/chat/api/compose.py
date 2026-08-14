@@ -78,7 +78,7 @@ def _duplicate_exceptions() -> tuple[type[Exception], ...]:
 	return tuple(classes) or (frappe.ValidationError,)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def send_message(
 	room: str,
 	text: str,
@@ -107,7 +107,7 @@ def send_message(
 		frappe.ValidationError: empty body, oversized body, or a mention/attachment the
 			caller is not entitled to reference.
 	"""
-	user, name = require_room(room)
+	user, name = require_room(room, intent="write")
 	body = (text or "").strip()
 	files = _coerce_list(attachments)
 
@@ -208,7 +208,7 @@ def _dispatch_triton(message: str) -> None:
 			pass
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def edit_message(message: str, text: str) -> dict[str, Any]:
 	"""Edit your own message. Sets ``is_edited`` and lets Phase 2 propagate the change.
 
@@ -244,7 +244,7 @@ def edit_message(message: str, text: str) -> dict[str, Any]:
 	return message_payload(frappe.db.get_value(MESSAGE_DOCTYPE, row["name"], "*", as_dict=True))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_message(message: str) -> dict[str, Any]:
 	"""Tombstone your own message. **Never a row delete.**
 
@@ -286,7 +286,7 @@ def prepare_upload(room: str) -> dict[str, Any]:
 	crosses a mobile connection, and so the "you are allowed to upload into this room"
 	decision is made server-side even though the upload itself is a framework endpoint.
 	"""
-	_user, name = require_room(room)
+	_user, name = require_room(room, intent="write")
 
 	from erpnext_enhancements.chat.sync import attachments as attachments_sync
 

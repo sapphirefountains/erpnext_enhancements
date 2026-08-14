@@ -39,8 +39,10 @@ from erpnext_enhancements.chat import permissions
 from erpnext_enhancements.chat.api._common import (
 	attachment_payload,
 	mention_payload,
+	is_privileged_scope,
 	message_payload,
 	page_size,
+	record_privileged_content_read,
 	require_message,
 	require_room,
 )
@@ -83,8 +85,45 @@ def get_messages(
 	Deleted rows are **returned**, with their body stripped by
 	:func:`_common.message_payload`. A message that silently vanishes reads as a bug, and
 	decision #12 wants the tombstone visible.
+
+	**Records a `Chat Retrieval Audit` row when the caller reached the room through the
+	oversight escape hatch** (invariant I9). A member reading their own room records nothing.
+	See :func:`_page` for why the recording lives at the whitelisted entry point rather than
+	one layer down.
 	"""
-	_user, name = require_room(room)
+	user, name = require_room(room)
+	rows, payload = _page(name, before_seq=before_seq, after_seq=after_seq, limit=limit, thread=thread)
+	privileged = is_privileged_scope(
+		permissions.membership_filter_sql("`m`.`room`", seq_column="`m`.`seq`")
+	)
+	record_privileged_content_read(rows, user=user, privileged=privileged, purpose="transcript")
+	return payload
+
+
+def _page(
+	name: str,
+	*,
+	before_seq: Any = None,
+	after_seq: Any = None,
+	limit: Any = None,
+	thread: str | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+	"""The transcript query, returning the raw rows **and** the client payload.
+
+	Split out from :func:`get_messages` so that :func:`get_thread` — which needs the same
+	page plus its root row — can record **one** audit row covering both rather than two
+	covering half each. §4.D.2 asks for exactly one record per non-participant read, and a
+	call that produces two records is as wrong as one that produces none: it makes the
+	compliance query's counts meaningless in the direction that looks like more diligence.
+
+	The raw rows come back because ``message_payload`` strips deleted bodies and drops
+	columns; the audit record needs the ``seq`` values, which is a question about what was
+	read rather than about what was shown.
+
+	**Deliberately not whitelisted, and the recording is deliberately not in here.** If this
+	took a "should I record?" flag it would be one query parameter away from being the
+	endpoint that reads a transcript without recording it.
+	"""
 	size = page_size(limit)
 	scope = permissions.membership_filter_sql("`m`.`room`", seq_column="`m`.`seq`")
 
@@ -130,7 +169,7 @@ def get_messages(
 	if not (thread or "").strip():
 		_attach_reply_counts(name, messages)
 
-	return {
+	return rows, {
 		"room": name,
 		"thread": (thread or "").strip() or None,
 		"messages": messages,
@@ -155,23 +194,34 @@ def get_thread(root: str, limit: Any = None) -> dict[str, Any]:
 	side renders flat and **the thread structure is ERPNext's alone**. That makes the thread
 	pane a feature with no Google dependency, which is why it works with chat dormant.
 	"""
-	_user, row = require_message(root)
+	user, row = require_message(root)
 	root_name = row["name"]
 	# A reply's own thread_root is the root; asking for a thread by a reply's name should
 	# open the thread it is in rather than an empty one.
 	root_name = (row.get("thread_root") or root_name) or root_name
 
+	scope = permissions.membership_filter_sql("`m`.`room`", seq_column="`m`.`seq`")
 	root_row = frappe.db.sql(
 		f"""select {_MESSAGE_COLUMNS}
 			from `tabChat Message` `m`
-			where `m`.`name` = %(root)s and {permissions.membership_filter_sql("`m`.`room`", seq_column="`m`.`seq`")}""",
+			where `m`.`name` = %(root)s and {scope}""",
 		{"root": root_name},
 		as_dict=True,
 	)
 	if not root_row:
 		frappe.throw(frappe._("That thread is no longer available."), frappe.DoesNotExistError)
 
-	page = get_messages(root_row[0]["room"], thread=root_name, limit=limit)
+	reply_rows, page = _page(root_row[0]["room"], thread=root_name, limit=limit)
+	# One record for the whole thread — root and replies together. Calling `get_messages`
+	# here (as this did) would have recorded the replies and not the root, and would have
+	# done it from inside another endpoint's audit row.
+	record_privileged_content_read(
+		root_row + reply_rows,
+		user=user,
+		privileged=is_privileged_scope(scope),
+		purpose="thread",
+	)
+
 	root_payload = message_payload(root_row[0])
 	_attach_attachments([root_payload])
 	_attach_mentions([root_payload])
@@ -196,7 +246,7 @@ def get_message_context(message: str, limit: Any = None) -> dict[str, Any]:
 	Returns the thread context too, so ``?message=`` on a *reply* opens the thread pane on
 	the right root rather than scrolling the main transcript to a message that is not in it.
 	"""
-	_user, row = require_message(message)
+	user, row = require_message(message)
 	size = page_size(limit)
 	target_seq = cint(row["seq"])
 	thread_root = row.get("thread_root") or None
@@ -233,6 +283,12 @@ def get_message_context(message: str, limit: Any = None) -> dict[str, Any]:
 	)
 
 	older.reverse()
+	record_privileged_content_read(
+		older + newer,
+		user=user,
+		privileged=is_privileged_scope(scope),
+		purpose="message_context",
+	)
 	messages = [message_payload(r) for r in older + newer]
 	_attach_attachments(messages)
 	_attach_mentions(messages)

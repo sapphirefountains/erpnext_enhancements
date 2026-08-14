@@ -37,6 +37,7 @@ one, so the history of the reasoning survives.
 | [0008](0008-global-assets-ship-as-bundles.md) | Global browser assets ship as esbuild bundles, not raw `/assets` paths | Accepted |
 | [0009](0009-erpnext-google-chat-triton.md) | Employee chat is a module in this app, mirrored to Google Chat, with Triton on `@triton` | Accepted |
 | [0009-A1](0009-addendum-1-phase-5-decisions.md) | Addendum: what Phase 5 decided, and where the build diverged from the plan | Accepted |
+| [0009-A2](0009-addendum-2-phase-6-decisions.md) | Addendum: Phase 6 — `Chat Audit Log` reinstated, the gate's two doors, and the governance policy the human answered | Accepted |
 
 0009 carries two appendices linked from the record itself — the widget behaviour inventory and
 the file-by-file implementation plan — and one **addendum**. The addendum is listed above

@@ -7,6 +7,526 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.285.1] - 2026-08-13
+
+CI caught three suites this branch broke and I had not run. The fixes are small; **how they
+were missed is the part worth writing down.**
+
+I verified the previous six releases by running the bench-free chat suites named in `ci.yml`'s
+`python -m unittest` steps — and stopped there. The chat **pytest** steps
+(`test_chat_provisioning`, `test_chat_api_contracts`) were never run. That is the same trap
+`CLAUDE.md` already documents in the other direction: a pytest suite appended to a unittest
+module list collects nothing and passes. Here the list was mine and the omission was the same
+shape. A bulk `unittest discover` run *had* shown failures; I attributed them to the documented
+`frappe`-stub cross-talk without checking each one, and two were real.
+
+Every CI test command now runs locally in one sweep before a push, rather than the subset I
+thought was relevant.
+
+### Fixed
+
+- **`test_chat_provisioning`'s `frappe` stub had no `only_for`**, so v1.283.0's role gate on
+  `enroll_org_units` / `start_org_mirror` turned eight tests into `AttributeError`.
+
+  Stubbed **with teeth rather than as a no-op**: it raises unless the fake session holds the
+  role, and `frappe.session_roles` is a list a test can take a role away from. A stub that
+  swallowed `only_for` would let the suite pass whether the gate is there or not, which is how
+  the gate goes missing again.
+
+- **`test_chat_api_contracts` called `search._audited_rooms`**, which v1.283.3 moved to
+  `_common.audited_room_ranges` once four readers needed it. The assertion is unchanged; only
+  the address moved.
+
+- **`test_every_transcript_path_hydrates_mentions` failed on `get_messages`** because v1.283.3
+  split its query into a private `_page`, and the structural scan was one level deep.
+
+  Fixed in the scan, not by listing the helper. `_called_names` now folds in calls made by
+  same-module private helpers, one level down — because **the property is about the request,
+  not about which function in the file contains the line**. A scan that failed here was
+  demanding a particular factoring rather than a behaviour. One level, not full recursion: a
+  rule nobody can evaluate by reading the function and its helper is a rule that stops being
+  checked by hand.
+
+### Added
+
+- `test_both_provisioning_endpoints_refuse_a_caller_without_the_role` — the behavioural twin of
+  the AST check in `test_chat_endpoint_surface`. They answer different questions: that one asks
+  *is a role check present in the function body*, this one asks *does a caller without the role
+  actually get refused*. **A gate placed after the first write would satisfy the first and fail
+  this.** It also asserts the refusal left no `Chat Room`, no `Chat Provisioning Run` and no
+  Google call behind.
+
+### Notes
+
+- Both scan-widenings were re-verified non-vacuous after the change: deleting the two `only_for`
+  calls fails the new test, and removing the mention hydration from `_page` still fails the
+  transcript scan. Widening a check is the easiest way to quietly disable it.
+
+## [1.285.0] - 2026-08-13
+
+**Build the vault before filling it.** Phase 6 §6 step 5 sequences audit immutability before any
+new writer exists, and this release is that step: the DocType, its four immutability layers and
+their tests, with **nothing writing to it yet**.
+
+### Added
+
+- **`Chat Audit Log`**, reversing ADR 0009's X-1 by explicit amendment
+  (`decisions/adr/0009-addendum-2-phase-6-decisions.md`), approved 2026-08-13. Not an agent
+  deciding the ADR was inconvenient.
+
+  X-1 was right about the principle — *two audit tables is acceptable, two definitions of "a
+  read" is not* — and wrong about the shape. `Chat Retrieval Audit` is read-shaped all the way
+  down: required `accessed_by`/`actor_type`/`purpose`, a child row per *room read* with a `seq`
+  range, and `was_participant` as the field that gives the table its value. A role grant has no
+  room, no range and no participation; stored there it is a row with every load-bearing field
+  null, and the compliance query — *"child rows where `was_participant = 0`"* — stops being one
+  line.
+
+  The two do not overlap, which is the test of whether X-1's principle survived: nothing
+  recorded here returns message content, and nothing that returns message content is recorded
+  here.
+
+  **One rule this table has that its sibling does not: message text must never appear in any
+  field.** A retention run records how many rows it destroyed and over which `seq` range, never
+  what they said. A log of what was deleted that contains what was deleted has not deleted
+  anything — it has moved it somewhere with weaker permissions and called that an audit trail.
+
+- **A conditional `reason` requirement, in the controller rather than the JSON.** The deliberate
+  acts — expanding a tombstone, requesting an export, downloading one — need a reason of at
+  least 12 characters, and are **refused** without one rather than accepted and blanked (G6-10).
+  A `reqd` on the field could not express the condition, and would demand a reason from the
+  retention scheduler too — producing a constant string that teaches everyone the field means
+  nothing.
+
+### Changed
+
+- The three source-level guards now cover the new table: the MCP denylist (set equality against
+  the filesystem, so it had to land in this commit or CI goes red), the zero-DocPerm doctrine's
+  exemption list, and — the one that matters — **layer 3's app-wide scan** for `set_value` /
+  `db_set` / `delete_doc` / raw `UPDATE` against `tabChat Audit Log`. Verified by adding a
+  `frappe.db.set_value` against it in an unrelated module and watching the build go red.
+
+### Notes
+
+- **Nothing writes to this table yet, and that is the point.** §6 step 5 is explicit that
+  immutability comes before any writer, because a vault built around existing rows is a vault
+  built around rows that were unprotected while it was under construction. The writers — the
+  role-grant hook, the audited tombstone expand, the retention run record — come next.
+- **Two holes in layer 2 are named rather than papered over**, both verified against frappe
+  v16.9.0's `delete_doc.py`: `on_trash` fires only when `not for_reload and not
+  ignore_on_trash`, so `frappe.delete_doc(..., ignore_on_trash=True)` and `for_reload=True` each
+  delete a row with the controller never consulted — and `for_reload` suppresses the
+  `Deleted Document` copy too, so the row leaves no trace but the chain break. **An
+  `after_delete` guard does not close this**: it runs after the rows are gone, so throwing there
+  rolls back a delete that already happened rather than preventing one. Layer 3 covers both
+  inside this repo; from `bench console`, another app, or the desk they are open, and layer 4 is
+  what remains.
+- **`chain_hash` is declared and not yet computed.** It gets its own stream, separate from
+  `Chat Retrieval Audit` — one chain per table, because interleaving two writers into one chain
+  makes every concurrent write a fork, which `verify_chain` reports as permanent tampering. The
+  computation lands with the first writer, so the genesis row is signed rather than backfilled.
+
+## [1.284.0] - 2026-08-13
+
+**The gate has exactly two doors, and the employee chat app is no longer one of them.** A
+governance decision, settled with Nikolas on 2026-08-13, not an agent's tidy-up.
+
+### Changed
+
+- **`membership_filter_sql` now takes `allow_oversight`, defaulting to `False`.** Only
+  `chat/retrieval/gate.py` passes `True`. Every other caller — history paging, search, the room
+  list, notification fan-out, read state — scopes to membership for **everybody, auditors
+  included**.
+
+  It used to short-circuit on the caller's *roles*, so an oversight-role holder got the
+  unrestricted `1 = 1` fragment on every query they made, all day, including their own ordinary
+  scrollback. That wrote a `Chat Retrieval Audit` row about a person reading their own
+  conversations, which is noise in the one table whose signal is `was_participant = 0`.
+
+  **The function now agrees with its own Python twin.** `visible_room_names` has never
+  short-circuited for the oversight role, on stated grounds: *"every room in the system is a
+  different query with a different audit obligation, and it must be written where that
+  obligation is visible."* That reasoning was right and this function was doing the opposite,
+  silently, for thirty call sites.
+
+  The parameter is **keyword-only**, so it can never be passed by accident in the `seq_column`
+  position.
+
+- `gate.py`'s nine call sites pass `allow_oversight=True`, preserving its behaviour **exactly**.
+  Splitting `retrieve()` from `retrieve_for_oversight()` — which share those private helpers, so
+  today an auditor's ordinary Triton turn is also unrestricted — belongs with the oversight read
+  path, where `retrieve_for_oversight` gets its first caller and its behaviour can be tested
+  rather than assumed.
+
+### Added
+
+- `TestTheGateHasExactlyTwoDoors` in `tests/test_chat_audit_immutability.py`: a call site
+  outside the gate opening the hatch fails the build, and so does flipping the default. Both
+  verified by doing each and watching CI go red — the default matters more than it looks,
+  because a truthy default restores the old behaviour everywhere at once with no diff at any
+  call site.
+
+### Notes
+
+- **This is what makes §4.D.2's mandatory `reason` implementable rather than aspirational.**
+  A reason can be collected once per oversight session by the surface built for it; there is now
+  nowhere else an oversight read can happen. v1.283.3 shipped the audit rows with `reason` null
+  precisely because the SPA had no way to ask, and the answer turned out to be that the SPA
+  should not have been asking.
+- **The recording added in v1.283.3 stays**, and it is not dead code. It is what fires if a
+  future call site opts in, and the source rule requires any function that branches on the
+  unrestricted scope to record. What changed is that the branch is now never taken from the
+  employee surface — which is a stronger form of I9 than auditing those reads was.
+- **What an auditor loses**: cross-room search from the ordinary chat UI. That is the point.
+  They get it back through the oversight viewer, with a reason attached and a record written.
+
+## [1.283.3] - 2026-08-13
+
+Invariant **I9** — *every non-participant read is audited* — was false. Three endpoints returned
+whole transcripts through the oversight escape hatch and recorded nothing at all.
+
+### Fixed
+
+- **`get_messages`, `get_thread` and `get_message_context` did not import `audit`.** An
+  oversight-role holder — or `Administrator`, who reaches the same branch even with the role
+  field blank — could read any room's full transcript, page by page, with zero audit rows.
+  Decision #12 permits a non-participant read **because** it is recorded; without the record it
+  is just access.
+
+  All three now write a `Chat Retrieval Audit` row, fail-closed: the row is committed before the
+  bodies are returned, and if it cannot be written the read does not happen.
+
+  Recorded **after** the query, never before. Before the query the rooms and `seq` ranges are
+  not known, and "somebody privileged read something" is a far weaker record than "they read
+  these rooms, over these ranges, and were a member of none of them". §4.D.2 asks for the range
+  specifically.
+
+- **The build-failing rule that should have caught this had a blind spot exactly where the
+  reads were.** It keys on the `"1 = 1"` literal — which *is* the unrestricted scope by
+  contract — and `history.py` never writes that literal; it gets the fragment from
+  `membership_filter_sql` and passes it to MariaDB. So the rule was green on three endpoints
+  that returned every message in the company to a privileged caller.
+
+  The rule now also treats **calling the named classifier** as branching on the unrestricted
+  scope. That is strictly stronger than the literal-only form: once a helper exists, a function
+  can ask the privilege question without the keyword appearing anywhere in it, which is the
+  same defect arriving through the front door.
+
+### Added
+
+- `_common.record_privileged_content_read` — the endpoint-facing recorder, and
+  `_common.is_privileged_scope` — the named predicate for "this scope is unrestricted".
+- `_common.audited_room_ranges`, moved out of `search.py` now that four readers need it.
+  "Which rooms did this read touch, over which `seq` range" is one question with one right
+  answer, and `was_participant` is still resolved by the writer rather than by whichever caller
+  thought about it.
+
+### Notes
+
+- **The recorder takes `privileged` as a parameter rather than working it out itself, and that
+  is the opposite of the obvious design.** Deciding it inside the helper would take every
+  endpoint out of the source rule's sight — the exact blind spot described above, rebuilt one
+  layer down. Keeping the branch at the call site costs a line per endpoint and is the only
+  reason the rule can see them. Verified by deleting the recording from `get_messages` and
+  watching CI go red; the first version of this change, which hid the branch in the helper, did
+  **not** go red, which is how the design was found to be wrong.
+- **`get_messages` was split** into a whitelisted wrapper and a private `_page`. `get_thread`
+  needs the same page plus its root row, and calling `get_messages` (as it did) would have
+  recorded the replies and not the root — from inside another endpoint's audit row. One call,
+  one record: two records for one read is as wrong as none, and wrong in the direction that
+  looks like more diligence.
+- **What this does not yet do: `reason`.** §4.D.2 requires a non-trivial, minimum-length reason
+  on every admin read, and these rows are written with none, because the SPA has no way to
+  collect one — §4.D.2 itself says the reason is collected "once per viewer session", and the
+  viewer does not exist yet.
+
+  There is a real design question underneath, and it is for the checkpoint rather than for a
+  commit: **should the employee SPA use the oversight hatch at all?** An auditor is also an
+  ordinary employee, and today their ordinary scrollback silently runs unrestricted and writes
+  an audit row about their own reading. The alternative — the SPA always scopes to membership,
+  and oversight lives only behind the audited viewer — matches §4.B's "the gate has exactly two
+  doors" and would make the reason requirement enforceable rather than aspirational. It is not
+  a change to make quietly.
+
+## [1.283.2] - 2026-08-13
+
+Phase 6 §4.A.3 says the oversight role grants read and nothing else. It did not.
+
+### Fixed
+
+- **The oversight escape hatch granted *write*.** `require_room` — the gate every room-scoped
+  chat endpoint starts with — passed `ptype="read"` for every caller, writers included, and it
+  calls `chat_room_has_permission` **directly** rather than through `frappe.has_permission`. So
+  `Chat Room`'s read-only DocPerm, which that hook's own docstring names as the thing refusing
+  writes "above us", was never consulted on this path. The comment described a guarantee the
+  code beside it did not provide.
+
+  The consequence was not subtle: filling `Chat Settings.admin_oversight_role` would have handed
+  every holder the ability to **post into any conversation in the company**, as themselves —
+  along with marking rooms read, setting typing indicators and preparing uploads. An auditor who
+  can post into the room they are auditing is not an auditor.
+
+  Nothing is exploitable today, because the field ships blank and the hatch fails closed while
+  it is. But the reason to fill it is the oversight viewer, and the viewer is this phase — so
+  this had to land before anything that makes turning it on attractive.
+
+  `require_room` now takes an `intent`. **The two are not stricter shades of one check; they ask
+  different questions.** `read` asks *may this identity see the room*, which the oversight role
+  and `Administrator` may — that is decision #12. `write` asks *is this identity in the room*,
+  which no amount of oversight makes true. Nine call sites now pass `intent="write"`.
+
+  `Administrator` is refused for writes for the same reason `retrieve_for_oversight` already
+  refuses it: a shared login destroys attribution, and "who said this" is the one question a
+  transcript exists to answer.
+
+- **The same `ptype` blindness in all four `has_permission` hooks.** `Chat Room`,
+  `Chat Room Member`, `Chat Message` and `Chat Attachment` each returned `True` for a privileged
+  identity on *every* `ptype`. They now return it only for `read` and `select` — defence in
+  depth for the DocPerm path, and the thing that makes their shared docstring true rather than
+  aspirational.
+
+  `select` is on the list because Frappe asks for it on link-field and query paths, and refusing
+  it would break an oversight surface in the shape of an empty dropdown rather than a permission
+  error. `report` is deliberately **off** it: a report over chat content is the bulk-extraction
+  path the audited viewer exists to replace.
+
+### Added
+
+- `permissions.is_active_member` — a public, thin alias for the membership probe the hooks
+  already use. Deliberately an alias and not a second implementation: two probes that could
+  disagree about who is in a room is exactly the failure centralising the hooks avoided.
+- Two more assertions in `tests/test_chat_endpoint_surface.py`, both derived from the AST, and
+  they run in **both** directions. A mutating endpoint that asks for `read` fails. A reading
+  endpoint that demands `write` also fails — because locking the oversight role out of a read
+  presents as "the auditor cannot open a room", which reads as a bug rather than as an
+  over-tightened gate. Verified by putting `send_message` back on `read` and watching it go red.
+
+### Notes
+
+- **Writing the test found a flaw in the classification, which is the point of writing it.**
+  `prepare_upload` changes nothing, so it is `NON_MUTATING` — but its answer is "you may upload
+  into this room", and letting the oversight role through would return *yes* and then have
+  `send_message` refuse. One question answered two ways is worse than either answer. It is now
+  in `WRITE_GATED_READS`, a named exception list with a reason, because the two axes genuinely
+  come apart: `MUTATING` is about CSRF exposure and drives the POST rule, `intent` is about
+  authorisation and drives `require_room`.
+- **`edit_message` and `delete_message` needed no change** and are worth naming so nobody
+  re-fixes them: both gate on authorship, not membership, and an oversight holder is not the
+  author. Their docstring already said an admin edit is not a feature.
+- The refusal text for a write into a room you are not in is **identical** to "no such room".
+  A distinct message would tell an oversight holder which rooms exist that they are not in —
+  the room-existence oracle the uniform refusal exists to avoid, and a question that belongs on
+  the audited read path.
+
+## [1.283.1] - 2026-08-13
+
+Phase 6 §4.G.6 asks what headers Frappe's private-file route actually sets, and says to settle
+it against the installed source rather than assume. Settling it moved the work: the case the
+section is most worried about is **already defended twice over**, and the real gap is sitting
+next to it.
+
+### Fixed
+
+- **Seven file extensions were served inline from our own origin with a scriptable
+  content type.** Frappe v16 force-downloads exactly four — `.svg`, `.html`, `.htm`, `.xml` —
+  and serves everything else `Content-Disposition: inline`. Frappe's own `develop` branch
+  widened that list to fourteen. The seven in the gap are `.xhtml`, `.svgz`, `.shtml`,
+  `.mhtml`, `.xsl`, `.xslt` and `.swf`.
+
+  A private `evil.xhtml` therefore came back as `application/xhtml+xml`, inline, from the
+  ERPNext origin — stored XSS with the viewer's session cookies attached. **This is not a chat
+  finding**: anyone who can attach a file to anything reaches it, and the SPA renders chat
+  attachments straight off `file_url`, so chat is a consumer rather than the cause.
+
+  `X-Content-Type-Options: nosniff` goes on the same responses. Frappe sets that header nowhere
+  in v16, and it covers the case the extension list structurally cannot: a file whose extension
+  is unremarkable and whose *bytes* are HTML.
+
+  Both live in `monkeypatches.py`, which is where this app already carries framework patches so
+  they survive `bench update`.
+
+### Notes
+
+- **Why not an nginx rule.** `infra/configs/startup_script.sh` runs `bench setup production` on
+  every boot, which regenerates the nginx config from bench's own template — a hand-edited
+  location block is erased at the next reboot. Fifteen lines of Python that survive an update
+  beat infra work that does not survive a restart.
+- **What this deliberately does not fix, and cannot.** *Public* files (`is_private = 0`) never
+  reach Python at all; nginx serves them off disk with `try_files`. No application code can
+  defend them, and nginx's own regex covers only the same four extensions. That is the argument
+  for chat attachments being private without exception, which `chat/api/compose.py` already
+  enforces server-side — recorded here because the reason is easy to lose and the rule looks
+  like belt-and-braces without it.
+- **One nginx trap worth knowing, because it points the wrong way.** `add_header` inheritance is
+  all-or-nothing per level, so the `/private/files/*` location that defines its own header
+  **drops** the server-level `nosniff`, `X-Frame-Options` and HSTS. The responses that most need
+  hardening are the ones that lose it — a second reason to set the header in Python, where it
+  rides on the upstream response nginx forwards.
+- **The already-defended case, stated so nobody re-fixes it.** `.svg` and `.html` are
+  force-downloaded by Frappe *and* by nginx's own regex, on every v16 tag we run. The §4.G.6
+  work there is a regression test, not a change.
+- `tests/test_private_file_serving.py` (bench-free, unittest, its own `ci.yml` step). Nine
+  assertions, verified non-vacuous against three deliberate breaks: an extension trimmed from
+  the list → red; the idempotency guard removed → red (a doubly-wrapped function grows a frame
+  per call for the life of the process); `setdefault` changed to assignment → red, which is the
+  one that matters if a future Frappe sets the header itself. The suite asserts **the patch**,
+  not Frappe: an upstream fix makes it pass trivially rather than fail.
+
+## [1.283.0] - 2026-08-13
+
+Phase 6 §4.G.4–G.5 asked for an inventory of every whitelisted method in the chat package,
+"derived by walking the AST" rather than typed. Walking it found two things.
+
+### Fixed
+
+- **`enroll_org_units` and `start_org_mirror` had no role gate at all** — no `frappe.only_for`,
+  no `require_session`, no role test anywhere in `sync/provisioning.py`. Any authenticated
+  System User could create `Chat Room` rows and open a `Chat Provisioning Run`.
+
+  The second one is why it mattered. `dry_run` defaults to 1, and that default is the whole
+  safety argument for an action that creates Google spaces which appear in every coworker's
+  client and cannot be undone — but `dry_run` is a **caller-supplied parameter**, so the
+  deliberate step was one query-string value away from being skipped. The
+  `org_structure_mirroring_enabled` kill switch is not a substitute either: it is a setting
+  somebody turns on *in order to do this work*, so the window where it is on is exactly the
+  window where an ungated endpoint is reachable.
+
+  Both now call `frappe.only_for("System Manager")`, which is what every other operator action
+  in the package already did — the relay retry, the digest rebuild, the bot-credential link.
+  These two were the ones that did not.
+
+- **42 of 43 chat endpoints declared no `methods=`**, so every state-changer answered GET. A
+  GET that mutates is CSRF-able regardless of token handling and cacheable by intermediaries
+  besides. Nineteen now declare `methods=["POST"]`.
+
+  This costs nothing at the client: `public/js/chat/transport.js` has always sent POST for
+  every call, so the declaration closes the hole for every *other* caller — a link, a
+  prefetch, an `<img src>`, a crawler.
+
+  **Two are deliberately left unconstrained, and both would be bugs to "fix".**
+  `sync.attachments.download` serves bytes to a URL a browser navigates to; POST-only would
+  break every attachment link and right-click Save As, and it would present as "attachments
+  are broken" rather than as a method restriction. `retrieval.api.get_chat_context` is a
+  cross-service contract with Triton, and pinning a method on it from one side is how the
+  contract breaks on a day nobody is deploying chat. A test pins the first of those so nobody
+  tidies it.
+
+### Added
+
+- **`erpnext_enhancements/chat/endpoints.py`** — the HTTP surface as data. Every
+  `@frappe.whitelist()` in the package, classified `MUTATING` or `NON_MUTATING` with a
+  one-line reason, plus `ADMIN_ONLY` naming the five that must hold a role.
+
+  **The set is compared to the AST by equality, so a new endpoint fails the build until
+  somebody classifies it.** That is the property the file exists for; a hardcoded list nothing
+  compares against the source is the same bug as no list, arriving later and with more
+  confidence. The precedent is the chat MCP denylist, checked the same way for the same reason.
+
+  The one judgement call is written down rather than left implicit. `search_messages` writes a
+  `Chat Retrieval Audit` row on a privileged read and is still classified non-mutating, because
+  that write is a **record of the read** rather than an effect a caller wants — forging it
+  against somebody's session accomplishes nothing except making their own snooping more
+  visible. The same reasoning explicitly does *not* extend to `heartbeat`: presence looks
+  incidental, but Phase 4's suppression rules read it, so a forged heartbeat silences
+  somebody's notifications for as long as it is repeated. That one is mutating.
+
+- `tests/test_chat_endpoint_surface.py` (bench-free, unittest, its own `ci.yml` step so no
+  other suite's `frappe` stub is in `sys.modules` — this one imports no frappe at all).
+
+  Ten assertions, each verified non-vacuous against a deliberately broken tree: the `only_for`
+  gate deleted → red; `methods=` deleted from `send_message` → red; an unclassified
+  `@frappe.whitelist()` added → red.
+
+  The role-gate check reads the **function's own body** for `frappe.only_for`. A gate performed
+  by a helper two frames up is invisible to it and reports as ungated — the safe direction,
+  since a false alarm costs one exemption with a reason while the opposite silently blesses
+  the shape the scan exists to catch. It also asserts equality *both* ways, so a gate quietly
+  removed from a listed endpoint fails too; a subset check would miss exactly that.
+
+### Notes
+
+- The guest-endpoint census is part of the same suite: there is **exactly one**
+  (`gchat.webhook.handle`), and the test fails if that changes. Every guest endpoint answers an
+  unauthenticated request, so each needs its own authenticity check and its own row in
+  §4.G.2's curl matrix — the census is what makes a new one impossible to add quietly.
+- Rate limiting is **not** in this release. It needs this classification first, and v16's
+  `frappe.rate_limiter.rate_limit` turns out to be per-**IP** with no per-user mode, which is a
+  design constraint rather than a detail. Next.
+
+## [1.282.3] - 2026-08-13
+
+Phase 6's security hardening pass (§4.G.7) opened by re-reading every place a URL reaches an
+`href`. It found two, and the shape of the pair is the finding: **the path that was checked was
+the new one, and the path that was live was not.**
+
+### Fixed
+
+- **`renderSources()` put model and tool output straight into `a.href` with no scheme check.**
+  This is the legacy sources row in `triton_widget.js` — the path taken whenever a turn has no
+  citation manifest, which is every turn on every site that has not enabled Phase 5 retrieval,
+  and every turn where retrieval returned nothing. So it is not a dormant path; it is the
+  normal one. A `javascript:` URL arriving in a tool result executed on click, on any Desk
+  page, under the reader's own session.
+
+  The manifest-backed row twelve lines below it has called `isSafeUrl` since Phase 3. Reviewing
+  the new renderer and not the one it falls back to is how this survived a checkpoint.
+
+  An unsafe URL now renders as the same chip minus the anchor: still listed, still labelled,
+  still hoverable, no longer clickable. Nothing legitimate loses a link, and the
+  preserved-behaviour guard (`scripts/test_triton_widget_guards.js`) still passes, because it
+  pins the row's rendering rather than the function's bytes.
+
+- **`isSafeUrl` tested prefixes, and a prefix test cannot answer the question it was asked.**
+  `/\evil.example` starts with `/`, does not start with `//`, and every browser resolves it to
+  `http://evil.example/` — a protocol-relative escape straight past the one line written to
+  prevent it. Confirmed against Node's WHATWG parser before the fix, not inferred.
+
+  It now hands the value to the same parser the browser will use, and asks three questions of
+  the result: is the protocol `http:`/`https:`, does it carry userinfo, and — for a relative
+  value — did it stay on our origin. That last one is what a prefix test structurally cannot
+  do, since "did this leave the site" is a fact about the *resolved* URL.
+
+  Two consequences worth stating rather than discovering later. `https://evil.example@sapphirefountains.com/`
+  is now **refused** rather than linked: the host a person reads and the host a browser resolves
+  are not the same one, and nothing legitimate cites a URL carrying credentials. And `mailto:`
+  is **not** on the allowlist — §4.G.7 item 1 asks for that decision explicitly, and an `email`
+  citation's `url` is built by this app as a site-relative path to the ERPNext document, so
+  allowing `mailto:` would widen the allowlist for a case that does not use it.
+
+### Added
+
+- The Phase 6 §4.G.7 hostile-input corpus as executable rows in
+  `scripts/test_chat_citations.mjs` — every disallowed scheme in each of its spellings (case,
+  leading space, embedded tab, encoded NUL), the origin-escape family, the credentials trick,
+  and the legitimate shapes that a stricter check usually breaks.
+
+  **Verified non-vacuous by reverting `isSafeUrl` to its previous implementation and observing
+  two rows go red** — the backslash escape and the credentials trick. The scheme rows passed
+  under the old implementation too; they are committed because "the regex happened to cover
+  it" is not the same as "a test says so".
+
+  The backslash is written `String.fromCharCode(92)` rather than as an escape. The row that
+  matters is the one a reviewer is most likely to mis-read in a diff, and spelling it out
+  removes the chance that a later edit tidies the escaping and silently changes the input.
+
+- `docs/chat-phase6-plan.md` — Phase 6's opening deliverable, and the reason these two fixes
+  exist. It records the twelve places where the phase prompt disagrees with the shipped code
+  (each resolved in the ADR's favour), the thirteen hardening findings, the eleven governance
+  decisions that are not the agent's to make, and what cannot be verified without a bench, a
+  browser, a phone or a second person. A working document: when the decisions are answered its
+  conclusions move into an ADR addendum and the file is deleted.
+
+### Notes
+
+- **Server-side URL validation is still absent**, and §4.G.7 item 1 requires it to be
+  authoritative. Both fixes here are client-side, which is where the sink is — but a client-side
+  allowlist is a rendering decision, not a boundary. The server-authoritative `safe_url` lands
+  with the rest of the hardening pass, together with the export's `transcript.html`, which is
+  the same renderer writing a file that leaves the building.
+- **No Content-Security-Policy exists anywhere in this app**, so there is no second line behind
+  either fix. Recorded here because it is the reason these two were worth their own release
+  rather than being folded into a larger Phase 6 change.
+
 ## [1.282.2] - 2026-08-13
 
 ### Fixed

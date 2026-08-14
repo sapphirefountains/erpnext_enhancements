@@ -41,8 +41,31 @@ from pathlib import Path
 
 APP_DIR: Path = Path(__file__).resolve().parents[1]
 
+#: The named predicate for "this scope is unrestricted". Calling it counts as branching on the
+#: unrestricted scope, exactly as comparing to the literal does — otherwise the helper would be
+#: a way to ask the privilege question with the rule's keyword nowhere in sight.
+_CLASSIFIER: str = "is_privileged_scope"
+
+#: What counts as recording. ``record_privileged_content_read`` is the endpoint-facing wrapper:
+#: it is a no-op for an ordinary member and calls ``record_or_refuse`` for a privileged one, so
+#: a function that calls it has discharged the obligation.
+_RECORDING_CALLS: frozenset[str] = frozenset(
+	{"record_or_refuse", "record_privileged_read", "record_privileged_content_read"}
+)
+
+#: The single exemption, by function name, and it is the classifier itself. Its whole body is
+#: the comparison and it returns a bool — there is no content for it to record, and requiring
+#: an audit row from a predicate would mean writing one every time somebody *asks* whether a
+#: read is privileged rather than every time one happens.
+#:
+#: Keep this at one entry. A second name here is the moment this rule starts describing an
+#: aspiration instead of a property.
+_SCOPE_RULE_EXEMPT: frozenset[str] = frozenset({_CLASSIFIER})
+
 #: The audit tables, as they appear in SQL and as DocType names.
-AUDIT_DOCTYPES: frozenset[str] = frozenset({"Chat Retrieval Audit", "Chat Retrieval Audit Room"})
+AUDIT_DOCTYPES: frozenset[str] = frozenset(
+	{"Chat Audit Log", "Chat Retrieval Audit", "Chat Retrieval Audit Room"}
+)
 AUDIT_TABLES: frozenset[str] = frozenset({f"tab{name}" for name in AUDIT_DOCTYPES})
 
 #: The one module allowed to write these rows, and the controller that guards them. Any other
@@ -260,6 +283,14 @@ class TestThePrivilegedReadIsRecordedAtTheEndpoint(unittest.TestCase):
 		Keyed on the ``"1 = 1"`` comparison, because that literal IS the unrestricted scope -
 		``membership_filter_sql`` returns it by contract and spells denial ``"1 = 0"`` so that
 		neither can be produced by accident.
+
+		**Calling the named classifier counts as branching on it.** Once
+		``_common.is_privileged_scope`` existed, a function could ask the privilege question
+		without the literal appearing anywhere in it - which is precisely the shape this rule
+		exists to catch, arriving through the front door. Widening it here is strictly
+		stronger than the literal-only form, and it is why the classifier itself is the one
+		exemption: its whole body IS the comparison, and it returns a bool rather than
+		content, so there is nothing for it to record.
 		"""
 		offenders: list[str] = []
 		chat_files = [p for p in _python_files() if p.parts[len(APP_DIR.parts)] == "chat"]
@@ -281,7 +312,12 @@ class TestThePrivilegedReadIsRecordedAtTheEndpoint(unittest.TestCase):
 				# not write (it runs inside the permission stack), and which matched the first
 				# version of this rule. Restricting to the chat package likewise stops an
 				# unrelated `1 = 1` in a SQL builder elsewhere in the app reading as a defect.
-				consumes = any(
+				calls = {
+					_dotted(c.func).rsplit(".", 1)[-1]
+					for c in ast.walk(node)
+					if isinstance(c, ast.Call)
+				}
+				compares = any(
 					isinstance(cmp_node, ast.Compare)
 					and any(
 						isinstance(c, ast.Constant) and c.value == "1 = 1"
@@ -289,14 +325,10 @@ class TestThePrivilegedReadIsRecordedAtTheEndpoint(unittest.TestCase):
 					)
 					for cmp_node in ast.walk(node)
 				)
-				if not consumes:
+				consumes = compares or _CLASSIFIER in calls
+				if not consumes or node.name in _SCOPE_RULE_EXEMPT:
 					continue
-				calls = {
-					_dotted(c.func).rsplit(".", 1)[-1]
-					for c in ast.walk(node)
-					if isinstance(c, ast.Call)
-				}
-				if not calls & {"record_or_refuse", "record_privileged_read"}:
+				if not calls & _RECORDING_CALLS:
 					offenders.append(f"{_rel(path)}:{node.lineno} {node.name}()")
 
 		self.assertFalse(
@@ -418,6 +450,83 @@ class TestTheGuardIsNotVacuous(unittest.TestCase):
 			if set(_TAB_REF.findall(t)) & AUDIT_TABLES and _WRITING_SQL.search(t)
 		]
 		self.assertEqual(benign, [], "a plain SELECT is being reported as a write.")
+
+
+class TestTheGateHasExactlyTwoDoors(unittest.TestCase):
+	"""The oversight escape hatch is opt-in per call site, and only one module opts in.
+
+	§4.B states it as *"the gate has exactly two doors"*. Stated from the other end: the
+	employee-facing surface scopes to membership for **everybody**, auditors included, and an
+	oversight read happens through the surface built for it — which is also the only place a
+	mandatory ``reason`` can be collected, and therefore the only place §4.D.2 can be true
+	rather than aspirational.
+
+	Settled with the human 2026-08-13. Before it, ``membership_filter_sql`` short-circuited on
+	the caller's *roles*, so an auditor's ordinary scrollback ran unrestricted and wrote an
+	audit row about their own reading — while its Python twin ``visible_room_names`` had
+	always refused to do that, on exactly the grounds the decision adopted.
+	"""
+
+	#: The one module permitted to open the hatch. ``retrieve_for_oversight`` is the oversight
+	#: door; ``retrieve`` shares the same private query helpers, and splitting those two is the
+	#: oversight-read-path work rather than this rule's business.
+	OVERSIGHT_DOOR = "chat/retrieval/gate.py"
+
+	def test_only_the_gate_opts_into_the_oversight_hatch(self) -> None:
+		offenders: list[str] = []
+		chat_files = [p for p in _python_files() if p.parts[len(APP_DIR.parts)] == "chat"]
+		self.assertGreater(len(chat_files), 20, "the chat package scan found almost nothing.")
+
+		for path in chat_files:
+			if _rel(path) == self.OVERSIGHT_DOOR:
+				continue
+			try:
+				tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+			except SyntaxError:  # pragma: no cover
+				continue
+			for node in ast.walk(tree):
+				if not isinstance(node, ast.Call):
+					continue
+				if _dotted(node.func).rsplit(".", 1)[-1] != "membership_filter_sql":
+					continue
+				for keyword in node.keywords:
+					if keyword.arg == "allow_oversight" and getattr(keyword.value, "value", False):
+						offenders.append(f"{_rel(path)}:{node.lineno}")
+
+		self.assertFalse(
+			sorted(set(offenders)),
+			"these call sites open the oversight hatch outside the gate:\n  "
+			+ "\n  ".join(sorted(set(offenders)))
+			+ f"\n\nOnly {self.OVERSIGHT_DOOR} may. Everywhere else — the SPA's history, search, "
+			"room list, notification fan-out — scopes to membership for everybody, auditors "
+			"included. An oversight read goes through the audited viewer, which is the only "
+			"surface that can collect the reason §4.D.2 requires.",
+		)
+
+	def test_the_hatch_is_shut_by_default(self) -> None:
+		"""The parameter's default is the whole protection; a truthy default undoes the rule."""
+		source = (APP_DIR / "chat" / "permissions.py").read_text(encoding="utf-8")
+		tree = ast.parse(source)
+		for node in ast.walk(tree):
+			if isinstance(node, ast.FunctionDef) and node.name == "membership_filter_sql":
+				defaults = {
+					kw.arg: getattr(default, "value", None)
+					for kw, default in zip(node.args.kwonlyargs, node.args.kw_defaults, strict=False)
+				}
+				self.assertIn(
+					"allow_oversight",
+					defaults,
+					"allow_oversight must stay KEYWORD-ONLY, so it cannot be passed by accident "
+					"in the seq_column position",
+				)
+				self.assertIs(
+					defaults["allow_oversight"],
+					False,
+					"allow_oversight must default to False — fail closed. A truthy default "
+					"restores the behaviour where every caller silently got the hatch.",
+				)
+				return
+		self.fail("membership_filter_sql not found in chat/permissions.py")
 
 
 if __name__ == "__main__":  # pragma: no cover

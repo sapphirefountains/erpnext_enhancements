@@ -1416,10 +1416,19 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		if (live.thinkingTimer) live.thinkingTimer.textContent = "";
 	}
 
-	// UNCHANGED from before Phase 3, deliberately and byte for byte. This is the path taken
-	// whenever there is no citation manifest — which is every site until Phase 5 emits one,
-	// and every turn where the retrieval produced nothing. Decision #7's "preserve exactly"
-	// still governs it.
+	// UNCHANGED from before Phase 3 apart from the `isSafeUrl` gate below. This is the path
+	// taken whenever there is no citation manifest — which is every site until Phase 5 emits
+	// one, and every turn where the retrieval produced nothing. Decision #7's "preserve
+	// exactly" still governs everything else about it.
+	//
+	// **The gate is the one deliberate deviation, and it is a security fix rather than a
+	// change of behaviour.** `s.url` is model and tool output; this function put it straight
+	// into an `href`, so a `javascript:` URL in a tool result executed on click, on every Desk
+	// page, under the reader's session. The manifest-backed row twelve lines below has always
+	// called `isSafeUrl` — the checked path was the new one and the unchecked one was the live
+	// one, which is the shape this class of bug usually has. An unsafe URL now renders as the
+	// same chip without the anchor: the source is still listed, still labelled, still
+	// hoverable, and no longer clickable. Nothing legitimate loses a link.
 	function renderSources(container, sources) {
 		if (!sources || !sources.length) return;
 		const box = document.createElement("div");
@@ -1427,7 +1436,7 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		sources.forEach((s) => {
 			const label = s.label || s.title || s.url || "source";
 			let a;
-			if (s.url) {
+			if (s.url && isSafeUrl(s.url)) {
 				a = document.createElement("a");
 				a.href = s.url;
 				a.target = "_blank";

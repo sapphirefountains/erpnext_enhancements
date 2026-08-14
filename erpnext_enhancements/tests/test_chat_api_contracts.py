@@ -320,11 +320,15 @@ def test_the_canonical_form_is_stable_against_key_order() -> None:
 	assert " " not in audit._canonical({"a": 1, "b": 2})
 
 
-def test_search_collapses_its_hits_into_one_audit_entry_per_room() -> None:
+def test_a_read_collapses_its_hits_into_one_audit_entry_per_room() -> None:
 	"""The audit records the seq RANGE read per room, not one entry per message.
 
 	"They looked at that room once" is not a useful audit record; "they read seq 4 through 91
 	of a room they were not in" is.
+
+	Lives in ``_common`` rather than in ``search`` since v1.283.3, because four readers need it
+	— search and the three history paths — and *"which rooms did this read touch, over which
+	range"* is one question with one right answer.
 	"""
 	rows = [
 		{"room": "R1", "seq": 9},
@@ -332,7 +336,7 @@ def test_search_collapses_its_hits_into_one_audit_entry_per_room() -> None:
 		{"room": "R2", "seq": 30},
 		{"room": "R1", "seq": 7},
 	]
-	entries = {e["room"]: e for e in search._audited_rooms(rows)}
+	entries = {e["room"]: e for e in _common.audited_room_ranges(rows)}
 	assert set(entries) == {"R1", "R2"}
 	assert entries["R1"]["messages_read"] == 3
 	assert entries["R1"]["first_seq"] == 4
@@ -947,7 +951,7 @@ def _module_source(module: Any) -> str:
 	return pathlib.Path(module.__file__).read_text(encoding="utf-8")
 
 
-def _called_names(module: Any, function: str | None = None) -> set[str]:
+def _called_names(module: Any, function: str | None = None, *, follow_local: bool = True) -> set[str]:
 	"""Every dotted callee name actually invoked — in the module, or in one function of it.
 
 	Deliberately AST rather than text: these modules explain their own rules at length in
@@ -957,15 +961,45 @@ def _called_names(module: Any, function: str | None = None) -> set[str]:
 	``function`` narrows it, which matters for a helper that several paths must ALL use:
 	module-wide presence is satisfied by one surviving caller, so "the group path stopped
 	creating member rows" reads as fine while it is not.
+
+	``follow_local`` folds in the calls made by same-module private helpers the function calls,
+	one level deep. **The property these tests assert is about the request**, not about which
+	function in the file happens to contain the line: ``get_messages`` delegating its query to a
+	private ``_page`` still hydrates mentions, and a scan that reported otherwise would be
+	demanding a particular factoring rather than a behaviour. One level, not full recursion,
+	because a rule nobody can evaluate by reading the function and its helper is a rule that
+	stops being checked by hand.
 	"""
-	tree: Any = ast.parse(_module_source(module))
+	source = _module_source(module)
+	module_tree = ast.parse(source)
+
+	tree: Any = module_tree
 	if function:
 		tree = None
-		for node in ast.walk(ast.parse(_module_source(module))):
+		for node in ast.walk(module_tree):
 			if isinstance(node, ast.FunctionDef) and node.name == function:
 				tree = node
 		assert tree is not None, f"{module.__name__} has no function named {function}"
 
+		if follow_local:
+			local_defs = {
+				node.name: node
+				for node in ast.walk(module_tree)
+				if isinstance(node, ast.FunctionDef) and node.name.startswith("_")
+			}
+			direct = _direct_call_names(tree)
+			extra = {
+				name
+				for helper in direct & set(local_defs)
+				for name in _direct_call_names(local_defs[helper])
+			}
+			return direct | extra
+
+	return _direct_call_names(tree)
+
+
+def _direct_call_names(tree: Any) -> set[str]:
+	"""Dotted callee names invoked directly inside one AST subtree."""
 	names: set[str] = set()
 	for node in ast.walk(tree):
 		if not isinstance(node, ast.Call):
