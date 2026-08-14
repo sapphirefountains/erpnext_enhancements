@@ -93,6 +93,7 @@
   "inbound_event_retention_days",
   "relay_job_retention_days",
   "admin_oversight_role",
+  "transparency_view_enabled",
   "triton_section",
   "context_token_ceiling",
   "budget_t0_stable",
@@ -720,6 +721,13 @@
    "fieldtype": "Link",
    "label": "Admin Oversight Role",
    "options": "Role"
+  },
+  {
+   "fieldname": "transparency_view_enabled",
+   "fieldtype": "Check",
+   "label": "Show Employees Who Read Their Messages",
+   "default": "0",
+   "description": "Decision D-1: built, and shipped OFF. Turning it on lets an employee see which non-participant reads touched their rooms — the admin NAMED (D-2) and the reason shown as a CATEGORY, never the free text (D-3). Enabling it is a rollout step, not a build decision. Note this is a Single: a `default` on a new field never reaches the row that already exists, so on every existing site this reads as unset, which is the same as off. That is why it needs no backfill patch."
   },
   {
    "fieldname": "triton_section",

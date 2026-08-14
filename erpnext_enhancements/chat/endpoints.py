@@ -100,6 +100,21 @@ MUTATING: Final[dict[str, str]] = {
 #: getter" is not one — the entries that matter are the four that write something and are
 #: nonetheless classified here.
 NON_MUTATING: Final[dict[str, str]] = {
+	f"{DOTTED_ROOT}.governance.viewer.search": (
+		"the oversight read. Writes a Chat Retrieval Audit row, which is a record OF the read "
+		"rather than an effect the caller wants — the same reasoning search_messages carries. "
+		"POST despite being a read: it carries the REASON in its body, and a reason in a query "
+		"string lands in the access log, the browser history and the next Referer header"
+	),
+	f"{DOTTED_ROOT}.governance.viewer.access_log": (
+		"reads the unified access report. Reading the record of reads is not itself a read of "
+		"chat content, and recording it would put the auditor's own review into the log they "
+		"are reviewing. POST so its filters are not logged alongside somebody's name"
+	),
+	f"{DOTTED_ROOT}.governance.viewer.my_access_log": (
+		"the employee's own 'who read my messages' view (D-1). Answers only for the caller, "
+		"every row redacted, and refuses unless the transparency setting is on"
+	),
 	f"{DOTTED_ROOT}.api.compose.prepare_upload": (
 		"returns the size and count limits the composer enforces; the upload itself goes to "
 		"Frappe's own upload_file"

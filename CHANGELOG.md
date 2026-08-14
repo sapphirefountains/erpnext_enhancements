@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.289.3] - 2026-08-14
+
+**Phase 6 §4.B — the oversight viewer, and the release where the reason gate stops being
+advisory.** v1.288.6 built `reason_quality()` and deliberately did not enforce it: refusing a
+read for a bad reason belongs with the surface that can *ask* for a good one, and enforcing
+it earlier would have failed `Administrator`'s live privileged reads, which have no field to
+type a reason into. This is that surface, so this is where it is enforced.
+
+### Added
+
+- **`chat/governance/viewer.py`** — three POST-only endpoints. `search` is the first caller
+  `retrieve_for_oversight()` has ever had; `access_log` reads the unified report;
+  `my_access_log` is the employee's own view.
+
+  **G6-10: a bad reason is refused, not accepted and blanked.** The grade comes from the same
+  function the compliance report grades by — two thresholds would admit reads at the door
+  that the report then marks non-compliant, which reads as tampering rather than as two
+  components disagreeing. The role is checked before the reason (cheapest refusal first, and
+  it avoids telling a stranger which reasons are valid), and the reason before the read.
+
+  **POST-only, including the reads.** They are classified non-mutating — the audit row is a
+  record *of* the read rather than an effect the caller wants, the same reasoning
+  `search_messages` carries. They are still POST because each carries a **reason** in its
+  body, and a reason in a query string lands in the access log, the browser history and the
+  `Referer` header of whatever the auditor clicks next.
+
+- **`www/chat_admin.py` + `chat_admin.html`** — a separate page, never a mode of the chat
+  SPA. They share no template, no bundle and no socket: `chat/permissions.py` records that
+  the gate has exactly two doors and the employee app is not one, and teaching the SPA an
+  "oversight mode" is the fastest way to make it a third.
+
+  **No socket at all, and that is G6-6 rather than a simplification.** A realtime
+  subscription to a room the auditor is not in is a read this module cannot audit — the row
+  is written when the transcript is fetched, and a live event arriving afterwards was never
+  asked for. The controller also reads no chat content during render: a transcript preloaded
+  "for convenience" would be an unaudited read on page load, and the most frequent one.
+
+- **`Chat Settings.transparency_view_enabled`** (D-1) — built, shipped **off**. On a Single a
+  `default` never reaches the row that already exists, so it reads unset on every existing
+  site, which is the same as off. That is exactly what D-1 asks for, which is why this field
+  is the rare new Single field that needs **no backfill patch** — the trap is a controller
+  that *rejects* the unset value, and this one is read as a boolean.
+
+- **`tests/test_chat_oversight_viewer.py`** — 19 assertions, its own CI step.
+
+### Notes
+
+- **Three text scans in this change flagged prose rather than code**, each one the sentence
+  explaining why a thing is absent — `publish_realtime` in a docstring saying it is not
+  called, `innerHTML` in a comment saying `textContent` is used instead. All three now walk
+  the AST or strip comments first. A guard that cannot tell an explanation from a call is
+  satisfied by deleting the explanation, which is the wrong direction.
+- Reading the trail is deliberately **not** recorded as a privileged read — it reads no chat
+  content, and recording it would put the auditor's own review into the log they are
+  reviewing.
+
 ## [1.289.2] - 2026-08-14
 
 **The auditor can now read the trail, and knows what to say about why.** Two halves of
