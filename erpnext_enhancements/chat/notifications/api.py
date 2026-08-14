@@ -116,7 +116,7 @@ def read_from_notification(room: str, message: str | None = None) -> dict[str, A
 	opening the conversation, not one line of it, and leaving the rest unread would put them
 	straight back into an unread badge for messages they are about to look at.
 	"""
-	user, name = require_room(room)
+	user, name = require_room(room, intent="write")
 
 	from erpnext_enhancements.chat.notifications import read_state
 

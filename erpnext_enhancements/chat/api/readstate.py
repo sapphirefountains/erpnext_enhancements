@@ -49,7 +49,7 @@ def mark_read(room: str, up_to_seq: Any) -> dict[str, Any]:
 	when another tab of the same user got there first. The client keeps its own monotonic
 	value and takes the max, so a slow tab's stale flush cannot pull the UI backwards either.
 	"""
-	user, name = require_room(room)
+	user, name = require_room(room, intent="write")
 	target = cint(up_to_seq)
 	if target < 1:
 		return {"room": name, "last_read_seq": _current_mark(name, user), "changed": False}

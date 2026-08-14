@@ -141,6 +141,19 @@ NON_MUTATING: Final[dict[str, str]] = {
 }
 
 
+#: Endpoints that read, and must nonetheless assert **membership** rather than the weaker
+#: "may see the room". Two axes come apart here and the file is clearer for saying so:
+#: ``MUTATING`` is about CSRF exposure and drives the POST rule; ``intent="write"`` is about
+#: authorisation and drives ``require_room``. Almost everything that needs one needs the other,
+#: and this dict is the exception list for the cases that do not.
+WRITE_GATED_READS: Final[dict[str, str]] = {
+	f"{DOTTED_ROOT}.api.compose.prepare_upload": (
+		"changes nothing, but its answer is 'you may upload into this room'. Letting the "
+		"oversight role through would return yes and then have send_message refuse — one "
+		"question answered two ways, which is worse than either answer"
+	),
+}
+
 #: Endpoints whose caller must hold a role, not merely a session. Each must call
 #: ``frappe.only_for`` in its own body — asserted from the AST, because a gate that lives in a
 #: caller is a gate the next caller forgets.
@@ -189,6 +202,52 @@ def gated_by_only_for(package: pathlib.Path | None = None) -> set[str]:
 					gated.add(f"{module}.{node.name}")
 					break
 	return gated
+
+
+def require_room_intents(package: pathlib.Path | None = None) -> dict[str, set[str]]:
+	"""For each whitelisted function, the ``intent=`` values it passes to ``require_room``.
+
+	A function that never calls ``require_room`` is absent from the mapping; one that calls it
+	without an ``intent`` keyword records ``"read"``, which is the parameter's default and
+	therefore what the code actually does.
+
+	This exists because ``require_room``'s two intents ask genuinely different questions —
+	``read`` is "may this identity *see* the room", which the oversight role may; ``write`` is
+	"is this identity *in* the room", which no amount of oversight makes true. The distinction
+	is only load-bearing if every mutating endpoint actually asks the second one, and the only
+	way to know that without a bench is to read the call.
+	"""
+	root = package or CHAT_PACKAGE
+	intents: dict[str, set[str]] = {}
+
+	for path in sorted(root.rglob("*.py")):
+		try:
+			tree = ast.parse(path.read_text(encoding="utf-8"))
+		except (SyntaxError, UnicodeDecodeError):
+			continue
+
+		module = _dotted_module(path, root)
+		for node in ast.walk(tree):
+			if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+				continue
+			if not any(_is_whitelist(dec) for dec in node.decorator_list):
+				continue
+
+			for inner in ast.walk(node):
+				if not isinstance(inner, ast.Call):
+					continue
+				func = inner.func
+				name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+				if name != "require_room":
+					continue
+
+				intent = "read"
+				for keyword in inner.keywords:
+					if keyword.arg == "intent":
+						intent = str(getattr(keyword.value, "value", "")) or "read"
+				intents.setdefault(f"{module}.{node.name}", set()).add(intent)
+
+	return intents
 
 
 def discover(package: pathlib.Path | None = None) -> dict[str, Endpoint]:

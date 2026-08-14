@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.283.2] - 2026-08-13
+
+Phase 6 §4.A.3 says the oversight role grants read and nothing else. It did not.
+
+### Fixed
+
+- **The oversight escape hatch granted *write*.** `require_room` — the gate every room-scoped
+  chat endpoint starts with — passed `ptype="read"` for every caller, writers included, and it
+  calls `chat_room_has_permission` **directly** rather than through `frappe.has_permission`. So
+  `Chat Room`'s read-only DocPerm, which that hook's own docstring names as the thing refusing
+  writes "above us", was never consulted on this path. The comment described a guarantee the
+  code beside it did not provide.
+
+  The consequence was not subtle: filling `Chat Settings.admin_oversight_role` would have handed
+  every holder the ability to **post into any conversation in the company**, as themselves —
+  along with marking rooms read, setting typing indicators and preparing uploads. An auditor who
+  can post into the room they are auditing is not an auditor.
+
+  Nothing is exploitable today, because the field ships blank and the hatch fails closed while
+  it is. But the reason to fill it is the oversight viewer, and the viewer is this phase — so
+  this had to land before anything that makes turning it on attractive.
+
+  `require_room` now takes an `intent`. **The two are not stricter shades of one check; they ask
+  different questions.** `read` asks *may this identity see the room*, which the oversight role
+  and `Administrator` may — that is decision #12. `write` asks *is this identity in the room*,
+  which no amount of oversight makes true. Nine call sites now pass `intent="write"`.
+
+  `Administrator` is refused for writes for the same reason `retrieve_for_oversight` already
+  refuses it: a shared login destroys attribution, and "who said this" is the one question a
+  transcript exists to answer.
+
+- **The same `ptype` blindness in all four `has_permission` hooks.** `Chat Room`,
+  `Chat Room Member`, `Chat Message` and `Chat Attachment` each returned `True` for a privileged
+  identity on *every* `ptype`. They now return it only for `read` and `select` — defence in
+  depth for the DocPerm path, and the thing that makes their shared docstring true rather than
+  aspirational.
+
+  `select` is on the list because Frappe asks for it on link-field and query paths, and refusing
+  it would break an oversight surface in the shape of an empty dropdown rather than a permission
+  error. `report` is deliberately **off** it: a report over chat content is the bulk-extraction
+  path the audited viewer exists to replace.
+
+### Added
+
+- `permissions.is_active_member` — a public, thin alias for the membership probe the hooks
+  already use. Deliberately an alias and not a second implementation: two probes that could
+  disagree about who is in a room is exactly the failure centralising the hooks avoided.
+- Two more assertions in `tests/test_chat_endpoint_surface.py`, both derived from the AST, and
+  they run in **both** directions. A mutating endpoint that asks for `read` fails. A reading
+  endpoint that demands `write` also fails — because locking the oversight role out of a read
+  presents as "the auditor cannot open a room", which reads as a bug rather than as an
+  over-tightened gate. Verified by putting `send_message` back on `read` and watching it go red.
+
+### Notes
+
+- **Writing the test found a flaw in the classification, which is the point of writing it.**
+  `prepare_upload` changes nothing, so it is `NON_MUTATING` — but its answer is "you may upload
+  into this room", and letting the oversight role through would return *yes* and then have
+  `send_message` refuse. One question answered two ways is worse than either answer. It is now
+  in `WRITE_GATED_READS`, a named exception list with a reason, because the two axes genuinely
+  come apart: `MUTATING` is about CSRF exposure and drives the POST rule, `intent` is about
+  authorisation and drives `require_room`.
+- **`edit_message` and `delete_message` needed no change** and are worth naming so nobody
+  re-fixes them: both gate on authorship, not membership, and an oversight holder is not the
+  author. Their docstring already said an admin edit is not a feature.
+- The refusal text for a write into a room you are not in is **identical** to "no such room".
+  A distinct message would tell an oversight holder which rooms exist that they are not in —
+  the room-existence oracle the uniform refusal exists to avoid, and a question that belongs on
+  the audited read path.
+
 ## [1.283.1] - 2026-08-13
 
 Phase 6 §4.G.6 asks what headers Frappe's private-file route actually sets, and says to settle

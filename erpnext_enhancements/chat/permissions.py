@@ -130,7 +130,7 @@ Indentation is tabs, per ``CLAUDE.md`` and the Frappe convention this package fo
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Final
 
 import frappe
 from frappe.utils import cint
@@ -163,6 +163,25 @@ def _resolve_user(user: str | None) -> str:
 def _is_scopable(user: str) -> bool:
 	"""Whether membership scoping is even a coherent question for this identity."""
 	return user not in _NEVER_A_MEMBER
+
+
+#: The ``ptype`` values the oversight escape hatch may answer for. Decision #12 buys a
+#: **read** of conversations you are not in; it buys nothing else.
+#:
+#: ``select`` is here alongside ``read`` because Frappe asks for it on link-field and query
+#: paths, and refusing it would break an oversight surface in the shape of an empty dropdown
+#: rather than a permission error. ``report`` is **not**: a report over chat content is the
+#: bulk-extraction path the audited viewer exists to replace.
+#:
+#: ``None`` is treated as ``read``, because Frappe calls ``has_permission`` with no ``ptype``
+#: on several paths and the historical behaviour of this hook was to allow them. Widening the
+#: default to "any operation" is the mistake this constant exists to prevent.
+_PRIVILEGED_PTYPES: Final[frozenset[str]] = frozenset({"read", "select"})
+
+
+def _is_read_ptype(ptype: str | None) -> bool:
+	"""Whether ``ptype`` is one the escape hatch may answer for. ``None`` means ``read``."""
+	return (ptype or "read").strip().lower() in _PRIVILEGED_PTYPES
 
 
 def _docname(doc: Any) -> str:
@@ -371,6 +390,22 @@ def _is_active_member(room: str, user: str) -> bool:
 		return False
 
 
+def is_active_member(room: str, user: str) -> bool:
+	"""Public: is this identity **in** this room. Membership only, no escape hatch.
+
+	The read gates in this module all answer "may this identity see the room", which the
+	oversight role and ``Administrator`` may — that is decision #12. This answers the other
+	question, the one no amount of oversight makes true, and it exists because
+	:func:`chat.api._common.require_room` needs to distinguish them for writes.
+
+	Deliberately a thin public alias rather than a second implementation. The private probe
+	is called from inside the permission hooks and this is called from the HTTP gate; two
+	probes that could disagree about who is in a room is exactly the failure the hooks were
+	centralised to avoid.
+	"""
+	return _is_active_member(room, user)
+
+
 def _may_read_message(room: str, seq: int, user: str) -> bool:
 	"""One message. The Python twin of :func:`_message_scope_sql`, and it must stay one.
 
@@ -497,16 +532,29 @@ def chat_room_has_permission(doc: Any, ptype: str | None = None, user: str | Non
 	decides operations. ``Chat Room``'s DocPerm grants ``read`` and nothing else, so a
 	write attempt is already refused above us — but if a future commit widens it, the
 	membership scope should still hold rather than having to be remembered.
+
+	**The privileged branches are ``read``-only, and that sentence above is why it had to
+	be made explicit.** "Already refused above us" is true of the DocPerm stack and false of
+	any caller that reaches this function directly, which
+	:func:`chat.api._common.require_room` did for every write endpoint in the package. The
+	comment described a guarantee that the code next to it did not provide. Now the escape
+	hatch answers the question it was built for — *may this identity see the room* — and
+	nothing else; §4.A.3's "read and nothing else" is a property of this function rather
+	than of a DocPerm somebody might widen.
+
+	``PRIVILEGED_PTYPES`` rather than ``ptype == "read"``: ``select`` is what the link-field
+	and query paths ask for, and refusing it would break an oversight surface in a way that
+	presents as an empty dropdown rather than as a permission error.
 	"""
 	user = _resolve_user(user)
 	if not _is_scopable(user):
 		return False
-	if user == "Administrator":
+
+	privileged = user == "Administrator" or _has_oversight(user)
+	if privileged and _is_read_ptype(ptype):
 		note_privileged_read("Chat Room", _docname(doc), user, ptype)
 		return True
-	if _has_oversight(user):
-		note_privileged_read("Chat Room", _docname(doc), user, ptype)
-		return True
+
 	room = _docname(doc)
 	if not room:
 		return False
@@ -520,7 +568,7 @@ def chat_room_member_has_permission(
 	user = _resolve_user(user)
 	if not _is_scopable(user):
 		return False
-	if user == "Administrator" or _has_oversight(user):
+	if (user == "Administrator" or _has_oversight(user)) and _is_read_ptype(ptype):
 		note_privileged_read("Chat Room Member", _docname(doc), user, ptype)
 		return True
 	if (_field(doc, "user") or "").strip() == user:
@@ -542,7 +590,7 @@ def chat_message_has_permission(
 	user = _resolve_user(user)
 	if not _is_scopable(user):
 		return False
-	if user == "Administrator" or _has_oversight(user):
+	if (user == "Administrator" or _has_oversight(user)) and _is_read_ptype(ptype):
 		note_privileged_read("Chat Message", _docname(doc), user, ptype)
 		return True
 	room = (_field(doc, "room") or "").strip()
@@ -558,7 +606,7 @@ def chat_attachment_has_permission(
 	user = _resolve_user(user)
 	if not _is_scopable(user):
 		return False
-	if user == "Administrator" or _has_oversight(user):
+	if (user == "Administrator" or _has_oversight(user)) and _is_read_ptype(ptype):
 		note_privileged_read("Chat Attachment", _docname(doc), user, ptype)
 		return True
 

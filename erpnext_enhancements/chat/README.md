@@ -366,6 +366,25 @@ is a cross-service contract with Triton. A test pins the first so nobody tidies 
 | `erpnext_enhancements.chat.sync.provisioning.start_org_mirror` | no, `System Manager` | Opens a `Chat Provisioning Run`. `dry_run` defaults to **1** and the default is the point — the thing being planned creates spaces in twenty people's clients and cannot be undone without a call this codebase refuses to make. |
 | `erpnext_enhancements.chat.sync.provisioning.create_document_room` | no | A per-document room, **user-initiated and registered in no hook.** Never automatic: 60 project-wide space writes per minute means a rule creating a space per Project would saturate the budget for hours and leave thousands of empty spaces behind. Permission is the *document's* permission, checked here — a room hung off a document must not be an easier door than the document. |
 
+**`require_room` asks one of two questions, and the difference is decision #12.**
+`intent="read"` (the default) asks *may this identity see the room* — which the oversight role
+and `Administrator` may, and which is the whole of what decision #12 grants. `intent="write"`
+asks *is this identity in the room*, which no amount of oversight makes true, and every
+mutating endpoint passes it.
+
+That distinction was missing until v1.283.2 and it was a real hole rather than a tidy-up.
+`require_room` passed `"read"` for every caller, writers included, and it calls the permission
+hook **directly** rather than through `frappe.has_permission` — so `Chat Room`'s read-only
+DocPerm, which the hook's own docstring named as the thing refusing writes "above us", was
+never consulted on that path. Filling `Chat Settings.admin_oversight_role` would have let every
+holder post into any conversation in the company, as themselves. An auditor who can post into
+the room they are auditing is not an auditor.
+
+`tests/test_chat_endpoint_surface.py` asserts it in both directions: a mutating endpoint that
+asks for `read` fails, and so does a reading one that demands `write` — the second because
+locking the oversight role out of a read presents as "the auditor cannot open a room", which
+reads as a bug rather than as an over-tightened gate.
+
 **Phase 3's read/write surface — everything under `chat/api/`.** Every one begins with
 `_common.require_session` or `require_room`, which resolves the caller, refuses Guest,
 enforces the pilot whitelist, and (for room-scoped calls) asserts active membership through

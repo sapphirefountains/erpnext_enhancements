@@ -107,7 +107,7 @@ def send_message(
 		frappe.ValidationError: empty body, oversized body, or a mention/attachment the
 			caller is not entitled to reference.
 	"""
-	user, name = require_room(room)
+	user, name = require_room(room, intent="write")
 	body = (text or "").strip()
 	files = _coerce_list(attachments)
 
@@ -286,7 +286,7 @@ def prepare_upload(room: str) -> dict[str, Any]:
 	crosses a mobile connection, and so the "you are allowed to upload into this room"
 	decision is made server-side even though the upload itself is a framework endpoint.
 	"""
-	_user, name = require_room(room)
+	_user, name = require_room(room, intent="write")
 
 	from erpnext_enhancements.chat.sync import attachments as attachments_sync
 

@@ -137,6 +137,57 @@ class ChatEndpointSurfaceTest(unittest.TestCase):
 			"place in the §4.G.2 curl matrix.",
 		)
 
+	def test_room_scoped_writers_ask_for_write_intent(self) -> None:
+		"""The oversight role reads rooms it is not in; it does not write to them.
+
+		`require_room` used to pass `"read"` for every caller, writers included, and it calls
+		the permission hook **directly** rather than through `frappe.has_permission` — so
+		`Chat Room`'s read-only DocPerm, which the hook's own docstring cited as the thing
+		refusing writes "above us", was never consulted on that path. Filling
+		`Chat Settings.admin_oversight_role` would have handed every holder the ability to
+		post into any conversation in the company, as themselves.
+
+		So the rule: a **mutating** endpoint that gates on a room asks for `intent="write"`,
+		which is membership and nothing else. A reading one asks for `read`, which the hatch
+		may answer. This test is the only thing standing between that distinction and a
+		future endpoint that copies the wrong line from its neighbour.
+		"""
+		intents = endpoints.require_room_intents()
+		must_write = set(endpoints.MUTATING) | set(endpoints.WRITE_GATED_READS)
+		offenders = []
+		for dotted in sorted(must_write):
+			asked = intents.get(dotted)
+			if asked is None:
+				continue  # not room-scoped — create_group, mark_all_read, the webhook
+			if asked != {"write"}:
+				offenders.append(f"{dotted} asks require_room for {sorted(asked)}")
+
+		self.assertFalse(
+			offenders,
+			'these endpoints change state but gate on require_room(intent="read"), which the\n'
+			"oversight role and Administrator both satisfy without being in the room:\n  "
+			+ "\n  ".join(offenders),
+		)
+
+	def test_readers_do_not_ask_for_write_intent(self) -> None:
+		"""The other direction, which is a bug in the shape of extra caution.
+
+		`intent="write"` on a read endpoint locks the oversight role out of the very thing
+		decision #12 grants it — and it would present as "the auditor cannot open a room",
+		which reads as a permission bug rather than as an over-tightened gate.
+		"""
+		intents = endpoints.require_room_intents()
+		offenders = [
+			f"{dotted} asks require_room for {sorted(intents[dotted])}"
+			for dotted in sorted(set(endpoints.NON_MUTATING) - set(endpoints.WRITE_GATED_READS))
+			if dotted in intents and "write" in intents[dotted]
+		]
+		self.assertFalse(
+			offenders,
+			"these only read, but demand room membership — which shuts the oversight role out\n"
+			"of the read decision #12 exists to grant:\n  " + "\n  ".join(offenders),
+		)
+
 	def test_admin_endpoints_carry_their_own_role_gate(self) -> None:
 		"""Set equality again, and it is what closes the finding this suite was written for.
 

@@ -97,7 +97,7 @@ def require_session() -> str:
 	return user
 
 
-def require_room(room: str, *, user: str | None = None) -> tuple[str, str]:
+def require_room(room: str, *, user: str | None = None, intent: str = "read") -> tuple[str, str]:
 	"""Gate a room-scoped request. Returns ``(user, room)`` or raises.
 
 	Membership is asserted through :func:`chat.permissions.chat_room_has_permission` — the
@@ -105,6 +105,25 @@ def require_room(room: str, *, user: str | None = None) -> tuple[str, str]:
 	second ``frappe.db.exists`` written here. One rule, one implementation: if the socket
 	boundary and the REST boundary can disagree, one of them is wrong and nobody will know
 	which.
+
+	**``intent="write"`` is not a stricter shade of the same check; it asks a different
+	question.** ``read`` asks "may this identity *see* the room", which the oversight role and
+	``Administrator`` may — that is decision #12's whole point. ``write`` asks "is this
+	identity *in* the room", which no amount of oversight makes true.
+
+	The distinction was missing and it was a real hole. This function passed ``"read"`` for
+	every caller, writers included, and called the hook **directly** rather than through
+	``frappe.has_permission`` — so ``Chat Room``'s read-only DocPerm, which the hook's own
+	docstring cited as the thing refusing writes "above us", was never consulted on this path.
+	The result: filling ``Chat Settings.admin_oversight_role`` would have handed every holder
+	the ability to *post* into any conversation in the company, silently, as themselves.
+	§4.A.3 says the role grants read and nothing else. An auditor who can post into the room
+	they are auditing is not an auditor.
+
+	``Administrator`` is refused for ``write`` for the same reason
+	:func:`chat.retrieval.gate.retrieve_for_oversight` refuses it: a shared login destroys the
+	attribution that makes a chat message mean anything, and "who said this" is the one
+	question a transcript exists to answer.
 	"""
 	user = user or require_session()
 	name = (room or "").strip()
@@ -112,6 +131,13 @@ def require_room(room: str, *, user: str | None = None) -> tuple[str, str]:
 		_deny("That conversation is no longer available.")
 
 	if not permissions.chat_room_has_permission(name, "read", user):
+		_deny("That conversation is no longer available.")
+
+	if intent == "write" and not permissions.is_active_member(name, user):
+		# Deliberately the *same* refusal text as "no such room". A distinct message here
+		# would tell an oversight holder which rooms exist that they are not in, which is
+		# the room-existence oracle `_deny` exists to avoid — and they can already learn it
+		# through the audited read path, which is where that question belongs.
 		_deny("That conversation is no longer available.")
 
 	return user, name
