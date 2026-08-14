@@ -7,6 +7,161 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.291.0] - 2026-08-15
+
+**Chat already alerted. It did it five different ways, and all five ended in the Error Log.**
+Phase 6 §4.H, first half: one alert path, with deduplication, a lifecycle, and a delivery
+rule that stops an alert being carried by the thing it is about. Closes the observability
+half of TASK-2026-01316; drift reconciliation is the other half and is a separate change.
+
+The five, each with its own private helper: `sync/inbound.py::_alarm`,
+`indexing/digest.py::_note`, `sync/membership.py::_alert_external`,
+`audit.py::verify_all_chains` (whose docstring already admitted the channel was *"necessary
+and not sufficient"*), and `governance/role_grants.py`. None of them deduplicated, and that
+is not a tidiness complaint. **`check_digest_staleness` is on an hourly cron** — while the
+summariser is stopped it wrote one Error Log row an hour, forever. A weekend of that is 48
+rows describing one incident, which is not "no alerting" but something worse: enough
+alerting to stop carrying information.
+
+### Added
+
+- **`chat/governance/alert_rules.py`** — every decision the alert path makes, as pure
+  functions with no imports. The same split `notifications/policy.py` and
+  `chat_settings_rules.py` already use, and for the same reason: the judgement is the part
+  worth being able to run without a bench. Four rules, each with the failure it prevents.
+
+  **The deduplication key names the problem, never the measurement.** `subsystem::kind::scope`,
+  where scope is the room or chain the problem is about. A key carrying the queue depth
+  changes every time the depth does, so nothing ever matches its predecessor — the table
+  grows exactly as fast as it would with no deduplication at all, while the code, the schema
+  and the dashboard all say the alerts are deduplicated. That failure is invisible until
+  somebody counts rows, which is why it is a function with a test rather than a convention.
+
+  **Repeats update the open alert and re-notify on a doubling schedule** — occurrences 1, 2,
+  4, 8, 16. Thirty-two occurrences page six times instead of thirty-two. Total silence after
+  the first is the opposite error to twelve pages: an incident still firing eight hours later
+  is different news from one that just started, and a path that cannot say so leaves the
+  reader unable to distinguish *handled* from *ignored*.
+
+  **Resolved is terminal; a recurrence opens a new incident.** There is deliberately no
+  `Resolved → Open` row in the transition table. Reopening would overwrite `resolved_at`, and
+  losing the record that the problem was fixed once destroys the only evidence that it is
+  *flapping* rather than continuing — which is the difference between "the fix did not work"
+  and "it never stopped", and those want different people looking at them.
+
+  **An alert is never delivered by the thing it is about.** This is why the ops-space channel
+  is not simply "always on". A post to an operations space is a `Chat Message`, carried to
+  Google by the relay worker — so an alert *about the relay* joins the queue it is reporting
+  on and arrives when the incident ends. `SELF_DELIVERING` names the six subsystems on that
+  path (relay, inbound, gchat, quota, subscriptions, notifications); they are email-only, by
+  construction rather than by a runtime guess.
+
+- **`Chat Ops Alert`** — one row per *problem*, not per occurrence. Zero DocPerm like every
+  other chat DocType, added to the shared MCP denylist. `dedup_key` is indexed and
+  deliberately **not unique**: a resolved incident that recurs must be able to open a second
+  row with the same key, and a unique index would make the recurrence fail to insert instead.
+
+- **`chat/governance/alerts.py`** — the I/O, in a fixed order that is itself the design.
+
+  **A log-file line first, unconditionally, for every occurrence** — `frappe.logger`, which
+  writes to a file. Not the `Error Log`, which is a database table: the failure class where
+  an alert is most valuable (*the database is unhappy*) is exactly the class where a
+  database-backed alert is least likely to survive. Then the alert row; then an `Error Log`
+  row on notification steps only, so it stays desk-visible without reproducing the
+  hourly-row problem; then the transports.
+
+  **No membership bypass anywhere on the path.** The ops-space post goes through the ordinary
+  `compose.send_message` and passes no `ignore_permissions`, so it needs an identity that is
+  actually in the room — `alert_post_as`, which ships empty. The alternative was a
+  write-into-any-room primitive sitting in the codebase with a comment saying it is only for
+  alerts, which is not a property anything enforces and not one that survives the next person
+  who needs to post something. A non-member poster fails, the failure lands on
+  `delivery_error`, and the health report prints it.
+
+  **Email is `frappe.sendmail` directly and never a `Notification Log` row** (G6-18).
+  `hooks.py` registers `Chat Message` and `Chat Mention` in `notification_skip_email_types`
+  so chat notifications can *never* be emailed. Routing an operational alert through
+  `Notification Log` would put the operational channel and the deliberately suppressed user
+  channel on the same wire — and the way that fails is not "the alert does not arrive", it is
+  somebody widening the notification path to make alerts work and re-enabling 12,000 emails a
+  day as a side effect.
+
+  **`alerts_enabled` gates delivery, never recording.** An operator switching it off is
+  asking not to be paged; they are not asking the system to stop noticing, and the rows
+  written while nobody was watching are the first thing anybody wants afterwards.
+
+  **The re-entrancy guard is load-bearing.** Every step can fail and the obvious handling for
+  a failure is to raise an alert about it. That loop ends in a full disk.
+
+- **An `OPEN ALERTS` panel at the top of `chat.health.report`**, above the numbers. It answers
+  a different question from the rest of the report: everything else is a measurement an
+  operator has to judge, and an open alert is a judgement the system already made, at the
+  moment it happened, with the evidence in front of it. It also prints `undeliverable` — the
+  one thing about alerting that alerting cannot tell you, since a configuration gap that
+  silences delivery is silent by definition.
+
+- **`chat/governance/alert_delivery.py`** — the ops-space post, in a background job, and it
+  is a separate module because **`test_chat_guardrails` refused the obvious version**.
+
+  That suite asserts no `doc_events` handler reaches the Google transport through any import,
+  transitively. Putting `from chat.api import compose` inside `alerts.py` created the path
+  `chat.permissions → chat.audit → alerts → chat.api.compose → chat.sync.attachments →
+  chat.gchat.client`, which left `readstate.announce_unread` and
+  `role_grants.on_user_roles_changed` — both `doc_events` handlers — one import from it.
+
+  **The fix is not a narrower guardrail.** Delivering inline was wrong for three reasons the
+  static walk was standing in for. A caller's rollback would take the post with it, and
+  alerting that vanishes when things go wrong is alerting that works only when it is not
+  needed. `frappe.set_user` in the middle of somebody else's save means a failure between the
+  two calls leaves the rest of that save running as the wrong person. And the latency lands on
+  whoever noticed the problem. So delivery is enqueued `after_commit`, `alerts.py` names the
+  worker as a dotted string and imports nothing from it, and the static edge is gone because
+  the runtime edge is.
+
+- **`tests/test_chat_alert_rules.py`** (36 tests, executed rather than inspected) and
+  **`tests/test_chat_alerts_surface.py`** (31, AST). The second scans *docstring-stripped*
+  source, because six text-matching assertions in this series have now flagged prose rather
+  than code — every one of them the sentence explaining why a thing is absent, and both new
+  files discuss `Notification Log` at length. Three mutations were run against the surface
+  suite (a `Notification Log` reference, an `ignore_permissions=True`, a bare `raise` in the
+  handler) and each is caught.
+
+### Changed
+
+- **`verify_all_chains`, `check_digest_staleness` and `inbound._alarm` now route through the
+  alert path.** The chain check alerts **per chain**, so a broken retrieval chain and a broken
+  governance chain are two incidents rather than one row that keeps changing its mind about
+  which chain it is describing. `_alarm` scopes to the room where there is one, so two rooms
+  with the same problem are two incidents and one room repeating is one.
+
+  The digest check gains the half a bare `_note` could never have: it **resolves** its alert
+  on the healthy branch. A checker that can only alarm produces a board of stale alarms, and
+  a board nobody trusts is one nobody reads — the same end state as no alerting, reached by a
+  longer road.
+
+- **`Chat Settings`** gains an Operational Alerting section: `alerts_enabled`,
+  `alert_ops_room`, `alert_post_as`, `alert_email_recipients`, `alert_rate_limit_per_hour`.
+
+  **No new backfill patch, and that is checked rather than assumed.**
+  `backfill_chat_settings_defaults` is registered on `after_migrate` (not only `after_install`)
+  and walks `get_meta().fields`, so it picks up new fields automatically — the Single-default
+  trap is already covered for this section. `alert_rate_limit_per_hour` still falls back to 20
+  in code when it reads 0, which is the window between deploy and migrate; a zero there would
+  otherwise mean "no alerts at all", turning a migration detail into total silence.
+
+### Not done here, and named rather than implied
+
+- **Drift reconciliation** (the second half of TASK-2026-01316) — seven divergence classes, a
+  settling window and the three-part loop guard. Its own change: an auto-repairer with a bad
+  classifier is a bot that fights the other system at one write per second, and it wants a
+  review of its own rather than a paragraph at the end of this one.
+- **`sync/membership.py::_alert_external`** keeps its `Comment` on the room. That one is not a
+  private reimplementation of alerting — a membership anomaly is *about* a room and belongs in
+  that room's timeline, where the person who can fix it is looking. It already throttles its
+  own Error Log.
+- **The web dashboard.** §4.H asks for one place a human looks *plus* a command-line twin;
+  this ships the twin, which is the half you use when the web interface is the broken thing.
+
 ## [1.290.0] - 2026-08-14
 
 **The 197 wins that all closed on the same Wednesday.** Triton's sales dashboard reports

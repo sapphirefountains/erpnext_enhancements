@@ -131,7 +131,17 @@ def check_digest_staleness() -> dict[str, Any]:
 	**The failure being watched for is not an error — it is silence.** Every other failure in
 	this package announces itself; a digest pass that has quietly stopped running produces no
 	log line, no exception and no user complaint, because stale summaries still answer.
+
+	**On an hourly cron, which is why it goes through the alert path rather than
+	``_note``.** Until v1.291.0 this wrote one ``Error Log`` row per run for as long as the
+	condition lasted: a weekend of a stopped summariser produced 48 rows describing one
+	incident. :func:`alerts.check` deduplicates on the key, counts the occurrences on a
+	single row, re-notifies on a doubling schedule, and — the half a bare ``_note`` could
+	never do — **resolves the alert on the healthy branch**, so the board shows a stopped
+	summariser only while it is stopped.
 	"""
+	from erpnext_enhancements.chat.governance import alerts
+
 	if not _enabled():
 		return {"ok": True, "reason": "chat is disabled"}
 
@@ -143,14 +153,20 @@ def check_digest_staleness() -> dict[str, Any]:
 		return {"ok": True, "reason": "no digest has been generated yet"}
 
 	age = (now_datetime() - get_datetime(newest)).total_seconds() / 60.0
+	alerts.check(
+		age <= window,
+		subsystem="indexing",
+		kind="digest_stale",
+		summary="the chat summariser has stopped and stale summaries keep answering",
+		detail=(
+			f"No chat digest has been generated for {round(age)} minutes (threshold "
+			f"{window}). Nothing else will report this: a stale summary still answers."
+		),
+		age_minutes=round(age, 1),
+		threshold_minutes=window,
+	)
 	if age <= window:
 		return {"ok": True, "age_minutes": round(age, 1)}
-
-	_note(
-		f"No chat digest has been generated for {round(age)} minutes (threshold {window}). "
-		"The summariser has stopped, and stale summaries keep answering, so nothing else "
-		"will report this."
-	)
 	return {"ok": False, "age_minutes": round(age, 1), "threshold_minutes": window}
 
 

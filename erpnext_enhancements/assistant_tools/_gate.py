@@ -183,6 +183,13 @@ CHAT_DENYLIST_DOCTYPES = frozenset(
         "Chat Inbound Event",
         "Chat Mention",
         "Chat Message",
+        # Phase 6 §4.H. No message text by schema — a subsystem, a failure kind, counts
+        # and timestamps. On the list anyway, for two reasons that are not "it might
+        # contain content". It names rooms, so reading it is a room census by another
+        # route; and an alert board is an operational map of what is currently broken,
+        # which is the thing you would read first if you wanted to act while nobody was
+        # looking. Set equality means the choice had to be made deliberately either way.
+        "Chat Ops Alert",
         "Chat Message Revision",
         "Chat Provisioning Run",
         "Chat Push Subscription",

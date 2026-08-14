@@ -142,7 +142,14 @@
   "inline_citations_enabled",
   "column_break_triton_behaviour",
   "triton_ack_deadline_seconds",
-  "triton_degrade_without_erpnext_link"
+  "triton_degrade_without_erpnext_link",
+  "alerting_section",
+  "alerts_enabled",
+  "alert_ops_room",
+  "alert_post_as",
+  "column_break_alerting",
+  "alert_email_recipients",
+  "alert_rate_limit_per_hour"
  ],
  "fields": [
   {
@@ -1046,6 +1053,49 @@
    "fieldname": "triton_degrade_without_erpnext_link",
    "fieldtype": "Check",
    "label": "Answer Without An ERPNext Link"
+  },
+  {
+   "fieldname": "alerting_section",
+   "fieldtype": "Section Break",
+   "label": "Operational Alerting"
+  },
+  {
+   "default": "0",
+   "description": "Whether alerts are DELIVERED. It never gates recording: an operator who switches this off is asking not to be paged, not asking the system to stop noticing, and the rows written while nobody was watching are the first thing anybody wants afterwards.",
+   "fieldname": "alerts_enabled",
+   "fieldtype": "Check",
+   "label": "Deliver Operational Alerts"
+  },
+  {
+   "description": "The room alerts are posted into. Needs Post Alerts As set as well - a room with nobody configured to post into it is a channel that reports as configured and delivers nothing. Alerts about the relay, inbound, gchat, quota, subscriptions and notifications NEVER use this channel whatever is set here: the post is a Chat Message carried to Google by the relay, so an alert about the relay would join the queue it is reporting on and arrive after the incident ends. Those go to the email recipients instead.",
+   "fieldname": "alert_ops_room",
+   "fieldtype": "Link",
+   "label": "Operations Room",
+   "options": "Chat Room"
+  },
+  {
+   "description": "The identity that posts alerts into the operations room. It must be a MEMBER of that room: the alert path calls the ordinary send_message and passes no ignore_permissions, deliberately, because the alternative is a write-into-any-room primitive living in the codebase with a comment saying it is only for alerts. If this user is not a member the post fails, the failure is recorded on the alert row, and the health report prints it.",
+   "fieldname": "alert_post_as",
+   "fieldtype": "Link",
+   "label": "Post Alerts As",
+   "options": "User"
+  },
+  {
+   "fieldname": "column_break_alerting",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Comma-separated addresses for the email channel, which carries every alert from a subsystem that would otherwise be delivering its own, plus every Critical. Sent with frappe.sendmail directly and NEVER as a Notification Log row - routing an operational alert through Notification Log would put it on the same wire as the deliberately suppressed chat-notification email path, and the way that fails is somebody widening the notification path to make alerts work and re-enabling 12,000 emails a day as a side effect.",
+   "fieldname": "alert_email_recipients",
+   "fieldtype": "Small Text",
+   "label": "Alert Email Recipients"
+  },
+  {
+   "default": "20",
+   "description": "How many DISTINCT problems may open in an hour before alerting suppresses and raises one storm alert instead. Occurrences of an existing problem are free - they update a single row and consume one of the budget - so reaching this number means that many different things broke at once, which is an outage or a broken classifier and wants one loud row rather than two hundred. 0 falls back to 20 rather than meaning 'none': this field is new, and a default on a new field of a Single never reaches the row that already exists.",
+   "fieldname": "alert_rate_limit_per_hour",
+   "fieldtype": "Int",
+   "label": "New Alerts Per Hour Before Suppressing"
   }
  ],
  "index_web_pages_for_search": 0,

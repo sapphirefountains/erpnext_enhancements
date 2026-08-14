@@ -312,18 +312,36 @@ def _log(level: str, summary: str, **fields: Any) -> None:
 
 
 def _alarm(kind: str, summary: str, **fields: Any) -> None:
-	"""An operator-visible alarm: a counter, a warning line, and an Error Log row.
+	"""An operator-visible alarm: a log line, and a deduplicated ``Chat Ops Alert``.
 
 	Alarms exist for the cases where guessing would be worse than stopping —
 	``ECHO_ORPHAN`` above all. Never raises: an alarm that can abort the transaction it is
 	reporting on turns a recoverable anomaly into lost data.
+
+	**Scoped to the room where there is one**, so two rooms with the same problem are two
+	incidents and one room repeating is one. Everything in ``fields`` is a *measurement* and
+	goes into the detail rather than the deduplication key — a key carrying the number that
+	changes deduplicates nothing while looking like it does.
+
+	Inbound is a :data:`~chat.governance.alert_rules.SELF_DELIVERING` subsystem, so these
+	never route to the operations space: an alarm about inbound ingest posted into a chat
+	room would be carried by the machinery it is reporting on.
 	"""
 	_log("warning", f"ALARM {kind}: {summary}", **fields)
 	try:
-		rendered = ", ".join(f"{key}={value}" for key, value in fields.items())
-		frappe.log_error(
-			title=f"Chat inbound: {kind}",
-			message=f"{summary}\n\n{rendered}",
+		from erpnext_enhancements.chat.governance import alerts
+
+		alerts.raise_alert(
+			subsystem="inbound",
+			kind=kind,
+			scope=str(fields.get("room") or ""),
+			room=fields.get("room") or None,
+			summary=summary[:255],
+			# Rendered here rather than splatted as `**fields`. `raise_alert` takes named
+			# keyword-only parameters, and a caller passing `summary=` or `kind=` inside
+			# `fields` would be a TypeError swallowed by the `except` below — an alarm lost
+			# on the path whose entire job is not losing alarms.
+			detail=", ".join(f"{key}={value}" for key, value in fields.items()),
 		)
 	except Exception:
 		return

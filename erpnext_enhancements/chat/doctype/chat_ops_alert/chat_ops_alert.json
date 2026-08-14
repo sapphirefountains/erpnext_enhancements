@@ -1,0 +1,257 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "autoname": "hash",
+ "creation": "2026-08-15 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "alert_section",
+  "severity",
+  "state",
+  "subsystem",
+  "kind",
+  "column_break_head",
+  "scope",
+  "room",
+  "dedup_key",
+  "occurrence_section",
+  "occurrence_count",
+  "notified_count",
+  "first_seen_at",
+  "column_break_occurrence",
+  "last_seen_at",
+  "last_notified_at",
+  "detail_section",
+  "summary",
+  "detail",
+  "delivery_section",
+  "transports",
+  "undeliverable",
+  "delivery_error",
+  "lifecycle_section",
+  "acknowledged_by",
+  "acknowledged_at",
+  "acknowledged_note",
+  "column_break_lifecycle",
+  "resolved_at",
+  "resolved_note"
+ ],
+ "fields": [
+  {
+   "fieldname": "alert_section",
+   "fieldtype": "Section Break",
+   "label": "Alert"
+  },
+  {
+   "fieldname": "severity",
+   "fieldtype": "Select",
+   "label": "Severity",
+   "options": "Warning\nCritical",
+   "default": "Warning",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "state",
+   "fieldtype": "Select",
+   "label": "State",
+   "options": "Open\nAcknowledged\nResolved",
+   "default": "Open",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Resolved is terminal. A recurrence after resolution opens a NEW row rather than reopening this one — reopening would overwrite the resolution timestamp and destroy the only evidence that the problem is flapping rather than continuing."
+  },
+  {
+   "fieldname": "subsystem",
+   "fieldtype": "Data",
+   "label": "Subsystem",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "One of chat.governance.alert_rules.SUBSYSTEMS. Enumerated rather than free text because the deduplication key is built from it, and 'relay' / 'Relay' / 'relay_worker' would be three incidents."
+  },
+  {
+   "fieldname": "kind",
+   "fieldtype": "Data",
+   "label": "Kind",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "scope",
+   "fieldtype": "Data",
+   "label": "Scope",
+   "read_only": 1,
+   "description": "The object the problem is about — a room, a chain, a space. Two rooms with stuck queues are two incidents; one room reporting hourly is one."
+  },
+  {
+   "fieldname": "room",
+   "fieldtype": "Link",
+   "label": "Room",
+   "options": "Chat Room",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dedup_key",
+   "fieldtype": "Data",
+   "label": "Deduplication Key",
+   "read_only": 1,
+   "search_index": 1,
+   "description": "subsystem::kind::scope. Deliberately NOT unique: a resolved incident that recurs must be able to open a second row with the same key, and a unique index would make the recurrence fail to insert instead."
+  },
+  {
+   "fieldname": "occurrence_section",
+   "fieldtype": "Section Break",
+   "label": "Occurrences"
+  },
+  {
+   "fieldname": "occurrence_count",
+   "fieldtype": "Int",
+   "label": "Occurrences",
+   "default": "1",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "notified_count",
+   "fieldtype": "Int",
+   "label": "Notifications Sent",
+   "default": "0",
+   "read_only": 1,
+   "description": "Occurrences 1, 2, 4, 8, 16… notify; the rest update this row silently. Thirty-two occurrences page six times rather than thirty-two, and the gaps widen as the incident ages rather than stopping."
+  },
+  {
+   "fieldname": "first_seen_at",
+   "fieldtype": "Datetime",
+   "label": "First Seen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_occurrence",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_seen_at",
+   "fieldtype": "Datetime",
+   "label": "Last Seen",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "last_notified_at",
+   "fieldtype": "Datetime",
+   "label": "Last Notified",
+   "read_only": 1
+  },
+  {
+   "fieldname": "detail_section",
+   "fieldtype": "Section Break",
+   "label": "What Happened"
+  },
+  {
+   "fieldname": "summary",
+   "fieldtype": "Data",
+   "label": "Summary",
+   "read_only": 1,
+   "length": 255
+  },
+  {
+   "fieldname": "detail",
+   "fieldtype": "Small Text",
+   "label": "Detail",
+   "read_only": 1,
+   "description": "The measured values, which is why they are here and never in the deduplication key. Overwritten by the newest occurrence: the current numbers are what an operator needs, and the history of the numbers is what the counters are for."
+  },
+  {
+   "fieldname": "delivery_section",
+   "fieldtype": "Section Break",
+   "label": "Delivery"
+  },
+  {
+   "fieldname": "transports",
+   "fieldtype": "Data",
+   "label": "Transports",
+   "read_only": 1,
+   "description": "Channels this alert was allowed to use. Subsystems that carry their own delivery never use the operations space — an alert about the relay would join the queue it is reporting on."
+  },
+  {
+   "fieldname": "undeliverable",
+   "fieldtype": "Small Text",
+   "label": "Undeliverable",
+   "read_only": 1,
+   "description": "Set when this alert reached nothing but the log. A configuration gap that silences alerting is the one gap that cannot report itself, so it is recorded here rather than inferred from an absence."
+  },
+  {
+   "fieldname": "delivery_error",
+   "fieldtype": "Small Text",
+   "label": "Delivery Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "lifecycle_section",
+   "fieldtype": "Section Break",
+   "label": "Lifecycle"
+  },
+  {
+   "fieldname": "acknowledged_by",
+   "fieldtype": "Link",
+   "label": "Acknowledged By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "acknowledged_at",
+   "fieldtype": "Datetime",
+   "label": "Acknowledged At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "acknowledged_note",
+   "fieldtype": "Small Text",
+   "label": "Acknowledgement Note",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_lifecycle",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "resolved_at",
+   "fieldtype": "Datetime",
+   "label": "Resolved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "resolved_note",
+   "fieldtype": "Small Text",
+   "label": "Resolution Note",
+   "read_only": 1,
+   "description": "Written by the clearing check, not by a human: an alert that the system can see is fixed says so itself, so the board shows what is wrong now rather than everything that was ever wrong."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-15 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Ops Alert",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

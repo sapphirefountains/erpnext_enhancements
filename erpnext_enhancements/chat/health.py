@@ -137,6 +137,7 @@ _MESSAGE: Final[str] = "Chat Message"
 _ROOM: Final[str] = "Chat Room"
 _SUBSCRIPTION: Final[str] = "Chat Event Subscription"
 _INBOUND_EVENT: Final[str] = "Chat Inbound Event"
+_OPS_ALERT: Final[str] = "Chat Ops Alert"
 
 
 # --- tiny formatting helpers ---------------------------------------------------
@@ -305,8 +306,35 @@ def collect(room: str | None = None, max_rooms: int = 20) -> dict[str, Any]:
 		errors.append(f"counters: {type(exc).__name__}: {exc}")
 
 	_collect_triton(data, errors)
+	_collect_alerts(data, errors)
 
 	return data
+
+
+def _collect_alerts(data: dict[str, Any], errors: list[str]) -> None:
+	"""Live ``Chat Ops Alert`` rows — Phase 6 §4.H.
+
+	**This panel prints first**, above the numbers, because it answers a different question
+	from the rest of the report. Everything else here is a measurement an operator has to
+	judge; an open alert is a judgement the system already made, at the moment it happened,
+	when the evidence was in front of it. A report that makes you scroll past nine panels of
+	healthy numbers to find out something has been broken since Friday is one that buries its
+	own conclusion.
+
+	It also prints ``undeliverable``, which is the one thing about alerting that alerting
+	cannot tell you: a configuration gap that silences delivery is silent by definition, so
+	it has to be *read* somewhere rather than waited for.
+	"""
+	if not _table_ready(errors, _OPS_ALERT):
+		data["alerts"] = []
+		return
+	try:
+		from erpnext_enhancements.chat.governance import alerts as alert_engine
+
+		data["alerts"] = alert_engine.open_alerts(limit=25)
+	except Exception as exc:
+		data["alerts"] = []
+		errors.append(f"alerts: {type(exc).__name__}: {exc}")
 
 
 def _collect_triton(data: dict[str, Any], errors: list[str]) -> None:
@@ -643,6 +671,7 @@ def _render(data: dict[str, Any]) -> list[str]:
 		lines.append(f"filtered to room {data['room_filter']}")
 	lines.append(_rule())
 
+	_render_alerts(lines, data)
 	_render_config(lines, data)
 	_render_queue(lines, data)
 	_render_rooms(lines, data)
@@ -651,6 +680,43 @@ def _render(data: dict[str, Any]) -> list[str]:
 	_render_triton(lines, data)
 	_render_errors(lines, data)
 	return lines
+
+
+def _render_alerts(lines: list[str], data: dict[str, Any]) -> None:
+	alerts = data.get("alerts") or []
+	lines.append("")
+	if not alerts:
+		lines.append(_line("open alerts", 0, _OK, "nothing is currently alerting"))
+		return
+
+	criticals = sum(1 for row in alerts if row.get("severity") == "Critical")
+	flag = _ALARM if criticals else _WARN
+	lines.append(f"OPEN ALERTS  ({len(alerts)}, of which {criticals} critical)")
+	lines.append(_line("open alerts", len(alerts), flag, "worst and longest-running first"))
+
+	for row in alerts:
+		mark = _ALARM if row.get("severity") == "Critical" else _WARN
+		age = _humanise_seconds(row.get("age_seconds"))
+		count = _as_int(row.get("occurrence_count"), 1)
+		scope = f"/{row.get('scope')}" if row.get("scope") else ""
+		state = "" if row.get("state") == "Open" else f" [{row.get('state')}]"
+		lines.append(
+			f"  {mark} {row.get('subsystem')}{scope}: {row.get('kind')}{state}  "
+			f"x{count}, open {age}"
+		)
+		if row.get("summary"):
+			lines.append(f"          {row['summary']}")
+		if row.get("undeliverable"):
+			# The gap that cannot report itself. Printed against the alert rather than as a
+			# configuration note, because it is only true for the alerts it applies to.
+			lines.append(f"          {_ALARM} nobody was told: {row['undeliverable']}")
+		if row.get("delivery_error"):
+			lines.append(f"          {_ALARM} delivery failed: {row['delivery_error']}")
+
+	lines.append(
+		"  resolve or acknowledge with: bench --site <site> execute "
+		"erpnext_enhancements.chat.governance.alerts.acknowledge --kwargs \"{'alert': '<name>'}\""
+	)
 
 
 def _render_config(lines: list[str], data: dict[str, Any]) -> None:
