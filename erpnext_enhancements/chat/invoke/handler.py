@@ -176,7 +176,7 @@ def handle(envelope: Envelope, *, origin: str = "") -> str | None:
 		_close_log(
 			log_name,
 			STATUS_FAILED,
-			error=f"model turn failed: {exc.__class__.__name__}",
+			error=f"model turn failed: {_model_failure_detail(exc)}",
 			retrieval_ms=retrieval_ms,
 			result=result,
 		)
@@ -304,6 +304,45 @@ def _reply(
 		except Exception:
 			pass
 		return None
+
+
+def _model_failure_detail(exc: Exception) -> str:
+	"""What to record when the model turn raises. **Keeps the message for the one class that
+	guarantees it is safe, and the class name for everything else.**
+
+	This used to be ``exc.__class__.__name__`` unconditionally, and the cost was exactly the
+	thing ``TritonUnavailable`` was designed to prevent. Every one of its raise sites writes a
+	deliberately content-free sentence — *"The Triton assistant is switched off in ERPNext"*,
+	*"Triton Settings has no Gateway URL, so there is nothing to ask"*, *"could not mint a
+	Triton token for this identity: PermissionError"*, *"Could not reach Triton: ConnectionError"* —
+	and each points at a different file. Recording only the class name collapsed all of them
+	into the single word ``TritonUnavailable``, which names the symptom and hides the cause.
+
+	``triton_client``'s own comment says why that matters: the class exists *"named, because
+	'the model was unavailable' for a permission problem sent us looking at the model for an
+	hour."* The author made the message safe to log and the logger dropped it.
+
+	**Only ``TritonUnavailable``.** Its docstring guarantees it never carries a token, and its
+	messages are written to be content-free; nothing else here makes that promise, and an
+	arbitrary exception's ``str()`` can carry a prompt, a row, or a credential. The retrieval
+	branch above makes the same distinction with ``db_cause``.
+
+	``status`` and ``code`` are appended when present — they are machine-readable by design and
+	are what separates "Triton is down" from "this person needs to link ERPNext".
+	"""
+	from erpnext_enhancements.chat.invoke.triton_client import TritonUnavailable
+
+	if not isinstance(exc, TritonUnavailable):
+		return exc.__class__.__name__
+
+	parts = [str(exc).strip() or exc.__class__.__name__]
+	status = cint(getattr(exc, "status", 0))
+	code = str(getattr(exc, "code", "") or "").strip()
+	if status:
+		parts.append(f"status={status}")
+	if code:
+		parts.append(f"code={code}")
+	return " ".join(parts)
 
 
 def _bot_user() -> str:
