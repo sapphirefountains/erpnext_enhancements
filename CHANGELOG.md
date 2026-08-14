@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.289.4] - 2026-08-14
+
+**Phase 6 §4.C — the export bundle's decisions.** Everything else in this phase is read by
+people inside the company, through surfaces that enforce their own rules. This produces a
+file that is emailed to a lawyer, so its contents are a legal question wearing a
+serialization costume — and the interesting code is not the ZIP writer but the four
+decisions above it.
+
+### Added
+
+- **`chat/governance/export.py`.** Pure — it imports nothing from Frappe, deliberately: a
+  module that needed a database to answer *"does a deleted message's text leave the
+  building"* would be a module nobody could answer that about.
+
+- **G6-9, first half: the deleted body is in `revisions.jsonl` and NOT in `messages.jsonl`.**
+  This is a **decision, not a filter**. On this schema an `is_deleted = 1` row **retains its
+  `text`** (divergence D4, argued in five places in the ADR), so a naive dump of the message
+  table hands over every deleted message body in the file a reader opens first — the one
+  that looks like "the conversation".
+
+  So a deleted row's body is replaced with a tombstone that names where the text went. It is
+  not lost: it is in `revisions.jsonl`, where a reader has to go deliberately and where it
+  sits beside who deleted it and when. Same bytes, different sentence. Decision **D-9** lets
+  an export include them inline, ships that **off**, and makes turning it on its own audited
+  act. **Verified to bite** — removing the redaction fails two tests.
+
+  `revision_record()` takes no such flag, by design: gating it too would produce an export
+  that records *that* a message was deleted and can never say what it said. That is not a
+  redaction, it is a gap.
+
+- **G6-9, second half: a re-export is byte-identical apart from the timestamp and the export
+  id.** That is what makes the manifest worth anything — if two exports of the same range
+  differ, the difference has to *mean* something. Records sort by `seq`, JSON has sorted keys
+  and no incidental whitespace, and the ZIP writes a fixed entry timestamp because ZIP stores
+  an mtime per entry and would otherwise drift on every build.
+
+- **`manifest.json` names the code that produced the bundle**, not just the bytes. Two
+  exports of the same range can legitimately differ if the redaction rule changed between
+  them; without the app version and commit, the only visible fact is that the hashes
+  disagree — which looks exactly like tampering. `verify_bundle()` reports **missing, extra
+  and altered** files rather than only altered, because a bundle that quietly lost a file
+  would otherwise verify clean, and the file most worth removing is the one that contradicts
+  the story.
+
+- **`README.txt` is a control, not decoration.** It names the misreading it exists to
+  prevent: `messages.jsonl` is the conversation **as it stands**, not as it happened. A
+  message edited three times appears once, with its final text. Reading only the first file
+  gives a confident and incomplete account.
+
+- **34 tests** in `tests/test_chat_export.py`, its own CI step. `MESSAGE_FIELDS` is an
+  allowlist rather than a row dump, and there is a test for that: a column added next year is
+  not automatically part of a legal disclosure, and the opposite fails silently.
+
+### Notes
+
+- **Nothing calls this yet.** The `Chat Export Request` DocType, the background job that
+  fulfils it and the download endpoint that writes `export_downloaded` are the next slice.
+  Said plainly because a module with no caller is exactly how `retrieve_for_oversight()`
+  carried two defects for its whole life — the difference here is that these functions are
+  pure and their acceptance properties are pinned, so the job assembles a bundle whose
+  contents are already provably correct.
+- `Chat Audit Log` has declared `export_requested` and `export_downloaded` since v1.285.0
+  with no writer. They get one with the job.
+
 ## [1.289.3] - 2026-08-14
 
 **Phase 6 §4.B — the oversight viewer, and the release where the reason gate stops being
