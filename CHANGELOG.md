@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.285.1] - 2026-08-13
+
+CI caught three suites this branch broke and I had not run. The fixes are small; **how they
+were missed is the part worth writing down.**
+
+I verified the previous six releases by running the bench-free chat suites named in `ci.yml`'s
+`python -m unittest` steps — and stopped there. The chat **pytest** steps
+(`test_chat_provisioning`, `test_chat_api_contracts`) were never run. That is the same trap
+`CLAUDE.md` already documents in the other direction: a pytest suite appended to a unittest
+module list collects nothing and passes. Here the list was mine and the omission was the same
+shape. A bulk `unittest discover` run *had* shown failures; I attributed them to the documented
+`frappe`-stub cross-talk without checking each one, and two were real.
+
+Every CI test command now runs locally in one sweep before a push, rather than the subset I
+thought was relevant.
+
+### Fixed
+
+- **`test_chat_provisioning`'s `frappe` stub had no `only_for`**, so v1.283.0's role gate on
+  `enroll_org_units` / `start_org_mirror` turned eight tests into `AttributeError`.
+
+  Stubbed **with teeth rather than as a no-op**: it raises unless the fake session holds the
+  role, and `frappe.session_roles` is a list a test can take a role away from. A stub that
+  swallowed `only_for` would let the suite pass whether the gate is there or not, which is how
+  the gate goes missing again.
+
+- **`test_chat_api_contracts` called `search._audited_rooms`**, which v1.283.3 moved to
+  `_common.audited_room_ranges` once four readers needed it. The assertion is unchanged; only
+  the address moved.
+
+- **`test_every_transcript_path_hydrates_mentions` failed on `get_messages`** because v1.283.3
+  split its query into a private `_page`, and the structural scan was one level deep.
+
+  Fixed in the scan, not by listing the helper. `_called_names` now folds in calls made by
+  same-module private helpers, one level down — because **the property is about the request,
+  not about which function in the file contains the line**. A scan that failed here was
+  demanding a particular factoring rather than a behaviour. One level, not full recursion: a
+  rule nobody can evaluate by reading the function and its helper is a rule that stops being
+  checked by hand.
+
+### Added
+
+- `test_both_provisioning_endpoints_refuse_a_caller_without_the_role` — the behavioural twin of
+  the AST check in `test_chat_endpoint_surface`. They answer different questions: that one asks
+  *is a role check present in the function body*, this one asks *does a caller without the role
+  actually get refused*. **A gate placed after the first write would satisfy the first and fail
+  this.** It also asserts the refusal left no `Chat Room`, no `Chat Provisioning Run` and no
+  Google call behind.
+
+### Notes
+
+- Both scan-widenings were re-verified non-vacuous after the change: deleting the two `only_for`
+  calls fails the new test, and removing the mention hydration from `_page` still fails the
+  transcript scan. Widening a check is the easiest way to quietly disable it.
+
 ## [1.285.0] - 2026-08-13
 
 **Build the vault before filling it.** Phase 6 §6 step 5 sequences audit immutability before any
