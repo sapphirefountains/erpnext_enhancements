@@ -13,6 +13,10 @@ Notes worth repeating because each was learned the expensive way:
   Purchase Order format went to suppliers unbranded for a month on exactly this. A letter
   head exists on this site (`Sapphire Fountains Default`, is_default, logo at
   `/files/Logo-print.png`), so this is the only thing standing between it and the page.
+- **And the letter head is only a logo**, so the template draws our name, address and phone
+  beside it as well. That block is shared with the Purchase Order format rather than copied
+  — see `company_contact`, which also explains why the address prefers each document's own
+  `company_address_display` and the phone cannot.
 - **`description` is rendered unescaped, `item_name` escaped.** The item description is a
   Text Editor field holding markup authored in the Item master; escaping it printed a
   literal `&lt;div&gt;&lt;p&gt;` at the supplier. Every stock ERPNext format does the same.
@@ -38,7 +42,15 @@ Deliberate content decisions:
 
 import frappe
 
+from erpnext_enhancements.enhancements_core.company_contact import contact_block
+
 MODULE = "Enhancements Core"
+
+# All three sales doctypes name the company address `company_address_display`, and all
+# three carry one: 657 of 657 Quotations and every Sales Invoice on production. Purchase
+# Order calls the same thing `billing_address_display`, which is why the block takes the
+# fieldname rather than assuming.
+ADDRESS_FIELD = "company_address_display"
 
 QUOTATION_FORMAT = "Quotation - Sapphire"
 SALES_ORDER_FORMAT = "Sales Order - Sapphire"
@@ -48,15 +60,18 @@ SALES_INVOICE_FORMAT = "Sales Invoice - Sapphire"
 # Composed rather than triplicated: the line table and the totals block are genuinely
 # identical across the three documents, and three copies would drift on the first edit.
 
-_OPEN = """
+_OPEN = (
+	"""
 <div style="font-family:'Helvetica Neue',Arial,sans-serif; color:#222; font-size:12px;">
 
   {#- A custom Jinja format renders its own letterhead; Frappe injects one only for
-      *standard* formats. See the module docstring. -#}
-  {%- if letter_head %}
-  <div style="margin-bottom:10px;">{{ letter_head }}</div>
-  {%- endif %}
+      *standard* formats. See the module docstring. The block below draws the logo AND our
+      name, address and phone, because the letter head carries none of the latter — it is a
+      right-aligned logo and nothing else. Shared with the Purchase Order format so the two
+      cannot drift; see `company_contact`. -#}
 """
+	+ contact_block(ADDRESS_FIELD)
+)
 
 _TITLE_BAR = """
   <div style="display:table; width:100%; border-bottom:2px solid #333; padding-bottom:6px; margin-bottom:12px;">

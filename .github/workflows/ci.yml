@@ -280,12 +280,24 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_sales_print_formats -v
       - name: PO approval threshold (WI-013, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_po_approval -v
-      # Which superseded PO formats get DELETED and which only get DISABLED. The
-      # three that ship with ERPNext re-sync from its JSON on migrate, so a patch
-      # that deleted them would appear to work and undo itself at the next
-      # migrate -- and nobody looks again until they print a PO weeks later.
-      # Getting the split backwards is invisible until production.
-      - name: Purchase Order print format purge (delete vs disable)
+      # Purchase Order Order Stage. Pins the backfill rule, which CANNOT key on an empty
+      # column -- Purchase Order is a normal doctype, so the ALTER that adds the field
+      # writes its default into all 157 existing rows, and an emptiness predicate would
+      # match nothing and log itself a success (the v1.280.3 failure). Also pins that the
+      # Select options come from one list, and that neither Purchase Receipt hook can
+      # raise or assume the column exists.
+      # Own step: installs its own frappe stub in setUpModule.
+      - name: Purchase Order order stage (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_po_order_stage -v
+      # Two things about the Purchase Order format, both invisible until production.
+      # WHAT IT SAYS: our address and phone in the header -- the address prefers the
+      # document's billing_address_display and the phone is a constant, because the
+      # number is stored nowhere in ERPNext. WHICH RIVALS GO: the three that ship with
+      # ERPNext re-sync from its JSON on migrate, so a patch that deleted them would
+      # appear to work and undo itself at the next migrate -- and nobody looks again
+      # until they print a PO weeks later.
+      # Own step: installs its own frappe stub in setUpModule to exec the setup module.
+      - name: Purchase Order print format (contents + delete vs disable)
         run: python -m unittest erpnext_enhancements.tests.test_purchase_order_print_formats -v
       # Own step: installs its own frappe stub in setUpModule, so it must not
       # share a process with the other bench-free suites.

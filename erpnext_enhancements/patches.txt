@@ -643,3 +643,16 @@ erpnext_enhancements.patches.add_chat_message_fulltext_index
 # says 1. Writes 1 once, and only when nothing was ever stored, so a later manual un-tick is
 # respected. Safe twice.
 erpnext_enhancements.patches.default_field_text_wrap_on
+
+# The Order Stage field on Purchase Order: Created / Awaiting Confirmation / Waiting for
+# Delivery / Waiting for Pickup / Received. Not three more options on erpnext's `status`,
+# which is recomputed from docstatus + per_received + per_billed on every save and would
+# discard them silently. Safe twice (create_custom_fields with update=True).
+erpnext_enhancements.patches.add_po_order_stage_field
+
+# Gives the existing orders a truthful stage. MUST run after the field exists. Keyed on
+# docstatus/status/per_received, NOT on an empty column: Purchase Order is a normal
+# doctype, so the field's default was written into all 157 rows by the ALTER that added
+# it, and an emptiness predicate would match nothing and log itself a success. Safe twice
+# - it only ever moves a row off the default, so a hand-set stage survives a re-run.
+erpnext_enhancements.patches.backfill_po_order_stage

@@ -430,6 +430,20 @@ doc_events = {
 			"erpnext_enhancements.po_approval.stamp_approval",
 		],
 	},
+	# The far end of Purchase Order.custom_order_stage (see po_order_stage.py). The stage
+	# is set by hand everywhere else on purpose -- submitting an order in ERPNext is
+	# approval, not the act of placing it with a supplier -- but full receipt is a fact
+	# ERPNext already has, so a receipt that completes an order marks it Received, and a
+	# cancelled receipt takes that back.
+	#
+	# doc_events run AFTER the controller's own on_submit, which is the only reason
+	# reading per_received here returns the post-receipt figure: erpnext pushes it onto
+	# the order from that same method. Both handlers swallow-and-log; a stage update must
+	# never be the reason a Purchase Receipt cannot be submitted.
+	"Purchase Receipt": {
+		"on_submit": "erpnext_enhancements.po_order_stage.advance_on_receipt",
+		"on_cancel": "erpnext_enhancements.po_order_stage.revert_on_receipt_cancel",
+	},
 	# Lead attribution. Lead had no doc_events block at all before v1.241.0.
 	# Both handlers are inert unless the attribution Custom Fields exist on the
 	# bench (they check frappe.db.has_column), which is what keeps them safe

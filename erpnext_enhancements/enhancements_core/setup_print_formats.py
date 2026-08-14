@@ -27,6 +27,11 @@ Design decisions, all confirmed rather than assumed:
   `#header-html` block for *standard* formats. `letter_head` is handed to the template in
   the render args and dropped if unused, which is how this format spent its first month
   going to suppliers unbranded.
+- **Our own address and phone are printed beside the letter head**, because the letter
+  head does not carry them: `Sapphire Fountains Default` is a bare right-aligned logo and
+  nothing else, so before this the only way for a supplier to reach us was the buyer's
+  email in the "Questions to" cell. The block is shared with the three sales formats —
+  see `company_contact` for why the address prefers document data and the phone cannot.
 - **Print-safe CSS only**: no flexbox, no grid, `page-break-inside: avoid` on rows, and a
   `thead` that repeats across pages. The PDF engine on this host has been unreliable
   enough (see docs/pdf-generation.md) without asking it to do anything clever.
@@ -38,10 +43,18 @@ palette.
 
 import frappe
 
+from erpnext_enhancements.enhancements_core.company_contact import contact_block
+
 MODULE = "Enhancements Core"
 PURCHASE_ORDER_FORMAT = "Purchase Order - Sapphire"
 
-_HTML = """
+# The company-address field is called `billing_address_display` here. Purchase Order has no
+# `company_address` at all — the sales doctypes' name for the same thing — which is why
+# `contact_block` takes the fieldname instead of hard-coding one. Get it wrong and the block
+# prints nothing and raises nothing: Jinja renders a missing attribute as empty.
+ADDRESS_FIELD = "billing_address_display"
+
+_TEMPLATE = """
 <div style="font-family:'Helvetica Neue',Arial,sans-serif; color:#222; font-size:12px;">
 
   {#- A custom Jinja format has to render the letterhead itself. Frappe injects it only for
@@ -55,9 +68,7 @@ _HTML = """
       Page one only, and deliberately. The identifier a counter clerk needs on every sheet is
       the PO number, which is in the bar below and repeats through the table header. A logo
       on each page would cost ~52 KB per page for no working benefit. -#}
-  {%- if letter_head %}
-  <div style="margin-bottom:10px;">{{ letter_head }}</div>
-  {%- endif %}
+__CONTACT_BLOCK__
 
   <div style="display:table; width:100%; border-bottom:2px solid #333; padding-bottom:6px; margin-bottom:12px;">
     <div style="display:table-cell; vertical-align:bottom;">
@@ -205,6 +216,10 @@ _HTML = """
 
 </div>
 """
+
+# Substituted rather than interpolated: the template is full of Jinja braces, so an
+# f-string is not an option and `%`/`.format` would collide with them too.
+_HTML = _TEMPLATE.replace("__CONTACT_BLOCK__", contact_block(ADDRESS_FIELD))
 
 
 def ensure_enhancements_core_print_formats():

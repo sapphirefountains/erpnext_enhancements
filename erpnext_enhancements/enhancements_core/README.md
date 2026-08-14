@@ -7,6 +7,8 @@ The catch-all module. It holds the app's **Single settings doctypes**, the **Tim
 | File | Purpose | Key functions |
 |---|---|---|
 | `setup_print_formats.py` | The supplier-facing **Purchase Order** print format, upserted on every `after_migrate`. Lives here because procurement has no module of its own and a Print Format needs a real Module Def | `ensure_enhancements_core_print_formats` |
+| `setup_sales_print_formats.py` | The three customer-facing formats — **Quotation**, **Sales Order**, **Sales Invoice** (WI-020). Same `after_migrate` upsert; composed from shared fragments so the line table and totals cannot drift across three documents | `ensure_sales_print_formats` |
+| `company_contact.py` | Our name, address and phone as printed at the top of every outgoing document, shared by both format modules above. The letter head is a logo and nothing else, so each template draws these itself. The address prefers the document's own company address and falls back to the constant; the phone **is** the constant, because it is stored nowhere in ERPNext. Takes the address fieldname because Purchase Order (`billing_address_display`) and the sales doctypes (`company_address_display`) disagree on the name | `contact_block` |
 | `doctype/asset_booking/asset_booking.py` / `.js` | Submittable asset reservation, overlap guard, calendar feed | `validate`/`check_overlap`, `update_asset_status` (bg), whitelisted `check_availability`, `get_events` |
 | `doctype/erpnext_enhancements_settings/…py` | App-wide Single config | (stub) |
 | `doctype/expense_claim_type/…py` | Customised HR doctype controller | (stub) |
