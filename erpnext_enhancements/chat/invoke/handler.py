@@ -125,6 +125,17 @@ def handle(envelope: Envelope, *, origin: str = "") -> str | None:
 		_close_log(log_name, STATUS_REFUSED, error="no ERPNext OAuth link for the mentioning user")
 		return log_name
 
+	# --- say the bot is working, before anything slow -------------------------------------
+	#
+	# Retrieval and the model together are seconds, and until now the room showed nothing at
+	# all for that whole time — the person cannot tell a thinking assistant from a broken one,
+	# which is exactly the state this feature spent a day being in.
+	#
+	# Reuses `chat_typing`, the event the composer already publishes and both surfaces already
+	# render. A second "the bot is busy" event would be a second thing to subscribe to, wire up
+	# and forget, for a UI that is identical.
+	_typing(envelope, on=True)
+
 	# --- retrieve, as the human ------------------------------------------------------
 	_set_status(log_name, STATUS_RETRIEVING)
 	retrieval_started = time.monotonic()
@@ -198,6 +209,36 @@ def handle(envelope: Envelope, *, origin: str = "") -> str | None:
 # ------------------------------------------------------------------------------- the reply
 
 
+def _typing(envelope: Envelope, *, on: bool) -> None:
+	"""Show or clear "the bot is thinking" in the room. **Never raises.**
+
+	Reuses ``chat_typing`` — the event the composer already publishes and which both the SPA
+	and the desk widget already render. A dedicated "bot is busy" event would be a second thing
+	to subscribe to, wire up and forget, for a UI that is identical to the one that exists.
+
+	Nothing published it for Triton before, so a room showed *nothing at all* for the seconds
+	retrieval and the model take. A person cannot tell a thinking assistant from a broken one,
+	which is precisely the state this feature spent a day in.
+
+    Swallowed, like ``_publish_created``: a missing indicator costs a moment of uncertainty and
+	an exception here would abandon the turn it was announcing. The receiver's five-second
+	expiry is the safety net if the stop event is ever lost.
+	"""
+	try:
+		from erpnext_enhancements.chat import realtime
+
+		payload: dict[str, Any] = {"room": envelope.room, "user": _bot_user()}
+		if envelope.thread_root:
+			payload["thread_root"] = envelope.thread_root
+		realtime.publish_room_event(
+			envelope.room,
+			realtime.EVENT_TYPING if on else realtime.EVENT_TYPING_STOPPED,
+			payload,
+		)
+	except Exception:
+		pass
+
+
 def _reply(
 	envelope: Envelope,
 	text: str,
@@ -223,6 +264,11 @@ def _reply(
 	"""
 	if not text.strip():
 		return None
+	# Whatever else happens below, the bot has stopped thinking — it is about to speak, or it
+	# is about to say it cannot. Placed here rather than at the four call sites so no future
+	# exit can forget it and leave a room showing "Triton is typing…" forever.
+	_typing(envelope, on=False)
+
 	try:
 		from erpnext_enhancements.chat.sync import outbox
 

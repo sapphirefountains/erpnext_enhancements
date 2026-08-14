@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.282.0] - 2026-08-13
+
+### Added
+
+- **Triton shows a thinking indicator while it works.** Retrieval and the model together are
+  seconds, and the room showed *nothing at all* for that whole time — a person cannot tell a
+  thinking assistant from a broken one, which is exactly the state this feature spent a day in.
+- Reuses `chat_typing`, the event the composer already publishes and which **both** surfaces
+  already render (the SPA directly, the desk widget via `chat_surface.onRealtime`). Nothing had
+  ever published it for the bot; a dedicated "bot is busy" event would have been a second thing
+  to subscribe to, wire up and forget, for an identical UI.
+
+### Notes
+
+- **The stop lives in `_reply`, not at the call sites.** Every exit that says something clears
+  it — refused, retrieval failed, model failed, answered — so no future branch can leave a room
+  showing "typing…" forever. The receiver's five-second expiry is the safety net if the stop
+  event is lost.
+- Swallowed like `_publish_created`, and for the same reason: a missing indicator costs a
+  moment of uncertainty, and an exception here would abandon the turn it was announcing.
+
 ## [1.281.0] - 2026-08-13
 
 ### Changed
