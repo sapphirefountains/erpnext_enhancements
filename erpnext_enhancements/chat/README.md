@@ -1080,13 +1080,39 @@ bench --site <site> execute erpnext_enhancements.chat.audit.verify_chain
 **What is still missing before oversight is genuinely reviewable**, and why turning the field
 on is still a decision rather than a formality:
 
-- Nothing *reads* the log yet. There is no oversight viewer, no `Chat Access Report`, and no
-  scheduled chain verification — so a privileged read is recorded and nobody is told.
+- Nothing *reads* the log yet. There is no oversight viewer and no `Chat Access Report` — so a
+  privileged read is recorded and nobody is told. **Scheduled chain verification landed in
+  v1.287.0** (`10 3 * * *`, both chains, a break recorded as a governance event); until §4.H's
+  alerting exists its delivery channel is the Error Log, which is necessary and not sufficient.
 - A row written from a permission hook records that a privileged read happened, not what it
   reached; only `search_messages` records rooms and seq ranges today.
 - `reason` is a free-text field that nothing enforces, because the thing that should collect
   it — the viewer — does not exist. The ADR requires a minimum-length reason per viewer
   session for Admin reads.
+
+### The second audit stream: `Chat Audit Log`
+
+`Chat Retrieval Audit` records **reads of** chat content. `Chat Audit Log` (v1.285.0, written to
+from v1.287.0) records **acts of administration over** it: who was granted the oversight role,
+who expanded a tombstone, what a retention run destroyed. The two do not overlap — nothing
+recorded in the second returns message content, and nothing that returns message content is
+recorded there.
+
+**It holds no message text in any field, by design.** A retention run records how many rows it
+destroyed and over which `seq` range, never what they said: a log of what was deleted that
+contains what was deleted has not deleted anything.
+
+**Two chains, never one.** Interleaving two writers into a single chain makes every concurrent
+write a fork, and `verify_chain` reports a fork as a permanent break indistinguishable from
+tampering. Separate genesis strings, separate advisory locks, separate payload shapes — asserted
+by `tests/test_chat_governance_audit.py`.
+
+```bash
+bench --site <site> execute erpnext_enhancements.chat.audit.verify_all_chains
+```
+
+Runs nightly at 03:10. Nightly rather than hourly because a break is a point in time rather than
+a rate: every row after it is suspect and every row before it is not.
 
 ## What is deliberately lossy
 

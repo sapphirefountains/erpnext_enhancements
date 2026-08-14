@@ -720,6 +720,23 @@ jobs:
       # asserts that directly - no innerHTML is ever assigned, and no element is created that
       # the renderer does not itself construct - plus the §4.G.7 hostile corpus through every
       # link path.
+      # Phase 6 §4.A.4 and §4.D.3 layer 4. Chat Audit Log shipped in v1.285.0 as a vault
+      # with nothing in it - four immutability layers and no writer, which is §6 step 5's
+      # ordering. This is the first writer, and two properties need a test rather than a
+      # comment.
+      #
+      # ONE CHAIN PER TABLE. Interleaving two writers into a single chain makes every
+      # concurrent write a fork, and the verifier reports a fork as a permanent break that is
+      # indistinguishable from tampering. Separate genesis strings, separate locks.
+      #
+      # And every DATA FIELD is signed, checked by set equality against the DocType JSON. The
+      # per-field test alone is not enough: deleting a field from the signed tuple makes that
+      # loop skip it, so it stays green while the field becomes editable without breaking the
+      # chain - which is exactly what the chain exists to catch.
+      #
+      # Own step: installs its own frappe stub in setUpModule.
+      - name: Chat governance audit (the second chain, and the role-grant hook)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_governance_audit -v
       - name: Chat markdown renderer (browser half)
         run: node scripts/test_chat_markdown.mjs
       # The server half. Pure `re`, imports no frappe, so it gets its own step and can never

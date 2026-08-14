@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.288.0] - 2026-08-14
+
+Phase 6 §6 step 5 continues. v1.285.0 built the vault — `Chat Audit Log` with its four
+immutability layers and **no writer**. This fills it, in the order the phase requires: the chain
+first, then the first thing that writes to it, then the job that checks the chain.
+
+### Added
+
+- **The governance chain**, in `chat/audit.py` beside the retrieval one. `compute_governance_chain_hash`,
+  `record_governance_event`, `verify_governance_chain`.
+
+  **Its own stream, and that is the design decision.** One chain per table: interleaving two
+  writers into a single chain makes every concurrent write a fork, and the verifier reports a
+  fork as a permanent break indistinguishable from tampering. Separate genesis string, separate
+  advisory lock, separate payload shape.
+
+  It signs `recorded_at`, never `creation` — `Document.insert()` overwrites `creation`
+  unconditionally, so signing it signs a value the database never stored. That is not a
+  precaution; it is what made v1.268.0 report its own first row as tampered.
+
+  **The writer swallows, and its sibling does not.** The difference is the direction of time:
+  the retrieval writer runs *before* content is returned, so it can still refuse. This one runs
+  *after* the act it records — a role already granted, a retention run already finished — and
+  raising would undo the act in order to record it.
+
+- **The role-grant hook** (§4.A.4) — `chat/governance/role_grants.py`, on `User.on_update`.
+
+  Granting the oversight role hands somebody every conversation in the company, and **a System
+  Manager can grant it to themselves**. That is not a flaw to close — somebody has to be able to
+  grant it — but it is exactly why the grant is recorded.
+
+  `Has Role` is a child table of `User` and Frappe fires no event for a child row alone, so the
+  parent's `on_update` is the only place a role change is observable. `hooks.py` now carries a
+  **list** there, so this runs alongside the training assignment handler that was already using
+  the same event.
+
+  It diffs **sets, not rows**. A profiled user's roles are rebuilt wholesale from their Role
+  Profiles on every save, so row identity churns while membership does not — a row-based diff
+  would log a grant and a revoke every time anybody with a Role Profile saved anything, which is
+  noise in the one table whose value is that it is quiet.
+
+  It **does not refuse the grant**. An audit hook that can veto a save takes down user
+  administration when it has a bug, and the person it would be stopping already holds System
+  Manager.
+
+- **Nightly chain verification** — `verify_all_chains`, wired to `10 3 * * *`. Nightly rather
+  than hourly because **a break is a point in time, not a rate**: every row after it is suspect
+  and every row before it is not, so checking twenty-four times a day finds the same break
+  twenty-four times.
+
+  A break is recorded as a governance event, which is the only self-consistent place for it —
+  the audit log is what this system uses to say something happened, and "the audit log was
+  tampered with" is something that happened.
+
+### Notes
+
+- **The chain was computed and nothing ever checked it.** That was true from v1.268.0 until this
+  release, and it is the gap this closes. Until §4.H's alerting lands the Error Log is the
+  delivery channel, which is **necessary and not sufficient** — nobody reads it unprompted, and
+  that is stated in the code rather than implied.
+- **A test found a hole in another test.** `test_the_governance_hash_covers_the_governance_fields`
+  iterates the signed-field tuple and proves each entry moves the hash — necessary, and *not*
+  sufficient: deleting a field from the tuple makes the loop skip it, so it stays green while
+  the field becomes editable without breaking the chain. Verified by deleting `subject_user` and
+  watching it pass. `EveryDataFieldIsSigned` now checks set equality against the DocType JSON
+  instead, and fails on exactly that deletion.
+- The raw-SQL guard caught the new queries and was answered rather than worked around:
+  `Chat Audit Log` is classified `UNSCOPED` with its reason, added to the literal pin that makes
+  growing the allowlist a deliberate edit, and the two new lock helpers are exempted beside
+  their retrieval twins.
+
 ## [1.287.0] - 2026-08-14
 
 A long value in a `Data` field, or in a child-table cell, has been unreadable without
@@ -126,7 +197,6 @@ read that step's state. Now each button renders inside its step's own box.
 - Boxes carrying buttons get a wider flex basis (`.has-actions`) and stack their buttons
   full-width. Seven boxes on one row is already tight on a laptop, and a button that clips its
   own label is worse than a taller bar.
-
 ## [1.286.2] - 2026-08-14
 
 **v1.286.0 and v1.286.1 shipped a markdown renderer that never ran.** Both releases were green,
