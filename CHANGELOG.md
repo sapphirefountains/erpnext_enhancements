@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.286.0] - 2026-08-13
+
+Triton's answers rendered as raw markdown. Reported as one bug across three surfaces; it was
+**three different bugs that happened to share a symptom**, which is why it looked inconsistent.
+
+| Surface | What was actually wrong |
+|---|---|
+| `/chat` SPA | `message_view.js` built every body with `textContent`. **No markdown renderer existed on that page at all**, so `**bold**` was literally what you saw. |
+| Floating widget | Called `frappe.markdown`, which in v16 is `showdown` and lives in the **Desk bundle**. On a Desk page it rendered; on `/chat`, where `frappe`/`showdown`/jQuery are absent, it threw and fell back **silently** to escaped raw text. Same widget, two outputs, no error either way. |
+| Google Chat | Chat's bold is a **single** asterisk. `**Incompressibility:**` arrived as `*` + `*Incompressibility:*` + `*` — bold **with a stray asterisk glued to it**. That is the "sometimes it bolds, sometimes there's a bold character" report: not two behaviours, one deterministic mistranslation. |
+
+### Added
+
+- **`public/js/chat/markdown.js`** — one renderer, shared by the SPA and the widget. Bold,
+  italic, inline and fenced code, bullet and numbered lists, links, headings.
+
+  **Nodes, never HTML strings.** No `innerHTML` anywhere in it, and there must never be one:
+  the input is model output, untrusted twice over — it carries prompt-injected content, and it
+  quotes employees' own messages back verbatim. Links go through the parser-based `isSafeUrl`
+  hardened in v1.282.3. It is a renderer, not a parser: anything unhandled falls through as the
+  characters the model typed, which is the correct failure mode.
+
+- **`chat/gchat/markdown.py`** — the server half, translating CommonMark into Chat's own
+  vocabulary: `**b**`→`*b*`, `*i*`→`_i_`, `~~s~~`→`~s~`, `# H`→`*H*`, `- x`→`• x`,
+  `[l](u)`→`l: u`. Code spans are extracted first and restored last, so `` `**not bold**` ``
+  keeps both asterisks.
+
+- `scripts/test_chat_markdown.mjs` (19 assertions) and
+  `tests/test_chat_gchat_markdown.py` (19), each with its own `ci.yml` step.
+
+### Changed
+
+- **The widget no longer uses `frappe.markdown`** — an approved change to a "preserve exactly"
+  surface (decision #7), settled 2026-08-13, and it is a security fix as much as a formatting
+  one. v16's `frappe.markdown` is `new showdown.Converter()` with **no sanitiser** (the
+  sanitising commit is on frappe's `develop` and **not** in the v16 line) and its output went
+  straight into `innerHTML`. That closes hardening finding B-9. Mermaid rendering is kept.
+
+- **The SPA renders markdown for Triton's replies only.** A coworker's message stays literal,
+  and the asymmetry is forced by the data rather than chosen: `tokenizeMentions` positions
+  mention chips by **character offset into the raw body**, and markdown rendering moves every
+  offset after the first delimiter it removes. Triton never @-mentions anyone; a coworker does,
+  and their `2 * 3` is arithmetic.
+
+- The relay converts **only** Triton's messages, before the byte budget is applied so the
+  truncation point is measured on the bytes that actually go on the wire.
+
+### Notes
+
+- **Two bugs were found by writing the tests, not by reading the code.** `snake_case_name`
+  rendered as italic — CommonMark forbids intraword `_` for exactly this reason, and Triton
+  emits identifiers constantly. And `**bold with *inner* italic**` failed to match at all,
+  because the pattern forbade inner asterisks. Both fixed in both renderers.
+
+- **The Google Chat conversion is deliberately NOT idempotent, and a test pins that.** `*x*` is
+  Chat's *bold* and CommonMark's *italic*; the two languages disagree about what that string
+  means, so no translator between them can be idempotent — a second pass reads its own bold as
+  italic. What keeps it safe is the call site: `relay_text` converts from `Chat Message.text`,
+  the stored CommonMark, on **every** relay including the re-relay after an edit, so a second
+  pass never happens. A source-level test asserts that call site stays put, since asserting it
+  behaviourally would need a bench.
+
+- **Tables and blockquotes are not supported.** Triton does emit tables when asked to compare
+  things, and they still arrive as pipe characters. Extend `renderBlocks` with corpus rows when
+  that becomes worth it — never by reaching for a general parser.
+
+- The renderer avoids regex lookbehind: it only reached Safari in 16.4, and an unsupported group
+  throws at **parse** time, which would take the whole renderer down on that browser silently
+  for everybody on it.
+
 ## [1.285.1] - 2026-08-13
 
 CI caught three suites this branch broke and I had not run. The fixes are small; **how they

@@ -11,6 +11,7 @@
  */
 
 import { applyCitations, indexManifest } from "./citations.js";
+import { renderMarkdown } from "./markdown.js";
 import { clockTime, dayLabel, el, fileSize, initials, linkify, relativeTime } from "./dom.js";
 import { tokenizeMentions } from "./mentions.js";
 import { STATE } from "./optimistic.js";
@@ -154,6 +155,46 @@ function renderContent(message, ctx) {
 	}
 
 	const text = el("div", { class: "ee-msg-text" });
+
+	// Triton's replies are markdown; a coworker's message is the characters they typed.
+	//
+	// The split is not a preference, it is forced by the data. `tokenizeMentions` positions
+	// mention chips by **character offset into the raw body**, and markdown rendering moves
+	// every offset after the first delimiter it removes — so the two cannot both apply to one
+	// message. Triton does not @-mention anybody, so it never needs the offsets; a coworker
+	// does, and their `2 * 3` is arithmetic rather than emphasis.
+	//
+	// Before this the SPA rendered every body with `textContent`, so an answer arrived as
+	// literal `**bold**` and `- item`. The renderer builds nodes, never HTML strings: the input
+	// is model output, which carries prompt-injected content and quotes employees' messages
+	// back verbatim.
+	if (isAssistant(message)) {
+		renderMarkdown(text, message.text || "");
+	} else {
+		renderPlainBody(text, message, ctx);
+	}
+
+	// Inline citations, last, over the finished DOM. With no manifest this is a no-op and the
+	// body renders exactly as it did before this phase — which is the required behaviour, not
+	// a fallback afterthought, and is what lets Phase 3 ship before Phase 5.
+	if (ctx.citationsEnabled && message.citations && message.citations.length) {
+		applyCitations(text, indexManifest(message.citations), {
+			onMiss: ctx.onCitationMiss,
+			onNavigate: ctx.onCitationNavigate,
+			onExpandDigest: ctx.onExpandDigest,
+		});
+	}
+
+	return text;
+}
+
+/** Whether this message is Triton's, and therefore markdown rather than typed text. */
+function isAssistant(message) {
+	return String((message && message.sender_kind) || "") === "Triton";
+}
+
+/** A human's message: mention chips at their offsets, then linkified text. Unchanged. */
+function renderPlainBody(text, message, ctx) {
 	const tokens = tokenizeMentions(message.text || "", message.mentions || []);
 	for (const token of tokens) {
 		if (token.type === "mention") {
@@ -168,18 +209,6 @@ function renderContent(message, ctx) {
 		}
 		for (const node of linkify(token.value)) text.appendChild(node);
 	}
-
-	// Inline citations, last, over the finished DOM. With no manifest this is a no-op and the
-	// body renders exactly as it did before this phase — which is the required behaviour, not
-	// a fallback afterthought, and is what lets Phase 3 ship before Phase 5.
-	if (ctx.citationsEnabled && message.citations && message.citations.length) {
-		applyCitations(text, indexManifest(message.citations), {
-			onMiss: ctx.onCitationMiss,
-			onNavigate: ctx.onCitationNavigate,
-			onExpandDigest: ctx.onExpandDigest,
-		});
-	}
-
 	return text;
 }
 

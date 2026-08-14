@@ -333,10 +333,36 @@ def relay_text(message: Any) -> tuple[str, bool]:
 	settings = _settings()
 	limit = cint(_setting(settings, "message_byte_limit")) or budget.MESSAGE_BYTE_LIMIT_DEFAULT
 	body = getattr(message, "text_plain", None) or extract_text_plain(getattr(message, "text", None))
+	body = _formatted_for_chat(body, message)
 	room = getattr(message, "room", None) or ""
 	name = getattr(message, "name", None) or ""
 	suffix = truncation_suffix(room, name) if room and name else ""
 	return budget.fit_to_byte_budget(body, limit - ENVELOPE_ESTIMATE_BYTES, suffix=suffix)
+
+
+def _formatted_for_chat(body: str, message: Any) -> str:
+	"""Translate Triton's markdown into Google Chat's own formatting. **Triton only.**
+
+	Google Chat's bold is a *single* asterisk, so ``**Incompressibility:**`` reached the Chat
+	client bold with a stray ``*`` glued to it — reported as "sometimes it bolds and sometimes
+	it leaves a bold character", which is one deterministic mistranslation rather than two
+	behaviours.
+
+	**A human's message is left exactly as typed**, and that asymmetry is the decision rather
+	than an oversight. Triton emits CommonMark by nature; a coworker typing ``2 * 3`` typed
+	arithmetic, and a relay that rewrites what somebody wrote is a relay that lies about what
+	they said. It also keeps the three surfaces consistent: the SPA renders markdown for
+	Triton's replies and leaves human messages literal, for the same reason.
+
+	Converting **before** the byte budget is applied, not after, so the truncation point is
+	measured on the bytes that actually go on the wire. Doing it the other way can cut a
+	message inside a delimiter the conversion is about to rewrite.
+	"""
+	if str(getattr(message, "sender_kind", "") or "") != "Triton":
+		return body
+	from erpnext_enhancements.chat.gchat.markdown import to_google_chat
+
+	return to_google_chat(body)
 
 
 # --- settings and flags --------------------------------------------------------

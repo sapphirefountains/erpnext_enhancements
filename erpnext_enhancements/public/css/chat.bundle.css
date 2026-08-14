@@ -1132,3 +1132,67 @@ body .container {
 	min-height: 46px;
 	background: var(--ee-bg-alt);
 }
+
+/* Markdown, as rendered by public/js/chat/markdown.js. Triton's replies only — a coworker's
+   message is still literal text, because mention chips are positioned by character offset and
+   markdown rendering moves every offset after the first delimiter it removes.
+   Margins are collapsed hard: these blocks live inside a chat bubble, where a browser's default
+   paragraph and list spacing reads as a gap somebody left by accident. */
+.ee-msg-text .ee-md-p {
+	margin: 0 0 0.5em;
+}
+.ee-msg-text .ee-md-p:last-child {
+	margin-bottom: 0;
+}
+.ee-msg-text .ee-md-h {
+	margin: 0.6em 0 0.3em;
+	font-size: 1em;
+	font-weight: 600;
+	line-height: 1.3;
+}
+.ee-msg-text .ee-md-h:first-child {
+	margin-top: 0;
+}
+.ee-msg-text .ee-md-list {
+	margin: 0 0 0.5em;
+	padding-left: 1.3em;
+}
+.ee-msg-text .ee-md-list:last-child {
+	margin-bottom: 0;
+}
+.ee-msg-text .ee-md-list.is-nested {
+	margin-bottom: 0;
+}
+.ee-msg-text .ee-md-li {
+	margin: 0.15em 0;
+}
+.ee-msg-text .ee-md-inline-code {
+	padding: 0.1em 0.3em;
+	border-radius: 3px;
+	background: var(--ee-bg-alt);
+	font-family: var(--font-stack-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
+	font-size: 0.92em;
+}
+/* Wide code must scroll inside the bubble rather than widening it — a bubble that grows to fit
+   a long line pushes the whole transcript sideways on a phone. */
+.ee-msg-text .ee-md-code {
+	margin: 0 0 0.5em;
+	padding: 0.5em 0.7em;
+	overflow-x: auto;
+	border-radius: 5px;
+	background: var(--ee-bg-alt);
+}
+.ee-msg-text .ee-md-code:last-child {
+	margin-bottom: 0;
+}
+.ee-msg-text .ee-md-code code {
+	font-family: var(--font-stack-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
+	font-size: 0.92em;
+	white-space: pre;
+}
+/* A URL the safety check refused. Rendered as visible text, deliberately not styled as a link:
+   the reader should be able to see what the model wrote without it looking clickable. */
+.ee-msg-text .ee-md-link.is-unsafe {
+	text-decoration: underline dotted;
+	cursor: not-allowed;
+}
