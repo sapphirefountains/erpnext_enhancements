@@ -234,6 +234,7 @@ HOLD_TOMBSTONE_KEPT: Final[str] = "keep_tombstones_forever is on"
 HOLD_THREAD_ROOT: Final[str] = "a live reply still names this message as its thread root"
 HOLD_ROOM_LAST_MESSAGE: Final[str] = "the room points at this as its last message"
 HOLD_DERIVED_BLOCKED: Final[str] = "derived artefacts covering it cannot be retired"
+HOLD_NOT_RETIRED: Final[str] = "the retirement mark for this room does not cover it yet"
 
 #: Fallback when ``Chat Settings.message_retention_days`` reads 0. ``0`` means **never**, the
 #: convention the rest of that form already uses and which ``chat/retention.py`` established;
@@ -259,6 +260,9 @@ def holds(facts: dict) -> set[str]:
 	``live_replies``        count of undeleted messages naming this one as thread_root
 	``is_room_last_message`` ``Chat Room.last_message`` points here
 	``derived_blocked``     a BLOCKED artefact covers this message's span
+	``seq``                 this message's sequence number
+	``retired_below_seq``   ``Chat Room.retired_below_seq`` — derived coverage at or below
+	                        this seq has been retired, so purging is safe there
 	"""
 	out: set[str] = set()
 
@@ -286,6 +290,15 @@ def holds(facts: dict) -> set[str]:
 
 	if facts.get("derived_blocked"):
 		out.add(HOLD_DERIVED_BLOCKED)
+
+	# The retirement floor. A message is only purgeable once the derived coverage over its
+	# span has actually been retired — which is a per-message fact about `seq`, not a
+	# site-wide one. It is checked LAST because it is the most specific: a message held by
+	# this and nothing else is one waiting on the retirement mark to advance, which is a
+	# different conversation from one held because it is still in the retention window.
+	retired_below = int(facts.get("retired_below_seq") or 0)
+	if int(facts.get("seq") or 0) > retired_below:
+		out.add(HOLD_NOT_RETIRED)
 
 	return out
 

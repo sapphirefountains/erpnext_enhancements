@@ -138,9 +138,7 @@ def request_export(
 			{"status": STATUS_FAILED, "error": "the export_requested audit row could not be written"},
 			update_modified=False,
 		)
-		raise ExportRefused(
-			frappe._("This export could not be recorded, so it was not started.")
-		)
+		raise ExportRefused(frappe._("This export could not be recorded, so it was not started."))
 
 	_enqueue(doc.name)
 	return {"export_request": doc.name, "status": doc.status, "rooms": named}
@@ -288,15 +286,13 @@ def _build(row: dict[str, Any]) -> dict[str, Any]:
 		)
 	attachments, attachments_omitted = _attachments(rooms)
 
-	message_records = [
-		export.message_record(m, include_deleted_content=include_deleted) for m in messages
-	]
+	message_records = [export.message_record(m, include_deleted_content=include_deleted) for m in messages]
 	files: dict[str, bytes] = {
 		"messages.jsonl": export.canonical_jsonl(message_records),
 		"revisions.jsonl": export.canonical_jsonl(export.revision_record(r) for r in revisions),
-		"transcript.html": export.transcript_html(
-			message_records, export_id=str(row["name"])
-		).encode("utf-8"),
+		"transcript.html": export.transcript_html(message_records, export_id=str(row["name"])).encode(
+			"utf-8"
+		),
 	}
 	for path, payload in attachments.items():
 		files[path] = payload
@@ -587,9 +583,7 @@ def download_export(export_request: str) -> None:
 		# `record_governance_event` swallows its own failures and returns None. Fail closed:
 		# an unrecorded download is precisely the thing the two-event split exists to make
 		# impossible, and a caller that cannot tell is a caller that assumes it worked.
-		raise frappe.ValidationError(
-			frappe._("This download could not be recorded, so it was refused.")
-		)
+		raise frappe.ValidationError(frappe._("This download could not be recorded, so it was refused."))
 
 	frappe.db.set_value(
 		DOCTYPE,

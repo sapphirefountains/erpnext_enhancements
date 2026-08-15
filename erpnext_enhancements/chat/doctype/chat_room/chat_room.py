@@ -88,6 +88,47 @@ class ChatRoom(Document):
 				title=frappe._("Chat Room"),
 			)
 
+		self._refuse_backwards_retirement(previous_high_water=previous)
+
+	def _refuse_backwards_retirement(self, *, previous_high_water: int) -> None:
+		"""``retired_below_seq`` only goes up, and never past ``seq_high_water``.
+
+		The mirror of the rule above it, and refused for a different reason. Lowering the
+		retirement floor does not corrupt an allocator — it **re-admits derived coverage of
+		messages that no longer exist**, and nothing can rebuild that coverage correctly
+		because the source is gone. The stale chunks and digests simply become servable again,
+		which is the one outcome retirement exists to prevent.
+
+		Both invariants are backstops rather than the enforcement point: the field is
+		``read_only`` on the DocField, which is a form property and not a database constraint,
+		and the writer moves it with ``db.set_value``, which skips ``validate()`` entirely.
+		What this catches is a Desk save, a fixture, or a data fix — which, per
+		``retire_rules``, is exactly the case that produces a mark the boundary snap never saw.
+		"""
+		from erpnext_enhancements.chat import retire_rules
+
+		previous = cint(frappe.db.get_value(self.doctype, self.name, "retired_below_seq"))
+		current = cint(getattr(self, "retired_below_seq", None))
+
+		refusal = retire_rules.refuse_lowering(previous, current)
+		if refusal:
+			frappe.throw(
+				frappe._("Chat Room {0}: {1}").format(self.name, refusal),
+				title=frappe._("Chat Room"),
+			)
+
+		high_water = max(cint(getattr(self, "seq_high_water", None)), previous_high_water)
+		if current > high_water:
+			frappe.throw(
+				frappe._(
+					"Chat Room {0}: retired_below_seq ({1}) cannot exceed seq_high_water ({2}). "
+					"That would declare messages retired which were never allocated, and the "
+					"indexer's watermark floor would then skip every message the room goes on "
+					"to receive."
+				).format(self.name, current, high_water),
+				title=frappe._("Chat Room"),
+			)
+
 	def before_insert(self) -> None:
 		"""Normalise the two column pairs that back composite UNIQUE indexes.
 

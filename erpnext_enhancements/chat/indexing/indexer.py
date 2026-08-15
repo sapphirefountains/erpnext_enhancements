@@ -307,18 +307,35 @@ def _rooms_needing_chunks(*, limit: int) -> list[dict[str, Any]]:
 	without a backfill script.
 
 	Oldest-lag-first, so a room that has been waiting cannot be starved by a busier one.
+
+	**The watermark is floored at ``retired_below_seq``, and that floor is the whole reason the
+	retention purge was blocked.** Without it, deleting a room's retired chunks drops
+	``max(last_seq)`` — there is no staleness filter here — so this sweep would re-read every
+	surviving message above the hole and re-chunk it **verbatim**, with a fresh embedding, once
+	every ten minutes. A purge that tidied up after itself would manufacture new copies of the
+	text it was destroying, for as many nights as its batch cap took to finish the room.
+
+	Flooring it also fixes the `HAVING` and the ordering, which is why all three moved
+	together: a room whose only lag is retired messages must fall out of the rotation entirely
+	rather than be selected forever with nothing to do. The arithmetic is
+	``retire_rules.watermark_floor``; this is its SQL twin, and the two are asserted to agree.
 	"""
 	return (
 		frappe.db.sql(
 			f"""
-		select r.`name` as `name`, coalesce(max(c.`last_seq`), 0) as `watermark`
+		select r.`name` as `name`,
+			greatest(coalesce(max(c.`last_seq`), 0), coalesce(r.`retired_below_seq`, 0)) as `watermark`
 		from `tab{ROOM_DOCTYPE}` r
 		left join `tab{CHUNK_DOCTYPE}` c
 			on c.`room` = r.`name` and c.`sealed` = 1
 		where r.`is_archived` = 0
-		group by r.`name`, r.`seq_high_water`
-		having r.`seq_high_water` > coalesce(max(c.`last_seq`), 0)
-		order by (r.`seq_high_water` - coalesce(max(c.`last_seq`), 0)) desc
+		group by r.`name`, r.`seq_high_water`, r.`retired_below_seq`
+		having r.`seq_high_water`
+			> greatest(coalesce(max(c.`last_seq`), 0), coalesce(r.`retired_below_seq`, 0))
+		order by (
+			r.`seq_high_water`
+			- greatest(coalesce(max(c.`last_seq`), 0), coalesce(r.`retired_below_seq`, 0))
+		) desc
 		limit %(limit)s
 		""",
 			{"limit": max(cint(limit), 0)},

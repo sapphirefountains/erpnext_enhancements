@@ -350,6 +350,36 @@ FOREIGN_TABLES: dict[str, str] = {
 #: bounded by something other than the reader's identity, and no column selected is a body.**
 #: A read that answers an HTTP request fails all three and does not belong here.
 SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
+	# --- chat/retrieval/gate.py: the retirement floor fragments (Phase 6 §4.F) -----------
+	#
+	# **The same inversion `permissions.py`'s own builders get, and for the same reason: these
+	# ARE a filter.** Each is a correlated sub-select reading exactly one column —
+	# `retired_below_seq` — of the room a row already belongs to, ANDed into a WHERE that
+	# already carries `membership_filter_sql` on that same room. It cannot widen a result set;
+	# it can only remove rows. A fragment that only ever narrows cannot leak, and reporting it
+	# as an unfiltered read of `Chat Room` is backwards in the way the guard's own docstring
+	# describes for the membership builders.
+	#
+	# Why a sub-select rather than a join: the fragment has to compose into five different
+	# queries with different FROM clauses, three of them already carrying a FULLTEXT match or
+	# an `IN (…)` of chunk names. One shared string that can be ANDed anywhere is what stops
+	# five hand-written copies of a correctness filter — and the copy that gets forgotten is
+	# the one that serves the transcript of destroyed messages.
+	#
+	# No body column is selected by any of the three; the value is an integer watermark.
+	(
+		"retrieval/gate.py",
+		"<module>",
+		"Chat Room",
+	): (
+		"`_RETIRED_CHUNK_SQL` and `_retired_digest_sql`, declared at module scope beside the "
+		"table constants. Each reads one integer column of the row's own room and is ANDed "
+		"into a membership-filtered WHERE, so it can only narrow. Keyed on the chunk's "
+		"`first_seq` rather than `last_seq` deliberately — see `chat/retire_rules."
+		"wholly_retired`: for a mark set by hand rather than snapped to a chunk boundary, "
+		"`last_seq` would serve a chunk straddling the mark whose body is the retired "
+		"transcript verbatim."
+	),
 	# --- chat/governance/retention.py: what a purge WOULD destroy (Phase 6 §4.F) ---------
 	#
 	# Eligible on all three counts, and the third is the load-bearing one here. NO SESSION

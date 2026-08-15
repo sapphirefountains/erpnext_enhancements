@@ -305,7 +305,7 @@ def transcript_html(records: list[dict[str, Any]], *, export_id: str) -> str:
 
 	rows = []
 	for record in records:
-		deleted = " class=\"deleted\"" if record.get("is_deleted") else ""
+		deleted = ' class="deleted"' if record.get("is_deleted") else ""
 		rows.append(
 			"<tr{cls}><td>{seq}</td><td>{sender}</td><td>{text}</td><td>{when}</td></tr>".format(
 				cls=deleted,
@@ -316,7 +316,7 @@ def transcript_html(records: list[dict[str, Any]], *, export_id: str) -> str:
 			)
 		)
 	return (
-		"<!doctype html>\n<html><head><meta charset=\"utf-8\">"
+		'<!doctype html>\n<html><head><meta charset="utf-8">'
 		f"<title>Chat transcript {escape(export_id)}</title>"
 		"<style>body{font-family:system-ui,sans-serif;margin:2rem}"
 		"table{border-collapse:collapse;width:100%}"

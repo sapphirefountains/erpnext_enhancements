@@ -219,18 +219,14 @@ def clear_digest_poison(room: str = "") -> dict[str, int]:
 	# a check that cannot see the target is a check that has stopped protecting it. The loop
 	# version was rejected on exactly that ground. `limit_page_length=0` because `get_all`
 	# otherwise stops at 20, which would silently half-clear a site and look like success.
-	room_names = frappe.get_all(
-		ROOM_DIGEST_DOCTYPE, filters=filters, pluck="name", limit_page_length=0
-	)
+	room_names = frappe.get_all(ROOM_DIGEST_DOCTYPE, filters=filters, pluck="name", limit_page_length=0)
 	for name in room_names:
 		# `update_modified=False` to match how every other write in this module touches a digest
 		# row: `modified` is the staleness signal the sweeper reads, and an operator clearing a
 		# flag must not look like a rebuild.
 		frappe.db.set_value(ROOM_DIGEST_DOCTYPE, name, values, update_modified=False)
 
-	thread_names = frappe.get_all(
-		THREAD_DIGEST_DOCTYPE, filters=filters, pluck="name", limit_page_length=0
-	)
+	thread_names = frappe.get_all(THREAD_DIGEST_DOCTYPE, filters=filters, pluck="name", limit_page_length=0)
 	for name in thread_names:
 		frappe.db.set_value(THREAD_DIGEST_DOCTYPE, name, values, update_modified=False)
 
@@ -559,6 +555,14 @@ def _dirty_rooms(*, limit: int) -> list[dict[str, Any]]:
 	The age comparison binds ``frappe.utils.now_datetime()`` rather than calling SQL ``NOW()``:
 	this database runs UTC and Frappe writes site-local, so ``NOW()`` here would make every
 	room permanently dirty and the only symptom would be the bill.
+
+	**A fully retired room is excluded outright** (``seq_high_water > retired_below_seq``), and
+	that is the fix for a spin this sweep would otherwise never leave. ``_messages_for_digest``
+	filters out everything at or below the mark, so a room whose messages are all retired
+	returns nothing, ``_rebuild_room_digest`` returns *before writing*, ``is_stale`` stays 1 and
+	``rebuild_failures`` is never incremented — so it never poisons out either, and this query
+	re-selects it every five minutes, forever, doing nothing. Retiring the room is what makes
+	it fall out of the rotation instead.
 	"""
 	threshold = cint(_setting("digest_dirty_message_threshold")) or 25
 	minutes = cint(_setting("digest_dirty_minutes")) or 15
@@ -577,6 +581,7 @@ def _dirty_rooms(*, limit: int) -> list[dict[str, Any]]:
 		where r.`is_archived` = 0
 			and coalesce(d.`poisoned`, 0) = 0
 			and r.`last_message_at` is not null
+			and r.`seq_high_water` > coalesce(r.`retired_below_seq`, 0)
 			and (
 				r.`seq_high_water` - coalesce(d.`watermark_seq`, 0) >= %(threshold)s
 				or coalesce(d.`is_stale`, 0) = 1
@@ -634,7 +639,11 @@ def _messages_for_digest(room: str, since: int, *, limit: int) -> list[dict[str,
 		select `name`, `seq`, `sender`, `sender_email`, `text`, `text_plain`, `creation`
 		from `tab{MESSAGE_DOCTYPE}`
 		where `room` = %(room)s
-			and `seq` > %(since)s
+			and `seq` > greatest(
+				%(since)s,
+				coalesce((select `retired_below_seq` from `tab{ROOM_DOCTYPE}`
+					where `name` = %(room)s), 0)
+			)
 			and `is_deleted` = 0
 			and coalesce(`sender_kind`, '') != %(assistant)s
 		order by `seq` desc

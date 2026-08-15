@@ -130,9 +130,7 @@ def _rooms(raw: Any) -> list[str]:
 			frappe._("Name the rooms to read. An oversight read of 'everything' is not expressible here.")
 		)
 	if len(names) > MAX_ROOMS_PER_READ:
-		raise OversightRefused(
-			frappe._("One read may name at most {0} rooms.").format(MAX_ROOMS_PER_READ)
-		)
+		raise OversightRefused(frappe._("One read may name at most {0} rooms.").format(MAX_ROOMS_PER_READ))
 	return names
 
 
@@ -189,9 +187,7 @@ def _stamp_category(result: Any, category: str) -> None:
 	if not name:
 		return
 	try:
-		frappe.db.set_value(
-			audit.AUDIT_DOCTYPE, name, "reason_category", category, update_modified=False
-		)
+		frappe.db.set_value(audit.AUDIT_DOCTYPE, name, "reason_category", category, update_modified=False)
 	except Exception:
 		try:
 			frappe.log_error(
@@ -261,8 +257,6 @@ def my_access_log(limit: int = 100) -> list[dict[str, Any]]:
 def _transparency_enabled() -> bool:
 	"""Never raises. A settings read that throws must not take the page with it."""
 	try:
-		return bool(
-			cint(frappe.db.get_single_value("Chat Settings", "transparency_view_enabled"))
-		)
+		return bool(cint(frappe.db.get_single_value("Chat Settings", "transparency_view_enabled")))
 	except Exception:
 		return False
