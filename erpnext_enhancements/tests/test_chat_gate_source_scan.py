@@ -1157,5 +1157,65 @@ class TestTheFenceIsNotVacuous(unittest.TestCase):
 		self.assertTrue(_all_param_names(func) & FORBIDDEN_ENTRY_PARAMS)
 
 
+class TestTheWriterPackageIsNotReachableFromAnEndpoint(unittest.TestCase):
+	"""The fourth property of ``WRITER_PACKAGE_REASON``, asserted rather than only stated.
+
+	The writer package's exemption from Rule A rests on four properties. Three were already
+	asserted here. The fourth -- *"no endpoint importing it"* -- was prose, and prose is how a
+	documented invariant erodes: v1.295.0 put a shared pure module inside ``chat/indexing/``,
+	and wiring the retrieval gate to it would have made the gate import the writer package for
+	the sake of a WHERE fragment. The module moved to the package root; this is what stops the
+	next one.
+
+	**Why it matters beyond tidiness.** The exemption says the indexer may read every room
+	because nothing user-facing can ask it to. An endpoint importing it does not by itself break
+	that, but it is the first step of every way it could -- and the property is cheap to keep and
+	expensive to recover once several modules depend on the shortcut.
+	"""
+
+	def test_no_whitelisted_chat_module_imports_the_writer_package(self):
+		import ast
+		import pathlib
+
+		from erpnext_enhancements.chat import endpoints as endpoint_inventory
+
+		chat_root = pathlib.Path(endpoint_inventory.CHAT_PACKAGE).resolve()
+		writer = WRITER_PACKAGE.split("/")[-1]
+		endpoint_files = {
+			endpoint.relpath.replace(chr(92), "/")
+			for endpoint in endpoint_inventory.discover().values()
+		}
+		self.assertTrue(endpoint_files, "the endpoint inventory found nothing; the scan is broken")
+
+		offenders = []
+		for rel in sorted(endpoint_files):
+			if rel.startswith(writer + "/"):
+				continue
+			path = chat_root / rel
+			try:
+				tree = ast.parse(path.read_text(encoding="utf-8"))
+			except (OSError, SyntaxError):  # pragma: no cover
+				continue
+			for node in ast.walk(tree):
+				module = ""
+				if isinstance(node, ast.ImportFrom) and node.module:
+					module = node.module
+				elif isinstance(node, ast.Import):
+					module = ",".join(alias.name for alias in node.names)
+				if "chat." + writer in module:
+					offenders.append(rel + " imports " + module)
+
+		self.assertFalse(
+			offenders,
+			"these modules contain a whitelisted endpoint AND import the writer package: "
+			+ "; ".join(offenders)
+			+ ". "
+			+ WRITER_PACKAGE_REASON
+			+ " If the import is for shared PURE logic that several packages need and none owns, "
+			"move that module to the chat package root beside permissions.py -- which is the "
+			"precedent, and what chat/retire_rules.py did after shipping in the wrong place.",
+		)
+
+
 if __name__ == "__main__":  # pragma: no cover
 	unittest.main()

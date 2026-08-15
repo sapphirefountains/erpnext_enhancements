@@ -3,7 +3,7 @@
 
 """The retirement arithmetic, executed. Bench-free, unittest.
 
-`chat/indexing/retire_rules.py` imports nothing, which is what lets this run in the bench-free
+`chat/retire_rules.py` imports nothing, which is what lets this run in the bench-free
 tier. It is the prerequisite §4.F's purge is blocked on: a way to say *"everything in this room
 at or below seq N is gone forever — drop its derived coverage and never re-read it"*.
 
@@ -22,7 +22,7 @@ both were wrong in the obvious version:
 import unittest
 from typing import ClassVar
 
-from erpnext_enhancements.chat.indexing import retire_rules as rules
+from erpnext_enhancements.chat import retire_rules as rules
 
 
 class StraddlerTest(unittest.TestCase):

@@ -900,7 +900,10 @@ jobs:
       # and commits later, so a mark committed in between produces a straddler the snap never
       # saw.
       #
-      # Pure: retire_rules.py imports nothing at all.
+      # Pure: chat/retire_rules.py imports nothing at all. It sits at the PACKAGE ROOT, not in
+      # chat/indexing, and that is load-bearing: chat/indexing is the writer package whose
+      # exemption rests on four properties, the fourth being "no endpoint importing it", and
+      # the retrieval gate needs this fragment.
       - name: Chat retirement rules (the boundary, by arithmetic rather than re-chunking)
         run: python -m unittest erpnext_enhancements.tests.test_chat_retire_rules -v
       # The assertion that 4.F as shipped CANNOT destroy anything: no delete_doc, no db.delete,

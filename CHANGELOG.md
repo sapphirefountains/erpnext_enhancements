@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.295.1] - 2026-08-15
+
+**`retire_rules.py` shipped in the wrong package, and the invariant it would have broken was
+prose rather than a test.** Both fixed, before the wiring that would have relied on it.
+
+### Fixed
+
+- **Moved `chat/indexing/retire_rules.py` to `chat/retire_rules.py`.** It has four consumers
+  spanning three packages — the indexer and the summariser, the retrieval gate, and the
+  retention planner. `chat/indexing` is the **writer package**, whose exemption from Rule A in
+  `test_chat_gate_source_scan.py` rests on four stated properties, and the fourth is *"no
+  endpoint importing it"*. Wiring the gate to a module inside the writer package would have
+  broken that for the sake of a module that reads nothing.
+
+  It now sits beside `permissions.py`, which is the precedent: shared pure logic that several
+  packages need and none owns.
+
+### Added
+
+- **`TestTheWriterPackageIsNotReachableFromAnEndpoint`** — the fourth property, asserted rather
+  than only stated. Three of the four were already tested; this one was a sentence in a reason
+  string, and a sentence is how a documented invariant erodes. It walks every module containing
+  a whitelisted chat endpoint and fails on any import of `chat.indexing`.
+
+  The exemption says the indexer may read every room because nothing user-facing can ask it to.
+  An endpoint importing it does not by itself break that — but it is the first step of every
+  way it could, and the property is cheap to keep and expensive to recover once several modules
+  depend on the shortcut. Verified by mutation: adding a `chat.indexing` import to
+  `api/history.py` turns it red.
+
 ## [1.295.0] - 2026-08-15
 
 **The retirement arithmetic the retention purge is blocked on — and a finding that says the
