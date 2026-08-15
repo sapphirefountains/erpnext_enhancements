@@ -83,6 +83,17 @@ export class ChatCallError extends Error {
 		this.payload = payload;
 		this.forbidden = status === 403;
 		this.missing = status === 404;
+		// 429, and it is not hypothetical. `frappe.rate_limiter` is wired into the request
+		// lifecycle in `frappe/app.py`, so `frappe.conf.rate_limit` applies a GLOBAL limiter
+		// to every request whether or not any endpoint carries a decorator — and whatever sits
+		// in front of the app can produce one too. Both `TooManyRequestsError` and
+		// `RateLimitExceededError` are `http_status_code = 429`.
+		//
+		// Before this flag existed every caller treated a throttle as an ordinary failure, and
+		// four of them failed *silently*: presence aged out into notification spam, a read
+		// mark was lost, push was disabled for the tab's whole session, and a refused room
+		// open removed the very thing that had been suppressing the burst.
+		this.throttled = status === 429;
 	}
 }
 
@@ -193,6 +204,7 @@ function errorMessage(payload, status) {
 		}
 	}
 	if (status === 403) return "That conversation is no longer available.";
+	if (status === 429) return "Chat is busy right now. Trying again shortly.";
 	if (status === 417 || status === 400) return "That request was refused.";
 	return `Request failed (${status})`;
 }

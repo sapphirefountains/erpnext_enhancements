@@ -901,6 +901,19 @@ jobs:
       # Own step: no frappe import needed, the modules are only ever parsed.
       - name: Chat purge surface (the planner cannot destroy anything)
         run: python -m unittest erpnext_enhancements.tests.test_chat_purge_surface -v
+      # The chat clients survive a 429, which is not a hypothetical: frappe.rate_limiter is
+      # wired into the request lifecycle in frappe/app.py, so frappe.conf.rate_limit applies a
+      # GLOBAL limiter to every request whether or not any endpoint carries a decorator.
+      # Before v1.294.1 no chat client mentioned 429 anywhere and four paths failed SILENTLY -
+      # presence kept beating into the limiter and read as absent (notification spam), the read
+      # mark was LOST because take() advances the cursor before the POST, push memoised the
+      # failed promise and stayed dead for the tab's session, and a refused room open left the
+      # tab joined to no socket room.
+      #
+      # A source scan because this repo has no JS test runner - package.json declares lint and
+      # nothing else. Comment-stripped, because every file it reads discusses 429 at length.
+      - name: Chat clients survive a 429 (presence, read marks, push)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_client_throttling -v
       # The SPA received NO realtime events at all - not another person's message, not
       # @triton's reply, not even its own - and looked healthy doing it, because every symptom
       # pointed away from the cause. Frappe's socket server namespaces connections by site and
