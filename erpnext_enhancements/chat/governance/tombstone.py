@@ -142,9 +142,7 @@ def expand(message: str = "", reason: str = "", reason_category: str = "") -> di
 		# so a caller that ignores the return has assumed a record that does not exist — and
 		# an unrecorded look through a tombstone is the one act this module exists to make
 		# impossible.
-		raise TombstoneRefused(
-			frappe._("This expansion could not be recorded, so it was refused.")
-		)
+		raise TombstoneRefused(frappe._("This expansion could not be recorded, so it was refused."))
 
 	return {
 		"message": {key: _clean(row.get(key)) for key in MESSAGE_FIELDS},
@@ -167,9 +165,7 @@ def _message(name: str) -> dict[str, Any] | None:
 	participant, and filtering by membership would return nothing and look correct doing it.
 	The gate is the role and the reason, both checked above, and the price is the audit row.
 	"""
-	return frappe.db.get_value(
-		"Chat Message", name, list(MESSAGE_FIELDS), as_dict=True
-	)
+	return frappe.db.get_value("Chat Message", name, list(MESSAGE_FIELDS), as_dict=True)
 
 
 def _revisions(message: str) -> list[dict[str, Any]]:

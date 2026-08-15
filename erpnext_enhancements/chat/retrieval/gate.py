@@ -82,6 +82,43 @@ _CHUNK_TABLE = "`tabChat Context Chunk`"
 _ROOM_DIGEST_TABLE = "`tabChat Room Digest`"
 _THREAD_DIGEST_TABLE = "`tabChat Thread Digest`"
 _MESSAGE_TABLE = "`tabChat Message`"
+_ROOM_TABLE = "`tabChat Room`"
+
+#: **The retirement floor, as a WHERE fragment.** One copy, used by every chunk and digest
+#: query below, because five hand-written copies of a correctness filter is five chances to
+#: forget one — and the one that gets forgotten serves the transcript of messages that were
+#: destroyed.
+#:
+#: Keyed on the chunk's ``first_seq``, never its ``last_seq``. For a mark that was snapped to a
+#: chunk boundary the two are equivalent; for a mark set by hand — the field is ``read_only``
+#: on the DocField, which is not a database constraint — they are not, and ``last_seq`` would
+#: serve a chunk straddling the mark, whose body is the retired transcript verbatim. See
+#: ``chat/retire_rules.wholly_retired``, which makes the same choice for the same reason.
+_RETIRED_CHUNK_SQL = (
+	f"{_CHUNK_TABLE}.`first_seq` > coalesce("
+	f"(select `retired_below_seq` from {_ROOM_TABLE} where `name` = {_CHUNK_TABLE}.`room`), 0)"
+)
+
+#: The digest form of the same floor, one constant per table rather than a builder. A digest
+#: is a summary crossing time and topic boundaries, so ANY intersection with the retired range
+#: disqualifies it — there is no partial un-saying of a summary — and ``covered_from`` being
+#: above the mark is that test.
+#:
+#: Constants rather than a function on purpose: every private *function* in this module takes
+#: ``allowed_rooms`` as its required first positional, and `test_chat_gate_source_scan`
+#: enforces it. That rule is about the failure mode — omitting a required positional is a
+#: TypeError in development, while omitting a defaulted keyword is a query with no membership
+#: filter, which is a leak in production that looks like nothing at all. A fragment builder
+#: that took a table name first would have been the first exception to a rule worth keeping
+#: exceptionless.
+_RETIRED_ROOM_DIGEST_SQL = (
+	f"{_ROOM_DIGEST_TABLE}.`covered_from` > coalesce("
+	f"(select `retired_below_seq` from {_ROOM_TABLE} where `name` = {_ROOM_DIGEST_TABLE}.`room`), 0)"
+)
+_RETIRED_THREAD_DIGEST_SQL = (
+	f"{_THREAD_DIGEST_TABLE}.`covered_from` > coalesce("
+	f"(select `retired_below_seq` from {_ROOM_TABLE} where `name` = {_THREAD_DIGEST_TABLE}.`room`), 0)"
+)
 
 #: Hard cap on the T1 verbatim thread, independent of the token budget. The budget is a cost
 #: control; this is a statement-cost control, so one enormous thread cannot make the query
@@ -225,6 +262,7 @@ def _semantic_candidate_rows(
 		from {_CHUNK_TABLE}
 		where `room` in {rooms}
 			and {scope}
+			and {_RETIRED_CHUNK_SQL}
 			and `sealed` = 1
 			and `is_stale` = 0
 			and `embedding` is not null
@@ -263,6 +301,7 @@ def _lexical_chunk_order(
 		from {_CHUNK_TABLE}
 		where `room` in {rooms}
 			and {scope}
+			and {_RETIRED_CHUNK_SQL}
 			and `is_stale` = 0
 			and match(`body`) against (%(expression)s in boolean mode)
 		order by match(`body`) against (%(expression)s in boolean mode) desc, `name` asc
@@ -295,6 +334,7 @@ def _chunk_rows(allowed_rooms: frozenset[str], *, names: list[str]) -> list[dict
 		where `name` in ({placeholders})
 			and `room` in {rooms}
 			and {scope}
+			and {_RETIRED_CHUNK_SQL}
 			and `is_stale` = 0
 		""",
 		as_dict=True,
@@ -310,7 +350,9 @@ def _room_digest_rows(allowed_rooms: frozenset[str]) -> list[dict[str, Any]]:
 	only copy of that text, and a summary cannot unsay it. Skipping costs a less complete
 	answer; serving costs the delete.
 	"""
-	scope = permissions.membership_filter_sql(f"{_ROOM_DIGEST_TABLE}.`room`", _acting_user(), allow_oversight=True)
+	scope = permissions.membership_filter_sql(
+		f"{_ROOM_DIGEST_TABLE}.`room`", _acting_user(), allow_oversight=True
+	)
 	rooms = _room_list_sql(allowed_rooms)
 	rows = frappe.db.sql(
 		f"""
@@ -319,6 +361,7 @@ def _room_digest_rows(allowed_rooms: frozenset[str]) -> list[dict[str, Any]]:
 		from {_ROOM_DIGEST_TABLE}
 		where `room` in {rooms}
 			and {scope}
+			and {_RETIRED_ROOM_DIGEST_SQL}
 			and `is_stale` = 0
 			and `poisoned` = 0
 			and `summary_text` is not null
@@ -333,7 +376,9 @@ def _thread_digest_row(allowed_rooms: frozenset[str], *, thread_root: str) -> di
 	"""The digest for one thread, if it exists and is usable. Rung 4's substitute."""
 	if not thread_root:
 		return None
-	scope = permissions.membership_filter_sql(f"{_THREAD_DIGEST_TABLE}.`room`", _acting_user(), allow_oversight=True)
+	scope = permissions.membership_filter_sql(
+		f"{_THREAD_DIGEST_TABLE}.`room`", _acting_user(), allow_oversight=True
+	)
 	rooms = _room_list_sql(allowed_rooms)
 	rows = frappe.db.sql(
 		f"""
@@ -342,6 +387,7 @@ def _thread_digest_row(allowed_rooms: frozenset[str], *, thread_root: str) -> di
 		where `thread_root` = %(thread_root)s
 			and `room` in {rooms}
 			and {scope}
+			and {_RETIRED_THREAD_DIGEST_SQL}
 			and `is_stale` = 0
 			and `poisoned` = 0
 		limit 1
@@ -374,7 +420,9 @@ def _thread_messages(
 		# bug, and answering it from the other rooms would hide the bug behind a plausible
 		# answer.
 		return []
-	scope = permissions.membership_filter_sql(f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq", allow_oversight=True)
+	scope = permissions.membership_filter_sql(
+		f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq", allow_oversight=True
+	)
 	rooms = _room_list_sql(allowed_rooms)
 	thread_clause = "and `thread_root` = %(thread_root)s" if thread_root else ""
 	rows = frappe.db.sql(
@@ -432,9 +480,7 @@ def _oversight_room_messages(
 	# With a query, the matching messages; without one, the tail. An oversight read with no
 	# search terms is a legitimate "show me this conversation" request, and returning nothing
 	# for it would push the auditor towards a broader read rather than a narrower one.
-	match_clause = (
-		"and match(`text_plain`) against (%(expression)s in boolean mode)" if expression else ""
-	)
+	match_clause = "and match(`text_plain`) against (%(expression)s in boolean mode)" if expression else ""
 	rows = frappe.db.sql(
 		f"""
 		select `name`, `room`, `seq`, `sender`, `sender_email`, `text`, `thread_root`,
@@ -469,7 +515,9 @@ def _authored_messages(
 	"""
 	if not expression:
 		return []
-	scope = permissions.membership_filter_sql(f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq", allow_oversight=True)
+	scope = permissions.membership_filter_sql(
+		f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq", allow_oversight=True
+	)
 	rooms = _room_list_sql(allowed_rooms)
 	rows = frappe.db.sql(
 		f"""
@@ -505,7 +553,9 @@ def _room_watermarks(allowed_rooms: frozenset[str], *, room: str) -> tuple[int, 
 	"""
 	if room not in allowed_rooms:
 		return (0, 0, "")
-	scope = permissions.membership_filter_sql(f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq", allow_oversight=True)
+	scope = permissions.membership_filter_sql(
+		f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq", allow_oversight=True
+	)
 	rooms = _room_list_sql(allowed_rooms)
 	rows = frappe.db.sql(
 		f"""

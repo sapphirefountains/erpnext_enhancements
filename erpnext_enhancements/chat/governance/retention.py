@@ -110,7 +110,7 @@ def _plan_rooms(names: list[str], retention_days: int, *, limit: int) -> dict[st
 	rooms = frappe.get_all(
 		ROOM_DOCTYPE,
 		filters=filters,
-		fields=["name", "last_message"],
+		fields=["name", "last_message", "retired_below_seq"],
 		order_by="name asc",
 		limit=limit,
 	)
@@ -132,6 +132,7 @@ def _plan_rooms(names: list[str], retention_days: int, *, limit: int) -> dict[st
 		open_jobs = _open_relay_targets(room_name)
 		live_reply_roots = _live_reply_roots(room_name)
 		last_message = str(room.get("last_message") or "")
+		retired_below = cint(room.get("retired_below_seq"))
 
 		for message in messages:
 			name = str(message.get("name"))
@@ -148,6 +149,8 @@ def _plan_rooms(names: list[str], retention_days: int, *, limit: int) -> dict[st
 					# rather than globally so the day the retirement path lands, this
 					# becomes a real per-span question and nothing else has to change.
 					"derived_blocked": bool(purge_rules.blocked_doctypes()),
+					"seq": cint(message.get("seq")),
+					"retired_below_seq": retired_below,
 				}
 			)
 			if reasons:

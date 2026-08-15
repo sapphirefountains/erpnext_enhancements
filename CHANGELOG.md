@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.297.0] - 2026-08-15
+
+**The retirement mark is wired.** v1.295.0 shipped the arithmetic; this gives it a column and
+makes every consumer honour it. A mark nothing reads is a column.
+
+### Added
+
+- **`Chat Room.retired_below_seq`** — the mirror of `seq_high_water`, so a room's live range is
+  `(retired_below_seq, seq_high_water]`. `Chat Room` is a **normal** DocType, so `default: 0`
+  reaches every existing row in the one `ALTER` — the opposite of the Single behaviour, and the
+  case `CLAUDE.md` warns about in both directions. **No backfill patch**, and one keyed on
+  emptiness would have matched zero rows.
+
+- **Two invariants in `ChatRoom.validate`**, beside the `seq_high_water` refusal it mirrors.
+  It only goes up — lowering it re-admits derived coverage of messages that no longer exist,
+  and nothing can rebuild that coverage because the source is gone, so the stale rows simply
+  become servable again. And it never exceeds `seq_high_water` — that would declare messages
+  retired which were never allocated, and the watermark floor would then skip every message
+  the room went on to receive.
+
+### The floor that unblocks the purge
+
+`indexer._rooms_needing_chunks` computes its watermark as `max(last_seq)` over sealed chunks
+with **no staleness filter**. Deleting a room's retired chunks would drop it, and the
+ten-minute sweep would then re-read every surviving message above the hole and re-chunk it
+**verbatim**, with a fresh embedding — a purge manufacturing new copies of the text it was
+destroying, once every ten minutes, for as many nights as its batch cap took.
+
+The watermark, the `HAVING` and the ordering all move together, and that is deliberate: a room
+whose only lag is retired messages must fall **out** of the rotation rather than be selected
+forever with nothing to do.
+
+`digest._dirty_rooms` gains the same exclusion for the emptied room, which fixes a spin it
+could never leave: the source returns nothing, `_rebuild_room_digest` returns *before writing*,
+`is_stale` stays 1 and `rebuild_failures` is never incremented — so it never poisons out
+either, and the sweep re-selected it every five minutes forever.
+
+### The gate: retired content is never served
+
+Five queries could serve it, so the fragment is declared **once**. It keys on the chunk's
+**`first_seq`, never `last_seq`** — equivalent for a mark snapped to a chunk boundary, and
+*not* equivalent for one set by hand, where `last_seq` would serve a chunk straddling the mark
+whose body is the retired transcript verbatim.
+
+Two guards fired and both were right. The raw-SQL guard flagged the correlated sub-select on
+`Chat Room`; it earns an exemption on the same inversion `permissions.py`'s own builders get —
+**a fragment ANDed into an already membership-filtered WHERE can only narrow, and something
+that only removes rows cannot leak.** And `test_chat_gate_source_scan` refused a
+`_retired_digest_sql(table)` helper, because every private *function* in the gate takes
+`allowed_rooms` as its required first positional. It is two constants instead: a fragment
+builder taking a table name first would have been the first exception to a rule worth keeping
+exceptionless.
+
+### Changed
+
+- **`purge_rules.holds` gains `HOLD_NOT_RETIRED`**, and the retention planner passes each
+  message's `seq` and its room's mark. The hold is now the real per-message question — *has
+  the derived coverage over this span actually been retired?* — rather than the site-wide
+  "something is BLOCKED" placeholder.
+
+### Still not enabled, and asserted
+
+**Nothing writes the mark.** `test_chat_retire_wiring` proves it, by AST over write forms
+only — the first version looked for the field name as a dict key and flagged the retention
+planner, which builds it as a *fact* for the eligibility predicate. A detector that cannot tell
+a read from a write would have to be silenced, and a silenced guard is worse than none.
+
+So every predicate here is a no-op today, which is the shipped state. `can_enable()` stays
+`False`. The writer arrives with the purge.
+
 ## [1.296.0] - 2026-08-15
 
 **Triton's own answers are no longer indexed.** TASK-2026-01569, decided and implemented.

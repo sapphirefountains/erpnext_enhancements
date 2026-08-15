@@ -35,6 +35,7 @@
   "gchat_space_uri",
   "activity_section",
   "seq_high_water",
+  "retired_below_seq",
   "last_message",
   "last_message_at",
   "last_event_at",
@@ -241,6 +242,14 @@
    "fieldname": "seq_high_water",
    "fieldtype": "Int",
    "label": "Sequence High Water",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "THE RETIREMENT FLOOR, and the mirror of seq_high_water: every message in this room at or below this seq is gone forever, so the room's live range is (retired_below_seq, seq_high_water]. 0 means nothing is retired, which is every room until a purge moves it. Only ever goes UP, and never past seq_high_water — ChatRoom.validate refuses both, because lowering it re-admits derived coverage of messages that no longer exist and nothing can rebuild that coverage correctly, the source being gone. Consumed by the chunk indexer (as a watermark floor, so deleting a room's chunks cannot retreat the watermark and cause the sweep to re-chunk surviving messages verbatim), by the digest sweeps, and by the retrieval gate. The arithmetic lives in chat/retire_rules.py.",
+   "fieldname": "retired_below_seq",
+   "fieldtype": "Int",
+   "label": "Retired Below Sequence",
    "read_only": 1
   },
   {
