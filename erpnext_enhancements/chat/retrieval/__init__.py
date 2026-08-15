@@ -43,10 +43,14 @@ out of the tier CI can run and into the tier nothing runs.
 
 from typing import TYPE_CHECKING, Any
 
-__all__ = ["retrieve", "retrieve_for_oversight"]
+__all__ = ["retrieve", "retrieve_for_oversight", "retrieve_transcript"]
 
 if TYPE_CHECKING:  # pragma: no cover — for type checkers only; never executed
-	from erpnext_enhancements.chat.retrieval.gate import retrieve, retrieve_for_oversight
+	from erpnext_enhancements.chat.retrieval.gate import (
+		retrieve,
+		retrieve_for_oversight,
+		retrieve_transcript,
+	)
 
 
 def __getattr__(name: str) -> Any:

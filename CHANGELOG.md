@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.308.0] - 2026-08-15
+
+**The oversight viewer becomes a viewer.** Until now `/chat_admin` was a search box that rendered
+its answer as one flat blob of text into a single div — and the thing it rendered was a retrieval
+assembly, which is not a transcript and cannot be made into one.
+
+### Added
+
+`gate.retrieve_transcript()` — one room's conversation, verbatim, in `seq` order, one audited page
+at a time. No ranking, no query, no token budget, no assembly.
+
+**Why `retrieve_for_oversight` could not serve it.** That function answers *"what in these rooms is
+relevant to this question"*: it returns a 200-message tail, becomes a **search** the moment the
+derived boolean expression is non-empty, and hands its rows to `budget`, whose rung 4 discards
+messages from the **middle** of the thread to fit a token ceiling. Every one of those is correct for
+assembling a model's context and disqualifying for a record. *A transcript that silently elides its
+middle is not a transcript.*
+
+**Tombstones stay in place, and that is the one way this read differs from every tier above it.**
+The retrieval tiers exclude `is_deleted` so an ordinary read is not a tombstone expansion (§4.E). A
+transcript has the opposite obligation: a conversation with the deleted messages quietly removed is
+a *misleading* record, and the gap is exactly where an investigation is most likely to be looking.
+So the row comes back and keeps its sequence position — and its body does not. Seeing through it
+stays `tombstone.expand`'s separately-audited job, now reachable from the page for the first time.
+
+`viewer.transcript()` is the POST endpoint: role gate, reason gate, rate-limited at 240/hour
+(higher than `search` because paging a long conversation is many requests that are **one act**, and
+a limit tuned for one-shot searches would refuse an auditor halfway down). One `Chat Retrieval
+Audit` row **per page**, correlated by the `request_id` added in v1.307.1 — which is what makes
+§4.D.2's "reason collected once per session, not per scroll" expressible at all.
+
+### Changed
+
+**The read lives in `gate.py`, not in a new governance module, and the design that said otherwise
+was wrong about the code.** `test_chat_audit_immutability` enforces
+`OVERSIGHT_DOOR = "chat/retrieval/gate.py"` by AST across the whole chat package: only the gate may
+pass `allow_oversight=True`. A `chat/governance/transcript.py` holding raw reads could never scope
+its own query. The endpoint, the reason gate and the shaping live in `chat/governance/viewer.py`;
+the fetch lives in the gate. That guard's own comment anticipated this task — *"splitting those two
+is the oversight-read-path work rather than this rule's business."*
+
+`retrieve_transcript` is a **third public symbol** on a package whose stated design is "one door",
+so it is named in `PUBLIC_SYMBOLS` and in `chat/retrieval/__init__.py`'s `__all__` rather than
+reached around by importing `gate` directly from the viewer — which would have left `__all__`
+asserting something no longer true. It pays for itself the way the oversight path does, with
+`test_the_transcript_path_pays_for_its_exemption`: reason required, room named, `_has_oversight`
+checked, `record_or_refuse` called, no `restrict_to`.
+
+Rows are shaped by `chat/api/_common.message_payload`, the one place in the app that emits a message
+body and the only place a deleted one is withheld. The import crosses a package boundary and is
+worth it: a second serialiser here would be a second place to forget the tombstone rule, which is
+precisely what that function's docstring exists to prevent.
+
+### Added — the page
+
+`/chat_admin` now renders a conversation as bubbles: a monospace sequence rail down the left like
+line numbers in a printed record, speaker grouping (a name header on change, tighter runs after),
+threaded replies indented with the tie drawn **once per run** rather than once per reply, dashed
+amber tombstones that look deliberately withheld rather than broken, edit markers, and a real
+timestamp column of tabular figures.
+
+**The audit banner is present before the first read**, naming the auditor, and it accumulates the
+row ids this sitting has written. "You are on the record" is a claim that should exist while the
+decision to read is still being made, not arrive as a receipt afterwards. It is written **before a
+single node is drawn**: the record is a fact about the server, not about the page succeeding at
+rendering it. A read that returns no audit row turns the banner red and says so outright.
+
+**The two reads are kept visibly apart.** Search is labelled as ranked, summarised and possibly
+incomplete; a transcript is labelled as read in full. An auditor who mistakes the first for the
+second has a gap they cannot see.
+
+**Ordering is stated honestly.** Every transcript carries a line saying it is ordered by the room's
+sequence number and that the times shown are what each side reported and are *not* the ordering.
+An earlier draft badged rows whose timestamps ran backwards; that was dropped, because badging
+*some* rows as out of order implies the unbadged ones are in chronological order — a claim this
+page cannot make.
+
+Nothing user-authored is ever parsed as markup: bodies, addresses, room titles and refusal text are
+employee-authored and reach the DOM only through `textContent` on nodes from `createElement`. No
+socket, no timer, no polling, no external asset.
+
+### Fixed
+
+The template's own comment tripped its own guard. `test_chat_oversight_viewer`'s no-realtime check
+is a raw **text** scan of this file, so naming the forbidden timer — even to say it is absent — fails
+the test that checks it is absent. The comment now describes it without spelling it, and says why.
+Its sibling scan over the module walks the AST and does not have this problem; a template cannot.
+
 ## [1.307.1] - 2026-08-15
 
 **Every privileged transcript read was recorded as a deliberate investigation**, and none of them

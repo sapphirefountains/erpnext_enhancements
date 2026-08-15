@@ -121,6 +121,14 @@ NON_MUTATING: Final[dict[str, str]] = {
 		"POST despite being a read: it carries the REASON in its body, and a reason in a query "
 		"string lands in the access log, the browser history and the next Referer header"
 	),
+	f"{DOTTED_ROOT}.governance.viewer.transcript": (
+		"one room's conversation verbatim, in seq order, one page at a time. Writes a Chat "
+		"Retrieval Audit row PER PAGE, correlated by request_id so a scroll is one act rather "
+		"than a dozen unexplained ones -- a record OF the read rather than an effect the caller "
+		"wants. Distinct from `search`: that one ranks and budgets and may drop the MIDDLE of a "
+		"thread, which is right for a model's context and disqualifying for a transcript. POST "
+		"because the reason travels in the body"
+	),
 	f"{DOTTED_ROOT}.governance.viewer.rooms": (
 		"which rooms one NAMED person is in. Metadata only — no description, no preview, no "
 		"DM participants. Writes an oversight_rooms_listed governance row, which is a record "
@@ -285,6 +293,12 @@ RATE_LIMIT: Final[dict[str, str]] = {
 		"120/3600s. The only caller of the one function permitted to open the membership "
 		"hatch, and it returns bodies. Same reasoning as `tombstone.expand`, and left at the "
 		"shipped value for the same reason."
+	),
+	f"{DOTTED_ROOT}.governance.viewer.transcript": (
+		"240/3600s. Higher than `search` deliberately: paging a long conversation is many "
+		"requests that are ONE act, correlated by request_id, and a limit tuned for one-shot "
+		"searches would refuse an auditor halfway down a transcript -- which reads as the tool "
+		"breaking rather than as a control, and teaches people to work around it."
 	),
 	f"{DOTTED_ROOT}.governance.viewer.rooms": (
 		"240/3600s. Matches access_log rather than search: it returns no content, and an "
@@ -470,6 +484,7 @@ PILOT_GATE_EXEMPT: Final[dict[str, str]] = {
 		"whether Google is in the pilot whitelist is not a question with an answer."
 	),
 	f"{DOTTED_ROOT}.governance.viewer.search": _OVERSIGHT_GATE,
+	f"{DOTTED_ROOT}.governance.viewer.transcript": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.viewer.access_log": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.viewer.rooms": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.tombstone.expand": _OVERSIGHT_GATE,
