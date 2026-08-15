@@ -68,6 +68,79 @@ AUDIT_DOCTYPES: frozenset[str] = frozenset(
 )
 AUDIT_TABLES: frozenset[str] = frozenset({f"tab{name}" for name in AUDIT_DOCTYPES})
 
+#: ``chat/audit.py`` itself, read for the doctype constants it defines.
+_AUDIT_MODULE: Path = APP_DIR / "chat" / "audit.py"
+
+
+def _audit_constant_map() -> dict[str, str]:
+	"""``{"AUDIT_DOCTYPE": "Chat Retrieval Audit", ...}``, read out of ``chat/audit.py``.
+
+	**This scan used to collect string *literals* only, and that is how it missed a real
+	violation for eleven releases.** ``viewer._stamp_category`` wrote ``reason_category`` onto
+	an audit row with ``frappe.db.set_value(audit.AUDIT_DOCTYPE, ...)`` — an ``ast.Attribute``,
+	not an ``ast.Constant`` — so the one check that exists to forbid exactly that call could
+	not see it. Naming the constant instead of the string was enough to walk past the guard.
+
+	Derived rather than hard-coded, so renaming a constant in ``chat/audit.py`` moves this map
+	with it instead of silently disarming the scan again.
+	"""
+	tree = ast.parse(_AUDIT_MODULE.read_text(encoding="utf-8"), str(_AUDIT_MODULE))
+	found: dict[str, str] = {}
+	for node in tree.body:
+		if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Constant):
+			continue
+		value = node.value.value
+		if not isinstance(value, str) or value not in AUDIT_DOCTYPES:
+			continue
+		for target in node.targets:
+			if isinstance(target, ast.Name):
+				found[target.id] = value
+	return found
+
+
+def _audit_constant_bindings(tree: ast.AST, constants: dict[str, str]) -> tuple[set[str], dict[str, str]]:
+	"""Names in *this* file that certainly refer to ``chat/audit.py``'s doctype constants.
+
+	Binding-aware, and that is load-bearing rather than fastidious. Matching any attribute
+	whose final component is ``AUDIT_DOCTYPE``/``ROOM_DOCTYPE``/``GOVERNANCE_DOCTYPE`` looks
+	equivalent and is not: several modules define a local ``ROOM_DOCTYPE = "Chat Room"`` and
+	write to it legitimately, and a name-only rule reports all of them. Requiring the import in
+	the same file separates "this is audit's constant" from "this happens to share its spelling".
+
+	Returns the module aliases (``from ...chat import audit`` → ``{"audit"}``) and the directly
+	imported names (``from ...chat.audit import AUDIT_DOCTYPE`` → ``{"AUDIT_DOCTYPE": ...}``).
+	"""
+	module_aliases: set[str] = set()
+	direct: dict[str, str] = {}
+	for node in ast.walk(tree):
+		if not isinstance(node, ast.ImportFrom) or not node.module:
+			continue
+		if node.module.endswith("chat.audit"):
+			for alias in node.names:
+				if alias.name in constants:
+					direct[alias.asname or alias.name] = constants[alias.name]
+		elif node.module.endswith("chat") or node.module.endswith("erpnext_enhancements"):
+			for alias in node.names:
+				if alias.name == "audit":
+					module_aliases.add(alias.asname or alias.name)
+	return module_aliases, direct
+
+
+def _named_audit_doctypes(node: ast.Call, module_aliases: set[str], direct: dict[str, str],
+                          constants: dict[str, str]) -> list[str]:
+	"""The audit doctype names this call passes, whether spelled as a literal or a constant."""
+	out: list[str] = []
+	for arg in list(node.args) + [kw.value for kw in node.keywords]:
+		if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+			if arg.value in AUDIT_DOCTYPES or arg.value in AUDIT_TABLES:
+				out.append(arg.value)
+		elif isinstance(arg, ast.Attribute) and arg.attr in constants:
+			if isinstance(arg.value, ast.Name) and arg.value.id in module_aliases:
+				out.append(constants[arg.attr])
+		elif isinstance(arg, ast.Name) and arg.id in direct:
+			out.append(direct[arg.id])
+	return out
+
 #: The one module allowed to write these rows, and the controller that guards them. Any other
 #: module doing so is the defect this file exists to catch.
 #:
@@ -165,6 +238,12 @@ class TestTheAuditTablesAreWrittenInOnePlace(unittest.TestCase):
 		the audit log — a future report, the oversight viewer — stays legal.
 		"""
 		offenders: list[str] = []
+		constants = _audit_constant_map()
+		self.assertTrue(
+			constants,
+			"no doctype constants were resolved out of chat/audit.py, so this scan is now "
+			"literal-only again — which is the exact state in which it missed _stamp_category",
+		)
 		for path in _python_files():
 			if _is_writer(path):
 				continue
@@ -173,6 +252,10 @@ class TestTheAuditTablesAreWrittenInOnePlace(unittest.TestCase):
 			except SyntaxError:  # pragma: no cover - a broken file fails its own tests
 				continue
 
+			# Resolved per file, because a constant only counts as *this* module's constant when
+			# this file imported it from here.
+			module_aliases, direct = _audit_constant_bindings(tree, constants)
+
 			for node in ast.walk(tree):
 				if not isinstance(node, ast.Call):
 					continue
@@ -180,17 +263,8 @@ class TestTheAuditTablesAreWrittenInOnePlace(unittest.TestCase):
 				short = name.rsplit(".", 1)[-1]
 				if name not in MUTATING_CALLS and short not in MUTATING_CALLS:
 					continue
-				literals = [
-					a.value for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)
-				]
-				literals += [
-					k.value.value
-					for k in node.keywords
-					if isinstance(k.value, ast.Constant) and isinstance(k.value.value, str)
-				]
-				for text in literals:
-					if text in AUDIT_DOCTYPES or text in AUDIT_TABLES:
-						offenders.append(f"{_rel(path)}:{node.lineno} {name}({text!r})")
+				for text in _named_audit_doctypes(node, module_aliases, direct, constants):
+					offenders.append(f"{_rel(path)}:{node.lineno} {name}({text!r})")
 
 		self.assertFalse(
 			sorted(set(offenders)),
@@ -527,6 +601,76 @@ class TestTheGateHasExactlyTwoDoors(unittest.TestCase):
 				)
 				return
 		self.fail("membership_filter_sql not found in chat/permissions.py")
+
+
+class TestTheConstantResolverItself(unittest.TestCase):
+	"""Controls for the resolver, because the scan it belongs to was blind for eleven releases.
+
+	``viewer._stamp_category`` wrote a signed audit column after the hash, from outside the
+	writer, and this file is the one check that should have refused it. It passed the whole
+	time: the scan collected ``ast.Constant`` strings and the call named ``audit.AUDIT_DOCTYPE``.
+	Naming the constant instead of the string was the entire evasion, and it was not deliberate.
+
+	So the resolver gets both a positive and a negative control. A guard nobody has watched fail
+	is a guard that may already be guarding nothing, and this one has the receipts.
+	"""
+
+	def _flagged(self, source: str) -> list[str]:
+		tree = ast.parse(source)
+		constants = _audit_constant_map()
+		module_aliases, direct = _audit_constant_bindings(tree, constants)
+		found: list[str] = []
+		for node in ast.walk(tree):
+			if isinstance(node, ast.Call):
+				found.extend(_named_audit_doctypes(node, module_aliases, direct, constants))
+		return found
+
+	def test_the_constants_resolve_out_of_the_writer(self) -> None:
+		self.assertEqual(
+			_audit_constant_map(),
+			{
+				"AUDIT_DOCTYPE": "Chat Retrieval Audit",
+				"ROOM_DOCTYPE": "Chat Retrieval Audit Room",
+				"GOVERNANCE_DOCTYPE": "Chat Audit Log",
+			},
+		)
+
+	def test_the_shape_that_escaped_is_now_caught(self) -> None:
+		"""``_stamp_category``'s call, in shape, as it stood until v1.307.0."""
+		source = (
+			"from erpnext_enhancements.chat import audit\n"
+			"frappe.db.set_value(audit.AUDIT_DOCTYPE, n, 'reason_category', c, update_modified=False)\n"
+		)
+		self.assertEqual(self._flagged(source), ["Chat Retrieval Audit"])
+
+	def test_a_directly_imported_constant_is_caught(self) -> None:
+		source = (
+			"from erpnext_enhancements.chat.audit import GOVERNANCE_DOCTYPE\n"
+			"frappe.db.set_value(GOVERNANCE_DOCTYPE, n, 'x', 1)\n"
+		)
+		self.assertEqual(self._flagged(source), ["Chat Audit Log"])
+
+	def test_a_literal_is_still_caught(self) -> None:
+		"""The original rule has to keep working; this is a widening, not a replacement."""
+		self.assertEqual(
+			self._flagged("frappe.db.set_value('Chat Audit Log', n, 'x', 1)\n"),
+			["Chat Audit Log"],
+		)
+
+	def test_a_same_spelled_constant_from_elsewhere_is_not_caught(self) -> None:
+		"""Why the rule is binding-aware rather than spelling-aware.
+
+		Several modules define their own ``ROOM_DOCTYPE = "Chat Room"`` and write to it, quite
+		legitimately. A rule keyed on the attribute's last component reports every one of them,
+		and a scan that cries wolf is one somebody widens until it says nothing at all.
+		"""
+		source = (
+			"from erpnext_enhancements.chat.sync import outbox\n"
+			"ROOM_DOCTYPE = 'Chat Room'\n"
+			"frappe.db.set_value(ROOM_DOCTYPE, n, 'x', 1)\n"
+			"frappe.db.set_value(outbox.ROOM_DOCTYPE, n, 'x', 1)\n"
+		)
+		self.assertEqual(self._flagged(source), [])
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -7,6 +7,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.307.0] - 2026-08-15
+
+**The retrieval audit chain signed a field its own verifier never read.** The one field decision
+D-3 shows a surveilled employee was the one field nothing vouched for.
+
+### Fixed
+
+`reason_category` is in `_OPTIONAL_CHAINED_FIELDS`, so `compute_chain_hash` signs it on any row
+that carries one. `verify_chain` wrote its fifteen column names out **by hand**, and nobody added
+this one — so the verifier recomputed a payload missing a key the writer would have signed. The
+two agreed only because no caller ever supplied a value.
+
+Except one did, from the other end. `viewer._stamp_category` wrote the column onto the row with
+`frappe.db.set_value` **after** the gate had hashed it, justified by a comment reading *"`db_set`
+on the audit table is allowed for exactly this one field — it is outside the chained tuple's
+mandatory half and re-signing happens on the next verify."* **Nothing re-signs.** `verify_chain`
+computes, compares and reports; it assigns to nothing. The author intended the field to be signed
+and reached for a mechanism that was never built.
+
+So the module's own documented invariant was false in production. `audit.py`'s comment block
+states it plainly — *"an unsigned field is one an operator can rewrite in SQL to reclassify why
+they read somebody's messages, and that is exactly the edit this log exists to catch"* — and that
+sentence was true of the governance chain and false of the retrieval one for eleven releases.
+
+`viewer.search` now passes the category **to** the gate, which threads it to the writer, which
+signs it with everything else. `_stamp_category` is deleted and must not come back, not even as a
+fallback: a row whose category arrived late would now be reported as *tampered* by the chain the
+field is meant to be protected by.
+
+**A tolerant verifier was designed and rejected**, and the reasoning is worth keeping because it
+is the obvious move. Accepting either the with-category or without-category payload does catch a
+*changed* category — a row signed with one fails both variants once edited. It fails on the *add*
+direction: every Triton and mention row is signed with no category at all, by construction, and
+that set grows hourly. An attacker adding a fabricated category to one of those is accepted by
+the fallback permanently, because the fallback ignores the column — and manufacturing a
+justification is the useful forgery, which the transparency view then renders to the employee as
+fact. One rule, strictly applied: the payload depends on what the column holds, so add, remove
+and change all break the hash.
+
+**Root cause, fixed as such.** `verify_governance_chain` interpolated its SELECT *from* the field
+tuple and could not drift; `verify_chain` repeated the list by hand and did. Both now derive their
+columns through `_select_columns`. The governance verifier was not safe either, only luckier — it
+derived from the *mandatory* tuple alone, which protects against a new mandatory field and not a
+new optional one, and it stayed quiet solely because `record_governance_event` has no
+`reason_category` parameter. It now reads the optional tuple too: a no-op on today's rows, and the
+same trap disarmed on the second chain before anyone springs it.
+
+`verify_all_chains` no longer lets a verifier's own failure escape the scheduled job. A derived
+SELECT moves one mistake — a name in a tuple that is not a column — from import-time nothing to a
+query-time error, and an uncaught one leaves the job *before* `alerts.check` runs. No alert at all
+is precisely what a healthy chain looks like from the alert board. A failure to *run* is now its
+own incident under `chain_verification_errored`, and it deliberately does **not** clear
+`chain_verification_failed`: clearing asserts health, and a check that did not happen is nobody
+asserting anything.
+
+### Migration
+
+`patches/clear_unsigned_chat_audit_reason_category.py` puts existing rows back to exactly what
+they signed, by clearing the value that was written after the hash. Re-signing them was rejected:
+a log that re-signs itself signs whatever it currently says, which is a checksum over the present
+rather than a record of the past — the same non-mechanism the deleted comment appealed to.
+
+The predicate is **the rule the writer applied**, never emptiness: a row is cleared only if it
+fails to verify *with* its category and succeeds *without* it. CLAUDE.md's
+`Chat Relay Job.auth_identity` lesson is that an emptiness predicate describes the schema
+migration rather than the data; here it would be actively wrong, since the rows needing repair are
+the non-empty ones. A row that verifies neither way is a genuine break: the sweep **stops** there,
+logs, and changes nothing further, because a repair that walks past a break is how a break gets
+buried. Both tables are swept — on `Chat Audit Log` any non-empty value is unsigned by
+construction, since nothing writes that column.
+
+What is lost is real and small: on repaired rows the subject-facing transparency view shows "Not
+recorded" instead of a category. That value never had evidential weight, and the signed free-text
+`reason` beside it is untouched.
+
+Note the deploy ordering: the patch runs during `bench migrate`, after the new code is live. A
+nightly verify landing inside that window would report a break the patch then repairs, and the
+alert clears on the next clean run.
+
+### Changed
+
+Both doctype descriptions asserted the opposite of the code — *"NOT covered by chain_hash — adding
+a field to the chained tuple would re-hash every existing row"* — an objection that is valid for a
+*mandatory* field and is exactly what optional chaining answers. They are corrected, and
+deliberately **differently**: the retrieval chain signs the column directly, while the governance
+chain carries the category inside `detail`, which is already a mandatory chained field. A shared
+sentence is how the next reader concludes one chain is safe because the other is.
+
+### Tests
+
+`EveryDataFieldIsSigned` was green throughout, and had to be: it inspects the writer's tuples and
+the DocType and never the verifier's SELECT. `TheVerifiersReadEveryFieldTheyVerify` is the missing
+half — it captures the SQL each verifier actually issues and asserts every signed field appears in
+it. A verifier reading fewer columns than the writer signs does not report a break; it verifies a
+different payload and reports success, so what stops working is the alarm and nothing else looks
+wrong.
+
+**The immutability scan could not see the violation, and now can.**
+`test_chat_audit_immutability` collected `ast.Constant` strings, and `_stamp_category` named
+`audit.AUDIT_DOCTYPE` — an `ast.Attribute`. Naming the constant instead of the string was the
+entire evasion, and it was not deliberate. The scan now resolves those constants out of
+`chat/audit.py` by AST, **binding-aware**: an attribute counts only when the file imported the
+audit module, and a bare name only when it imported the constant. A rule keyed on spelling alone
+reports every module with its own `ROOM_DOCTYPE = "Chat Room"`, and a scan that cries wolf is one
+somebody widens until it says nothing. Positive and negative controls ship with it.
+
+Every guard here was verified by breaking what it protects and watching it fail: 4 for 4, covering
+each verifier dropping the optional tuple, a verifier exception escaping the job, and
+`_stamp_category` returning in its original spelling.
+
 ## [1.306.2] - 2026-08-15
 
 **An oversight read that named several rooms silently returned messages from only the busiest

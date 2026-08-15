@@ -718,6 +718,11 @@ def retrieve_for_oversight(
 	query: str,
 	rooms: list[str],
 	reason: str,
+	# Travels beside `reason` and is signed with it. It used to be written onto the audit row
+	# by the viewer *after* this function had already hashed it, which meant the one field the
+	# subject is ever shown was the one field the chain did not cover. See `audit.py`'s
+	# `_OPTIONAL_CHAINED_FIELDS`.
+	reason_category: str | None = None,
 	subject: str | None = None,
 	user: str | None = None,
 	request_id: str | None = None,
@@ -784,6 +789,7 @@ def retrieve_for_oversight(
 			user_card_lines=[],
 			actor_type="Admin",
 			reason=cleaned_reason,
+			reason_category=reason_category,
 			# The subject, or no authored tier at all. Never `acting`: that returned the
 			# auditor their own messages — content they could already read, in place of the
 			# content they came to audit.
@@ -813,6 +819,7 @@ def _run(
 	user_card_lines: list[str],
 	actor_type: str,
 	reason: str | None = None,
+	reason_category: str | None = None,
 	authored_user: str | None,
 	verbatim_across_rooms: bool = False,
 ) -> RetrievalResult:
@@ -912,6 +919,7 @@ def _run(
 		actor_type=actor_type,
 		request_id=request_id,
 		reason=reason,
+		reason_category=reason_category,
 		plan=fitted,
 		thread_rows=thread_rows,
 		authored_rows=authored_rows,
@@ -1281,6 +1289,7 @@ def _write_audit(
 	actor_type: str,
 	request_id: str | None,
 	reason: str | None,
+	reason_category: str | None,
 	plan: budget.Plan,
 	thread_rows: list[dict[str, Any]],
 	authored_rows: list[dict[str, Any]],
@@ -1323,6 +1332,10 @@ def _write_audit(
 		rooms=list(rooms_touched.values()),
 		query=query,
 		reason=reason,
+		# Signed here, with everything else, rather than written onto the row afterwards. The
+		# writer normalises it again — the viewer already refused anything outside the Select,
+		# so this is the belt that stops a future caller signing free text.
+		reason_category=reason_category,
 		request_id=request_id,
 		message_count=len(thread_rows) + len(authored_rows),
 		chunk_count=len(chunk_rows),

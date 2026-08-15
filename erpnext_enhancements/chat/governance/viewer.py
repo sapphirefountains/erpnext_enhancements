@@ -157,14 +157,18 @@ def search(
 		query=query or "",
 		rooms=named,
 		reason=cleaned_reason,
+		# Handed to the writer, not stamped on afterwards. Until v1.307.0 this rode onto the
+		# audit row through `db_set` *after* the gate had hashed it, on the strength of a
+		# comment claiming "re-signing happens on the next verify". Nothing re-signs:
+		# `verify_chain` computes, compares and reports, and assigns to nothing. So the one
+		# field decision D-3 shows the subject was the one field the chain did not cover.
+		#
+		# Still one read and one record — the value simply arrives before the signature
+		# instead of after it.
+		reason_category=category,
 		subject=(subject or "").strip() or None,
 		user=user,
 	)
-	# `reason_category` rides on the audit row the gate already wrote, rather than on a second
-	# row of our own: one read, one record. Written after the fact because the gate owns the
-	# insert, and `db_set` on the audit table is allowed for exactly this one field — it is
-	# outside the chained tuple's mandatory half and re-signing happens on the next verify.
-	_stamp_category(result, category)
 
 	# Read the dataclass, do not `getattr(..., default)` it. `RetrievalResult` has no `text`
 	# field and never had one — the transcript lives on `assembly`, exactly as every other
@@ -250,26 +254,16 @@ def rooms(subject: str = "", reason: str = "", reason_category: str = "") -> lis
 	)
 	return rows
 
-def _stamp_category(result: Any, category: str) -> None:
-	"""Put the category on the row the gate just wrote. Best effort, never fatal.
-
-	A failure here must not undo a read that already happened and was already recorded — the
-	row exists and names the reason in full, so a missing category degrades the *subject's*
-	view rather than the compliance one. Logged rather than raised for that reason.
-	"""
-	name = getattr(result, "audit_row", None)
-	if not name:
-		return
-	try:
-		frappe.db.set_value(audit.AUDIT_DOCTYPE, name, "reason_category", category, update_modified=False)
-	except Exception:
-		try:
-			frappe.log_error(
-				title="chat oversight: reason_category not stamped",
-				message=f"audit_row={name}",
-			)
-		except Exception:
-			pass
+# ``_stamp_category`` used to live here (removed v1.307.0). It wrote ``reason_category`` onto
+# the audit row with ``frappe.db.set_value`` after the gate had already signed it, and it must
+# not come back — not even as a fallback for a category the gate somehow did not receive,
+# because such a row would then be reported as tampered by the very chain the field is meant
+# to be protected by. `search` passes the category to the writer instead.
+#
+# It was also a bare write to an audited table from outside ``chat/audit.py``, i.e. exactly
+# what ``tests/test_chat_audit_immutability.py`` exists to forbid. It went unseen because that
+# scan matched string *literals* and this call named ``audit.AUDIT_DOCTYPE``; the scan now
+# resolves constants, so the shape cannot return silently.
 
 
 @frappe.whitelist(methods=["POST"])
