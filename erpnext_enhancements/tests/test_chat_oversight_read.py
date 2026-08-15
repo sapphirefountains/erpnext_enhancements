@@ -16,18 +16,147 @@ caller would have surfaced:
    right for an ordinary retrieve and exactly inverted for oversight: the auditor got content
    they could already read, in place of the content they had just stated a reason to see.
 
-Both were invisible to every existing test because nothing called the function. What is
-asserted here is the *shape* of the call — that each caller decides out loud — because the
-rows themselves need a bench and the wiring is what regressed.
+3. **Then the tier that fixed defect 1 lost whole rooms.** ``seq`` is a *per-room* counter, so
+   the single ``order by seq desc limit 200`` serving the whole named set ranked counters that
+   were never comparable. A busy room's tail took every slot and a quiet room named in the
+   same read came back empty — while chunks and digests still answered. Defect 1 again, one
+   room at a time, arriving through the ``ORDER BY`` instead of through the call site.
+
+Both of the first two were invisible to every existing test because nothing called the
+function, and they are asserted **by AST**, on the shape of the call.
+
+**The third could not be, and that is why this suite is no longer AST-only.** It lives in the
+interaction between an ``ORDER BY`` and a room set; every assertion about the source text that
+would have caught it — ``order by `seq` desc`` is present, ``%(limit)s`` is bound — was already
+here and passed on the broken code, and passes on the fixed code too. So the module now also
+installs a ``frappe`` stub whose ``db.sql`` answers from **what the statement bound** rather
+than from how it was written. That is what lets one fake both reproduce the old defect and
+verify the new behaviour; :class:`TheFakeItself` is the control that keeps it honest, because a
+fake that cannot fail proves nothing.
 """
 
 import ast
 import pathlib
+import re
+import sys
+import types
 import unittest
 
 GATE = (
 	pathlib.Path(__file__).resolve().parents[1] / "chat" / "retrieval" / "gate.py"
 )
+VIEWER = (
+	pathlib.Path(__file__).resolve().parents[1] / "chat" / "governance" / "viewer.py"
+)
+
+_STUBBED: list[str] = []
+
+#: The corpus, and the seq ranges are the whole point. `room-busy` alone can fill a 200-row
+#: global limit twenty-five times over, so any read that ranks these three against each other
+#: by `seq` comes back containing nothing but `room-busy`.
+_CORPUS: dict[str, int] = {"room-busy": 5000, "room-quiet": 40, "room-tiny": 3}
+
+
+def _rooms_in_clause(query: str) -> list[str]:
+	"""The room names inlined in a ``room in ('a', 'b')`` clause.
+
+	The one place the fake reads the statement instead of the bound values, and unavoidable:
+	the room set is variable-length, so `_room_list_sql` escapes the names into the SQL rather
+	than binding them. It exists for the control test, which hands the fake the *old* flat
+	statement — the one with no `room` parameter to answer from.
+	"""
+	found = re.search(r"`room`\s+in\s+\(([^)]*)\)", query)
+	if not found:
+		return []
+	return [part.strip().strip("'") for part in found.group(1).split(",") if part.strip()]
+
+
+class _FakeDB:
+	"""Enough MariaDB to answer the question this tier asks, and deliberately no more.
+
+	It reproduces three semantics and passes over everything else in the statement: which rooms
+	were asked for, ``order by seq desc`` as a **global** sort across whatever it selected, and
+	``LIMIT``. The global sort is not an approximation — it is exactly what MariaDB does with a
+	per-room counter over a multi-room set, so the defect is reproduced by construction rather
+	than by parsing for it.
+
+	**Keyed on the bound parameters, not on the statement text.** A fake that recognises the
+	implementation is a mock: it goes green the day the implementation is rewritten, whatever
+	the rewrite does. A fake that answers what was *asked for* is a database. It is not, and
+	must never become, a SQL engine — `test_chat_sql_columns` is right that a checker which
+	tries becomes fragile and is then ignored.
+	"""
+
+	def __init__(self) -> None:
+		self.statements: list[tuple[str, dict]] = []
+
+	def escape(self, value: object) -> str:
+		return "'" + str(value).replace("'", "''") + "'"
+
+	def get_single_value(self, _doctype: str, _field: str) -> None:
+		return None
+
+	def sql(self, query: str, values: dict | None = None, as_dict: bool = False, **_kw):
+		bound = dict(values or {})
+		self.statements.append((query, bound))
+		if "tabChat Message" not in query:
+			return []
+		rooms = [bound["room"]] if bound.get("room") else _rooms_in_clause(query)
+		rows = [
+			{
+				"name": f"{room}-{seq}",
+				"room": room,
+				"seq": seq,
+				"sender": "someone",
+				"sender_email": "someone@example.com",
+				"text": f"{room} message {seq}",
+				"thread_root": None,
+				"creation": None,
+				"gchat_create_time": None,
+			}
+			for room in rooms
+			for seq in range(1, _CORPUS.get(room, 0) + 1)
+		]
+		rows.sort(key=lambda row: row["seq"], reverse=True)
+		limit = bound.get("limit")
+		return rows if limit is None else rows[: int(limit)]
+
+
+def setUpModule() -> None:
+	for name in ("frappe", "frappe.utils", "frappe.model", "frappe.model.document"):
+		if name not in sys.modules:
+			sys.modules[name] = types.ModuleType(name)
+			_STUBBED.append(name)
+
+	frappe = sys.modules["frappe"]
+	utils = sys.modules["frappe.utils"]
+
+	def _cint(value: object) -> int:
+		try:
+			return int(float(value))  # type: ignore[arg-type]
+		except (TypeError, ValueError):
+			return 0
+
+	utils.cint = _cint
+	utils.get_datetime = lambda value=None: value
+	utils.now_datetime = lambda: None
+	utils.now = lambda: "2026-08-15 12:00:00.000000"
+	frappe.utils = utils
+	frappe.cint = _cint
+	frappe.session = types.SimpleNamespace(user="auditor@example.com")
+	frappe.log_error = lambda **_kw: None
+	frappe._ = lambda text: text
+	frappe.db = _FakeDB()
+	frappe.get_cached_doc = lambda *_a, **_k: None
+
+	document = sys.modules["frappe.model.document"]
+	if not hasattr(document, "Document"):
+		document.Document = object
+
+
+def tearDownModule() -> None:
+	for name in _STUBBED:
+		sys.modules.pop(name, None)
 
 
 def _tree():
@@ -176,6 +305,172 @@ class VerbatimTierTest(unittest.TestCase):
 		first = fn.body[1] if isinstance(fn.body[0], ast.Expr) else fn.body[0]
 		self.assertIsInstance(first, ast.If, "the empty-room guard must be the first statement")
 		self.assertIn("allowed_rooms", ast.dump(first.test))
+
+
+def _module_constant(path: pathlib.Path, name: str) -> object:
+	"""A module-level constant read by AST, without importing the module.
+
+	`chat/governance/viewer.py` pulls its whole whitelisted surface in at import — rate
+	limiter, permissions, the audit writer — and this suite wants exactly one integer off it.
+	"""
+	for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+		if isinstance(node, ast.Assign):
+			for target in node.targets:
+				if isinstance(target, ast.Name) and target.id == name:
+					return ast.literal_eval(node.value)
+	raise AssertionError(f"{name} not found in {path.name}")
+
+
+class VerbatimTierBehaviourTest(unittest.TestCase):
+	"""The rows themselves, against a fake that answers what the statement bound."""
+
+	def setUp(self) -> None:
+		from erpnext_enhancements.chat import permissions
+		from erpnext_enhancements.chat.retrieval import gate
+
+		self.gate = gate
+		self.db = _FakeDB()
+		sys.modules["frappe"].db = self.db
+		# The fragment is `test_chat_rawsql_guard`'s business and the bench suite's; pinning it
+		# to a constant here keeps this suite about ordering, which is the thing that broke.
+		self.permissions = permissions
+		self._real_filter = permissions.membership_filter_sql
+		permissions.membership_filter_sql = lambda *_a, **_k: "1 = 1"
+		self.named = frozenset(_CORPUS)
+
+	def tearDown(self) -> None:
+		self.permissions.membership_filter_sql = self._real_filter
+
+	def _read(self, expression: str = "", limit: int = 200) -> list[dict]:
+		return self.gate._oversight_room_messages(self.named, expression=expression, limit=limit)
+
+	def _message_statements(self) -> list[str]:
+		return [sql for sql, _ in self.db.statements if "tabChat Message" in sql]
+
+	def test_every_named_room_contributes_a_verbatim_message(self) -> None:
+		"""The defect, pinned by behaviour. This assertion is why the stub exists.
+
+		On the pre-fix code this returns 200 rows that are all `room-busy`, and the two other
+		rooms are simply absent — with no error, and with T2/T3 still answering around it.
+		"""
+		rows = self._read()
+		self.assertEqual(
+			{row["room"] for row in rows},
+			set(_CORPUS),
+			"a room named in the read came back with no verbatim message at all. `seq` is a "
+			"per-room counter, so one `order by seq desc limit 200` over a room set gives "
+			"every slot to the busiest room, and the auditor sees a result that looks "
+			"complete while containing none of the quiet room's messages.",
+		)
+
+	def test_the_fan_out_binds_one_statement_per_room(self) -> None:
+		"""Stops the 'optimisation' back to a single statement, which is the regression."""
+		self._read()
+		bound = [values.get("room") for _sql, values in self.db.statements if "tabChat Message" in _sql]
+		self.assertEqual(sorted(bound), sorted(_CORPUS))
+
+	def test_every_statement_carries_the_scope_and_the_delete_filter(self) -> None:
+		"""Every branch, not just one.
+
+		`test_chat_rawsql_guard` proves the fragment is *named* in this function — its own
+		docstring says so. With a fan-out that is no longer the same claim as "applied to each
+		read", because a later edit can drop it from one branch and leave the name in place.
+		"""
+		self._read()
+		statements = self._message_statements()
+		self.assertEqual(len(statements), len(_CORPUS))
+		for sql in statements:
+			self.assertIn("1 = 1", sql, "the membership fragment is missing from a branch")
+			self.assertIn("`is_deleted` = 0", sql)
+			self.assertIn("order by `seq` desc", sql)
+
+	def test_the_rows_are_grouped_by_room_and_ascend_within_one(self) -> None:
+		"""No cross-room total order is invented, and each block reads in the order it happened."""
+		rows = self._read()
+		order = [row["room"] for row in rows]
+		self.assertEqual(order, sorted(order), "a room's block is interrupted by another room's")
+		for room in _CORPUS:
+			seqs = [row["seq"] for row in rows if row["room"] == room]
+			self.assertEqual(seqs, sorted(seqs), f"{room} does not ascend by seq")
+
+	def test_a_room_with_more_to_give_than_its_share_says_so(self) -> None:
+		"""And a room that fitted entirely does not — the marker means "cut", not "read"."""
+		rows = self._read()
+		marked = {row["room"] for row in rows if row.get(self.gate._TAIL_CUT)}
+		self.assertEqual(marked, {"room-busy"})
+		busy = [row for row in rows if row["room"] == "room-busy"]
+		self.assertTrue(
+			busy[0].get(self.gate._TAIL_CUT),
+			"the marker belongs on the OLDEST kept row, which renders first — 'there is more "
+			"above this' is meaningless at the bottom of a block",
+		)
+
+	def test_a_cap_of_zero_reads_nothing_rather_than_one_per_room(self) -> None:
+		"""A caller asking for no verbatim tier is not a caller being starved by the floor."""
+		self.assertEqual(self._read(limit=0), [])
+		self.assertEqual(self._message_statements(), [])
+
+	def test_the_quota_divides_the_cap_and_never_reaches_zero(self) -> None:
+		shares = self.gate._per_room_limits(frozenset({"a", "b", "c"}), 200)
+		self.assertEqual(sum(shares.values()), 200, "the remainder is dropped rather than dealt")
+		self.assertEqual(shares, {"a": 67, "b": 67, "c": 66})
+		self.assertEqual(self.gate._per_room_limits(frozenset({"only"}), 200), {"only": 200})
+		self.assertEqual(self.gate._per_room_limits(frozenset(), 200), {})
+		self.assertEqual(self.gate._per_room_limits(frozenset({"a", "b"}), 0), {})
+		starved = self.gate._per_room_limits(frozenset({f"r{i}" for i in range(30)}), 20)
+		self.assertTrue(all(share >= 1 for share in starved.values()), "the floor of one failed")
+
+
+class TheFakeItself(unittest.TestCase):
+	"""A fake that cannot fail proves nothing.
+
+	The same control idiom as `test_chat_gate_source_scan.TestTheAnalyserItself`: hand the fake
+	the statement the gate used to write and assert it reproduces the defect. Without this, a
+	green run cannot be told apart from "the fake did not recognise the query", which is the
+	failure mode that makes a stubbed suite worthless the day someone refactors.
+	"""
+
+	def test_it_reproduces_the_global_seq_order_defect(self) -> None:
+		rooms = "', '".join(sorted(_CORPUS))
+		old_statement = (
+			"select `name`, `room`, `seq` from `tabChat Message` "
+			f"where `room` in ('{rooms}') and 1 = 1 and `is_deleted` = 0 "
+			"order by `seq` desc limit %(limit)s"
+		)
+		rows = _FakeDB().sql(old_statement, {"limit": 200}, as_dict=True)
+		self.assertEqual(len(rows), 200)
+		self.assertEqual(
+			{row["room"] for row in rows},
+			{"room-busy"},
+			"the fake no longer reproduces the defect, so every assertion resting on it is "
+			"passing for a reason nobody has checked",
+		)
+
+	def test_it_answers_a_bound_room_rather_than_the_in_clause(self) -> None:
+		"""The property that makes it a database rather than a mock of this implementation."""
+		rows = _FakeDB().sql(
+			"select `seq` from `tabChat Message` where `room` = %(room)s and `room` in ('x')",
+			{"room": "room-tiny", "limit": 10},
+			as_dict=True,
+		)
+		self.assertEqual({row["room"] for row in rows}, {"room-tiny"})
+
+
+class TheTwoCapsAgree(unittest.TestCase):
+	"""The floor of one in `_per_room_limits` is unreachable today. This says so out loud."""
+
+	def test_the_room_cap_cannot_starve_a_named_room(self) -> None:
+		from erpnext_enhancements.chat.retrieval import gate
+
+		rooms = _module_constant(VIEWER, "MAX_ROOMS_PER_READ")
+		self.assertLessEqual(
+			rooms,
+			gate.MAX_THREAD_MESSAGES,
+			"a read may now name more rooms than the verbatim cap has slots, so the "
+			"guarantee that every named room contributes a message holds only because of "
+			"the floor of one — raise one constant or lower the other deliberately, not by "
+			"accident",
+		)
 
 
 if __name__ == "__main__":
