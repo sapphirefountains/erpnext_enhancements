@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.298.0] - 2026-08-15
+
+**The retirement writer, and the refusal that makes it safe to have at all.** v1.295.0 shipped
+the arithmetic, v1.297.0 gave it a column and made every consumer honour it. This is what moves
+it.
+
+### The refusal
+
+The mark means *"every message at or below this seq is gone forever"*, and **every consumer
+acts on that claim**: the chunk sweep never reads below it, the digest sweep drops the room,
+the retrieval gate stops serving anything covering it.
+
+Set it over messages that still **exist** and you have not retired anything — you have made a
+stretch of live, readable conversation permanently invisible to the assistant. Nobody would
+report that as a bug. They would report that Triton *"doesn't know about"* a conversation, and
+the cause would be a column nobody thought to look at.
+
+So the order is forced by code rather than documentation: **destroy first, then retire.**
+`set_retirement_mark` verifies the deletion actually happened before it writes anything, and
+there is deliberately **no argument that bypasses the check** — its absence is asserted,
+because the case for a `force=` is always *"I know they are gone"*, which is exactly the belief
+the check exists to test.
+
+**Existence is the test, not `is_deleted`.** A tombstoned message is still a row holding its
+text — divergence D4 is explicit that the body stays, and an oversight expansion can still
+reveal it. Counting only live rows would let the mark be set over a room full of tombstones,
+which is the opposite of retired.
+
+### Added
+
+- **`chat/indexing/retire.py`** — `plan_retirement` (answers *how far may I go*, writes
+  nothing), `set_retirement_mark` (advances the mark and deletes the coverage it retires), and
+  `sweep_retirement` (the reconciler).
+
+  **The snap happens in the writer, not the caller.** A purge that snapped in its own code and
+  then deleted messages up to the *unsnapped* seq would destroy exactly the messages the snap
+  was protecting. `plan_retirement` is therefore also the question a purge has to ask before it
+  deletes anything.
+
+  It deletes chunks by **`first_seq`** and nothing else — no messages, no revisions, no
+  attachments. Those are the purge's business and are classified in `purge_rules`.
+
+- **`sweep_retirement` on `40 4 * * *`** — the **one sweep in this package with no
+  `is_archived` filter**, deliberately: `digest._dirty_rooms` and `indexer._rooms_needing_chunks`
+  both open `where is_archived = 0`, so archiving a room is otherwise the single action that
+  makes its retired coverage permanent. It never advances a mark and never deletes a message,
+  so it can only finish work an already-written mark authorises.
+
+- **`tests/test_chat_retire_writer.py`** — 17 assertions. Four mutations run: dropping the
+  refusal, deleting by `last_seq`, letting the sweep move the mark, and counting only live
+  rows — each caught.
+
+### Changed
+
+- **`test_chat_retire_wiring` now asserts one writer rather than none.** It said *nothing*
+  writes the mark, and it failed the moment this landed — correctly. Widening it to a single
+  named module rather than deleting it is the point: the only code allowed to promise that a
+  span of messages is destroyed is the code that verifies it. A second writer anywhere would be
+  a way to assert the promise without checking it. It now also fails if the writer disappears,
+  which would make the whole suite dead code.
+
+### The guard that shaped the placement
+
+`test_chat_gate_source_scan` requires every public function in the writer package to be a
+registered scheduler job or the named seam writer. It already carries an `OPERATOR_ENTRY_POINTS`
+category for bench-only tools, with an honesty check in both directions — so `sweep_retirement`
+is registered and the other three are declared operator-only, and the test fails if a scheduled
+`set_retirement_mark` ever appears. **A scheduled version would be a job that retires
+conversation on a timer**, which is the one thing nobody asked for.
+
 ## [1.297.0] - 2026-08-15
 
 **The retirement mark is wired.** v1.295.0 shipped the arithmetic; this gives it a column and

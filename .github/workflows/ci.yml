@@ -917,6 +917,19 @@ jobs:
       # are five separate queries that could serve one. The fragment is declared once.
       - name: Chat retirement wiring (the floor, the gate, the emptied room)
         run: python -m unittest erpnext_enhancements.tests.test_chat_retire_wiring -v
+      # The WRITER, and the refusal that makes it safe to have at all. The mark asserts
+      # "every message at or below this seq is gone forever" and every consumer acts on that:
+      # the chunk sweep never reads below it, the digest sweep drops the room, the gate stops
+      # serving anything covering it. Set it over messages that still EXIST and you have not
+      # retired anything - you have made a stretch of live, readable conversation permanently
+      # invisible to the assistant, which nobody reports as a bug. They report that Triton
+      # "doesn't know about" a conversation, and the cause is a column nobody looks at.
+      #
+      # So the order is forced by code: destroy first, then retire. There is deliberately no
+      # argument that bypasses the check, and its absence is asserted - the case for a force=
+      # is always "I know they are gone", which is the belief the check exists to test.
+      - name: Chat retirement writer (destroy first, then retire)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_retire_writer -v
       # The assistant's own answers must never become indexed content. handler.py posts
       # Triton's reply as a REAL Chat Message through the ordinary outbox, and its text is
       # composed from the chunk bodies and digest summaries retrieval just handed it - so

@@ -236,6 +236,34 @@ WRITER_PACKAGE_REASON: str = (
 #: Named individually rather than by pattern, because "public function in the indexing
 #: package" is exactly the shape somebody would add a convenient cross-room reader as.
 WRITER_ENTRY_POINTS: dict[str, dict[str, str]] = {
+	"chat/indexing/retire.py": {
+		"plan_retirement": (
+			"Answers how far the retirement mark may move and what that would remove. Writes "
+			"NOTHING, which is the point: the snap decides which messages a purge is ALLOWED to "
+			"delete, so a caller that snapped in its own code and then deleted up to the "
+			"unsnapped seq would destroy exactly the messages the snap was protecting. Reads "
+			"chunk spans and a room's two counters; no body column."
+		),
+		"set_retirement_mark": (
+			"Advances Chat Room.retired_below_seq and deletes the derived coverage it retires. "
+			"REFUSES unless the messages at or below the mark are already gone - the check is "
+			"the whole safety argument, because the mark asserts they are, and every consumer "
+			"acts on that assertion. Setting it over live messages would make readable "
+			"conversation permanently invisible to the assistant with no error anywhere. No "
+			"argument bypasses the check. Not whitelisted; bench execute and the future purge."
+		),
+		"sweep_retirement": (
+			"Scheduler job. Finishes deletions an already-written mark authorises - it never "
+			"advances a mark and never deletes a message, so it cannot destroy anything a human "
+			"did not ask for. The ONE sweep in this package with no is_archived filter, and "
+			"deliberately: archiving a room is otherwise the single action that makes its "
+			"retired coverage permanent, because both other sweeps skip archived rooms."
+		),
+		"report": (
+			"bench execute. Prints what a retirement would do and writes nothing, the same "
+			"shape chat.health.report and chat.governance.drift.report use."
+		),
+	},
 	"chat/indexing/indexer.py": {
 		"sweep_chunks": (
 			"Scheduler job, every ten minutes. Reads messages past each room's derived "
@@ -879,7 +907,18 @@ class TestTheWriterPackagePaysForItsExemption(unittest.TestCase):
 	#: reader is added to this package. Adding a name here is a reviewable act, and each one
 	#: still has to pass every other rule in this file — in particular it may not be whitelisted.
 	OPERATOR_ENTRY_POINTS: frozenset = frozenset(
-		{("chat/indexing/digest.py", "clear_digest_poison")}
+		{
+			("chat/indexing/digest.py", "clear_digest_poison"),
+			# Phase 6 §4.F's retirement writer. Operator-and-purge, never the scheduler: the
+			# whole point of `set_retirement_mark` is that a human or a purge has *just*
+			# destroyed a span of messages and is now asserting so. A scheduled version would
+			# be a job that retires conversation on a timer, which is the one thing nobody
+			# asked for. `sweep_retirement` IS scheduled and is listed with the jobs, because
+			# it only finishes deletions an already-written mark authorises.
+			("chat/indexing/retire.py", "plan_retirement"),
+			("chat/indexing/retire.py", "set_retirement_mark"),
+			("chat/indexing/retire.py", "report"),
+		}
 	)
 
 	def test_the_scheduler_owns_every_entry_point_but_the_seam_writer(self):
