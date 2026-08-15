@@ -55,6 +55,49 @@ from frappe.utils import cint
 
 
 class ChatRoom(Document):
+	def validate_share(self, docshare) -> None:
+		"""**Refuse every DocShare on this DocType.** Frappe's own designated hook.
+
+		A ``DocShare`` row does not merely add a permission — on v16 it *overrides* the ones
+		this package relies on, in both directions, and neither is obvious from reading our
+		code:
+
+		* ``frappe/database/query.py`` ORs ``name in (shared)`` onto the whole condition group
+		  after calling ``permission_query_conditions``, under its own comment "shared docs
+		  trump all other restrictions". The membership SQL is ANDed; the share is ORed past it.
+		* ``frappe/permissions.py`` answers a controller hook's ``False`` with
+		  ``false_if_not_shared()``, so a share overrides the single-document gate too — and
+		  that gate is the realtime boundary, because ``doc_subscribe`` reaches
+		  :func:`~erpnext_enhancements.chat.permissions.chat_room_has_permission`. A socket that
+		  joins on a share is never re-checked.
+
+		``Chat Room`` is the reachable one, because it is the only chat DocType carrying a read
+		DocPerm — but zero DocPerm is not immunity either. With no role permission the query
+		engine returns the shared-name filter and never calls the hook at all, which is why the
+		sibling controllers refuse too.
+
+		``validate_share`` is the right hook and not a ``doc_events`` handler: ``DocShare`` runs
+		it as the **last** step of its own ``validate``, after ``check_share_permission``, and
+		``flags.ignore_share_permission`` does not skip it. That matters because the paths that
+		actually reach here are the privileged ones — Administrator, for whom
+		``check_share_permission`` short-circuits; an Assignment Rule, which calls
+		``assign_to._add(ignore_permissions=True)``; and any server-side insert setting the
+		flag. An ordinary member is already refused earlier.
+
+		**Assignment on a chat DocType is therefore not possible, and that is the decision.** A
+		conversation is not a work item; access to it is membership. Assigning one in the desk
+		sidebar had exactly one effect — permanently granting read of a room the assignee is not
+		in — and it announced itself only as "Shared with the following Users with Read access".
+		"""
+		frappe.throw(
+			frappe._(
+				"Chat records cannot be shared. Access to a conversation is membership, not "
+				"sharing — add a Chat Room Member instead. Sharing would grant a read that "
+				"the membership rules never see and the audit trail never records."
+			),
+			frappe.PermissionError,
+		)
+
 	def validate(self) -> None:
 		"""Refuse a backwards ``seq_high_water``. The counter only ever goes up.
 

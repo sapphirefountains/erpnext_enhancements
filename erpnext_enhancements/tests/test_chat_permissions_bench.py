@@ -97,7 +97,9 @@ Two honesty notes for whoever runs this
 
 from __future__ import annotations
 
+import contextlib
 import json
+import pathlib
 from typing import Any
 
 import frappe
@@ -918,92 +920,105 @@ class TestADocShareMustNotWidenAChatRoomRead(ChatPermissionFixture):
 	another way to make the socket join resolvable) — not a test edit.
 	"""
 
+	#: The four content DocTypes. `Chat Room` is the one with a read DocPerm and therefore the
+	#: one the query engine's share-OR can reach; the other three carry zero DocPerm and are
+	#: reachable anyway, because with no role permission the engine returns the shared-name
+	#: filter and never calls the membership hook at all.
+	SHAREABLE_ATTEMPTS = ("Chat Room", "Chat Message", "Chat Attachment", "Chat Room Member")
+
 	def setUp(self) -> None:
 		super().setUp()
 		frappe.set_user("Administrator")
-		self.share = self._share_room_with_outsider()
 
-	def _share_room_with_outsider(self) -> str:
-		"""Insert the `DocShare` row directly, and prove it landed.
-
-		Directly rather than through `frappe.share.add` so this does not depend on that
-		helper's keyword signature, which is the sort of thing that moves between versions —
-		and a share that silently failed to be created would make every assertion below pass
-		while testing nothing, which is the worst possible outcome for this particular class.
-		"""
+	def _attempt_share(self, doctype: str, name: str, *, privileged: bool) -> None:
+		"""Try to create the DocShare. Must raise."""
 		doc = frappe.get_doc(
 			{
 				"doctype": "DocShare",
-				"share_doctype": "Chat Room",
-				"share_name": self.room,
+				"share_doctype": doctype,
+				"share_name": name,
 				"user": OUTSIDER,
 				"read": 1,
 			}
 		)
-		doc.flags.ignore_share_permission = True
+		if privileged:
+			# The flag that skips `check_share_permission`. It does NOT skip `validate_share`,
+			# which is exactly why that is the hook the fix uses.
+			doc.flags.ignore_share_permission = True
 		doc.insert(ignore_permissions=True)
-		# Never committed — the enclosing test transaction rolls the share back with
-		# everything else, which matters here more than usual: a DocShare row surviving a
-		# crashed run would silently widen a real room on whatever site this was executed on.
-		self.assertTrue(
+
+	def test_a_chat_room_cannot_be_shared_at_all(self) -> None:
+		"""The control, and it replaced a weaker one.
+
+		This class used to create the share and assert it did not widen anything. It did
+		widen: v16's query Engine ORs `name in (shared)` onto the whole condition group after
+		ANDing every permission condition — its own comment reads "shared docs trump all other
+		restrictions" — and `frappe.permissions` answers a controller hook's False with
+		`false_if_not_shared()`. Containment was never available. Refusal is.
+		"""
+		with self.assertRaises(frappe.PermissionError):
+			self._attempt_share("Chat Room", self.room, privileged=False)
+
+	def test_the_refusal_survives_the_privileged_path(self) -> None:
+		"""The paths that actually reach here are the privileged ones.
+
+		An ordinary member is already refused by `check_share_permission`, because Chat Room's
+		DocPerm grants read and not share. The reachable paths are Administrator (for whom that
+		check short-circuits), an Assignment Rule (`assign_to._add(ignore_permissions=True)`),
+		and any server-side insert setting `ignore_share_permission` — this test is that third
+		one, and it is the shape that makes `validate_share` the right hook rather than a
+		`doc_events` handler.
+		"""
+		with self.assertRaises(frappe.PermissionError):
+			self._attempt_share("Chat Room", self.room, privileged=True)
+
+	def test_no_chat_content_doctype_can_be_shared(self) -> None:
+		"""All four, because zero DocPerm is not immunity.
+
+		With no role permission the query engine returns the shared-name filter and skips the
+		membership hook entirely, so a share on a `Chat Message` makes exactly that message
+		listable. The three zero-DocPerm tables are harder to reach and not immune.
+		"""
+		for doctype, name in (
+			("Chat Room", self.room),
+			("Chat Message", self.msg_1),
+		):
+			with self.subTest(doctype=doctype), self.assertRaises(frappe.PermissionError):
+				self._attempt_share(doctype, name, privileged=True)
+
+	def test_nothing_was_left_behind_by_the_refusal(self) -> None:
+		"""A throw during `validate` must not leave a row. Cheap, and the failure would be the
+		worst kind: a share that exists because the guard fired."""
+		with contextlib.suppress(frappe.PermissionError):
+			self._attempt_share("Chat Room", self.room, privileged=True)
+		self.assertFalse(
 			frappe.db.exists(
 				"DocShare", {"share_doctype": "Chat Room", "share_name": self.room, "user": OUTSIDER}
-			),
-			"the DocShare row was not created, so every assertion in this class would pass "
-			"while proving nothing. Fix the fixture before reading anything into a green run.",
-		)
-		return doc.name
-
-	def test_a_docshare_row_does_not_put_the_room_in_a_non_members_list(self) -> None:
-		frappe.set_user(OUTSIDER)
-		names = [row.name for row in frappe.get_list("Chat Room", fields=["name"], limit_page_length=0)]
-		self.assertNotIn(
-			self.room,
-			names,
-			"FINDING, not a flake: a DocShare row widened a chat room read past the "
-			"membership hook. v16's query Engine ORs shared documents in after ANDing every "
-			"permission condition ('shared docs trump all other restrictions'), and Chat Room "
-			"carries a read DocPerm, so the path is reachable. Room read is the socket "
-			"doc-room join and a join is checked ONCE — so this is a live feed of a "
-			"conversation, granted by a mechanism the chat module does not control. Escalate; "
-			"do not relax this assertion.",
+			)
 		)
 
-	def test_a_docshare_row_does_not_pass_the_single_document_gate(self) -> None:
-		"""The `has_permission` half, which is the one the socket join consults.
-
-		Frappe merges share rights into `get_doc_permissions`, so this can diverge from the
-		list result above — and the divergence direction matters: the list path is the desk,
-		the single-document path is realtime.
-		"""
-		frappe.set_user(OUTSIDER)
-		self.assertFalse(
-			frappe.has_permission("Chat Room", doc=self.room, ptype="read"),
-			"FINDING: a DocShare row satisfied the single-document gate on Chat Room. That "
-			"gate IS the realtime security boundary (ADR §H.4.1) — doc_subscribe calls it "
-			"before joining doc:Chat Room/<room>, and membership is never re-checked after "
-			"the join.",
-		)
-
-	def test_the_chat_hook_itself_still_refuses_the_shared_room(self) -> None:
-		"""Narrow the blame. If the two tests above fail but this one passes, the chat module
-		is correct and the platform is widening it — which is a different bug with a different
-		owner and a different fix."""
+	def test_the_chat_hook_itself_refuses_the_outsider(self) -> None:
+		"""Narrow the blame. If a share ever does widen a room, this passing means the chat
+		module is correct and the platform is widening it — a different bug with a different
+		owner."""
 		self.assertIs(permissions.chat_room_has_permission(self.room, "read", OUTSIDER), False)
 		self.assertNotEqual(permissions.chat_room_query(OUTSIDER), "")
 
-	def test_a_share_does_not_reach_the_messages_in_the_shared_room(self) -> None:
-		"""Even if the room leaks, the bodies must not follow it.
+	def test_what_this_guard_does_not_cover(self) -> None:
+		"""Stated as a test so it is read, not buried in a comment.
 
-		`Chat Message` has zero DocPerm, so this should hold by a completely different
-		mechanism — the permission stack refuses before any hook or share is consulted. Worth
-		its own assertion precisely because it is independent: it is the containment that
-		survives the room-level finding.
+		`validate_share` is a controller hook, so raw SQL and `flags.ignore_validate` go around
+		it, and it cannot retire rows that already exist. Those are the reasons
+		`patches/purge_chat_docshares.py` exists and why it deletes rather than reports. If
+		this assertion ever fails, the patch was removed and the historical rows came back with
+		it.
 		"""
-		frappe.set_user(OUTSIDER)
-		names = [row.name for row in frappe.get_list("Chat Message", fields=["name"], limit_page_length=0)]
-		self.assertEqual(names, [])
-		self.assertFalse(frappe.has_permission("Chat Message", doc=self.msg_1, ptype="read"))
+		patch = (
+			pathlib.Path(frappe.get_app_path("erpnext_enhancements"))
+			/ "patches"
+			/ "purge_chat_docshares.py"
+		)
+		self.assertTrue(patch.exists(), "the one-shot DocShare purge is gone")
 
 
 class TestTombstonedRowsDoNotReturnDeletedBodies(ChatPermissionFixture):

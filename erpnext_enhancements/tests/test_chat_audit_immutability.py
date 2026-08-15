@@ -703,6 +703,105 @@ class TestEveryAuditControllerRefusesEveryPath(unittest.TestCase):
 		)
 
 
+class TestNoChatRecordCanBeShared(unittest.TestCase):
+	"""``DocShare`` overrides both mechanisms this package's access control is built from.
+
+	Not one more permission among several. On v16:
+
+	* ``frappe/database/query.py`` calls ``permission_query_conditions``, ANDs every condition,
+	  then **ORs the shared names onto the result** — under its own comment, "shared docs trump
+	  all other restrictions". The membership SQL is ANDed; the share is ORed past it.
+	* ``frappe/permissions.py`` answers a controller hook's ``False`` with
+	  ``false_if_not_shared()``. That is the single-document gate, which is the **realtime
+	  boundary** — ``doc_subscribe`` consults it and a join is never re-checked. A share buys a
+	  live feed, not a list row.
+
+	Zero DocPerm is not immunity: with no role permission the engine returns the shared-name
+	filter and never calls the hook at all.
+
+	Asserted bench-free and structurally, because the behavioural version of this
+	(``test_chat_permissions_bench``) needs a real database and CI has no bench — so it has
+	never run, and a control that has never executed is a control nobody should count on.
+	"""
+
+	#: Every chat DocType that holds conversation content or its membership. `Chat Room` is the
+	#: one with a read DocPerm and therefore the one the query engine's share-OR reaches; the
+	#: rest are reachable by the zero-DocPerm path.
+	CONTENT_DOCTYPES = ("chat_room", "chat_message", "chat_attachment", "chat_room_member")
+
+	def _controller(self, module: str) -> dict[str, ast.AST]:
+		path = APP_DIR / "chat" / "doctype" / module / f"{module}.py"
+		self.assertTrue(path.exists(), f"{module} controller has moved or been renamed")
+		return {
+			node.name: node
+			for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), str(path)))
+			if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+		}
+
+	def test_every_content_doctype_refuses_a_share(self) -> None:
+		for module in self.CONTENT_DOCTYPES:
+			methods = self._controller(module)
+			self.assertIn(
+				"validate_share",
+				methods,
+				f"{module} has no validate_share, so a DocShare on it is accepted — and a "
+				"share is ORed past the membership SQL and overrides the single-document gate "
+				"that the socket join consults.",
+			)
+
+	def test_the_refusal_is_unconditional(self) -> None:
+		"""No ``if``: there is no circumstance in which sharing a conversation is correct.
+
+		The method existing is not the guard — the same lesson the sibling assertions carry.
+		"""
+		for module in self.CONTENT_DOCTYPES:
+			node = self._controller(module)["validate_share"]
+			throws = [
+				c
+				for c in ast.walk(node)
+				if isinstance(c, ast.Call) and getattr(c.func, "attr", "") == "throw"
+			]
+			self.assertTrue(throws, f"{module}.validate_share() refuses nothing")
+			dead = [
+				b
+				for b in ast.walk(node)
+				if isinstance(b, ast.If) and isinstance(b.test, ast.Constant) and not b.test.value
+			]
+			self.assertFalse(dead, f"{module}.validate_share() hides its throw behind a falsy branch")
+
+	def test_the_hook_is_the_one_frappe_actually_calls(self) -> None:
+		"""``validate_share`` and not a ``doc_events`` handler on DocShare, deliberately.
+
+		``DocShare.validate`` runs ``self.get_doc().run_method("validate_share", self)`` as its
+		**last** step, after ``check_share_permission`` — and ``flags.ignore_share_permission``
+		does not skip it. That matters because the paths that actually reach here are the
+		privileged ones: Administrator, for whom ``check_share_permission`` short-circuits; an
+		Assignment Rule, which calls ``assign_to._add(ignore_permissions=True)``; and any
+		server-side insert setting the flag. A hook that the flag skipped would miss all three.
+		"""
+		for module in self.CONTENT_DOCTYPES:
+			node = self._controller(module)["validate_share"]
+			args = [a.arg for a in node.args.args]
+			self.assertEqual(
+				args[:2],
+				["self", "docshare"],
+				f"{module}.validate_share must take the DocShare Frappe passes it; a different "
+				"signature means run_method silently does not call it",
+			)
+
+	def test_the_existing_rows_are_purged_by_a_patch(self) -> None:
+		"""The hook cannot retire rows that already exist, and two of the paths that could have
+		created them are ordinary operations rather than attacks."""
+		patch = APP_DIR / "patches" / "purge_chat_docshares.py"
+		self.assertTrue(patch.exists(), "the one-shot DocShare purge is missing")
+		registered = (APP_DIR / "patches.txt").read_text(encoding="utf-8")
+		self.assertIn(
+			"erpnext_enhancements.patches.purge_chat_docshares",
+			registered,
+			"the purge exists but is not in patches.txt, so it never runs",
+		)
+
+
 class TestTheConstantResolverItself(unittest.TestCase):
 	"""Controls for the resolver, because the scan it belongs to was blind for eleven releases.
 
