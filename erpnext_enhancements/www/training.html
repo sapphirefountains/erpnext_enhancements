@@ -112,7 +112,11 @@
 		// no way to reach it. Both dial api.training re-exports rather than training.qa
 		// directly: PREFIX is single, and this map is the one place endpoint names appear.
 		askQuestion: "ask_lesson_question",
-		lessonQuestions: "lesson_questions"
+		lessonQuestions: "lesson_questions",
+		// The board. gamification.py has computed points, badges and streaks since
+		// v1.215.0 and its one endpoint had no caller, so every number existed and
+		// none was ever shown to the person who earned it.
+		leaderboard: "leaderboard"
 	};
 	var PREFIX = "/api/method/erpnext_enhancements.api.training.";
 

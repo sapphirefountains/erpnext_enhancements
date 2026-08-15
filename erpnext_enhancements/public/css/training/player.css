@@ -2540,3 +2540,60 @@
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
 }
+
+/* -------------------------------------------------------------------- the board
+ *
+ * The learner side of `training/gamification.py`, which had no caller until
+ * v1.305.0. Collapsed by default and rendered not at all when the feature is off —
+ * a permanently empty "Leaderboard" heading reads as broken rather than as
+ * switched off.
+ */
+.tr-board {
+	margin-top: 2rem;
+	border-top: 1px solid var(--tr-border, #d8dde2);
+	padding-top: 1rem;
+}
+
+.tr-board-toggle {
+	font-weight: 600;
+}
+
+.tr-board-body {
+	margin-top: 0.75rem;
+	/* The table has six columns and this page is opened on phones. Scroll the
+	   table rather than the document: a body that scrolls sideways takes the whole
+	   catalog with it. */
+	overflow-x: auto;
+}
+
+.tr-board-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.95rem;
+}
+
+.tr-board-table th,
+.tr-board-table td {
+	text-align: left;
+	padding: 0.4rem 0.6rem;
+	border-bottom: 1px solid var(--tr-border, #d8dde2);
+	white-space: nowrap;
+}
+
+.tr-board-table th {
+	font-size: 0.8rem;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	color: var(--tr-muted, #6c7680);
+}
+
+/* The row the learner came to find. Weight and a rule rather than colour alone,
+   so it survives a colour-blind reader and a monochrome print. */
+.tr-board-table tr.is-me td {
+	font-weight: 700;
+	border-left: 3px solid var(--tr-accent, #2f6fed);
+}
+
+.tr-board-table tr.is-me td:first-child {
+	padding-left: 0.35rem;
+}
