@@ -113,11 +113,25 @@ RETRIEVAL_TABLES: frozenset[str] = frozenset(
 #: it, and the reason is that a boolean is one typo from being ``True``. A
 #: distinctly named function cannot be reached by a caller who did not mean to
 #: reach it, and it shows up as itself in a stack trace and in a grep.
-PUBLIC_SYMBOLS: frozenset[str] = frozenset({"retrieve", "retrieve_for_oversight"})
+PUBLIC_SYMBOLS: frozenset[str] = frozenset(
+	{"retrieve", "retrieve_for_oversight", "retrieve_transcript"}
+)
 
 #: The one entry point Rule D exempts, conditionally — see
 #: :meth:`TestRuleDTheEntryPointDerivesItsOwnRoomSet.test_the_oversight_path_pays_for_its_exemption`.
 OVERSIGHT_SYMBOL: str = "retrieve_for_oversight"
+
+#: The verbatim read of one room, added in v1.308.0. It is a THIRD public symbol on a package
+#: whose stated design is "one door", so it is named here rather than reached around: the
+#: alternative was importing ``gate`` directly from the viewer and leaving ``__all__`` saying
+#: something that was no longer true.
+#:
+#: Rule D does not trip on it — it takes ``room``, singular, which is deliberately absent from
+#: :data:`FORBIDDEN_ENTRY_PARAMS` because ``retrieve(room=…)`` names a room *inside* the
+#: derived set rather than supplying the set. Here the room **is** the scope, which is the same
+#: shape the oversight exemption covers, so it pays the same price: see
+#: :meth:`TestRuleDTheEntryPointDerivesItsOwnRoomSet.test_the_transcript_path_pays_for_its_exemption`.
+TRANSCRIPT_SYMBOL: str = "retrieve_transcript"
 
 #: The required first positional parameter of every SQL builder in the package.
 ALLOWED_ROOMS: str = "allowed_rooms"
@@ -726,6 +740,52 @@ class TestRuleDTheEntryPointDerivesItsOwnRoomSet(unittest.TestCase):
 			"arguments from text.\n"
 			f"If the intent is to NARROW the search, the parameter is `{NARROWING_PARAM}`, "
 			"which is intersected with the derived set and therefore cannot widen it.",
+		)
+
+	def test_the_transcript_path_pays_for_its_exemption(self):
+		"""``retrieve_transcript`` names its room too, and owes the same compensating controls.
+
+		Rule D does not catch it, because ``room`` singular is not in
+		:data:`FORBIDDEN_ENTRY_PARAMS` — and must not be, since ``retrieve(room=…)`` names a
+		room *within* the derived set. On this path the room **is** the scope, so the rule's
+		reasoning applies even though its mechanism does not, and the controls are asserted
+		here rather than left to the fact that the scan happens to look elsewhere.
+
+		A public entry point that no rule governs is how a package with "one door" acquires a
+		second one nobody is watching.
+		"""
+		if not RETRIEVAL_DIR.is_dir():
+			self.skipTest("chat/retrieval/ does not exist yet")
+		source = (APP_DIR / GATE_REL).read_text(encoding="utf-8")
+		func = None
+		for node in ast.walk(ast.parse(source)):
+			if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == TRANSCRIPT_SYMBOL:
+				func = node
+		self.assertIsNotNone(func, f"{TRANSCRIPT_SYMBOL} is gone from {GATE_REL}")
+
+		params = _all_param_names(func)
+		self.assertIn("reason", params, "a transcript read no longer requires a reason")
+		self.assertIn("room", params, "a transcript read of 'everything' must not be expressible")
+
+		body = ast.dump(func)
+		self.assertIn(
+			"_has_oversight",
+			body,
+			"the transcript read no longer checks the oversight role, which is what makes it "
+			"fail closed while Chat Settings ships the role name blank",
+		)
+		self.assertIn(
+			"record_or_refuse",
+			body,
+			"the transcript read no longer writes its audit row through the fail-closed "
+			"writer. A page of somebody's conversation handed over without a record of who "
+			"read it is the failure this whole surface exists to prevent.",
+		)
+		self.assertNotIn(
+			NARROWING_PARAM,
+			params,
+			f"{TRANSCRIPT_SYMBOL} accepts {NARROWING_PARAM}, which only means something when "
+			"there is a derived set to narrow. Here the caller names the room outright.",
 		)
 
 	def test_the_oversight_path_pays_for_its_exemption(self):

@@ -111,12 +111,22 @@ class _FakeDB:
 				"sender_email": "someone@example.com",
 				"text": f"{room} message {seq}",
 				"thread_root": None,
+				# Every seventh message is a tombstone. The retrieval tiers exclude these and
+				# the transcript keeps them, which is the difference the tests below turn on.
+				"is_deleted": 1 if seq % 7 == 0 else 0,
+				"is_edited": 1 if seq % 5 == 0 else 0,
+				"edited_at": "2026-08-14 09:00:00" if seq % 5 == 0 else None,
 				"creation": None,
 				"gchat_create_time": None,
 			}
 			for room in rooms
 			for seq in range(1, _CORPUS.get(room, 0) + 1)
 		]
+		# The gate binds a positive `before_seq` only when it also emits the clause, so keying
+		# on the bound value is faithful to the question rather than to the statement's text.
+		before = bound.get("before_seq")
+		if before:
+			rows = [row for row in rows if row["seq"] < int(before)]
 		rows.sort(key=lambda row: row["seq"], reverse=True)
 		limit = bound.get("limit")
 		return rows if limit is None else rows[: int(limit)]
@@ -144,6 +154,14 @@ def setUpModule() -> None:
 	frappe.utils = utils
 	frappe.cint = _cint
 	frappe.session = types.SimpleNamespace(user="auditor@example.com")
+
+	def _set_user(user):
+		frappe.session.user = user
+
+	# `_acting_as` sets the session for the duration of a read, because the shared membership
+	# fragment resolves its own default from the session and a helper that forgot the argument
+	# would silently widen to every room.
+	frappe.set_user = _set_user
 	frappe.log_error = lambda **_kw: None
 	frappe._ = lambda text: text
 	frappe.db = _FakeDB()
@@ -419,6 +437,127 @@ class VerbatimTierBehaviourTest(unittest.TestCase):
 		self.assertEqual(self.gate._per_room_limits(frozenset({"a", "b"}), 0), {})
 		starved = self.gate._per_room_limits(frozenset({f"r{i}" for i in range(30)}), 20)
 		self.assertTrue(all(share >= 1 for share in starved.values()), "the floor of one failed")
+
+
+class TranscriptReadTest(unittest.TestCase):
+	"""The transcript path. Tombstones stay, the order ascends, and every page is recorded.
+
+	`retrieve_for_oversight` cannot serve this: it returns a tail, becomes a search on a
+	non-empty expression, and hands its rows to a budget whose rung 4 discards the MIDDLE of
+	the thread. Each of those is right for assembling a model's context and disqualifying for
+	a record. What is asserted here is the properties that make this one a record.
+	"""
+
+	def setUp(self) -> None:
+		from erpnext_enhancements.chat import audit, permissions
+		from erpnext_enhancements.chat.retrieval import gate
+
+		self.gate = gate
+		self.db = _FakeDB()
+		sys.modules["frappe"].db = self.db
+		sys.modules["frappe"].session.user = "auditor@example.com"
+
+		self.permissions = permissions
+		self.audit = audit
+		self._saved = {
+			"filter": permissions.membership_filter_sql,
+			"oversight": permissions._has_oversight,
+			"enabled": gate._assert_retrieval_enabled,
+			"record": audit.record_or_refuse,
+		}
+		permissions.membership_filter_sql = lambda *_a, **_k: "1 = 1"
+		permissions._has_oversight = lambda _user: True
+		gate._assert_retrieval_enabled = lambda: None
+		self.recorded: list[dict] = []
+		audit.record_or_refuse = lambda **kw: (self.recorded.append(kw), "CRA-0001")[1]
+
+	def tearDown(self) -> None:
+		self.permissions.membership_filter_sql = self._saved["filter"]
+		self.permissions._has_oversight = self._saved["oversight"]
+		self.gate._assert_retrieval_enabled = self._saved["enabled"]
+		self.audit.record_or_refuse = self._saved["record"]
+
+	def _read(self, **kw):
+		return self.gate.retrieve_transcript(
+			room=kw.pop("room", "room-quiet"),
+			reason=kw.pop("reason", "reviewing the Jones complaint"),
+			**kw,
+		)
+
+	def test_a_deleted_message_keeps_its_place_in_the_transcript(self) -> None:
+		"""The one property that separates this from every tier above it.
+
+		The retrieval tiers exclude ``is_deleted`` so an ordinary read is not a tombstone
+		expansion. A transcript has the opposite obligation: a conversation with the deleted
+		messages quietly removed is a *misleading* transcript, and the gap is where an
+		investigation is most likely to be looking.
+		"""
+		page = self._read()
+		self.assertTrue(
+			[row for row in page.rows if row.get("is_deleted")],
+			"the transcript dropped its tombstones, so the record it hands an auditor is "
+			"missing exactly the messages somebody chose to remove",
+		)
+
+	def test_it_ascends_by_seq(self) -> None:
+		seqs = [row["seq"] for row in self._read().rows]
+		self.assertEqual(seqs, sorted(seqs))
+
+	def test_it_pages_backwards_on_seq_and_never_offset(self) -> None:
+		first = self._read(limit=10)
+		older = self._read(limit=10, before_seq=first.first_seq)
+		self.assertTrue(older.rows)
+		self.assertLess(older.last_seq, first.first_seq)
+		for _sql, values in self.db.statements:
+			self.assertIn("before_seq", values)
+
+	def test_it_says_whether_there_is_more_above(self) -> None:
+		"""Otherwise "the conversation starts here" and "your page ended" look identical."""
+		self.assertTrue(self._read(limit=5).has_more_before)
+		self.assertFalse(self._read(room="room-tiny", limit=50).has_more_before)
+
+	def test_every_page_writes_exactly_one_audit_row(self) -> None:
+		self._read(limit=10)
+		self._read(limit=10, before_seq=20)
+		self.assertEqual(len(self.recorded), 2)
+		for row in self.recorded:
+			self.assertEqual(row["purpose"], "transcript")
+			self.assertEqual(row["actor_type"], "Admin")
+			self.assertEqual(row["rooms"][0]["room"], "room-quiet")
+			self.assertTrue(row["reason"])
+
+	def test_the_audit_row_records_the_range_actually_read(self) -> None:
+		"""`§4.D.2` asks for the range. "They looked at that room" is not an audit record."""
+		page = self._read(limit=10)
+		recorded = self.recorded[-1]["rooms"][0]
+		self.assertEqual(recorded["first_seq"], page.first_seq)
+		self.assertEqual(recorded["last_seq"], page.last_seq)
+		self.assertEqual(recorded["messages_read"], len(page.rows))
+
+	def test_the_pages_of_one_sitting_can_be_correlated(self) -> None:
+		self._read(limit=5, request_id="sitting-7")
+		self._read(limit=5, before_seq=10, request_id="sitting-7")
+		self.assertEqual({row["request_id"] for row in self.recorded}, {"sitting-7"})
+
+	def test_it_refuses_without_the_oversight_role(self) -> None:
+		self.permissions._has_oversight = lambda _user: False
+		with self.assertRaises(self.gate.RetrievalRefused):
+			self._read()
+		self.assertEqual(self.recorded, [], "a refused read still wrote an audit row")
+
+	def test_it_refuses_a_reason_too_short_to_be_one(self) -> None:
+		with self.assertRaises(self.gate.RetrievalRefused):
+			self._read(reason="because")
+		self.assertEqual(self.recorded, [])
+
+	def test_it_refuses_to_read_an_unnamed_room(self) -> None:
+		with self.assertRaises(self.gate.RetrievalRefused):
+			self._read(room="   ")
+
+	def test_the_page_size_is_capped_however_much_is_asked_for(self) -> None:
+		"""A caller-supplied limit sizes a statement; it must not be able to size it unbounded."""
+		page = self._read(room="room-busy", limit=100000)
+		self.assertLessEqual(len(page.rows), self.gate.MAX_TRANSCRIPT_PAGE)
 
 
 class TheFakeItself(unittest.TestCase):

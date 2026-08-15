@@ -3,39 +3,318 @@
 
    Server-rendered, no socket, no bundle. G6-6 is the reason rather than simplicity: a
    realtime subscription to a room the auditor is not in is a read this page cannot audit,
-   because the audit row is written when the transcript is fetched.
+   because the audit row is written when the transcript is fetched and a live event arriving
+   afterwards was never asked for. There is no polling either, for the same reason, and
+   `test_chat_oversight_viewer` forbids the timer by name.
+
+   That guard is a raw TEXT scan of this file, so it cannot tell an explanation from a call —
+   naming the forbidden token here, even to say it is absent, fails the test that checks it is
+   absent. Hence the circumlocution above. The module-level scan in the same suite walks the
+   AST instead and does not have this problem; this one cannot, because a template is not
+   Python.
 
    Every read here goes through `chat.governance.viewer`, which refuses without a reason and
    a category. The form cannot be submitted without both, but the *server* is the gate — a
-   required attribute is a courtesy to the auditor, not a control. #}
+   required attribute is a courtesy to the auditor, not a control.
+
+   TWO READS, ANSWERING DIFFERENT QUESTIONS. `search` asks "what in these rooms is relevant"
+   and returns a retrieval assembly: ranked, budgeted, and free to drop the middle of a
+   thread. `transcript` asks "what was said in this room", which tolerates none of that. The
+   page keeps them visibly apart rather than presenting one as a prettier form of the other,
+   because an auditor who mistakes the first for the second has a gap they cannot see.
+
+   NOTHING USER-AUTHORED IS EVER PARSED AS MARKUP. Bodies, addresses, room titles and refusal
+   text are all employee-authored, and this page renders them into an administrator's live
+   desk session — an employee typing a script tag into a room would otherwise be writing code
+   that runs with an admin's session. Every such value is placed with `textContent` on a node
+   built by `document.createElement`. The only markup this file writes is its own. #}
 
 {% block title %}Chat Oversight{% endblock %}
 
 {% block page_content %}
-<div class="ee-oversight">
+<style>
+	/* Scoped to .ee-ov throughout, with the tokens on that element rather than :root, so
+	   nothing here reaches the portal chrome around it. This page is a guest inside
+	   templates/web.html, not the owner of it.
+
+	   Light only, deliberately: Frappe's website chrome does not follow prefers-color-scheme,
+	   and a page that went dark inside chrome that did not would produce the worst of both —
+	   dark panels marooned on white, with Frappe's explicitly-coloured headings turning
+	   near-invisible against them. Colour is stated outright on every element here, headings
+	   included, so no host stylesheet can half-apply to it. */
+	.ee-ov {
+		--ee-paper: #ffffff;
+		--ee-sunken: #f4f6f7;
+		--ee-ink: #1d2328;
+		--ee-ink-soft: #454f57;
+		--ee-muted: #5b656d;
+		--ee-line: #dfe3e6;
+		--ee-line-firm: #6e777f;
+		--ee-record: #2c3238;
+		--ee-record-ink: #eef0f1;
+		--ee-record-dim: #b6bec4;
+		--ee-alert: #8c2b22;
+		--ee-alert-bg: #fbf3f2;
+		--ee-gone: #7a6a52;
+		--ee-gone-bg: #faf6ef;
+		--ee-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+		/* One token for the sequence rail. Four rules depend on these agreeing; when the rail
+		   width was a number repeated per rule, they disagreed by 4px and the paging control
+		   sat off the column it was measured against. */
+		--ee-rail: 4rem;
+		--ee-gutter: 14px;
+		--ee-indent: 20px;
+
+		max-width: 64rem;
+		margin: 0 auto;
+		padding: 4px 0 96px;
+		color: var(--ee-ink);
+		line-height: 1.55;
+	}
+
+	/* Frappe colours headings with its own token, and an explicit colour beats inheritance. */
+	.ee-ov h1, .ee-ov h2 { color: var(--ee-ink); font-weight: 600; }
+	.ee-ov h1 { font-size: 1.5rem; margin: 0 0 8px; letter-spacing: -0.01em; }
+	.ee-ov h2 { font-size: 1.05rem; margin: 0 0 2px; }
+
+	.ee-ov .ee-sr {
+		position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+		overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+	}
+	.ee-ov :is(a, button, input, select, textarea):focus-visible {
+		outline: 2px solid var(--ee-ink); outline-offset: 2px; border-radius: 2px;
+	}
+	.ee-ov .ee-lede { max-width: 46rem; margin: 0 0 22px; color: var(--ee-ink-soft); }
+
+	/* ---- the audit banner ---------------------------------------------------------------
+	   Sticky, so the record this session is writing cannot scroll away from the person
+	   writing it. Present BEFORE the first read, in a resting state that names the auditor:
+	   "you are on the record" is a claim that should exist while the decision to read is
+	   still being made, not arrive as a receipt once it has been.
+
+	   No ancestor may set `overflow` to anything but `visible` — an overflow-clipping
+	   ancestor becomes the sticky element's scrollport and the banner silently stops
+	   sticking. */
+	.ee-ov .ee-banner {
+		position: sticky; top: 0; z-index: 3;
+		margin: 0 0 22px; padding: 12px 16px;
+		background: var(--ee-record); color: var(--ee-record-ink);
+		border-radius: 3px; font-size: 0.86rem;
+	}
+	.ee-ov .ee-banner-line { margin: 0; font-weight: 600; }
+	.ee-ov .ee-banner-who { font-family: var(--ee-mono); font-weight: 400; }
+	.ee-ov .ee-banner-rows { margin: 6px 0 0; color: var(--ee-record-dim); font-size: 0.8rem; }
+	.ee-ov .ee-banner-id { font-family: var(--ee-mono); color: var(--ee-record-ink); }
+	.ee-ov .ee-banner.is-unrecorded { background: var(--ee-alert); }
+	.ee-ov .ee-banner.is-unrecorded .ee-banner-rows { color: #fff; font-weight: 600; }
+
+	/* ---- form ---------------------------------------------------------------------------- */
+
+	.ee-ov form { margin: 0 0 26px; }
+	/* Bootstrap's reboot sets `legend { display: block; width: 100% }`, and this repo ships
+	   those web styles. A full-width legend cuts a fieldset's top border across its whole
+	   width, leaving a U-shaped box with two bare arcs where the top should be. */
+	.ee-ov fieldset { border: 0; border-top: 1px solid var(--ee-line); margin: 0 0 20px; padding: 14px 0 0; }
+	.ee-ov legend {
+		float: none; width: auto; border: 0; margin: 0; padding: 0 10px 0 0;
+		font-size: 0.72rem; font-weight: 600; letter-spacing: 0.09em;
+		text-transform: uppercase; color: var(--ee-muted);
+	}
+	.ee-ov label { display: block; margin: 14px 0 4px; font-size: 0.88rem; font-weight: 600; }
+	.ee-ov .ee-req {
+		margin-left: 6px; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em;
+		text-transform: uppercase; color: var(--ee-muted);
+	}
+	.ee-ov small { display: block; margin: 5px 0 0; max-width: 44rem; font-size: 0.82rem; color: var(--ee-muted); }
+	.ee-ov input[type="text"], .ee-ov input[type="email"], .ee-ov select, .ee-ov textarea {
+		display: block; width: 100%; max-width: 34rem; padding: 8px 10px;
+		font: inherit; font-size: 0.95rem; color: var(--ee-ink); background: var(--ee-paper);
+		border: 1px solid var(--ee-line-firm); border-radius: 3px;
+	}
+	.ee-ov textarea { max-width: 44rem; resize: vertical; }
+
+	.ee-ov .ee-modes { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 6px 0 0; }
+	.ee-ov .ee-mode { display: flex; align-items: flex-start; gap: 8px; }
+	.ee-ov .ee-mode input { width: auto; margin: 5px 0 0; }
+	.ee-ov .ee-mode label { margin: 0; }
+	.ee-ov .ee-mode small { margin-top: 1px; }
+
+	.ee-ov .ee-go {
+		margin-top: 6px; padding: 9px 18px; font: inherit; font-size: 0.92rem; font-weight: 600;
+		color: var(--ee-record-ink); background: var(--ee-record);
+		border: 1px solid var(--ee-record); border-radius: 3px; cursor: pointer;
+	}
+	.ee-ov .ee-go:hover { background: var(--ee-ink); }
+	.ee-ov .ee-go[disabled] { opacity: 0.55; cursor: default; }
+
+	.ee-ov .ee-error {
+		max-width: 46rem; margin: 0 0 20px; padding: 12px 14px;
+		color: var(--ee-alert); background: var(--ee-alert-bg);
+		border: 1px solid var(--ee-alert); border-radius: 3px; font-size: 0.92rem;
+	}
+
+	/* ---- transcript ------------------------------------------------------------------- */
+
+	.ee-ov .ee-head { margin: 0 0 4px; }
+	.ee-ov .ee-room-id { margin: 0; font-family: var(--ee-mono); font-size: 0.84rem; color: var(--ee-muted); }
+	.ee-ov .ee-order {
+		max-width: 46rem; margin: 10px 0 14px; padding: 8px 12px;
+		background: var(--ee-sunken); border-left: 3px solid var(--ee-line-firm);
+		font-size: 0.82rem; color: var(--ee-ink-soft);
+	}
+
+	/* The sunken ground is what makes the white bubbles read as objects. Without it they are
+	   white on white, separated by a 1px hairline measuring about 1.25:1 — which a good many
+	   people simply cannot see. */
+	.ee-ov .ee-list {
+		list-style: none; margin: 0; padding: 14px 16px;
+		background: var(--ee-sunken);
+		border: 1px solid var(--ee-line); border-radius: 4px;
+		/* The rail is painted on the list, not per row, so it runs unbroken through speaker
+		   gaps and tombstones instead of restarting at every item. */
+		background-image: linear-gradient(
+			to right, transparent 0, transparent calc(var(--ee-rail) - 1px),
+			var(--ee-line) calc(var(--ee-rail) - 1px), var(--ee-line) var(--ee-rail),
+			transparent var(--ee-rail));
+	}
+
+	.ee-ov .ee-row {
+		display: grid;
+		grid-template-columns: var(--ee-rail) minmax(0, 1fr) auto;
+		align-items: start; column-gap: var(--ee-gutter); padding: 1px 0;
+	}
+	.ee-ov .ee-row.is-newspeaker { margin-top: 14px; }
+	.ee-ov .ee-list > .ee-row:first-child { margin-top: 0; }
+
+	/* Tabular figures, so seq and time are columns rather than ragged edges. */
+	.ee-ov .ee-seq {
+		grid-column: 1; font-family: var(--ee-mono); font-size: 0.72rem; color: var(--ee-muted);
+		text-align: right; padding: 7px 8px 0 0; font-variant-numeric: tabular-nums;
+	}
+	.ee-ov .ee-when {
+		grid-column: 3; font-family: var(--ee-mono); font-size: 0.72rem; color: var(--ee-muted);
+		padding: 7px 0 0 0; font-variant-numeric: tabular-nums; white-space: nowrap;
+	}
+	.ee-ov .ee-who {
+		grid-column: 2; margin: 0 0 3px;
+		font-size: 0.82rem; font-weight: 600; color: var(--ee-ink-soft); overflow-wrap: anywhere;
+	}
+	.ee-ov .ee-bubble {
+		grid-column: 2; padding: 8px 12px;
+		background: var(--ee-paper); border: 1px solid var(--ee-line); border-radius: 10px;
+		/* A pasted URL, a stack trace or a base64 blob WILL appear in a real transcript. */
+		overflow-wrap: anywhere; white-space: pre-wrap;
+	}
+	.ee-ov .ee-row.is-reply .ee-bubble,
+	.ee-ov .ee-row.is-reply .ee-who,
+	.ee-ov .ee-row.is-reply .ee-tie { margin-left: var(--ee-indent); }
+
+	.ee-ov .ee-chip {
+		display: inline-block; margin: 6px 8px 0 0;
+		font-size: 0.72rem; font-weight: 600; letter-spacing: 0.03em; color: var(--ee-muted);
+	}
+
+	/* A tombstone must look deliberately withheld — not missing, and not an empty message. */
+	.ee-ov .ee-row.is-gone .ee-bubble {
+		background: var(--ee-gone-bg); border-style: dashed; border-color: var(--ee-gone);
+		color: var(--ee-gone); font-style: italic;
+	}
+	.ee-ov .ee-expand {
+		display: inline-block; margin: 8px 0 0; padding: 4px 10px;
+		font: inherit; font-size: 0.78rem; font-weight: 600; font-style: normal;
+		color: var(--ee-gone); background: transparent;
+		border: 1px solid var(--ee-gone); border-radius: 3px; cursor: pointer;
+	}
+	.ee-ov .ee-expand:hover { background: #f2e9db; }
+
+	.ee-ov .ee-tie { grid-column: 2; margin: 12px 0 2px; font-size: 0.78rem; color: var(--ee-muted); }
+	.ee-ov .ee-tie a { color: var(--ee-ink-soft); }
+
+	.ee-ov .ee-earlier { margin: 12px 0 0; padding-left: calc(var(--ee-rail) + var(--ee-gutter)); }
+	.ee-ov .ee-earlier button {
+		padding: 6px 14px; font: inherit; font-size: 0.84rem; font-weight: 600;
+		color: var(--ee-ink); background: var(--ee-paper);
+		border: 1px solid var(--ee-line-firm); border-radius: 3px; cursor: pointer;
+	}
+	.ee-ov .ee-count { margin: 10px 0 0; font-size: 0.82rem; color: var(--ee-muted); }
+	.ee-ov .ee-empty { display: block; padding: 8px 0; color: var(--ee-muted); }
+
+	.ee-ov .ee-assembly {
+		margin: 0; padding: 14px 16px;
+		background: var(--ee-sunken); border: 1px solid var(--ee-line); border-radius: 4px;
+		font: inherit; font-size: 0.9rem; white-space: pre-wrap; overflow-wrap: anywhere;
+	}
+
+	@media (max-width: 640px) {
+		.ee-ov { --ee-rail: 2.75rem; --ee-gutter: 10px; --ee-indent: 12px; }
+		.ee-ov .ee-row { grid-template-columns: var(--ee-rail) minmax(0, 1fr); }
+		.ee-ov .ee-when { grid-column: 2; padding: 2px 0 0; }
+	}
+
+	/* A printed transcript is an exhibit, and an exhibit carrying no visible audit reference
+	   is the artefact this page exists to prevent. The banner is repainted explicitly rather
+	   than left to `print-color-adjust`, which a browser with background graphics off simply
+	   discards. Live controls go: a printed page cannot be clicked. */
+	@media print {
+		.ee-ov form, .ee-ov .ee-earlier, .ee-ov .ee-expand { display: none; }
+		.ee-ov .ee-banner { position: static; background: #fff; color: #000; border: 2px solid #000; }
+		.ee-ov .ee-banner-rows, .ee-ov .ee-banner-id, .ee-ov .ee-banner-who { color: #000; }
+		.ee-ov .ee-list { background: #fff; border-color: #000; }
+		.ee-ov .ee-bubble { border-color: #666; }
+	}
+</style>
+
+<div class="ee-ov">
 	<h1>Chat oversight</h1>
-	<p class="ee-oversight-lede">
+	<p class="ee-lede">
 		Every read from this page is recorded against your name, with the reason you give.
 		The person whose messages you read may be shown that you read them, your name, and
-		the <em>category</em> you choose — never the reason text itself.
+		the <em>category</em> you choose &mdash; never the reason text itself.
 	</p>
 
-	<form id="ee-oversight-form" autocomplete="off">
+	<div id="ee-banner" class="ee-banner" role="status" aria-live="polite">
+		<p class="ee-banner-line">On the record as <span class="ee-banner-who">{{ acting_user }}</span></p>
+		<p class="ee-banner-rows" id="ee-banner-rows">
+			Nothing has been read yet, so nothing has been recorded yet.
+		</p>
+	</div>
+
+	<form id="ee-form" autocomplete="off">
 		<fieldset>
 			<legend>What to read</legend>
 
+			<div class="ee-modes">
+				<div class="ee-mode">
+					<input type="radio" id="ee-mode-transcript" name="mode" value="transcript" checked>
+					<div>
+						<label for="ee-mode-transcript">Read a conversation</label>
+						<small>One room, in order, with nothing left out.</small>
+					</div>
+				</div>
+				<div class="ee-mode">
+					<input type="radio" id="ee-mode-search" name="mode" value="search">
+					<div>
+						<label for="ee-mode-search">Search across rooms</label>
+						<small>Ranked and summarised. May not return everything.</small>
+					</div>
+				</div>
+			</div>
+
 			<label for="ee-rooms">Rooms <span class="ee-req">required</span></label>
-			<input id="ee-rooms" name="rooms" type="text" required
-				placeholder="CHAT-ROOM-000123, CHAT-ROOM-000124">
-			<small>Comma-separated. An oversight read of &ldquo;everything&rdquo; is not expressible.</small>
+			<input id="ee-rooms" name="rooms" type="text" required placeholder="CHAT-ROOM-000123">
+			<small>
+				Reading a conversation takes one room. A search may name several, comma-separated
+				&mdash; an oversight read of &ldquo;everything&rdquo; is not expressible.
+			</small>
 
 			<label for="ee-query">Search terms</label>
 			<input id="ee-query" name="query" type="text" placeholder="invoice 4471">
-			<small>Leave empty to read the recent conversation rather than search it.</small>
+			<small>Search only. A conversation is read in full, never filtered.</small>
 
 			<label for="ee-subject">Whose messages is this about?</label>
 			<input id="ee-subject" name="subject" type="email" placeholder="ada@example.com">
-			<small>Optional. Not every read is about a person.</small>
+			<small>Optional, and search only. Not every read is about a person.</small>
 		</fieldset>
 
 		<fieldset>
@@ -60,59 +339,274 @@
 			</small>
 		</fieldset>
 
-		<button type="submit" class="btn btn-primary">Read, and record it</button>
+		<button type="submit" class="ee-go" id="ee-go">Read, and record it</button>
 	</form>
 
-	<div id="ee-oversight-error" class="ee-oversight-error" role="alert" hidden></div>
-	<div id="ee-oversight-result" class="ee-oversight-result" hidden></div>
+	<div id="ee-error" class="ee-error" role="alert" hidden></div>
+	<div id="ee-result"></div>
 </div>
 
 <script>
 (function () {
 	"use strict";
-	// No socket, no polling, no subscription. See the controller docstring: G6-6.
-	var form = document.getElementById("ee-oversight-form");
-	var errorBox = document.getElementById("ee-oversight-error");
-	var resultBox = document.getElementById("ee-oversight-result");
+	// No socket, no subscription, no timer, no polling. See the controller docstring: G6-6.
+	var form = document.getElementById("ee-form");
+	var errorBox = document.getElementById("ee-error");
+	var resultBox = document.getElementById("ee-result");
+	var banner = document.getElementById("ee-banner");
+	var bannerRows = document.getElementById("ee-banner-rows");
+	var goButton = document.getElementById("ee-go");
 
-	function show(el, text) {
-		// textContent, never innerHTML: the reason and the transcript are user-authored, and
-		// this page renders them for an administrator with a live session.
-		el.textContent = text;
-		el.hidden = false;
+	// The page keeps its own ledger of what THIS sitting caused, rather than asking the
+	// server — the server's answer would itself be a read of the audit log.
+	var recorded = [];
+	var loadedRoom = null;
+	var oldestSeq = null;
+
+	function el(tag, className, text) {
+		var node = document.createElement(tag);
+		if (className) { node.className = className; }
+		// textContent, always. Bodies, addresses and titles are employee-authored, and this
+		// page renders them into an administrator's live desk session.
+		if (text !== undefined && text !== null) { node.textContent = String(text); }
+		return node;
+	}
+
+	function clear(node) { while (node.firstChild) { node.removeChild(node.firstChild); } }
+
+	function fail(message) {
+		errorBox.textContent = message;
+		errorBox.hidden = false;
+	}
+
+	function recordRead(auditRow) {
+		// Called BEFORE anything is drawn. The record is a fact about the server, not about
+		// this page succeeding at drawing it — if rendering throws after the read happened,
+		// the banner must still say the read happened.
+		if (!auditRow) {
+			banner.classList.add("is-unrecorded");
+			clear(bannerRows);
+			bannerRows.appendChild(document.createTextNode(
+				"This read returned no audit row. Treat it as unrecorded and stop."));
+			return;
+		}
+		banner.classList.remove("is-unrecorded");
+		recorded.push(auditRow);
+		clear(bannerRows);
+		bannerRows.appendChild(document.createTextNode(
+			recorded.length + (recorded.length === 1 ? " read recorded" : " reads recorded")
+			+ " this sitting, the most recent as "));
+		bannerRows.appendChild(el("span", "ee-banner-id", auditRow));
+	}
+
+	function speakerOf(row) { return row.sender || row.sender_email || "unknown participant"; }
+
+	function shortTime(value) {
+		// Display only. The list is ordered by `seq`, never by this — see the note rendered
+		// above every transcript.
+		if (!value) { return ""; }
+		return String(value).replace("T", " ").slice(0, 16);
+	}
+
+	function bubbleFor(row, previous) {
+		var item = el("li", "ee-row");
+		var isReply = Boolean(row.thread_root);
+		var newSpeaker = !previous || speakerOf(previous) !== speakerOf(row);
+
+		if (isReply) { item.classList.add("is-reply"); }
+		if (newSpeaker) { item.classList.add("is-newspeaker"); }
+		if (row.is_deleted) { item.classList.add("is-gone"); }
+
+		// The thread tie is drawn once per RUN of replies, not once per reply: a four-reply
+		// thread would otherwise repeat the same line four times, and a busy room would be
+		// mostly chrome.
+		if (isReply && (!previous || previous.thread_root !== row.thread_root)) {
+			var tie = el("p", "ee-tie", "reply in the thread beginning at ");
+			var anchor = el("a", null, "#" + row.thread_root);
+			anchor.href = "#ee-msg-" + row.thread_root;
+			tie.appendChild(anchor);
+			item.appendChild(tie);
+		}
+
+		var seq = el("span", "ee-seq", row.seq);
+		seq.id = "ee-msg-" + row.name;
+		item.appendChild(seq);
+
+		if (newSpeaker) { item.appendChild(el("p", "ee-who", speakerOf(row))); }
+
+		var bubble = el("div", "ee-bubble");
+		if (row.is_deleted) {
+			bubble.appendChild(document.createTextNode(
+				"This message was deleted. Its text is not shown here."));
+			var expand = el("button", "ee-expand", "Show what it said");
+			expand.type = "button";
+			expand.setAttribute("data-message", row.name);
+			bubble.appendChild(expand);
+		} else {
+			bubble.appendChild(document.createTextNode(row.text || ""));
+		}
+
+		if (row.is_edited) {
+			var chip = el("span", "ee-chip",
+				"edited" + (row.edited_at ? " " + shortTime(row.edited_at) : ""));
+			// The visible chip decorates a fact a screen reader gets as a sentence.
+			chip.setAttribute("aria-hidden", "true");
+			bubble.appendChild(chip);
+			bubble.appendChild(el("span", "ee-sr", "This message was edited after it was sent."));
+		}
+		item.appendChild(bubble);
+		item.appendChild(el("span", "ee-when", shortTime(row.creation)));
+		return item;
+	}
+
+	function renderTranscript(payload) {
+		recordRead(payload.audit_row);
+
+		clear(resultBox);
+		loadedRoom = payload.room;
+		oldestSeq = payload.first_seq;
+
+		resultBox.appendChild(el("h2", "ee-head", payload.room_title || payload.room));
+		resultBox.appendChild(el("p", "ee-room-id", payload.room));
+		resultBox.appendChild(el("p", "ee-order",
+			"Ordered by the room's own sequence number, which is what each message was given "
+			+ "when it arrived. The times shown are what each side reported and are not the "
+			+ "ordering — two clocks are involved and they disagree."));
+
+		var list = el("ol", "ee-list");
+		var messages = (payload.messages || []).slice().sort(function (a, b) {
+			return a.seq - b.seq;
+		});
+		var previous = null;
+		messages.forEach(function (row) {
+			list.appendChild(bubbleFor(row, previous));
+			previous = row;
+		});
+		if (!messages.length) {
+			list.appendChild(el("li", "ee-empty", "This room has no messages in this range."));
+		}
+		resultBox.appendChild(list);
+
+		if (payload.has_more_before) {
+			var earlier = el("div", "ee-earlier");
+			var button = el("button", null, "Read earlier messages");
+			button.type = "button";
+			button.id = "ee-earlier";
+			earlier.appendChild(button);
+			earlier.appendChild(el("small", null,
+				"A further page, recorded as its own read against the same reason."));
+			resultBox.appendChild(earlier);
+		}
+		resultBox.appendChild(el("p", "ee-count",
+			messages.length + (messages.length === 1 ? " message" : " messages")
+			+ " shown, sequence " + payload.first_seq + " to " + payload.last_seq + "."));
+	}
+
+	function renderSearch(payload) {
+		recordRead(payload.audit_row);
+		clear(resultBox);
+		resultBox.appendChild(el("h2", "ee-head", "Search result"));
+		resultBox.appendChild(el("p", "ee-order",
+			"A ranked, summarised answer that may not contain every matching message. To read "
+			+ "a conversation in full, read it as a conversation."));
+		resultBox.appendChild(el("pre", "ee-assembly", payload.text || "No matching messages."));
+	}
+
+	function currentReason() {
+		var data = new FormData(form);
+		return {
+			reason: data.get("reason") || "",
+			reason_category: data.get("reason_category") || ""
+		};
+	}
+
+	function call(method, args, onOk) {
+		goButton.disabled = true;
+		frappe.call({
+			method: method,
+			type: "POST",
+			args: args,
+			callback: function (response) {
+				goButton.disabled = false;
+				var payload = response && response.message;
+				if (!payload) {
+					fail("The server returned nothing. Treat the read as unrecorded.");
+					return;
+				}
+				onOk(payload);
+			},
+			error: function (err) {
+				goButton.disabled = false;
+				// The server's refusal is written for the auditor and names which gate
+				// refused — role, reason or category.
+				fail((err && err.message) || "The read was refused and nothing was returned.");
+			}
+		});
 	}
 
 	form.addEventListener("submit", function (event) {
 		event.preventDefault();
 		errorBox.hidden = true;
-		resultBox.hidden = true;
-
 		var data = new FormData(form);
-		frappe.call({
-			method: "erpnext_enhancements.chat.governance.viewer.search",
-			type: "POST",
-			args: {
+		var why = currentReason();
+
+		if (data.get("mode") === "transcript") {
+			call("erpnext_enhancements.chat.governance.viewer.transcript", {
+				room: (data.get("rooms") || "").split(",")[0].trim(),
+				reason: why.reason,
+				reason_category: why.reason_category
+			}, renderTranscript);
+		} else {
+			call("erpnext_enhancements.chat.governance.viewer.search", {
 				rooms: data.get("rooms") || "",
 				query: data.get("query") || "",
 				subject: data.get("subject") || "",
-				reason: data.get("reason") || "",
-				reason_category: data.get("reason_category") || ""
-			},
-			callback: function (response) {
-				var payload = response && response.message;
-				if (!payload) {
-					show(errorBox, "The server returned nothing. The read was not recorded.");
-					return;
-				}
-				show(resultBox, payload.text || "No matching messages.");
-			},
-			error: function (err) {
-				// The server's refusal text is written for the auditor and says which of the
-				// three gates refused — role, reason or category.
-				var message = (err && err.message) || "The read was refused and nothing was returned.";
-				show(errorBox, message);
-			}
-		});
+				reason: why.reason,
+				reason_category: why.reason_category
+			}, renderSearch);
+		}
+	});
+
+	// Delegated, because the result nodes are rebuilt on every read.
+	resultBox.addEventListener("click", function (event) {
+		var target = event.target;
+		if (!target) { return; }
+
+		if (target.id === "ee-earlier") {
+			var why = currentReason();
+			call("erpnext_enhancements.chat.governance.viewer.transcript", {
+				room: loadedRoom,
+				reason: why.reason,
+				reason_category: why.reason_category,
+				before_seq: oldestSeq
+			}, renderTranscript);
+			return;
+		}
+
+		if (target.classList && target.classList.contains("ee-expand")) {
+			// Seeing through a delete is its own act with its own audit event (§4.E) and it
+			// costs its own reason. The room-read reason is deliberately NOT carried down and
+			// the category is NOT pre-filled: this is a different decision about a different
+			// thing, and inheriting the justification would record it as though it were the
+			// same one.
+			var message = target.getAttribute("data-message");
+			var reason = window.prompt(
+				"Seeing what a deleted message said is recorded separately, against your name."
+				+ "\nWhy are you overriding this deletion?");
+			if (!reason) { return; }
+			var category = window.prompt("Category for this expansion (the person may be shown it):");
+			if (!category) { return; }
+			call("erpnext_enhancements.chat.governance.tombstone.expand", {
+				message: message,
+				reason: reason,
+				reason_category: category
+			}, function (payload) {
+				var bubble = target.parentNode;
+				clear(bubble);
+				bubble.appendChild(document.createTextNode(payload.text || "(no retained body)"));
+				bubble.appendChild(el("span", "ee-chip", "expanded, and recorded separately"));
+			});
+		}
 	});
 })();
 </script>

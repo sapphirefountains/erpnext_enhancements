@@ -72,7 +72,7 @@ from frappe.utils import cint, get_datetime, now_datetime
 from erpnext_enhancements.chat import audit, permissions
 from erpnext_enhancements.chat.retrieval import assemble, budget, citations, lexical, rank, vectors
 
-__all__ = ["retrieve", "retrieve_for_oversight"]
+__all__ = ["retrieve", "retrieve_for_oversight", "retrieve_transcript"]
 
 CHUNK_DOCTYPE = "Chat Context Chunk"
 ROOM_DIGEST_DOCTYPE = "Chat Room Digest"
@@ -134,6 +134,12 @@ MAX_AUTHORED_MESSAGES: int = 60
 #: person rather than sent to a model**, and the citation instruction is addressed to a model.
 PURPOSE_MENTION: str = "mention"
 PURPOSE_OVERSIGHT: str = "oversight"
+
+#: The third: a verbatim read of one room's conversation, with no query and no budget. Kept
+#: distinct from ``oversight`` deliberately — the compliance report projects ``purpose``, and
+#: "they searched these rooms for a term" and "they read this conversation end to end" are
+#: different acts that a single label would merge.
+PURPOSE_TRANSCRIPT: str = "transcript"
 
 
 class RetrievalRefused(Exception):
@@ -803,6 +809,168 @@ def retrieve_for_oversight(
 #: An oversight reason shorter than this is refused. Long enough to be a sentence, short
 #: enough that a legitimate one-line justification passes.
 _MIN_OVERSIGHT_REASON: int = 12
+
+#: One page of a transcript. Independent of :data:`MAX_THREAD_MESSAGES`, which sizes a tier
+#: inside a token budget; this sizes a **statement** and a scroll.
+MAX_TRANSCRIPT_PAGE: int = 100
+
+
+@dataclass
+class TranscriptPage:
+	"""One audited page of one room's conversation, in ``seq`` order."""
+
+	room: str
+	rows: list[dict[str, Any]] = field(default_factory=list)
+	first_seq: int = 0
+	last_seq: int = 0
+	has_more_before: bool = False
+	audit_row: str = ""
+
+
+def _transcript_rows(
+	allowed_rooms: frozenset[str],
+	*,
+	room: str,
+	before_seq: int | None,
+	limit: int,
+) -> list[dict[str, Any]]:
+	"""One room's messages, newest-first from ``before_seq``, returned oldest-first.
+
+	**Tombstones are INCLUDED here, and that is the one place this path differs from every
+	tier above.** The retrieval tiers exclude ``is_deleted`` because folding a deleted body
+	into an ordinary read would make every read a tombstone expansion (§4.E). A transcript
+	has the opposite obligation: a conversation with the deleted messages quietly removed is
+	a **misleading** transcript, and the gap is exactly where an investigation is most likely
+	to be looking. So the row comes back, keeps its place in the sequence, and its **body does
+	not** — the serialiser withholds it, and seeing through it stays a separate audited act
+	with its own event.
+
+	Keyset on ``seq``, never ``OFFSET``: the same rule as the SPA's own paging, and for the
+	same reason. ``seq`` is per-room, which is valid here because this reads exactly one room
+	— see :func:`_per_room_limits` for what goes wrong when that assumption is stretched
+	across a set.
+	"""
+	if not allowed_rooms or not room:
+		return []
+	scope = permissions.membership_filter_sql(
+		f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq", allow_oversight=True
+	)
+	rooms = _room_list_sql(allowed_rooms)
+	before = "and `seq` < %(before_seq)s" if before_seq else ""
+	rows = frappe.db.sql(
+		f"""
+		select `name`, `room`, `seq`, `sender`, `sender_email`, `text`, `thread_root`,
+			`is_deleted`, `is_edited`, `edited_at`, `creation`, `gchat_create_time`
+		from {_MESSAGE_TABLE}
+		where `room` = %(room)s
+			and `room` in {rooms}
+			and {scope}
+			{before}
+		order by `seq` desc
+		limit %(limit)s
+		""",
+		{"room": room, "before_seq": cint(before_seq), "limit": max(cint(limit), 0) + 1},
+		as_dict=True,
+	)
+	# Fetched newest-first so the LIMIT keeps the most recent page; returned oldest-first,
+	# because that is the order the conversation happened in and the order it is read in.
+	return list(reversed(list(rows or [])))
+
+
+def retrieve_transcript(
+	*,
+	room: str,
+	reason: str,
+	reason_category: str | None = None,
+	before_seq: int | None = None,
+	limit: int | None = None,
+	user: str | None = None,
+	request_id: str | None = None,
+) -> TranscriptPage:
+	"""One room's conversation, verbatim and in order. **Not a retrieval.**
+
+	:func:`retrieve_for_oversight` cannot serve this and the difference is not a preference.
+	That function answers *"what in these rooms is relevant to this question"*: it returns a
+	200-message tail, becomes a **search** the moment the derived boolean expression is
+	non-empty, and hands its result to :mod:`chat.retrieval.budget`, whose rung 4 discards
+	messages from the **middle** of the thread to fit a token ceiling. Every one of those is
+	correct for assembling a model's context and disqualifying for a transcript: *a record
+	that silently elides its middle is not a record.* There is no token budget here, no
+	ranking, no assembly, and no query.
+
+	It lives in this module rather than in ``chat/governance`` because opening the oversight
+	hatch is this module's exclusive privilege — ``membership_filter_sql(allow_oversight=True)``
+	is refused anywhere else, and ``tests/test_chat_audit_immutability`` enforces that across
+	the whole package. The endpoint, the reason gate and the shaping live in
+	``chat/governance/viewer.py``; what lives here is the fetch.
+
+	**One audit row per page**, written before the rows are returned and refusing the read if
+	it cannot be written. ``request_id`` correlates the pages of one sitting, so an auditor
+	scrolling a long conversation is one act of reading in the record rather than eleven
+	unrelated ones — which is the whole reason §4.D.2 asks for the correlation.
+	"""
+	acting = _assert_real_user(user)
+	_assert_retrieval_enabled()
+
+	if not permissions._has_oversight(acting):
+		raise RetrievalRefused(
+			"Reading a transcript you are not a participant in requires the role named in "
+			"Chat Settings → Admin Oversight Role."
+		)
+
+	cleaned_reason = (reason or "").strip()
+	if len(cleaned_reason) < _MIN_OVERSIGHT_REASON:
+		raise RetrievalRefused(
+			f"A transcript read needs a stated reason of at least {_MIN_OVERSIGHT_REASON} "
+			"characters. It is the thing that makes this read defensible later."
+		)
+
+	named = str(room or "").strip()
+	if not named:
+		raise RetrievalRefused("A transcript read must name the room it reads.")
+
+	page = max(cint(limit) or MAX_TRANSCRIPT_PAGE, 1)
+	page = min(page, MAX_TRANSCRIPT_PAGE)
+
+	with _acting_as(acting):
+		allowed = frozenset({named})
+		fetched = _transcript_rows(allowed, room=named, before_seq=before_seq, limit=page)
+		# One row past the page, discarded: the cheapest answer to "is there more above this",
+		# which the auditor otherwise cannot tell apart from "the conversation starts here".
+		has_more = len(fetched) > page
+		rows = fetched[-page:] if has_more else fetched
+
+		seqs = [cint(r.get("seq")) for r in rows]
+		audit_row = audit.record_or_refuse(
+			user=acting,
+			purpose=PURPOSE_TRANSCRIPT,
+			actor_type="Admin",
+			rooms=(
+				[
+					{
+						"room": named,
+						"messages_read": len(rows),
+						"first_seq": min(seqs),
+						"last_seq": max(seqs),
+					}
+				]
+				if rows
+				else []
+			),
+			reason=cleaned_reason,
+			reason_category=reason_category,
+			request_id=request_id,
+			message_count=len(rows),
+		)
+
+	return TranscriptPage(
+		room=named,
+		rows=rows,
+		first_seq=min(seqs) if rows else 0,
+		last_seq=max(seqs) if rows else 0,
+		has_more_before=has_more,
+		audit_row=audit_row,
+	)
 
 
 def _run(

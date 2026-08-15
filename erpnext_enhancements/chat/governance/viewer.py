@@ -195,6 +195,68 @@ def search(
 
 @frappe.whitelist(methods=["POST"])
 @rate_limit(limit=240, seconds=3600, methods=["POST"])
+def transcript(
+	room: str = "",
+	reason: str = "",
+	reason_category: str = "",
+	before_seq: Any = None,
+	limit: Any = None,
+) -> dict[str, Any]:
+	"""One room's conversation, verbatim, in ``seq`` order. One audit row per page.
+
+	**A different question from :func:`search`, not a nicer rendering of it.** ``search``
+	answers *"what in these rooms is relevant"* and returns a retrieval assembly — a tail, a
+	ranking, and a token budget that may drop the middle of a thread. This answers *"what was
+	said in this room"*, which cannot tolerate any of that. See
+	:func:`gate.retrieve_transcript` for why the two cannot share a path.
+
+	The rows are shaped by ``chat.api._common.message_payload``, which is the **only** place
+	in the app that emits a message body and the only place a deleted one is withheld. A
+	second serialiser here would be a second place to forget the tombstone rule, which is the
+	failure that docstring exists to prevent — the import crosses a package boundary and is
+	worth it for that reason alone.
+
+	A higher rate limit than ``search`` on purpose: paging a long conversation is many
+	requests that are **one act**, correlated by ``request_id``, and a limit tuned for
+	one-shot searches would refuse an auditor halfway down a transcript.
+	"""
+	from erpnext_enhancements.chat.api._common import message_payload
+
+	user = _require_auditor()
+	cleaned_reason, category = _require_reason(reason, reason_category)
+	named = str(room or "").strip()
+	if not named:
+		raise OversightRefused(frappe._("Name the room to read."))
+
+	page = gate.retrieve_transcript(
+		room=named,
+		reason=cleaned_reason,
+		reason_category=category,
+		before_seq=cint(before_seq) or None,
+		limit=cint(limit) or None,
+		user=user,
+		# The same sitting as every other read this auditor makes today, so the pages of one
+		# scroll are one act in the record rather than a dozen unexplained ones.
+		request_id=audit.viewer_session_id(),
+	)
+
+	return {
+		"room": page.room,
+		# Metadata, not content: the auditor named this room to get here, and `rooms()`
+		# already returns titles. Fetched by docname rather than queried so this endpoint adds
+		# no second scoped read of the room table.
+		"room_title": frappe.db.get_value("Chat Room", page.room, "title") or page.room,
+		"reason_category": category,
+		"messages": [message_payload(row) for row in page.rows],
+		"first_seq": page.first_seq,
+		"last_seq": page.last_seq,
+		"has_more_before": page.has_more_before,
+		"audit_row": page.audit_row,
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=240, seconds=3600, methods=["POST"])
 def rooms(subject: str = "", reason: str = "", reason_category: str = "") -> list[dict[str, Any]]:
 	"""The rooms one named person is an active member of. **Metadata only.**
 
