@@ -453,6 +453,52 @@ def _thread_messages(
 	return list(reversed(rows or []))
 
 
+#: Marks the oldest row of a room's block when that room had more to give than its share.
+#: Set on the row in flight and read by :func:`_render`; it is not a column, nothing selects
+#: it and nothing writes it back. The budget only ever reads ``text`` off a T1 payload
+#: (:func:`_budget_items`), so an extra key is inert everywhere except the one place that
+#: looks for it.
+_TAIL_CUT = "earlier_matches_unread"
+
+
+def _per_room_limits(allowed_rooms: frozenset[str], limit: int) -> dict[str, int]:
+	"""How deep a tail each named room gets when one read names several.
+
+	``seq`` is a **per-room** counter — the field's own description says so, "unique per
+	(room, seq) … never client-assigned" — so a single ``order by seq desc limit 200`` over a
+	room *set* ranks counters that were never comparable. A room holding 50,000 messages tops
+	out near seq 50000 while a room holding forty tops out at 40, and the busy room's tail
+	takes every slot: the quiet room named in the same read contributes **no verbatim message
+	at all**, while T2 and T3 still answer. That is this tier's own failure mode — summaries
+	in place of a transcript — arriving through the ``ORDER BY`` rather than through the call
+	site, which is how it survived the fix that gave this function its name.
+
+	**Even division, and a quiet room's unspent share is not handed to a busy one.** An audit
+	read is bought breadth: the auditor named these rooms and the read has to answer for each
+	of them. Redistributing the slack would restore exactly the bias being removed here, in a
+	form that looks principled. Depth on a single room is already expressible — name one
+	room — and that narrower read is audited like any other.
+
+	The remainder is dealt to the first rooms in ``sorted()`` order rather than dropped, so
+	the shares sum to ``limit`` exactly. ``sorted()`` is the tie-break :func:`_room_list_sql`
+	already uses and for the same reason: a read that varies its own shape run to run records
+	a different act each time.
+
+	The floor of one beats the cap deliberately. The two constants cannot divide to zero
+	today — ``MAX_ROOMS_PER_READ`` is 25 against a ``MAX_THREAD_MESSAGES`` of 200 — but if
+	they ever did, every room would return nothing while looking exactly like a read that
+	found nothing, which is the shape this function exists to make impossible. A cap of zero
+	is different and is honoured: that is a caller asking for no verbatim tier, not a caller
+	asking for one and being starved.
+	"""
+	rooms = sorted(allowed_rooms)
+	cap = max(cint(limit), 0)
+	if not rooms or cap <= 0:
+		return {}
+	base, remainder = divmod(cap, len(rooms))
+	return {room: max(base + (1 if i < remainder else 0), 1) for i, room in enumerate(rooms)}
+
+
 def _oversight_room_messages(
 	allowed_rooms: frozenset[str],
 	*,
@@ -473,6 +519,19 @@ def _oversight_room_messages(
 	and immune to the site-local-vs-UTC skew that makes a mixed-origin transcript sort wrong
 	by the site offset.
 
+	**One statement per room, because that ordering is only valid inside one.** The sibling
+	takes a single room, where a ``seq`` sort is exact; carrying the same ``ORDER BY`` across
+	a set silently reintroduced the defect described above, one room at a time. See
+	:func:`_per_room_limits` for how the cap divides. The fan-out is bounded at 25 by
+	``governance.viewer.MAX_ROOMS_PER_READ`` and each statement is an index-ordered dive that
+	stops after its share, which is *cheaper* than the single statement it replaces: ranking
+	one global 200 meant reading every message in every named room first.
+
+	Rows come back grouped by room and ascending within a room, and there is deliberately no
+	order **across** rooms. Two per-room counters have no meaningful comparison, and the
+	timestamps that would give one are the very thing this tier refuses to sort on. Grouping
+	states what is true; an interleave would state something that is not.
+
 	**Deleted rows stay excluded here.** Seeing through a tombstone is its own audited act
 	with its own event type (``tombstone_expanded``, §4.E), and folding it into the ordinary
 	oversight read would make every such read an expansion — which is precisely the
@@ -484,26 +543,46 @@ def _oversight_room_messages(
 		f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq", allow_oversight=True
 	)
 	rooms = _room_list_sql(allowed_rooms)
+	shares = _per_room_limits(allowed_rooms, limit)
 	# With a query, the matching messages; without one, the tail. An oversight read with no
 	# search terms is a legitimate "show me this conversation" request, and returning nothing
 	# for it would push the auditor towards a broader read rather than a narrower one.
 	match_clause = "and match(`text_plain`) against (%(expression)s in boolean mode)" if expression else ""
-	rows = frappe.db.sql(
-		f"""
-		select `name`, `room`, `seq`, `sender`, `sender_email`, `text`, `thread_root`,
-			`creation`, `gchat_create_time`
-		from {_MESSAGE_TABLE}
-		where `room` in {rooms}
-			and {scope}
-			and `is_deleted` = 0
-			{match_clause}
-		order by `seq` desc
-		limit %(limit)s
-		""",
-		{"expression": expression, "limit": max(cint(limit), 0)},
-		as_dict=True,
-	)
-	return list(reversed(rows or []))
+	out: list[dict[str, Any]] = []
+	for room, share in shares.items():
+		rows = frappe.db.sql(
+			f"""
+			select `name`, `room`, `seq`, `sender`, `sender_email`, `text`, `thread_root`,
+				`creation`, `gchat_create_time`
+			from {_MESSAGE_TABLE}
+			where `room` = %(room)s
+				and `room` in {rooms}
+				and {scope}
+				and `is_deleted` = 0
+				{match_clause}
+			order by `seq` desc
+			limit %(limit)s
+			""",
+			# `room in {rooms}` is redundant beside `room = %(room)s` and stays anyway: the
+			# bound value comes from `shares`, and a later edit that derives those from
+			# anywhere but `allowed_rooms` would otherwise read outside the authorised set
+			# with nothing in the statement to stop it.
+			#
+			# One row past the share, fetched and discarded: the cheapest answer to "was this
+			# room's tail cut", which the auditor otherwise cannot tell apart from "this room
+			# said exactly eight things".
+			{"room": room, "expression": expression, "limit": share + 1},
+			as_dict=True,
+		)
+		fetched = list(rows or [])
+		kept = fetched[:share]
+		if kept and len(fetched) > share:
+			# Newest-first here, so the last kept row is the OLDEST — which after the reverse
+			# below is the first line of this room's block, where "there is more above this"
+			# belongs.
+			kept[-1][_TAIL_CUT] = 1
+		out.extend(reversed(kept))
+	return out
 
 
 def _authored_messages(
@@ -840,7 +919,15 @@ def _run(
 	)
 
 	# --- assemble ----------------------------------------------------------------------
-	manifest_entries, t0_lines, t2_t3_lines, thread_lines = _render(fitted, digest_by_room, thread_rows)
+	manifest_entries, t0_lines, t2_t3_lines, thread_lines = _render(
+		fitted,
+		digest_by_room,
+		thread_rows,
+		# Only the oversight path *named* its rooms; the mention path's `allowed_rooms` is
+		# every room the asker belongs to, and reporting coverage against that would tell a
+		# model about forty rooms nobody asked it to consider.
+		named_rooms=allowed_rooms if verbatim_across_rooms else None,
+	)
 	manifest = citations.resolve_urls(citations.build_manifest(manifest_entries))
 
 	assembly = assemble.assemble(
@@ -1042,17 +1129,34 @@ def _render(
 	fitted: budget.Plan,
 	digest_by_room: dict[str, dict[str, Any]],
 	thread_rows: list[dict[str, Any]],
+	*,
+	named_rooms: frozenset[str] | None = None,
 ) -> tuple[list[dict[str, object]], list[str], list[str], list[str]]:
 	"""Turn the surviving items into manifest entries and labelled context lines.
 
 	Manifest numbering follows **assembly order**, which is why this function builds both at
 	once: numbering in one place and rendering in another is how the model ends up citing
 	``[[ref:1]]`` for the third thing it read.
+
+	``named_rooms`` is the set the *caller named*, and only the oversight path has one — the
+	mention path's ``allowed_rooms`` is "every room this person is in", which is not a request
+	and must not be reported against. When it is supplied, every room in it is accounted for
+	below even if it contributed nothing, because **a room that returned no rows produces no
+	evidence of its own absence**: silence from a room nobody read and silence from a room
+	that had nothing to say are the same silence on the page, and that identity is what let
+	the per-room ``seq`` defect run unnoticed.
 	"""
 	manifest_entries: list[dict[str, object]] = []
 	t0_lines: list[str] = []
 	t2_t3_lines: list[str] = []
 	thread_lines: list[str] = []
+
+	# `citations.context_line` renders ref, author, time and body — never the room. Grouped
+	# blocks from several rooms would therefore read as one conversation that never happened,
+	# so the headers go in whenever a read actually spans rooms. A single-room read renders
+	# byte-identically to before.
+	multi_room = len({str(row.get("room") or "") for row in thread_rows}) > 1
+	current_room: str | None = None
 
 	ref = 0
 	for item in fitted.kept:
@@ -1071,6 +1175,20 @@ def _render(
 				"kind": "message",
 				"thread_root": payload.get("thread_root"),
 			}
+			row_room = str(payload.get("room") or "")
+			if multi_room and row_room != current_room:
+				thread_lines.append(f"[room {row_room}]")
+				current_room = row_room
+			if payload.get(_TAIL_CUT):
+				# Database-side truncation, and a different fact from the ladder-side loss
+				# reported at the end of this function: this room had more to give than its
+				# share of the cap, and the remedy is a *narrower* read. The two causes get
+				# two sentences because they have two different fixes, and a gap reported
+				# without its remedy trains people to skip the report.
+				thread_lines.append(
+					f"[room {row_room}: this room has more messages than this read's share — "
+					"read it on its own for the rest]"
+				)
 			thread_lines.append(
 				citations.context_line(
 					citations.Citation(
@@ -1110,10 +1228,37 @@ def _render(
 			)
 		manifest_entries.append(entry)
 
-	if not thread_lines and thread_rows:
+	tier_dropped = not thread_lines and bool(thread_rows)
+	if tier_dropped:
 		# The thread was dropped entirely by the hard floor. Say so rather than silently
 		# presenting no thread at all, which reads to the model as "there is no conversation".
 		thread_lines.append("[the current thread was omitted to fit the context limit]")
+
+	if named_rooms:
+		shown = {
+			str((item.payload or {}).get("room") or "")
+			for item in fitted.kept
+			if item.tier == budget.TIER_T1
+		}
+		fetched = {str(row.get("room") or "") for row in thread_rows}
+		# Every room the auditor named is accounted for, including the ones that said nothing.
+		# Two silences with two causes and two remedies: a room that matched nothing is a fact
+		# about the room, and a room whose block the ladder ate is a fact about this read being
+		# too wide. Neither line discloses anything — the auditor supplied these room ids, and
+		# saying "nothing matched" reveals strictly less than the messages would have.
+		for room in sorted(named_rooms):
+			if not room or room in shown:
+				continue
+			if room not in fetched:
+				thread_lines.append(f"[room {room}: no matching messages in this read]")
+			elif not tier_dropped:
+				# The rungs are room-blind — `_take_while_fits` keeps a prefix, `_compress_t1`
+				# removes from the middle outward — so one room's whole block can vanish
+				# between the fetch and here while its neighbours survive intact.
+				thread_lines.append(
+					f"[room {room}: verbatim messages were omitted to fit the context limit — "
+					"name fewer rooms in one read]"
+				)
 
 	return manifest_entries, t0_lines, t2_t3_lines, thread_lines
 

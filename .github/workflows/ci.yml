@@ -812,9 +812,19 @@ jobs:
       # and the read answered with summaries while looking complete), and the authored tier
       # ran as the auditor, returning their OWN messages in place of the ones under audit.
       #
-      # AST rather than behaviour, because the rows need a bench and the WIRING is what
-      # regressed. Verified to bite: reintroducing either defect fails this step.
-      - name: Chat oversight read (whose messages, and which tier)
+      # Those two are AST, on the shape of the call, because the WIRING is what regressed.
+      #
+      # A THIRD defect then hid behind exactly that choice (v1.306.2): the tier that fixed the
+      # first one served the whole named room set with one `order by seq desc limit 200`, and
+      # `seq` is a PER-ROOM counter — so a busy room took every slot and a quiet room named in
+      # the same read came back empty, while chunks and digests still answered. Every AST
+      # assertion that could have caught it was already here and passed, because the source
+      # text is identical either way. So the suite now also installs its own frappe stub and a
+      # fake `db.sql` that answers from what the statement BOUND rather than how it was
+      # written; that is what lets one fake both reproduce the old defect and verify the fix.
+      # Own step, per the stub rule above. Verified to bite: reverting gate.py fails six of
+      # these assertions, four of them behavioural rather than AttributeError.
+      - name: Chat oversight read (whose messages, which tier, and every named room)
         run: python -m unittest erpnext_enhancements.tests.test_chat_oversight_read -v
       # The oversight viewer's gates. Three properties make this surface safe to switch on:
       # G6-10 (a bad reason is REFUSED, not accepted-and-blanked, graded by the same function

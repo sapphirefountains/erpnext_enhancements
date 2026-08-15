@@ -7,6 +7,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.306.2] - 2026-08-15
+
+**An oversight read that named several rooms silently returned messages from only the busiest
+one.** `seq` is a *per-room* counter, and the verbatim tier ranked the whole named set by it.
+
+### Fixed
+
+`_oversight_room_messages` served every named room with one statement ending
+``order by `seq` desc limit 200``. `chat_message.json` states the constraint plainly in the
+field's own description — "unique per (room, seq) … never client-assigned" — so that ORDER BY
+compares counters that were never comparable. A room holding 50,000 messages tops out near seq
+50000 while a room holding forty tops out at 40; the busy room's tail takes all 200 slots and
+**the quiet room named in the same read contributes nothing at all**.
+
+It did not look like a failure. T0 digests and the T2/T3 chunk tiers still answered for every
+room, so the auditor got a full-looking result box with none of the quiet room's messages in
+it. That is this function's *own* documented failure mode — its docstring says a read that
+answers with summaries when it was asked for a transcript "is worse than one that returns
+nothing, because only the second one gets reported" — arriving through the ORDER BY instead of
+through the call site, which is where v1.288.7 had already fixed it once.
+
+**The audit row was honest; the person was not.** `_write_audit` builds one child row per room
+*actually returned*, from the rows themselves, so a room that yielded nothing was never recorded
+as read. Nothing in the log was wrong. The entire defect was in what the auditor was led to
+believe, which is the half no query can detect afterwards.
+
+**Why the reasoning was right and still produced this.** Sorting by `seq` rather than a
+timestamp is correct and load-bearing — `seq` is immutable, never renumbered, and immune to the
+site-local-vs-UTC skew that makes a mixed-origin transcript sort wrong by the site offset. It is
+also only valid *within* one room. The rule was carried over verbatim from the single-room
+sibling `_thread_messages`, where it holds exactly, into a function that takes a set, where it
+does not.
+
+The fix is one statement per room. `_per_room_limits` divides the cap by the number of named
+rooms and deals the remainder to the first rooms in `sorted()` order, so the shares sum to the
+cap exactly and two identical reads allocate identically. **Slack is not redistributed**: an
+audit read is bought breadth, and handing a quiet room's unused slots to the room that already
+dominates is precisely the bias being removed. Depth on one room stays expressible by naming one
+room, and that narrower read is audited like any other.
+
+This is also *cheaper* than the code it replaces, which is worth stating because it looks like a
+fan-out should be dearer. `where room = %(room)s … order by seq desc limit N` is an index-ordered
+range dive on `unique_room_seq` — the unique `(room, seq)` constraint added by
+`patches/add_chat_indexes.py:70`, not declared in the doctype JSON — and stops after N rows. The
+single statement it replaces could not use that index for ordering across several room values,
+so producing one global 200 meant reading every message in every named room and sorting them.
+
+A window function (`row_number() over (partition by room order by seq desc)`) is the obvious
+alternative and was rejected: a derived table containing a window function cannot be merged, so
+the full projection — including the `text` longtext — materialises before the per-room rank is
+filtered. A `UNION ALL` of per-room branches was rejected for a harder reason worth recording so
+nobody spends an afternoon on it: MariaDB refuses `LIMIT` inside a subquery used with
+`IN`/`ALL`/`ANY`, and a union of limited branches does not escape it — `ERROR 1235 … This version
+of MariaDB doesn't yet support 'LIMIT & IN/ALL/ANY/SOME subquery'`. A top-level union would work
+and is a real upgrade path if these reads ever get hot.
+
+### Added
+
+Rows now come back grouped by room, ascending within a room, and with **no order across rooms** —
+because there is no true one. Two per-room counters have no meaningful comparison, and the
+timestamps that would supply one are the very thing this tier refuses to sort on. Grouping states
+what is true; an interleave would state something that is not. `_render` emits a `[room …]`
+header whenever a read actually spans rooms, since `citations.context_line` renders ref, author,
+time and body but never the room, and ungrouped blocks would otherwise read as one conversation
+that never happened. A single-room read renders byte-identically to before.
+
+Three silences now say which silence they are, because they have three different remedies:
+
+- `[room X: this room has more messages than this read's share — read it on its own for the
+  rest]` — the tail was cut at the database. Detected by fetching one row past the share and
+  discarding it, which is the cheapest possible answer to "was this cut" and costs no second
+  statement.
+- `[room X: verbatim messages were omitted to fit the context limit — name fewer rooms in one
+  read]` — the room was fetched and the budget ladder ate its whole block. The rungs are
+  room-blind: `_take_while_fits` keeps a prefix and `_compress_t1` removes from the middle
+  outward, so one room can vanish while its neighbours survive intact.
+- `[room X: no matching messages in this read]` — **the one that closes the defect.** A room that
+  returned no rows produces no evidence of its own absence, and silence from a room nobody read
+  is identical on the page to silence from a room that had nothing to say. That identity is what
+  let this run. It is built from the set the auditor *named*, which `_render` now receives as
+  `named_rooms` — and only from the oversight path, because the mention path's `allowed_rooms` is
+  "every room this person is in", which is not a request and must not be reported against.
+
+`budget.py` is deliberately untouched. Making its rungs room-aware is the right long-term answer
+to a middle room being dropped, and the wrong thing to bundle into a correctness fix: it is pure,
+import-free, shared with every mention-path turn, and a change there that is the identity on the
+single-room path is invisible to every test that path has — which is the same "only one caller,
+and it is the rare one" shape that produced this defect.
+
+### Tests
+
+`test_chat_oversight_read` was AST-only, and **that is exactly why this survived**. Every
+assertion that might have caught it was already present and passed on the broken code:
+``order by `seq` desc`` is there, `%(limit)s` is bound, the membership fragment is named. The
+source text is identical either way. So the suite now also installs its own frappe stub with a
+fake `db.sql` that answers from **what the statement bound** rather than from how it was written
+— a fake that recognises the implementation is a mock and goes green on any rewrite, while one
+that answers what was asked for is a database.
+
+`TheFakeItself` is the control: it hands the fake the *old* flat statement and asserts it still
+starves the quiet room. Without it, a green run cannot be distinguished from "the fake stopped
+recognising the query", which is how a stubbed suite quietly becomes worthless. Verified by
+reverting `gate.py` and re-running: six assertions fail, four of them behavioural rather than
+`AttributeError`. `TheTwoCapsAgree` additionally asserts
+`viewer.MAX_ROOMS_PER_READ <= gate.MAX_THREAD_MESSAGES`, so the floor of one in
+`_per_room_limits` — unreachable today at 25 rooms against 200 messages — goes red the day
+someone raises the room cap rather than silently becoming load-bearing.
+
 ## [1.306.1] - 2026-08-15
 
 **The oversight viewer was showing the auditor an LLM prompt.** Introduced by v1.299.1, which
