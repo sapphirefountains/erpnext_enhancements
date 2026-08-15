@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.299.4] - 2026-08-15
+
+**All thirteen learner-runtime endpoints answered a GET, and the client had been saying they
+did not for eight releases.** The same class `chat/endpoints.py` closed in v1.283.0.
+
+### Fixed
+
+Every `@frappe.whitelist()` in `api/training.py` was argument-free, so Frappe served each of
+them over GET as well as POST. These are not neutral reads: they carry the **attempt id, the
+lesson key and the checkpoint timestamp**, and a GET writes all three into the web server's
+access log, the browser's history, and the `Referer` header of whatever the learner clicks
+next. `get_media_url` mints a signed GCS playback URL; `answer_checkpoint` carries the
+learner's answer.
+
+Nothing was exploiting it, because `www/training.html`'s `call()` has always used
+`method: "POST"` and its comment has always claimed *"Every call is a POST"*. **The two sides
+disagreed in the direction where the server was the looser of the two, and nothing compared
+them** — which is the only reason it lasted. All thirteen now declare `methods=["POST"]`.
+
+Safe to tighten because every caller was checked rather than assumed: twelve are dialled
+through the player's `METHOD` map, which posts; the thirteenth, `get_learner_bootstrap`, is
+imported and called **server-side** by `www/training.py` inside `get_context`, and a Python
+call does not go through HTTP dispatch at all.
+
+### Added
+
+`tests/test_training_endpoint_surface.py` — three properties, of which the third is the one
+that keeps this true later:
+
+1. every whitelisted endpoint declares POST, asserted **on the decorator** rather than against
+   a list somebody maintains;
+2. every name the player can dial resolves to a real endpoint — a rename in `api/training.py`
+   with no matching edit to the `METHOD` map is a 404 the learner sees and CI does not;
+3. every endpoint is either in that map **or** in `NOT_DIALLED_BY_THE_PLAYER` with a reason.
+   Set equality, not a subset check, so a new endpoint cannot be added and left both un-wired
+   and unexplained — the doctrine `test_training_boundary_contract` states as *"asymmetries are
+   allowed, silence about them is not"*.
+
+### Changed
+
+Two existing scanners matched `@frappe\.whitelist\(\)` with **empty parens** and so found
+nothing once the decorators grew an argument —
+`test_training_heartbeat_wire.TestTransportMapPointsAtRealEndpoints._whitelisted` and
+`test_training_phase3_contracts._whitelisted`. Both now accept arguments. They failed loudly
+here only because a sibling assertion compared against the empty set; the same shape elsewhere
+finds zero of something and asserts over it happily. `test_training_boundary_contract` was
+unaffected — it reads the decorator through the AST, which is the reason to prefer that.
+
+`api/README.md` records the posture under the module's security bullets.
+
+Closes TASK-2026-01568.
+
 ## [1.299.3] - 2026-08-15
 
 ### Changed

@@ -76,7 +76,15 @@ def _transport_calls(*paths):
 
 
 def _whitelisted(path):
-    return set(re.findall(r"@frappe\.whitelist\(\)\s*\ndef\s+(\w+)", _read(path)))
+    """Every whitelisted function name in ``path``.
+
+    ``[^)]*`` rather than empty parens: v1.299.4 added ``methods=["POST"]`` to all
+    thirteen runtime endpoints and this scan matched nothing, which made the transport
+    map check below compare against an empty set. Decorator arguments are normal; a
+    scan that only recognises the argument-free spelling is one release from finding
+    zero of something and asserting happily over it.
+    """
+    return set(re.findall(r"@frappe\.whitelist\([^)]*\)\s*\ndef\s+(\w+)", _read(path)))
 
 
 def _phase3_built():

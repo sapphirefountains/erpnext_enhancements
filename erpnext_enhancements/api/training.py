@@ -405,7 +405,7 @@ def _attempts_by_course(user, course_names):
 # ------------------------------------------------------------------ bootstrap
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_learner_bootstrap():
     """Everything ``/training`` needs to draw itself, in one call.
 
@@ -554,7 +554,7 @@ def _next_lesson_key(attempt_name, course_version):
 # --------------------------------------------------------------------- course
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_course(course):
     """Course meta, the published table of contents, and where the learner is."""
     user = _learner()
@@ -624,7 +624,7 @@ def get_course(course):
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def start_attempt(course):
     """Find or create an In Progress attempt against the *current* published version.
 
@@ -722,7 +722,7 @@ def _attempt_state(doc):
 # --------------------------------------------------------------------- lesson
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_lesson(attempt, lesson_key):
     """One lesson's answer-free payload, plus this learner's progress through it.
 
@@ -759,7 +759,7 @@ def get_lesson(attempt, lesson_key):
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def heartbeat(attempt, payload=None):
     """Credit watched seconds and tell the player what to do next.
 
@@ -907,7 +907,7 @@ def _next_checkpoints_by_block(doc, lesson_key):
     return out
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def open_checkpoint(attempt, at, lesson_key=None, block_key=None):
     """The next unanswered checkpoint at or before ``at`` — one, never a list.
 
@@ -1006,7 +1006,7 @@ def _checkpoint_payload(checkpoint):
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def answer_checkpoint(attempt, checkpoint_key, option_keys, response_ms=None):
     """Grade one in-video answer and record that it was given."""
     _learner()
@@ -1101,7 +1101,7 @@ def _lesson_key_for(course_version, lesson_name):
     frappe.throw(_("That lesson is not part of this course."))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def complete_lesson(attempt, lesson_key):
     """Mark a lesson finished, if every gate on it is actually met."""
     _learner()
@@ -1132,7 +1132,7 @@ def complete_lesson(attempt, lesson_key):
 # ----------------------------------------------------------------------- quiz
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_quiz(attempt, lesson_key):
     """Draw this run's questions. Refuses once the attempt limit is used up."""
     _learner()
@@ -1161,7 +1161,7 @@ def get_quiz(attempt, lesson_key):
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def submit_quiz(attempt, lesson_key, answers):
     """Grade a quiz run. Any score the client sent with it is ignored."""
     _learner()
@@ -1228,7 +1228,7 @@ def submit_quiz(attempt, lesson_key, answers):
 # ----------------------------------------------------------------- completion
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def finish_attempt(attempt):
     """Check every lesson, and on a pass write the completion record.
 
@@ -1562,7 +1562,7 @@ def _close_assignment(doc, completion):
     row.save(ignore_permissions=True)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_my_transcript():
     """This learner's own completions. Never anybody else's."""
     user = _learner()
@@ -1601,7 +1601,7 @@ def get_my_transcript():
 # ---------------------------------------------------------------------- media
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_media_url(attempt, block_key):
     """A short-lived playback URL for one video block.
 
