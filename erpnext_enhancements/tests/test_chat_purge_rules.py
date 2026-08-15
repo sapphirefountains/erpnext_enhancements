@@ -76,9 +76,12 @@ class TableCoversTheFilesystemTest(unittest.TestCase):
 		for name, (disposition, _reason) in rules.DISPOSITION.items():
 			self.assertIn(disposition, rules.DISPOSITIONS, name)
 
-	def test_the_three_groups_partition_the_table(self):
+	def test_the_four_groups_partition_the_table(self):
 		total = (
-			len(rules.purgeable_doctypes()) + len(rules.surviving_doctypes()) + len(rules.blocked_doctypes())
+			len(rules.purgeable_doctypes())
+			+ len(rules.surviving_doctypes())
+			+ len(rules.blocked_doctypes())
+			+ len(rules.retired_doctypes())
 		)
 		self.assertEqual(total, len(rules.DISPOSITION))
 
@@ -114,33 +117,39 @@ class TheAuditTrailSurvivesTest(unittest.TestCase):
 
 
 class BlockerTest(unittest.TestCase):
-	def test_the_derived_artefacts_are_blocked_rather_than_decided(self):
+	def test_the_derived_artefacts_are_retired_rather_than_purged_or_kept(self):
+		"""They were BLOCKED until v1.299.0, because both plain answers were wrong: leaving
+		them serves a summary of the destroyed conversation forever, and deleting them from
+		the purge retreats the indexer watermark so the sweep re-chunks the not-yet-purged
+		messages verbatim.
+
+		RETIRED is the third answer — *this must go too, and another mechanism takes it*.
+		Marking them SURVIVES would lose the only record that a second mechanism has to run
+		for a purge to be complete; marking them PURGE would put the deletion back in the
+		place that cannot do it safely."""
 		for name in ("Chat Context Chunk", "Chat Room Digest", "Chat Thread Digest"):
-			self.assertEqual(
-				rules.DISPOSITION[name][0],
-				rules.BLOCKED,
-				f"{name} must be BLOCKED, not purge or survives. Both answers are wrong: "
-				"leaving it serves a summary of the destroyed conversation forever, and "
-				"deleting it retreats the indexer watermark so the sweep re-chunks the "
-				"not-yet-purged messages verbatim.",
-			)
+			self.assertEqual(rules.DISPOSITION[name][0], rules.RETIRED, name)
 
-	def test_the_destructive_path_cannot_be_enabled_while_anything_is_blocked(self):
-		ok, why = rules.can_enable()
-		self.assertFalse(ok)
-		self.assertTrue(why)
-		for name in rules.blocked_doctypes():
-			self.assertIn(name, why)
+	def test_nothing_is_blocked_any_more(self):
+		"""The BLOCKED category stays in the vocabulary — it is how a future finding gets
+		recorded — but it is empty, and `can_enable` reads it rather than a flag."""
+		self.assertEqual(rules.blocked_doctypes(), ())
 
-	def test_clearing_the_blocker_is_what_unblocks_it(self):
-		"""The one place that has to change the day the retirement path lands."""
-		saved = dict(rules.DISPOSITION)
-		self.addCleanup(rules.DISPOSITION.update, saved)
-		for name in rules.blocked_doctypes():
-			rules.DISPOSITION[name] = (rules.SURVIVES, saved[name][1])
+	def test_the_destructive_path_is_enabled_only_because_nothing_is_blocked(self):
+		"""`can_enable` reads the table rather than a flag, so this cannot be waived by
+		editing a boolean — a future finding is recorded by marking a DocType BLOCKED, and
+		that alone turns the purge off again."""
 		ok, why = rules.can_enable()
 		self.assertTrue(ok)
 		self.assertEqual(why, "")
+
+	def test_marking_anything_blocked_turns_it_off_again(self):
+		saved = dict(rules.DISPOSITION)
+		self.addCleanup(rules.DISPOSITION.update, saved)
+		rules.DISPOSITION["Chat Context Chunk"] = (rules.BLOCKED, saved["Chat Context Chunk"][1])
+		ok, why = rules.can_enable()
+		self.assertFalse(ok)
+		self.assertIn("Chat Context Chunk", why)
 
 
 class EligibilityTest(unittest.TestCase):

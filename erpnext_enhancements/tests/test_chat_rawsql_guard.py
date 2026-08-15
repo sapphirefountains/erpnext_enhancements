@@ -350,6 +350,62 @@ FOREIGN_TABLES: dict[str, str] = {
 #: bounded by something other than the reader's identity, and no column selected is a body.**
 #: A read that answers an HTTP request fails all three and does not belong here.
 SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
+	# --- chat/governance/purge.py: the purge itself (Phase 6 §4.F) ----------------------
+	#
+	# Eligible on all three counts, and the third is worth reading rather than assuming.
+	# NO SESSION USER: `bench execute` only — there is no scheduler entry, deliberately (a job
+	# that destroys conversation on a timer is not something to add and then remember to think
+	# about) and no endpoint, which `test_chat_purge` asserts. BOUNDED BY SOMETHING OTHER THAN
+	# THE READER: whatever the retention window makes eligible, which is a property of the
+	# calendar rather than of anybody's membership. NO BODY COLUMN: `name` and `seq` only, and
+	# `Chat Attachment.file` which is a File docname.
+	#
+	# A membership filter would be actively wrong rather than merely unnecessary: a purge
+	# scoped to what the operator happens to be a member of would silently skip exactly the
+	# rooms nobody is watching, which are the rooms whose messages age out. The eligibility
+	# decision is `purge_rules.holds` and is made in one place; these queries only fetch the
+	# identifiers it has already ruled on.
+	#
+	# `Chat Message Revision` has NO entry here on purpose — its rows are removed by a
+	# filtered `frappe.db.delete` with no preceding read, because they are being destroyed
+	# rather than inspected and that table's guard offers no exemption mechanism.
+	(
+		"governance/purge.py",
+		"_rooms",
+		"Chat Room",
+	): (
+		"The unarchived rooms a run will consider, `name` only. The purge iterates rooms so a "
+		"failure in one cannot abandon the rest, and so the retirement mark advances per room."
+	),
+	(
+		"governance/purge.py",
+		"_eligible",
+		"Chat Message",
+	): (
+		"`name` and `seq` for the span the retention planner already ruled eligible — the "
+		"eligibility rule itself is `purge_rules.holds` and is deliberately not restated here, "
+		"so the report and the purge cannot disagree about what may go."
+	),
+	(
+		"governance/purge.py",
+		"_retire",
+		"Chat Message",
+	): (
+		"One row: the lowest surviving `seq` in the room, which is where the retirement mark "
+		"has to stop. `set_retirement_mark` refuses unless everything at or below it is gone, "
+		"so the mark cannot be the batch's high seq — a message held by an open relay job or a "
+		"live thread reply is still there."
+	),
+	(
+		"governance/purge.py",
+		"_destroy_sidecars",
+		"Chat Attachment",
+	): (
+		"`name` and `file` for one already-destroyed message. The `file` is a File docname and "
+		"is read because the bytes have to go with the row: `sync/attachments.download` "
+		"resolves by attachment name and there is no other door, so deleting the attachment "
+		"alone would leave the bytes on disk unreadable AND undeleted."
+	),
 	# --- chat/retrieval/gate.py: the retirement floor fragments (Phase 6 §4.F) -----------
 	#
 	# **The same inversion `permissions.py`'s own builders get, and for the same reason: these

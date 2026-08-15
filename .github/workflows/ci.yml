@@ -930,6 +930,22 @@ jobs:
       # is always "I know they are gone", which is the belief the check exists to test.
       - name: Chat retirement writer (destroy first, then retire)
         run: python -m unittest erpnext_enhancements.tests.test_chat_retire_writer -v
+      # The purge - the only code in this system that deliberately destroys a message.
+      # Almost all of it is ordering, and almost all of this suite asserts that ordering,
+      # because every one of these was got wrong in a design that was reviewed and rewritten:
+      #
+      #   * the audit row BEFORE any deletion, and a failed write refuses the purge -
+      #     outbox.refuse_hard_delete's own docstring says this path "has to write its audit
+      #     row first", and record_governance_event swallows failures and returns None;
+      #   * the message, THEN its sidecars - the reverse leaves a live message stripped of the
+      #     only copies of its superseded bodies when delete_doc raises, which it may;
+      #   * delete_permanently=True - without it the whole document, body included, is copied
+      #     into tabDeleted Document, and the purge reports success having retained everything;
+      #   * the retirement mark LAST, and only over the contiguous purged prefix.
+      #
+      # Five mutations are run against it in development; all five go red.
+      - name: Chat purge (the ordering, which is the whole thing)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_purge -v
       # The assistant's own answers must never become indexed content. handler.py posts
       # Triton's reply as a REAL Chat Message through the ordinary outbox, and its text is
       # composed from the chunk bodies and digest summaries retrieval just handed it - so

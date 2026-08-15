@@ -74,11 +74,22 @@ PURGE: Final[str] = "purge"
 #: Rows the purge must leave alone.
 SURVIVES: Final[str] = "survives"
 
-#: Rows the purge can neither keep nor destroy correctly today. See the module docstring.
-#: A DocType here is the reason the purge is not enabled, and naming it is the point.
+#: Rows the purge can neither keep nor destroy correctly. A DocType here is a reason the
+#: purge cannot be enabled, and naming it is the point. **Empty as of v1.299.0** — the three
+#: entries that were here are now :data:`RETIRED`.
 BLOCKED: Final[str] = "blocked"
 
-DISPOSITIONS: Final[tuple[str, ...]] = (PURGE, SURVIVES, BLOCKED)
+#: Rows a purge does not touch itself, because something else removes them **on the purge's
+#: behalf and on its own terms**. Today that is one thing: the derived layer, removed by
+#: `chat/indexing/retire.py` once the retirement mark advances over the span.
+#:
+#: A separate answer from SURVIVES, and the distinction is load-bearing. SURVIVES means *this
+#: outlives the purge* — the audit trail, the room, the queue tables. RETIRED means *this must
+#: go too, and here is the other mechanism that takes it*. Collapsing them would lose the only
+#: record that a second mechanism has to run for the purge to be complete.
+RETIRED: Final[str] = "retired"
+
+DISPOSITIONS: Final[tuple[str, ...]] = (PURGE, SURVIVES, BLOCKED, RETIRED)
 
 #: Every chat DocType, classified, with the reason. **Set-equality against the filesystem**
 #: is asserted by the test suite, so a chat DocType added next year fails the build until
@@ -110,7 +121,7 @@ DISPOSITION: Final[dict[str, tuple[str, str]]] = {
 	),
 	# ---- blocked ----------------------------------------------------------------
 	"Chat Context Chunk": (
-		BLOCKED,
+		RETIRED,
 		"`body` is the messages verbatim, pre-assembled into prose. Deleting a chunk retreats "
 		"`indexer._rooms_needing_chunks`'s watermark — it is `max(last_seq)` over sealed "
 		"chunks with no staleness filter — so the ten-minute sweep re-reads every live "
@@ -119,7 +130,7 @@ DISPOSITION: Final[dict[str, tuple[str, str]]] = {
 		"transcript.",
 	),
 	"Chat Room Digest": (
-		BLOCKED,
+		RETIRED,
 		"A model-written summary of the conversation. `_messages_for_digest` filters "
 		"`is_deleted = 0` and `_rebuild_room_digest` returns before writing when that is "
 		"empty, so a purged room keeps its summary forever while the dirty sweep re-selects "
@@ -127,7 +138,7 @@ DISPOSITION: Final[dict[str, tuple[str, str]]] = {
 		"entirely, so there the summary is permanent unconditionally.",
 	),
 	"Chat Thread Digest": (
-		BLOCKED,
+		RETIRED,
 		"Same failure, one level down, plus its own: `_dirty_threads` selects with `having "
 		"count(*) >= minimum`, so a thread whose replies are purged below the threshold is "
 		"never selected again and keeps a summary of the purged replies indefinitely.",
@@ -305,6 +316,11 @@ def holds(facts: dict) -> set[str]:
 
 def is_eligible(facts: dict) -> bool:
 	return not holds(facts)
+
+
+def retired_doctypes() -> tuple[str, ...]:
+	"""The DocTypes the retirement path removes rather than the purge."""
+	return tuple(sorted(name for name, (d, _) in DISPOSITION.items() if d == RETIRED))
 
 
 def blocked_doctypes() -> tuple[str, ...]:
