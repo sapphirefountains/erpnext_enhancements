@@ -93,6 +93,22 @@ Verified, and all of them expensive to rediscover:
   server where packages can't be pip-installed, so it talks to the Stripe REST API with
   `requests` and hand-rolls webhook signature verification, mirroring the QuickBooks
   client. Don't "fix" this by adding the SDK.
+- **The sibling `frappe` and `erpnext` checkouts are on `develop`, and production is not.**
+  If you have `../frappe` and `../erpnext` alongside this repo, their working trees read
+  `17.0.0-dev` while the site this app deploys to runs **16.x**. Reading them to settle a
+  question about framework behaviour is the right instinct and the wrong tree: line numbers
+  differ substantially in `permissions.py`, `db_query.py` and `api/v2.py`, and behaviour
+  differs too — v17 adds `QUERY` to `SAFE_HTTP_METHODS`, and deprecates the legacy `?cmd=`
+  route that v16 still dispatches *before* it looks at `request.path`. Use
+  `git show origin/version-16:<path>` instead. Two design documents in one day cited v17
+  line numbers as v16 fact before this was noticed; a claim about the framework is only
+  worth as much as the tree it was read from.
+- **Merging to `main` does more than deploy this app's code.** The prod deploy `FLUSHDB`s
+  **both** redis instances — `:13000` and `:11000` — and restarts the bench. The `:11000`
+  flush destroys every queued background job, silently, whether or not it had anything to
+  do with the change being merged; it is the confirmed cause of a batch of Drive folders
+  that were never created. If a change enqueues work that matters, it must be re-drivable
+  after a deploy rather than assumed to have run.
 
 ## Conventions
 
