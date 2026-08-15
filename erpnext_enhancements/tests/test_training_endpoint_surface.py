@@ -74,6 +74,26 @@ def _whitelisted():
     return found
 
 
+def _body(name):
+    """A function's source minus its docstring.
+
+    A character-window slice was the first version of this and it failed: the docstrings in
+    ``api/training.py`` are long enough that 900 characters after ``def`` never reached the
+    code. Slicing by offset assumes something about prose; the AST does not.
+    """
+    text = API.read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            src = ast.get_source_segment(text, node) or ""
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                doc = ast.get_source_segment(text, body[0].value)
+                if doc:
+                    src = src.replace(doc, "", 1)
+            return src
+    raise AssertionError(f"{name}() not found in api/training.py")
+
+
 def _method_map():
     """The endpoint names ``www/training.html`` can dial, from its ``METHOD`` map.
 
@@ -155,6 +175,53 @@ class TheTwoSidesAgreeTest(unittest.TestCase):
     def test_every_reason_says_something(self):
         for name, reason in NOT_DIALLED_BY_THE_PLAYER.items():
             self.assertGreater(len(reason.strip()), 40, f"{name}'s reason is a placeholder")
+
+
+class AskTheAuthorIsReachableTest(unittest.TestCase):
+    """``training/qa.py`` shipped complete in v1.215.0 with **no caller anywhere**.
+
+    The changelog said the feature landed, and the backend really was there — visibility gate,
+    author resolution, notification, all of it. No learner could reach a line of it. That is
+    the failure this class keeps closed, and it is why every check here is about
+    *reachability* rather than about the function existing.
+    """
+
+    PLAYER = APP / "public/js/training/player.js"
+
+    def test_both_endpoints_are_dialled_by_the_player(self):
+        """Not merely present in the METHOD map — actually called."""
+        src = self.PLAYER.read_text(encoding="utf-8")
+        for method in ("askQuestion", "lessonQuestions"):
+            self.assertIn(f'call("{method}"', src, f"player.js never calls transport.{method}")
+
+    def test_the_map_carries_both(self):
+        for name in ("ask_lesson_question", "lesson_questions"):
+            self.assertIn(name, _method_map(), f"{name} is not in the player's METHOD map")
+
+    def test_the_wrappers_delegate_rather_than_reimplement(self):
+        """A second copy of the visibility gate would drift from the one in ``training/qa.py``,
+        and a drift in a permission rule is a leak. These wrappers exist for the transport's
+        single PREFIX, not to make decisions."""
+        for fn, delegate in (
+            ("ask_lesson_question", "qa.ask_question"),
+            ("lesson_questions", "qa.get_lesson_questions"),
+        ):
+            body = _body(fn)
+            self.assertIn(delegate, body, f"{fn} does not delegate to {delegate}")
+            self.assertNotIn("_visible_or_throw", body, f"{fn} re-implements the visibility gate")
+
+    def test_the_panel_renders_untrusted_text_without_innerhtml(self):
+        """Questions are learner-typed and answers are author-typed, and both are rendered into
+        a page a third learner opens. ``el()`` sets textContent; an innerHTML anywhere in this
+        file would turn a question into script."""
+        self.assertNotIn("innerHTML", self.PLAYER.read_text(encoding="utf-8"))
+
+    def test_the_disclosure_is_announced(self):
+        """The panel is collapsed by default, so a screen reader has to be told it is a
+        disclosure and what it controls — otherwise the button is an unlabelled dead end."""
+        src = self.PLAYER.read_text(encoding="utf-8")
+        self.assertIn("aria-expanded", src)
+        self.assertIn("aria-controls", src)
 
 
 class TheClientStillPostsTest(unittest.TestCase):

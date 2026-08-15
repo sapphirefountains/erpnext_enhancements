@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.303.0] - 2026-08-15
+
+**Ask-the-author shipped complete in v1.215.0 and no learner could reach a line of it.**
+`training/qa.py` held the whole feature — the visibility gate, the author resolution, the
+notification — and its three whitelisted functions had **zero callers anywhere in the repo**.
+The changelog said the feature landed. It did; it just did nothing.
+
+### Added
+
+Two thin re-exports in `api/training.py` — `ask_lesson_question` and `lesson_questions` — and
+the learner UI that dials them. They live in `api/training.py` rather than being called at
+their own path because the player's transport has a **single** `PREFIX` and one gate; a second
+prefix in the client would be a second place for a rename to break silently, and
+`tests/test_training_endpoint_surface.py` only watches that module.
+
+The wrappers delegate and decide nothing. A second copy of the visibility gate would drift from
+`training/qa.py`'s, and a drift in a permission rule is a leak — asserted, not just intended.
+
+The panel is **collapsed by default** and fetches on first open, never on lesson render.
+Otherwise it is one extra round trip per lesson on a portal that is opened on phones, on site.
+It carries `aria-expanded`/`aria-controls`, and every string goes through `el()`, which sets
+`textContent` — questions are learner-typed and answers are author-typed, and both are rendered
+into a page a *third* learner opens.
+
+`mine` and `public` stay two lists, because they are two different things: `mine` is
+correspondence, and an unanswered question still sitting there is the only way a learner knows
+that asking did anything. `public` is content.
+
+The video position rides along when there is one, and is **omitted rather than sent as 0** when
+there is not: 0 is a real timestamp and would point every text question at the first frame.
+
+### Still missing, and worth naming
+
+- **The author has no way to answer.** `qa.answer_question_thread` is whitelisted and also has
+  no caller; `training/doctype/training_question_thread/` contains no `.js`. A learner can now
+  ask into a queue nobody can empty from the UI. That is a smaller gap than the one closed here
+  and it is the obvious next step.
+- **Gamification is still unreachable.** `gamification.get_leaderboard` is in the same position
+  this was: complete, whitelisted, no caller. Badges and streaks are computed and never shown.
+
+Both are the remaining half of TASK-2026-01157, which stays open with them named.
+
+### Notes
+
+Two of my own guards fired during this work and both were right: `test_training_endpoint_surface`
+refused the new endpoints until they were in the player's `METHOD` map, and the player CSS
+contract refused the panel until every class it emits had a rule — it also correctly flagged two
+`id` prefixes I had spelled `tr-…`, which its scanner reads as class literals. The ids are now
+`qa-region-`/`qa-ask-`.
+
 ## [1.302.0] - 2026-08-15
 
 **An attachment's `content_type` was never derived from anything, and the visible consequence

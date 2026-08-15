@@ -1602,6 +1602,39 @@ def get_my_transcript():
 
 
 @frappe.whitelist(methods=["POST"])
+def ask_lesson_question(course, lesson_key, question, at_seconds=None):
+    """File a learner's question against a lesson. Delegates to :mod:`training.qa`.
+
+    A thin re-export and nothing more. ``training/qa.py`` has held the whole feature — the
+    visibility gate, the author resolution, the notification — since v1.215.0, and it had
+    **no caller anywhere in the repo**: the backend was complete and the learner had no way
+    to reach it, so the feature shipped and then did nothing for six weeks.
+
+    It lives here rather than being dialled at its own path because the player's transport
+    has a single ``PREFIX`` (``/api/method/erpnext_enhancements.api.training.``) and one gate.
+    A second prefix in the client would be a second place for a rename to break silently, and
+    ``tests/test_training_endpoint_surface.py`` only watches this module.
+    """
+    from erpnext_enhancements.training import qa
+
+    return qa.ask_question(course, lesson_key, question, at_seconds=at_seconds)
+
+
+@frappe.whitelist(methods=["POST"])
+def lesson_questions(course, lesson_key):
+    """This learner's own threads on a lesson, plus the author's public answers.
+
+    Two lists, not one, and the split is `training.qa`'s: ``mine`` is correspondence — it
+    shows an unanswered question still sitting there, which is the only way a learner knows
+    that asking did anything — while ``public`` is content, the author's answers with nobody's
+    name attached to the questions.
+    """
+    from erpnext_enhancements.training import qa
+
+    return qa.get_lesson_questions(course, lesson_key)
+
+
+@frappe.whitelist(methods=["POST"])
 def get_media_url(attempt, block_key):
     """A short-lived playback URL for one video block.
 
