@@ -56,7 +56,7 @@ Indentation is tabs, per ``CLAUDE.md`` and the Frappe convention this package fo
 from __future__ import annotations
 
 import json
-from typing import Any, Final
+from typing import Any, Final, NamedTuple
 
 import frappe
 from frappe.utils import cint
@@ -84,6 +84,30 @@ TERMINAL_STATUSES: Final[frozenset[int]] = frozenset({404, 410})
 #: Preview text is trimmed to this before encryption. A notification is a prompt to open the
 #: app, not a way to read the conversation from the lock screen.
 PREVIEW_LIMIT: Final[int] = 120
+
+#: The alert kind raised when a push service rate-limits us. See :func:`_alert_rate_limited`
+#: for why this exists at all rather than another debug line.
+RATE_LIMITED_KIND: Final[str] = "push_rate_limited"
+
+
+class PostOutcome(NamedTuple):
+	"""What one POST to a push service means for the *subscription*.
+
+	A NamedTuple rather than a fourth positional element: the tuple was already carrying
+	three booleans whose order nothing enforced, and ``accepted, terminal, retry, after``
+	is four chances to swap two of them at a call site.
+	"""
+
+	accepted: bool
+	terminal: bool
+	retry_without_preview: bool
+	#: Whether the service said 429. A separate field from ``retry_after`` because the header
+	#: is optional: keying the signal off the header alone would count a 429 that sent no
+	#: ``Retry-After`` as no rate limiting at all, which is the case most worth hearing about.
+	rate_limited: bool = False
+	#: The service's ``Retry-After``, verbatim and unparsed. It is either a delta-seconds
+	#: integer or an HTTP-date, and this code does not act on it — it reports it.
+	retry_after: str | None = None
 
 
 def push_to_user(
@@ -118,9 +142,14 @@ def push_to_user(
 	)
 
 	delivered = 0
+	outcomes: dict[str, Any] = {"rate_limited": 0, "origins": set(), "retry_after": None}
 	for row in subscriptions.active_for(user):
-		if send_one(row, payload):
+		if send_one(row, payload, outcomes=outcomes):
 			delivered += 1
+	# One alert per fan-out, not one per device: a service that is rate-limiting us is
+	# rate-limiting every subscription it holds, and twenty rows would say the same thing
+	# twenty times.
+	_alert_rate_limited(outcomes)
 	return delivered
 
 
@@ -164,11 +193,20 @@ def room_tag(room: str) -> str:
 	return f"chat-room-{room}"
 
 
-def send_one(subscription: dict[str, Any], payload: dict[str, Any]) -> bool:
+def send_one(
+	subscription: dict[str, Any],
+	payload: dict[str, Any],
+	outcomes: dict[str, Any] | None = None,
+) -> bool:
 	"""Encrypt and POST to one endpoint. Returns whether it was accepted.
 
 	Never raises: one unreachable device must not stop the others, and this is called in a
 	loop over everything one person owns.
+
+	``outcomes`` is an optional accumulator the caller owns, so a fan-out can report once on
+	something that is true of the whole fan-out. Passed in rather than kept in module state
+	because this runs in background workers, where module state is shared between unrelated
+	jobs and outlives the one that wrote it.
 	"""
 	name = subscription.get("name")
 	endpoint = (subscription.get("endpoint") or "").strip()
@@ -176,31 +214,44 @@ def send_one(subscription: dict[str, Any], payload: dict[str, Any]) -> bool:
 		return False
 
 	try:
-		accepted, terminal, retry_without_preview = _post(endpoint, subscription, payload)
+		result = _post(endpoint, subscription, payload)
 	except Exception:
 		frappe.log_error(title="chat push request failed", message=f"subscription={name}")
 		subscriptions.note_failure(str(name), terminal=False)
 		return False
 
-	if accepted:
+	_accumulate(outcomes, result, endpoint)
+
+	if result.accepted:
 		subscriptions.note_success(str(name))
 		return True
 
-	if retry_without_preview and payload.get("body"):
+	if result.retry_without_preview and payload.get("body"):
 		# 413. The preview is the only variable-length field, so dropping it is the one retry
 		# that can change the outcome — and a notification naming the sender and the room is
 		# worth far more than none at all.
 		stripped = dict(payload, body="")
 		try:
-			accepted, terminal, _ = _post(endpoint, subscription, stripped)
+			result = _post(endpoint, subscription, stripped)
 		except Exception:
-			accepted, terminal = False, False
-		if accepted:
+			result = PostOutcome(False, False, False)
+		_accumulate(outcomes, result, endpoint)
+		if result.accepted:
 			subscriptions.note_success(str(name))
 			return True
 
-	subscriptions.note_failure(str(name), terminal=terminal)
+	subscriptions.note_failure(str(name), terminal=result.terminal)
 	return False
+
+
+def _accumulate(outcomes: dict[str, Any] | None, result: PostOutcome, endpoint: str) -> None:
+	"""Fold one POST's rate-limit signal into the fan-out's accumulator."""
+	if outcomes is None or result.retry_after is None and not result.rate_limited:
+		return
+	outcomes["rate_limited"] = cint(outcomes.get("rate_limited")) + 1
+	outcomes.setdefault("origins", set()).add(_origin(endpoint))
+	if result.retry_after and not outcomes.get("retry_after"):
+		outcomes["retry_after"] = result.retry_after
 
 
 def _post(
@@ -242,17 +293,16 @@ def _post(
 
 	status = cint(response.status_code)
 	if status in (200, 201, 202):
-		return True, False, False
+		return PostOutcome(True, False, False)
 	if status in TERMINAL_STATUSES:
-		return False, True, False
+		return PostOutcome(False, True, False)
 	if status == 413:
-		return False, False, True
+		return PostOutcome(False, False, True)
 	if status == 429:
-		_note_retry_after(response)
-		return False, False, False
+		return PostOutcome(False, False, False, rate_limited=True, retry_after=_retry_after(response))
 
 	frappe.logger("chat").debug("chat push rejected status=%s endpoint=%s", status, _origin(endpoint))
-	return False, False, False
+	return PostOutcome(False, False, False)
 
 
 def _topic(payload: dict[str, Any]) -> str:
@@ -268,19 +318,74 @@ def _topic(payload: dict[str, Any]) -> str:
 	return encrypt.b64u_encode(digest)[:32]
 
 
-def _note_retry_after(response: Any) -> None:
-	"""Log what the service asked for. There is no retry queue here yet, and that is honest.
-
-	A 429 means this message is lost for that device. The bell row still exists, the unread
-	counter still moved, and the next message in the room will try again — so the failure is
-	one missed banner rather than a missing conversation. Building a retry queue for push would
-	mean a second outbox, and it is not worth one until 429s are actually observed.
-	"""
+def _retry_after(response: Any) -> str | None:
+	"""The service's ``Retry-After``, verbatim. Never raises."""
 	try:
-		retry_after = response.headers.get("Retry-After")
+		value = response.headers.get("Retry-After")
 	except Exception:
-		retry_after = None
-	frappe.logger("chat").debug("chat push rate limited retry_after=%s", retry_after)
+		return None
+	return str(value).strip() or None if value is not None else None
+
+
+def _alert_rate_limited(outcomes: dict[str, Any]) -> None:
+	"""Raise **one** ops alert when a push service rate-limited this fan-out.
+
+	**Still no retry queue, and that is still the right call** — a 429 costs one missed
+	banner, not a missing conversation: the bell row exists, the unread counter moved, and the
+	next message in the room tries again. A retry queue for push means a second outbox with
+	its own leases, ordering and dead-letter story, which is a large thing to build for a
+	failure nobody has seen.
+
+	What changed in v1.299.5 is that the deferral was **conditioned on an observation nothing
+	made**. The reasoning here read "not worth one until 429s are actually observed", and the
+	only record of a 429 was a ``frappe.logger(...).debug`` line — which on a production site
+	is written at a level nobody reads, in a file nobody tails, for an event nobody is paged
+	about. A decision to wait for evidence has to be paired with something that would produce
+	the evidence, or it is a decision never to do it.
+
+	So the 429 goes to the ops-alert machinery instead, where §4.H already solves the parts
+	that make this awkward:
+
+	* **Dedup names the problem, not the occurrence.** The scope is the push service's origin,
+	  so every Chrome subscription on the site folds into one incident and the count rides in
+	  ``detail``. A key carrying the number that changes deduplicates nothing.
+	* **Repeats re-notify on a doubling schedule**, so a service rate-limiting us all afternoon
+	  is one row that speaks up at 1, 2, 4, 8 occurrences rather than a mailbox full.
+	* **It is delivered by email, not by chat** — and not by our own accident. ``notifications``
+	  is in :data:`alert_rules.SELF_DELIVERING`, so the rule that an alert is never delivered by
+	  the thing it is about already covers this: the ops-space channel is a ``Chat Message``,
+	  whose banner is the thing that just failed.
+
+	Never raises. ``raise_alert`` swallows its own failures and returns ``None``, and this runs
+	at the end of a fan-out whose real work has already succeeded.
+	"""
+	if not cint(outcomes.get("rate_limited")):
+		return
+
+	from erpnext_enhancements.chat.governance import alerts
+
+	origins = sorted(outcomes.get("origins") or [])
+	count = cint(outcomes.get("rate_limited"))
+	retry_after = outcomes.get("retry_after")
+	alerts.raise_alert(
+		subsystem="notifications",
+		kind=RATE_LIMITED_KIND,
+		# Scope is the service, not the user: one origin rate-limiting us is one incident no
+		# matter how many people it affects, and the per-user framing would open a row per
+		# recipient for a condition none of them can do anything about.
+		scope=origins[0] if len(origins) == 1 else "multiple",
+		summary=f"A push service rate-limited {count} notification(s)",
+		detail=(
+			f"{count} subscription(s) answered 429 in one fan-out. "
+			f"Services: {', '.join(origins) or 'unknown'}. "
+			f"Retry-After: {retry_after or 'not sent'}. "
+			"Each 429 is one banner that did not arrive; the bell row and unread counter are "
+			"unaffected and the next message in the room will try again. There is no retry "
+			"queue for push — if this alert recurs, that is the evidence for building one."
+		),
+		rate_limited_count=count,
+		retry_after=retry_after,
+	)
 
 
 def _origin(endpoint: str) -> str:
