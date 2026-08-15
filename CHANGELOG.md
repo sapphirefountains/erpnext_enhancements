@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.299.2] - 2026-08-15
+
+**"Hide the activity feed on every tab but the first" has done nothing since it shipped in
+v1.259.4, and its test passed the whole time.** Also found by the reconciliation sweep, in the
+same pass as v1.299.1 and by the same method: re-reading the code behind a "shipped" claim.
+
+### Fixed
+
+The JS half was always fine — `activity_first_tab_only.js` toggles `.ee-activity-off-tab` and
+is bundled correctly. The CSS half lost the cascade:
+
+- `desk_enhancements.bundle.css:1152` — the older *"FIX: Restore Missing Comment Box on All
+  Doctypes"* block declares `.form-footer, .timeline { display: block !important }`
+- `:1378` — the hide rule declared `.form-page.ee-activity-off-tab .form-footer { display: none }`
+  with **no `!important`**
+
+An important author declaration beats a non-important one **regardless of specificity**, so
+the three-class selector lost to the one-class selector and the footer was never hidden. The
+hide rule is now `!important` too, which puts both declarations in the same origin-importance
+bucket and lets specificity decide — `(0,3,0)` beats `(0,1,0)`, correctly. The blanket rule was
+deliberately *not* narrowed instead: it exists because something was hiding the comment box on
+some doctypes and that something was never identified.
+
+### The test was the actual defect
+
+`tests/test_activity_first_tab_only.py` asserted the string
+`.ee-activity-off-tab .form-footer { display: none;` was present in the file. It was present.
+It was also inert. **Asserting a rule exists is not asserting it applies**, and for a
+cascading language those are very different claims — this is the CSS twin of the guard that
+probes for a renamed constant and skips forever.
+
+`test_the_hide_rule_actually_wins_the_cascade` now resolves the cascade instead: it collects
+every rule in the stylesheet whose rightmost compound names `.form-footer` and which declares
+`display`, then picks the winner by importance, then specificity, then source order, and
+asserts that winner is the hide rule. It fails with the losing selector printed in the message.
+Verified failing against the pre-fix stylesheet before being kept.
+
+Closes TASK-2026-00353 (properly, this time).
+
 ## [1.299.1] - 2026-08-15
 
 **The oversight viewer returned an empty transcript on every call, and wrote a full audit row

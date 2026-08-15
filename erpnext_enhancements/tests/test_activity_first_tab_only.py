@@ -41,7 +41,59 @@ class TestTheTwoHalvesAgree(unittest.TestCase):
     def test_the_stylesheet_hides_it(self):
         css = CSS.read_text(encoding="utf-8")
         self.assertIn(f".{CLASS} .form-footer", css)
-        self.assertRegex(css, rf"\.{re.escape(CLASS)} \.form-footer \{{\s*display: none;")
+        self.assertRegex(css, rf"\.{re.escape(CLASS)} \.form-footer \{{\s*display: none")
+
+    def test_the_hide_rule_actually_wins_the_cascade(self):
+        """Asserting the rule EXISTS is not asserting it applies.
+
+        v1.259.4 shipped this feature inert and the original of this test passed the
+        whole time. `.form-footer, .timeline { display: block !important }` — the
+        "Restore Missing Comment Box" fix earlier in the same stylesheet — beat the
+        hide rule outright, because an important author declaration wins over a
+        non-important one *no matter how specific the loser is*. The feature did
+        nothing on any form, for six weeks, with a green test.
+
+        So this resolves the cascade instead of grepping for a string: every rule in
+        the file whose rightmost compound names `.form-footer` and which declares
+        `display` is a competitor, and the winner is decided by importance first,
+        then specificity, then source order — the real algorithm. The hide rule has
+        to be that winner.
+        """
+        css = CSS.read_text(encoding="utf-8")
+        css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+
+        competitors = []
+        for order, match in enumerate(re.finditer(r"([^{}]+)\{([^{}]*)\}", css)):
+            selectors, body = match.group(1), match.group(2)
+            display = re.search(r"(?<![\w-])display\s*:\s*([^;]+)", body)
+            if not display:
+                continue
+            value = display.group(1).strip()
+            important = "!important" in value
+            for selector in selectors.split(","):
+                selector = selector.strip()
+                if not selector or ".form-footer" not in selector.split()[-1]:
+                    continue
+                specificity = (
+                    selector.count("#"),
+                    selector.count(".") + selector.count("["),
+                    len(re.findall(r"(?:^|[\s>+~])[a-z]", selector)),
+                )
+                competitors.append((important, specificity, order, selector, value))
+
+        self.assertTrue(competitors, "no `display` rule targets .form-footer at all")
+        winner = max(competitors)
+        self.assertIn(
+            CLASS,
+            winner[3],
+            "the winning `display` declaration on .form-footer is "
+            f"`{winner[3]} {{ display: {winner[4]} }}` — NOT the hide rule, so the "
+            "activity feed is never hidden and this feature does nothing",
+        )
+        self.assertTrue(
+            winner[4].startswith("none"),
+            f"the hide rule wins but declares `display: {winner[4]}`",
+        )
 
     def test_the_class_name_is_not_duplicated_elsewhere(self):
         """Two scripts toggling one class is a race, not a feature."""
