@@ -228,6 +228,15 @@
 	}
 	.ee-ov .ee-expand:hover { background: #f2e9db; }
 
+	/* A superseded body is not the message. It is set apart so nobody quotes the wrong one. */
+	.ee-ov .ee-trail { margin: 10px 0 0; padding: 8px 0 0; border-top: 1px dashed var(--ee-gone); }
+	.ee-ov .ee-trail-row { margin: 0 0 8px; }
+	.ee-ov .ee-trail-body {
+		margin: 2px 0 0; padding: 6px 10px;
+		background: var(--ee-gone-bg); border-left: 3px solid var(--ee-gone);
+		color: var(--ee-gone); white-space: pre-wrap; overflow-wrap: anywhere;
+	}
+
 	.ee-ov .ee-tie { grid-column: 2; margin: 12px 0 2px; font-size: 0.78rem; color: var(--ee-muted); }
 	.ee-ov .ee-tie a { color: var(--ee-ink-soft); }
 
@@ -487,13 +496,20 @@
 			bubble.appendChild(document.createTextNode(row.text || ""));
 		}
 
-		if (row.is_edited) {
+		if (row.is_edited && !row.is_deleted) {
 			var chip = el("span", "ee-chip",
 				"edited" + (row.edited_at ? " " + shortTime(row.edited_at) : ""));
 			// The visible chip decorates a fact a screen reader gets as a sentence.
 			chip.setAttribute("aria-hidden", "true");
 			bubble.appendChild(chip);
 			bubble.appendChild(el("span", "ee-sr", "This message was edited after it was sent."));
+
+			// Reading what it USED to say is a separate act with its own reason and its own
+			// audit row, exactly like seeing through a delete. The affordance says so.
+			var history = el("button", "ee-expand", "Show what it used to say");
+			history.type = "button";
+			history.setAttribute("data-history", row.name);
+			bubble.appendChild(history);
 		}
 		item.appendChild(bubble);
 		item.appendChild(el("span", "ee-when", shortTime(row.creation)));
@@ -698,6 +714,41 @@
 				reason_category: why.reason_category,
 				before_seq: oldestSeq
 			}, renderTranscript);
+			return;
+		}
+
+		if (target.getAttribute && target.getAttribute("data-history")) {
+			// Same price as an expansion, for the same reason: `text_before` is the body
+			// somebody wrote and then replaced, and it exists in one column on this site.
+			// That the message survived says nothing about the versions that did not.
+			var forMessage = target.getAttribute("data-history");
+			var editReason = window.prompt(
+				"Reading what a message used to say is recorded separately, against your name."
+				+ "\nWhy do you need the superseded versions?");
+			if (!editReason) { return; }
+			var editCategory = window.prompt("Category for this read (the person may be shown it):");
+			if (!editCategory) { return; }
+			call("erpnext_enhancements.chat.governance.tombstone.edit_history", {
+				message: forMessage,
+				reason: editReason,
+				reason_category: editCategory
+			}, function (payload) {
+				var host = target.parentNode;
+				host.removeChild(target);
+				var trail = el("div", "ee-trail");
+				(payload.revisions || []).forEach(function (rev) {
+					var line = el("div", "ee-trail-row");
+					line.appendChild(el("span", "ee-chip",
+						"v" + rev.revision_no + " " + (rev.change_type || "")));
+					line.appendChild(el("div", "ee-trail-body", rev.text_before || "(empty)"));
+					trail.appendChild(line);
+				});
+				if (!(payload.revisions || []).length) {
+					trail.appendChild(el("p", "ee-empty", "No revision rows are retained for this message."));
+				}
+				trail.appendChild(el("span", "ee-chip", "history read, and recorded separately"));
+				host.appendChild(trail);
+			});
 			return;
 		}
 

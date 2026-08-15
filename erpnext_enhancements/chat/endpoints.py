@@ -115,6 +115,15 @@ NON_MUTATING: Final[dict[str, str]] = {
 		"tombstone_expanded row, which is a record OF the read rather than an effect the "
 		"caller wants. POST because the reason travels in the body"
 	),
+	f"{DOTTED_ROOT}.governance.tombstone.edit_history": (
+		"returns the superseded bodies of a LIVE message -- what it used to say before it was "
+		"edited. The other half of `expand`, which refuses anything not deleted; this refuses "
+		"anything that is, so the two partition the space with no gap and no second door onto "
+		"a deleted body. `text_before` exists in one column on this site, so the read is as "
+		"sensitive as an expansion even though the message survives. Writes a "
+		"revision_history_read row, a record OF the read rather than an effect the caller "
+		"wants. POST because the reason travels in the body"
+	),
 	f"{DOTTED_ROOT}.governance.viewer.search": (
 		"the oversight read. Writes a Chat Retrieval Audit row, which is a record OF the read "
 		"rather than an effect the caller wants — the same reasoning search_messages carries. "
@@ -287,6 +296,11 @@ RATE_LIMIT: Final[dict[str, str]] = {
 		"bundle that leaves the building. Deliberately NOT converted to a short window: the "
 		"long lockout is the intended behaviour for the one endpoint that manufactures "
 		"downloadable transcripts."
+	),
+	f"{DOTTED_ROOT}.governance.tombstone.edit_history": (
+		"60/3600s. Matches `expand` exactly, and deliberately: it reads the same column from "
+		"the same table with the same gates, and the only difference is whether the message "
+		"survived. Two sibling acts on one body of evidence should not have two budgets."
 	),
 	f"{DOTTED_ROOT}.governance.tombstone.expand": (
 		"60/3600s. Reads a deleted body with **no membership filter**, gated on the oversight "
@@ -500,6 +514,7 @@ PILOT_GATE_EXEMPT: Final[dict[str, str]] = {
 	f"{DOTTED_ROOT}.governance.viewer.access_log": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.viewer.rooms": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.tombstone.expand": _OVERSIGHT_GATE,
+	f"{DOTTED_ROOT}.governance.tombstone.edit_history": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.export_runner.request_export": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.export_runner.download_export": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.viewer.my_access_log": (

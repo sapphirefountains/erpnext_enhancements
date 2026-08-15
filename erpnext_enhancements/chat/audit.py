@@ -129,6 +129,12 @@ GOVERNANCE_EVENTS = frozenset(
 		# answer either question about the other.
 		"oversight_members_listed",
 		"tombstone_expanded",
+		# The live-message twin of `tombstone_expanded`: the superseded bodies of a message
+		# that was edited and never deleted. A separate type because the acts are separately
+		# defensible — "I read what somebody deleted" and "I read what somebody rewrote" are
+		# different sentences to have to justify, and one label for both would let the rarer
+		# one hide inside the commoner.
+		"revision_history_read",
 		"export_requested",
 		"export_downloaded",
 		"retention_run",

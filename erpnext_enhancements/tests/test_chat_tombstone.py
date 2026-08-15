@@ -198,5 +198,78 @@ class TrailTest(unittest.TestCase):
 		self.assertNotIn('{"', src.split("get_value(")[1][:120])
 
 
+class EditHistoryTest(unittest.TestCase):
+	"""`edit_history` is `expand`'s other half, and the pair must leave no gap and no overlap.
+
+	`expand` refuses anything not deleted; this refuses anything that is. A single endpoint
+	serving both would be a second door onto deleted bodies that skipped `expand`'s refusal
+	and its `tombstone_expanded` event — the shape v1.301.0 closed elsewhere. Two endpoints
+	that each refuse the other's domain have no such door, and that is what is asserted here
+	rather than assumed.
+	"""
+
+	def test_it_refuses_a_deleted_message(self):
+		"""The mirror of `expand`'s refusal. Without it the pair overlaps and the two event
+		types stop being countable against each other."""
+		self.assertIn('row.get("is_deleted")', _src("edit_history"))
+
+	def test_the_two_refusals_are_complementary(self):
+		"""`expand` wants deleted; this wants live. If both ever wanted the same thing, one of
+		them is a door nobody is watching."""
+		self.assertIn('not row.get("is_deleted")', _src("expand"))
+		self.assertNotIn('not row.get("is_deleted")', _src("edit_history"))
+
+	def test_missing_and_deleted_get_the_same_refusal(self):
+		fn = _func("edit_history")
+		checks = [
+			n
+			for n in ast.walk(fn)
+			if isinstance(n, ast.If) and isinstance(n.test, ast.BoolOp) and isinstance(n.test.op, ast.Or)
+		]
+		self.assertTrue(checks, "missing and deleted are refused separately")
+
+	def test_it_uses_its_own_event_type(self):
+		"""One label for both acts would let the rarer hide inside the commoner."""
+		self.assertIn('event_type="revision_history_read"', _src("edit_history"))
+		self.assertNotIn('event_type="tombstone_expanded"', _src("edit_history"))
+
+	def test_the_role_is_checked_before_the_reason_and_both_before_any_read(self):
+		calls = _calls(_func("edit_history"))
+		self.assertLess(calls.index("_require_auditor"), calls.index("_require_reason"))
+		self.assertLess(calls.index("_require_reason"), calls.index("_message"))
+
+	def test_a_failed_audit_write_refuses_the_read(self):
+		"""Fail-closed, like its sibling: the body is not returned if the record is not written."""
+		src = _src("edit_history")
+		self.assertIn("if not recorded", src)
+		self.assertLess(src.index("if not recorded"), src.index("return {"))
+
+	def test_the_audit_detail_carries_no_message_text(self):
+		"""The most tempting place to put the very body the read revealed."""
+		src = _src("edit_history")
+		detail = src[src.index("detail=json.dumps(") : src.index("affected_count=")]
+		for forbidden in ("text", "body", "text_before", "text_after"):
+			self.assertNotIn(f'"{forbidden}"', detail)
+
+	def test_it_reuses_the_one_revision_reader(self):
+		"""A second query would be a second place to get the ordering or the field list wrong,
+		and a second entry in a waiver whose value is being short."""
+		self.assertIn("_revisions(", _src("edit_history"))
+		self.assertNotIn("tabChat Message Revision", _src("edit_history"))
+
+	def test_the_endpoint_is_post_only_and_rate_limited(self):
+		fn = _func("edit_history")
+		decorators = [ast.dump(d) for d in fn.decorator_list]
+		self.assertTrue(any("rate_limit" in d for d in decorators))
+		self.assertTrue(any("'POST'" in d or '"POST"' in d for d in decorators))
+
+	def test_the_returned_fields_are_the_same_allowlist_as_expand(self):
+		"""Two shapes for one body of evidence is how a reader concludes they differ."""
+		src = _src("edit_history")
+		self.assertIn("MESSAGE_FIELDS", src)
+		self.assertIn("REVISION_FIELDS", src)
+		self.assertNotIn("text_plain", src)
+
+
 if __name__ == "__main__":
 	unittest.main()

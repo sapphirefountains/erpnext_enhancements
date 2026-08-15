@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.310.0] - 2026-08-15
+
+**What a live message used to say.** The last read surface TASK-2026-01278 asks for, and the one
+that touches the tightest table in the module.
+
+### Added
+
+`tombstone.edit_history()` — the superseded bodies of a message that was edited and **not**
+deleted. It is `expand`'s other half, and the gap it fills was real: `expand` refuses anything not
+deleted, saying *"A live message is read through the oversight viewer, which records it there"* —
+and the viewer serves the *current* body. Nothing served the earlier ones, so the trail of a
+message edited eleven times and never deleted was unreachable by any surface.
+
+**The two functions partition the space, and that is why this is a sibling rather than a general
+`revisions(message)`.** `expand` handles `is_deleted = 1` and refuses the rest; this handles the
+rest and refuses `is_deleted`. One endpoint serving both would be a second door onto deleted bodies
+that skipped `expand`'s refusal and its `tombstone_expanded` event — the shape v1.301.0 closed
+elsewhere. Complementary refusals leave no gap and no overlap, and a test asserts both halves.
+
+**As sensitive as an expansion, despite the message surviving.** `text_before` is the body a
+colleague wrote and then chose to replace. `Chat Message` holds only the current text and Google's
+tombstone is content-free, so the sentence somebody typed and regretted lives in exactly one column
+on this site. That the message survives says nothing about the versions that did not — so the read
+costs a reason, writes `revision_history_read`, and is refused if that row cannot be written.
+
+New event type rather than reusing `tombstone_expanded`: *"I read what somebody deleted"* and *"I
+read what somebody rewrote"* are different sentences to have to justify, and one label for both
+would let the rarer hide inside the commoner.
+
+The page grows the affordance on edited bubbles, and it costs its own reason and category — the
+transcript's are deliberately not carried down, exactly as for a tombstone.
+
+### Changed — a guard that was quietly bypassable
+
+`test_chat_message_revision_is_never_read_by_a_bare_query` keys its waiver on `file:function`, and
+its docstring says the waiver is *"one function, named, keyed on `file:function` so a second
+function in the same module does not inherit it."* That stops a second *query* inheriting it. It
+does **not** stop a second *caller* — and for this table the caller is what matters.
+
+This release walked straight into it. `edit_history` needed the superseded bodies; it called the
+already-waived `_revisions`; and the scan saw nothing new, because the query had not moved. **A
+second reader of the most sensitive table in the module arrived and the guard whose entire subject
+is that table stayed silent.** Mechanically no change was required, which is precisely the problem.
+
+So the callers are now enumerated: `test_the_revision_reader_has_exactly_the_callers_it_is_waived_for`
+asserts they are exactly `expand` and `edit_history`. A third fails the build, which is the
+deliberate conversation the original docstring asks for. What the waiver buys is "these named acts,
+each paying an audit row", not "any code that happens to live in this file".
+
+### Not done, and recorded instead
+
+**`revision_count` on the transcript row was dropped.** It would put a second reader of this table
+on the *transcript* path — a query on every page load, to display a number — and a count is exactly
+the sort of small convenience that erodes a guard whose value is being short. `is_edited` already
+tells the auditor there are edits, and the count arrives with the history, by which point they have
+stated a reason. The recorded design asked for it; this is a deliberate departure.
+
+**A discrepancy worth settling, raised as its own task.** `tombstone.expand` serves deleted bodies
+and records a *governance* event, so it is invisible to `access_report._content_rows`, which counts
+non-participant content reads off the retrieval chain. `edit_history` mirrors it, because splitting
+two sibling acts across two chains would be worse for a compliance reader than either consistent
+choice. But it means neither expansion appears in the content-read count, and that predates this
+release.
+
 ## [1.309.0] - 2026-08-15
 
 **The member timeline — who was in a room, and when they left.** The last read surface
