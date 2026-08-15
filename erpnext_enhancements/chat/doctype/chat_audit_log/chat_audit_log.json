@@ -105,7 +105,7 @@
    "label": "Reason Category",
    "options": "\nHR or personnel matter\nLegal, regulatory or compliance\nSecurity investigation\nSafety or site incident\nCustomer or contract dispute\nRequested by the employee\nTechnical maintenance\nOther",
    "read_only": 1,
-   "description": "What the SUBJECT is shown instead of the free-text reason (decision D-3). The free text is written for a compliance reviewer and can name a third party or an open investigation; this is the part an employee can be shown without the disclosure becoming the leak. NOT covered by chain_hash — adding a field to the chained tuple would re-hash every existing row and report the whole log as tampered. The authoritative, tamper-evident record is the free-text `reason`."
+   "description": "What the SUBJECT is shown instead of the free-text reason (decision D-3). NOT WRITTEN on this table: record_governance_event has no reason_category parameter, so nothing populates this column. On this chain the category travels inside `detail`, which is a MANDATORY chained field — governance/tombstone.py, governance/export_runner.py and governance/viewer.py each json.dumps it in there — so it is already signed, by a different route than its twin on Chat Retrieval Audit. The column is declared for symmetry and for reports that project both tables through one shape. Deliberately worded differently from that twin: a shared sentence is how somebody concludes one chain is safe because the other is. If a writer is ever added, note the field IS optionally chained and both verifiers now read it — but the category would then live twice, here and in `detail`, and the two will drift. Fold it into `detail` instead."
   },
   {
    "fieldname": "section_break_scope",

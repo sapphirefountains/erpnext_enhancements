@@ -143,7 +143,57 @@ _DEFAULT_PURPOSE = "oversight"
 #: none adds a key and changes the hash. Neither edit passes the verifier, which is the whole
 #: requirement — an unsigned field is one an operator can rewrite in SQL to reclassify why
 #: they read somebody's messages, and that is exactly the edit this log exists to catch.
+#:
+#: **That last paragraph was false on the retrieval chain from v1.288.6 until v1.307.0, and
+#: the mechanism was never the problem.** ``verify_chain`` wrote its column list out by hand
+#: and nobody added ``reason_category`` to it, so the verifier recomputed a payload without a
+#: key the writer would have signed — and the two agreed only because no caller ever supplied
+#: a value. Meanwhile ``viewer._stamp_category`` wrote the column *after* the hash on the
+#: strength of a re-signing pass that does not exist. Both verifiers now derive their SELECT
+#: from these tuples (:func:`_select_columns`), so the reader and the writer cannot name
+#: different fields again.
+#:
+#: The alternative that will be proposed next is a stored ``chain_version`` column selecting
+#: between payload recipes. It reopens the hole this closes: an *unsigned* selector lets an
+#: attacker set the category and the version together, and the older recipe then recomputes a
+#: matching hash. A version that governs a signature has to be signed itself, which is the
+#: same problem one level up.
 _OPTIONAL_CHAINED_FIELDS = ("reason_category",)
+
+#: Columns the retrieval verifier reads that no payload signs: the row's identity, the
+#: signature being checked, and the raw ``query_text`` re-derived against ``query_hash``.
+#: ``recorded_at`` is absent because :data:`_CHAINED_FIELDS` already carries it.
+_VERIFY_EXTRA_COLUMNS = ("name", "chain_hash", "query_text")
+
+#: The governance equivalent. ``recorded_at`` is in :data:`_GOVERNANCE_CHAINED_FIELDS`.
+_GOVERNANCE_VERIFY_EXTRA_COLUMNS = ("name", "chain_hash")
+
+
+def _select_columns(*groups: tuple[str, ...]) -> str:
+	"""```a`, `b``` for a SELECT list, built from the signed-field tuples themselves.
+
+	**Derived rather than written out, and that is the fix rather than the tidying.** A
+	verifier that reads a different set of columns than the writer signed does not report a
+	break; it silently recomputes a *different payload* and reports success. That is the one
+	failure a chain cannot survive, because what stops working is the alarm it exists to
+	raise — and it is invisible for exactly as long as no row carries a value for the missing
+	column, which on this chain was over a dozen releases.
+
+	Order-preserving and de-duplicated. A name listed in both an extras tuple and a signed
+	tuple would otherwise be emitted twice, which MariaDB rejects outright — better than the
+	alternative, but only by luck.
+
+	The names are module-level constants and never input, so the interpolation carries no
+	injection surface. It does move one class of mistake from import time to query time: a
+	name in a tuple that is not a column on the DocType is now an ``OperationalError`` when
+	the nightly job runs. :func:`verify_all_chains` catches that deliberately — see the
+	reasoning there, because an uncaught one is silent.
+	"""
+	seen: dict[str, None] = {}
+	for group in groups:
+		for name in group:
+			seen.setdefault(name, None)
+	return ", ".join(f"`{name}`" for name in seen)
 
 
 def _optional_chain_payload(row: dict[str, Any]) -> dict[str, Any]:
@@ -616,9 +666,7 @@ def verify_chain(limit: int | None = None) -> dict[str, Any]:
     raises the cost from one ``UPDATE`` to a correct rewrite of the whole tail.
 	"""
 	rows = frappe.db.sql(
-		"""select `name`, `recorded_at`, `chain_hash`, `accessed_by`, `actor_type`, `purpose`,
-				`request_id`, `reason`, `query_hash`, `query_text`, `message_count`,
-				`chunk_count`, `token_count`, `tiers_used`, `context_truncated`
+		f"""select {_select_columns(_VERIFY_EXTRA_COLUMNS, _CHAINED_FIELDS, _OPTIONAL_CHAINED_FIELDS)}
 			from `tabChat Retrieval Audit`
 			order by `recorded_at` asc, `name` asc
 			limit %(limit)s""",
@@ -808,9 +856,17 @@ def verify_governance_chain(limit: int | None = None) -> dict:
 	database write access can rewrite a row and recompute every hash after it. It raises the
 	cost from one ``UPDATE`` to a correct rewrite of the whole tail.
 	"""
-	fields = ", ".join(f"`{name}`" for name in _GOVERNANCE_CHAINED_FIELDS)
+	# The optional tuple belongs here too, and its absence was the same defect armed on this
+	# chain. Deriving from the *mandatory* tuple protects against a new mandatory field and
+	# not against a new optional one — `compute_governance_chain_hash` folds
+	# `_optional_chain_payload` in at the bottom of this module exactly as its retrieval twin
+	# does. It is dormant only because `record_governance_event` has no `reason_category`
+	# parameter, so the column is never populated; adding one would have re-created the bug on
+	# the second chain. Reading it is a no-op on today's rows and closes the trap for good.
 	rows = frappe.db.sql(
-		f"""select `name`, `chain_hash`, {fields}
+		f"""select {_select_columns(
+			_GOVERNANCE_VERIFY_EXTRA_COLUMNS, _GOVERNANCE_CHAINED_FIELDS, _OPTIONAL_CHAINED_FIELDS
+		)}
 			from `tabChat Audit Log`
 			order by `recorded_at` asc, `name` asc
 			limit %(limit)s""",
@@ -855,10 +911,51 @@ def verify_all_chains() -> dict:
 	"""
 	from erpnext_enhancements.chat.governance import alert_rules, alerts
 
-	results = {"retrieval": verify_chain(), "governance": verify_governance_chain()}
+	def _run(verifier) -> dict[str, Any]:
+		"""Never let a verifier's own failure look like a healthy chain.
+
+		Both SELECTs are now derived from the signed-field tuples, which moves one mistake —
+		a name in a tuple that is not a column — from import-time nothing to an
+		``OperationalError`` here. Unguarded it would propagate out of the scheduled job
+		*before* ``alerts.check`` runs, and no alert at all is exactly what a verifying chain
+		looks like from the alert board. Caught, it becomes its own incident.
+		"""
+		try:
+			return verifier()
+		# Blind on purpose, and the breadth *is* the feature: what is being caught is not a
+		# known failure mode but the category "this check did not happen", and narrowing it to
+		# OperationalError would let the next unanticipated one go back to being silent.
+		except Exception as exc:
+			return {
+				"ok": False,
+				"errored": True,
+				"rows_checked": 0,
+				"first_break": None,
+				"detail": f"the verifier could not run: {type(exc).__name__}",
+			}
+
+	results = {"retrieval": _run(verify_chain), "governance": _run(verify_governance_chain)}
 	broken = [name for name, result in results.items() if not result.get("ok")]
 
 	for name, result in results.items():
+		errored = bool(result.get("errored"))
+		alerts.check(
+			not errored,
+			subsystem="audit",
+			kind="chain_verification_errored",
+			scope=name,
+			severity=alert_rules.SEVERITY_CRITICAL,
+			summary=f"the {name} audit chain verifier could not run",
+			detail=(
+				f"{result.get('detail')}. This says nothing about the chain — it says the "
+				f"check did not happen, which is a different incident and needs a different "
+				f"fix. The chain's own alert is left exactly as it was."
+			),
+		)
+		if errored:
+			# `chain_verification_failed` is deliberately NOT touched here. Clearing an alert
+			# asserts health, and a verifier that did not run is nobody asserting anything.
+			continue
 		alerts.check(
 			bool(result.get("ok")),
 			subsystem="audit",
@@ -875,8 +972,16 @@ def verify_all_chains() -> dict:
 		)
 
 	if broken:
+		# One event type, not two. A verifier that could not run is still "this run did not
+		# come back clean", and the distinction belongs in the detail rather than in
+		# `GOVERNANCE_EVENTS` — a new event type is a schema change and a Select migration for
+		# something a sentence answers.
 		detail = "; ".join(
-			f"{name}: first break {results[name].get('first_break')} at {results[name].get('at')}"
+			(
+				f"{name}: {results[name].get('detail')}"
+				if results[name].get("errored")
+				else f"{name}: first break {results[name].get('first_break')} at {results[name].get('at')}"
+			)
 			for name in broken
 		)
 		record_governance_event(

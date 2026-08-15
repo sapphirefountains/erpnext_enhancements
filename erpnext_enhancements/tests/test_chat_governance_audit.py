@@ -379,5 +379,199 @@ class TheHookIsActuallyRegistered(unittest.TestCase):
 		)
 
 
+class TheVerifiersReadEveryFieldTheyVerify(unittest.TestCase):
+	"""A field is only signed if the **verifier** reads it back. This is the missing half.
+
+	`EveryDataFieldIsSigned` above asserts that every column is in a signed tuple, and it was
+	green throughout the defect this class exists for. It had to be: it inspects the writer's
+	tuples and the DocType, and never the verifier's SELECT.
+
+	``verify_chain`` wrote its column list out by hand. ``reason_category`` was added to
+	``_OPTIONAL_CHAINED_FIELDS``, the writer began signing it on any row that carried one, and
+	the hand-written list was never touched — so the verifier recomputed a payload missing a key
+	the writer would have signed. The two agreed only for as long as no caller supplied a value,
+	which was eleven releases, and `viewer._stamp_category` was quietly supplying one the whole
+	time by writing the column *after* the hash.
+
+	**The failure mode is the reason this is worth a test rather than a convention.** A verifier
+	reading fewer columns than the writer signs does not report a break — it verifies a
+	*different payload* and reports success. What stops working is the alarm, and nothing else
+	looks wrong.
+
+	Both SELECTs are now derived from the tuples, so this asserts the derivation actually reaches
+	the statement rather than that the helper exists.
+	"""
+
+	def _select_for(self, verifier: str) -> str:
+		"""The SQL the verifier issues, captured through the module's own frappe stub."""
+		from erpnext_enhancements.chat import audit
+
+		captured: list[str] = []
+
+		class _Recorder:
+			def sql(self, query, values=None, as_dict=False, **_kw):
+				captured.append(query)
+				return []
+
+			def get_single_value(self, *_a, **_k):
+				return None
+
+		frappe = sys.modules["frappe"]
+		real = frappe.db
+		frappe.db = _Recorder()
+		try:
+			getattr(audit, verifier)()
+		finally:
+			frappe.db = real
+		self.assertTrue(captured, f"{verifier} issued no statement, so this asserts nothing")
+		return captured[0]
+
+	def test_the_retrieval_verifier_selects_every_field_the_writer_signs(self) -> None:
+		from erpnext_enhancements.chat import audit
+
+		sql = self._select_for("verify_chain")
+		missing = [
+			name
+			for name in audit._CHAINED_FIELDS + audit._OPTIONAL_CHAINED_FIELDS
+			if f"`{name}`" not in sql
+		]
+		self.assertFalse(
+			missing,
+			"verify_chain signs these fields but never reads them back, so it recomputes a "
+			"payload the writer did not sign and reports success anyway:\n  "
+			+ "\n  ".join(missing),
+		)
+
+	def test_the_governance_verifier_selects_every_field_the_writer_signs(self) -> None:
+		"""The same trap was armed on this chain and was never fired.
+
+		Its SELECT *was* derived — but from the mandatory tuple alone, which protects against a
+		new mandatory field and not against a new optional one. It stayed quiet only because
+		``record_governance_event`` has no ``reason_category`` parameter, so nothing populates
+		the column. Adding one would have re-created the defect on the second chain.
+		"""
+		from erpnext_enhancements.chat import audit
+
+		sql = self._select_for("verify_governance_chain")
+		missing = [
+			name
+			for name in audit._GOVERNANCE_CHAINED_FIELDS + audit._OPTIONAL_CHAINED_FIELDS
+			if f"`{name}`" not in sql
+		]
+		self.assertFalse(
+			missing,
+			"verify_governance_chain signs these fields but never reads them back:\n  "
+			+ "\n  ".join(missing),
+		)
+
+	def test_the_column_helper_does_not_emit_a_name_twice(self) -> None:
+		"""``recorded_at`` is both signed and quoted in the break report. Twice is a SQL error."""
+		from erpnext_enhancements.chat import audit
+
+		columns = audit._select_columns(
+			audit._VERIFY_EXTRA_COLUMNS, audit._CHAINED_FIELDS, audit._OPTIONAL_CHAINED_FIELDS
+		).split(", ")
+		self.assertEqual(len(columns), len(set(columns)))
+
+
+class TheVerifiersFailureIsItsOwnIncident(unittest.TestCase):
+	"""A verifier that cannot run must not look like a chain that verifies.
+
+	Deriving the SELECT from the tuples moves one mistake — a name in a tuple that is not a
+	column — from import-time nothing to a query-time error. Unguarded it leaves the scheduled
+	job before ``alerts.check`` runs, and no alert is exactly what health looks like.
+	"""
+
+	def _run_with_broken_db(self) -> tuple[dict, list[dict]]:
+		"""``verify_all_chains`` against a database that raises, with the alert path faked.
+
+		The two governance modules are stubbed rather than imported: the real ``alerts`` pulls
+		half of ``frappe.utils`` at module scope, and growing this suite's stub to carry it
+		would be adding surface for a test that is about exception handling. Faking them also
+		makes the alert calls assertable, which is the half that matters.
+		"""
+		import types
+
+		from erpnext_enhancements.chat import audit, governance
+
+		calls: list[dict] = []
+
+		alerts = types.ModuleType("erpnext_enhancements.chat.governance.alerts")
+		alerts.check = lambda ok, **kw: calls.append({"ok": bool(ok), **kw})
+		alert_rules = types.ModuleType("erpnext_enhancements.chat.governance.alert_rules")
+		alert_rules.SEVERITY_CRITICAL = "Critical"
+
+		class _Broken:
+			"""A database where the *verifier's* statement fails and nothing else does.
+
+			That is the hazard being defended against, and the fidelity matters. Deriving the
+			SELECT from the signed tuples means a name that is not a column becomes an error on
+			that one statement — the connection is fine, the alert path still works. Failing
+			every statement instead would model a dead connection, which is a different
+			incident with a different fix, and it would make this test pass or fail for reasons
+			that have nothing to do with the code under test.
+			"""
+
+			def sql(self, query, *_a, **_k):
+				if "tabChat Retrieval Audit" in query or "tabChat Audit Log" in query:
+					raise RuntimeError("Unknown column 'nope' in 'field list'")
+				return []
+
+			def get_single_value(self, *_a, **_k):
+				return None
+
+		frappe = sys.modules["frappe"]
+		real_db = frappe.db
+		saved = {n: sys.modules.get(f"erpnext_enhancements.chat.governance.{n}") for n in ("alerts", "alert_rules")}
+		sys.modules["erpnext_enhancements.chat.governance.alerts"] = alerts
+		sys.modules["erpnext_enhancements.chat.governance.alert_rules"] = alert_rules
+		governance.alerts = alerts
+		governance.alert_rules = alert_rules
+		frappe.db = _Broken()
+		try:
+			result = audit.verify_all_chains()
+		finally:
+			frappe.db = real_db
+			for name, module in saved.items():
+				if module is None:
+					sys.modules.pop(f"erpnext_enhancements.chat.governance.{name}", None)
+				else:
+					sys.modules[f"erpnext_enhancements.chat.governance.{name}"] = module
+		return result, calls
+
+	def test_a_verifier_that_raises_becomes_a_result_rather_than_an_escape(self) -> None:
+		try:
+			result, _ = self._run_with_broken_db()
+		except Exception as exc:  # pragma: no cover - the regression this test names
+			self.fail(
+				"verify_all_chains let the verifier's own failure escape the scheduled job, "
+				"so no alert is raised at all — which is indistinguishable from a chain that "
+				f"verifies: {exc!r}"
+			)
+		self.assertFalse(result["ok"])
+		for scope in ("retrieval", "governance"):
+			self.assertTrue(result["results"][scope].get("errored"))
+			self.assertIn("could not run", result["results"][scope].get("detail", ""))
+
+	def test_a_broken_verifier_raises_its_own_kind_and_clears_nothing(self) -> None:
+		"""The distinction that keeps the alert board honest.
+
+		"The chain is broken" and "the check did not happen" are different incidents with
+		different fixes. And ``chain_verification_failed`` must not be *cleared* on a run that
+		learned nothing — clearing asserts health, and nobody asserted it.
+		"""
+		_, calls = self._run_with_broken_db()
+		kinds = {c["kind"] for c in calls}
+		self.assertIn("chain_verification_errored", kinds)
+		self.assertTrue(all(c["ok"] is False for c in calls if c["kind"] == "chain_verification_errored"))
+		self.assertNotIn(
+			"chain_verification_failed",
+			kinds,
+			"a run whose verifier could not execute touched the chain's own alert; clearing "
+			"it would claim health nobody established, and raising it would blame the chain "
+			"for the verifier's failure",
+		)
+
+
 if __name__ == "__main__":
 	unittest.main()
