@@ -113,17 +113,49 @@ closes immediately and any historical backlog is served by the Phase 3 endpoint 
 *message* rule.
 
 --------------------------------------------------------------------------------------
-The admin escape hatch
+The admin escape hatch, and why it is no longer in these hooks
 --------------------------------------------------------------------------------------
 
-Decision #12: the oversight role may read chat it is not a participant in. That is the
-*only* thing that returns an unrestricted ``""``, it is gated on a role read from
-``Chat Settings.admin_oversight_role`` (never a literal, never a caller-supplied flag),
-and the field **ships blank on purpose** so the hatch fails closed until somebody
-deliberately opens it. Every privileged read routes through :func:`note_privileged_read`
-— one function, one call site per path — which is a no-op in Phase 1 and is where
-Phase 6 writes its ``Chat Retrieval Audit`` row. One hook point rather than audit calls
-scattered through six functions later.
+Decision #12 says the oversight role may read chat it is not a participant in. Until
+v1.301.0 the eight content hooks below implemented that by returning an unrestricted
+``""`` (and ``True``) to any holder of ``Chat Settings.admin_oversight_role``, and to
+``Administrator``. **They no longer do. These hooks scope to active membership for every
+identity, without exception.**
+
+Decision #12 is not revoked — it is *relocated*. The oversight read still exists and it is
+`chat/governance/viewer.py`, which demands a written reason graded by
+``access_report.reason_quality``, demands a category, and records one hash-chained
+``Chat Retrieval Audit`` row per read. It reaches content through
+``membership_filter_sql(allow_oversight=True)``, which is keyword-only and which only
+`chat/retrieval/gate.py` passes. That is the door, and there is now exactly one.
+
+**What the branch actually bought, once each use was traced, was three leaks.** It was
+never consumed by the audited path: ``retrieve_for_oversight`` gates on
+:func:`_has_oversight` itself and reads through raw SQL, touching neither
+``permission_query_conditions`` nor ``has_permission``. What it did reach was:
+
+1. :func:`chat.api._common.require_room`, which calls :func:`chat_room_has_permission`
+   **directly**. A non-member passed it, and ``rooms.get_room`` then read the row with
+   ``frappe.db.get_value`` — which bypasses permissions — and returned ``title``,
+   ``description``, ``last_message_preview`` and the roster. One ``fetch`` from the SPA,
+   no reason collected, no audit row.
+2. The socket join. :func:`chat_room_has_permission` is the realtime boundary and is
+   evaluated once; a privileged non-member joined ``doc:Chat Room/<room>`` and got a live
+   feed from Node, outside Python, where this app has no seam at all.
+3. The desk list, report view, search-link and printview — paths with nowhere to collect a
+   reason from a human, and so unable to satisfy G6-7 even in principle.
+
+G6-7 asks for exactly one audit record per non-participant read, by every path. For
+``Chat Message`` that was already satisfied the honest way — by the absent capability
+rather than by the audit — and this brings the other three doctypes into line with it.
+
+**One residual, stated rather than hidden.** ``frappe/permissions.py`` on v16 (:107)
+returns True for ``Administrator`` before any controller hook runs, so a literal
+``Administrator`` session keeps single-document reads through ``/api/resource`` and the
+desk form view. ``db_query.build_match_conditions`` has no such short-circuit, so list,
+report and search-link reads *are* scoped by the hooks below for that identity too.
+Closing the single-document residual needs a request-layer refusal; it is tracked
+separately and nothing below pretends it is closed.
 
 Indentation is tabs, per ``CLAUDE.md`` and the Frappe convention this package follows.
 """
@@ -242,8 +274,10 @@ def note_privileged_read(
 	"""Note that an unrestricted scope was granted. **Marks memory; writes nothing.**
 
 	This function used to write the ``Chat Retrieval Audit`` row itself, and every serious
-	defect in v1.268.0 came from that. It is called from nine places inside the permission
-	stack, and a database write from here:
+	defect in v1.268.0 came from that. It is now called from **one** place — the
+	``allow_oversight`` branch of :func:`membership_filter_sql` — rather than the nine it had
+	when the eight content hooks each granted an unrestricted scope; the defect list below is
+	kept verbatim anyway, because it is the whole reason this function still only marks:
 
 	* **committed inside other people's transactions.** The row has to be durable before
 	  content is returned, so the writer commits — and from a hook firing part-way through an
@@ -452,9 +486,6 @@ def chat_room_query(user: str | None = None) -> str:
 	user = _resolve_user(user)
 	if not _is_scopable(user):
 		return "1 = 0"
-	if user == "Administrator" or _has_oversight(user):
-		note_privileged_read("Chat Room", None, user, "read")
-		return ""
 	return _active_member_sql("`tabChat Room`.`name`", user)
 
 
@@ -468,9 +499,6 @@ def chat_room_member_query(user: str | None = None) -> str:
 	user = _resolve_user(user)
 	if not _is_scopable(user):
 		return "1 = 0"
-	if user == "Administrator" or _has_oversight(user):
-		note_privileged_read("Chat Room Member", None, user, "read")
-		return ""
 	own = f"{_MEMBER_TABLE}.`user` = {frappe.db.escape(user)}"
 	roster = _active_member_sql(f"{_MEMBER_TABLE}.`room`", user)
 	return f"({own} or {roster})"
@@ -487,9 +515,6 @@ def chat_message_query(user: str | None = None) -> str:
 	user = _resolve_user(user)
 	if not _is_scopable(user):
 		return "1 = 0"
-	if user == "Administrator" or _has_oversight(user):
-		note_privileged_read("Chat Message", None, user, "read")
-		return ""
 	return _message_scope_sql(f"{_MESSAGE_TABLE}.`room`", f"{_MESSAGE_TABLE}.`seq`", user)
 
 
@@ -515,9 +540,6 @@ def chat_attachment_query(user: str | None = None) -> str:
 	user = _resolve_user(user)
 	if not _is_scopable(user):
 		return "1 = 0"
-	if user == "Administrator" or _has_oversight(user):
-		note_privileged_read("Chat Attachment", None, user, "read")
-		return ""
 	escaped = frappe.db.escape(user)
 	return (
 		f"exists (select 1 from {_MESSAGE_TABLE} `cmsg`"
@@ -570,11 +592,6 @@ def chat_room_has_permission(doc: Any, ptype: str | None = None, user: str | Non
 	if not _is_scopable(user):
 		return False
 
-	privileged = user == "Administrator" or _has_oversight(user)
-	if privileged and _is_read_ptype(ptype):
-		note_privileged_read("Chat Room", _docname(doc), user, ptype)
-		return True
-
 	room = _docname(doc)
 	if not room:
 		return False
@@ -588,9 +605,6 @@ def chat_room_member_has_permission(
 	user = _resolve_user(user)
 	if not _is_scopable(user):
 		return False
-	if (user == "Administrator" or _has_oversight(user)) and _is_read_ptype(ptype):
-		note_privileged_read("Chat Room Member", _docname(doc), user, ptype)
-		return True
 	if (_field(doc, "user") or "").strip() == user:
 		return True
 	room = (_field(doc, "room") or "").strip()
@@ -610,9 +624,6 @@ def chat_message_has_permission(
 	user = _resolve_user(user)
 	if not _is_scopable(user):
 		return False
-	if (user == "Administrator" or _has_oversight(user)) and _is_read_ptype(ptype):
-		note_privileged_read("Chat Message", _docname(doc), user, ptype)
-		return True
 	room = (_field(doc, "room") or "").strip()
 	if not room:
 		return False
@@ -626,9 +637,6 @@ def chat_attachment_has_permission(
 	user = _resolve_user(user)
 	if not _is_scopable(user):
 		return False
-	if (user == "Administrator" or _has_oversight(user)) and _is_read_ptype(ptype):
-		note_privileged_read("Chat Attachment", _docname(doc), user, ptype)
-		return True
 
 	message = (_field(doc, "message") or "").strip()
 	if not message:

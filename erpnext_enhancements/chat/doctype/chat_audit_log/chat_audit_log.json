@@ -35,7 +35,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Event Type",
-   "options": "oversight_role_granted\noversight_role_revoked\noversight_config_changed\ntombstone_expanded\nexport_requested\nexport_downloaded\nretention_run\nchain_verification_failed",
+   "options": "oversight_role_granted\noversight_role_revoked\noversight_config_changed\noversight_rooms_listed\ntombstone_expanded\nexport_requested\nexport_downloaded\nretention_run\nchain_verification_failed",
    "reqd": 1
   },
   {

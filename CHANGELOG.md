@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.301.0] - 2026-08-15
+
+**Eight permission hooks handed an unrestricted scope to the oversight role and to
+`Administrator`. The audited oversight path never used it; three unaudited things used all of
+it.** Phase 6 §4.D / G6-7, and a decision Nik took explicitly before this was written.
+
+### Fixed
+
+`chat_room_query`, `chat_room_member_query`, `chat_message_query`, `chat_attachment_query` and
+their four `has_permission` twins returned `""` / `True` to any holder of
+`Chat Settings.admin_oversight_role`, and to `Administrator`. **They now scope to active
+membership for every identity, without exception.**
+
+The branch was traced to every consumer before it was removed. The audited surface uses none
+of it — `retrieve_for_oversight` gates on `_has_oversight` itself and reads through raw SQL,
+touching neither `permission_query_conditions` nor `has_permission`. What it *did* reach:
+
+1. **`chat/api/rooms.get_room`.** It calls `require_room` → `chat_room_has_permission`
+   **directly**, so a non-member passed; the row was then read with `frappe.db.get_value`,
+   which bypasses permissions, and the endpoint returned `title`, `description`,
+   **`last_message_preview`** and the full roster. One `fetch` from the SPA, no reason
+   collected, no audit row. The code carried a comment acknowledging the pass-through without
+   noticing what it handed back.
+2. **The socket join.** `chat_room_has_permission` is the realtime boundary and is evaluated
+   once, at join. A privileged non-member joined `doc:Chat Room/<room>` and received a live
+   feed from Node — outside Python, where this app has no seam at all.
+3. **The desk list, report view, search-link and printview** — the framework paths, which have
+   nowhere to collect a reason from a human and so cannot satisfy G6-7 even in principle.
+
+Decision #12 is **not revoked, it is relocated.** The oversight read is
+`chat/governance/viewer.py`, which demands a reason graded by `access_report.reason_quality`,
+demands a category, and writes one hash-chained `Chat Retrieval Audit` row per read. There is
+now exactly one door.
+
+G6-7 is satisfied here the way it was already satisfied for `Chat Message` — **by the absent
+capability rather than by the audit.**
+
+### Added
+
+`chat.governance.viewer.rooms(subject, reason, reason_category)` — the replacement for the
+desk room list, and deliberately narrower. It takes a **subject** and refuses without one, so
+"show me everything" is not expressible. Metadata only: `name`, `title`, `room_type`,
+`modified` — never `description`, never `last_message_preview`, and never
+`dm_user_1`/`dm_user_2`, which would turn a room list into a map of who talks to whom
+privately. Writes an `oversight_rooms_listed` governance row per call.
+
+Rule F in `tests/test_chat_gate_source_scan.py`: no content hook may name `_has_oversight` or
+`"Administrator"`, and no content query hook may `return ""`. Verified failing when the branch
+is re-added. The two audit-table hooks are exempt by name and separately asserted to still
+admit the auditor — an auditor who cannot read the audit log is not an auditor.
+
+### Known residual, stated rather than hidden
+
+`frappe/permissions.py` on v16 (`:107`) returns True for `Administrator` before any controller
+hook runs, so a literal `Administrator` session keeps **single-document** reads through
+`/api/resource` and the desk form view. `db_query.build_match_conditions` has no such
+short-circuit, so list, report and search-link reads *are* scoped for that identity too. Both
+facts were verified against `origin/version-16`, not against the local checkout, which is on
+`develop` at 17.0.0-dev.
+
+The request-layer refusal that would close it was designed and **rejected**: three independent
+adversarial reviews each found the same fatal defect — a `try/except Exception` swallowing its
+own `frappe.throw`, with a guard test that *mandated* the broken shape, so CI would have gone
+green over a dead security layer. One also found that v16 dispatches `?cmd=` before it looks at
+`request.path`, defeating path-based matching outright. Tracked as its own task rather than
+shipped broken.
+
 ## [1.300.0] - 2026-08-15
 
 **The export bundle was six of the seven parts it specifies, and the three things missing were

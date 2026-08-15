@@ -121,6 +121,12 @@ NON_MUTATING: Final[dict[str, str]] = {
 		"POST despite being a read: it carries the REASON in its body, and a reason in a query "
 		"string lands in the access log, the browser history and the next Referer header"
 	),
+	f"{DOTTED_ROOT}.governance.viewer.rooms": (
+		"which rooms one NAMED person is in. Metadata only — no description, no preview, no "
+		"DM participants. Writes an oversight_rooms_listed governance row, which is a record "
+		"OF the read rather than an effect the caller wants. POST because the reason and the "
+		"subject's name both travel in the body"
+	),
 	f"{DOTTED_ROOT}.governance.viewer.access_log": (
 		"reads the unified access report. Reading the record of reads is not itself a read of "
 		"chat content, and recording it would put the auditor's own review into the log they "
@@ -279,6 +285,10 @@ RATE_LIMIT: Final[dict[str, str]] = {
 		"120/3600s. The only caller of the one function permitted to open the membership "
 		"hatch, and it returns bodies. Same reasoning as `tombstone.expand`, and left at the "
 		"shipped value for the same reason."
+	),
+	f"{DOTTED_ROOT}.governance.viewer.rooms": (
+		"240/3600s. Matches access_log rather than search: it returns no content, and an "
+		"auditor working through a roster legitimately calls it once per person."
 	),
 	f"{DOTTED_ROOT}.governance.viewer.access_log": (
 		"240/3600s. Reads the audit record rather than content, so a higher count than its "
@@ -461,6 +471,7 @@ PILOT_GATE_EXEMPT: Final[dict[str, str]] = {
 	),
 	f"{DOTTED_ROOT}.governance.viewer.search": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.viewer.access_log": _OVERSIGHT_GATE,
+	f"{DOTTED_ROOT}.governance.viewer.rooms": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.tombstone.expand": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.export_runner.request_export": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.export_runner.download_export": _OVERSIGHT_GATE,

@@ -184,6 +184,72 @@ def search(
 	}
 
 
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=240, seconds=3600, methods=["POST"])
+def rooms(subject: str = "", reason: str = "", reason_category: str = "") -> list[dict[str, Any]]:
+	"""The rooms one named person is an active member of. **Metadata only.**
+
+	The replacement for something taken away in v1.301.0, and deliberately narrower than what
+	it replaces. Until then an oversight-role holder could browse the ``Chat Room`` desk list —
+	every room in the company, with ``description`` and ``last_message_preview`` rendered right
+	there in the list view, collecting no reason and writing no audit row.
+
+	What an auditor actually needed that for is answerable without any of it: *which rooms is
+	this person in, so I know what to ask the transcript endpoint for.* So this takes a
+	**subject** and refuses without one. "Show me everything" is not expressible here — the same
+	shape as :data:`MAX_ROOMS_PER_READ` and the same reason: a read of everything is a fishing
+	expedition wearing a reason, and the audit row would record it as a single justified act.
+
+	**No content fields.** ``name``, ``title``, ``room_type``, ``modified`` — never
+	``description``, never ``last_message_preview``, and never ``dm_user_1``/``dm_user_2``,
+	which would turn a room list into a map of who talks to whom privately. A title *can* carry
+	something sensitive; a preview always does.
+
+	The room set comes from :func:`permissions.visible_room_names`, which is the same active-
+	membership rule the employee surface uses and which does not short-circuit for this role —
+	so this answers about the *subject's* membership, not about the auditor's reach.
+	"""
+	user = _require_auditor()
+	cleaned_reason, category = _require_reason(reason, reason_category)
+
+	name = (subject or "").strip()
+	if not name or name == "Guest":
+		raise OversightRefused(
+			frappe._(
+				"Name the person whose rooms you need. A list of every room is not "
+				"expressible here."
+			)
+		)
+
+	names = permissions.visible_room_names(name)
+	# An empty `in` matches nothing but still costs a query. The audit row below is written
+	# either way: "this person is in no rooms" is an answer somebody asked for.
+	rows = (
+		frappe.get_all(
+			"Chat Room",
+			filters={"name": ("in", names)},
+			fields=["name", "title", "room_type", "modified"],
+			order_by="modified desc",
+			ignore_permissions=True,
+		)
+		if names
+		else []
+	)
+
+	# One row per call, before returning. `record_governance_event` swallows its own failures
+	# and returns None, so this is best-effort by construction — and unlike a transcript read
+	# there is no content to withhold if it fails. Refusing to answer "which rooms" while the
+	# audited transcript endpoint still works would be a gate with nothing behind it.
+	audit.record_governance_event(
+		event_type="oversight_rooms_listed",
+		actor=user,
+		subject_user=name,
+		reason=cleaned_reason,
+		detail=json.dumps({"reason_category": category, "room_count": len(rows)}, sort_keys=True),
+		affected_count=len(rows),
+	)
+	return rows
+
 def _stamp_category(result: Any, category: str) -> None:
 	"""Put the category on the row the gate just wrote. Best effort, never fatal.
 

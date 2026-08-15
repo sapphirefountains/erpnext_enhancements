@@ -544,7 +544,22 @@ class TestTheOversightRole(ChatPermissionFixture):
 		self.assertNotEqual(permissions.chat_room_query(AUDITOR), "")
 		self.assertFalse(frappe.has_permission("Chat Room", doc=self.other_room, ptype="read"))
 
-	def test_the_oversight_role_sees_every_room_and_every_message(self) -> None:
+	def test_the_oversight_role_is_scoped_like_everybody_else_in_these_hooks(self) -> None:
+		"""**Inverted in v1.301.0.** This used to assert the opposite, and the assertion was
+		the specification, so read the reason rather than the diff.
+
+		These hooks used to hand an oversight-role holder an unrestricted scope. Tracing every
+		consumer showed the audited oversight path used none of it — `retrieve_for_oversight`
+		gates on `_has_oversight` itself and reads through raw SQL — while three unaudited
+		things used all of it: `rooms.get_room` (which returned `last_message_preview` and the
+		roster to a non-member, from the SPA, with no reason and no row), the socket join, and
+		the desk list/report views.
+
+		Decision #12 is not revoked; it moved to `chat/governance/viewer.py`, which demands a
+		reason and writes one hash-chained row. What this test now pins is that the *hooks*
+		grant nothing — G6-7 satisfied by the absent capability, the same way it was already
+		satisfied for `Chat Message`.
+		"""
 		self._set_oversight_role(OVERSIGHT_ROLE)
 		_ensure_role(OVERSIGHT_ROLE)
 		user = frappe.get_doc("User", AUDITOR)
@@ -552,13 +567,26 @@ class TestTheOversightRole(ChatPermissionFixture):
 		user.save(ignore_permissions=True)
 
 		frappe.set_user(AUDITOR)
-		self.assertEqual(permissions.chat_room_query(AUDITOR), "")
-		self.assertEqual(permissions.chat_message_query(AUDITOR), "")
-		self.assertIs(permissions.chat_room_has_permission(self.other_room, "read", AUDITOR), True)
+		self.assertNotEqual(permissions.chat_room_query(AUDITOR), "")
+		self.assertNotEqual(permissions.chat_message_query(AUDITOR), "")
+		self.assertIs(permissions.chat_room_has_permission(self.other_room, "read", AUDITOR), False)
 
 		names = [row.name for row in frappe.get_list("Chat Room", fields=["name"], limit_page_length=0)]
-		self.assertIn(self.room, names)
-		self.assertIn(self.other_room, names)
+		self.assertIn(self.room, names, "the auditor's OWN room must still be visible")
+		self.assertNotIn(self.other_room, names, "a room they are not in must not be")
+
+	def test_the_audited_door_still_opens_for_the_role(self) -> None:
+		"""The other half, and the reason the change above is a relocation rather than a
+		revocation: the one function permitted to open the hatch still does."""
+		self._set_oversight_role(OVERSIGHT_ROLE)
+		_ensure_role(OVERSIGHT_ROLE)
+		user = frappe.get_doc("User", AUDITOR)
+		user.append("roles", {"role": OVERSIGHT_ROLE})
+		user.save(ignore_permissions=True)
+
+		self.assertEqual(
+			permissions.membership_filter_sql("`r`.`name`", AUDITOR, allow_oversight=True), "1 = 1"
+		)
 
 	def test_the_same_user_without_the_role_is_scoped_like_anybody_else(self) -> None:
 		"""The load-bearing negative: configuring the role must not widen it to everyone."""

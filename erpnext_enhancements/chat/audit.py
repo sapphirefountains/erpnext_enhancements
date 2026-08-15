@@ -116,6 +116,7 @@ GOVERNANCE_EVENTS = frozenset(
 		"oversight_role_granted",
 		"oversight_role_revoked",
 		"oversight_config_changed",
+		"oversight_rooms_listed",
 		"tombstone_expanded",
 		"export_requested",
 		"export_downloaded",
