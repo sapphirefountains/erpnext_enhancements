@@ -106,7 +106,13 @@
 		startAttempt: "start_attempt",
 		finishAttempt: "finish_attempt",
 		getCourse: "get_course",
-		getTranscript: "get_my_transcript"
+		getTranscript: "get_my_transcript",
+		// Ask-the-author. training/qa.py has held this whole feature since v1.215.0 and had
+		// NO caller anywhere until v1.303.0 -- the backend was complete and the learner had
+		// no way to reach it. Both dial api.training re-exports rather than training.qa
+		// directly: PREFIX is single, and this map is the one place endpoint names appear.
+		askQuestion: "ask_lesson_question",
+		lessonQuestions: "lesson_questions"
 	};
 	var PREFIX = "/api/method/erpnext_enhancements.api.training.";
 

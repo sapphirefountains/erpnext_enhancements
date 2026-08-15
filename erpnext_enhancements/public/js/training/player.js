@@ -880,7 +880,173 @@
 			});
 			main.appendChild(column);
 
+			main.appendChild(renderQuestions(lesson));
+
 			renderBottomBar();
+		}
+
+		// ------------------------------------------------------------------ ask the author
+		//
+		// training/qa.py has held this entire feature -- the visibility gate, the author
+		// resolution, the notification -- since v1.215.0, and had NO caller anywhere in the
+		// repo until v1.303.0. The backend was complete and the learner had no way to reach
+		// it, so the feature shipped and then did nothing.
+
+		var qaState = { lessonKey: null, open: false, busy: false, data: null, error: null };
+
+		function renderQuestions(lesson) {
+			var key = lesson.lesson_key || "";
+			if (qaState.lessonKey !== key) {
+				// A different lesson answers a different question. Keeping the old payload
+				// would show one lesson's threads under another's heading, which reads as
+				// data loss rather than as a stale cache.
+				qaState = { lessonKey: key, open: false, busy: false, data: null, error: null };
+			}
+
+			var wrap = el("div", "tr-qa");
+			var slug = String(key || "lesson").replace(/[^A-Za-z0-9_-]/g, "-");
+			var regionId = "qa-region-" + slug;
+
+			var toggle = button(
+				t("Ask the author"),
+				"tr-button tr-button-quiet tr-qa-toggle",
+				function () {
+					qaState.open = !qaState.open;
+					// Fetch on first open, never on lesson render: otherwise this is an extra
+					// round trip per lesson on a portal that is opened on phones, on site.
+					if (qaState.open && !qaState.data && !qaState.busy) loadQuestions(key);
+					else render();
+				}
+			);
+			toggle.setAttribute("aria-expanded", qaState.open ? "true" : "false");
+			toggle.setAttribute("aria-controls", regionId);
+			wrap.appendChild(toggle);
+
+			var region = el("div", "tr-qa-body");
+			region.id = regionId;
+			if (!qaState.open) {
+				region.hidden = true;
+				wrap.appendChild(region);
+				return wrap;
+			}
+
+			if (qaState.busy) region.appendChild(el("p", "tr-muted", t("Loading…")));
+			if (qaState.error) fail(region, qaState.error);
+
+			var data = qaState.data || {};
+			if (data.enabled === false) {
+				region.appendChild(el("p", "tr-muted", t("Questions are not available here.")));
+				wrap.appendChild(region);
+				return wrap;
+			}
+
+			region.appendChild(renderAskBox(key));
+
+			var mine = data.mine || [];
+			if (mine.length) {
+				region.appendChild(el("h2", "tr-qa-heading", t("Your questions")));
+				mine.forEach(function (row) {
+					region.appendChild(renderThread(row, true));
+				});
+			}
+
+			var shared = data.public || [];
+			if (shared.length) {
+				region.appendChild(el("h2", "tr-qa-heading", t("Answers for everyone")));
+				shared.forEach(function (row) {
+					region.appendChild(renderThread(row, false));
+				});
+			}
+
+			if (!qaState.busy && !mine.length && !shared.length) {
+				region.appendChild(el("p", "tr-muted", t("No questions on this lesson yet.")));
+			}
+
+			wrap.appendChild(region);
+			return wrap;
+		}
+
+		function renderAskBox(key) {
+			var form = el("div", "tr-qa-ask");
+			var fieldId = "qa-ask-" + String(key || "lesson").replace(/[^A-Za-z0-9_-]/g, "-");
+			var label = el("label", "tr-qa-label", t("Ask a question about this lesson"));
+			label.setAttribute("for", fieldId);
+			var field = el("textarea", "tr-qa-input");
+			field.rows = 3;
+			field.id = fieldId;
+			form.appendChild(label);
+			form.appendChild(field);
+
+			form.appendChild(
+				button(t("Send to the author"), "tr-button tr-button-primary", function () {
+					var text = (field.value || "").trim();
+					if (!text) return;
+					qaState.busy = true;
+					qaState.error = null;
+					var args = {
+						course: state.course && state.course.name,
+						lesson_key: key,
+						question: text,
+					};
+					// The video position is what turns "I don't understand this" into
+					// something an author can act on. Omitted rather than sent as 0 when the
+					// lesson has no video: 0 is a real timestamp and would point every text
+					// question at the first frame.
+					var at = currentVideoSecond();
+					if (at != null) args.at_seconds = at;
+					render();
+					call("askQuestion", args)
+						.then(function () {
+							return loadQuestions(key);
+						})
+						.catch(function (err) {
+							qaState.busy = false;
+							qaState.error = err;
+							render();
+						});
+				})
+			);
+			return form;
+		}
+
+		function renderThread(row, isMine) {
+			var item = el("div", "tr-qa-thread");
+			if (isMine) item.appendChild(el("p", "tr-qa-question", row.question || ""));
+			if (row.answer) {
+				item.appendChild(el("p", "tr-qa-answer", row.answer));
+			} else if (isMine) {
+				// The whole reason `mine` is a separate list: an unanswered question still
+				// sitting there is the only way a learner knows that asking did anything.
+				item.appendChild(el("p", "tr-muted", t("Waiting for an answer.")));
+			}
+			return item;
+		}
+
+		function currentVideoSecond() {
+			var media = rootEl.querySelector("video");
+			if (!media || typeof media.currentTime !== "number") return null;
+			var at = Math.floor(media.currentTime);
+			return at > 0 ? at : null;
+		}
+
+		function loadQuestions(key) {
+			qaState.busy = true;
+			render();
+			return call("lessonQuestions", {
+				course: state.course && state.course.name,
+				lesson_key: key,
+			})
+				.then(function (data) {
+					qaState.busy = false;
+					qaState.data = data || {};
+					qaState.error = null;
+					render();
+				})
+				.catch(function (err) {
+					qaState.busy = false;
+					qaState.error = err;
+					render();
+				});
 		}
 
 		function renderBottomBar() {

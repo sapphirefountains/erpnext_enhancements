@@ -2467,3 +2467,76 @@
 @media (min-width: 1200px) {
 	.tr-shell { max-width: 1280px; }
 }
+
+/* ---------------------------------------------------------------- ask the author
+ *
+ * The learner side of `training/qa.py`, which had no caller at all until v1.303.0.
+ * Collapsed by default: a lesson is a place to watch a video, and a permanently open
+ * form under every one of them competes with the thing the learner came for.
+ */
+.tr-qa {
+	margin-top: 1.5rem;
+	border-top: 1px solid var(--tr-border, #d8dde2);
+	padding-top: 1rem;
+}
+
+.tr-qa-toggle {
+	font-weight: 600;
+}
+
+.tr-qa-body {
+	margin-top: 0.75rem;
+}
+
+.tr-qa-ask {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	margin-bottom: 1.25rem;
+}
+
+.tr-qa-label {
+	font-size: 0.9rem;
+	color: var(--tr-muted, #6c7680);
+}
+
+.tr-qa-input {
+	width: 100%;
+	box-sizing: border-box;
+	font: inherit;
+	padding: 0.5rem;
+	border: 1px solid var(--tr-border, #d8dde2);
+	border-radius: 6px;
+	background: var(--tr-surface, #fff);
+	color: inherit;
+	/* Vertical only: a textarea a learner can drag wider escapes the column on a
+	   phone, and there is nothing useful to the right of it. */
+	resize: vertical;
+}
+
+.tr-qa-heading {
+	font-size: 0.95rem;
+	margin: 1rem 0 0.5rem;
+}
+
+.tr-qa-thread {
+	border-left: 3px solid var(--tr-border, #d8dde2);
+	padding: 0.25rem 0 0.25rem 0.75rem;
+	margin-bottom: 0.75rem;
+}
+
+.tr-qa-question {
+	margin: 0 0 0.35rem;
+	font-weight: 600;
+	/* Learner-typed text. `white-space: pre-wrap` so the line breaks they typed
+	   survive, and `overflow-wrap` so one long unbroken string cannot widen the
+	   column on a phone. */
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.tr-qa-answer {
+	margin: 0;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
