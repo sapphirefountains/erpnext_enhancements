@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.293.1] - 2026-08-15
+
+**38 chat endpoints have no rate limit, and adding one to each would make things worse.**
+Phase 6 §4.G.4 / G6-5, which asks that every endpoint be *"rate limited **or** explicitly
+exempt with a reason"*. This ships the classification — all 45 endpoints, 5 limited, 40 exempt,
+set-equal to the discovered surface — and the reasons are the finding.
+
+### Why the obvious change was refused
+
+**`frappe.rate_limiter.rate_limit` has no per-user mode.** `frappe.session.user` appears
+nowhere in the file; the identity is `frappe.local.request_ip` and/or a client-supplied
+`form_dict` value (`rate_limiter.py:147-156`). And `request_ip` is the **first comma element of
+`X-Forwarded-For`, taken unconditionally, with no trusted-hop count** (`auth.py:64-66`) — a
+string the caller writes.
+
+On this host it is already collapsed, measured rather than supposed: **0/79** of May's logins
+came from GCP load-balancer ranges, **0/252** of June's, then **79/94 in July** and **41/84 in
+August**, each a different `35.191.x`. Since ~2026-07-18 the recorded client address has been
+the load balancer's own, from a rotating fleet — so a per-IP bucket is neither stable for one
+caller nor separate between callers.
+
+**The repo had already reached this conclusion and written the rule**, in
+`docs/website-capture/README.md:180-185`: *"do not read the 120/hour as a per-client control,
+and **do not add one that depends on the IP**."* Forty new decorators would have been forty
+violations of a standing rule written eight days earlier, after investigating exactly this.
+
+**And no chat client handles a 429 anywhere.** Grepping `429|Retry-After|backoff|RateLimit`
+across `public/js/chat`, `www/chat-sw.js` and `chat_surface.js` returns nothing; the pattern
+exists one module over at `fountain_move.js:1102-1108`. Four refusal paths are silent and three
+of those lossy:
+
+- `presence.heartbeat` swallows it, so the tab ages out of presence at the 55s TTL and the
+  visible symptom is **notification spam**, not an error;
+- `readstate.mark_read` advances its `emitted` cursor **before** the POST, so a refused mark is
+  lost until strictly newer traffic arrives;
+- `notifications.api.push_config` memoises the failed *promise* — one refusal disables push for
+  that tab for the rest of its session;
+- `rooms.get_room` throws before the `focus()` call that suppresses repeat keyboard navigation,
+  so **the refusal removes the thing that was preventing the burst that tripped it**, and
+  leaves the tab joined to no socket room without knowing.
+
+### Added
+
+- **`RATE_LIMIT` and `RATE_LIMIT_EXEMPT` in `chat/endpoints.py`**, set-equal to the discovered
+  surface so a new endpoint fails the build until somebody classifies it — the mechanism
+  `MUTATING`/`NON_MUTATING` already use. Four distinct exemption arguments, named once each
+  rather than repeated forty times, because there are only four and repeating them would hide
+  how few.
+
+- **`RATE_LIMIT_PREREQUISITES`** — what would change the answer, in the order it has to happen:
+  the clients handle a 429; the identity stops being caller-controlled (TASK-2026-01478, or a
+  counter of our own keyed on `frappe.session.user`, roughly thirty lines reusing the
+  fixed-window arithmetic already in `chat/sync/ratelimit.py`); and the numbers get sized from
+  server cost rather than client cadence. The exemptions are a position, not a permanent state.
+
+- **Eight assertions in `test_chat_endpoint_surface.py`**, including both honesty directions: a
+  `RATE_LIMIT` entry whose function carries no decorator fails, and so does a decorated
+  function recorded as exempt. Plus `test_no_spa_endpoint_carries_a_limit`, which is what keeps
+  the short list short. Four mutations run against them — a dropped exemption, a one-word
+  reason, an SPA endpoint moved into `RATE_LIMIT` — each caught.
+
+### Changed
+
+- **The five existing limits are unchanged, and that was a decision.** A design pass proposed
+  converting them to short windows at higher counts — `tombstone.expand` 60/3600s → 600/60s, a
+  **600x** loosening — on the argument that a tripped hour locks the whole office out. Refused:
+  the office-shares-a-bucket argument does not apply to somebody outside the office, and for
+  them it is pure loosening of the endpoint that returns deleted message bodies with **no
+  membership filter**. They now carry that reasoning in `RATE_LIMIT` rather than implicitly.
+
+### Not done here
+
+- **Any new limit.** Named as a prerequisite chain rather than deferred silently.
+- **`methods=["POST"]` was specifically not copied** onto `attachments.download` or
+  `download_export`. Both are navigation GETs, and `rate_limit`'s wrapper returns early when
+  the request method is not in the list — so the decorator would have been inert while passing
+  a presence check.
+
 ## [1.293.0] - 2026-08-15
 
 **The retention purge cannot be written yet, and finding out why is the deliverable.** Phase 6

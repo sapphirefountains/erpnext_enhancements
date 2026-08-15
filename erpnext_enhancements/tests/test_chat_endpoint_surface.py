@@ -61,7 +61,7 @@ class ChatEndpointSurfaceTest(unittest.TestCase):
 		self.assertFalse(
 			unclassified,
 			"these @frappe.whitelist() functions are not in chat/endpoints.py.\n"
-			"Add each to MUTATING (and give it methods=[\"POST\"]) or to NON_MUTATING, with a\n"
+			'Add each to MUTATING (and give it methods=["POST"]) or to NON_MUTATING, with a\n'
 			"reason. Deciding which is the point of the exercise:\n  " + "\n  ".join(unclassified),
 		)
 
@@ -95,7 +95,9 @@ class ChatEndpointSurfaceTest(unittest.TestCase):
 			if endpoint is None:
 				continue  # covered by test_every_endpoint_is_classified
 			if tuple(m.upper() for m in endpoint.methods) != ("POST",):
-				offenders.append(f"{dotted} ({endpoint.relpath}:{endpoint.lineno}) declares {endpoint.methods or 'no methods='}")
+				offenders.append(
+					f"{dotted} ({endpoint.relpath}:{endpoint.lineno}) declares {endpoint.methods or 'no methods='}"
+				)
 
 		self.assertFalse(
 			offenders,
@@ -240,6 +242,108 @@ class ChatEndpointSurfaceTest(unittest.TestCase):
 					tuple(m.upper() for m in endpoint.methods),
 					("POST",),
 					f"{dotted} answers unauthenticated requests and must be POST-only",
+				)
+
+
+class ChatRateLimitSurfaceTest(unittest.TestCase):
+	"""G6-5 / §4.G.4 — *every endpoint is rate limited **or** explicitly exempt with a reason*.
+
+	The "or" is not a loophole here, it is the answer. ``chat/endpoints.py``'s rate-limit block
+	states why at length: ``frappe.rate_limiter`` has no per-user mode, keys on
+	``frappe.local.request_ip``, and that value is the first ``X-Forwarded-For`` element taken
+	unconditionally — a string the caller writes. On this host it has additionally been the load
+	balancer's own address for most traffic since ~2026-07-18, measured rather than supposed. The
+	repo's own standing rule, written before this change, is *"do not add one that depends on the
+	IP"*.
+
+	So these assert that the **classification** is complete and honest, which is what G6-5 asks
+	for, rather than asserting that decorators exist.
+	"""
+
+	def setUp(self) -> None:
+		self.discovered = endpoints.discover()
+		self.decided = endpoints.rate_limit_classified()
+
+	def _decorators(self, dotted: str) -> set[str]:
+		import ast
+
+		endpoint = self.discovered[dotted]
+		source = (endpoints.CHAT_PACKAGE / endpoint.relpath).resolve()
+		tree = ast.parse(source.read_text(encoding="utf-8"))
+		function = dotted.rsplit(".", 1)[1]
+		names: set[str] = set()
+		for node in ast.walk(tree):
+			if isinstance(node, ast.FunctionDef) and node.name == function:
+				for dec in node.decorator_list:
+					target = dec.func if isinstance(dec, ast.Call) else dec
+					names.add(getattr(target, "id", "") or getattr(target, "attr", ""))
+		return names
+
+	def test_the_decorator_scan_actually_finds_decorators(self) -> None:
+		"""An empty scan passes both honesty checks below it."""
+		any_dotted = next(iter(sorted(endpoints.RATE_LIMIT)))
+		self.assertTrue(self._decorators(any_dotted))
+
+	def test_every_endpoint_has_a_rate_limit_decision(self) -> None:
+		missing = sorted(set(self.discovered) - set(self.decided))
+		self.assertFalse(
+			missing,
+			f"these chat endpoints have no rate-limit decision: {missing}. "
+			"Add each to endpoints.RATE_LIMIT or endpoints.RATE_LIMIT_EXEMPT, with the reason. "
+			"Set equality rather than containment, so a new endpoint fails the build by default — "
+			"a checklist item nobody was asked about is one that gets answered silently.",
+		)
+
+	def test_no_decision_names_an_endpoint_that_no_longer_exists(self) -> None:
+		stale = sorted(set(self.decided) - set(self.discovered))
+		self.assertFalse(stale, f"rate-limit decisions for endpoints that are gone: {stale}")
+
+	def test_no_endpoint_is_both_limited_and_exempt(self) -> None:
+		both = sorted(set(endpoints.RATE_LIMIT) & set(endpoints.RATE_LIMIT_EXEMPT))
+		self.assertFalse(both, f"{both} are recorded as both limited and exempt")
+
+	def test_every_decision_carries_a_reason(self) -> None:
+		for dotted, reason in self.decided.items():
+			with self.subTest(endpoint=dotted):
+				self.assertGreater(
+					len(reason.strip()),
+					60,
+					f"{dotted}'s rate-limit reason is too short to be one. G6-5 asks for a reason "
+					"because the exemption that gets forgotten is the one written as 'not needed'.",
+				)
+
+	def test_the_limited_endpoints_actually_carry_a_decorator(self) -> None:
+		"""A dict claiming a limit the source does not apply is worse than no dict: it reports
+		the surface as covered."""
+		for dotted in sorted(endpoints.RATE_LIMIT):
+			with self.subTest(endpoint=dotted):
+				self.assertIn("rate_limit", self._decorators(dotted))
+
+	def test_the_exempt_endpoints_carry_no_decorator(self) -> None:
+		"""The other direction: a decorator nobody recorded is a limit nobody reasoned about,
+		and on this host that means one firing on the wrong person."""
+		for dotted in sorted(endpoints.RATE_LIMIT_EXEMPT):
+			with self.subTest(endpoint=dotted):
+				self.assertNotIn("rate_limit", self._decorators(dotted))
+
+	def test_the_prerequisites_are_recorded(self) -> None:
+		"""The exemptions are a position, not a permanent state. What would change the answer is
+		written down, so the next person does not re-derive it from the framework."""
+		self.assertGreaterEqual(len(endpoints.RATE_LIMIT_PREREQUISITES), 3)
+		for step in endpoints.RATE_LIMIT_PREREQUISITES:
+			self.assertGreater(len(step), 80)
+
+	def test_no_spa_endpoint_carries_a_limit(self) -> None:
+		"""What keeps the short list short. A limit on an SPA endpoint fires on whoever shares
+		the load balancer address, on a client that cannot see the refusal."""
+		spa = (f"{endpoints.DOTTED_ROOT}.api.", f"{endpoints.DOTTED_ROOT}.notifications.api.")
+		for dotted in endpoints.RATE_LIMIT:
+			with self.subTest(endpoint=dotted):
+				self.assertFalse(
+					dotted.startswith(spa),
+					f"{dotted} is an SPA endpoint carrying a rate limit. Read the rate-limit block "
+					"in chat/endpoints.py first: no chat client handles a 429, and four of the "
+					"refusal paths are silent.",
 				)
 
 

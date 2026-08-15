@@ -200,6 +200,237 @@ ADMIN_ONLY: Final[dict[str, str]] = {
 }
 
 
+# --- §4.G.4 / G6-5: rate limiting -------------------------------------------------
+#
+# **The mechanism this app has does not do what a rate limit is for, and that is a measured
+# fact about this host rather than a theory.** Read this before adding a decorator.
+#
+# `frappe.rate_limiter.rate_limit` keys on `frappe.local.request_ip` (`rate_limiter.py:147`,
+# `:156`, `:161`). `frappe.session.user` appears nowhere in that file: there is **no per-user
+# mode**. And `request_ip` is taken from the **first comma element of `X-Forwarded-For`,
+# unconditionally, with no trusted-hop count** (`frappe/auth.py:64-66`), falling back to
+# `REMOTE_ADDR` only when that header is absent. The identity is a string the caller writes.
+#
+# On this host it is worse than forgeable — it is already collapsed. `CHANGELOG.md` records
+# the measurement: **0/79** of May's logins came from GCP load-balancer ranges, **0/252** of
+# June's, then **79/94 in July** and **41/84 in August**, each a different `35.191.x`. Since
+# roughly 2026-07-18 the recorded client address has been the load balancer's own, from a
+# rotating fleet. So a per-IP bucket is neither stable for one caller nor separate between
+# callers, and TASK-2026-01478 is the open investigation into why.
+#
+# The repo already reached this conclusion once and wrote the rule down, in
+# `docs/website-capture/README.md:180-185`:
+#
+#     do not read the 120/hour as a per-client control, and **do not add one that depends on
+#     the IP**.
+#
+# That is why `RATE_LIMIT_EXEMPT` is long and `RATE_LIMIT` is short. Adding forty decorators
+# would satisfy a checklist by installing forty controls that fire on the wrong person at an
+# unpredictable moment — and this surface makes that specifically dangerous, because **no chat
+# client handles a 429 anywhere**: grepping `429|Retry-After|backoff|RateLimit` across
+# `public/js/chat`, `www/chat-sw.js` and `chat_surface.js` returns nothing, while the pattern
+# exists one module over at `public/js/fountain_move/fountain_move.js:1102-1108`.
+#
+# Four of the refusal paths are silent, and three of those are lossy:
+#
+#   * `presence.heartbeat` swallows the error, so the tab ages out of presence at the 55s TTL
+#     and the visible symptom is **notification spam**, not an error;
+#   * `readstate.mark_read` advances its `emitted` cursor **before** the POST, so a refused
+#     read-mark is lost until strictly newer traffic arrives;
+#   * `notifications.api.push_config` memoises the failed *promise*, so one refusal disables
+#     push for that tab for the rest of its session;
+#   * `rooms.get_room` throws before the `focus()` call that suppresses repeat navigation, so
+#     the refusal **removes the thing that was preventing the burst that tripped it**, and
+#     leaves the tab joined to no socket room without knowing.
+#
+# So G6-5 is satisfied here exactly as it is written — *"rate limited **or** explicitly exempt
+# with a reason"* — and the reasons are load-bearing rather than a shrug. What would change
+# the answer is named in :data:`RATE_LIMIT_PREREQUISITES`, in the order it has to happen.
+
+#: Endpoints carrying a real limit today. Checked against the source: an entry here whose
+#: function has no ``@rate_limit`` decorator, or a decorated function missing from here,
+#: fails ``test_chat_endpoint_surface.py``.
+#:
+#: **Every one is an oversight or machine endpoint**, which is the whole reason they are the
+#: exceptions. A bucket shared between a handful of auditors is *more* conservative than a
+#: per-person one, not less: the failure mode of a collapsed identity there is "the second
+#: auditor waits", where on the SPA surface it is "everybody's chat breaks".
+RATE_LIMIT: Final[dict[str, str]] = {
+	f"{DOTTED_ROOT}.gchat.webhook.handle": (
+		"600/60s. `allow_guest=True`, so this is the one endpoint with no session behind it "
+		"and the JWT is the only gate. Google is the caller and does not share this office's "
+		"egress, so the per-IP bucket is closer to meaningful here than anywhere else."
+	),
+	f"{DOTTED_ROOT}.governance.export_runner.request_export": (
+		"20/3600s. An export is a human decision that takes minutes to satisfy and produces a "
+		"bundle that leaves the building. Deliberately NOT converted to a short window: the "
+		"long lockout is the intended behaviour for the one endpoint that manufactures "
+		"downloadable transcripts."
+	),
+	f"{DOTTED_ROOT}.governance.tombstone.expand": (
+		"60/3600s. Reads a deleted body with **no membership filter**, gated on the oversight "
+		"role and a graded reason. The count is auditor ergonomics; the chained audit row is "
+		"the control. Left at the shipped value: widening it to 600/60s was considered and "
+		"refused, because the office-shares-a-bucket argument does not apply to somebody "
+		"outside the office, and for them it is a 600x loosening of the endpoint that returns "
+		"deleted message bodies."
+	),
+	f"{DOTTED_ROOT}.governance.viewer.search": (
+		"120/3600s. The only caller of the one function permitted to open the membership "
+		"hatch, and it returns bodies. Same reasoning as `tombstone.expand`, and left at the "
+		"shipped value for the same reason."
+	),
+	f"{DOTTED_ROOT}.governance.viewer.access_log": (
+		"240/3600s. Reads the audit record rather than content, so a higher count than its "
+		"siblings; still an oversight surface with a handful of legitimate callers."
+	),
+}
+
+#: The four arguments for an exemption. Named rather than repeated per endpoint, because
+#: there are only four and repeating them would hide how few.
+_CLIENT_PACED: Final[str] = (
+	"Client-paced. The SPA calls this on a timer, on a keystroke, or once per inbound realtime "
+	"message, so any honest ceiling is a whole-office aggregate — and a collapsed per-IP "
+	"identity makes that ceiling fire on whoever happens to share the load balancer address, "
+	"not on the runaway tab. No client handles the refusal."
+)
+_INTERACTIVE_READ: Final[str] = (
+	"An interactive read the SPA issues in direct response to a person acting — opening a "
+	"room, scrolling back, resyncing after a reconnect. Its rate is bounded by what a human "
+	"does, and a refusal is invisible to the client, so a limit costs availability and buys a "
+	"bound the identity cannot enforce anyway."
+)
+_HUMAN_WRITE: Final[str] = (
+	"A deliberate human write. A person cannot reach a useful ceiling by hand, and the limit "
+	"that would stop a script is exactly the case a caller-controlled identity cannot see — "
+	"one rotated header and the bucket is fresh."
+)
+_ADMIN_GATED: Final[str] = (
+	"Gated on a role rather than a rate: the `only_for` check refuses the call before any work "
+	"happens. A rate limit on an endpoint that already refuses everybody without the role "
+	"bounds how fast a System Manager can operate their own plumbing."
+)
+
+#: Endpoints with no limit, each with the reason. **Set equality against the discovered
+#: surface is asserted**, so a new endpoint fails the build until somebody classifies it —
+#: the same mechanism, and the same reason, as ``MUTATING``/``NON_MUTATING`` above.
+RATE_LIMIT_EXEMPT: Final[dict[str, str]] = {
+	# --- client-paced: timers, keystrokes, and one call per inbound message ---------
+	f"{DOTTED_ROOT}.api.presence.heartbeat": (
+		_CLIENT_PACED + " Worst on the surface: the Desk bubble starts its interval from the "
+		"constructor, so this runs for people who never open chat, and blur/focus/"
+		"visibilitychange each fire an unthrottled extra beat."
+	),
+	f"{DOTTED_ROOT}.api.presence.set_typing": _CLIENT_PACED,
+	f"{DOTTED_ROOT}.api.presence.goodbye": _CLIENT_PACED,
+	f"{DOTTED_ROOT}.api.readstate.mark_read": (
+		_CLIENT_PACED + " And lossy on refusal: the batcher advances its `emitted` cursor "
+		"before the POST, so a refused mark is lost until strictly newer traffic arrives."
+	),
+	f"{DOTTED_ROOT}.api.readstate.get_read_marks": _CLIENT_PACED,
+	f"{DOTTED_ROOT}.api.readstate.get_unread_state": _CLIENT_PACED,
+	f"{DOTTED_ROOT}.api.history.get_messages": (
+		_CLIENT_PACED + " Its rate is driven by **other people**: one call per inbound "
+		"realtime message per open tab, so it scales with senders times viewers rather than "
+		"with headcount."
+	),
+	f"{DOTTED_ROOT}.api.rooms.get_rooms": _CLIENT_PACED,
+	f"{DOTTED_ROOT}.api.rooms.get_bootstrap": _CLIENT_PACED,
+	f"{DOTTED_ROOT}.notifications.api.push_config": (
+		_CLIENT_PACED + " And permanently lossy: the client memoises the failed promise, so "
+		"one refusal disables push for that tab for the rest of its session, silently."
+	),
+	# --- interactive reads ----------------------------------------------------------
+	f"{DOTTED_ROOT}.api.rooms.get_room": (
+		_INTERACTIVE_READ + " **The worst refusal on the surface**: it throws before the "
+		"`focus()` call that suppresses repeat keyboard navigation, so the 429 removes the "
+		"thing preventing the burst that caused it, and leaves the tab joined to no socket "
+		"room with no indication."
+	),
+	f"{DOTTED_ROOT}.api.rooms.get_members": _INTERACTIVE_READ,
+	f"{DOTTED_ROOT}.api.presence.get_presence": _INTERACTIVE_READ,
+	f"{DOTTED_ROOT}.api.history.get_thread": _INTERACTIVE_READ,
+	f"{DOTTED_ROOT}.api.history.get_message_context": _INTERACTIVE_READ,
+	f"{DOTTED_ROOT}.api.conversations.search_people": _INTERACTIVE_READ,
+	f"{DOTTED_ROOT}.api.mentions.search_mention_targets": _INTERACTIVE_READ,
+	f"{DOTTED_ROOT}.api.search.search_messages": (
+		_INTERACTIVE_READ + " It is the most expensive read on the surface and would be the "
+		"best candidate for a limit if the identity were sound — recorded here as the first "
+		"endpoint to revisit once it is."
+	),
+	f"{DOTTED_ROOT}.notifications.api.explain": _INTERACTIVE_READ,
+	f"{DOTTED_ROOT}.sync.attachments.download": (
+		_INTERACTIVE_READ + " Note it has **no caller today**: every surface renders "
+		"attachments from `file_url` straight at `/private/files/`, so a limit here would "
+		"bound traffic that does not exist."
+	),
+	f"{DOTTED_ROOT}.governance.export_runner.download_export": (
+		'A navigation GET, so `methods=["POST"]` — the shape copied from its four governance '
+		"siblings — would make the decorator inert while passing a presence check. Its own "
+		"audit row is written before the bytes are attached, and that record is the control."
+	),
+	f"{DOTTED_ROOT}.governance.viewer.my_access_log": (
+		"A person reading who looked at their own messages. Rate-limiting the transparency "
+		"view is the one place on this surface where a refusal has a governance cost as well "
+		"as an availability one."
+	),
+	f"{DOTTED_ROOT}.retrieval.api.get_chat_context": (
+		"Called by Triton for one turn of one conversation, and already bounded upstream by "
+		"the assistant's own turn rate and by the retrieval gate's token ceiling."
+	),
+	f"{DOTTED_ROOT}.api.compose.prepare_upload": _INTERACTIVE_READ,
+	f"{DOTTED_ROOT}.invoke.triton_link.bot_credential_status": _ADMIN_GATED,
+	# --- human writes ---------------------------------------------------------------
+	f"{DOTTED_ROOT}.api.compose.send_message": (
+		_HUMAN_WRITE + " And a refusal is the one this surface can least afford: the offline "
+		"queue drain sits inside the same `try` as the resync reads, so a refusal upstream of "
+		"it skips the drain entirely and shows a reconnecting banner over a healthy socket."
+	),
+	f"{DOTTED_ROOT}.api.compose.edit_message": _HUMAN_WRITE,
+	f"{DOTTED_ROOT}.api.compose.delete_message": _HUMAN_WRITE,
+	f"{DOTTED_ROOT}.api.conversations.create_group": _HUMAN_WRITE,
+	f"{DOTTED_ROOT}.api.conversations.create_direct_message": _HUMAN_WRITE,
+	f"{DOTTED_ROOT}.api.readstate.mark_all_read": _HUMAN_WRITE,
+	f"{DOTTED_ROOT}.api.rooms.set_last_open_room": _HUMAN_WRITE,
+	f"{DOTTED_ROOT}.notifications.api.subscribe": _HUMAN_WRITE,
+	f"{DOTTED_ROOT}.notifications.api.unsubscribe": _HUMAN_WRITE,
+	f"{DOTTED_ROOT}.notifications.api.read_from_notification": _HUMAN_WRITE,
+	# --- role-gated plumbing ---------------------------------------------------------
+	f"{DOTTED_ROOT}.invoke.triton_link.link_bot_credentials": _ADMIN_GATED,
+	f"{DOTTED_ROOT}.sync.outbound.retry_relay_job": _ADMIN_GATED,
+	f"{DOTTED_ROOT}.sync.provisioning.create_document_room": _ADMIN_GATED,
+	f"{DOTTED_ROOT}.sync.provisioning.enroll_org_units": _ADMIN_GATED,
+	f"{DOTTED_ROOT}.sync.provisioning.start_org_mirror": _ADMIN_GATED,
+}
+
+#: What has to be true before the exemptions above stop being the right answer, in the order
+#: it has to happen. Each is smaller than the forty decorators it unblocks.
+RATE_LIMIT_PREREQUISITES: Final[tuple[str, ...]] = (
+	"1. The clients handle a 429. Today none of them does, and four refusal paths are silent "
+	"— three of those lossy. The branch already exists at "
+	"`public/js/fountain_move/fountain_move.js:1102-1108` and is smaller than any limit it "
+	"would make safe. Until this lands, every limit added here degrades invisibly.",
+	"2. The identity stops being caller-controlled. Either the edge is configured to overwrite "
+	"rather than append `X-Forwarded-For` and the trusted-hop count is established "
+	"(TASK-2026-01478), or the limiter stops keying on the IP at all. Frappe offers no "
+	"per-user mode, so the second option means a counter of our own over `frappe.cache` keyed "
+	"on `frappe.session.user` — server-derived and unforgeable, and roughly thirty lines "
+	"reusing the fixed-window arithmetic already in `chat/sync/ratelimit.py`.",
+	"3. The numbers are sized from server cost, not client cadence. `presence.heartbeat` does "
+	"O(room members) Redis reads per beat, so a ceiling picked from how often browsers call it "
+	"can sit far above the point at which the server is already down — which is not a ceiling.",
+)
+
+
+def rate_limit_classified() -> dict[str, str]:
+	"""Every endpoint's rate-limit decision, limited and exempt together.
+
+	The union is what ``test_chat_endpoint_surface.py`` compares against the filesystem, so an
+	endpoint that appears in neither dict — or in both — fails the build.
+	"""
+	return {**RATE_LIMIT, **RATE_LIMIT_EXEMPT}
+
+
 def gated_by_only_for(package: pathlib.Path | None = None) -> set[str]:
 	"""Dotted names of whitelisted functions that call ``frappe.only_for`` in their own body.
 
