@@ -1495,9 +1495,7 @@ def upload_outbound_attachments(
 			"the Chat app, which cannot carry files; the text was mirrored and the files were "
 			"not."
 		)
-		return OutboundUploadResult(
-			failed=tuple((item, reason) for item in resolved.upload)
-		)
+		return OutboundUploadResult(failed=tuple((item, reason) for item in resolved.upload))
 
 	if identity is not AuthIdentity.USER:
 		# Still positive, still raising, and for the reason it always was: an identity that is
@@ -1699,6 +1697,23 @@ def download(attachment: str) -> None:
 	would answer "does room R contain an attachment called X" for somebody not in room R.
 	"""
 	from erpnext_enhancements.chat import permissions
+	from erpnext_enhancements.chat.api._common import require_session
+
+	# The pilot gate and the master switch, **before** the membership decision. Added in
+	# v1.294.0 because this was the one content endpoint enforcing membership and not them,
+	# and §4.J's requirement is worded about exactly this shape: *"a non-pilot user holding a
+	# deep link must be refused by the server"*. An attachment URL is a deep link.
+	#
+	# Two consequences it had, and the second is the one that matters. A member dropped from
+	# the pilot whitelist kept fetching bytes from rooms they were still in — recoverable, and
+	# arguably minor. But `Chat Settings.enabled` is the top layer of the rollback table, and
+	# with it off this path kept serving attachment bytes: a rollback layer with less blast
+	# radius than the table would have claimed for it, which is the kind of gap you discover
+	# during the incident you are rolling back from.
+	#
+	# `ChatAccessError` subclasses `frappe.PermissionError`, so this refuses with the same 403
+	# as everything else here and the uniform-refusal property below is preserved.
+	require_session()
 
 	name = str(attachment or "").strip()
 	user = frappe.session.user

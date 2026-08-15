@@ -422,6 +422,115 @@ RATE_LIMIT_PREREQUISITES: Final[tuple[str, ...]] = (
 )
 
 
+# --- §4.J: the pilot gate ---------------------------------------------------------
+#
+# *"Pilot gating is enforced server-side on every chat endpoint. Hiding a button is not a
+# rollout control — a non-pilot user holding a deep link must be refused by the server."*
+#
+# The gate is `api/_common.require_session`, which refuses Guest, refuses when
+# `Chat Settings.enabled` is off, and refuses anyone `is_user_allowed` says is outside the
+# pilot. `require_room` and `require_message` call it, so most endpoints inherit it.
+#
+# **This dict exists because a transitive-reach scan found fourteen endpoints that did not.**
+# Thirteen were correct — Google's webhook, the role-gated plumbing, the oversight surface —
+# and one was not: `sync.attachments.download` enforced membership but neither the pilot
+# whitelist nor the master switch. Fixed in v1.294.0. The scan is now a test, so the next
+# endpoint that misses the gate fails the build instead of being found by a later audit.
+
+#: The two arguments an exemption can rest on, named once each.
+_OVERSIGHT_GATE: Final[str] = (
+	"Gated on the oversight role and a graded reason rather than the pilot. An auditor is not "
+	"necessarily a pilot member, and the governance obligation deliberately outlives the "
+	"rollout flag: the moment somebody most needs to review what was said is often after the "
+	"feature has been switched off."
+)
+_PLUMBING_GATE: Final[str] = (
+	"Gated on `only_for('System Manager')` rather than the pilot. These are operator actions "
+	"on the plumbing, not chat use — an administrator repairing the relay is not making a "
+	"claim to be in the pilot, and requiring it would mean a rollback switch could lock the "
+	"operator out of the controls they need to finish the rollback."
+)
+
+#: Endpoints that deliberately do NOT go through `require_session`, and why. **Set equality
+#: against the discovered surface is asserted**, so an endpoint that stops reaching the gate
+#: has to be classified here rather than silently joining the exempt set.
+PILOT_GATE_EXEMPT: Final[dict[str, str]] = {
+	f"{DOTTED_ROOT}.gchat.webhook.handle": (
+		"Google is the caller, not a person. `allow_guest=True` and the JWT is the gate. Asking "
+		"whether Google is in the pilot whitelist is not a question with an answer."
+	),
+	f"{DOTTED_ROOT}.governance.viewer.search": _OVERSIGHT_GATE,
+	f"{DOTTED_ROOT}.governance.viewer.access_log": _OVERSIGHT_GATE,
+	f"{DOTTED_ROOT}.governance.tombstone.expand": _OVERSIGHT_GATE,
+	f"{DOTTED_ROOT}.governance.export_runner.request_export": _OVERSIGHT_GATE,
+	f"{DOTTED_ROOT}.governance.export_runner.download_export": _OVERSIGHT_GATE,
+	f"{DOTTED_ROOT}.governance.viewer.my_access_log": (
+		"The transparency view: a person reading who looked at *their own* messages. Gating it "
+		"on the pilot would mean somebody removed from the pilot — or reading after the feature "
+		"was switched off — could no longer see who had read them, which is the moment they are "
+		"most likely to want to. The governance obligation outlives the rollout flag."
+	),
+	f"{DOTTED_ROOT}.invoke.triton_link.bot_credential_status": _PLUMBING_GATE,
+	f"{DOTTED_ROOT}.invoke.triton_link.link_bot_credentials": _PLUMBING_GATE,
+	f"{DOTTED_ROOT}.sync.outbound.retry_relay_job": _PLUMBING_GATE,
+	f"{DOTTED_ROOT}.sync.provisioning.create_document_room": _PLUMBING_GATE,
+	f"{DOTTED_ROOT}.sync.provisioning.enroll_org_units": _PLUMBING_GATE,
+	f"{DOTTED_ROOT}.sync.provisioning.start_org_mirror": _PLUMBING_GATE,
+}
+
+
+def pilot_gated(package: pathlib.Path | None = None) -> set[str]:
+	"""Dotted names that reach ``require_session`` — directly or through a helper.
+
+	A transitive walk over same-module calls, bounded in depth, because the gate is usually
+	reached through ``require_room``/``require_message`` rather than called outright. It is a
+	source-level proxy for "this endpoint refuses a non-pilot caller", and a good one: the
+	three gate functions are the only things that consult ``is_user_allowed``.
+
+	What it cannot see, stated so a green run is not over-read: a call through a variable, a
+	gate reached only on one branch, or a helper in a different module. The behavioural half is
+	the bench suite.
+	"""
+	root = (package or CHAT_PACKAGE).resolve()
+	gates = {"require_session", "require_room", "require_message"}
+	bodies: dict[tuple[str, str], set[str]] = {}
+
+	for path in sorted(root.rglob("*.py")):
+		try:
+			tree = ast.parse(path.read_text(encoding="utf-8"))
+		except (OSError, SyntaxError):  # pragma: no cover - unreadable file
+			continue
+		rel = path.relative_to(root).as_posix()
+		for node in ast.walk(tree):
+			if isinstance(node, ast.FunctionDef):
+				bodies[(rel, node.name)] = _called_names(node)
+
+	def reaches(rel: str, fn: str, seen: set[tuple[str, str]], depth: int) -> bool:
+		if depth > 6 or (rel, fn) in seen:
+			return False
+		seen.add((rel, fn))
+		called = bodies.get((rel, fn), set())
+		if called & gates:
+			return True
+		return any((rel, name) in bodies and reaches(rel, name, seen, depth + 1) for name in called)
+
+	out: set[str] = set()
+	for dotted, endpoint in discover(root).items():
+		rel = endpoint.relpath.replace("\\", "/")
+		if reaches(rel, dotted.rsplit(".", 1)[1], set(), 0):
+			out.add(dotted)
+	return out
+
+
+def _called_names(node: ast.AST) -> set[str]:
+	names: set[str] = set()
+	for inner in ast.walk(node):
+		if isinstance(inner, ast.Call):
+			target = inner.func
+			names.add(target.id if isinstance(target, ast.Name) else getattr(target, "attr", ""))
+	return names
+
+
 def rate_limit_classified() -> dict[str, str]:
 	"""Every endpoint's rate-limit decision, limited and exempt together.
 

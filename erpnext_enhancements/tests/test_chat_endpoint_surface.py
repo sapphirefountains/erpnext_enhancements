@@ -347,5 +347,81 @@ class ChatRateLimitSurfaceTest(unittest.TestCase):
 				)
 
 
+class ChatPilotGateSurfaceTest(unittest.TestCase):
+	"""§4.J — *"pilot gating is enforced server-side on every chat endpoint"*.
+
+	The requirement is worded about deep links: hiding a button is not a rollout control, so a
+	non-pilot user holding a URL has to be refused by the server. `api/_common.require_session`
+	is that refusal — it rejects Guest, rejects when `Chat Settings.enabled` is off, and rejects
+	anyone outside the whitelist — and `require_room`/`require_message` call it, so most
+	endpoints inherit it.
+
+	**This suite exists because a transitive scan found fourteen that did not.** Thirteen were
+	correct and are now classified with a reason; the fourteenth, `sync.attachments.download`,
+	was not: it enforced membership but neither the pilot whitelist nor the master switch, so
+	`Chat Settings.enabled = 0` — the top layer of the rollback table — left attachment bytes
+	flowing. Fixed in v1.294.0, and now the scan is a test rather than an audit somebody has to
+	remember to repeat.
+	"""
+
+	@classmethod
+	def setUpClass(cls) -> None:
+		cls.discovered = set(endpoints.discover())
+		cls.gated = endpoints.pilot_gated()
+
+	def test_the_scan_finds_a_plausible_number_of_gated_endpoints(self) -> None:
+		"""A walker that silently found nothing would make the exemption test pass for every
+		endpoint on the surface."""
+		self.assertGreater(len(self.gated), 20, "the pilot-gate walker is broken, not the surface")
+
+	def test_the_scan_finds_the_gate_on_a_known_gated_endpoint(self) -> None:
+		"""Both directions of the walker, pinned. `send_message` reaches it through
+		`require_room`, so this also proves the transitive hop works."""
+		self.assertIn(f"{endpoints.DOTTED_ROOT}.api.compose.send_message", self.gated)
+
+	def test_every_ungated_endpoint_is_declared_exempt(self) -> None:
+		ungated = sorted(self.discovered - self.gated - set(endpoints.PILOT_GATE_EXEMPT))
+		self.assertFalse(
+			ungated,
+			"these chat endpoints never reach require_session, and nobody has said why: "
+			f"{ungated}. §4.J requires the pilot gate to be enforced server-side on every "
+			"endpoint, because a non-pilot user holding a deep link must be refused by the "
+			"server. Either call require_session (usually via require_room), or add the endpoint "
+			"to endpoints.PILOT_GATE_EXEMPT with the reason.",
+		)
+
+	def test_no_exemption_names_an_endpoint_that_is_actually_gated(self) -> None:
+		"""A stale exemption is worse than none: it reads as a considered decision about an
+		endpoint whose behaviour has since changed."""
+		stale = sorted(set(endpoints.PILOT_GATE_EXEMPT) & self.gated)
+		self.assertFalse(stale, f"declared exempt from the pilot gate but reaches it: {stale}")
+
+	def test_no_exemption_names_an_endpoint_that_no_longer_exists(self) -> None:
+		gone = sorted(set(endpoints.PILOT_GATE_EXEMPT) - self.discovered)
+		self.assertFalse(gone, f"pilot-gate exemptions for endpoints that are gone: {gone}")
+
+	def test_every_exemption_carries_a_reason(self) -> None:
+		for dotted, reason in endpoints.PILOT_GATE_EXEMPT.items():
+			with self.subTest(endpoint=dotted):
+				self.assertGreater(len(reason.strip()), 80, f"{dotted} needs a real reason")
+
+	def test_every_content_endpoint_is_gated(self) -> None:
+		"""The property the fix restored, pinned as a rule rather than as one endpoint.
+
+		Anything under `api/` serves or writes conversation, and `attachments.download` serves
+		the bytes. None of them may be exempt: those are precisely the deep links §4.J is about.
+		"""
+		content = {f"{endpoints.DOTTED_ROOT}.sync.attachments.download"} | {
+			dotted for dotted in self.discovered if dotted.startswith(f"{endpoints.DOTTED_ROOT}.api.")
+		}
+		ungated = sorted(content - self.gated)
+		self.assertFalse(
+			ungated,
+			f"these endpoints serve or write conversation and do not enforce the pilot gate: "
+			f"{ungated}. A rollback switch that leaves one of these open has less blast radius "
+			"than the rollback table claims for it.",
+		)
+
+
 if __name__ == "__main__":
 	unittest.main()
