@@ -124,6 +124,53 @@ as the only cheap one.
 Fountains Company Page — they must click the verification link — and a business email on the
 company domain, because personal addresses fail vetting.
 
+#### 1.4.1 The procedure, in order — roughly 25 minutes
+
+The order is the whole point: **the Community Management request must be the first product ever
+requested on its app.** Everything below is a human action at developer.linkedin.com; nothing
+here can be automated, and a rejection means starting the app again.
+
+**Before you open the browser** — four things, because each has sunk a submission:
+
+- [ ] **Super admin** on the Sapphire Fountains Company Page identified. Not admin. They must
+      click the verification link, and the review checks for it.
+- [ ] **Business email on the company domain.** Personal addresses fail vetting.
+- [ ] **Privacy policy URL live** and describing the data LinkedIn will ask about. Meta and
+      Google check it too, so this is worth doing once properly.
+- [ ] **Two app names chosen** that contain no part of "LinkedIn" or "Microsoft" — LinkedIn's
+      rule names the substrings **"Linked"** and **"In"**. Read that literally when naming:
+      *Integration*, *Insights* and *Internal* all begin with "In". Safe pairs:
+      `Sapphire Fountains Social` and `Sapphire Fountains Ads Reporting`.
+
+**Then, in this order:**
+
+1. **Create app A.** Associate it with the Sapphire Fountains Company Page. Do **not** request
+   any product yet.
+2. **On app A, request Community Management → Development Tier, first, before anything else.**
+   This is the step the whole ordering exists for: the option is greyed out on any app that
+   already has another API product.
+3. **Have the super admin verify app A** against the Page. Check spam for the verification
+   mail — it routinely lands there.
+4. **Create app B**, separately, also associated with the Page.
+5. **On app B, request the Marketing Developer Platform** (ads reporting). App B never touches
+   Community Management, and app A never touches the ads product.
+
+**Scopes to request on app A:** `w_organization_social` (post as the organisation) and
+`r_organization_social` (read posts, comments, reactions).
+
+**Do not request `r_member_social`** — LinkedIn's FAQ says it is a **closed permission** and
+they are not accepting requests. Nothing here needs it: we post as the organisation, never as a
+member. Asking for a closed permission is a way to have a submission refused on a scope we do
+not want.
+
+**What you get from Dev Tier:** 500 requests per app per day, 100 per member per day. Enough to
+build against; Standard Tier comes later and needs a screencast of the finished integration,
+which is why it is wave two rather than today.
+
+**Record both client IDs** when you have them. They do not go in this repo — nothing under
+`marketing/` stores platform credentials yet, and when that is built it must hold **two** sets
+for LinkedIn (see the approvals doc §5a). Until then, keep them wherever secrets normally live.
+
 ### 1.5 Search Console property grant — **file today, ~15 minutes, and it is silently costing you now**
 
 Not an approval; a permissions grant. **Google Search Console has returned HTTP 403 on every run
