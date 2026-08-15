@@ -1256,5 +1256,122 @@ class TestTheWriterPackageIsNotReachableFromAnEndpoint(unittest.TestCase):
 		)
 
 
+class TestRuleFTheContentHooksScopeToMembershipForEveryone(unittest.TestCase):
+	"""Rule F, added in v1.301.0: **no content permission hook grants an unrestricted scope.**
+
+	Until then, eight hooks in ``chat/permissions.py`` returned ``""`` (and ``True``) to any
+	holder of ``Chat Settings.admin_oversight_role``, and to ``Administrator``. Tracing every
+	consumer found the audited oversight path used none of it — ``retrieve_for_oversight`` gates
+	on ``_has_oversight`` itself and reads through raw SQL, touching neither
+	``permission_query_conditions`` nor ``has_permission`` — while three things that were not
+	audited at all used all of it: ``rooms.get_room`` (which returned ``last_message_preview``
+	and the roster to a non-member, from the SPA, with no reason collected and no row written),
+	the socket join, and the desk list / report / search-link paths.
+
+	So the branch is gone, and this is the guard. It asserts **the phrase appears nowhere in the
+	eight functions** rather than checking behaviour, because the failure being prevented is
+	somebody re-adding a convenience shortcut to one hook in six months — an edit that looks
+	entirely reasonable in isolation and restores the leak in full.
+
+	The two audit-table hook pairs are exempt by name: an auditor who cannot read the audit log
+	is not an auditor.
+	"""
+
+	#: The eight content hooks. Named rather than derived, so deleting one from the module fails
+	#: this suite instead of silently shrinking its coverage.
+	CONTENT_HOOKS = (
+		"chat_room_query",
+		"chat_room_member_query",
+		"chat_message_query",
+		"chat_attachment_query",
+		"chat_room_has_permission",
+		"chat_room_member_has_permission",
+		"chat_message_has_permission",
+		"chat_attachment_has_permission",
+	)
+
+	#: Exempt, and the exemption is the whole point of the role.
+	AUDIT_HOOKS = ("chat_audit_log_query", "chat_retrieval_audit_query")
+
+	def _body(self, name):
+		"""A function's source minus its docstring.
+
+		That module discusses the hatch at length, and a text scan that cannot tell an
+		explanation from a branch is one that gets satisfied by deleting the explanation. That
+		mistake has been made repeatedly across this series, which is why this helper exists.
+		"""
+		import ast as _ast
+		import pathlib as _pathlib
+
+		path = _pathlib.Path(__file__).resolve().parents[1] / "chat" / "permissions.py"
+		text = path.read_text(encoding="utf-8")
+		for node in _ast.walk(_ast.parse(text)):
+			if isinstance(node, _ast.FunctionDef) and node.name == name:
+				src = _ast.get_source_segment(text, node) or ""
+				body = node.body
+				if body and isinstance(body[0], _ast.Expr) and isinstance(body[0].value, _ast.Constant):
+					doc = _ast.get_source_segment(text, body[0].value)
+					if doc:
+						src = src.replace(doc, "", 1)
+				return src
+		raise AssertionError(f"{name}() not found in chat/permissions.py — re-derive this scan")
+
+	def test_the_scan_finds_all_eight(self):
+		"""Otherwise every assertion below is vacuous."""
+		for name in self.CONTENT_HOOKS:
+			self.assertTrue(self._body(name).strip(), f"{name} has an empty body")
+
+	def test_no_content_hook_consults_the_oversight_role(self):
+		for name in self.CONTENT_HOOKS:
+			self.assertNotIn(
+				"_has_oversight",
+				self._body(name),
+				f"{name} consults the oversight role again. These hooks scope to active membership "
+				"for every identity; the audited door is chat/governance/viewer.py via "
+				"membership_filter_sql(allow_oversight=True), which only chat/retrieval/gate.py "
+				"may pass.",
+			)
+
+	def test_no_content_hook_special_cases_administrator(self):
+		"""Administrator is not a person. A shared login destroys the attribution a transcript
+		exists to provide — the same reason ``retrieve_for_oversight`` refuses it."""
+		for name in self.CONTENT_HOOKS:
+			self.assertNotIn(
+				'"Administrator"', self._body(name), f"{name} special-cases Administrator"
+			)
+
+	def test_no_content_query_hook_returns_an_unrestricted_scope(self):
+		"""An empty string appended to a WHERE clause is *no filter*. It is the one return value
+		from this module that can leak every room in the company; ``1 = 0`` is the safe empty."""
+		for name in self.CONTENT_HOOKS:
+			if not name.endswith("_query"):
+				continue
+			self.assertNotIn(
+				'return ""',
+				self._body(name),
+				f"{name} returns an unrestricted scope",
+			)
+
+	def test_the_audit_tables_are_still_readable_by_the_auditor(self):
+		"""Asserted so a future sweep of this rule cannot take the role's own log away from it
+		and call that an improvement.
+
+		Checks the delegation to ``_may_read_audit`` rather than an inline ``_has_oversight``.
+		The audit hooks route the whole question through one predicate, which is exactly why the
+		rule above can forbid that phrase in the content hooks without also taking the auditor's
+		own log away. The first version of this assertion looked for the inline call and failed —
+		correctly, since it was asserting a shape the module deliberately does not use.
+		"""
+		for name in self.AUDIT_HOOKS:
+			self.assertIn(
+				"_may_read_audit", self._body(name), f"{name} no longer admits the auditor"
+			)
+
+	def test_the_auditors_predicate_is_the_one_that_knows_the_role(self):
+		"""And that predicate must still consult the configured role, or the delegation above is
+		satisfied by a function that admits nobody."""
+		self.assertIn("_has_oversight", self._body("_may_read_audit"))
+
+
 if __name__ == "__main__":  # pragma: no cover
 	unittest.main()
