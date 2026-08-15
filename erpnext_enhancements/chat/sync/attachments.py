@@ -412,6 +412,11 @@ class OutboundUpload:
 	resource_name: str
 	content_hash: str
 	byte_size: int
+	#: What the bytes are, per :func:`sniff_content_type`. Carried here rather than
+	#: re-derived at the write, because the bytes are in hand exactly once and
+	#: re-reading the File to answer a question already answered is how the two
+	#: sides of a record drift apart.
+	content_type: str = DEFAULT_ATTACHMENT_CONTENT_TYPE
 
 
 @dataclass(frozen=True)
@@ -479,6 +484,91 @@ def content_hash(data: bytes) -> str:
 	"are these the bytes we downloaded?". This can.
 	"""
 	return hashlib.sha256(bytes(data or b"")).hexdigest()
+
+
+#: Magic numbers, longest prefix first so a longer signature is never shadowed by a shorter
+#: one that happens to be its prefix. Only formats whose first bytes actually *prove* the type
+#: are here: this table exists to replace a claim with a fact, and a guess is still a claim.
+_SIGNATURES: Final[tuple[tuple[bytes, str], ...]] = (
+	(b"\x89PNG\r\n\x1a\n", "image/png"),
+	(b"GIF87a", "image/gif"),
+	(b"GIF89a", "image/gif"),
+	(b"\xff\xd8\xff", "image/jpeg"),
+	(b"%PDF-", "application/pdf"),
+	(b"OggS", "audio/ogg"),
+	(b"\x1a\x45\xdf\xa3", "video/webm"),
+	(b"ID3", "audio/mpeg"),
+)
+
+#: Types the *extension* may be trusted for when the bytes carry no signature. An allowlist,
+#: because the fallback's whole job is to name something inert: an extension is chosen by the
+#: uploader, so anything reached this way is still their claim.
+#:
+#: ``image/svg+xml`` is deliberately absent and that is the one entry worth explaining. SVG has
+#: no magic number — it is XML — so it can only ever be guessed at, and it is the one image
+#: type that is a document with a script element in it. Guessing a file into the one format
+#: that renders as an image *and* can execute is the wrong direction to be wrong in. An SVG
+#: therefore stores as ``application/octet-stream`` and downloads instead of rendering inline.
+_EXTENSION_TYPES: Final[dict[str, str]] = {
+	".png": "image/png",
+	".jpg": "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif": "image/gif",
+	".webp": "image/webp",
+	".avif": "image/avif",
+	".heic": "image/heic",
+	".pdf": "application/pdf",
+	".txt": "text/plain",
+	".csv": "text/csv",
+	".mp4": "video/mp4",
+	".mov": "video/quicktime",
+	".mp3": "audio/mpeg",
+	".m4a": "audio/mp4",
+	".wav": "audio/wav",
+}
+
+
+def sniff_content_type(data: bytes | None, file_name: str = "") -> str:
+	"""The content type these *bytes* are, falling back to what the name claims. Pure.
+
+	**This exists because the stored type was never derived from anything.** Files arriving
+	from Google carried Google's ``contentType`` verbatim; files uploaded from the SPA were
+	written as ``application/octet-stream`` unconditionally, by
+	:func:`record_outbound_attachments`, and sent to Google under that type too. The visible
+	consequence is an asymmetry a user notices immediately: `message_view.js` decides whether
+	to render an attachment inline from ``content_type``, so **the same photo appeared inline
+	when it arrived from Chat and as a generic file row when a colleague posted it from the
+	SPA** — and Google was told every file we upload is a binary blob.
+
+	Three rules, and the order is the point:
+
+	1. **A signature wins.** If the first bytes prove a format, that is the answer, and it
+	   overrides any declared type. This is the only branch that produces a fact.
+	2. **Otherwise the extension, from an allowlist.** A guess, and treated as one.
+	3. **Otherwise ``application/octet-stream``** — which is not a failure, it is the correct
+	   name for "unknown bytes" and it downloads rather than rendering.
+
+	**Not a security control, and it would be dishonest to ship it as one.** Both render paths
+	in the SPA are ``<img>`` tags, where a browser refuses to run script in an SVG, and
+	:func:`download` serves through Frappe's ``as_raw``, which sets
+	``Content-Disposition: attachment`` (verified on ``origin/version-16``). Nothing here
+	patches a live hole. What it does is make the stored value a *fact* rather than an
+	attacker-supplied claim, so whatever reads it next inherits something true.
+
+	WebP and AVIF are in the extension table but not the signature table on purpose: both are
+	RIFF/ISO-BMFF containers whose first four bytes are shared with formats we do not want to
+	claim, and a signature check that needs to parse a box header is not a signature check.
+	"""
+	blob = bytes(data or b"")
+	for prefix, content_type in _SIGNATURES:
+		if blob.startswith(prefix):
+			return content_type
+
+	suffix = ""
+	name = str(file_name or "").strip().lower()
+	if "." in name:
+		suffix = name[name.rfind(".") :]
+	return _EXTENSION_TYPES.get(suffix, DEFAULT_ATTACHMENT_CONTENT_TYPE)
 
 
 def safe_attachment_file_name(raw: str, *, fallback: str = FALLBACK_FILE_NAME) -> str:
@@ -1260,6 +1350,35 @@ def download_attachment(attachment: str, *, client: Any | None = None) -> str:
 		return _finish(name, INGEST_FAILED, f"{type(exc).__name__}: {scrub_secrets(str(exc))[:400]}")
 
 
+def _verified_content_type(data: bytes, file_name: str, served_type: str) -> str:
+	"""Google's declared type, unless the bytes prove otherwise.
+
+	The declared type wins on a tie because Google usually knows better than an extension does
+	— it saw the upload. What it cannot outrank is a signature: if the first bytes say PNG and
+	the resource says ``application/pdf``, one of those two is a fact.
+
+	A disagreement is worth a log line and is **not** worth failing the ingest. The message is
+	already in the room, the bytes are already downloaded, and refusing to record them because
+	their label was wrong would lose the attachment to protect a field.
+	"""
+	declared = str(served_type or "").strip()
+	sniffed = sniff_content_type(data, file_name)
+
+	proven = sniffed != DEFAULT_ATTACHMENT_CONTENT_TYPE and any(
+		bytes(data or b"").startswith(prefix) for prefix, _ in _SIGNATURES
+	)
+	if proven and declared and declared.split(";")[0].strip().lower() != sniffed:
+		# `log and ...`: `_logger()` returns None on a half-booted frappe, and this module
+		# already guards every other call that way. Calling `.info` on it unguarded was
+		# enough to turn an ingest into `Failed` — the bench-free suite caught it.
+		log = _logger()
+		log and log.info(
+			"chat attachment content type disagreed declared=%s sniffed=%s", declared, sniffed
+		)
+		return sniffed
+	return declared or sniffed
+
+
 def _store_bytes(*, attachment: str, message: str, file_name: str, data: bytes, served_type: str) -> str:
 	"""Write the private ``File`` and stamp the row. The only place chat bytes hit our disk.
 
@@ -1299,7 +1418,12 @@ def _store_bytes(*, attachment: str, message: str, file_name: str, data: bytes, 
 			"file": file_doc.name,
 			"file_size": len(data),
 			"content_hash": digest,
-			"content_type": served_type or DEFAULT_ATTACHMENT_CONTENT_TYPE,
+			# The bytes decide when they can. `served_type` is Google's `contentType`, taken
+			# verbatim from a resource whose whole schema is four fields — a claim about a
+			# file somebody else uploaded. `sniff_content_type` only overrides it when a
+			# magic number PROVES a different format; with no signature it falls back to the
+			# name, so an unrecognised type keeps whatever Google said.
+			"content_type": _verified_content_type(data, file_name, served_type),
 			"byte_size_verified": 1 if stored_size == len(data) else 0,
 			"ingest_state": INGEST_STORED,
 			"skip_reason": "",
@@ -1522,8 +1646,13 @@ def upload_outbound_attachments(
 			failed.append((candidate, "the local File produced no bytes; nothing was uploaded"))
 			continue
 		try:
+			# Sniffed from the bytes we are about to send rather than taken from `candidate`,
+			# which `collect_outbound_attachments` fills with the octet-stream default: a
+			# File row carries no content type of its own. Before v1.302.0 we therefore told
+			# Google that every file this company uploads is a binary blob.
+			sniffed = sniff_content_type(data, candidate.file_name)
 			response = client.upload_attachment(
-				space, candidate.file_name, content=data, content_type=candidate.content_type
+				space, candidate.file_name, content=data, content_type=sniffed
 			)
 		except GoogleChatError as exc:
 			# `scrub_secrets` because this string lands in `Chat Attachment.skip_reason`, which
@@ -1550,6 +1679,7 @@ def upload_outbound_attachments(
 				resource_name=upload_resource_name_of(response),
 				content_hash=content_hash(data),
 				byte_size=len(data),
+				content_type=sniffed,
 			)
 		)
 	return OutboundUploadResult(uploads=tuple(uploads), failed=tuple(failed))
@@ -1626,7 +1756,11 @@ def record_outbound_attachments(
 				"source": SOURCE_ERPNEXT,
 				"file": upload.file,
 				"file_name": upload.file_name,
-				"content_type": DEFAULT_ATTACHMENT_CONTENT_TYPE,
+				# `upload.content_type`, not the default: this is the field message_view.js
+			# consults to decide whether to render an attachment inline, so writing the
+			# octet-stream default here is what made a photo posted from the SPA appear as
+			# a generic file row while the same photo arriving from Chat appeared inline.
+			"content_type": upload.content_type or DEFAULT_ATTACHMENT_CONTENT_TYPE,
 				**values,
 			}
 		)
