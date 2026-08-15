@@ -291,6 +291,50 @@ class EveryQaEndpointHasACallerTest(unittest.TestCase):
         self.assertIn("does not notify", src)
 
 
+class TheBoardIsReachableTest(unittest.TestCase):
+    """The third feature that shipped complete and unreachable, and the last of them.
+
+    ``training/gamification.py`` has computed points, badges and streaks since v1.215.0 —
+    awarded on completion, decayed nightly — and its one whitelisted function had no caller.
+    Every one of those numbers existed and none of them was ever shown to the person who
+    earned it.
+    """
+
+    GAMIFICATION = APP / "training/gamification.py"
+    PLAYER = APP / "public/js/training/player.js"
+
+    def test_the_endpoint_is_dialled(self):
+        self.assertIn('call("leaderboard"', self.PLAYER.read_text(encoding="utf-8"))
+        self.assertIn("leaderboard", _method_map())
+
+    def test_the_wrapper_delegates(self):
+        body = _body("leaderboard")
+        self.assertIn("gamification.get_leaderboard", body)
+
+    def test_the_wrapper_does_not_sanitise_scope(self):
+        """``scope`` is a convenience the server resolves — a manager gets the board they
+        asked for, everybody else their own, whatever they send. Filtering it here would be a
+        second home for a rule that already has one, and the copy that drifts is the one that
+        stops being an access decision."""
+        body = _body("leaderboard")
+        for meddling in ("_resolve_scope", "MANAGER_ROLES", "has_role", "get_roles"):
+            self.assertNotIn(meddling, body, f"the wrapper re-implements scope handling ({meddling})")
+
+    def test_a_disabled_feature_renders_nothing(self):
+        """Not an empty panel. ``gamification_enabled`` ships off, and a permanently empty
+        "Leaderboard" heading on every learner's catalog reads as broken rather than as
+        switched off — which generates a support question about a feature nobody turned on."""
+        src = self.PLAYER.read_text(encoding="utf-8")
+        self.assertIn("enabled === false", src)
+
+    def test_the_row_that_is_mine_is_decided_by_the_server(self):
+        """``is_me`` comes off the payload and is never computed by comparing names here.
+        Two people share a name far more often than anyone expects, and the row a learner
+        opens the board to find is their own."""
+        src = self.PLAYER.read_text(encoding="utf-8")
+        self.assertIn("row.is_me", src)
+
+
 class TheClientStillPostsTest(unittest.TestCase):
     """The server rule is only safe because the client already obeyed it."""
 

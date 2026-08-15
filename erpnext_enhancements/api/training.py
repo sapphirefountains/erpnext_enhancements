@@ -1602,6 +1602,28 @@ def get_my_transcript():
 
 
 @frappe.whitelist(methods=["POST"])
+def leaderboard(scope=None):
+    """The training leaderboard. Delegates to :mod:`training.gamification`.
+
+    The last of the three learner features that shipped complete and unreachable.
+    ``gamification.py`` has computed points, badges and streaks since v1.215.0 — awarded on
+    completion, decayed nightly — and its one whitelisted function had no caller, so every
+    one of those numbers existed and none of them was ever shown to the person who earned it.
+
+    Same reasoning as the Q&A re-exports for why it lives here: the player's transport has a
+    single ``PREFIX``, and this module is the one ``test_training_endpoint_surface`` watches.
+
+    ``scope`` is passed through untouched. It is a convenience and never an access decision —
+    ``_resolve_scope`` gives a manager the board they asked for and everybody else their own,
+    whatever they send — so sanitising it here would be re-implementing a rule that already
+    has one home.
+    """
+    from erpnext_enhancements.training import gamification
+
+    return gamification.get_leaderboard(scope)
+
+
+@frappe.whitelist(methods=["POST"])
 def ask_lesson_question(course, lesson_key, question, at_seconds=None):
     """File a learner's question against a lesson. Delegates to :mod:`training.qa`.
 

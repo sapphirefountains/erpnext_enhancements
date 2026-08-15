@@ -534,6 +534,112 @@
 				});
 				main.appendChild(shelf);
 			}
+
+			main.appendChild(renderLeaderboard());
+		}
+
+		// ------------------------------------------------------------------ the board
+		//
+		// gamification.py has computed points, badges and streaks since v1.215.0 --
+		// awarded on completion, decayed nightly -- and its one whitelisted function
+		// had no caller. Every one of those numbers existed and none of them was ever
+		// shown to the person who earned it.
+
+		var boardState = { open: false, busy: false, data: null, error: null };
+
+		function renderLeaderboard() {
+			var wrap = el("div", "tr-board");
+
+			// `enabled: false` renders NOTHING, not an empty panel. The feature ships
+			// off (`gamification_enabled`), and a permanently empty "Leaderboard"
+			// heading on every learner's page is worse than its absence: it reads as
+			// broken rather than as switched off.
+			if (boardState.data && boardState.data.enabled === false) return wrap;
+
+			var toggle = button(
+				t("Leaderboard"),
+				"tr-button tr-button-quiet tr-board-toggle",
+				function () {
+					boardState.open = !boardState.open;
+					// Lazily, like the lesson Q&A panel and for the same reason: the
+					// catalog is the first screen, and it is opened on phones on site.
+					if (boardState.open && !boardState.data && !boardState.busy) loadBoard();
+					else render();
+				}
+			);
+			toggle.setAttribute("aria-expanded", boardState.open ? "true" : "false");
+			toggle.setAttribute("aria-controls", "board-region");
+			wrap.appendChild(toggle);
+
+			var region = el("div", "tr-board-body");
+			region.id = "board-region";
+			if (!boardState.open) {
+				region.hidden = true;
+				wrap.appendChild(region);
+				return wrap;
+			}
+
+			if (boardState.busy) region.appendChild(el("p", "tr-muted", t("Loading…")));
+			if (boardState.error) fail(region, boardState.error);
+
+			var rows = (boardState.data && boardState.data.rows) || [];
+			if (!boardState.busy && !boardState.error && !rows.length) {
+				region.appendChild(el("p", "tr-muted", t("Nobody has finished a course yet.")));
+			}
+
+			if (rows.length) {
+				var table = el("table", "tr-board-table");
+				var head_ = el("tr");
+				[t("#"), t("Name"), t("Points"), t("Courses"), t("Badges"), t("Streak")].forEach(
+					function (label) {
+						head_.appendChild(el("th", null, label));
+					}
+				);
+				table.appendChild(el("thead", null)).appendChild(head_);
+				var body = el("tbody");
+				rows.forEach(function (row) {
+					// `is_me` is decided by the server against the session user, never by
+					// comparing names here — two people share a name far more often than
+					// anyone expects, and the row a learner looks for is their own.
+					var tr = el("tr", row.is_me ? "is-me" : null);
+					[
+						row.rank,
+						row.full_name,
+						row.points,
+						row.courses_completed,
+						row.badges_earned,
+						fmt(t("{0} d"), [row.current_streak_days]),
+					].forEach(function (value) {
+						tr.appendChild(el("td", null, value));
+					});
+					body.appendChild(tr);
+				});
+				table.appendChild(body);
+				region.appendChild(table);
+			}
+
+			wrap.appendChild(region);
+			return wrap;
+		}
+
+		function loadBoard() {
+			boardState.busy = true;
+			render();
+			// No `scope` argument. It is a convenience the server resolves — a manager
+			// gets the board they ask for, everybody else their own — and sending one
+			// from here would look like the client choosing, which it never does.
+			return call("leaderboard", {})
+				.then(function (data) {
+					boardState.busy = false;
+					boardState.data = data || {};
+					boardState.error = null;
+					render();
+				})
+				.catch(function (err) {
+					boardState.busy = false;
+					boardState.error = err;
+					render();
+				});
 		}
 
 		function courseCard(course) {

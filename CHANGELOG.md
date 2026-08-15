@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.305.0] - 2026-08-15
+
+**The last of the three training features that shipped complete and unreachable.**
+`training/gamification.py` has computed points, badges and streaks since v1.215.0 — awarded
+on completion, decayed nightly by a scheduled sweep — and its one whitelisted function had
+**no caller**. Every one of those numbers existed, was kept current, and was never shown to
+the person who earned it.
+
+### Added
+
+`leaderboard` in `api/training.py`, a thin re-export, plus the board itself on the catalog
+view. `scope` is passed through untouched: it is a convenience the server resolves — a manager
+gets the board they ask for, everybody else their own, whatever they send — so filtering it in
+the wrapper would be a second home for a rule that already has one, and the copy that drifts is
+the one that stops being an access decision.
+
+Three decisions in the surface, all of them about what *not* to draw:
+
+- **A disabled feature renders nothing**, not an empty panel. `gamification_enabled` ships off,
+  and a permanently empty "Leaderboard" heading on every learner's catalog reads as broken
+  rather than as switched off — which generates a support question about a feature nobody
+  turned on.
+- **`is_me` comes off the payload** and is never computed by comparing names in the client.
+  Two people share a name far more often than anyone expects, and the row a learner opens the
+  board to find is their own. It is styled with weight and a rule rather than colour alone, so
+  it survives a colour-blind reader and a monochrome print.
+- **The table scrolls, not the page.** Six columns on a phone otherwise take the whole catalog
+  sideways with them.
+
+Collapsed by default and fetched on first open, like the lesson Q&A panel and for the same
+reason: the catalog is the first screen and it is opened on phones, on site.
+
+### Notes
+
+Individual badge *names* are still not shown — `get_leaderboard` returns a count per learner,
+and surfacing the badges somebody actually holds would need an endpoint that does not exist.
+Recorded rather than implied.
+
+The player CSS contract fired again on an `id` spelled `tr-…`, which its scanner reads as an
+emitted class. Correct behaviour, second time this week; the id is `board-region`.
+
 ## [1.304.0] - 2026-08-15
 
 **The author can answer now, and — more usefully — the form stops answering silently.**
