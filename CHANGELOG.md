@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.294.1] - 2026-08-15
+
+**No chat client mentioned 429 anywhere, and four paths failed silently.** Not a hypothetical
+waiting on rate limits being added: `frappe.rate_limiter` is wired into the request lifecycle
+in `frappe/app.py` (`:91`, `:262`, `:405`), so `frappe.conf.rate_limit` applies a **global**
+limiter to every request whether or not any endpoint carries a decorator — and whatever sits in
+front of the app can produce one too. `TooManyRequestsError` and `RateLimitExceededError` are
+both `http_status_code = 429`.
+
+This is the first of the three prerequisites v1.293.1 recorded before chat rate limits can be
+added, and it was worth doing on its own terms: three live bugs, one of them data loss.
+
+### Fixed
+
+- **The read mark was lost, and a comment asserted it was not.** `ReadBatcher.take()` advances
+  `emitted` to `candidate` **before** the POST, and `shouldFlush` requires
+  `candidate > emitted` — so after any failed flush the next one carried nothing at all until
+  somebody sent a strictly newer message. On a quiet conversation that is days of staring at an
+  unread badge for a room you have read, which is how people learn to ignore the badge.
+
+  The `catch` said *"the next flush carries the same or a higher value; nothing is lost"*.
+  **That was false, and believing it is what hid this.** There is now a `rollback()`, and it
+  refuses to clobber a newer `acknowledge` from another tab of the same user — overwriting that
+  would start two tabs sawing the mark back and forth, exactly what `acknowledge`'s
+  max-in-both-directions rule exists to prevent.
+
+- **Push was disabled for the tab's whole session by one refusal.** `pushConfig` memoises the
+  *promise*, so a single rejection resolved `null` forever; `attach()` returns early on a null
+  config and nothing calls it again after boot. Transient failures — a throttle, a dropped
+  connection — no longer memoise. A genuine "push is not configured here" answer still does,
+  because that one arrives as a resolved response rather than a rejection.
+
+- **Presence kept beating into the limiter.** A refused beat expires by TTL, and that direction
+  is fail-safe — the server stops believing you are present, so notifications resume rather than
+  staying suppressed. What was not safe was continuing at full cadence, because the bucket then
+  never recovers and the tab spends the whole window absent, which reads to the person as
+  notification spam. It now backs off by doubling to a two-minute cap; the next success carries
+  `heartbeat_seconds` and restores the server's own cadence.
+
+### Added
+
+- **`ChatCallError.throttled`**, beside the `forbidden` and `missing` flags that already
+  existed, plus a message that is not `Request failed (429)`.
+- **`tests/test_chat_client_throttling.py`** — 16 assertions. A Python source scan because this
+  repo has no JS runner (`package.json` declares `lint` and nothing else), which is the idiom
+  `scripts/check_www_controllers.py` already uses. Comment-stripped, because every file it reads
+  discusses 429 at length — with one deliberate exception: the false comment is asserted gone
+  against the **raw** text, since there the comment *is* the thing.
+
+  Three mutations run — removing the cursor snapshot, removing the rollback call, removing the
+  memoisation reset — each caught.
+
+### Not fixed here, and asserted to stay written down
+
+- **A refused `get_room` still leaves the tab joined to no socket room**, and the refusal removes
+  the `focus()` call that had been suppressing the key-repeat burst that caused it — so the
+  limit disables the thing that was preventing the traffic that tripped it. Fixing it means
+  restructuring `openRoom`'s failure path, which is its own change. The test asserts the fact
+  stays recorded in `chat/endpoints.py` where somebody touching rate limits will read it.
+
 ## [1.294.0] - 2026-08-15
 
 **One content endpoint enforced membership but not the pilot gate, so `enabled = 0` kept

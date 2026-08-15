@@ -164,7 +164,21 @@ function registrationFor() {
 
 let configPromise = null;
 function pushConfig() {
-	if (!configPromise) configPromise = call(M.PUSH_CONFIG).catch(() => null);
+	if (!configPromise) {
+		configPromise = call(M.PUSH_CONFIG).catch((err) => {
+			// Do not memoise a *transient* failure. The promise itself is what is cached, so a
+			// single refusal used to resolve `null` forever: `attach()` returns early on a null
+			// config and nothing calls it again after boot, so push was dead for the rest of
+			// the tab's session — silently, with no error anywhere and no way for the person
+			// to tell that notifications had stopped.
+			//
+			// A throttle or a dropped connection is transient. A genuine "push is not
+			// configured on this site" answer is not, and that one arrives as a resolved
+			// response rather than a rejection, so it still memoises exactly as before.
+			if (err && (err.throttled || !err.status)) configPromise = null;
+			return null;
+		});
+	}
 	return configPromise;
 }
 

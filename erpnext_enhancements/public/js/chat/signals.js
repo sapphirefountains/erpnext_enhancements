@@ -119,9 +119,32 @@ export class ReadBatcher {
 	/** Take the value to send. Returns 0 when there is nothing to send. */
 	take(now) {
 		if (this.candidate <= this.emitted) return 0;
+		this.previousEmitted = this.emitted;
 		this.emitted = this.candidate;
 		this.lastFlushAt = now;
 		return this.emitted;
+	}
+
+	/**
+	 * The send failed and the server never saw it. Put the cursor back.
+	 *
+	 * `take` advances `emitted` **before** the POST, which is right for the ordinary case: it
+	 * is what stops two flushes racing the same value. But `shouldFlush` requires
+	 * `candidate > emitted`, so an optimistic advance that is never acknowledged leaves the
+	 * room unread on the server until strictly newer traffic arrives. On a quiet conversation
+	 * that means "until somebody else says something", which can be days — and the person sees
+	 * an unread badge for a conversation they have read, which is the failure that trains
+	 * people to ignore the badge.
+	 *
+	 * Rolling back **only when nothing newer has arrived** is the load-bearing detail:
+	 * `acknowledge` may have raised `emitted` past our value from another tab of the same
+	 * user, and clobbering that would start the two tabs sawing the mark back and forth —
+	 * exactly what `acknowledge`'s max-in-both-directions rule exists to prevent.
+	 */
+	rollback() {
+		if (typeof this.previousEmitted !== "number") return;
+		if (this.emitted === this.candidate) this.emitted = this.previousEmitted;
+		this.previousEmitted = undefined;
 	}
 
 	/**

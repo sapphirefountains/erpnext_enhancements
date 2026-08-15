@@ -33,6 +33,16 @@ import { VirtualTranscript } from "./virtual_list.js";
 /** Below this width the SPA is a push-navigation stack rather than three panes. */
 const NARROW_PX = 768;
 
+/**
+ * Slowest the presence heartbeat will back off to when the server is throttling.
+ *
+ * Two minutes is well past the 55s presence TTL, and that is deliberate rather than an
+ * oversight: once beats are being refused the tab is going to read as absent whatever it
+ * does, so the useful thing is to stop pushing the limiter and let one beat get through
+ * cleanly. The next success carries `heartbeat_seconds` and restores the server's cadence.
+ */
+const HEARTBEAT_BACKOFF_MAX_MS = 120000;
+
 /** How often the handoff record is rewritten while the user is just scrolling and typing. */
 const HANDOFF_THROTTLE_MS = 500;
 
@@ -1494,7 +1504,13 @@ class ChatApp {
 		call(M.MARK_READ, { room: room, up_to_seq: seq }, { keepalive: !!force })
 			.then((res) => res && this.readBatcher.acknowledge(res.last_read_seq))
 			.catch(() => {
-				/* the next flush carries the same or a higher value; nothing is lost */
+				// This used to say "the next flush carries the same or a higher value; nothing
+				// is lost". That was false, and believing it is what hid the bug: `take`
+				// advances `emitted` to `candidate` BEFORE the POST, and `shouldFlush` requires
+				// `candidate > emitted` — so after a failure the next flush carries nothing at
+				// all until somebody sends a strictly newer message. On a quiet conversation
+				// that is days, and the reader stares at an unread badge for a room they read.
+				this.readBatcher.rollback();
 			});
 	}
 
@@ -1797,8 +1813,19 @@ class ChatApp {
 				}
 				return res;
 			})
-			.catch(() => {
-				/* presence is an accelerator; a failed beat expires by TTL */
+			.catch((err) => {
+				// A failed beat still expires by TTL, and that direction is fail-safe: the
+				// server stops believing we are present, so notifications resume rather than
+				// staying suppressed. What is NOT safe is continuing to beat at full cadence
+				// into a limiter, because the bucket then never recovers and the tab spends
+				// the whole window absent — which reads to the person as notification spam.
+				//
+				// So back off, doubling to a cap, and let the next success restore the
+				// server's own cadence through the `heartbeat_seconds` it returns.
+				if (err && err.throttled) {
+					const next = Math.min((this._heartbeatMs || 20000) * 2, HEARTBEAT_BACKOFF_MAX_MS);
+					if (next !== this._heartbeatMs) this.restartHeartbeat(next);
+				}
 				return null;
 			});
 	}
