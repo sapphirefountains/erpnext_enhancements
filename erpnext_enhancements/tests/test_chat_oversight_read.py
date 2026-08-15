@@ -560,6 +560,72 @@ class TranscriptReadTest(unittest.TestCase):
 		self.assertLessEqual(len(page.rows), self.gate.MAX_TRANSCRIPT_PAGE)
 
 
+class TheRoomSetIsRefusedRatherThanTrimmed(unittest.TestCase):
+	"""An auditor's named rooms are never silently narrowed.
+
+	`retrieve_for_oversight` used to pass its caller-supplied set through `_cap_rooms`, which
+	sorts and slices. With `max_rooms_per_retrieval` set, an auditor who named twelve rooms got
+	some smaller number of them and no indication which — and the audit row stayed honest,
+	because it records rooms actually *read*. So the log was right and the person was not,
+	which is the same shape as the per-room `seq` defect: a result that looks complete and is
+	not.
+
+	The cap's own field description says it applies "to the room set the gate derived from
+	membership, never to a set a caller supplied". The oversight path is the one path where the
+	caller supplies it.
+	"""
+
+	def test_the_oversight_entry_point_does_not_trim_its_room_set(self) -> None:
+		# Unparsed from the AST, not read as source. Comments never reach the AST, and the
+		# comment in that function has to NAME `_cap_rooms` in order to explain why it is gone
+		# — a text scan would be satisfied only by deleting the explanation. This file has now
+		# been bitten by that shape four times in one release series; the AST form is the fix.
+		fn = _func("retrieve_for_oversight")
+		stripped = ast.Module(body=list(fn.body), type_ignores=[])
+		if (
+			stripped.body
+			and isinstance(stripped.body[0], ast.Expr)
+			and isinstance(stripped.body[0].value, ast.Constant)
+		):
+			stripped.body = stripped.body[1:]
+		self.assertNotIn(
+			"_cap_rooms",
+			ast.unparse(stripped),
+			"retrieve_for_oversight trims the rooms the auditor named. `_cap_rooms` sorts and "
+			"slices; on this path that returns a subset of a set somebody typed, with nothing "
+			"anywhere saying so. Refuse instead.",
+		)
+
+	def test_it_refuses_above_the_bound_rather_than_returning_a_subset(self) -> None:
+		fn = _func("retrieve_for_oversight")
+		body = ast.dump(fn)
+		self.assertIn("MAX_OVERSIGHT_ROOMS", body, "the bound is no longer enforced at the gate")
+		raises = [n for n in ast.walk(fn) if isinstance(n, ast.Raise)]
+		self.assertGreaterEqual(
+			len(raises), 4, "a refusal was removed; the room bound must raise, not narrow"
+		)
+
+	def test_the_gate_enforces_it_itself_rather_than_trusting_the_viewer(self) -> None:
+		"""A gate that relies on its caller having checked stops working on its second caller."""
+		from erpnext_enhancements.chat.retrieval import gate
+
+		self.assertIsInstance(gate.MAX_OVERSIGHT_ROOMS, int)
+		self.assertGreater(gate.MAX_OVERSIGHT_ROOMS, 0)
+
+	def test_the_two_surfaces_agree_on_what_is_expressible(self) -> None:
+		"""The viewer refuses above its cap and so does the gate. Two different numbers would
+		mean a read the page accepts and the gate rejects, or worse, the reverse."""
+		from erpnext_enhancements.chat.retrieval import gate
+
+		viewer = _module_constant(VIEWER, "MAX_ROOMS_PER_READ")
+		self.assertEqual(viewer, gate.MAX_OVERSIGHT_ROOMS)
+
+	def test_the_derived_path_still_caps(self) -> None:
+		"""`_cap_rooms` is right where it was always meant to be — on the set derived from
+		somebody's own membership, where narrowing is a cost control and not a lie."""
+		self.assertIn("_cap_rooms", GATE.read_text(encoding="utf-8"))
+
+
 class TheFakeItself(unittest.TestCase):
 	"""A fake that cannot fail proves nothing.
 

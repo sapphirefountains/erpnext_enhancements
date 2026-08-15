@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.311.1] - 2026-08-15
+
+**An oversight read silently returned fewer rooms than the auditor named**, if anyone ever set a
+dial whose own description says it does not apply here.
+
+### Fixed
+
+`retrieve_for_oversight` passed its caller-supplied room set through `_cap_rooms`, which sorts and
+slices. With `max_rooms_per_retrieval` set, an auditor who named twelve rooms got some smaller
+number of them and **no indication which**. The audit row stayed honest — it records rooms actually
+read — so the log was right and the person was not. That is the same shape as the per-room `seq`
+defect fixed in v1.306.2: a result that looks complete and is not.
+
+**The setting's own field description already said this could not happen:** *"it is applied to the
+room set the gate derived from membership, **never to a set a caller supplied**."* The oversight
+path is the one path where the caller supplies it. Dormant on production — the dial defaults to
+`0`, meaning no cap — and armed the moment anybody turned it on for the mention path it was
+actually written for.
+
+The bound is now enforced by refusing. `MAX_OVERSIGHT_ROOMS` matches
+`governance.viewer.MAX_ROOMS_PER_READ`, so the page and the gate cannot disagree about what is
+expressible, and it lives in the gate rather than relying on the viewer having checked — a gate
+that trusts its caller stops working the day it gains a second one. `_cap_rooms` is untouched and
+still applies where it belongs: the set derived from somebody's own membership, where narrowing is
+a cost control rather than a claim.
+
+Found by verifying TASK-2026-01503 rather than by building it. That task's three stated problems
+were all already fixed and guarded; this was named in its sibling TASK-2026-01508 and had not been.
+
+### Tests
+
+`TheRoomSetIsRefusedRatherThanTrimmed` pins that the oversight entry point does not reach for
+`_cap_rooms`, that it raises instead, that the gate holds the bound itself, and that the two
+surfaces agree on the number. Verified by restoring the trim: the guard goes red.
+
+Its scan reads the **unparsed AST**, not the source, because the comment explaining why
+`_cap_rooms` is gone must name `_cap_rooms` — a text scan would be satisfied only by deleting the
+explanation. That is the fourth time in this release series that prose has matched a scan for the
+thing the prose says is absent; the AST form is the durable fix and the reason is recorded at the
+assertion.
+
 ## [1.311.0] - 2026-08-15
 
 **A documented contract that the code did not keep.** `record_governance_event` says it never

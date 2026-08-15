@@ -781,9 +781,30 @@ def retrieve_for_oversight(
 	if not named:
 		raise RetrievalRefused("An oversight read must name the rooms it reads.")
 
+	# **Refused, never silently narrowed.** This used to pass `named` through `_cap_rooms`,
+	# which sorts and slices — so with `max_rooms_per_retrieval` set, an auditor who named
+	# twelve rooms got some smaller number of them and no indication which. The audit row
+	# stayed honest (it records rooms actually read) and the *auditor* did not, which is the
+	# same shape as the per-room `seq` defect fixed in v1.306.2: a result that looks complete
+	# and is not.
+	#
+	# That cap is for the set the gate DERIVES from membership, and its own field description
+	# says so in as many words — "never to a set a caller supplied". The oversight path is the
+	# one path where the caller supplies it, so the cap did not belong here at all.
+	#
+	# The bound is enforced anyway, and by this module rather than by the viewer: a gate that
+	# depends on its caller having already checked is a gate that stops working the day it
+	# gains a second caller.
+	if len(named) > MAX_OVERSIGHT_ROOMS:
+		raise RetrievalRefused(
+			f"An oversight read may name at most {MAX_OVERSIGHT_ROOMS} rooms. Naming more is "
+			"refused rather than trimmed, because a trimmed read looks exactly like a complete "
+			"one."
+		)
+
 	with _acting_as(acting):
 		return _run(
-			_cap_rooms(named),
+			named,
 			acting=acting,
 			query=query,
 			room=None,
@@ -809,6 +830,16 @@ def retrieve_for_oversight(
 #: An oversight reason shorter than this is refused. Long enough to be a sentence, short
 #: enough that a legitimate one-line justification passes.
 _MIN_OVERSIGHT_REASON: int = 12
+
+#: How many rooms one oversight read may name. Matches ``governance.viewer.MAX_ROOMS_PER_READ``
+#: deliberately — the viewer refuses above it and so does this, so the two surfaces cannot
+#: disagree about what is expressible.
+#:
+#: **A bound that refuses, never one that trims.** ``_cap_rooms`` sorts and slices, which is
+#: right for the set this module DERIVES from somebody's membership and wrong for a set an
+#: auditor typed: silently returning eleven of the twelve rooms they named produces a result
+#: that looks complete and is not. A test asserts the oversight path does not reach for it.
+MAX_OVERSIGHT_ROOMS: int = 25
 
 #: One page of a transcript. Independent of :data:`MAX_THREAD_MESSAGES`, which sizes a tier
 #: inside a token budget; this sizes a **statement** and a scroll.
