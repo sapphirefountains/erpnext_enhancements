@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.314.0] - 2026-08-15
+
+**Filtered cross-room search — hits, not a summary.** The remaining half of TASK-2026-01285; the
+export bundle it names was already built and is confirmed complete.
+
+### Added
+
+`gate.search_transcripts()` and the `viewer.find` endpoint return every message matching a
+narrowing across the named rooms, filtered by sender, date range, origin or attachment presence.
+
+It is the third oversight read because it answers a third question. `retrieve_for_oversight`
+returns a ranked, budgeted assembly — right for handing a model context, wrong for an investigator
+who wants *every* message matching a filter. `retrieve_transcript` returns one room in full.
+Neither can answer *"every message from Ada in these rooms between March and June that had an
+attachment"*.
+
+**One audit row, with a child per room that actually produced a hit**, each carrying
+`was_participant` resolved by the writer. A search returning hits from twelve rooms is twelve
+non-participant reads and the record says so; rooms that matched nothing are absent rather than
+recorded as read, which is the rule `_write_audit` already applied. Recorded under a new
+`transcript`-style purpose, `search`, kept distinct from `oversight` because the compliance report
+projects that column and *"they searched twelve rooms for a term"* is a different act from *"they
+had the assistant summarise twelve rooms"*.
+
+Searched **per room**, for the reason `_per_room_limits` exists: `seq` is a per-room counter, so
+one `order by seq desc limit N` across a set ranks counters that were never comparable and hands
+every slot to the busiest room. A search silently returning nothing from half the rooms it names
+is v1.306.2's defect wearing a different hat.
+
+Rate limited at 120/hour, matching `search` rather than the 240 the other reads carry. §4.G.4's
+reasoning applies sharply here: an unthrottled all-rooms search is a bulk extraction tool wearing
+a reason, and this one returns bodies.
+
+### Two departures from the task text, both deliberate
+
+**It still names its rooms.** The task says the oversight search "searches all rooms". The shipped
+design refuses that on purpose — an oversight read of everything is not expressible, because the
+audit row has to say what was read and a fishing expedition wearing a reason is what the reason
+exists to stop. The filters are what make a bounded room set workable instead. `viewer._rooms`
+already refused an empty set and capped at 25; the gate now enforces the same bound itself.
+
+**No `include_deleted_content`, unlike the export bundle.** A bundle is a single artifact with a
+manifest, one audit row and a stated scope. A *search* returning deleted bodies inline would be a
+bulk tombstone expansion — forty withdrawn messages surfaced under one audit row, bypassing
+`tombstone.expand`'s per-message `tombstone_expanded` event and its refusal. Deleted rows are
+still **matched and returned** as tombstones with the body withheld, because a deleted message
+that matches is a fact an investigator needs and dropping it would make the search disagree with
+the transcript beside it.
+
+### Changed
+
+`search_transcripts` is the **fourth** public symbol on a package whose design is "one door", and
+the third that takes a caller-supplied room set. It is named in `PUBLIC_SYMBOLS` with its own
+`test_the_search_path_pays_for_its_exemption` rather than inheriting the oversight path's — a rule
+that covers the two entry points somebody remembered is not a rule.
+
+### Tests
+
+`CrossRoomSearchTest` pins the per-room fan-out, that every named room contributes, that the
+filters reach the statement as **bound values** while the ordering stays `seq`, that an absent
+filter binds nothing rather than `= ''` (which matches nothing and reads as "no hits"), that
+tombstones are matched and returned, and that a room which matched nothing is neither reported nor
+recorded as read.
+
+Verified by planting both the defects that matter: recording every named room as read, and
+excluding tombstones. Both go red.
+
 ## [1.313.0] - 2026-08-15
 
 **The access report implied a completeness it did not have.** Some non-participant reads of

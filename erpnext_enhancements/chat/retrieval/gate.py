@@ -72,7 +72,7 @@ from frappe.utils import cint, get_datetime, now_datetime
 from erpnext_enhancements.chat import audit, permissions
 from erpnext_enhancements.chat.retrieval import assemble, budget, citations, lexical, rank, vectors
 
-__all__ = ["retrieve", "retrieve_for_oversight", "retrieve_transcript"]
+__all__ = ["retrieve", "retrieve_for_oversight", "retrieve_transcript", "search_transcripts"]
 
 CHUNK_DOCTYPE = "Chat Context Chunk"
 ROOM_DIGEST_DOCTYPE = "Chat Room Digest"
@@ -140,6 +140,12 @@ PURPOSE_OVERSIGHT: str = "oversight"
 #: "they searched these rooms for a term" and "they read this conversation end to end" are
 #: different acts that a single label would merge.
 PURPOSE_TRANSCRIPT: str = "transcript"
+
+#: The fourth: a filtered cross-room search returning hits. Distinct from ``oversight``, which
+#: is the ranked assembly, for the reason that distinction keeps mattering — the compliance
+#: report projects ``purpose``, and "they searched twelve rooms for a term" and "they had the
+#: assistant summarise twelve rooms" are different acts.
+PURPOSE_SEARCH: str = "search"
 
 
 class RetrievalRefused(Exception):
@@ -847,6 +853,71 @@ MAX_TRANSCRIPT_PAGE: int = 100
 
 
 @dataclass
+class MessageFilters:
+	"""What an investigator narrows a cross-room search by. All optional, all AND-ed.
+
+	**No ``include_deleted_content``, and that is a decision rather than an omission.** The
+	export bundle has one, because a bundle is a single artifact with a manifest, one audit row
+	and a stated scope. A *search* that returned deleted bodies inline would be a bulk
+	tombstone expansion — forty withdrawn messages surfaced under one audit row, bypassing
+	``tombstone.expand``'s per-message ``tombstone_expanded`` event and its refusal. Deleted
+	rows are matched and returned here as tombstones, bodies withheld, exactly as elsewhere;
+	seeing through one stays a separate, separately-recorded act.
+
+	``sender`` matches the ERPNext user or the raw address, because an external participant has
+	the second and no first — searching for a person by the only identifier they have should
+	not silently return nothing.
+
+	The date range is on ``gchat_create_time`` when the row has one and ``creation`` otherwise,
+	and it is a **filter**, never an ordering. Ordering stays ``seq``; the two clocks disagree
+	by the site offset, which is survivable when narrowing a range and not when sequencing a
+	conversation.
+	"""
+
+	sender: str = ""
+	from_date: str = ""
+	to_date: str = ""
+	origin: str = ""
+	with_attachments: bool = False
+
+
+def _filter_sql(filters: MessageFilters | None) -> tuple[str, dict[str, Any]]:
+	"""The narrowing clauses and their bound values. Empty when nothing was asked for."""
+	if filters is None:
+		return "", {}
+	clauses: list[str] = []
+	values: dict[str, Any] = {}
+
+	if filters.sender:
+		# Either identifier. `sender` is NULL for an external participant.
+		clauses.append("and (`sender` = %(sender)s or `sender_email` = %(sender)s)")
+		values["sender"] = filters.sender
+	if filters.origin:
+		clauses.append("and `sync_origin` = %(origin)s")
+		values["origin"] = filters.origin
+	if filters.with_attachments:
+		clauses.append("and `has_attachments` = 1")
+	if filters.from_date:
+		clauses.append("and coalesce(`gchat_create_time`, `creation`) >= %(from_date)s")
+		values["from_date"] = filters.from_date
+	if filters.to_date:
+		clauses.append("and coalesce(`gchat_create_time`, `creation`) <= %(to_date)s")
+		values["to_date"] = filters.to_date
+
+	return "\n\t\t\t".join(clauses), values
+
+
+@dataclass
+class SearchHits:
+	"""Cross-room search results, grouped by room, with the audit row that paid for them."""
+
+	rows: list[dict[str, Any]] = field(default_factory=list)
+	per_room: dict[str, int] = field(default_factory=dict)
+	rooms_searched: int = 0
+	audit_row: str = ""
+
+
+@dataclass
 class TranscriptPage:
 	"""One audited page of one room's conversation, in ``seq`` order."""
 
@@ -906,6 +977,147 @@ def _transcript_rows(
 	# Fetched newest-first so the LIMIT keeps the most recent page; returned oldest-first,
 	# because that is the order the conversation happened in and the order it is read in.
 	return list(reversed(list(rows or [])))
+
+
+def _search_room(
+	allowed_rooms: frozenset[str],
+	*,
+	room: str,
+	expression: str,
+	filters: MessageFilters | None,
+	limit: int,
+) -> list[dict[str, Any]]:
+	"""One room's matching messages, newest-first, returned oldest-first.
+
+	Per-room and not across the set, for the reason ``_per_room_limits`` exists: ``seq`` is a
+	per-room counter, so one ``order by seq desc limit N`` over several rooms ranks counters
+	that were never comparable and hands every slot to the busiest room. A search that silently
+	returned nothing from half the rooms it names is the same defect wearing a different hat.
+
+	Tombstones are matched and returned, bodies withheld by the serialiser. A deleted message
+	that matches the query is a fact an investigator needs — dropping it would make the search
+	quietly disagree with the transcript beside it.
+	"""
+	if not allowed_rooms or not room:
+		return []
+	scope = permissions.membership_filter_sql(
+		f"{_MESSAGE_TABLE}.`room`", _acting_user(), "seq", allow_oversight=True
+	)
+	rooms = _room_list_sql(allowed_rooms)
+	match_clause = "and match(`text_plain`) against (%(expression)s in boolean mode)" if expression else ""
+	narrowing, narrowing_values = _filter_sql(filters)
+	rows = frappe.db.sql(
+		f"""
+		select `name`, `room`, `seq`, `sender`, `sender_email`, `text`, `thread_root`,
+			`is_deleted`, `is_edited`, `edited_at`, `has_attachments`, `sync_origin`,
+			`creation`, `gchat_create_time`
+		from {_MESSAGE_TABLE}
+		where `room` = %(room)s
+			and `room` in {rooms}
+			and {scope}
+			{match_clause}
+			{narrowing}
+		order by `seq` desc
+		limit %(limit)s
+		""",
+		{"room": room, "expression": expression, "limit": max(cint(limit), 0), **narrowing_values},
+		as_dict=True,
+	)
+	return list(reversed(list(rows or [])))
+
+
+def search_transcripts(
+	*,
+	rooms: list[str],
+	reason: str,
+	query: str = "",
+	reason_category: str | None = None,
+	filters: MessageFilters | None = None,
+	limit: int | None = None,
+	user: str | None = None,
+	request_id: str | None = None,
+) -> SearchHits:
+	"""Cross-room search returning **hits**, not an assembly.
+
+	The third oversight read, and it answers a question the other two cannot.
+	:func:`retrieve_for_oversight` returns a ranked, budgeted assembly — right for handing a
+	model context, wrong for an investigator who wants *every* message matching a narrowing.
+	:func:`retrieve_transcript` returns one room in full. This returns the matching messages
+	across the named rooms, filtered, in per-room ``seq`` order.
+
+	**It still names its rooms.** The task this implements says the oversight search "searches
+	all rooms"; the shipped design refuses that deliberately and this keeps the refusal — an
+	oversight read of everything is not expressible, because the audit row has to say what was
+	read, and a fishing expedition wearing a reason is the thing the reason is meant to stop.
+	The narrowing filters are what make a bounded room set workable in practice.
+
+	**One audit row, with a child per room that actually produced a hit**, each carrying
+	``was_participant`` resolved by the writer. A search returning hits from twelve rooms is
+	twelve non-participant reads and the record says so — rooms that matched nothing are absent
+	rather than recorded as read, which is the same rule ``_write_audit`` already applies.
+	"""
+	acting = _assert_real_user(user)
+	_assert_retrieval_enabled()
+
+	if not permissions._has_oversight(acting):
+		raise RetrievalRefused(
+			"Searching rooms you are not a participant in requires the role named in Chat "
+			"Settings → Admin Oversight Role."
+		)
+
+	cleaned_reason = (reason or "").strip()
+	if len(cleaned_reason) < _MIN_OVERSIGHT_REASON:
+		raise RetrievalRefused(
+			f"An oversight search needs a stated reason of at least {_MIN_OVERSIGHT_REASON} "
+			"characters."
+		)
+
+	named = frozenset(str(r).strip() for r in (rooms or []) if str(r or "").strip())
+	if not named:
+		raise RetrievalRefused("An oversight search must name the rooms it searches.")
+	if len(named) > MAX_OVERSIGHT_ROOMS:
+		raise RetrievalRefused(
+			f"An oversight search may name at most {MAX_OVERSIGHT_ROOMS} rooms. Naming more is "
+			"refused rather than trimmed."
+		)
+
+	shares = _per_room_limits(named, max(cint(limit) or MAX_TRANSCRIPT_PAGE, 1))
+	expression = lexical.build_boolean_query(query)
+
+	with _acting_as(acting):
+		hits: list[dict[str, Any]] = []
+		per_room: dict[str, int] = {}
+		for room, share in shares.items():
+			found = _search_room(
+				named, room=room, expression=expression, filters=filters, limit=share
+			)
+			if found:
+				per_room[room] = len(found)
+				hits.extend(found)
+
+		audit_row = audit.record_or_refuse(
+			user=acting,
+			purpose=PURPOSE_SEARCH,
+			actor_type="Admin",
+			rooms=[
+				{
+					"room": room,
+					"messages_read": count,
+					"first_seq": min(r["seq"] for r in hits if r["room"] == room),
+					"last_seq": max(r["seq"] for r in hits if r["room"] == room),
+				}
+				for room, count in per_room.items()
+			],
+			query=query,
+			reason=cleaned_reason,
+			reason_category=reason_category,
+			request_id=request_id,
+			message_count=len(hits),
+		)
+
+	return SearchHits(
+		rows=hits, per_room=per_room, rooms_searched=len(named), audit_row=audit_row
+	)
 
 
 def retrieve_transcript(
