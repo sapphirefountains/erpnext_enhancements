@@ -45,7 +45,7 @@ from erpnext_enhancements.chat.doctype.chat_export_request.chat_export_request i
 	STATUS_IN_PROGRESS,
 	STATUS_PENDING,
 )
-from erpnext_enhancements.chat.governance import access_report, export
+from erpnext_enhancements.chat.governance import access_report, drift_rules, export
 
 DOCTYPE = "Chat Export Request"
 
@@ -287,12 +287,14 @@ def _build(row: dict[str, Any]) -> dict[str, Any]:
 	attachments, attachments_omitted = _attachments(rooms)
 
 	message_records = [export.message_record(m, include_deleted_content=include_deleted) for m in messages]
+	timezone = _timezone()
 	files: dict[str, bytes] = {
 		"messages.jsonl": export.canonical_jsonl(message_records),
 		"revisions.jsonl": export.canonical_jsonl(export.revision_record(r) for r in revisions),
-		"transcript.html": export.transcript_html(message_records, export_id=str(row["name"])).encode(
-			"utf-8"
-		),
+		"members.csv": export.members_csv(_members(rooms)),
+		"transcript.html": export.transcript_html(
+			message_records, export_id=str(row["name"]), timezone=timezone
+		).encode("utf-8"),
 	}
 	for path, payload in attachments.items():
 		files[path] = payload
@@ -302,6 +304,8 @@ def _build(row: dict[str, Any]) -> dict[str, Any]:
 		rooms=rooms,
 		include_deleted_content=include_deleted,
 		app_version=APP_VERSION,
+		timezone=timezone,
+		drift_note=_drift_note(rooms),
 	).encode("utf-8")
 
 	manifest = export.build_manifest(
@@ -331,6 +335,26 @@ def _build(row: dict[str, Any]) -> dict[str, Any]:
 		"completed_at": now(),
 		"error": None,
 	}
+
+
+def _timezone() -> str:
+	"""The site's time zone name, for the README and the transcript header.
+
+	Frappe stores naive site-local datetimes, so every timestamp in this bundle is a wall
+	clock with no zone attached. Naming it is the difference between a document a reader can
+	order events from and one where they will assume their own zone, or UTC, and be wrong
+	roughly half the time.
+
+	Returns ``""`` rather than guessing when it cannot be read — the README has a sentence for
+	the unknown case, and "we do not know" is a true statement where "UTC" would be a false
+	one. Never raises: a missing time zone must not fail an export.
+	"""
+	try:
+		from frappe.utils import get_system_timezone
+
+		return str(get_system_timezone() or "").strip()
+	except Exception:
+		return ""
 
 
 def _room_sql(rooms: list[str]) -> tuple[str, dict[str, Any]]:
@@ -387,6 +411,100 @@ def _revisions(rooms: list[str]) -> list[dict[str, Any]]:
 		values,
 		as_dict=True,
 	)
+
+
+def _members(rooms: list[str]) -> list[dict[str, Any]]:
+	"""Every membership row for the named rooms, **including the departed ones**.
+
+	Unscoped for the same reason as :func:`_messages`, and departed rows are the point rather
+	than an oversight: ``left_seq`` composes with a message's ``seq`` to answer "was this
+	person still in the room when that was said" without involving a clock. Filtering to
+	``is_active = 1`` would make somebody who read six months of a room and then left look
+	like they were never there — which is the single most useful thing this file can say and
+	the easiest to delete by accident.
+	"""
+	if not rooms:
+		return []
+	clause, values = _room_sql(rooms)
+	values["limit"] = MAX_MESSAGES + 1
+	return frappe.db.sql(
+		f"""
+		select {", ".join(f"`{f}`" for f in export.MEMBER_FIELDS)}
+		from `tabChat Room Member`
+		where `room` in {clause}
+		order by `room` asc, `user` asc
+		limit %(limit)s
+		""",
+		values,
+		as_dict=True,
+	)
+
+
+def _drift_note(rooms: list[str]) -> str:
+	"""A sentence for ``README.txt`` when the mirror and this system are known to disagree.
+
+	This is the one input to the bundle that can only ever *lower* the confidence it projects,
+	which is why it is built here and not left to a reader to go and check. The rooms in an
+	export are mirrored into Google Chat; when the nightly sweep has a live finding for one of
+	them, the honest thing to hand a lawyer alongside a completeness claim is the fact that
+	the two sides did not agree and that this copy is the ERPNext side.
+
+	Live means ``Open`` **or** ``Accepted``. Accepted is not resolved — it means somebody
+	looked and decided to live with it, which is exactly the finding a reader of this bundle
+	is entitled to hear about. Only ``Cleared`` is silence.
+
+	Best effort. A drift table that cannot be read must not fail an export: the bundle is
+	still true, and refusing to produce it because the caveat is unavailable trades a complete
+	document with a missing footnote for no document at all. The failure is logged and the
+	README says the check could not be made, which is itself the honest sentence.
+	"""
+	if not rooms:
+		return ""
+	try:
+		clause, values = _room_sql(rooms)
+		state_keys = {f"state{i}": s for i, s in enumerate(sorted(drift_rules.LIVE_STATES))}
+		values.update(state_keys)
+		state_clause = ", ".join(f"%({k})s" for k in state_keys)
+		findings = frappe.db.sql(
+			f"""
+			select `drift_class`, `room`, `summary`, `observations`, `last_seen_at`
+			from `tabChat Drift Report`
+			where `room` in {clause} and `state` in ({state_clause})
+			order by `drift_class` asc, `room` asc
+			limit 50
+			""",
+			values,
+			as_dict=True,
+		)
+	except Exception:
+		frappe.log_error(title="chat export drift check failed", message=frappe.get_traceback())
+		return (
+			"The automated consistency check between this system and the Google Chat\n"
+			"spaces it mirrors could not be run when this bundle was produced. That is\n"
+			"not a finding of a problem; it means the check is unavailable and this\n"
+			"bundle carries no assurance either way."
+		)
+
+	if not findings:
+		return ""
+
+	lines = [
+		"This system mirrors messages to and from Google Chat. A nightly check compares",
+		"the two sides, and at the time this bundle was produced it had the following",
+		"unresolved findings for these rooms. They do not mean this copy is wrong — it is",
+		"the ERPNext side of the mirror, and it is the system of record — but they do mean",
+		"the two sides were not in agreement, and you should not treat the absence of a",
+		"message here as proof it never existed:",
+		"",
+	]
+	for finding in findings:
+		lines.append(
+			f"  - {finding.get('drift_class') or 'unknown'}"
+			f" (room {finding.get('room') or '?'}, seen {cint(finding.get('observations'))} time(s),"
+			f" last {finding.get('last_seen_at') or 'unknown'})"
+			f"\n      {finding.get('summary') or ''}".rstrip()
+		)
+	return "\n".join(lines)
 
 
 def _attachments(rooms: list[str]) -> tuple[dict[str, bytes], list[str]]:

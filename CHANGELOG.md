@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.300.0] - 2026-08-15
+
+**The export bundle was six of the seven parts it specifies, and the three things missing were
+all about how much a reader should trust it.** Phase 6 §4.C, closing the residual on
+TASK-2026-01509.
+
+### Added
+
+**`members.csv` — the seventh part.** Who was in each room and for which part of it. CSV
+rather than JSONL, alone among the data files, because this is the one somebody opens in a
+spreadsheet and sorts by person.
+
+`left_seq` is what makes it evidence rather than a roster: sequence numbers are assigned once
+and never reused, so "left at seq 4192" composes with a message's own `seq` into an answer
+about a specific message **without involving a clock** — which matters because the timestamps
+in this bundle come from two systems whose clocks are not the same. Departed rows are kept for
+exactly that reason; filtering to `is_active = 1` would make somebody who read six months of a
+room and then left look like they were never in it.
+
+**It deliberately carries no read state.** `last_read_seq` was available and is excluded. It
+looks like it answers "did they see it" and it does not: the mark is advanced by the person's
+own client, so it moves when a window is left open, when a phone is unlocked in a pocket, and
+when a notification is swiped away. Handing a lawyer a column that reads as proof of reading,
+in a bundle whose entire value is that its contents can be relied on, invites exactly one
+inference and it is not a safe one. The README says so in as many words.
+
+### Changed
+
+**Every timestamp now names its time zone**, in `README.txt` *and* in the `transcript.html`
+header. Frappe stores naive site-local datetimes, so an unlabelled `2026-08-14 09:12:00` is
+not a moment in time — it is a moment in an unstated place, and the reader's default
+assumption will be their own zone or UTC. The transcript carries it separately because that is
+the file that gets screenshotted into a report and pasted into an email, travelling away from
+the README that would have explained it. A named zone rather than an offset: `-05:00` is
+ambiguous across a daylight-saving boundary and an export range may span one.
+
+When the zone cannot be read the bundle says so, rather than defaulting to UTC. "We do not
+know" is true; "UTC" would be false, and false in the direction that silently reorders events
+across a date boundary.
+
+**`README.txt` now carries a drift note when one applies.** This system mirrors a Google Chat
+space; when the nightly sweep has a live finding for one of the exported rooms, the bundle now
+says the two sides did not agree and that this copy is the ERPNext side. Live means `Open`
+**or** `Accepted` — accepted is not resolved, it means somebody looked and decided to live
+with it, which is precisely the finding a reader of a legal export is entitled to hear about.
+Only `Cleared` is silence.
+
+This is the one input that can only ever *lower* the confidence the bundle projects, which is
+why it is built here and not left to a reader to go and check. **A completeness claim that
+quietly omits a known disagreement is the one defect in this bundle that cannot be corrected
+later** — it is in someone else's hands by the time anybody notices. It is appended after
+"VERIFYING THIS BUNDLE" on purpose: a caveat above the claim reads as boilerplate, below it as
+a correction to what was just asserted. And it is best-effort — a drift table that cannot be
+read logs and says the check was unavailable, because refusing to produce the document trades
+a complete bundle with a missing footnote for no bundle at all.
+
+### Notes
+
+`_members` is registered in `test_chat_rawsql_guard.SYSTEM_CONTEXT_READS` with its reason,
+alongside the three export reads already there. The guard caught it on the first run, which is
+what it is for. `export.py` stays Frappe-free: the time zone is read in the runner and passed
+in.
+
+Closes TASK-2026-01509.
+
 ## [1.299.5] - 2026-08-15
 
 **A deferral conditioned on an observation that nothing made.** TASK-2026-01288's one

@@ -39,6 +39,7 @@ and the hearing" with a hash comparison rather than an argument.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import io
 import json
@@ -53,6 +54,7 @@ BUNDLE_FILES = (
 	"README.txt",
 	"messages.jsonl",
 	"revisions.jsonl",
+	"members.csv",
 	"transcript.html",
 )
 
@@ -84,6 +86,26 @@ MESSAGE_FIELDS = (
 	"sync_origin",
 	"gchat_create_time",
 	"creation",
+)
+
+#: Membership fields, and the omission is the decision. ``members.csv`` answers **"who could
+#: have seen what"** — membership and its window — and deliberately carries no read state.
+#:
+#: ``last_read_seq`` was available and is left out on purpose. It looks like it answers "did
+#: they see it", and it does not: the mark is advanced by a client, so it moves when a window
+#: is open, when a phone is unlocked in a pocket, and when a notification is swiped. Handing a
+#: lawyer a column that reads as proof of reading, in a bundle whose whole value is that its
+#: contents can be relied on, invites exactly one inference and it is not a safe one.
+#: "Was a member of the room while the message was in it" is a fact this system knows.
+MEMBER_FIELDS = (
+	"room",
+	"user",
+	"role",
+	"is_active",
+	"derived_from_document",
+	"joined_at",
+	"left_at",
+	"left_seq",
 )
 
 #: Revision fields. `text_before` is the deleted body, and it is why this file exists.
@@ -158,6 +180,36 @@ def canonical_jsonl(records: Iterable[dict[str, Any]]) -> bytes:
 	return buf.getvalue().encode("utf-8")
 
 
+def members_csv(rows: Iterable[dict[str, Any]]) -> bytes:
+	"""``members.csv`` — who was in each room, and for which part of it.
+
+	CSV rather than JSONL, alone among the data files, because this is the one a reader
+	*opens in a spreadsheet and sorts*. The others are read by a tool or by eye, line at a
+	time; this one gets filtered by person.
+
+	**``left_seq`` is what makes this evidence rather than a roster.** Sequence numbers are
+	assigned once and never reused, so "left at seq 4192" and a message's own ``seq`` compose
+	into an answer about a specific message without involving a clock — which matters because
+	the timestamps in this bundle come from two systems whose clocks are not the same.
+	A departed member's row is kept for exactly that reason: dropping it would make somebody
+	who read six months of a room look like they were never in it.
+
+	Deterministic like everything else here: rows sorted by ``(room, user)``, ``\\n`` endings
+	rather than the ``\\r\\n`` the csv module defaults to, and every field quoted so a display
+	name containing a comma cannot shift the columns of the row it is in.
+	"""
+	buf = io.StringIO(newline="")
+	writer = csv.writer(buf, lineterminator="\n", quoting=csv.QUOTE_ALL)
+	writer.writerow(MEMBER_FIELDS)
+	ordered = sorted(
+		rows,
+		key=lambda row: (str(row.get("room") or ""), str(row.get("user") or "")),
+	)
+	for row in ordered:
+		writer.writerow(["" if row.get(key) is None else _clean(row.get(key)) for key in MEMBER_FIELDS])
+	return buf.getvalue().encode("utf-8")
+
+
 def sha256_hex(payload: bytes) -> str:
 	return hashlib.sha256(payload).hexdigest()
 
@@ -224,12 +276,26 @@ def readme_text(
 	rooms: list[str],
 	include_deleted_content: bool,
 	app_version: str,
+	timezone: str = "",
+	drift_note: str = "",
 ) -> str:
 	"""``README.txt`` — written for a lawyer or an HR investigator, not for an engineer.
 
 	It exists because the most likely misreading of this bundle is that ``messages.jsonl``
 	is "the conversation". It is the conversation **as it stands**, and the difference
 	between that and what was said is the whole of ``revisions.jsonl``.
+
+	``drift_note`` is the second thing this file exists for, and it only ever *reduces* the
+	confidence the bundle projects. This system mirrors a Google Chat space; when the nightly
+	drift sweep has an open finding for one of these rooms, the honest sentence is that the two
+	sides disagreed and this copy is the ERPNext side. **A completeness claim that quietly
+	omits a known disagreement is the one defect in this bundle that could not be corrected
+	later** — the export is already in someone else's hands by the time anybody notices.
+
+	``timezone`` names the zone every timestamp in the bundle is written in. Frappe stores
+	site-local naive datetimes, so an unlabelled ``2026-08-14 09:12:00`` is not a moment in
+	time; it is a moment in an unstated place. That ambiguity is worth hours in a dispute about
+	who replied first.
 	"""
 	deleted_note = (
 		"This export INCLUDES the original text of deleted messages, inline, in\n"
@@ -241,6 +307,25 @@ def readme_text(
 			"original text. That text is NOT missing from this export: it is in\n"
 			"revisions.jsonl, beside who deleted it and when."
 		)
+	)
+	# Named, not offsetted: "-05:00" is ambiguous across a daylight-saving boundary and this
+	# range may span one. A zone name resolves every timestamp in the bundle; an offset
+	# resolves the ones that happen to fall on the right side of the change.
+	timezone_note = (
+		f"Every timestamp in this bundle is local time in the {timezone} time zone.\n"
+		"They are written without an offset, so read them in that zone and not in\n"
+		"your own.\n\n"
+		if timezone
+		else (
+			"NOTE: the time zone of the timestamps in this bundle could not be\n"
+			"determined when it was produced. Do not assume UTC. Establish it before\n"
+			"relying on any ordering that depends on a clock rather than on seq.\n\n"
+		)
+	)
+	# Appended rather than woven in, and last, so it reads as a caveat on everything above
+	# instead of a footnote to whichever section it happened to land near.
+	drift_section = (
+		f"\nA KNOWN DISAGREEMENT AFFECTS THIS EXPORT\n\n{drift_note}\n" if drift_note else ""
 	)
 	return f"""Chat export {export_id}
 {"=" * (len("Chat export ") + len(export_id))}
@@ -265,10 +350,24 @@ WHAT EACH FILE CONTAINS
                     it became, who changed it and when. If you want to know what
                     was originally said, this is the file.
 
+  members.csv       Who was in each room, and for which part of it. The left_seq
+                    column is the one that matters: compare it against a message's
+                    seq to establish whether somebody was still in the room when
+                    that message was sent. It carries no read receipts — see below.
+
   transcript.html   The same messages, readable in a browser. It is a convenience
                     and it is NOT the record — messages.jsonl is.
 
   attachments/      Files sent in these rooms, named by their message.
+
+WHAT MEMBERS.CSV DOES NOT TELL YOU
+
+It records who COULD have seen a message, not who did. This system holds a
+per-person read marker and it is deliberately not in this bundle: that marker is
+advanced by the person's own browser or phone, so it moves when a window is left
+open, when a phone is unlocked in a pocket, and when a notification is swiped
+away. It is not evidence that a human read anything. Membership and its window
+are facts this system knows; reading is not.
 
 THE THING MOST OFTEN GOT WRONG
 
@@ -279,27 +378,34 @@ incomplete account.
 
 {deleted_note}
 
-ENCODING AND ORDER
+ENCODING, ORDER AND TIME
 
 All files are UTF-8. Messages are ordered by their sequence number, which is
 assigned once and never reused, so the order here is the order they were sent —
 not the order of any timestamp, which can differ between systems.
 
+{timezone_note}
 VERIFYING THIS BUNDLE
 
-  sha256sum messages.jsonl revisions.jsonl transcript.html
+  sha256sum messages.jsonl revisions.jsonl members.csv transcript.html
 
 Compare each against the value in manifest.json. Any difference means the file
 has changed since it was exported.
-"""
+{drift_section}"""
 
 
-def transcript_html(records: list[dict[str, Any]], *, export_id: str) -> str:
+def transcript_html(records: list[dict[str, Any]], *, export_id: str, timezone: str = "") -> str:
 	"""A readable rendering. Explicitly *not* the record — the README says so too.
 
 	Every value is escaped. This file is opened in a browser by somebody who has been handed
 	it, and the text in it was typed by the people under investigation; an export that
 	executes their script when a lawyer opens it would be a remarkable way to lose a case.
+
+	**The timezone is named in the page, not only in the README.** This is the file that gets
+	screenshotted into a report and pasted into an email, and it travels away from the bundle
+	that explains it. Frappe stores site-local naive datetimes, so the column headed "when" is
+	otherwise a number with no zone attached — and the reader's default assumption will be
+	their own, or UTC, and both are wrong roughly half the time.
 	"""
 	from html import escape
 
@@ -315,16 +421,21 @@ def transcript_html(records: list[dict[str, Any]], *, export_id: str) -> str:
 				when=escape(str(record.get("gchat_create_time") or record.get("creation") or "")),
 			)
 		)
+	when_label = f"when ({escape(timezone)})" if timezone else "when (time zone unknown)"
 	return (
 		'<!doctype html>\n<html><head><meta charset="utf-8">'
 		f"<title>Chat transcript {escape(export_id)}</title>"
 		"<style>body{font-family:system-ui,sans-serif;margin:2rem}"
 		"table{border-collapse:collapse;width:100%}"
-		"td{border-bottom:1px solid #ddd;padding:.4rem;vertical-align:top}"
+		"td,th{border-bottom:1px solid #ddd;padding:.4rem;vertical-align:top;text-align:left}"
+		"th{border-bottom:2px solid #999;font-size:.85rem;color:#444}"
 		".deleted td{color:#888;font-style:italic}</style></head><body>"
 		f"<h1>Chat transcript {escape(export_id)}</h1>"
 		"<p>A convenience rendering. <strong>messages.jsonl is the record.</strong></p>"
-		"<table>" + "".join(rows) + "</table></body></html>\n"
+		"<table><thead><tr><th>seq</th><th>sender</th><th>text</th>"
+		f"<th>{when_label}</th></tr></thead><tbody>"
+		+ "".join(rows)
+		+ "</tbody></table></body></html>\n"
 	)
 
 
@@ -348,12 +459,14 @@ def build_zip(files: dict[str, bytes]) -> bytes:
 
 __all__ = [
 	"BUNDLE_FILES",
+	"MEMBER_FIELDS",
 	"MESSAGE_FIELDS",
 	"REVISION_FIELDS",
 	"TOMBSTONE",
 	"build_manifest",
 	"build_zip",
 	"canonical_jsonl",
+	"members_csv",
 	"message_record",
 	"readme_text",
 	"revision_record",

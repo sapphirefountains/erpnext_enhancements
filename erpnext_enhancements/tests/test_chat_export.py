@@ -278,5 +278,154 @@ class FieldAllowlistTest(unittest.TestCase):
 			self.assertIn(field, export.REVISION_FIELDS)
 
 
+def _member(**over):
+	row = {
+		"room": "ROOM-1",
+		"user": "b@example.com",
+		"role": "Member",
+		"is_active": 1,
+		"derived_from_document": 0,
+		"joined_at": "2026-01-02 09:00:00",
+		"left_at": None,
+		"left_seq": 0,
+	}
+	row.update(over)
+	return row
+
+
+class MembersCsvTest(unittest.TestCase):
+	"""The seventh part, and the one a reader opens in a spreadsheet."""
+
+	def test_it_is_one_of_the_files_a_bundle_always_contains(self):
+		self.assertIn("members.csv", export.BUNDLE_FILES)
+
+	def test_the_header_is_the_field_list(self):
+		text = export.members_csv([]).decode("utf-8")
+		self.assertEqual(text.splitlines()[0], ",".join(f'"{f}"' for f in export.MEMBER_FIELDS))
+
+	def test_rows_are_sorted_so_a_re_export_matches(self):
+		"""The determinism requirement every other file here has: if two exports of one range
+		differ, the difference has to mean something."""
+		rows = [
+			_member(user="c@example.com"),
+			_member(room="ROOM-2", user="a@example.com"),
+			_member(user="a@example.com"),
+		]
+		text = export.members_csv(rows).decode("utf-8")
+		self.assertEqual(export.members_csv(list(reversed(rows))).decode("utf-8"), text)
+		self.assertLess(text.index("ROOM-1"), text.index("ROOM-2"))
+		self.assertLess(text.index("a@example.com"), text.index("c@example.com"))
+
+	def test_line_endings_are_lf_not_crlf(self):
+		"""The csv module defaults to CRLF. Mixed endings inside one bundle make a diff of two
+		exports show every line as changed, which is exactly the signal the manifest exists to
+		keep meaningful."""
+		self.assertNotIn(b"\r", export.members_csv([_member()]))
+
+	def test_every_field_is_quoted_so_a_comma_cannot_shift_a_column(self):
+		text = export.members_csv([_member(role="Member, acting")]).decode("utf-8")
+		self.assertIn('"Member, acting"', text)
+		self.assertEqual(len(text.strip().splitlines()), 2)
+
+	def test_a_departed_member_is_kept(self):
+		"""The row most worth having and the easiest to filter away by accident. Somebody who
+		read six months of a room and then left must not look like they were never in it."""
+		text = export.members_csv([_member(is_active=0, left_at="2026-03-01 10:00:00", left_seq=4192)])
+		self.assertIn(b"4192", text)
+
+	def test_none_becomes_empty_and_never_the_word_none(self):
+		"""``left_at`` is null for everyone still in the room, and the literal 'None' in a date
+		column is a parse error at best and a wrong date at worst."""
+		text = export.members_csv([_member(left_at=None)]).decode("utf-8")
+		self.assertNotIn("None", text)
+
+	def test_it_carries_no_read_state(self):
+		"""The decision, asserted rather than only described. A read marker is advanced by the
+		person's own client — it moves when a window is left open or a notification is swiped
+		— so a column that reads as proof of reading invites an inference this system cannot
+		support. Membership is a fact this system knows; reading is not."""
+		for field in ("last_read_seq", "last_read_at"):
+			self.assertNotIn(field, export.MEMBER_FIELDS)
+
+	def test_it_carries_the_window_that_makes_it_evidence(self):
+		for field in ("left_seq", "joined_at", "is_active"):
+			self.assertIn(field, export.MEMBER_FIELDS)
+
+
+class TimeZoneTest(unittest.TestCase):
+	"""Frappe stores naive site-local datetimes, so an unlabelled stamp is a wall clock in an
+	unstated place."""
+
+	def _readme(self, **over):
+		kwargs = {
+			"export_id": "EXP-1",
+			"rooms": ["ROOM-1"],
+			"include_deleted_content": False,
+			"app_version": "1.299.6",
+		}
+		kwargs.update(over)
+		return export.readme_text(**kwargs)
+
+	def test_the_readme_names_the_zone(self):
+		self.assertIn("America/Denver", self._readme(timezone="America/Denver"))
+
+	def test_an_unknown_zone_says_so_rather_than_assuming_utc(self):
+		""""We do not know" is true; "UTC" would be false, and false in the direction that
+		silently reorders events across a date boundary."""
+		text = self._readme(timezone="")
+		self.assertIn("could not be", text)
+		self.assertIn("Do not assume UTC", text)
+
+	def test_the_transcript_names_the_zone_in_its_own_header(self):
+		"""It travels away from the README — this is the file that gets screenshotted into a
+		report and pasted into an email."""
+		html = export.transcript_html([], export_id="EXP-1", timezone="America/Denver")
+		self.assertIn("America/Denver", html)
+
+	def test_the_transcript_says_unknown_rather_than_nothing(self):
+		self.assertIn("time zone unknown", export.transcript_html([], export_id="EXP-1"))
+
+	def test_the_transcript_still_escapes_everything(self):
+		"""The header added a new interpolation into the same document that renders text typed
+		by the people under investigation."""
+		html = export.transcript_html(
+			[{"seq": 1, "sender_email": "a@example.com", "text": "<script>alert(1)</script>"}],
+			export_id="EXP-1",
+			timezone="<script>",
+		)
+		self.assertNotIn("<script>alert", html)
+		self.assertNotIn("<th>when (<script>)</th>", html)
+
+
+class DriftNoteTest(unittest.TestCase):
+	"""The one input that can only ever lower the confidence the bundle projects."""
+
+	def _readme(self, **over):
+		kwargs = {
+			"export_id": "EXP-1",
+			"rooms": ["ROOM-1"],
+			"include_deleted_content": False,
+			"app_version": "1.299.6",
+		}
+		kwargs.update(over)
+		return export.readme_text(**kwargs)
+
+	def test_a_clean_export_says_nothing_about_drift(self):
+		"""Silence when there is nothing to say. A standing section reading "no known
+		problems" trains a reader to skim past the one time it says something else."""
+		self.assertNotIn("DISAGREEMENT", self._readme())
+
+	def test_a_finding_is_stated_where_a_reader_will_hit_it(self):
+		text = self._readme(drift_note="relay_dead_letter (room ROOM-1)")
+		self.assertIn("DISAGREEMENT", text)
+		self.assertIn("relay_dead_letter", text)
+
+	def test_the_caveat_comes_after_the_completeness_claim_it_qualifies(self):
+		"""A caveat above the claim reads as boilerplate; below it, it reads as a correction to
+		what was just asserted."""
+		text = self._readme(drift_note="relay_dead_letter (room ROOM-1)")
+		self.assertLess(text.index("VERIFYING THIS BUNDLE"), text.index("DISAGREEMENT"))
+
+
 if __name__ == "__main__":
 	unittest.main()
