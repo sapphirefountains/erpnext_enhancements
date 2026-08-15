@@ -247,12 +247,16 @@ class StillNotEnabledTest(unittest.TestCase):
 			"been removed, every predicate in this suite is dead code.",
 		)
 
-	def test_the_purge_is_still_refused(self):
+	def test_the_purge_is_enabled_only_because_this_landed(self):
+		"""It was refused until v1.299.0 for one reason: the derived layer could not be
+		retired. This suite is that reason being gone, so the assertion inverts rather than
+		disappearing — if `can_enable` ever goes back to False, the cause is a NEW finding and
+		somebody should read it rather than find this test quietly deleted."""
 		from erpnext_enhancements.chat.governance import purge_rules
 
 		ok, why = purge_rules.can_enable()
-		self.assertFalse(ok)
-		self.assertTrue(why)
+		self.assertTrue(ok, f"the purge is refused again: {why}")
+		self.assertEqual(purge_rules.blocked_doctypes(), ())
 
 
 if __name__ == "__main__":

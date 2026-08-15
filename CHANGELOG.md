@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.299.0] - 2026-08-15
+
+**The purge.** Phase 6 §4.F is complete. This is the only code in this system that
+deliberately destroys a message, and almost all of it is ordering.
+
+### The order, and what each step protects against
+
+**1. The audit row before anything is destroyed, and a failed write refuses the purge.**
+`outbox.refuse_hard_delete`'s own docstring stated the requirement before this was written —
+the escape hatch exists for *"the Phase 6 retention/erasure path, which has to write its audit
+row first"*. `record_governance_event` swallows its failures and returns `None`, so a caller
+that ignores the return has assumed a record that does not exist. Bodies destroyed with nothing
+saying so is the one outcome this phase exists to prevent.
+
+**2. The message, then its sidecars.** The reverse is what a review of the earlier design
+killed, and the reason is asymmetric recoverability: `delete_doc` can raise on lock contention,
+so a message delete is *allowed to fail* — and failing with the revisions already gone leaves a
+**live message stripped of the only copies of its superseded bodies**, which nothing can
+restore. An orphaned revision is a row whose message no longer exists: findable, removable.
+Fail toward the state you can repair.
+
+**3. The retirement mark last, and only over the contiguous purged prefix.**
+`retire.set_retirement_mark` refuses unless *every* message at or below the mark is gone, so
+the mark cannot be the batch's high seq — a message held by an open relay job or a live thread
+reply is still there. The mark stops one below the lowest survivor, and the rest follows on a
+later run once the hold clears.
+
+### Three framework facts, read from Frappe's source rather than assumed
+
+- **`delete_permanently=True` is mandatory.** Without it `delete_doc` calls
+  `add_to_deleted_document`, which stores `doc.as_json()` — the whole message, body included —
+  in `tabDeleted Document`. **A purge without that flag reports success and moves every body to
+  another table.** Asserted on every `delete_doc` call in the module.
+- **`ignore_links` is not a parameter.** The signature has `ignore_doctypes`; passing it is a
+  `TypeError`, and the crash would be inside the destructive loop. `force=True` is the only
+  link bypass.
+- **`delete_doc` takes `for_update=True, wait=False`**, so it raises on contention rather than
+  waiting. That is why this commits per message rather than holding a room lock across the
+  batch — the lock is transaction-scoped and the first commit would release it anyway, so
+  holding it buys the guarantee for exactly one message.
+
+### Changed
+
+- **`Chat Context Chunk`, `Chat Room Digest` and `Chat Thread Digest` move from `BLOCKED` to a
+  new `RETIRED` disposition**, and `can_enable()` now returns `True`. The blocker is cleared
+  rather than waived: `can_enable` reads the disposition table rather than a flag, so a future
+  finding turns the purge off again **by being recorded**, not by somebody remembering to.
+
+  `RETIRED` is a separate answer from `SURVIVES` on purpose. `SURVIVES` means *this outlives
+  the purge* — the audit trail, the room, the queue tables. `RETIRED` means *this must go too,
+  and here is the other mechanism that takes it*. Collapsing them would lose the only record
+  that a second mechanism has to run for a purge to be complete.
+
+- **Two suites had their assertions inverted rather than deleted.** `test_chat_retire_wiring`
+  asserted the purge was refused; it now asserts it is enabled *and* that nothing is blocked —
+  so if `can_enable` ever goes back to `False`, the cause is a **new** finding somebody should
+  read, rather than a test quietly removed.
+
+### Added
+
+- **`tests/test_chat_purge.py`** — 18 assertions, almost all of them about ordering. Five
+  mutations run: dropping `delete_permanently`, moving the sidecars before the message,
+  removing the audit guard, defaulting `dry_run` to off, and swapping the hard-delete flag for
+  `ignore_on_trash`. All five go red.
+
+- **Four `SYSTEM_CONTEXT_READS` justifications.** `Chat Message Revision` deliberately has
+  **none**: its rows are removed by a filtered `frappe.db.delete` with no preceding read,
+  because they are being destroyed rather than inspected — and that table's guard allows
+  exactly two functions and offers no exemption mechanism for a third. Reading them first would
+  have pulled the superseded bodies into a local variable for no reason at all.
+
+### It ships disabled and stays disabled
+
+`message_retention_days` defaults to `0`, which means never, and the gate refuses on it before
+reading anything. Decision D-6 is *keep forever*. `run_purge` defaults to `dry_run=1` — the
+difference between the two is irreversible, and the shape of the mistake is somebody running
+the obvious incantation to see what it would do. **There is no scheduler entry**, and a test
+asserts there is none: a job that destroys conversation on a timer is not something to add and
+then remember to think about.
+
 ## [1.298.0] - 2026-08-15
 
 **The retirement writer, and the refusal that makes it safe to have at all.** v1.295.0 shipped
