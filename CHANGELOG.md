@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.302.0] - 2026-08-15
+
+**An attachment's `content_type` was never derived from anything, and the visible consequence
+was that the same photo rendered two different ways depending on which side sent it.**
+
+### Fixed
+
+`public/js/chat/message_view.js` decides whether to show an attachment inline by matching
+`content_type` against `INLINE_IMAGE`. That field was:
+
+- **inbound** — Google's `contentType`, taken verbatim from a resource whose entire schema is
+  four fields;
+- **from the SPA** — `application/octet-stream`, written unconditionally by
+  `record_outbound_attachments`, and sent to Google under that type too.
+
+So a photo arriving from Google Chat appeared inline, and the same photo posted by a colleague
+from the SPA appeared as a generic file row — an asymmetry a user notices immediately and
+cannot explain. We were also telling Google that every file this company uploads is a binary
+blob, which is how Chat then rendered them.
+
+`sniff_content_type(data, file_name)` is pure and has three rules, in order: **a magic-number
+signature wins** (the only branch that produces a fact); otherwise **the extension, from an
+allowlist** (a guess, treated as one); otherwise **`application/octet-stream`**, which is not a
+failure but the correct name for unknown bytes.
+
+It is wired into the three places that were storing a claim: the Google upload now sends the
+sniffed type, `OutboundUpload` carries it to the write so the bytes are not re-read to answer a
+question already answered, and inbound runs `_verified_content_type`, where Google's declared
+type wins a tie — it saw the upload, an extension did not — but **cannot outrank a signature**.
+A disagreement is logged and never fails the ingest: the message is already in the room and the
+bytes are already downloaded, so refusing to record them to protect a field would lose the
+attachment.
+
+### It is not a security fix, and shipping it as one would be dishonest
+
+Both SPA render paths are `<img>` tags, where browsers refuse to execute script inside an SVG,
+and the byte endpoint serves through Frappe's `as_raw`, which sets
+`Content-Disposition: attachment` — verified on `origin/version-16`, not on the local checkout,
+which is on `develop`. Nothing here closes a live hole. It makes the stored value a fact where
+the bytes can prove one, so whatever reads it next inherits something true.
+
+`image/svg+xml` is nevertheless **never produced**. SVG has no magic number — it is XML — so it
+can only ever be guessed at, and it is the one image type that is a document with a script
+element in it. Guessing a file into the single format that renders as an image *and* can
+execute is the wrong direction to be wrong in.
+
+### Notes
+
+`tests/test_chat_attachment_content_type.py` builds its byte literals with `bytes([...])`
+rather than `b"PNG"`. The first version of these tests was written through a heredoc, an
+escape survived one layer and not the next, and a real control byte landed in the source —
+`SyntaxError: source code string cannot contain null bytes`. The file says so, so the next
+person does not rediscover it.
+
+Also fixed on the way: `_verified_content_type` called `_logger().info(...)` unguarded.
+`_logger()` returns `None` on a half-booted frappe and every other call site in that module
+guards it — the unguarded call was enough to turn a stored attachment into `Failed`, and the
+bench-free suite caught it before it left the branch.
+
 ## [1.301.0] - 2026-08-15
 
 **Eight permission hooks handed an unrestricted scope to the oversight role and to

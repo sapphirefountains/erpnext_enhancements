@@ -1151,6 +1151,15 @@ jobs:
         run: |
           python -m pip install cryptography
           python -m pytest erpnext_enhancements/tests/test_chat_webpush_crypto.py -q
+      # Where an attachment's content_type comes from, which until v1.302.0 was nowhere:
+      # inbound took Google's contentType verbatim, the SPA side wrote octet-stream
+      # unconditionally, and message_view.js decides inline rendering from that field -- so
+      # one photo rendered inline from Chat and as a file row from the SPA. Its own step and
+      # pytest-style, because it installs its own frappe stub (including a savepoint no-op,
+      # which attachments.py imports at module scope) and would cross-talk if appended to a
+      # unittest module list.
+      - name: Chat attachment content type (sniffed from bytes, never guessed into SVG)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_attachment_content_type.py -q
       # The only automated coverage of triton_chat.py, and `grep -c
       # test_triton_personas .github/workflows/ci.yml` returned 0 until this line:
       # the file shipped and then never ran. Everything it guards -- the SSE relay,
