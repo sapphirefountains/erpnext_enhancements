@@ -284,5 +284,60 @@ class ControllerFilenameTest(unittest.TestCase):
 		self.assertNotIn("innerHTML", html)
 
 
+class TranscriptShapeTest(unittest.TestCase):
+	"""What `search()` actually hands back — the half nobody had asserted."""
+
+	def test_the_transcript_comes_from_the_assembly(self):
+		"""The bug this class exists for, and the reason it survived four releases.
+
+		``search()`` returned ``getattr(result, "text", "") or ""``. ``RetrievalResult`` has no
+		``text`` field, no ``text`` property and no ``__getattr__`` — so the default fired on
+		every call and the auditor got an empty transcript **while the gate wrote a full audit
+		row saying they had read it**. Nothing failed, nothing logged, and the compliance
+		record was the only part that worked.
+
+		A defaulted ``getattr`` on a typed dataclass turns a wrong attribute name into a
+		plausible value, so this asserts the names rather than the behaviour: every attribute
+		``search()`` reads off the gate's result must exist on ``RetrievalResult``. That is the
+		check that would have caught it, and it keeps catching it after the next rename.
+		"""
+		fields = set()
+		for node in ast.walk(_tree(CHAT / "retrieval" / "gate.py")):
+			if isinstance(node, ast.ClassDef) and node.name == "RetrievalResult":
+				for stmt in node.body:
+					if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+						fields.add(stmt.target.id)
+		self.assertIn("assembly", fields, "RetrievalResult did not parse")
+
+		fn = _func(VIEWER, "search")
+		read = set()
+		for node in ast.walk(fn):
+			if isinstance(node, ast.Attribute) and getattr(node.value, "id", "") == "result":
+				read.add(node.attr)
+			if (
+				isinstance(node, ast.Call)
+				and getattr(node.func, "id", "") == "getattr"
+				and getattr(node.args[0], "id", "") == "result"
+			):
+				self.fail(
+					"search() calls getattr() on the gate result. A defaulted getattr on a "
+					"typed dataclass answers a wrong field name with the default instead of "
+					"raising — which is how the empty-transcript bug shipped."
+				)
+
+		unknown = sorted(read - fields)
+		self.assertEqual(
+			unknown,
+			[],
+			f"search() reads {unknown} off RetrievalResult, which has no such field(s). The "
+			f"transcript lives on `assembly`; the declared fields are {sorted(fields)}.",
+		)
+		self.assertIn(
+			"assembly",
+			read,
+			"search() never reads `assembly`, so it cannot be returning a transcript",
+		)
+
+
 if __name__ == "__main__":
 	unittest.main()

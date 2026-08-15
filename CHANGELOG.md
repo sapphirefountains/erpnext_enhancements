@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.299.1] - 2026-08-15
+
+**The oversight viewer returned an empty transcript on every call, and wrote a full audit row
+saying it had not.** Found by a reconciliation sweep re-reading the code behind
+TASK-2026-01508's "shipped" claim, not by anyone using the feature — nobody has.
+
+### Fixed
+
+`chat/governance/viewer.py::search()` built its response with
+`getattr(result, "text", "") or ""`. `RetrievalResult` (`chat/retrieval/gate.py:136-154`) has
+**no `text` field**, no `text` property and no `__getattr__` — its transcript lives on
+`assembly`. So the default fired on every call. The auditor saw nothing; the citations, the
+room list and the audit row were all correct; and the audit row recorded a completed
+non-participant read. **The compliance record was the only part that worked**, which is the
+worst possible direction for this failure to point: the row asserts a read that never happened,
+and the person whose messages they are would be shown a transparency notice for it.
+
+Every other consumer in the repo already read it correctly — `chat/invoke/handler.py:171`,
+`chat/retrieval/api.py:70` and `tests/test_chat_triton_bench.py:355` all use
+`result.assembly.text() if result.assembly else ""`. This surface was the only one that
+guessed, and it guessed a name that has never existed.
+
+### Why the shape matters more than the typo
+
+**A defaulted `getattr` on a typed dataclass converts a wrong field name into a plausible
+value.** The same three lines read `manifest` and `audit_row` the same way; those names happen
+to be right, so the idiom looked like it worked. It is the idiom that is the defect — it turns
+a `AttributeError` at the first call into a silent empty string forever. All three now read the
+dataclass directly.
+
+`tests/test_chat_oversight_viewer.py::TranscriptShapeTest` asserts the general property rather
+than the fixed line: every attribute `search()` reads off the gate's result must exist on
+`RetrievalResult`, and `search()` may not call `getattr` on it at all. Verified to fail against
+the pre-fix code before being kept — a guard that has never been seen failing is a guard whose
+subject may already have been renamed out from under it.
+
 ## [1.299.0] - 2026-08-15
 
 **The purge.** Phase 6 §4.F is complete. This is the only code in this system that

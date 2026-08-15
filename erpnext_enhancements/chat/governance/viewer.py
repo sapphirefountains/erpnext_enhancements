@@ -166,13 +166,21 @@ def search(
 	# outside the chained tuple's mandatory half and re-signing happens on the next verify.
 	_stamp_category(result, category)
 
+	# Read the dataclass, do not `getattr(..., default)` it. `RetrievalResult` has no `text`
+	# field and never had one — the transcript lives on `assembly`, exactly as every other
+	# consumer reads it (`invoke/handler.py`, `retrieval/api.py`). Until v1.299.1 this line was
+	# `getattr(result, "text", "") or ""`, which is not a missing feature but a **silent** one:
+	# the default fires on every call, so the auditor got an empty transcript while the gate
+	# wrote a full audit row saying they had read it. A defaulted `getattr` on a typed dataclass
+	# converts a typo into a plausible answer, which is why the fields below are read directly
+	# and `tests/test_chat_oversight_viewer.py` now asserts every name here exists on the class.
 	return {
 		"rooms": named,
 		"subject": (subject or "").strip() or None,
 		"reason_category": category,
-		"text": getattr(result, "text", "") or "",
-		"citations": [c.as_dict() for c in (getattr(result, "manifest", None) or [])],
-		"audit_row": getattr(result, "audit_row", None),
+		"text": result.assembly.text() if result.assembly else "",
+		"citations": [c.as_dict() for c in result.manifest],
+		"audit_row": result.audit_row,
 	}
 
 
