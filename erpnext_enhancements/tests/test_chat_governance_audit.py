@@ -24,9 +24,15 @@ Role Profile saves, which is noise in the one table whose value is that it is qu
 
 from __future__ import annotations
 
+import ast
+import pathlib
 import sys
 import types
 import unittest
+
+#: The app directory, for the source scans below. They read the tree rather than importing it,
+#: so a call site is checked whether or not its module can be imported without a bench.
+APP_DIR = pathlib.Path(__file__).resolve().parents[1]
 
 _STUBBED: list[str] = []
 _SETTINGS: dict[str, object] = {}
@@ -377,6 +383,141 @@ class TheHookIsActuallyRegistered(unittest.TestCase):
 			"the chain is computed and nothing ever checks it — which is the state v1.285.0 "
 			"shipped in and this release exists to end",
 		)
+
+
+class TheAuditPurposeVocabulary(unittest.TestCase):
+	"""Every ``purpose=`` a caller passes must be one the writer accepts.
+
+	``audit._write`` coerces an unknown purpose to ``oversight`` and then **signs** it, so a
+	caller passing something outside the set does not get an error — it gets a plausible,
+	tamper-evident record of a read that did not happen the way the row says. That is worse
+	than a crash and it is invisible.
+
+	It was not hypothetical. ``chat/api/history.py`` passed ``transcript``, ``thread`` and
+	``message_context`` from the day it was written; none of the three was in ``_PURPOSES``;
+	all three were rewritten to ``oversight``. So every privileged content read from those
+	three endpoints was recorded as a deliberate investigation, and
+	``access_report`` projected it into the compliance report as one.
+
+	This is the check that had to exist for the coercion to stay safe: a mistake now costs a
+	red build instead of a silent lie in a signed row.
+	"""
+
+	#: The audit writers. A ``purpose=`` literal at a call to any of these is a claim about
+	#: what will be stored.
+	WRITERS = frozenset(
+		{"record_or_refuse", "record_privileged_read", "record_privileged_content_read"}
+	)
+
+	def _purpose_literals(self) -> list[tuple[str, int, str]]:
+		found: list[tuple[str, int, str]] = []
+		for path in sorted(APP_DIR.rglob("*.py")):
+			try:
+				tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+			except SyntaxError:  # pragma: no cover - a broken file fails its own tests
+				continue
+			for node in ast.walk(tree):
+				if not isinstance(node, ast.Call):
+					continue
+				name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+				if name not in self.WRITERS:
+					continue
+				for kw in node.keywords:
+					if kw.arg == "purpose" and isinstance(kw.value, ast.Constant):
+						if isinstance(kw.value.value, str):
+							found.append((str(path.relative_to(APP_DIR)), node.lineno, kw.value.value))
+		return found
+
+	def test_the_scan_finds_the_call_sites(self) -> None:
+		"""Non-vacuity. A scan that matches nothing passes forever."""
+		self.assertGreaterEqual(
+			len(self._purpose_literals()),
+			4,
+			"the purpose scan found almost nothing, so it is no longer looking where the "
+			"callers are — check WRITERS against chat/audit.py",
+		)
+
+	def test_every_purpose_a_caller_passes_is_one_the_writer_accepts(self) -> None:
+		from erpnext_enhancements.chat import audit
+
+		bad = [
+			f"{rel}:{line} purpose={value!r}"
+			for rel, line, value in self._purpose_literals()
+			if value not in audit._PURPOSES
+		]
+		self.assertFalse(
+			bad,
+			"these call sites pass a purpose the writer does not accept, so `audit._write` "
+			f"silently rewrites it to {audit._DEFAULT_PURPOSE!r} and signs that instead — the "
+			"row then asserts a read that did not happen the way it says, in the chain's own "
+			"hand:\n  " + "\n  ".join(bad),
+		)
+
+	def test_the_accepted_set_matches_the_select_exactly(self) -> None:
+		"""The two drifting is how three real read kinds went unrecorded for the field's life."""
+		import json
+
+		from erpnext_enhancements.chat import audit
+
+		doctype = APP_DIR / "chat" / "doctype" / "chat_retrieval_audit" / "chat_retrieval_audit.json"
+		fields = json.loads(doctype.read_text(encoding="utf-8"))["fields"]
+		options = next(f for f in fields if f["fieldname"] == "purpose")["options"]
+		self.assertEqual(
+			set(options.split("\n")),
+			set(audit._PURPOSES),
+			"audit._PURPOSES and the Purpose Select disagree. A value in the set but not the "
+			"Select is refused by Frappe at save time, i.e. after the read happened; a value "
+			"in the Select but not the set is rewritten to the default and signed.",
+		)
+
+	def test_the_default_purpose_is_itself_accepted(self) -> None:
+		from erpnext_enhancements.chat import audit
+
+		self.assertIn(audit._DEFAULT_PURPOSE, audit._PURPOSES)
+
+
+class TheViewerSessionId(unittest.TestCase):
+	"""``request_id`` correlates the rows of one sitting, and must not leak the cookie."""
+
+	def _with_session(self, user: str, sid: str | None):
+		from erpnext_enhancements.chat import audit
+
+		frappe = sys.modules["frappe"]
+		saved = frappe.session
+		frappe.session = types.SimpleNamespace(user=user, sid=sid)
+		try:
+			return audit.viewer_session_id()
+		finally:
+			frappe.session = saved
+
+	def test_it_is_stable_within_a_session(self) -> None:
+		"""Which is the whole point: N pages of one read share one id."""
+		first = self._with_session("auditor@example.com", "abc123")
+		second = self._with_session("auditor@example.com", "abc123")
+		self.assertEqual(first, second)
+		self.assertTrue(first)
+
+	def test_two_users_on_the_same_sid_do_not_collide(self) -> None:
+		self.assertNotEqual(
+			self._with_session("a@example.com", "abc123"),
+			self._with_session("b@example.com", "abc123"),
+		)
+
+	def test_a_new_session_is_a_new_correlation(self) -> None:
+		self.assertNotEqual(
+			self._with_session("auditor@example.com", "abc123"),
+			self._with_session("auditor@example.com", "def456"),
+		)
+
+	def test_the_raw_sid_never_appears_in_it(self) -> None:
+		"""``sid`` is a bearer credential and an audit row is read by more people than the
+		cookie ever should be."""
+		value = self._with_session("auditor@example.com", "supersecretsid")
+		self.assertNotIn("supersecretsid", value or "")
+
+	def test_no_session_is_no_correlation_rather_than_a_guess(self) -> None:
+		self.assertIsNone(self._with_session("auditor@example.com", None))
+		self.assertIsNone(self._with_session("", "abc123"))
 
 
 class TheVerifiersReadEveryFieldTheyVerify(unittest.TestCase):

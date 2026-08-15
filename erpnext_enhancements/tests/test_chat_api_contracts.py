@@ -1095,3 +1095,79 @@ def test_an_unset_bot_user_hides_nobody(monkeypatch) -> None:
 	results = _picker_results(monkeypatch, members=members, bot="")
 
 	assert "alice@example.com" in [row["user"] for row in results]
+
+
+# ---------------------------------------------------------------------------
+# request_id — the correlation that existed as a column and a sentence and nowhere else
+# ---------------------------------------------------------------------------
+
+
+def _captured_audit_row(monkeypatch, *, sid: str | None = "cookie-value", **kwargs) -> dict[str, Any]:
+	"""Drive ``record_privileged_content_read`` and return what reached the writer."""
+	captured: dict[str, Any] = {}
+	monkeypatch.setattr(
+		audit, "record_or_refuse", lambda **kw: captured.update(kw) or "CRA-1", raising=True
+	)
+	monkeypatch.setattr(
+		FRAPPE, "session", types.SimpleNamespace(user="auditor@example.com", sid=sid), raising=False
+	)
+	_common.record_privileged_content_read(
+		[{"name": "M1", "room": "R1", "seq": 7}],
+		user="auditor@example.com",
+		privileged=True,
+		purpose="transcript",
+		**kwargs,
+	)
+	return captured
+
+
+def test_a_privileged_content_read_carries_a_session_correlation(monkeypatch) -> None:
+	"""§4.D.2 asks for one audit row per page. Without a shared id those rows are N unrelated
+	facts rather than one act of reading.
+
+	``record_privileged_content_read`` had no ``request_id`` parameter at all until v1.307.1, so
+	every row this package wrote landed with the column NULL — while both audit DocTypes
+	documented it as correlating "the rows written by one viewer session".
+	"""
+	captured = _captured_audit_row(monkeypatch)
+	assert captured["request_id"], (
+		"no correlation id reached the writer, so each page of a transcript read is recorded "
+		"as an unrelated event"
+	)
+
+
+def test_the_correlation_never_carries_the_session_cookie(monkeypatch) -> None:
+	"""``sid`` is a bearer credential; an audit row is read by more people than the cookie."""
+	captured = _captured_audit_row(monkeypatch, sid="supersecret-bearer-token")
+	assert "supersecret-bearer-token" not in str(captured["request_id"])
+
+
+def test_two_pages_of_one_read_share_an_id(monkeypatch) -> None:
+	"""The property the column exists for."""
+	first = _captured_audit_row(monkeypatch)["request_id"]
+	second = _captured_audit_row(monkeypatch)["request_id"]
+	assert first == second
+
+
+def test_an_explicit_correlation_wins_over_the_session_default(monkeypatch) -> None:
+	"""Triton passes an invocation id through the gate; the two meanings share the column."""
+	captured = _captured_audit_row(monkeypatch, request_id="triton-turn-42")
+	assert captured["request_id"] == "triton-turn-42"
+
+
+def test_no_session_records_no_correlation_rather_than_a_guess(monkeypatch) -> None:
+	captured = _captured_audit_row(monkeypatch, sid=None)
+	assert captured["request_id"] is None
+
+
+def test_an_unprivileged_read_still_records_nothing(monkeypatch) -> None:
+	"""Invariant I9's other half. Adding a parameter must not turn a member's own read into a row."""
+	captured: dict[str, Any] = {}
+	monkeypatch.setattr(audit, "record_or_refuse", lambda **kw: captured.update(kw) or "CRA-1")
+	_common.record_privileged_content_read(
+		[{"name": "M1", "room": "R1", "seq": 7}],
+		user="member@example.com",
+		privileged=False,
+		purpose="transcript",
+	)
+	assert captured == {}

@@ -125,8 +125,32 @@ GOVERNANCE_EVENTS = frozenset(
 	}
 )
 
-#: Purposes the ``purpose`` Select accepts.
-_PURPOSES = frozenset({"mention", "search", "briefing", "oversight", "attachment"})
+#: Purposes the ``purpose`` Select accepts. **Must equal the DocField's options**, which
+#: ``tests/test_chat_governance_audit.py`` asserts by set equality — the two drifting is how
+#: this set came to be missing three of the five things that actually call the writer.
+#:
+#: ``transcript``, ``thread`` and ``message_context`` were added in v1.307.1. All three were
+#: already being passed by ``chat/api/history.py`` and none was in this set, so every
+#: privileged content read from those endpoints was silently rewritten to ``oversight`` by the
+#: coercion below and recorded as a deliberate investigation. See that coercion for why the
+#: real defence against a fourth one is a build failure rather than a runtime check.
+#:
+#: ``briefing`` and ``attachment`` have no caller today. They are kept rather than pruned:
+#: removing a Select option needs a data patch for any row still holding it, and the audit
+#: tables cannot be surveyed from here — the chat gate refuses them to generic query tools,
+#: by design. An unused option costs nothing; a deletion that strands rows costs a migration.
+_PURPOSES = frozenset(
+	{
+		"mention",
+		"search",
+		"briefing",
+		"oversight",
+		"attachment",
+		"transcript",
+		"thread",
+		"message_context",
+	}
+)
 _DEFAULT_PURPOSE = "oversight"
 
 #: Fields signed by **both** chains, but only on rows that actually carry a value.
@@ -194,6 +218,38 @@ def _select_columns(*groups: tuple[str, ...]) -> str:
 		for name in group:
 			seen.setdefault(name, None)
 	return ", ".join(f"`{name}`" for name in seen)
+
+
+def viewer_session_id() -> str | None:
+	"""An opaque, stable id for one signed-in session, for correlating its audit rows.
+
+	:data:`request_id` is documented on both audit DocTypes as correlating "the rows written by
+	one viewer session", and until v1.307.1 nothing outside ``chat/retrieval`` supplied one — so
+	every row written by ``chat/api`` landed with it NULL and the correlation existed as a
+	column and a sentence and nowhere else. Reading a transcript is inherently multi-request:
+	the SPA pages, and §4.D.2 asks for one row per page. Without a shared id those rows are N
+	unrelated facts rather than one act of reading, which is the question an audit trail is
+	opened to answer.
+
+	**Derived from the session, never supplied by the client.** A caller-chosen correlation id
+	can be varied per request to make one sustained read look like many unrelated ones, and
+	this column is signed — a client-controlled signed field records the client's story.
+
+	**Hashed, never stored raw.** ``sid`` is a bearer credential; an audit row is read by more
+	people than the cookie ever should be. The user is folded in so a digest here cannot be
+	confirmed against one computed from a stolen sid alone.
+
+	``None`` when there is no session, which is honest and is exactly what the writer already
+	stores for "no correlation". Lives here rather than in ``chat/api/_common.py`` because
+	``chat/governance`` needs it too and already imports this module; the alternative was an
+	HTTP-layer helper reached from a governance module.
+	"""
+	session = getattr(frappe, "session", None)
+	sid = getattr(session, "sid", None)
+	user = getattr(session, "user", None)
+	if not sid or not user:
+		return None
+	return hashlib.sha256(f"{user}\x1f{sid}".encode()).hexdigest()[:48]
 
 
 def _optional_chain_payload(row: dict[str, Any]) -> dict[str, Any]:
@@ -543,6 +599,16 @@ def _write(
 	row: dict[str, Any] = {
 		"accessed_by": user,
 		"actor_type": actor_type if actor_type in ("Triton", "Admin", "User") else "Admin",
+		# **A backstop, and not the defence.** This coercion is why three of the five callers
+		# spent their whole lives recorded as something they were not: an unknown purpose was
+		# rewritten to `oversight` and then *signed*, so the log asserted a deliberate
+		# investigation in the chain's own hand and nothing anywhere disagreed.
+		#
+		# It stays, because refusing here would refuse the read — `record_or_refuse` fails
+		# closed, so a typo in a purpose string would take an endpoint down in production. The
+		# real defence is `TheAuditPurposeVocabulary` in tests/test_chat_governance_audit.py,
+		# which reads every `purpose=` literal at every call site and fails the build on one
+		# this set does not contain. A mistake should cost a red CI job, not a silent lie.
 		"purpose": purpose if purpose in _PURPOSES else _DEFAULT_PURPOSE,
 		"request_id": (request_id or "")[:64] or None,
 		"reason": (reason or "").strip() or None,

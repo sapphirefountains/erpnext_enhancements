@@ -56,8 +56,9 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Purpose",
-   "options": "mention\nsearch\nbriefing\noversight\nattachment",
-   "reqd": 1
+   "options": "mention\nsearch\nbriefing\noversight\nattachment\ntranscript\nthread\nmessage_context",
+   "reqd": 1,
+   "description": "What kind of read this was. Must match audit._PURPOSES exactly; a test asserts the two by set equality, because they drifted once and the consequence was silent. `transcript`, `thread` and `message_context` were added in v1.307.1 -- chat/api/history.py had been passing all three since it was written, none was in the accepted set, and the writer rewrote each to `oversight` and then SIGNED it. So rows before v1.307.1 record ordinary privileged transcript loads as deliberate investigations, and cannot be corrected: `purpose` is covered by chain_hash, so rewriting the value would report those rows as tampered. They stay readable though -- an oversight read always carries a `reason` of at least 12 characters and a reason_category, and a history read carries neither, so `purpose = 'oversight' AND reason IS NULL` is the mislabelled set. Counts of oversight reads taken from before v1.307.1 are inflated by that set."
   },
   {
    "description": "Correlates this read with the Triton turn that caused it. For an Admin read it correlates the rows written by one viewer session.",

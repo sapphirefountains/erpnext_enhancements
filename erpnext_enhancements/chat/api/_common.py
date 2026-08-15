@@ -218,6 +218,7 @@ def record_privileged_content_read(
 	privileged: bool,
 	purpose: str,
 	reason: str | None = None,
+	request_id: str | None = None,
 ) -> None:
 	"""Record a non-participant read of message bodies, or refuse the read. Invariant **I9**.
 
@@ -256,6 +257,10 @@ def record_privileged_content_read(
 		rooms=audited_room_ranges(rows),
 		message_count=len(rows),
 		reason=reason,
+		# Defaults to the caller's own session, so the correlation is present unless a caller
+		# deliberately supplies its own — Triton passes an invocation id through the gate, and
+		# the two meanings share this column by design.
+		request_id=request_id or audit.viewer_session_id(),
 	)
 
 
