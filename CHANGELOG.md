@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.312.0] - 2026-08-15
+
+**The audit vault's third door, and a table that had none of them.** Layer 2's remaining holes,
+closed or written down honestly.
+
+### Added
+
+**A `db_set` tripwire on all three audit tables.** `before_save` never sees a `db_set` — that path
+writes the column directly and never reaches the save machinery — so a row could be rewritten with
+no controller consulted. `before_change` does see it.
+
+The hook choice is the substance, and it was settled from v16 source rather than assumed.
+`Document.db_set` runs `run_method("before_change")` immediately **before** the write and
+`on_change` after, and `before_change` is invoked from **exactly one place in the entire
+framework** — that line. So it is a tripwire with no false positives: it cannot fire on an insert
+or an ordinary save, which means no condition to get right and no legitimate write to
+discriminate. And because it runs before the write, throwing **prevents** the change rather than
+rolling back one that already landed. The task proposed `on_change`; `before_change` is strictly
+better for both reasons.
+
+**`Chat Retrieval Audit Room` gets `before_save` and `on_trash` — it had neither.** Its controller
+was a bare `pass`, and its docstring explained that a guard was unnecessary because reaching a
+child row without its parent "means bypassing the ORM altogether". **That was false.**
+`frappe.delete_doc("Chat Retrieval Audit Room", name)` is an ordinary ORM path that never loads
+the parent, and the parent's refusals do not extend to a document that was never loaded through
+it. `was_participant` is signed into the parent's `chain_hash`, so a deletion did not vanish
+silently — but it surfaced at the nightly verifier as *tampering somewhere in the log* rather than
+as *this row was removed*, which is the difference between an alarm and a prevention.
+
+The retention-purge flag is now imported from the parent rather than re-declared. Two constants
+spelled the same way are two constants, and "who may delete an audit row" has to have one answer.
+
+### Changed
+
+Layer 2's docstring now states what it **cannot** catch instead of implying it catches everything.
+`frappe.db.set_value` and raw SQL reach no controller — and `set_value` takes a filter dict, so one
+call can rewrite many rows. Deletion has two holes of its own: `on_trash` fires only when
+`not for_reload and not ignore_on_trash`, so `frappe.delete_doc(..., ignore_on_trash=True)` and
+`for_reload=True` both delete without consulting the controller, and `for_reload` additionally
+suppresses the `Deleted Document` copy — the row simply vanishes, leaving only the chain break.
+An `after_delete` guard does not close that: it fires after the rows are gone, so a throw there
+rolls back a delete that already ran, which is worth less than it sounds when the caller swallows.
+Layers 3 and 4 are the answer, which is why there are four.
+
+### Tests
+
+`TestEveryAuditControllerRefusesEveryPath` checks all three doors on all **three** tables. The
+existing assertion tested one controller by path, which is exactly how the child's absence
+survived: the table nobody checked was the one nobody had written a guard for.
+
+It also asserts the tripwire cannot hide its throw behind a falsy branch, and that the child's
+docstring no longer claims it needs no guard — because a future reader finding guards in the code
+and prose saying they are unnecessary will believe the prose, it being shorter.
+
+All six guards verified by breaking what they protect.
+
+### Note on the rest of TASK-2026-01505
+
+Everything else it asked for had already landed and is confirmed on main: nightly verification is
+wired at `hooks.py:766` with a `SEVERITY_CRITICAL` alert on a break (hardened in v1.307.0), the
+`Chat Auditor` role holds `read`/`report` on both audit tables, and the `Chat Audit Log` DocType
+the task recommended creating exists and now holds rows.
+
 ## [1.311.1] - 2026-08-15
 
 **An oversight read silently returned fewer rooms than the auditor named**, if anyone ever set a

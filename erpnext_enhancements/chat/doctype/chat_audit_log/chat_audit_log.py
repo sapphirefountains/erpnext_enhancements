@@ -146,3 +146,16 @@ class ChatAuditLog(Document):
 				frappe._("Chat audit log rows are not deletable."),
 				frappe.PermissionError,
 			)
+
+	def before_change(self) -> None:
+		"""**The ``db_set`` tripwire.** See ``Chat Retrieval Audit`` for the reasoning in full.
+
+		Short version: ``before_save`` never sees a ``db_set``, ``before_change`` does, it runs
+		before the write so a throw prevents rather than rolls back, and in v16 it is invoked
+		from exactly one place in the framework — so any call at all is the violation and no
+		condition is needed.
+		"""
+		frappe.throw(
+			frappe._("A chat audit log row cannot be changed after it is written."),
+			frappe.PermissionError,
+			)
