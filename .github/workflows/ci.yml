@@ -492,6 +492,16 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_training_phase4_contracts -v
       - name: Training certificates (issuance, snapshot, verify PII, recertification)
         run: python -m unittest erpnext_enhancements.tests.test_training_certificates -v
+      # The learner API's HTTP surface. Until v1.299.4 none of the thirteen endpoints
+      # declared methods=, so every one also answered a GET -- which puts the attempt
+      # id, lesson key and checkpoint timestamp into the access log, the browser
+      # history and the next Referer header. The client had posted all along and said
+      # so in a comment, so the two sides disagreed in the direction where the server
+      # was the looser of the two and nothing compared them. Also pins the player's
+      # METHOD map against the real function names: a rename with no matching edit
+      # there is a 404 the learner sees and CI does not.
+      - name: Training endpoint surface (POST-only, and the player's dial map agrees)
+        run: python -m unittest erpnext_enhancements.tests.test_training_endpoint_surface -v
       # Every dotted path in hooks.py must name something that exists. Frappe
       # resolves after_migrate at the very END of `bench migrate`, so a typo there
       # fails the deploy after every schema change has already been applied -- the

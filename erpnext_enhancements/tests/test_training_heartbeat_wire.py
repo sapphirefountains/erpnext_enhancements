@@ -370,8 +370,14 @@ class TestTransportMapPointsAtRealEndpoints(unittest.TestCase):
 		return dict(re.findall(r'(\w+)\s*:\s*"(\w+)"', block))
 
 	def _whitelisted(self):
+		"""``[^)]*`` matters: this read ``whitelist\\(\\)`` with empty parens until
+		v1.299.4, when every endpoint gained ``methods=["POST"]`` and the scan matched
+		**nothing** — so the map check below compared against an empty set and reported
+		all thirteen as broken. A detector that only recognises one spelling of the thing
+		it looks for fails loudly here, but the same shape elsewhere in this repo has
+		failed silently by finding zero and asserting over an empty set."""
 		api = self.API.read_text(encoding="utf-8")
-		return set(re.findall(r"@frappe\.whitelist\(\)\s*\ndef\s+(\w+)", api))
+		return set(re.findall(r"@frappe\.whitelist\([^)]*\)\s*\ndef\s+(\w+)", api))
 
 	def _transport_calls(self):
 		used = set()
