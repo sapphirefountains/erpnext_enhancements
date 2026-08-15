@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.311.0] - 2026-08-15
+
+**A documented contract that the code did not keep.** `record_governance_event` says it never
+raises. It could, three ways — and its most exposed caller is a `doc_events` handler on `User`.
+
+### Fixed
+
+The docstring is unambiguous: *"**Swallows.** Every caller is an act that has already happened —
+a role granted, a tombstone expanded, a retention run finished — and raising here would undo the
+act to record it."* The `try` that delivers that promise began well down the function, and three
+calls sat above it:
+
+- **`_acquire_governance_lock()`**, which runs `select get_lock(…)` — a query, on a connection
+  that may be exactly what has failed.
+- the `log_error` on the unknown-event-type path.
+- the `log_error` on the lock-not-obtained path.
+
+So on a failing database the exception went straight out through a function documented never to
+raise. The sharpest caller is `governance/role_grants.py`, which hooks `User` so that granting or
+revoking the oversight role is itself recorded: **a failed audit write would have become a failed
+save, for every profiled user on the site.**
+
+Both lock helpers now answer `False` rather than raising. To every caller, *"the lock was not
+obtained"* and *"asking for the lock failed"* are one fact with one correct response, and both
+callers already handled `False` — `_write` refuses the read, which keeps `record_or_refuse`
+fail-closed and produces a better message than a raw `OperationalError`. This mirrors
+`_release_chain_lock` and `_release_governance_lock`, which have always swallowed for the same
+reason; the asymmetry was that *release* was guarded and *acquire* was not.
+
+Every log now goes through `_log_quietly`. **Reporting a failure must not be able to fail the same
+way**: `log_error` writes a document, so on a dead connection it dies exactly as the thing it is
+reporting died, and a swallowing caller raises after all — from inside its own error handler.
+CLAUDE.md records the result from the background-job side, where the job aborts with an *empty*
+Error Log. This is not a new idea in the module: `record_governance_event`'s `except` clause and
+`record_privileged_read` both already wrapped their `log_error` in a nested `try` for exactly this
+reason. What was missing was the same care at the two early exits. One helper, used at all four
+sites, so the protection cannot be present in one branch and absent in the branch beside it.
+
+**The retrieval side was already safe, and the difference is worth recording.**
+`_acquire_chain_lock` also sits outside `_write`'s own `try` — but `record_privileged_read` wraps
+its `_write` call in *its* `try`, so the swallowing path was covered by the caller rather than by
+the callee. It is guarded now anyway, because a contract that holds only because of where a
+different function put its `try` is one edit away from not holding.
+
+### Tests
+
+`TheSwallowContractHolds` drives `record_governance_event` against a database that raises, and
+asserts it returns `None`. Then against a database that raises **and** an `log_error` that raises,
+because the second is the failure mode the first invites. Then the unknown-event early exit, which
+logs outside the `try` as well. A promise about what a function does *not* do is exactly the kind
+that survives untested for a long time, because nothing exercises it until the day it matters.
+
+Verified by restoring the pre-fix shape: 3 for 3.
+
+### Changed
+
+The two vocabulary scans added in v1.307.1 and v1.309.0 now skip `tests/`. They police what
+*production* passes to the audit writers, and a suite that drives a refusal path necessarily
+passes the value being refused — found by writing exactly such a test, which the scan then flagged.
+Excluding the suite is right: the alternative is that the only way to exercise the refusal is to
+stop testing it.
+
 ## [1.310.0] - 2026-08-15
 
 **What a live message used to say.** The last read surface TASK-2026-01278 asks for, and the one

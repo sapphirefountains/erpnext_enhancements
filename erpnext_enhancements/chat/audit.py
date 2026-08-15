@@ -535,13 +535,10 @@ def record_privileged_read(
 			context_truncated=context_truncated,
 		)
 	except Exception:
-		try:
-			frappe.log_error(
-				title="chat audit: privileged read NOT recorded",
-				message=f"user={user} purpose={purpose}",
-			)
-		except Exception:
-			pass
+		_log_quietly(
+			title="chat audit: privileged read NOT recorded",
+			message=f"user={user} purpose={purpose}",
+		)
 		return None
 
 
@@ -560,6 +557,27 @@ def record_or_refuse(**kwargs: Any) -> str:
 	return name
 
 
+def _log_quietly(title: str, message: str) -> None:
+	"""``frappe.log_error`` that cannot itself raise.
+
+	**Reporting a failure must not be able to fail the same way.** ``log_error`` writes a
+	document, so on a dead or exhausted connection it dies exactly as whatever it is reporting
+	died — and a caller that was swallowing on purpose raises after all, from inside its own
+	error handler. CLAUDE.md records the shape from the background-job side: the job aborts
+	with an **empty Error Log**, which is the least useful outcome available.
+
+	This is not a new idea in this module. :func:`record_governance_event`'s ``except`` clause
+	already wrapped its ``log_error`` in a nested ``try`` for precisely this reason; what was
+	missing was the same care at its two *early-exit* logs, which sat outside any handler. One
+	helper, used everywhere, so the protection cannot be present in one branch and absent in
+	the branch next to it.
+	"""
+	try:
+		frappe.log_error(title=title, message=message)
+	except Exception:
+		pass
+
+
 def _acquire_chain_lock() -> bool:
 	"""Serialise read-head → insert → commit. Returns False if the lock was not obtained.
 
@@ -568,8 +586,18 @@ def _acquire_chain_lock() -> bool:
 	permanent break that is indistinguishable from tampering. Overlap is the normal case, not
 	a rare race: the SPA issues its room list, unread counts and transcript as parallel
 	requests.
+
+	**Returns False rather than raising when the query itself fails**, which is the same
+	answer for the same reason its sibling :func:`_release_chain_lock` already swallows: to
+	every caller, "the lock was not obtained" and "asking for the lock failed" are one fact
+	with one correct response. Both callers already handle False — ``_write`` refuses the
+	read, which keeps ``record_or_refuse`` fail-closed and gives a better message than a raw
+	``OperationalError`` would.
 	"""
-	rows = frappe.db.sql("select get_lock(%s, %s)", (_CHAIN_LOCK, _CHAIN_LOCK_TIMEOUT))
+	try:
+		rows = frappe.db.sql("select get_lock(%s, %s)", (_CHAIN_LOCK, _CHAIN_LOCK_TIMEOUT))
+	except Exception:
+		return False
 	return bool(rows and rows[0][0] == 1)
 
 
@@ -850,6 +878,15 @@ def record_governance_event(
 	row detectable only by its absence — which is the honest limit of an append-only log that
 	cannot refuse the thing it describes.
 
+	**That contract was stated here and not kept, until v1.311.0.** Three calls sat outside the
+	``try`` — the two early-exit ``log_error``\\ s and, worst, ``_acquire_governance_lock``,
+	which runs a query. On a failing connection the exception went straight out through a
+	function documented never to raise, and into a ``doc_events`` handler that fires on **every
+	``User`` save**: a failed audit write would have become a failed save, for every profiled
+	user on the site. The lock helpers now answer False instead of raising, every log goes
+	through :func:`_log_quietly`, and ``TheSwallowContractHolds`` drives this function against a
+	database that raises so the promise is asserted rather than described.
+
 	**Never put message text in ``detail``.** A retention run records how many rows it
 	destroyed and over which ``seq`` range; a log of what was deleted that contains what was
 	deleted has not deleted anything.
@@ -857,7 +894,7 @@ def record_governance_event(
 	if event_type not in GOVERNANCE_EVENTS:
 		# Checked here rather than left to Frappe's Select validation, which would raise at
 		# save time — after the act being recorded already happened.
-		frappe.log_error(
+		_log_quietly(
 			title="chat audit: unknown governance event",
 			message=f"event_type={event_type!r} actor={actor!r}",
 		)
@@ -879,7 +916,7 @@ def record_governance_event(
 	}
 
 	if not _acquire_governance_lock():
-		frappe.log_error(
+		_log_quietly(
 			title="chat audit: governance chain lock not obtained",
 			message=f"event_type={event_type} actor={actor}",
 		)
@@ -893,20 +930,29 @@ def record_governance_event(
 		frappe.db.commit()
 		return doc.name
 	except Exception as exc:
-		try:
-			frappe.log_error(
-				title="chat audit: governance event NOT recorded",
-				message=f"event_type={event_type} actor={actor} error={exc.__class__.__name__}",
-			)
-		except Exception:
-			pass
+		_log_quietly(
+			title="chat audit: governance event NOT recorded",
+			message=f"event_type={event_type} actor={actor} error={exc.__class__.__name__}",
+		)
 		return None
 	finally:
 		_release_governance_lock()
 
 
 def _acquire_governance_lock() -> bool:
-	rows = frappe.db.sql("select get_lock(%s, %s)", (_GOVERNANCE_CHAIN_LOCK, _CHAIN_LOCK_TIMEOUT))
+	"""The governance twin of :func:`_acquire_chain_lock`, and swallowing for a sharper reason.
+
+	This one is called by :func:`record_governance_event`, whose documented contract is that it
+	**never raises** — every caller is an act that has already happened, and raising here would
+	undo the act in order to record it. That contract had a hole exactly this wide: the lock was
+	acquired *before* the ``try``, so on a failing connection the exception went straight out
+	through a function that promises it will not, and into a ``doc_events`` handler that runs on
+	every ``User`` save.
+	"""
+	try:
+		rows = frappe.db.sql("select get_lock(%s, %s)", (_GOVERNANCE_CHAIN_LOCK, _CHAIN_LOCK_TIMEOUT))
+	except Exception:
+		return False
 	return bool(rows and rows[0][0] == 1)
 
 
