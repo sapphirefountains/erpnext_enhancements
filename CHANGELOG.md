@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.316.1] - 2026-08-15
+
+### Changed
+
+- **`docs/migration/wi011-triton-role-scope.md`** — records that **wave 1 was applied**
+  (2026-08-15 17:31 UTC): `Script Manager` and `Device Manager` removed from
+  `triton@sapphirefountains.com`, **90 → 88 roles**. Docs only; this repo ships no code that
+  reads or writes that account.
+
+  Verified against the 90-role snapshot taken beforehand: exactly those two roles gone, **nothing
+  else added or lost**, and the measured capability change across all eight ptypes and 2,856
+  grants is `Server Script` r/w/c/d/report/export **and nothing else**. `Device Manager` cost
+  literally nothing, as predicted — the MDM webhook path runs as `mdm@`, not this account.
+
+  `enabled`, `user_type`, `role_profile_name` unchanged; **`api_key` and `api_secret` both still
+  set**. Zero Error Log rows since the change and zero permission errors naming the account. The
+  strongest immediate signal: **`last_active` moved to 17:31:27, twenty seconds after the change**
+  — the credential authenticated successfully post-revoke.
+
+  Two things that would have turned this into an outage were checked on v16 **before** the save
+  rather than assumed, and neither happens: `clear_sessions(user, force=True)` fires only
+  `if self.has_value_changed("user_type")`, and `user_type` does not change while `System User`
+  and other desk roles remain; and a User save never touches `api_key`/`api_secret` — key
+  generation lives in the separate `generate_keys()` method, not in `validate`/`on_update`.
+
+  Wave 2 (58 roles) is gated on a clean week. The failure mode to watch for is **not** an error: a
+  narrowed `get_list` returns fewer rows and raises nothing, so the gate is Call Log and Contact
+  creation continuing at their usual cadence, not an empty Error Log.
+
 ## [1.316.0] - 2026-08-15
 
 **A service account's role set is the blast radius of its credential, and this one holds 90 roles
