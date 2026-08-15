@@ -603,6 +603,106 @@ class TestTheGateHasExactlyTwoDoors(unittest.TestCase):
 		self.fail("membership_filter_sql not found in chat/permissions.py")
 
 
+class TestEveryAuditControllerRefusesEveryPath(unittest.TestCase):
+	"""Three tables, three doors each. The child table had none of them.
+
+	``Chat Retrieval Audit Room``'s controller was a bare ``pass``, and its docstring explained
+	that a guard was unnecessary because reaching a child row without its parent "means
+	bypassing the ORM altogether". **It does not.**
+	``frappe.delete_doc("Chat Retrieval Audit Room", name)`` and
+	``frappe.get_doc(...).db_set(...)`` are ordinary ORM paths that never load the parent, and
+	the parent's refusals do not reach a document that was never loaded through it.
+
+	The older assertion above tests one controller by path. That is why this gap survived: the
+	table nobody checked was the one nobody had written a guard for.
+
+	``before_change`` is the third door, and it is unconditional by design. In v16
+	``Document.db_set`` runs ``run_method("before_change")`` immediately before writing, and
+	that is the **only** call site in the framework — so the hook cannot fire on an insert or
+	an ordinary save, and any call at all is the violation. Hence no ``if`` to assert, unlike
+	its two siblings.
+	"""
+
+	CONTROLLERS = ("chat_retrieval_audit", "chat_retrieval_audit_room", "chat_audit_log")
+
+	def _methods(self, module: str) -> dict[str, ast.AST]:
+		path = APP_DIR / "chat" / "doctype" / module / f"{module}.py"
+		self.assertTrue(path.exists(), f"{module} controller has moved or been renamed")
+		return {
+			node.name: node
+			for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), str(path)))
+			if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+		}
+
+	def test_all_three_controllers_refuse_update_and_delete(self) -> None:
+		for module in self.CONTROLLERS:
+			methods = self._methods(module)
+			for hook in ("before_save", "on_trash"):
+				self.assertIn(
+					hook,
+					methods,
+					f"{module} has no {hook}. An audit row that can be "
+					f"{'edited' if hook == 'before_save' else 'deleted'} is not a record of "
+					"what somebody did — and a child table is a document in its own right.",
+				)
+
+	def test_all_three_controllers_carry_the_db_set_tripwire(self) -> None:
+		for module in self.CONTROLLERS:
+			methods = self._methods(module)
+			self.assertIn(
+				"before_change",
+				methods,
+				f"{module} has no before_change, so `doc.db_set(...)` rewrites the row with no "
+				"controller consulted. That path writes the column directly and never reaches "
+				"before_save.",
+			)
+
+	def test_the_tripwire_actually_refuses(self) -> None:
+		"""The method existing is not the guard — the same lesson as the sibling assertion."""
+		for module in self.CONTROLLERS:
+			node = self._methods(module)["before_change"]
+			throws = [
+				c
+				for c in ast.walk(node)
+				if isinstance(c, ast.Call) and getattr(c.func, "attr", "") == "throw"
+			]
+			self.assertTrue(
+				throws, f"{module}.before_change() has no frappe.throw — it refuses nothing"
+			)
+			guards = [
+				b
+				for b in ast.walk(node)
+				if isinstance(b, ast.If)
+				and isinstance(b.test, ast.Constant)
+				and not b.test.value
+			]
+			self.assertFalse(
+				guards,
+				f"{module}.before_change() hides its throw behind a falsy branch, which keeps "
+				"the method, the word 'throw' and the refusal of nothing.",
+			)
+
+	def test_the_child_no_longer_claims_it_needs_no_guard(self) -> None:
+		"""The docstring that made the gap look deliberate.
+
+		Asserted because a future reader finding guards here and prose saying they are
+		unnecessary will believe the prose — it is shorter.
+		"""
+		path = (
+			APP_DIR
+			/ "chat"
+			/ "doctype"
+			/ "chat_retrieval_audit_room"
+			/ "chat_retrieval_audit_room.py"
+		)
+		source = path.read_text(encoding="utf-8")
+		self.assertNotIn(
+			"No immutability guard of its own",
+			source,
+			"the child controller still says it has no guard of its own, which is now false",
+		)
+
+
 class TestTheConstantResolverItself(unittest.TestCase):
 	"""Controls for the resolver, because the scan it belongs to was blind for eleven releases.
 
