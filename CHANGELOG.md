@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.294.0] - 2026-08-15
+
+**One content endpoint enforced membership but not the pilot gate, so `enabled = 0` kept
+serving attachment bytes.** Phase 6 §4.J, whose first requirement is worded about exactly this
+shape: *"a non-pilot user holding a deep link must be refused by the server."* An attachment URL
+is a deep link.
+
+### Fixed
+
+- **`sync/attachments.download` now calls `require_session()`** before the membership decision.
+  It was correctly gated on membership — it calls the same `chat_attachment_has_permission` the
+  `has_permission` hook uses — but it reached neither the pilot whitelist nor
+  `Chat Settings.enabled`.
+
+  Two consequences, and the second is the one that matters. A member dropped from the pilot
+  whitelist kept fetching bytes from rooms they were still in: recoverable, arguably minor. But
+  **`enabled` is the top layer of the rollback table**, and with it off this path kept serving
+  attachment bytes — a rollback layer with less blast radius than the table would have claimed
+  for it, which is the kind of gap you discover during the incident you are rolling back from.
+
+  `ChatAccessError` subclasses `frappe.PermissionError`, so the refusal is the same 403 as every
+  other refusal there and the uniform-refusal property is preserved.
+
+### Added
+
+- **`PILOT_GATE_EXEMPT` and `pilot_gated()` in `chat/endpoints.py`.** A transitive scan for
+  endpoints reaching `require_session` — directly or through `require_room`/`require_message` —
+  found **fourteen** that did not. Thirteen were correct and now carry a written reason under
+  one of two arguments:
+
+  - **oversight-gated**: an auditor is not necessarily a pilot member, and the governance
+    obligation deliberately outlives the rollout flag — the moment somebody most needs to review
+    what was said is often *after* the feature was switched off. `my_access_log` gets its own
+    version of this: gating the transparency view on the pilot would mean somebody removed from
+    it could no longer see who had read their messages, at exactly the moment they would want to.
+  - **plumbing-gated**: `only_for("System Manager")`, and requiring the pilot as well would mean
+    a rollback switch could lock the operator out of the controls they need to finish the
+    rollback.
+
+  Set equality against the discovered surface is asserted, so an endpoint that stops reaching
+  the gate has to be classified rather than silently joining the exempt set.
+
+- **Seven assertions in `test_chat_endpoint_surface.py`**, including
+  `test_every_content_endpoint_is_gated`, which pins the rule rather than the one endpoint:
+  anything under `api/`, plus `attachments.download`, must reach the gate. Reverting the fix
+  turns two of them red.
+
+- **`docs/runbooks/chat_operations.md`** — the operations runbook §4.J asks for:
+
+  - **the layer-by-layer rollback table**, outermost first, each row with its blast radius, what
+    is lost, and a *specific observation* proving it took effect — including the layer that is
+    **not reversible in place**: a deleted Workspace Events subscription cannot be reactivated,
+    only recreated, and recreation delivers from the moment it exists, so the gap is recoverable
+    only by the reconciliation sweep and only for creations;
+  - **the degradation contract**, which the code already satisfies: `relay_disposition` writes
+    *no row at all* — not a `Skipped` one — when any of the three switches is off. A `Skipped`
+    row would look like a queue that had considered the message and declined, and would build a
+    backlog nobody drains;
+  - **the five most likely incidents**, each starting from `chat.health.report`'s alert panel;
+  - **the pilot note to send before anyone starts**, drafted for Nikolas to send. Four things,
+    plainly: an administrator can read anything and it is recorded; you can see those records;
+    the assistant reads across your rooms; nothing is deleted. Somebody who was not told cannot
+    have consented, which is what makes this phase's governance decisions real;
+  - **the 24-step acceptance checklist** a non-engineer can run, with four gate steps marked. In
+    plain terms the gates are: messages are attributable, silence is deliberate rather than
+    broken, the assistant works where people actually are, and the permission boundary holds.
+
+### Not done here
+
+- **The drill itself.** Chat-dark for thirty minutes with two real users, the notification matrix
+  across two browser profiles and a phone, and the pilot walkthrough. The runbook is what makes
+  those executable; it cannot substitute for them.
+
 ## [1.293.1] - 2026-08-15
 
 **38 chat endpoints have no rate limit, and adding one to each would make things worse.**
