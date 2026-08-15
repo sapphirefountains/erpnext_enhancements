@@ -128,6 +128,13 @@ MAX_THREAD_MESSAGES: int = 200
 #: Hard cap on the T3 authored tier.
 MAX_AUTHORED_MESSAGES: int = 60
 
+#: The two things a retrieval can be for. A constant rather than the bare strings that used to
+#: be passed, because ``purpose`` stopped being a label the moment it started deciding what
+#: goes into the assembly: **an oversight read is the one path whose output is rendered to a
+#: person rather than sent to a model**, and the citation instruction is addressed to a model.
+PURPOSE_MENTION: str = "mention"
+PURPOSE_OVERSIGHT: str = "oversight"
+
 
 class RetrievalRefused(Exception):
 	"""Raised when retrieval must not proceed. Never carries content."""
@@ -691,7 +698,7 @@ def retrieve_for_oversight(
 			query=query,
 			room=None,
 			thread_root=None,
-			purpose="oversight",
+			purpose=PURPOSE_OVERSIGHT,
 			request_id=request_id,
 			system_prompt="",
 			glossary_lines=[],
@@ -845,6 +852,18 @@ def _run(
 		thread_lines=thread_lines,
 		question=query,
 		context_truncated=fitted.context_truncated,
+		# **Not for an oversight read.** `assemble()` defaults this on, and every other caller
+		# is building a prompt, so on is right for them. The oversight path is the one place
+		# the assembly is rendered to a *person* — `governance/viewer.py` returns
+		# `assembly.text()` straight into the auditor's result box — and `CITATION_INSTRUCTION`
+		# is an instruction addressed to a language model. From v1.299.1 until v1.306.1 an
+		# investigator's transcript therefore opened with "Cite the numbered context lines you
+		# actually used, inline, as [[ref:N]]…", and a screenshot of that surface would have
+		# carried prompt scaffolding into a compliance record.
+		#
+		# The citations themselves are unaffected: they travel separately as `manifest`, which
+		# `viewer.search()` returns under its own key.
+		include_citation_instruction=purpose != PURPOSE_OVERSIGHT,
 	)
 
 	return RetrievalResult(

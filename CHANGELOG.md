@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.306.1] - 2026-08-15
+
+**The oversight viewer was showing the auditor an LLM prompt.** Introduced by v1.299.1, which
+fixed `search()` returning an *empty* transcript by switching it to `result.assembly.text()`.
+That was the right field to reach for and the wrong thing to hand a person.
+
+### Fixed
+
+`assemble()` defaults `include_citation_instruction=True` and appends `CITATION_INSTRUCTION`
+to S0. `retrieve_for_oversight` passes `system_prompt=""`, `glossary_lines=[]` and
+`user_card_lines=[]` — but never passed `include_citation_instruction=False`. So from v1.299.1
+until now, an investigator's result box opened with:
+
+> *"Cite the numbered context lines you actually used, inline, as `[[ref:N]]` where N is the
+> number shown in the line's ⟦ref:N⟧ prefix…"*
+
+— an instruction addressed to a language model, in the one path where the assembly is rendered
+to a human instead of sent to one. A screenshot of that surface would have carried prompt
+scaffolding into a compliance record.
+
+`purpose` also stopped being a label the moment it started deciding what goes into the
+assembly, so the two bare string literals are now `PURPOSE_MENTION` / `PURPOSE_OVERSIGHT`
+constants. Two literals compared for equality is one typo away from silently restoring the
+instruction, and the symptom would be prose in a compliance record — which nothing fails on.
+
+**The citations are unaffected.** They travel separately as `manifest`, which `viewer.search()`
+returns under its own key; suppressing the *instruction* is not suppressing the citations, and
+a test asserts that distinction.
+
+`TheAuditorIsNotShownAPromptTest` asserts on the **gate**, not the viewer — the viewer only
+renders what it is given, and the decision belongs to the one caller that knows its output is
+for a person. Verified failing against the pre-fix code.
+
+Closes TASK-2026-01572.
+
 ## [1.306.0] - 2026-08-15
 
 **Every number anyone had about the lint backlog was wrong, and the thing everyone thought was

@@ -339,5 +339,60 @@ class TranscriptShapeTest(unittest.TestCase):
 		)
 
 
+class TheAuditorIsNotShownAPromptTest(unittest.TestCase):
+	"""What lands in the auditor's result box is read by a person, not by a model.
+
+	v1.299.1 fixed ``search()`` returning an EMPTY transcript by switching it to
+	``result.assembly.text()``. That was the right field and the wrong thing to hand a human:
+	``assemble()`` defaults ``include_citation_instruction=True``, so S0 carried
+	``CITATION_INSTRUCTION`` — "Cite the numbered context lines you actually used, inline, as
+	[[ref:N]]…" — an instruction addressed to a language model. An investigator's transcript
+	opened with it, and a screenshot of that surface would have carried prompt scaffolding into
+	a compliance record.
+
+	Asserted on the *gate*, not on the viewer, because the viewer only renders what it is given:
+	the decision belongs to the one caller that knows the output is for a person.
+	"""
+
+	def test_the_oversight_path_suppresses_the_citation_instruction(self):
+		gate = pathlib.Path(__file__).resolve().parents[1] / "chat" / "retrieval" / "gate.py"
+		tree = ast.parse(gate.read_text(encoding="utf-8"))
+		calls = [
+			node
+			for node in ast.walk(tree)
+			if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "assemble"
+		]
+		self.assertTrue(calls, "gate.py no longer calls assemble() — re-derive this scan")
+		for call in calls:
+			kwargs = {kw.arg: kw.value for kw in call.keywords}
+			self.assertIn(
+				"include_citation_instruction",
+				kwargs,
+				"gate.py calls assemble() without deciding include_citation_instruction. It "
+				"defaults TRUE, and the oversight path renders the assembly to a person.",
+			)
+			self.assertIn(
+				"PURPOSE_OVERSIGHT",
+				ast.unparse(kwargs["include_citation_instruction"]),
+				"the decision no longer keys on the oversight purpose",
+			)
+
+	def test_the_purpose_values_are_constants(self):
+		"""``purpose`` stopped being a label the moment it decided what goes in the assembly.
+		Two bare string literals compared for equality is one typo away from silently restoring
+		the instruction — and the symptom would be prose in a compliance record, which nothing
+		fails on."""
+		gate = pathlib.Path(__file__).resolve().parents[1] / "chat" / "retrieval" / "gate.py"
+		src = gate.read_text(encoding="utf-8")
+		self.assertIn("PURPOSE_OVERSIGHT", src)
+		self.assertNotIn('purpose="oversight"', src)
+
+	def test_the_citations_still_reach_the_caller(self):
+		"""They travel separately as ``manifest``, so suppressing the *instruction* must not be
+		confused with suppressing the citations themselves."""
+		viewer = pathlib.Path(__file__).resolve().parents[1] / "chat" / "governance" / "viewer.py"
+		self.assertIn("result.manifest", viewer.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
 	unittest.main()
