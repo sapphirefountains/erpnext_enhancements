@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.304.0] - 2026-08-15
+
+**The author can answer now, and — more usefully — the form stops answering silently.**
+Closes the loop v1.303.0 opened, where a learner could ask into a queue nobody could empty
+from the UI.
+
+### The actual defect was narrower than "there is no way to answer"
+
+Training Author, Training Manager and System Manager all hold `write` on
+`Training Question Thread`, and its controller is thorough: `_stamp_answer` sets
+`answered_by` and `answered_on`, `_derive_status` moves the thread to `Answered`, and
+`_clamp_visibility` refuses to publish an unanswered or hidden one. **Typing into the Answer
+field and pressing Ctrl+S therefore saves a completely correct record.**
+
+It just never tells the learner. The notification lives in
+`training.qa.answer_question_thread` — which had no caller at all — and not in `validate()`.
+So the obvious path produced a right-looking row and silence, and the learner had no reason
+to reopen the lesson to discover the answer.
+
+### Added
+
+`training_question_thread.js`: an **Answer and notify** action routing through the endpoint,
+and a headline warning the moment the Answer field is edited directly, because that is the
+path somebody will actually take and it is the one that goes quiet.
+
+The dialog reports what happened rather than assuming it: `_notify` is best-effort by design —
+a learner with no email address must not fail the answer — so a send that did not go out says
+so, in orange, naming the likely cause. An author told "sent" when nothing was sent does not
+follow up.
+
+`is_public` is a checkbox that ships off, matching the DocType's own docstring: questions
+arrive phrased personally and routinely carry a site name, a customer name, or a photo of
+somebody's pump room. Publishing is a per-thread decision, not a default. The dialog also
+states the thing an author would otherwise have to infer — only the *answer* is published,
+never the question.
+
+Hidden threads get no button. `Hidden` is sticky and means "stop showing me this"; offering
+to answer one is offering to un-hide it as a side effect, which is not this button's decision.
+The server refuses it too.
+
+### Guard
+
+`EveryQaEndpointHasACallerTest` walks `training/qa.py` and requires a caller for **every**
+whitelisted name, as a set. The learner half and the author half were written in the same
+release and neither was wired to anything; asserting them one at a time is how the second one
+gets forgotten again. A fourth endpoint added next year fails this by default.
 ## [1.303.1] - 2026-08-15
 
 ### Changed

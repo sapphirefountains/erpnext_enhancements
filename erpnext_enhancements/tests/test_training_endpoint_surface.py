@@ -224,6 +224,73 @@ class AskTheAuthorIsReachableTest(unittest.TestCase):
         self.assertIn("aria-controls", src)
 
 
+class EveryQaEndpointHasACallerTest(unittest.TestCase):
+    """All three of ``training/qa.py``'s whitelisted functions, checked as a set.
+
+    The learner half and the author half were written in the same release and neither was
+    wired to anything. Asserting them one at a time is how the second one gets forgotten
+    again, so this walks the module and requires a caller for **every** whitelisted name —
+    a fourth endpoint added next year fails this by default.
+    """
+
+    QA = APP / "training/qa.py"
+    THREAD_JS = APP / "training/doctype/training_question_thread/training_question_thread.js"
+
+    def _qa_endpoints(self):
+        names = []
+        for node in ast.walk(ast.parse(self.QA.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for dec in node.decorator_list:
+                target = dec.func if isinstance(dec, ast.Call) else dec
+                if getattr(target, "attr", "") == "whitelist":
+                    names.append(node.name)
+        return sorted(names)
+
+    def _callers(self):
+        """Everything that could dial one, minus qa.py itself and this suite."""
+        blobs = []
+        for path in (
+            API,
+            PAGE,
+            self.THREAD_JS,
+            APP / "public/js/training/player.js",
+        ):
+            if path.exists():
+                blobs.append(path.read_text(encoding="utf-8"))
+        return "\n".join(blobs)
+
+    def test_the_scan_finds_them(self):
+        self.assertGreaterEqual(len(self._qa_endpoints()), 3)
+
+    def test_every_qa_endpoint_is_reachable_from_somewhere(self):
+        callers = self._callers()
+        orphans = [name for name in self._qa_endpoints() if name not in callers]
+        self.assertEqual(
+            orphans,
+            [],
+            f"{orphans} in training/qa.py are whitelisted and nothing calls them. That is how "
+            "this whole feature shipped in v1.215.0 and did nothing: the backend was complete "
+            "and unreachable. Wire it or delete it.",
+        )
+
+    def test_the_author_can_answer_from_the_desk(self):
+        """Specifically the desk form, because that is where an author reads the queue."""
+        self.assertTrue(self.THREAD_JS.exists(), "the thread DocType has no form script")
+        self.assertIn("answer_question_thread", self.THREAD_JS.read_text(encoding="utf-8"))
+
+    def test_the_form_warns_that_a_plain_save_does_not_notify(self):
+        """The real defect, and the one a button alone would not fix.
+
+        Authors hold `write` on this DocType and the controller stamps `answered_by`,
+        `answered_on` and the derived status on any save — so typing into the Answer field
+        and pressing Ctrl+S produces a completely correct record and total silence. The
+        notification lives in the endpoint, not in `validate()`.
+        """
+        src = self.THREAD_JS.read_text(encoding="utf-8")
+        self.assertIn("does not notify", src)
+
+
 class TheClientStillPostsTest(unittest.TestCase):
     """The server rule is only safe because the client already obeyed it."""
 
