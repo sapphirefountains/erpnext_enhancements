@@ -776,6 +776,16 @@ scheduler_events = {
 		# every class is vacuously empty and the scan would report a clean estate — a true
 		# answer that reads as reassurance about a mirror that does not exist.
 		"25 4 * * *": ["erpnext_enhancements.chat.governance.drift.run_drift_scan"],
+		# Phase 6 §4.F. Finishes deletions an already-written retirement mark authorises — it
+		# never advances a mark and never deletes a message, so it cannot destroy anything a
+		# human did not ask for. It exists for two cases: a mark moved by something other than
+		# `set_retirement_mark` (the field is read_only on the DocField, which is a form
+		# property and not a database constraint), and the ARCHIVED room — because the chunk
+		# sweep and the digest sweep both open `where is_archived = 0`, so archiving is
+		# otherwise the single action that makes a room's retired coverage permanent.
+		#
+		# A no-op on every site until something sets a mark, which nothing does today.
+		"40 4 * * *": ["erpnext_enhancements.chat.indexing.retire.sweep_retirement"],
 		# Semi-monthly commission report — 07:00 site TZ, DAILY on purpose even
 		# though it only emails on the 1st and the 16th. The job also owns the
 		# saved date window on the "Brian's Closed Won" Report Builder report, and

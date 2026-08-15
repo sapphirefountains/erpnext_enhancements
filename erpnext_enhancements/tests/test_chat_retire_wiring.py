@@ -194,14 +194,23 @@ class RetentionPlannerTest(unittest.TestCase):
 class StillNotEnabledTest(unittest.TestCase):
 	"""The mechanism exists; nothing sets it yet. Asserted so a green run is not over-read."""
 
-	def test_nothing_writes_the_mark(self):
-		"""There is no writer, deliberately — it arrives with the purge. Until then every
-		predicate above is a no-op, which is the shipped state.
+	#: The one module permitted to move the mark. `chat/indexing/retire.py` — which refuses
+	#: unless the messages at or below it are already gone.
+	SOLE_WRITER = "retire.py"
 
-		**Write forms only.** The first version of this looked for the field name as a dict
-		key and flagged `retention.py`, which builds it as a *fact* for the eligibility
-		predicate — a read. A detector that cannot tell a read from a write would have to be
-		silenced, and a silenced guard is worse than none.
+	def test_only_the_retirement_writer_moves_the_mark(self):
+		"""**One writer, and it is the one that checks.**
+
+		This assertion said *nothing* writes the mark until v1.298.0, and it failed the moment
+		the writer landed — correctly. Widening it to "one named module" rather than deleting
+		it is the point: every consumer treats the mark as a promise that a span of messages is
+		destroyed, and the only thing that may make that promise is the code that verifies it
+		first. A second writer anywhere would be a way to assert it without checking.
+
+		**Write forms only.** An earlier version looked for the field name as a dict key and
+		flagged `retention.py`, which builds it as a *fact* for the eligibility predicate — a
+		read. A detector that cannot tell a read from a write would have to be silenced, and a
+		silenced guard is worse than none.
 		"""
 		writers = []
 		for path in _CHAT.rglob("*.py"):
@@ -221,7 +230,22 @@ class StillNotEnabledTest(unittest.TestCase):
 				}:
 					if MARK in (ast.get_source_segment(text, node) or ""):
 						writers.append(f"{path.name}: set_value")
-		self.assertFalse(writers, f"something now writes the mark: {writers}")
+		strangers = sorted({w for w in writers if not w.startswith(self.SOLE_WRITER)})
+		self.assertFalse(
+			strangers,
+			f"these modules write retired_below_seq and are not the retirement writer: "
+			f"{strangers}.\n\n"
+			"Every consumer treats the mark as a promise that a span of messages is destroyed. "
+			"chat/indexing/retire.py is the only module allowed to make that promise, because "
+			"it is the only one that verifies it — set_retirement_mark refuses unless the "
+			"messages at or below the mark are actually gone. A second writer is a way to "
+			"assert the promise without checking it.",
+		)
+		self.assertTrue(
+			writers,
+			"nothing writes retired_below_seq at all. The writer landed in v1.298.0; if it has "
+			"been removed, every predicate in this suite is dead code.",
+		)
 
 	def test_the_purge_is_still_refused(self):
 		from erpnext_enhancements.chat.governance import purge_rules
