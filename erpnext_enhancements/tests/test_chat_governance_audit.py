@@ -34,6 +34,10 @@ import unittest
 #: so a call site is checked whether or not its module can be imported without a bench.
 APP_DIR = pathlib.Path(__file__).resolve().parents[1]
 
+#: Excluded from the vocabulary scans below. They police what PRODUCTION passes to the audit
+#: writers; a suite that drives a refusal path necessarily passes the value being refused.
+_TESTS_DIR = pathlib.Path(__file__).resolve().parent
+
 _STUBBED: list[str] = []
 _SETTINGS: dict[str, object] = {}
 
@@ -412,6 +416,9 @@ class TheAuditPurposeVocabulary(unittest.TestCase):
 	def _purpose_literals(self) -> list[tuple[str, int, str]]:
 		found: list[tuple[str, int, str]] = []
 		for path in sorted(APP_DIR.rglob("*.py")):
+			# Production call sites only — see the note on the event scan below for why.
+			if _TESTS_DIR in path.parents:
+				continue
 			try:
 				tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
 			except SyntaxError:  # pragma: no cover - a broken file fails its own tests
@@ -476,6 +483,134 @@ class TheAuditPurposeVocabulary(unittest.TestCase):
 		self.assertIn(audit._DEFAULT_PURPOSE, audit._PURPOSES)
 
 
+class TheSwallowContractHolds(unittest.TestCase):
+	"""``record_governance_event`` documents that it never raises. This asserts it.
+
+	The contract is not decoration: every caller is an act that has **already happened** — a
+	role granted, a tombstone expanded, a retention run finished — so raising here undoes the
+	act in order to record it. The sharpest caller is ``governance/role_grants.py``, a
+	``doc_events`` handler on ``User``. A raise there turns a failed audit write into a failed
+	**save**, for every profiled user on the site.
+
+	It was stated in the docstring and not kept. Three calls sat outside the ``try``: both
+	early-exit ``log_error``\\ s, and ``_acquire_governance_lock``, which runs a query. A
+	promise about what a function does *not* do is exactly the kind that survives untested for
+	a long time, because nothing exercises it until the day it matters.
+	"""
+
+	def _with_db(self, db):
+		"""Run ``record_governance_event`` against a given fake database."""
+		from erpnext_enhancements.chat import audit
+
+		frappe = sys.modules["frappe"]
+		real_db, real_log = frappe.db, frappe.log_error
+		frappe.db = db
+		try:
+			return audit.record_governance_event(
+				event_type="oversight_role_granted",
+				actor="someone@example.com",
+				reason="checking the contract",
+			)
+		finally:
+			frappe.db, frappe.log_error = real_db, real_log
+
+	def test_a_database_that_raises_returns_none_rather_than_propagating(self) -> None:
+		"""The whole contract, in one assertion."""
+
+		class _Dead:
+			def sql(self, *_a, **_k):
+				raise RuntimeError("MySQL server has gone away")
+
+			def get_single_value(self, *_a, **_k):
+				return None
+
+			def commit(self):
+				raise RuntimeError("MySQL server has gone away")
+
+		try:
+			result = self._with_db(_Dead())
+		except Exception as exc:  # pragma: no cover - the regression this test names
+			self.fail(
+				"record_governance_event raised on a failing database. Its callers are acts "
+				"that already happened; the role hook is a doc_events handler on User, so "
+				f"this turns a failed audit write into a failed save: {exc!r}"
+			)
+		self.assertIsNone(result)
+
+	def test_it_still_returns_none_when_even_the_error_log_is_unwritable(self) -> None:
+		"""Reporting a failure must not be able to fail the same way.
+
+		``log_error`` writes a document, so on a dead connection it dies exactly as the thing
+		it is reporting died — and a swallowing caller raises after all, from inside its own
+		handler. CLAUDE.md records the result from the job side: the job aborts with an empty
+		Error Log, which is the least useful outcome available.
+		"""
+
+		class _Dead:
+			def sql(self, *_a, **_k):
+				raise RuntimeError("MySQL server has gone away")
+
+			def get_single_value(self, *_a, **_k):
+				return None
+
+		frappe = sys.modules["frappe"]
+		real_log = frappe.log_error
+
+		def _also_dead(**_kw):
+			raise RuntimeError("MySQL server has gone away")
+
+		frappe.log_error = _also_dead
+		try:
+			result = self._with_db(_Dead())
+		except Exception as exc:  # pragma: no cover
+			self.fail(f"the error logger's own failure escaped: {exc!r}")
+		finally:
+			frappe.log_error = real_log
+		self.assertIsNone(result)
+
+	def test_an_unknown_event_type_is_survivable_too(self) -> None:
+		"""The other early exit, which also logs outside the try."""
+
+		class _Dead:
+			def sql(self, *_a, **_k):
+				raise RuntimeError("MySQL server has gone away")
+
+		from erpnext_enhancements.chat import audit
+
+		frappe = sys.modules["frappe"]
+		real_db, real_log = frappe.db, frappe.log_error
+		frappe.db = _Dead()
+
+		def _also_dead(**_kw):
+			raise RuntimeError("MySQL server has gone away")
+
+		frappe.log_error = _also_dead
+		try:
+			result = audit.record_governance_event(event_type="not_a_real_event", actor="x@y.z")
+		except Exception as exc:  # pragma: no cover
+			self.fail(f"the unknown-event path raised: {exc!r}")
+		finally:
+			frappe.db, frappe.log_error = real_db, real_log
+		self.assertIsNone(result)
+
+	def test_the_lock_helpers_answer_false_rather_than_raising(self) -> None:
+		"""To every caller, "not obtained" and "asking failed" are one fact."""
+		from erpnext_enhancements.chat import audit
+
+		class _Dead:
+			def sql(self, *_a, **_k):
+				raise RuntimeError("MySQL server has gone away")
+
+		frappe = sys.modules["frappe"]
+		real_db = frappe.db
+		frappe.db = _Dead()
+		try:
+			self.assertFalse(audit._acquire_governance_lock())
+			self.assertFalse(audit._acquire_chain_lock())
+		finally:
+			frappe.db = real_db
+
+
 class TheGovernanceEventVocabulary(unittest.TestCase):
 	"""Every ``event_type=`` a caller passes must be one the writer accepts.
 
@@ -493,6 +628,12 @@ class TheGovernanceEventVocabulary(unittest.TestCase):
 	def _event_literals(self) -> list[tuple[str, int, str]]:
 		found: list[tuple[str, int, str]] = []
 		for path in sorted(APP_DIR.rglob("*.py")):
+			# Production call sites only. A test that deliberately drives the unknown-event
+			# refusal has to pass an unknown event, and flagging it would mean the only way to
+			# exercise that path is to stop testing it. Found by writing exactly such a test:
+			# `TheSwallowContractHolds.test_an_unknown_event_type_is_survivable_too`.
+			if _TESTS_DIR in path.parents:
+				continue
 			try:
 				tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
 			except SyntaxError:  # pragma: no cover
