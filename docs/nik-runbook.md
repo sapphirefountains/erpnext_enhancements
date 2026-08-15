@@ -1,7 +1,8 @@
 # The Nik runbook — what only you can do
 
 **Written 2026-08-14**, after reconciling all 149 open task records on PRJ-00580 and PRJ-00755
-against the actual code on `main` in both repositories.
+against the actual code on `main` in both repositories. **Re-reconciled 2026-08-15** across the
+121 records still open after the first pass — see [§0](#0-what-changed-today-before-you-read-the-rest).
 
 Everything in this file is something an agent **cannot** do: file an application with an external
 platform, decide a policy, run a command against production, hold a phone, or be a person who is
@@ -15,36 +16,44 @@ queues measured in weeks and half of them gate the other half.
 
 ## 0. What changed today, before you read the rest
 
-**Already merged while this was being written:** erpnext `#828` (1.288.3) and `#829` (1.288.4),
-and triton `#340` (0.68.0).
+*Updated 2026-08-15. Everything the earlier version of this section listed as open — erpnext
+`#828`–`#831`, triton `#340`/`#343` — has since merged. `erpnext_enhancements` is on **1.299.0**,
+`triton` on **0.68.2**.*
 
-**Three remain open. None is merged; `main` auto-deploys to production, so merging is yours.**
+**Two PRs are open. Neither is merged; `main` auto-deploys to production, so merging is yours.**
 
-| PR | Repo | Version | What it is |
-|---|---|---|---|
-| [#343](https://github.com/sapphirefountains/triton/pull/343) | triton | 0.68.2 | The drift guard, and two claims that were written down and never asserted |
-| [#831](https://github.com/sapphirefountains/erpnext_enhancements/pull/831) | erpnext_enhancements | 1.288.6 | Phase 6 §4.D — the unified access report |
-| [#830](https://github.com/sapphirefountains/erpnext_enhancements/pull/830) | erpnext_enhancements | 1.288.5 | This document |
+| PR | Version | What it is |
+|---|---|---|
+| [#853](https://github.com/sapphirefountains/erpnext_enhancements/pull/853) | 1.299.1 | The oversight viewer returned an **empty transcript** on every call — and wrote a full audit row saying it had not |
+| [#854](https://github.com/sapphirefountains/erpnext_enhancements/pull/854) | 1.299.2 | "Hide the activity feed on every tab but the first" has done **nothing** since v1.259.4, and its test passed the whole time |
 
-They are independent — no stacking, no required order.
+`#854` is **stacked on** `#853` — merge `#853` first and `#854` retargets to `main` by itself.
+They are stacked rather than independent only because both bump the version files, which conflict
+on every line otherwise.
 
-> **Why `#343` exists, because the failure is worth knowing about.** Its contents were
-> originally `#341` and `#342`, each stacked on the branch below it. When `#340` merged, GitHub
-> deleted its branch and **closed both stacked PRs marked `MERGED`** — while their commits had
-> never entered `main`. The PR list showed two merged PRs and the code was simply gone; it was
-> caught by checking `git merge-base --is-ancestor` rather than by reading the list. `#343` is
-> both commits rebased onto `main` directly, so the trap cannot repeat.
+> Both were found the same way: **re-reading the code behind a task that claimed to be shipped.**
+> Neither feature has ever been used in production, which is exactly why a silent failure in each
+> could survive — six weeks in one case, four releases in the other. Both fixes ship with a guard
+> that was **verified failing against the pre-fix code before being kept**, because the defect in
+> both cases was a test that could not fail.
 
-**`#829` is merged but not yet doing anything.** It reads a field Triton only publishes from
-0.68.0, so it needs `#340` **deployed**, not merely merged. Until that happens the invocation
-log's cost columns read zero — which is the intended visible-absence state rather than a wrong
-number, and is the whole point of the pair.
+**The board was re-reconciled — 121 records, and this time the parents were checked too.**
+Every non-Completed task on both projects was re-verified against the code, and every *shipped*
+verdict was then handed to a second agent told to refute it. **Three of seven were overturned.**
+The two that mattered most, though, were ones the refuter never looked at: it only attacked
+`shipped`, and two *parent* verdicts proposed closing containers that still had open children —
+Chat Phase 1 (one child, itself unfinished) and Chat Phase 2 (**six** open children, three of them
+the production-evidence tasks that have never run). Both were rejected by querying the children
+rather than reading the verdict.
 
-**The task board was reconciled.** 57 tasks that had already shipped were sitting at *Overdue* or
-*Pending Review*; they are now Completed with `completed_on` set to the **actual release date from
-the changelog**, not to today. Twelve tasks that claimed to be finished turned out not to be, and
-were moved back to Open with a comment naming exactly what is left. PRJ-00580 went from 52 tasks
-at *Pending Review* to 4.
+**What that leaves is the honest shape of the work:** almost everything that is code is done, and
+almost everything that is left needs production — a bench, a phone, a live Google round trip, a
+walkthrough with a person who is not an engineer, or a decision only you can make. That is what
+the rest of this document is.
+
+Parent progress figures are now a computed roll-up of each container's children (Completed counted
+as 100), capped at 95 while any child is open — so a container can no longer read 99% because it
+has a long tail of finished leaves and two real gaps.
 
 The full per-task evidence is in [§5](#5-appendix--the-reconciliation-in-full) and in each task's
 own timeline in ERPNext.
@@ -397,7 +406,7 @@ every "shipped" claim; **11 of those claims were overturned** and are marked `�
 
 | Task | ↺ | What it was | Where it actually stands / what is left |
 |---|---|---|---|
-| TASK-2026-00353 |  | Hide Activity | Make the hide rule actually win: either add `!important` to `.form-page.ee-activity-off-tab .form-footer { display: none; }` at desk_enhancements.bundle.css:1378, or narrow/remove the blanket `display: block !important` on `.form-footer` at line 1152. Then extend tests/test_activity_first_tab_only.py to assert no… |
+| TASK-2026-00353 | ↺ | Hide Activity | **Fixed in PR #854, unmerged.** The feature shipped in v1.259.4 and never worked: the hide rule at `desk_enhancements.bundle.css:1378` had no `!important`, and the older "Restore Missing Comment Box" block at `:1152` declares `.form-footer { display: block !important }` — an important declaration beats a non-important one regardless of specificity, so the footer was never hidden on any form. The test asserted the rule's *text* was present, which it was, so it passed for six weeks. `#854` adds the `!important` and replaces the string check with one that resolves the cascade. |
 | TASK-2026-01157 | ↺ | Supervisor sign-off, ask-the-author Q&A, gamification &… | Learner-facing surfaces for two strands were never built. (1) Ask-the-author Q&A: add ask_question and get_lesson_questions to the METHOD map in www/training.html and build the lesson-level ask/read UI in public/js/training/player.js — today training/qa.py's three whitelisted functions have no caller in the app, so no… |
 | TASK-2026-01191 | ↺ | Triton: deployed ADK agents cannot name a single ERPNext… | Run `python -m scripts.deploy_agents` (all 13 Agent Engine agents) from backend/ so the committed 53-tool snapshot actually reaches the deployed agents, then confirm one deployed agent can name e.g. fac_training_compliance_status. Neither CI nor the VM deploy performs this step, and there is no record it has been done… |
 | TASK-2026-01241 |  | Lint backlog: 433 ruff findings keep the lint job advisory | Run the `ruff format` pass (457 files) as its own PR at a quiet moment; clear or consciously ignore the remaining 152 `ruff check` findings; then delete `continue-on-error: true` from the lint job in .github/workflows/ci.yml and refresh the stale comment above it that still says 73. |
@@ -429,6 +438,10 @@ every "shipped" claim; **11 of those claims were overturned** and are marked `�
 | TASK-2026-01503 |  | Endpoint posture: two ungated writers, and 37 endpoints that… | Rate limiting (§4.G.4). No chat endpoint carries frappe.rate_limiter.rate_limit — the only @rate_limit in the package is the pre-existing one on gchat/webhook.py:675 for Google's inbound webhook. Still to build: the decorator placed below @frappe.whitelist(), a zero-arg callable for limit= so the count is… |
 | TASK-2026-01504 |  | Attachment serving: the four-extension list is not the whole… | Content-type validation at the two entry points. There is no byte-signature sniffing anywhere in the chat package; ERPNext-side uploads still write no content_type, and sync/attachments.py:626 still takes Google's contentType verbatim with only a fallback default. And image/svg+xml is still in the client's… |
 | TASK-2026-01505 |  | Audit immutability: consolidate the vault, do not rebuild it | 1) The oversight role still holds read on neither audit table: chat_retrieval_audit.json and chat_audit_log.json each grant read/report to System Manager only, and hooks.py registers no has_permission hook for either, so an auditor still cannot read the trail they are meant to review. 2) No on_change runtime tripwire… |
+| TASK-2026-01285 | ↺ | Cross-room oversight search and a hash-manifested export | **Was filed here as "not started — everything"; that was eleven releases stale.** Shipped across v1.289.3/v1.289.4: `governance/viewer.py:137-176` `search()` is a separate endpoint from the employee search, with a server-side role re-check, a graded reason plus mandatory category, `@rate_limit(120/hr)`, and one audit parent row with a child row per hit room. Left: the sender / date-range / origin / attachment-presence filters; an include-deleted-content option that is itself an audited act; and reconciling "searches all rooms" against the shipped named-rooms-max-25 design — implement it or record the divergence in the ADR addendum. |
+| TASK-2026-01306 | ↺ | Retention: the policy value, the dry run, and what survives a purge | **Was filed here as "no purge job exists"; both halves have since shipped.** The planner is v1.293.0 (`governance/retention.py` — `plan()`, `report()`, and the `retention_run` writer, the last of four declared-but-unwritten event types), and the purge itself is v1.299.0 (`governance/purge.py`). It ships **Disabled** per decision D-6, has no HTTP endpoint and is deliberately not scheduled — a job that destroys conversation on a timer is not something to add and then remember to think about. Left: it has never been run, not even as a dry run, and that first run is yours. |
+| TASK-2026-01508 | ↺ | The oversight read path, and the function nothing has ever called | **Was filed here as "zero production callers"; it has one now** — `governance/viewer.py` — and the two named gate defects are fixed (`gate.py:687-708` passes `verbatim_across_rooms=True` and `authored_user=subject`). But the transcript did not reach the caller: `viewer.py:173` read `getattr(result, "text", "")` and `RetrievalResult` has no `text` field, so every oversight read returned **empty** while writing a full audit row saying otherwise. Fixed in **PR #853**, unmerged. Left after that: the viewer *surface* itself, under TASK-2026-01278. |
+| TASK-2026-01509 | ↺ | Export: the artefact that leaves the building | **Was filed here as "nothing exists"; that was written at v1.288.5 and is stale.** Shipped v1.289.4/v1.289.5: `chat/doctype/chat_export_request/` (21 fields, zero DocPerm, so `/private/files` is closed), `governance/export.py` (the Frappe-free builder) and `governance/export_runner.py`, which writes the `export_requested` audit row **before** enqueue and refuses to build if that write fails. Left: the bundle is **six of the seven** specified parts — `members.csv` is neither built nor in `BUNDLE_FILES`; no drift-disagreement note in `README.txt`; `transcript.html` carries no named timezone; and the human pre-ship check is open. |
 
 ### Human action — not code
 
@@ -469,8 +482,6 @@ every "shipped" claim; **11 of those claims were overturned** and are marked `�
 |---|---|---|---|
 | TASK-2026-01194 |  | Triton: agents, personas and domain guides for training,… | Everything: the DOMAIN_GUIDES dict keyed by pack name (moving FOUNTAIN_DESIGN_GUIDE into it under 'water' in the same change), the four guides (training, contracts, finance-close, procurement), the three personas (training_officer, contract_clerk, buyer) plus extending bean_counter to carry the finance pack, the four… |
 | TASK-2026-01195 |  | Triton: convergence.md has no row for Training, Contracts,… | Add ownership-matrix rows for: Training/LMS; Contracts + e-signature; KPI dashboards (ERPNext against Triton's kiosks); Gantt (ERPNext api/gantt.py against Triton's DynamicGantt); Google Drive; and the call-intelligence READ-UI overlap (Triton /voice/analytics against ERPNext's Call-Center desk - data ownership is… |
-| TASK-2026-01285 |  | Cross-room oversight search and a hash-manifested export an… | Everything: the separate oversight search endpoint with its six filters, server-side role re-check and rate limiting; the one-audit-row-with-a-child-row-per-hit-room wiring; and the whole export (request record, background job, ZIP with sha256 manifest, lawyer-readable README, self-contained printable transcript,… |
-| TASK-2026-01306 |  | Retention: the policy value, the dry run, and what survives a… | No message retention purge job exists on main. `message_retention_days` and `hard_delete_after_days` are still read only by Phase 1's `chat_settings_rules.py` validation; hooks.py registers no purge in any scheduler slot; there is no run-record DocType, no dry-run path, and no `retention_mode` or… |
 | TASK-2026-01417 |  | text-sapphire-light fails contrast on light panels (~2.4:1) | Pick one of the two options (light-mode darker variant of the accent, or a role token that resolves per theme), apply it, then delete KNOWN_FAILING_FG and the 'is still failing' test from frontend/e2e/contrast.spec.ts and confirm the four view scans stay green with the allowlist gone. |
 | TASK-2026-01473 |  | Make the Lead stage real — owner, triage queue, speed-to-lead… | None of this task's deliverables landed. What exists is the inputs the task itself names as already built: get_speed_to_lead in api/sales_dashboard.py (a dashboard widget listing leads with no Sent Communication — a list, not an SLA with a threshold or an alert), attribution.propagate_to_opportunity, and web_lead.py's… |
 | TASK-2026-01476 |  | Nightly ad-spend connectors: Google Ads, Meta Ads, LinkedIn… | No connector code exists. erpnext_enhancements/marketing/ contains only __init__.py, README.md and doctype/ — there is no core/ package, no client.py, no platforms/ directory and no tasks.py. hooks.py registers no marketing scheduler_events and no marketing doc_events; its only marketing entry is the Marketing… |
@@ -494,14 +505,12 @@ every "shipped" claim; **11 of those claims were overturned** and are marked `�
 | TASK-2026-01496 |  | Receive attributed inbound calls and stamp campaign… | No code exists for this. api/telephony.py has no endpoint that receives a tracking-number-derived campaign, never imports crm_enhancements.attribution, and nothing in the repo maps a phone number to a campaign (the only 'tracking_number' hits are shipping tracking in package_dispatch). attribution._fill_blanks still… |
 | TASK-2026-01498 |  | Tracking number pool: provision, assign to campaign, release | Triton (0.67.8) has a Twilio voice gateway — telephony_gateway.py, voice.py, the TWILIO_* settings — but no number pool of any kind: no provision/release calls, no purchase cap, no campaign-to-number assignment, and the word 'campaign' appears nowhere in backend/app outside the ADK agent definitions. There is no… |
 | TASK-2026-01499 |  | Inbound call webhook — report the attributed call to ERPNext | No inbound handler for a pool number exists in Triton, and nothing reports a dialled tracking number, disposition or call SID to ERPNext for attribution. Both ends are missing: the sender here, and the ERPNext receiver (TASK-2026-01496). The idempotency requirement (unique index on the Twilio call SID) has no table to… |
-| TASK-2026-01508 |  | The oversight read path, and the function nothing has ever… | retrieve_for_oversight still has zero production callers. Every reference on main is a mention rather than a call: the __all__ tuples in retrieval/gate.py:75 and retrieval/__init__.py:46, a docstring cross-reference in api/_common.py:124, and four test files. No new oversight module exists (chat/ contains only api,… |
-| TASK-2026-01509 |  | Export: the artefact that leaves the building | Nothing exists. There is no Chat Export Request DocType (the chat/doctype directory holds 20 DocTypes, none of them an export request), no export module, no builder for manifest.json / transcript.html / messages.jsonl / revisions.jsonl / members.csv, and no include_deleted_content setting on Chat Settings. The… |
-| TASK-2026-01511 |  | Triton: surface the cached-token split the cost dashboard… | Triton is at 0.67.8 and the change has not been made. The query response's ui_metadata is assembled at assistant.py:716-727 and carries only 'commands' and 'sources' — no prompt/candidates split, no cached_content_token_count, no model_name. core/gemini.py does read prompt_token_count and candidates_token_count from… |
 
 ### Shipped — verified in code on `main`, not just in a changelog line
 
 | Task | Version | Released | PR | What it was |
 |---|---|---|---|---|
+| TASK-2026-01511 | v0.68.0 | 2026-08-14 | [#340](https://github.com/sapphirefountains/triton/pull/340) | Triton: surface the cached-token split the cost dashboard needs — verified across **all three** answer routes (assistant, streaming, research), each writing `cached_tokens` rather than a silent zero, plus the `ALTER TABLE … ADD COLUMN IF NOT EXISTS` that ADR-0002 requires. The ERPNext half landed too (`triton_client.py:202`, v1.288.2). |
 | TASK-2026-01154 | v1.214.0 | 2026-08-02 | #686 | Training Builder desk page (block canvas + checkpoint scrubber) — v1.214.0,… |
 | TASK-2026-01155 | v1.214.0 | 2026-08-02 | #686 | AI question drafting + Preview as learner — v1.214.0, PR #686 |
 | TASK-2026-01156 | v1.215.0 | 2026-08-02 | #687 | Certificates, recertification & customer portal access — v1.215.0, PR #687 |

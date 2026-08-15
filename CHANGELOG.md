@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.299.3] - 2026-08-15
+
+### Changed
+
+Docs only; no executable change. `docs/nik-runbook.md` was written at v1.288.5 and its §0 had
+gone stale in the way that matters most for a document somebody reads top-down: it listed four
+already-merged PRs as "open", and cited version numbers eleven releases behind. §0 is rewritten
+against the current state, and now also records what the second reconciliation found.
+
+Five rows in the §5 appendix were filed under **Not started** and were wrong — the code had
+landed after the row was written. Each is now under **Partial** (or **Shipped**) with what
+actually remains, and each says plainly that it *was* filed as not-started, so the correction is
+legible rather than silent:
+
+- `TASK-2026-01285` — "not started, everything"; the oversight search shipped in v1.289.3/.4
+- `TASK-2026-01306` — "no purge job exists"; the planner is v1.293.0 and the purge is v1.299.0
+- `TASK-2026-01508` — "zero production callers"; it has one, `governance/viewer.py`
+- `TASK-2026-01509` — "nothing exists"; the export shipped in v1.289.4/.5
+- `TASK-2026-01511` — moved to **Shipped** (triton v0.68.0, PR #340)
+
+`TASK-2026-00353`'s row is updated to name PR #854 rather than restate the two options.
+
+**A runbook that sends its reader looking for work that is already done costs more than one that
+omits the item**, because the reader loses trust in every other row at the same time.
+
 ## [1.299.2] - 2026-08-15
 
 **"Hide the activity feed on every tab but the first" has done nothing since it shipped in
