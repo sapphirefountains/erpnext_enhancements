@@ -79,8 +79,23 @@ ignore = [
     "RUF001", # ambiguous character in a string
     "RUF002", # ambiguous character in a docstring
     "RUF003", # ambiguous character in a comment
+    # UP038 wants `isinstance(x, int | str)` instead of `isinstance(x, (int, str))`.
+    # Ruff's own rule documentation says of the form it is asking for: "Note that this
+    # results in slower code. Ignore this rule if the performance of an isinstance or
+    # issubclass check is a concern." Rewriting 36 call sites into a shape the linter
+    # itself documents as slower is the wrong trade, and several of ours sit in
+    # per-row serialisers. Ignored on the rule author's own advice rather than fixed.
+    "UP038", # non-pep604 isinstance — the pep604 form is slower, per ruff's own docs
 ]
 typing-modules = ["frappe.types.DF"]
+
+# Per-file exceptions. Kept deliberately short: a rule that needs silencing across many
+# directories is a rule that belongs in `ignore` above, where it is visible.
+[tool.ruff.lint.per-file-ignores]
+# RUF012 wants `typing.ClassVar` on mutable class attributes. All five occurrences are
+# fake/stub classes inside bench-free test suites, where the annotation buys nothing and
+# the class exists only to be instantiated once by the test that defines it.
+"erpnext_enhancements/tests/*" = ["RUF012"]
 
 [tool.ruff.format]
 quote-style = "double"

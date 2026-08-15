@@ -56,13 +56,27 @@ jobs:
   # dimensions, a real minus sign — that "fixing" would have rewritten into ASCII.
   # That took the backlog from 429 to 73.
   #
-  # The remaining 73 are NOT auto-fixable and are judgement calls, not bugs:
-  # B905 (`zip()` without `strict=`) is a behavioural decision per call site,
-  # E722 (bare `except`) is deliberate in the defensive handlers this app relies
-  # on, and the rest are idiom preferences (UP030/UP031, RUF005/007/012/015/046).
-  # Clearing those, then `ruff format` (391 files, ~68k lines — time it when
-  # nothing is in flight), is what stands between here and dropping
-  # `continue-on-error`. Tracked as TASK-2026-01241 on PRJ-00580.
+  # THE 73 AND THE FORMAT PASS WERE BOTH WRONG. Re-measured on main at v1.305.0
+  # with the pinned ruff 0.8.1: `ruff check` reported 189, not 73 — the backlog
+  # grew back as the app did. v1.306.0 retired 41 of those in config alone
+  # (UP038 on ruff's own "this results in slower code" advice, RUF012 scoped to
+  # test stubs), leaving 148.
+  #
+  # And the format pass is NOT a prerequisite for anything. THIS FILE CONTAINS NO
+  # `ruff format` STEP: the only two ruff invocations are the `ruff check` below
+  # and the `--select F821` gate further down, so dropping `continue-on-error`
+  # needs `ruff check` clean and nothing else. Formatting the whole repo moves the
+  # check backlog by five findings, for a 467-file diff that would also convert
+  # 147 space-indented files to tabs — overturning the mixed-indentation
+  # convention CLAUDE.md tells every contributor to preserve. Do not run it as
+  # part of this.
+  #
+  # What is left is genuinely editorial, and TASK-2026-01241 tracks it: mostly
+  # autofixable idiom (UP030/UP031, RUF005/007/015, I001), plus two decisions —
+  # 36 `# noqa: BLE001` comments that RUF100 calls unused (BLE is not in `select`,
+  # so the suppression is dead, but the comments mark deliberate blind `except`
+  # handlers in chat/governance/ that CLAUDE.md calls load-bearing), and B905's
+  # `strict=` on 9 call sites.
   #
   # F821 is already a hard gate in its own job below; that is the rule that
   # actually catches runtime failures, and it does not wait for this.

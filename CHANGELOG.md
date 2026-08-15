@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.306.0] - 2026-08-15
+
+**Every number anyone had about the lint backlog was wrong, and the thing everyone thought was
+blocking it was not required at all.** First step of TASK-2026-01241; config only, no code
+touched.
+
+### The measurements, because four different figures were in circulation
+
+Re-measured on `main` at v1.305.0 with the pinned ruff 0.8.1. `ruff check` reports **189**
+findings — not the 73 in `ci.yml:59`, not the 433 on the task, not the 152 in a reconciliation
+comment. The backlog grew back as the app did.
+
+**And `ruff format` is not a prerequisite for anything.** `ci.yml` said clearing the findings
+"then `ruff format` … is what stands between here and dropping `continue-on-error`". That is
+false, and checkable in ten seconds: **this repository's CI contains no `ruff format` step.**
+The only two ruff invocations are `ruff check` and the `--select F821` gate, so dropping
+`continue-on-error` requires `ruff check` to be clean and nothing else.
+
+Measured, formatting the whole repo moves the check backlog from 189 to **184**. Five findings,
+for a 467-file diff that would also convert 147 space-indented files to tabs — overturning the
+mixed-indentation convention `CLAUDE.md` tells every contributor to preserve. It should not be
+run as part of this task, and the comment saying otherwise is corrected.
+
+### Changed
+
+`pyproject.toml` retires 41 findings with no code churn (189 → **148**):
+
+- **UP038** (36) added to `ignore`. It wants `isinstance(x, int | str)` over
+  `isinstance(x, (int, str))`, and ruff's own rule documentation says of the form it is asking
+  for: *"Note that this results in slower code. Ignore this rule if the performance of an
+  isinstance or issubclass check is a concern."* Rewriting 36 call sites into a shape the
+  linter itself documents as slower is the wrong trade, and several of ours sit in per-row
+  serialisers. Ignored on the rule author's advice rather than fixed.
+- **RUF012** (5) scoped to `tests/*` via a new `per-file-ignores` table. All five are fake or
+  stub classes in bench-free suites, where a `ClassVar` annotation buys nothing.
+
+The table is deliberately short: a rule needing silence across many directories belongs in
+`ignore`, where it is visible.
+
+### Still open on TASK-2026-01241
+
+Mostly autofixable idiom, plus **two decisions that must not be autofixed blind**: 36
+`# noqa: BLE001` comments that RUF100 calls unused — BLE is not in `select`, so the suppression
+really is dead, but the comments mark deliberate blind `except` handlers in `chat/governance/`
+that `CLAUDE.md` calls load-bearing, and `--fix` would delete all 36 silently — and B905's
+`strict=` on 9 call sites, which would freeze today's silent zip-truncation into the source as
+an explicit decision nobody made.
+
 ## [1.305.0] - 2026-08-15
 
 **The last of the three training features that shipped complete and unreachable.**
