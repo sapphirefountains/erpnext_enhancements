@@ -152,6 +152,85 @@ def expand(message: str = "", reason: str = "", reason_category: str = "") -> di
 	}
 
 
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=60, seconds=3600, methods=["POST"])
+def edit_history(message: str = "", reason: str = "", reason_category: str = "") -> dict[str, Any]:
+	"""What a **live** message used to say. The other half of :func:`expand`.
+
+	``expand`` refuses anything that is not deleted, and says why in its refusal: *"A live
+	message is read through the oversight viewer, which records it there."* The viewer serves
+	the current body. Nothing served the superseded ones, so the trail of a message that was
+	edited eleven times and never deleted was unreachable — by anybody, through any surface.
+
+	**The two functions partition the space and neither leaves a gap.** ``expand`` handles
+	``is_deleted = 1`` and refuses the rest; this handles the rest and refuses ``is_deleted``.
+	That symmetry is the whole reason this is a sibling rather than a general
+	``revisions(message)``: a single endpoint serving both would be a second door onto deleted
+	bodies that skipped ``expand``'s refusal and its ``tombstone_expanded`` event, which is
+	exactly the shape v1.301.0 closed elsewhere.
+
+	**Why this is as sensitive as an expansion, despite the message still being here.**
+	``text_before`` is the body a colleague wrote and then chose to replace. ``Chat Message``
+	holds only the current text and Google's tombstone is content-free, so the sentence
+	somebody typed and regretted lives in exactly one column on this site. That the message
+	survives says nothing about the versions that did not; a read of them costs a reason and
+	an audit row, and is refused if the row cannot be written.
+
+	Same reader as ``expand`` — :func:`_revisions`, the one function permitted to query that
+	table here. A second query would be a second place to get the ordering or the field list
+	wrong, and a second entry in a waiver whose value is being short.
+	"""
+	user = _require_auditor()
+	cleaned_reason, category = _require_reason(reason, reason_category)
+
+	name = str(message or "").strip()
+	if not name:
+		raise TombstoneRefused(frappe._("Name the message whose history you want."))
+
+	row = _message(name)
+	# The mirror of `expand`'s refusal, and uniform for the same reason: distinguishing
+	# "missing" from "deleted" would answer "does this message exist" to somebody who has not
+	# paid for an answer. A deleted message goes through `expand`, which records it as the
+	# different act it is.
+	if not row or row.get("is_deleted"):
+		raise TombstoneRefused(
+			frappe._(
+				"That is not a live message. A deleted one is read through the tombstone "
+				"expansion, which records it as its own act."
+			)
+		)
+
+	revisions = _revisions(name)
+
+	recorded = audit.record_governance_event(
+		event_type="revision_history_read",
+		actor=user,
+		subject_user=row.get("sender") or "",
+		room=row.get("room") or "",
+		reference_doctype="Chat Message",
+		reference_name=name,
+		reason=cleaned_reason,
+		# No body in the detail. The count is a fact about the read; the text is the thing
+		# being read, and an audit row that quoted it would put a second copy of every
+		# withdrawn draft into the log that exists to police them.
+		detail=json.dumps(
+			{"reason_category": category, "revision_count": len(revisions)}, sort_keys=True
+		)[:1000],
+		affected_count=1,
+	)
+	if not recorded:
+		raise TombstoneRefused(
+			frappe._("This read could not be recorded, so it was refused.")
+		)
+
+	return {
+		"message": {key: _clean(row.get(key)) for key in MESSAGE_FIELDS},
+		"revisions": [{key: _clean(r.get(key)) for key in REVISION_FIELDS} for r in revisions],
+		"audit_row": recorded,
+		"reason_category": category,
+	}
+
+
 def _clean(value: Any) -> Any:
 	if value is None or isinstance(value, str | int | float | bool):
 		return value

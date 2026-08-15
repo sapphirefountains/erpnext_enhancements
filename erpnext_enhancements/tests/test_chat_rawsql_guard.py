@@ -1657,6 +1657,44 @@ class TestEveryQueryIsScopedOrJustified(unittest.TestCase):
 			"change this test deliberately and say so in the changelog.",
 		)
 
+	def test_the_revision_reader_has_exactly_the_callers_it_is_waived_for(self) -> None:
+		"""The waiver is on a FUNCTION, so a new caller inherits it silently.
+
+		That is the hole this closes, and it is worth stating plainly because v1.310.0 walked
+		into it. ``tombstone.edit_history`` needed the superseded bodies of a *live* message;
+		it called the already-waived ``_revisions``; and the scan above saw nothing new,
+		because the query had not moved. A second reader of the most sensitive table in the
+		module arrived and the guard whose entire subject is that table stayed quiet.
+
+		Keying the waiver on ``file:function`` stops a second *query* inheriting it. It does
+		not stop a second *caller* — and for this table the caller is the thing that matters,
+		because what the waiver buys is "these named acts, each paying an audit row", not "any
+		code that happens to live in this file".
+
+		So the callers are enumerated. A third one fails here, which is the deliberate
+		conversation the docstring above asks for.
+		"""
+		source = (APP_DIR / "chat" / "governance" / "tombstone.py").read_text(encoding="utf-8")
+		callers = {
+			node.name
+			for node in ast.walk(ast.parse(source))
+			if isinstance(node, ast.FunctionDef)
+			and any(
+				isinstance(inner, ast.Call) and getattr(inner.func, "id", "") == "_revisions"
+				for inner in ast.walk(node)
+			)
+		}
+		self.assertEqual(
+			callers,
+			{"expand", "edit_history"},
+			"the set of functions calling tombstone._revisions has changed. That function "
+			"reads `text_before` — the body a colleague wrote and then replaced, which exists "
+			"in exactly one column on this site. Every caller must be a whitelisted act that "
+			"collects a reason and writes an audit row it refuses without: `expand` pays with "
+			"`tombstone_expanded`, `edit_history` with `revision_history_read`. Adding a "
+			"caller is adding a way to read withdrawn drafts, whether or not it adds a query.",
+		)
+
 
 class TestTheWriterPackageIsUnreachableFromARequest(unittest.TestCase):
 	"""The price of the one package-level exemption in this file.
