@@ -1,8 +1,8 @@
 # Scoping the Triton service account — TASK-2026-01583
 
-**Status:** analysis complete, **no production change made**. The revoke is Nik's call.
-**Date:** 2026-08-15. **Account:** `triton@sapphirefountains.com` — enabled System User, no Role
-Profile, **90 directly-granted roles**.
+**Status:** **wave 1 applied 2026-08-15 17:31 UTC** (see §7). Wave 2 pending a clean week.
+**Account:** `triton@sapphirefountains.com` — enabled System User, no Role Profile, **90 roles at
+analysis time, 88 now**.
 
 Supersedes the deferral in [`wi011-apply-runbook.md`](wi011-apply-runbook.md) line 41
 (*"kept as-is (active service account, 72 roles; per direction, not scoped)"*, 2026-07-24). It held
@@ -228,3 +228,44 @@ Stated plainly, because a role nobody examined is not a cleared role:
 - **Whether `poseidon-voice-gateway` shares this key.** It reads `FRAPPE_API_KEY` from its own
   environment and hits only `allow_guest=True` telephony endpoints, so it needs no roles either
   way — but which account that env var resolves to was not confirmed.
+
+
+## 7. Wave 1 — applied 2026-08-15 17:31 UTC
+
+`Script Manager` (`Has Role` row `0mkpoh1mbv`) and `Device Manager` (`qsq81fpl9n`) removed via a
+User save in patch mode. **90 → 88.**
+
+Verified immediately after, against the 90-role snapshot taken before the change:
+
+| check | result |
+|---|---|
+| roles removed | exactly `Script Manager`, `Device Manager` |
+| roles unexpectedly added or lost | **none** |
+| capability lost (all 8 ptypes, 2,856 grants) | `Server Script` r/w/c/d/report/export — **and nothing else** |
+| `enabled` / `user_type` / `role_profile_name` | `1` / `System User` / empty — unchanged |
+| `api_key` / `api_secret` still set | **yes, both** |
+| Error Log rows since the change | 0 |
+| permission errors naming the account today | 0 |
+
+**`last_active` moved to 17:31:27 — twenty seconds after the change.** The credential
+authenticated successfully post-revoke, which is the strongest immediate evidence available that
+nothing broke.
+
+`Device Manager` cost **literally nothing**, as predicted: the MDM webhook path runs as
+`mdm@sapphirefountains.com`, not this account.
+
+The site holds 30 `Server Script` documents. This account can no longer read, write or create any
+of them — which was the point.
+
+**Before saving the User, `on_update` was checked on v16 rather than assumed.** Two things that
+would have made this an outage do not happen: `clear_sessions(force=True)` fires only
+`if self.has_value_changed("user_type")`, and `user_type` is unchanged because `System User` and
+many other desk roles remain; and `api_key`/`api_secret` are never touched by a save — key
+generation lives in the separate `generate_keys()` method. Both were confirmed above.
+
+**Rollback:** re-add the two roles. The account has no Role Profile, so direct `Has Role` rows
+stick. The full 90-role snapshot was captured before the change.
+
+**Wave 2 gate:** a clean week — no `PermissionError` naming the account, and Call Log / Contact
+creation continuing at its usual cadence. Watch counts, not errors: the dangerous failure mode is
+a `get_list` returning **fewer** rows, which raises nothing.
