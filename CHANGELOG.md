@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.303.1] - 2026-08-15
+
+### Changed
+
+Docs only; no executable change. Two gotchas added to `CLAUDE.md`, both from mistakes made
+this week rather than from theory.
+
+**The sibling `frappe`/`erpnext` checkouts are on `develop` and production is not.** Their
+working trees read `17.0.0-dev`; the site runs 16.x. Reading them to settle a question about
+framework behaviour is the right instinct and the wrong tree — line numbers differ
+substantially in `permissions.py`, `db_query.py` and `api/v2.py`, and so does behaviour: v17
+adds `QUERY` to `SAFE_HTTP_METHODS` and deprecates the legacy `?cmd=` route that v16 still
+dispatches *before* it looks at `request.path`. Two design documents in one day cited v17 line
+numbers as v16 fact before anyone noticed. `git show origin/version-16:<path>` is the answer.
+
+**Merging to `main` does more than deploy this app's code.** The prod deploy `FLUSHDB`s both
+redis instances and restarts the bench; the `:11000` flush destroys every queued background
+job, silently, whether or not it had anything to do with the merge. It is the confirmed cause
+of a batch of Drive folders that were never created. Work that matters has to be re-drivable
+after a deploy rather than assumed to have run.
+
 ## [1.303.0] - 2026-08-15
 
 **Ask-the-author shipped complete in v1.215.0 and no learner could reach a line of it.**
