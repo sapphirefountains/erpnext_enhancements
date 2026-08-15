@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.316.0] - 2026-08-15
+
+**A service account's role set is the blast radius of its credential, and this one holds 90 roles
+including `System Manager` and `Script Manager`.** Docs and tooling only — no production change,
+and nothing here alters executable behaviour.
+
+### Added
+
+- **`scripts/role_permission_diff.py`** — answers "what does this account actually LOSE if we take
+  these roles away", correctly. Not a CI guard; it needs a bench, and every other script in that
+  directory is bench-free, so it says so in its first line.
+
+  It exists because the obvious version of the check is wrong on this site in four ways, each
+  producing a **false clear** — a role that looks safe to remove and is not:
+
+  1. **A `Custom DocPerm` row replaces the standard rows wholesale.** Query `tabDocPerm` for a
+     doctype that has any custom row and the grant set you compute does not exist. `frappe.get_meta`
+     applies that rule; a hand-built query has to remember to.
+  2. **The `All` role is implicit** and in no `Has Role` row. Drop it from both sides of the diff
+     and you invent losses that cannot happen. `ToDo` is the one that bit us — it reads as "System
+     Manager only" from a joined query and is in fact granted to `All`, and that single mistake
+     produced a wrong conclusion about `System Manager` twice in one afternoon.
+  3. **Only losses matter, at `(doctype, ptype)` grain.** "Grants read on 58 doctypes" says nothing
+     about whether another retained role also grants them.
+  4. **All eight ptypes, not six.** An earlier pass omitted `report` and `export` and under-reported
+     the loss table by five entries. They are the least interesting permissions on a service
+     account and the easiest to leave out of a tuple.
+
+  Its docstring is equally explicit about what it *cannot* see, because a clean run is not
+  permission to proceed: role literals in Python (`if "Assistant User" in frappe.get_roles(...)`),
+  `permission_query_conditions` hooks — which narrow by returning a **shorter list** rather than
+  raising — and `User.set_system_user()`, which recomputes `user_type` from whether any held role
+  has desk access and silently demotes the account to Website User if the last one goes.
+
+- **`docs/migration/wi011-triton-role-scope.md`** — the derivation for TASK-2026-01583, superseding
+  the deferral in `wi011-apply-runbook.md` (*"kept as-is … 72 roles; per direction, not scoped"*,
+  2026-07-24). It held 72 then and 90 now: **+18 in three weeks**, so "kept as-is" was never a
+  stable state.
+
+  The finding that reframes it: **this account is not the identity the product runs as.** Triton's
+  own client documents system mode as *"reserved for background jobs with no user context (sync,
+  webhooks)"* and **raises** rather than falling back to it for user work; production agrees —
+  eight humans hold OAuth tokens for the Triton client and this account holds none. Of 8,904 rows
+  in `Assistant Audit Log`, 8,671 are one human's and **86 are this account's, none since
+  2026-05-25**.
+
+  The credential is nevertheless **live** — active today, from GCP — so "dormant, strip it" would
+  have been the wrong read of the same logs. What it actually does is telephony webhooks (which
+  need **zero** roles: `allow_guest=True`, writes with `ignore_permissions=True`, reads via
+  `frappe.get_all`, which v16 documents as *"will not check for permissions"* — the
+  `frappe.set_user` there is attribution, not authority) and a handful of REST sync loops.
+
+  Measured with the script above across 2,856 grants: **65 of the 90 roles are individually free**,
+  and removing 60 of them costs 10 doctypes — four procurement/logistics ones absent from the
+  account's entire call surface, four `export`-only and one `report`-only desk capability, and
+  `Server Script`, which is the point. Reports are counted separately because `Report.is_permitted()`
+  has **no System Manager short-circuit**: 210 runnable before, 200 after, and the 10 lost are the
+  same procurement corner, which is the coherence check.
+
+  Also recorded: why the cutover is direct `Has Role` deletion and **not** a Role Profile
+  (`User.populate_role_profile_roles` rewrites `self.roles` from the profile on *every* save, so
+  attaching one is irreversible-by-default and makes later edits silently vanish); and, listed
+  rather than glossed, the three things nobody checked — Wiki/Insights/Helpdesk app internals,
+  `Chat Settings.alert_post_as` (unreadable through the generic tools because the chat denylist
+  refused the query, correctly), and which account `poseidon-voice-gateway`'s key resolves to.
+
 ## [1.315.0] - 2026-08-15
 
 **A DocShare row grants a chat read that the membership rules never see and the audit trail never
