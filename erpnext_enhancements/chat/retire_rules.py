@@ -10,6 +10,20 @@ derived layer has a staleness story and no *retirement* story: chunks and digest
 destroyed. This is that story.
 
 --------------------------------------------------------------------------------------
+Why this sits at the package root rather than in ``chat/indexing/``
+--------------------------------------------------------------------------------------
+
+It shipped in ``chat/indexing/`` in v1.295.0 and that was wrong. Four consumers span three
+packages — the indexer and the summariser in ``chat/indexing/``, the retrieval gate, and the
+retention planner in ``chat/governance/`` — and ``chat/indexing`` is the **writer package**,
+whose exemption in ``test_chat_gate_source_scan.py`` rests on four stated properties. The
+fourth is *"no endpoint importing it"*, and the gate importing the writer package to obtain a
+WHERE fragment would have broken it for the sake of a module that reads nothing.
+
+So it lives beside ``permissions.py``, which is the closest precedent: shared pure logic that
+several packages need and none owns.
+
+--------------------------------------------------------------------------------------
 The mark, and why it is a floor
 --------------------------------------------------------------------------------------
 
