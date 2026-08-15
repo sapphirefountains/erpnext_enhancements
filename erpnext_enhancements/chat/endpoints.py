@@ -121,6 +121,13 @@ NON_MUTATING: Final[dict[str, str]] = {
 		"POST despite being a read: it carries the REASON in its body, and a reason in a query "
 		"string lands in the access log, the browser history and the next Referer header"
 	),
+	f"{DOTTED_ROOT}.governance.viewer.members": (
+		"who was in one room and when they left, INCLUDING the departed. Metadata only -- no "
+		"body is read, and `last_read_seq` is deliberately not among the fields, because a "
+		"read marker a client advanced is not evidence a human read anything. Writes an "
+		"oversight_members_listed governance row, which is a record OF the read rather than an "
+		"effect the caller wants. POST because the reason travels in the body"
+	),
 	f"{DOTTED_ROOT}.governance.viewer.transcript": (
 		"one room's conversation verbatim, in seq order, one page at a time. Writes a Chat "
 		"Retrieval Audit row PER PAGE, correlated by request_id so a scroll is one act rather "
@@ -293,6 +300,10 @@ RATE_LIMIT: Final[dict[str, str]] = {
 		"120/3600s. The only caller of the one function permitted to open the membership "
 		"hatch, and it returns bodies. Same reasoning as `tombstone.expand`, and left at the "
 		"shipped value for the same reason."
+	),
+	f"{DOTTED_ROOT}.governance.viewer.members": (
+		"240/3600s. Matches `rooms` rather than `search`: it returns no content, and an "
+		"auditor working through several rooms legitimately calls it once per room."
 	),
 	f"{DOTTED_ROOT}.governance.viewer.transcript": (
 		"240/3600s. Higher than `search` deliberately: paging a long conversation is many "
@@ -485,6 +496,7 @@ PILOT_GATE_EXEMPT: Final[dict[str, str]] = {
 	),
 	f"{DOTTED_ROOT}.governance.viewer.search": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.viewer.transcript": _OVERSIGHT_GATE,
+	f"{DOTTED_ROOT}.governance.viewer.members": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.viewer.access_log": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.viewer.rooms": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.tombstone.expand": _OVERSIGHT_GATE,
