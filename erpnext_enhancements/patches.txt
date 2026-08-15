@@ -682,3 +682,17 @@ erpnext_enhancements.patches.backfill_opportunity_won_date
 # distinction is load-bearing. Stops loudly at any row that verifies neither way, because
 # that is a real break and not this defect. Safe twice.
 erpnext_enhancements.patches.clear_unsigned_chat_audit_reason_category
+
+# Deletes every DocShare on a chat DocType. A share is not one more permission: on v16 the
+# query engine ORs shared names onto the whole condition group after ANDing every permission
+# condition ("shared docs trump all other restrictions"), and frappe.permissions answers a
+# controller hook's False with false_if_not_shared() -- which is the SINGLE-DOCUMENT gate, and
+# therefore the realtime boundary, since doc_subscribe consults it and a join is never
+# re-checked. Zero DocPerm is not immunity: with no role permission the engine returns the
+# shared-name filter and skips the membership hook entirely. `validate_share` on the
+# controllers refuses new rows and cannot touch existing ones, and the paths that could have
+# created them are ordinary ops rather than attacks -- Administrator using the desk's
+# "Assigned To" sidebar, an Assignment Rule on Chat Room, or any insert setting
+# ignore_share_permission. `everyone = 1` would make one such row every non-Guest account at
+# once. Keyed on share_doctype, which is the fact that makes a row wrong. Safe twice.
+erpnext_enhancements.patches.purge_chat_docshares

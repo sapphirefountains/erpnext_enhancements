@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.315.0] - 2026-08-15
+
+**A DocShare row grants a chat read that the membership rules never see and the audit trail never
+records.** Refused now, and the historical rows purged.
+
+### Fixed
+
+A share on a chat record is not one more permission among several. On v16 it **overrides** both
+mechanisms this package's access control is built from, and neither override is visible from
+reading our code:
+
+- `frappe/database/query.py` calls `permission_query_conditions`, ANDs every condition, then
+  **ORs the shared names onto the result** — under its own comment, *"shared docs trump all other
+  restrictions"*. The membership SQL is ANDed; the share is ORed past it.
+- `frappe/permissions.py` answers a controller hook's `False` with `false_if_not_shared()`. That
+  is the single-document gate, and the single-document gate is the **realtime boundary**:
+  `doc_subscribe` reaches `chat_room_has_permission` before joining `doc:Chat Room/<room>`, and
+  membership is never re-checked after the join. **A share buys a live feed of a conversation**,
+  not a row in a list.
+
+**Zero DocPerm is not immunity**, which is the part most likely to be assumed wrong — and the task
+that raised this assumed it. With no role permission the query engine returns the shared-name
+filter and **never calls the hook at all**, so a share on a `Chat Message` makes exactly that
+message listable.
+
+`validate_share` on `Chat Room`, `Chat Message`, `Chat Attachment` and `Chat Room Member` refuses
+every share. That hook and not a `DocShare` `doc_events` handler, deliberately: `DocShare.validate`
+runs it as its **last** step, after `check_share_permission`, and `flags.ignore_share_permission`
+does not skip it. That matters because the paths that actually reach here are the privileged ones —
+**Administrator**, for whom `check_share_permission` short-circuits; an **Assignment Rule** with
+`document_type = "Chat Room"`, which calls `assign_to._add(ignore_permissions=True)`; and any
+server-side insert setting the flag. An ordinary member is refused earlier and never gets this far.
+
+**Assignment on a chat DocType is therefore not possible, and that is the decision the task asked
+for.** A conversation is not a work item; access to it is membership. Assigning one in the desk
+sidebar had exactly one effect — permanently granting read of a room the assignee is not in — and
+it announced itself only as *"Shared with the following Users with Read access"*.
+
+### Migration
+
+`patches/purge_chat_docshares.py` deletes every existing `DocShare` on a chat DocType. The hook
+refuses new rows and cannot retire old ones, and two of the three paths that could have created
+them are ordinary operations rather than attacks. `frappe.share.get_shared` matches `everyone = 1`
+for every non-Guest user, so a single such row would not be one leak but every account at once.
+
+Keyed on `share_doctype`, which is the fact that makes a row wrong. Deletes rather than reports,
+because a share on a chat record has no legitimate meaning and what it removes is recoverable by
+adding a `Chat Room Member`. Logs what it deleted, loudly: each row was a read somebody had and no
+longer has.
+
+### Tests
+
+`TestNoChatRecordCanBeShared` asserts every content DocType carries the hook, that the refusal is
+unconditional, that its signature is the one `run_method` actually calls — a different one means
+Frappe silently does not call it — and that the purge is registered in `patches.txt`. Bench-free
+and structural, because the behavioural version needs a real database and CI has no bench, so it
+has **never run**; a control that has never executed is not one to count on.
+
+The bench class was rewritten rather than softened, which its own docstring had asked for in
+advance: *"the fix is a design decision (refuse the share in a `DocShare` validate hook…) — not a
+test edit."* It used to create a share and assert it did not widen anything. **It did widen** — the
+platform ORs it past the membership SQL — so containment was never available and the old
+assertions described a property the code did not have. They now assert the share is refused,
+including on the privileged path, which is the stronger claim and the one that is true.
+
+### Also verified, and already fixed
+
+Three of the task's four claims no longer hold, each closed by earlier work: the ptype-blind write
+hatch (`require_room` now takes `intent`, and `intent="write"` asks "is this identity *in* the
+room", which no oversight satisfies — v1.283.2 and v1.301.0), the three unaudited history reads
+(recorded since v1.307.1), and `search_messages` writing a null reason.
+
 ## [1.314.0] - 2026-08-15
 
 **Filtered cross-room search — hits, not a summary.** The remaining half of TASK-2026-01285; the
