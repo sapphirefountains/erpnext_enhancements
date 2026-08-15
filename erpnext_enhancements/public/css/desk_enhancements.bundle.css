@@ -1374,7 +1374,21 @@ mark {
    nothing. The comment box goes with it — a reply typed under the Budget tab
    still attaches to the document, so offering it there is offering a second
    place to do the same thing.
+
+   `!important` is REQUIRED here and is not defensive habit. "FIX: Restore
+   Missing Comment Box on All Doctypes" above declares
+   `.form-footer, .timeline { display: block !important }`, and an important
+   author declaration beats a non-important one no matter how specific the
+   loser is. Without it this rule loses to a selector with a third of its
+   specificity and the whole feature is inert — which is how it shipped in
+   v1.259.4 and stayed inert until v1.299.2. Both declarations are important,
+   so specificity decides, and `.form-page.ee-activity-off-tab .form-footer`
+   (0,3,0) beats `.form-footer` (0,1,0).
+
+   Do not "clean this up" by narrowing the blanket rule instead: it exists
+   because something was hiding the comment box on some doctypes, and that
+   something was never identified.
    ========================================================================== */
 .form-page.ee-activity-off-tab .form-footer {
-    display: none;
+    display: none !important;
 }
