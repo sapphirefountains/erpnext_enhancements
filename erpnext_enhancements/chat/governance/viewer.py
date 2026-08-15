@@ -168,6 +168,11 @@ def search(
 		reason_category=category,
 		subject=(subject or "").strip() or None,
 		user=user,
+		# Ties an auditor's successive searches in one sitting into one act. §4.D.2's shape is
+		# one row per read correlated by `request_id`, with the reason collected once per
+		# session rather than per scroll — that only works if the rows carry the id, and until
+		# v1.307.1 none of them did.
+		request_id=audit.viewer_session_id(),
 	)
 
 	# Read the dataclass, do not `getattr(..., default)` it. `RetrievalResult` has no `text`

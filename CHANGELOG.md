@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.307.1] - 2026-08-15
+
+**Every privileged transcript read was recorded as a deliberate investigation**, and none of them
+could be tied to the read they were part of.
+
+### Fixed
+
+`audit._write` coerces an unknown `purpose` to `oversight` and then **signs** it. `chat/api/history.py`
+has passed `transcript`, `thread` and `message_context` since it was written; **none of the three
+was in `_PURPOSES`**. So all three of that module's endpoints — the SPA's ordinary transcript,
+thread and jump-to-message loads — wrote audit rows claiming a deliberate oversight read, in the
+chain's own hand, with nothing anywhere disagreeing.
+
+The task that tracked this named one bad purpose. There were three, and they cover every content
+read `chat/api` performs.
+
+This is not a cosmetic mislabel. `access_report` projects `purpose` into the compliance report, so
+**any count of oversight reads taken before this release is inflated** by ordinary privileged
+transcript loads.
+
+The three values join `_PURPOSES` and the Select. `briefing` and `attachment` stay despite having
+no caller: removing a Select option needs a data patch for any row still holding it, and the audit
+tables cannot be surveyed from here — the chat gate refuses them to generic query tools, by design.
+
+**The historical rows cannot be corrected.** `purpose` is covered by `chain_hash`, so rewriting the
+value would report every one of those rows as tampered. They stay *identifiable* though, and the
+doctype description now says how: an oversight read always carries a `reason` of at least twelve
+characters and a `reason_category`, and a history read carries neither, so
+`purpose = 'oversight' AND reason IS NULL` is the mislabelled set.
+
+The runtime coercion stays — `record_or_refuse` fails closed, so refusing an unknown purpose would
+refuse the *read*, and a typo in a string would take an endpoint down in production. It is now
+explicitly a backstop, with the real defence being a build failure: `TheAuditPurposeVocabulary`
+reads every `purpose=` literal at every call site of the three audit writers and fails CI on one
+the accepted set does not contain. A mistake should cost a red job, not a silent lie in a signed row.
+
+### Added
+
+`request_id` now reaches the writer from outside `chat/retrieval`. Both audit DocTypes documented
+the column as correlating *"the rows written by one viewer session"*, and
+`record_privileged_content_read` had no such parameter at all — so every row `chat/api` wrote landed
+with it NULL and the correlation existed as a column and a sentence and nowhere else. §4.D.2 asks
+for one row per page, and reading a transcript is inherently multi-request: without a shared id
+those rows are N unrelated facts rather than one act of reading.
+
+`audit.viewer_session_id()` derives it as `sha256(user ‖ sid)`, and both halves of that are
+deliberate. **Derived from the session, never supplied by the client**, because a caller-chosen
+correlation id can be varied per request to make one sustained read look like many unrelated ones —
+and this column is signed, so a client-controlled signed field records the client's story.
+**Hashed, never stored raw**, because `sid` is a bearer credential and an audit row is read by more
+people than the cookie ever should be; the user is folded in so a digest here cannot be confirmed
+against one computed from a stolen `sid` alone.
+
+It lives in `chat/audit.py` rather than `chat/api/_common.py` so `chat/governance` can reach it
+without a governance module importing the HTTP layer. `viewer.search` now passes it too, which is
+what makes §4.D.2's "reason collected once per session, not per scroll" expressible at all.
+
+### Tests
+
+`TheAuditPurposeVocabulary` scans every call site of `record_or_refuse`,
+`record_privileged_read` and `record_privileged_content_read` for a literal `purpose=`, and asserts
+membership in `_PURPOSES` — plus set equality between `_PURPOSES` and the DocField's Select, since
+the two drifting is the mechanism that caused this. It carries a non-vacuity floor, because a scan
+that stops matching passes forever.
+
+`TheViewerSessionId` pins stability within a session, separation across users and across sessions,
+and that the raw `sid` never appears in the value. `test_chat_api_contracts` gains the threading
+tests, including that an explicit `request_id` still wins (Triton's invocation id shares this
+column) and that an *unprivileged* read still records nothing — invariant I9's other half, which a
+new parameter is exactly the kind of change to break quietly.
+
+All four guards verified by breaking what they protect. Reverting `_PURPOSES` to its pre-fix five
+trips both the caller scan and the Select-equality check, so this guard would have caught the
+original defect the day `history.py` was written.
+
 ## [1.307.0] - 2026-08-15
 
 **The retrieval audit chain signed a field its own verifier never read.** The one field decision
