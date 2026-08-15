@@ -73,6 +73,7 @@ import frappe
 from frappe.utils import add_to_date, cint, get_datetime, now_datetime
 
 from erpnext_enhancements.chat.doctype.chat_context_chunk.chat_context_chunk import estimate_tokens
+from erpnext_enhancements.chat.indexing.indexer import ASSISTANT_SENDER_KIND
 
 ROOM_DIGEST_DOCTYPE = "Chat Room Digest"
 THREAD_DIGEST_DOCTYPE = "Chat Thread Digest"
@@ -615,6 +616,18 @@ def _messages_for_digest(room: str, since: int, *, limit: int) -> list[dict[str,
 	Fetched newest-first so the bound keeps the **most recent** history, then reversed so the
 	model reads the conversation in the order it happened. Taking the oldest N instead would
 	summarise last year and ignore this week.
+
+	**Triton's own replies are excluded** (TASK-2026-01569). Two reasons, and the second is the
+	one that made it urgent. A room digest built over the assistant's answers is a summary of a
+	summary — the model re-reading its own prose and compounding whatever it got wrong the
+	first time. And because the assistant's answer is composed from the very digests and chunks
+	retrieval handed it, indexing it makes a second copy of the quoted conversation that
+	*outlives the original*: every retention mechanism is a floor keyed on ``seq``, and the
+	reply sits at the top of the room with its own creation date.
+
+	The **thread** tier is deliberately untouched — ``retrieval/gate._thread_messages`` reads
+	``Chat Message`` directly rather than through any digest, so a follow-up still sees the
+	earlier answer. This removes the durable copies and keeps the conversational one.
 	"""
 	rows = frappe.db.sql(
 		f"""
@@ -623,10 +636,16 @@ def _messages_for_digest(room: str, since: int, *, limit: int) -> list[dict[str,
 		where `room` = %(room)s
 			and `seq` > %(since)s
 			and `is_deleted` = 0
+			and coalesce(`sender_kind`, '') != %(assistant)s
 		order by `seq` desc
 		limit %(limit)s
 		""",
-		{"room": room, "since": max(cint(since), 0), "limit": max(cint(limit), 0)},
+		{
+			"room": room,
+			"since": max(cint(since), 0),
+			"limit": max(cint(limit), 0),
+			"assistant": ASSISTANT_SENDER_KIND,
+		},
 		as_dict=True,
 	)
 	return list(reversed(rows or []))
