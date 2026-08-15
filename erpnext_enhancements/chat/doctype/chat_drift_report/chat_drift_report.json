@@ -1,0 +1,216 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "autoname": "hash",
+ "creation": "2026-08-15 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "finding_section",
+  "drift_class",
+  "state",
+  "scope",
+  "column_break_head",
+  "room",
+  "reference_doctype",
+  "reference_name",
+  "report_key",
+  "observation_section",
+  "observations",
+  "first_seen_at",
+  "column_break_observation",
+  "last_seen_at",
+  "evidence",
+  "detail_section",
+  "summary",
+  "detail",
+  "triage_section",
+  "accepted_by",
+  "accepted_at",
+  "accepted_note",
+  "column_break_triage",
+  "cleared_at",
+  "cleared_note"
+ ],
+ "fields": [
+  {
+   "fieldname": "finding_section",
+   "fieldtype": "Section Break",
+   "label": "Finding"
+  },
+  {
+   "fieldname": "drift_class",
+   "fieldtype": "Data",
+   "label": "Drift Class",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "A slug from chat.governance.drift_rules.CLASSES. Deliberately NOT a D-number: the tokens D1-D7 are already cited in shipped code with a different meaning (the prompt-vs-code divergences in docs/chat-phase6-plan.md), and two meanings for one token inside one package is a permanent tax on every reader."
+  },
+  {
+   "fieldname": "state",
+   "fieldtype": "Select",
+   "label": "State",
+   "options": "Open\nAccepted\nCleared",
+   "default": "Open",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Accepted means 'we know, and we are not fixing it'. Re-observing does not undo it — otherwise the operator who triaged this gets it back tomorrow. Cleared is terminal; a recurrence opens a new row rather than reopening this one."
+  },
+  {
+   "fieldname": "scope",
+   "fieldtype": "Data",
+   "label": "Scope",
+   "read_only": 1,
+   "description": "The object this finding is about. Two objects with the same problem are two findings; one object observed nightly is one."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "room",
+   "fieldtype": "Link",
+   "label": "Room",
+   "options": "Chat Room",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "label": "Reference Doctype",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Data",
+   "label": "Reference Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "report_key",
+   "fieldtype": "Data",
+   "label": "Report Key",
+   "read_only": 1,
+   "search_index": 1,
+   "description": "drift_class::scope. Indexed and deliberately NOT unique: a cleared finding that recurs must be able to open a second row with the same key, and a unique index would make the recurrence fail to insert instead."
+  },
+  {
+   "fieldname": "observation_section",
+   "fieldtype": "Section Break",
+   "label": "Observations"
+  },
+  {
+   "fieldname": "observations",
+   "fieldtype": "Int",
+   "label": "Observations",
+   "default": "1",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "How many scans have seen this finding. A finding seen once may be a race; one seen thirty nights running is a decision nobody has made."
+  },
+  {
+   "fieldname": "first_seen_at",
+   "fieldtype": "Datetime",
+   "label": "First Seen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_observation",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_seen_at",
+   "fieldtype": "Datetime",
+   "label": "Last Seen",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "evidence",
+   "fieldtype": "Small Text",
+   "label": "Evidence",
+   "read_only": 1,
+   "description": "The positive fact that proves the mirror acted on this object. Copied from drift_rules.EVIDENCE at write time so the row still explains itself after the constant is edited. A drift class with no evidence entry cannot be emitted at all — every class here fires on something that HAPPENED, never on an empty column, because an empty column is a fact about the configuration rather than about the mirror."
+  },
+  {
+   "fieldname": "detail_section",
+   "fieldtype": "Section Break",
+   "label": "What Diverged"
+  },
+  {
+   "fieldname": "summary",
+   "fieldtype": "Data",
+   "label": "Summary",
+   "read_only": 1,
+   "length": 255
+  },
+  {
+   "fieldname": "detail",
+   "fieldtype": "Small Text",
+   "label": "Detail",
+   "read_only": 1,
+   "description": "Identifiers, states, counts and timestamps. NEVER message text: this table is a census of what diverged, not a copy of what was said, and a drift report holding bodies would be a second transcript outside the membership model."
+  },
+  {
+   "fieldname": "triage_section",
+   "fieldtype": "Section Break",
+   "label": "Triage"
+  },
+  {
+   "fieldname": "accepted_by",
+   "fieldtype": "Link",
+   "label": "Accepted By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "accepted_at",
+   "fieldtype": "Datetime",
+   "label": "Accepted At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "accepted_note",
+   "fieldtype": "Small Text",
+   "label": "Acceptance Note",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_triage",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cleared_at",
+   "fieldtype": "Datetime",
+   "label": "Cleared At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cleared_note",
+   "fieldtype": "Small Text",
+   "label": "Clear Note",
+   "read_only": 1,
+   "description": "Written by the scan when the condition stops being observed, not by a human: a finding the system can see is gone says so itself, so the board shows what is diverged now rather than everything that ever was."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-15 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Drift Report",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

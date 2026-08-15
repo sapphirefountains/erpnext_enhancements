@@ -149,7 +149,13 @@
   "alert_post_as",
   "column_break_alerting",
   "alert_email_recipients",
-  "alert_rate_limit_per_hour"
+  "alert_rate_limit_per_hour",
+  "drift_section",
+  "drift_detection_enabled",
+  "drift_settling_minutes",
+  "column_break_drift",
+  "drift_max_findings_per_run",
+  "drift_reconcile_stale_hours"
  ],
  "fields": [
   {
@@ -1096,6 +1102,43 @@
    "fieldname": "alert_rate_limit_per_hour",
    "fieldtype": "Int",
    "label": "New Alerts Per Hour Before Suppressing"
+  },
+  {
+   "fieldname": "drift_section",
+   "fieldtype": "Section Break",
+   "label": "Drift Reconciliation"
+  },
+  {
+   "default": "0",
+   "fieldname": "drift_detection_enabled",
+   "fieldtype": "Check",
+   "label": "Detect Drift",
+   "description": "The nightly census that looks for places ERPNext and Chat have permanently diverged. Detection only: nothing here repairs anything, and there is deliberately no drift_repair_enabled field, because a switch with no implementation behind it reads as a safety net that exists. Note what it does NOT do - no Google call of any kind. Every class it reports is answerable from ERPNext's own tables, which is what makes it cheap enough to run nightly and impossible to get wrong through a partial listing."
+  },
+  {
+   "default": "30",
+   "fieldname": "drift_settling_minutes",
+   "fieldtype": "Int",
+   "label": "Settling Window (min)",
+   "description": "How long an object must have been quiet before a disagreement about it counts as drift rather than as work in flight. A PROPOSAL, not a looked-up value - no settling duration exists in any document for this system. Chosen against the relay's own worst case: a room drains at one write per second, so a 600-message backlog is ten minutes of legitimate work and thirty gives that three times over. 0 falls back to 30 in code."
+  },
+  {
+   "fieldname": "column_break_drift",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "200",
+   "fieldname": "drift_max_findings_per_run",
+   "fieldtype": "Int",
+   "label": "Findings Per Run Before Halting",
+   "description": "Above this the scan writes NOTHING and raises one critical alert. It counts FINDINGS rather than repairs, deliberately: the cap exists because a mass divergence is the condition where the classifier is most likely to be the thing that is wrong, and that is most true of classes nothing repairs - a repair-counting cap here would be a circuit breaker wired to a circuit with no current in it. It halts rather than trimming, because the first 200 of a suspect ten thousand is a table that looks like a small credible problem."
+  },
+  {
+   "default": "168",
+   "fieldname": "drift_reconcile_stale_hours",
+   "fieldtype": "Int",
+   "label": "Reconcile Staleness (hours)",
+   "description": "When a mirrored room the sweep has not visited counts as a finding. 168 = seven days, the ADR's chat_reconcile_stale alarm, which was specified and never built. The code raises this floor automatically on a large site: the sweep takes 25 rooms per hourly pass, so on an N-room site every room is legitimately ceil(N/25) hours stale, and a flat seven days would alarm on the whole estate of a 5,000-room site for doing exactly what it was built to do."
   }
  ],
  "index_web_pages_for_search": 0,

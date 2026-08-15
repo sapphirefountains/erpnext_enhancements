@@ -213,6 +213,18 @@ UNSCOPED_TABLES: dict[str, str] = {
 		"exists so an interrupted run resumes rather than restarts, so the resuming worker "
 		"needs the row regardless of who started it. It references org units, never messages."
 	),
+	"Chat Drift Report": (
+		"Phase 6 §4.I's divergence census: a class slug, a scope, identifiers, counts, "
+		"timestamps and a lifecycle. No message text in any field by schema — the detail "
+		"column carries states, error strings and recovery instructions, never a body, "
+		"because a drift table holding bodies would be a second transcript sitting outside "
+		"the membership model.\n\n"
+		"UNSCOPED for the same reason as its siblings: every reader is the nightly scan, a "
+		"`bench execute` command or the alert path, none of which has a session user. There "
+		"is also nothing for membership to mean on it — half its rows are about rooms rather "
+		"than about anything anybody said, and the most important class in the set is "
+		"literally 'this room has no active members', which a membership filter would hide."
+	),
 	"Chat Ops Alert": (
 		"Phase 6 §4.H's alert board: a subsystem, a failure kind, a scope, counts, "
 		"timestamps and a lifecycle. It holds no message text in any field by schema, and "
@@ -338,6 +350,35 @@ FOREIGN_TABLES: dict[str, str] = {
 #: bounded by something other than the reader's identity, and no column selected is a body.**
 #: A read that answers an HTTP request fails all three and does not belong here.
 SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
+	# --- chat/governance/drift.py: the divergence census (Phase 6 §4.I) ------------------
+	#
+	# Eligible on all three counts the rule names, and the third one is worth reading rather
+	# than assuming. NO SESSION USER: a nightly scheduler job, refused outright unless BOTH
+	# `Chat Settings.enabled` and `drift_detection_enabled` are on. BOUNDED BY SOMETHING
+	# OTHER THAN THE READER'S IDENTITY: every mirrored room on the site, ordered by watermark
+	# — the population is a property of the estate, not of anybody's membership. NO BODY
+	# COLUMN: none of the four selected fields is content, and `test_chat_drift_surface`
+	# asserts that mechanically rather than leaving it to review.
+	#
+	# The membership filter would not merely be unnecessary here, it would defeat the most
+	# important finding in the module. `room_unreadable` fires on a mirrored room with **no
+	# active members at all** — the case where `spaces.messages.list` has nobody to
+	# impersonate, so the room silently contributes nothing to every other class and reads as
+	# clean. A membership filter returns zero rooms for a room with no members. The one query
+	# that must see it is the one a filter would blind.
+	(
+		"governance/drift.py",
+		"_room_findings",
+		"Chat Room",
+	): (
+		"Every mirrored room, oldest reconcile watermark first, selecting `name`, "
+		"`gchat_space_name`, `last_reconcile_at` and `last_event_at` — identifiers and "
+		"timestamps, no content. The row count itself is load-bearing beyond the findings: "
+		"`drift_rules.reconcile_stale_hours` raises the staleness threshold above the sweep's "
+		"own rotation (25 rooms per hourly pass), so a large site does not alarm on every "
+		"room for behaving exactly as designed. A filtered subset would compute that "
+		"threshold from a fraction of the estate and alarm on the whole of it."
+	),
 	# --- chat/governance/tombstone.py: seeing through a delete (Phase 6 §4.E) ------------
 	#
 	# Both reads are bounded to ONE named message and gated identically. The membership
@@ -1605,6 +1646,10 @@ class TestTheAllowlistsAreHonest(unittest.TestCase):
 				# pin exists: these tables are unscoped precisely BECAUSE the rows worth
 				# reading are the ones about somebody else.
 				"Chat Audit Log",
+				# Phase 6 §4.I's divergence census. Unscoped because its most important class
+				# is "this mirrored room has no active members" — a membership filter would
+				# hide exactly the room that reports clean on everything else.
+				"Chat Drift Report",
 				"Chat Event Subscription",
 				"Chat Inbound Event",
 				# Phase 6 §4.H's alert board. Unscoped because every reader is a scheduler, a

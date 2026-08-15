@@ -760,10 +760,22 @@ scheduler_events = {
 		# is what this system uses to say something happened, and "the audit log was tampered
 		# with" is something that happened.
 		#
-		# Until Phase 6's alerting lands (§4.H) the Error Log is the delivery channel, which is
-		# necessary and NOT sufficient: nobody reads it unprompted. Stated here rather than
-		# implied, because a verifier nobody hears from is a verifier nobody has.
+		# Delivery is §4.H's alert path as of v1.291.0 — one Chat Ops Alert per chain, at
+		# Critical, cleared when the chain verifies again. Before that the Error Log was the
+		# whole channel, which is necessary and NOT sufficient: nobody reads it unprompted.
 		"10 3 * * *": ["erpnext_enhancements.chat.audit.verify_all_chains"],
+		# Phase 6 §4.I, the drift census. Nightly and NOT hourly, and the minute is chosen to
+		# sit well clear of the :50 reconciliation sweep — not because they contend for a
+		# Google quota (this scan makes no Google call at all; every class it reports is
+		# answerable from ERPNext's own tables) but because a drift finding written while the
+		# sweep is mid-recovery describes a room that is being fixed as one that is broken.
+		#
+		# It refuses unless `Chat Settings.enabled` AND `drift_detection_enabled` are both on.
+		# The master switch matters as much as the feature switch: on a site where chat has
+		# never been turned on, no relay job and no inbound event has ever been written, so
+		# every class is vacuously empty and the scan would report a clean estate — a true
+		# answer that reads as reassurance about a mirror that does not exist.
+		"25 4 * * *": ["erpnext_enhancements.chat.governance.drift.run_drift_scan"],
 		# Semi-monthly commission report — 07:00 site TZ, DAILY on purpose even
 		# though it only emails on the 1st and the 16th. The job also owns the
 		# saved date window on the "Brian's Closed Won" Report Builder report, and

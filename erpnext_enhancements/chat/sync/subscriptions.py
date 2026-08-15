@@ -311,14 +311,23 @@ def raise_operator_alert(alert: SyncAlert) -> None:
 	A desk ``Notification Log`` rather than an email, following this app's precedent
 	(``kpi_dashboards/snapshots.py``): it lands in the bell menu of people already in the
 	desk, needs no outbound mail configuration to work, and cannot be filtered into a folder
-	nobody reads. An ``Error Log`` row is written alongside it so the alert survives the
-	notification being dismissed.
+	nobody reads.
 
 	Suppressed to at most one delivery per :data:`ALERT_COOLDOWN_SECONDS` per ``key``. The
 	cooldown lives in the cache Redis, which a deploy clears — so the first pass after a
 	release re-announces anything still broken. That is the right way round: a stale alert
 	costs one notification, a suppressed one costs the outage.
+
+	**The ``Error Log`` row moved to the §4.H alert path in v1.292.0 and is now a fallback.**
+	It existed so the alert survived the notification being dismissed; a ``Chat Ops Alert``
+	row does that better and durably, and the governance path writes its own desk-visible
+	``Error Log`` on notification steps carrying the alert name and key. Writing both would
+	put two rows in the same table for one event — the duplication this consolidation exists
+	to remove. So it is written here only when the governance path did **not** record, which
+	is the one case where dropping it would lose the event entirely.
 	"""
+	recorded = _to_governance_alerts(alert)
+
 	try:
 		if not _claim(f"chat:alert:{alert.key}", ALERT_COOLDOWN_SECONDS * 1000):
 			return
@@ -342,15 +351,81 @@ def raise_operator_alert(alert: SyncAlert) -> None:
 				}
 			).insert(ignore_permissions=True)
 
-		frappe.log_error(
-			f"{alert.severity} {alert.key}\n{alert.subject}\n\n{alert.message}",
-			"Chat subscriptions — operator alert",
-		)
+		if not recorded:
+			frappe.log_error(
+				f"{alert.severity} {alert.key}\n{alert.subject}\n\n{alert.message}",
+				"Chat subscriptions — operator alert",
+			)
 	except Exception:
 		# Alerting must never be able to fail the renewal it is reporting on. A swallowed
 		# notification is bad; a scheduler that dies before renewing the remaining nineteen
 		# subscriptions is the outage this whole module exists to prevent.
 		_log_debug("chat subscriptions: alert delivery failed for key=%s", alert.key)
+
+
+def _to_governance_alerts(alert: SyncAlert) -> bool:
+	"""Also record this on the §4.H alert board. Returns whether a row was written.
+
+	**Additive — no channel is lost.** The bell menu stays, and the `Error Log` moves rather
+	than disappearing: the caller writes its own only when this returns False.
+
+	This function was the *sixth* private way to tell somebody in this package, and the one
+	v1.291.0's inventory missed. It is also the best of the six: it already had a
+	deduplication key, and the bell menu is a channel the governance path does not have. So
+	it stays exactly as it is, and gains a second destination rather than being replaced.
+
+	**The two cooldowns are not equivalent, which is the reason for both.** This one is a flat
+	six-hour Redis claim: at hour seven it announces again, whatever has happened in between,
+	and a deploy clearing the cache re-announces everything still broken. The governance path
+	counts occurrences on one row and re-notifies on a doubling schedule, and — the part the
+	cooldown structurally cannot do — it **resolves**, so a subscription that starts renewing
+	again stops appearing on the board. Keeping only the cooldown loses the resolve; keeping
+	only the board loses the bell.
+
+	Above ``_claim`` on purpose: the six-hour suppression is a delivery decision about the
+	desk notification, and the alert board does its own deduplication with its own lifecycle.
+	Putting this below the claim would let one channel's cooldown silently govern the other's
+	record — the coupling this consolidation exists to remove.
+	"""
+	try:
+		from erpnext_enhancements.chat.governance import alert_rules, alerts
+
+		# `SyncAlert.key` is already `problem:object`, which is exactly the shape
+		# `alert_rules.dedup_key` wants — the problem half becomes the kind and the object
+		# half becomes the scope, so the two deduplication schemes agree by construction
+		# rather than by coincidence.
+		raw = str(alert.key or "subscription")
+		kind, _, scope = raw.partition(":")
+		return bool(
+			alerts.raise_alert(
+				subsystem=_subsystem_for(kind),
+				kind=kind or "subscription",
+				scope=scope,
+				severity=(
+					alert_rules.SEVERITY_CRITICAL
+					if alert.severity == ALERT_SEVERITY_ALARM
+					else alert_rules.SEVERITY_WARNING
+				),
+				summary=str(alert.subject or "")[:255],
+				detail=str(alert.message or ""),
+				user=alert.user or "",
+				subscription=alert.subscription or "",
+			)
+		)
+	except Exception:  # noqa: BLE001 - the other channels must survive this one
+		_log_debug("chat subscriptions: governance alert failed for key=%s", alert.key)
+		return False
+
+
+def _subsystem_for(kind: str) -> str:
+	"""Which subsystem an alert on this sink belongs to.
+
+	The sink is shared: ``reconcile.py`` injects it too, so a ``reconcile-…`` key filed under
+	*subscriptions* would put the recovery sweep's alerts on the wrong shelf. Both land in
+	subsystems that are self-delivering — an alert saying inbound is not arriving must not be
+	posted into a chat space, because a chat space is the thing that is not arriving.
+	"""
+	return "inbound" if str(kind or "").startswith("reconcile") else "subscriptions"
 
 
 def _notification_recipients() -> list[str]:
