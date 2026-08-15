@@ -592,6 +592,22 @@ SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
 		"doc — and bounded by TOTAL SIZE rather than by count, because one 400 MB video is "
 		"the case a count limit does not see. See the block comment above this entry."
 	),
+	(
+		"governance/export_runner.py",
+		"_members",
+		"Chat Room Member",
+	): (
+		"The export bundle's members.csv. Same argument as the block comment above, and one "
+		"addition that is specific to this table: the query deliberately does NOT filter to "
+		"`is_active = 1`. Departed rows are the most useful thing this file contains — "
+		"`left_seq` composes with a message's `seq` to answer 'was this person still in the "
+		"room when that was said' without involving a clock, and the clocks in this bundle "
+		"come from two systems. Filtering them out would make somebody who read six months of "
+		"a room and then left look like they were never in it. Reads no body column: the "
+		"fields are export.MEMBER_FIELDS, and `last_read_seq` is excluded on purpose — a read "
+		"marker advanced by a client is not evidence a human read anything, and a column that "
+		"looks like proof of reading in a legal bundle invites exactly one inference."
+	),
 	# --- chat/governance/access_report.py: the subject reading their own membership ------
 	(
 		"governance/access_report.py",
