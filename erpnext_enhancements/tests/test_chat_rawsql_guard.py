@@ -350,6 +350,54 @@ FOREIGN_TABLES: dict[str, str] = {
 #: bounded by something other than the reader's identity, and no column selected is a body.**
 #: A read that answers an HTTP request fails all three and does not belong here.
 SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
+	# --- chat/governance/retention.py: what a purge WOULD destroy (Phase 6 §4.F) ---------
+	#
+	# Eligible on all three counts, and the third is the load-bearing one here. NO SESSION
+	# USER: `bench execute` only — there is no scheduler entry and no endpoint, and
+	# `test_chat_purge_surface` asserts the absence of `@frappe.whitelist()`. BOUNDED BY
+	# SOMETHING OTHER THAN THE READER: every room on the site, and every message in each,
+	# because the question is "what would a purge destroy" and a purge is not scoped to
+	# anybody's membership. NO BODY COLUMN: `text` and `text_plain` appear in neither query,
+	# and `test_chat_purge_surface` asserts that mechanically rather than by review.
+	#
+	# The membership filter would be actively wrong rather than merely unnecessary: a purge
+	# plan filtered to what the operator happens to be a member of would under-report by
+	# exactly the rooms nobody is watching — which are the rooms whose messages age out.
+	#
+	# **This module deletes nothing.** The whole point of §4.F as shipped is the eligibility
+	# rule and the survives-a-purge table; the destructive half is blocked on Phase 5's
+	# derived layer having no retirement path (`purge_rules.can_enable`). If a future commit
+	# adds deletion here, these exemptions do NOT cover it — they justify a read.
+	(
+		"governance/retention.py",
+		"_plan_rooms",
+		"Chat Room",
+	): (
+		"Every unarchived room, selecting `name` and `last_message` only. `last_message` is "
+		"what makes the room-last-message hold computable: it is a Link, so purging its "
+		"target would leave the room list pointing at nothing."
+	),
+	(
+		"governance/retention.py",
+		"_messages",
+		"Chat Message",
+	): (
+		"One room's messages, selecting `name`, `seq`, `creation`, `is_deleted` and "
+		"`thread_root` — identifiers, states and timestamps, no content. These are exactly "
+		"the columns the eligibility predicate needs and nothing else; a planner that read "
+		"`text` would be a second unaudited transcript reader that could not meet the "
+		"no-body-column test above."
+	),
+	(
+		"governance/retention.py",
+		"_live_reply_roots",
+		"Chat Message",
+	): (
+		"`thread_root` of every undeleted reply in one room, as a set. `thread_root` is a "
+		"Link, so purging a root out from under live replies orphans the thread — and those "
+		"replies are inside the retention window by definition, or they would be in the "
+		"batch themselves. One column, and it is a docname."
+	),
 	# --- chat/governance/drift.py: the divergence census (Phase 6 §4.I) ------------------
 	#
 	# Eligible on all three counts the rule names, and the third one is worth reading rather

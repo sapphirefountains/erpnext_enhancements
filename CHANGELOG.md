@@ -7,6 +7,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.293.0] - 2026-08-15
+
+**The retention purge cannot be written yet, and finding out why is the deliverable.** Phase 6
+§4.F. This ships the eligibility rule, the survives-a-purge table and the `retention_run`
+writer — and deliberately **not** the purge. `test_chat_purge_surface` asserts that against the
+AST: no `delete_doc`, no `db.delete`, no `DELETE` literal, no `set_value`, in either module.
+
+### The blocker
+
+**Phase 5's derived layer has a staleness story and no retirement story.** Chunks and digests
+are rebuilt *from live messages*; nothing anywhere removes derived content on the grounds that
+its source was destroyed. Verified on disk:
+
+- `indexing/digest.py::_messages_for_digest` filters `is_deleted = 0`, and
+  `_rebuild_room_digest` returns before writing when that comes back empty. **A room the purge
+  empties keeps its model-written `summary_text` permanently** — `is_stale` stays 1,
+  `rebuild_failures` is never incremented so it never poisons out, and the dirty sweep
+  re-selects it every five minutes forever, doing nothing. Not an edge case: it is the
+  *designed end state* for exactly the rooms retention exists to clear.
+- `_dirty_rooms` and `indexer._rooms_needing_chunks` both open `where is_archived = 0`. An
+  archived room's derived artefacts are never revisited under any circumstances.
+- `_rooms_needing_chunks` computes its watermark as `coalesce(max(c.last_seq), 0)` over sealed
+  chunks **with no staleness filter**, and `_messages_after` re-reads every live message above
+  it — whose own docstring says *"a chunk is a verbatim copy"*. So deleting a room's chunks
+  **retreats the watermark**, and the ten-minute sweep re-chunks the messages the purge has not
+  deleted yet, verbatim, with a fresh embedding. **A purge that tidies up its chunks
+  manufactures new verbatim copies of the text it is destroying**, once every ten minutes, for
+  as many nights as the batch cap takes to finish the room.
+
+Both directions are wrong, and neither is fixable inside a retention job. Leave them and a
+summary of the destroyed conversation is served by the retrieval gate forever; delete them and
+retrieval coverage of *retained* messages dies at every boundary chunk. So `BLOCKED` is a third
+answer alongside "purge it" and "it survives", and the prerequisite is a retirement path in
+`chat/indexing/` — a way to say *"this span is gone, drop its coverage and do not re-read it"*.
+
+**A destroying job whose prerequisite is unwritten is worse than no job: it reads as the safety
+having been thought about.**
+
+### Added
+
+- **`chat/governance/purge_rules.py`** — pure, imports nothing. The survives-a-purge table
+  classifies **all 23** chat DocTypes as `purge` / `survives` / `blocked` with a written
+  reason, asserted for **set equality** against `chat/doctype/` on disk. Containment would let
+  a table added next year be treated by accident, and the accident is silent in both
+  directions: purged when it should survive, or kept when it holds a body.
+
+  D-7 is an assertion rather than a paragraph — all three audit tables are marked surviving,
+  and `Chat Retrieval Audit Room` carries the trap in its reason: **its controller is `pass`,
+  so it has no guard of its own, yet its rows are inside the parent's hash.** A room-scoped
+  cleanup over that child meets nothing and silently breaks the retrieval chain, after which
+  the nightly verifier alerts every night forever with nothing able to re-anchor it.
+
+  `holds()` returns **every** reason rather than the first. A message held by four rules is a
+  different fact from one held by a boundary condition, and a report that stops at the first
+  cannot tell an operator which rule is actually binding.
+
+- **`chat/governance/retention.py`** — `bench execute` only; no endpoint, no scheduler entry.
+  Its report **leads with what is held back and ends with the blocker**, because *"4,812
+  messages are eligible"* as a headline is the report that invites the answer "so turn it on".
+
+  It writes `retention_run` — the last of four event types `Chat Audit Log` has declared since
+  v1.285.0 with nothing able to produce one. A planning run is a run: somebody asked what a
+  purge would destroy, and D-7 is the principle that the record of an act outlives the act.
+  Counts and `seq` ranges only, `mode: plan`, `destroyed: 0`.
+
+- **`tests/test_chat_purge_rules.py`** (25, executed) and **`tests/test_chat_purge_surface.py`**
+  (16, AST). Four mutations run against the surface suite — a `delete_doc` call, a `DELETE`
+  literal, a `text` column added to a select, a `set_value` — each caught.
+
+### Verified against Frappe source rather than assumed
+
+Frappe is checked out alongside this repo, so three framework facts that would each have
+shipped a broken purge were read rather than inferred. They are recorded here because the
+destructive half will need them:
+
+- **`delete_doc` writes the whole document into `tabDeleted Document` unless
+  `delete_permanently=True`** — `frappe/model/delete_doc.py:215-216` calls
+  `add_to_deleted_document(doc)`, which stores `data=doc.as_json()`. **A purge without that
+  flag reports success and moves every body to another table.** This is the single likeliest
+  way to ship a retention feature that retains everything.
+- **`ignore_links` is not a `delete_doc` parameter.** The signature has `ignore_doctypes`;
+  passing `ignore_links` is a `TypeError`, not a no-op. `force=True` is the only
+  link-bypassing switch.
+- **`delete_doc` takes `for_update=True, wait=False` per row** (`:150`), so it raises on lock
+  contention rather than waiting — which is why a per-message loop cannot also hold
+  `outbox.lock_room`, whose lock is transaction-scoped and dies at the first commit.
+
+### Not done here, and named rather than implied
+
+- **The purge.** Three adversarial reviews of a design that *did* delete each found
+  independent reasons it was unsafe, over and above the blocker: the room lock and per-message
+  commits are mutually exclusive so the mid-relay guarantee held for one message; sidecars were
+  destroyed before a message delete that is allowed to fail, leaving a live message stripped of
+  the revisions that exist nowhere else; and the five-minute digest sweep could rebuild a
+  summary of the purge span with `is_stale = 0` while the purge was still running.
+- **`retention_mode`, `audit_survives_purge` and `archive_mode`** — described in the ADR, absent
+  from `Chat Settings`, and deliberately still absent. Adding a switch whose behaviour is not
+  built is the antipattern this phase has spent five changes removing. `message_retention_days`
+  and `hard_delete_after_days` already exist, already default to `0` meaning never, and already
+  validate against `keep_tombstones_forever` on save.
+- **A scheduler entry.** The planner writes an audit row per run; a nightly plan against a
+  dormant feature is noise in the one table that must stay readable.
+
 ## [1.292.0] - 2026-08-15
 
 **Every drift detector written against absence is a configuration detector wearing a

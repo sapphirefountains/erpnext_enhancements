@@ -880,6 +880,27 @@ jobs:
       # Own step: no frappe import needed, the modules are only ever parsed.
       - name: Chat drift surface (no Google call, no repair, no bodies)
         run: python -m unittest erpnext_enhancements.tests.test_chat_drift_surface -v
+      # The survives-a-purge table, asserted for SET EQUALITY against chat/doctype/ on disk,
+      # so a chat DocType added next year fails the build until somebody decides what a purge
+      # does to it. Containment would let a new table be treated by accident, and the accident
+      # is silent in both directions - purged when it should survive, or kept when it holds a
+      # body. Plus the eligibility rule, which returns EVERY hold rather than the first.
+      #
+      # Pure: purge_rules.py imports nothing at all.
+      - name: Chat purge rules (what survives a purge, and why it cannot run)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_purge_rules -v
+      # The assertion that 4.F as shipped CANNOT destroy anything: no delete_doc, no db.delete,
+      # no DELETE literal, no set_value, no body column, in either module. This matters more
+      # than the usual surface test because the destructive half was designed, reviewed by
+      # three adversarial passes and CUT - so the obvious next commit is somebody adding the
+      # twenty lines that "finish" it. This is what that commit collides with, and the failure
+      # message names the blocker: Phase 5's derived layer has a staleness story and no
+      # retirement story, so a purge can neither keep nor destroy the chunks and digests
+      # covering what it removes.
+      #
+      # Own step: no frappe import needed, the modules are only ever parsed.
+      - name: Chat purge surface (the planner cannot destroy anything)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_purge_surface -v
       # The SPA received NO realtime events at all - not another person's message, not
       # @triton's reply, not even its own - and looked healthy doing it, because every symptom
       # pointed away from the cause. Frappe's socket server namespaces connections by site and

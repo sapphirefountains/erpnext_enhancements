@@ -177,6 +177,22 @@ NAME_ONLY_EXEMPTIONS: dict[tuple[str, str], str] = {
 		"exists to close."
 	),
 	(
+		"chat/governance/purge_rules.py",
+		"<module>",
+	): (
+		"The survives-a-purge table — every chat DocType classified with a written reason, "
+		"and these three are the entries that say BLOCKED: a purge can neither keep nor "
+		"destroy them correctly today. Naming them IS that finding, and omitting them to "
+		"keep this scan quiet would delete the stated reason the destructive path is not "
+		"built.\n"
+		"The honesty condition is structural here rather than argued: purge_rules.py imports "
+		"NOTHING — not frappe, not anything — which tests/test_chat_purge_surface.py's "
+		"PurityTest asserts by set equality over its imports. A module with no imports cannot "
+		"execute a query, so there is no read here to route around the gate. The table is "
+		"separately checked for set equality against chat/doctype/ on disk, so these three "
+		"names are not optional there either."
+	),
+	(
 		"patches/add_chat_phase5_indexes.py",
 		"<module>",
 	): (
