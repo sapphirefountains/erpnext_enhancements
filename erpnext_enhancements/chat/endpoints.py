@@ -130,6 +130,15 @@ NON_MUTATING: Final[dict[str, str]] = {
 		"POST despite being a read: it carries the REASON in its body, and a reason in a query "
 		"string lands in the access log, the browser history and the next Referer header"
 	),
+	f"{DOTTED_ROOT}.governance.viewer.find": (
+		"filtered cross-room search returning HITS rather than a summary -- narrowed by sender, "
+		"date range, origin or attachment presence. Writes one Chat Retrieval Audit row with a "
+		"child per room that actually produced a hit, each carrying was_participant: a search "
+		"returning hits from twelve rooms is twelve non-participant reads and the record says "
+		"so. No include-deleted-content, unlike the export bundle -- that would surface forty "
+		"withdrawn messages under one audit row and bypass tombstone.expand's per-message "
+		"event. POST because the reason travels in the body"
+	),
 	f"{DOTTED_ROOT}.governance.viewer.members": (
 		"who was in one room and when they left, INCLUDING the departed. Metadata only -- no "
 		"body is read, and `last_read_seq` is deliberately not among the fields, because a "
@@ -314,6 +323,11 @@ RATE_LIMIT: Final[dict[str, str]] = {
 		"120/3600s. The only caller of the one function permitted to open the membership "
 		"hatch, and it returns bodies. Same reasoning as `tombstone.expand`, and left at the "
 		"shipped value for the same reason."
+	),
+	f"{DOTTED_ROOT}.governance.viewer.find": (
+		"120/3600s. Matches `search` rather than the 240 the other reads carry, and for the "
+		"reason 4.G.4 exists: an unthrottled all-rooms search is a bulk extraction tool wearing "
+		"a reason, and this one returns bodies."
 	),
 	f"{DOTTED_ROOT}.governance.viewer.members": (
 		"240/3600s. Matches `rooms` rather than `search`: it returns no content, and an "
@@ -511,6 +525,7 @@ PILOT_GATE_EXEMPT: Final[dict[str, str]] = {
 	f"{DOTTED_ROOT}.governance.viewer.search": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.viewer.transcript": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.viewer.members": _OVERSIGHT_GATE,
+	f"{DOTTED_ROOT}.governance.viewer.find": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.viewer.access_log": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.viewer.rooms": _OVERSIGHT_GATE,
 	f"{DOTTED_ROOT}.governance.tombstone.expand": _OVERSIGHT_GATE,

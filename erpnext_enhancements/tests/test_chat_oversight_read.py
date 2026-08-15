@@ -560,6 +560,130 @@ class TranscriptReadTest(unittest.TestCase):
 		self.assertLessEqual(len(page.rows), self.gate.MAX_TRANSCRIPT_PAGE)
 
 
+class CrossRoomSearchTest(unittest.TestCase):
+	"""The third oversight read: hits across the named rooms, narrowed, not summarised.
+
+	`retrieve_for_oversight` returns a ranked, budgeted assembly — right for handing a model
+	context and wrong for an investigator who wants *every* message matching a narrowing.
+	`retrieve_transcript` returns one room in full. This is the gap between them.
+	"""
+
+	def setUp(self) -> None:
+		from erpnext_enhancements.chat import audit, permissions
+		from erpnext_enhancements.chat.retrieval import gate
+
+		self.gate = gate
+		self.db = _FakeDB()
+		sys.modules["frappe"].db = self.db
+		sys.modules["frappe"].session.user = "auditor@example.com"
+		self.permissions, self.audit = permissions, audit
+		self._saved = {
+			"filter": permissions.membership_filter_sql,
+			"oversight": permissions._has_oversight,
+			"enabled": gate._assert_retrieval_enabled,
+			"record": audit.record_or_refuse,
+		}
+		permissions.membership_filter_sql = lambda *_a, **_k: "1 = 1"
+		permissions._has_oversight = lambda _user: True
+		gate._assert_retrieval_enabled = lambda: None
+		self.recorded: list[dict] = []
+		audit.record_or_refuse = lambda **kw: (self.recorded.append(kw), "CRA-0002")[1]
+
+	def tearDown(self) -> None:
+		self.permissions.membership_filter_sql = self._saved["filter"]
+		self.permissions._has_oversight = self._saved["oversight"]
+		self.gate._assert_retrieval_enabled = self._saved["enabled"]
+		self.audit.record_or_refuse = self._saved["record"]
+
+	def _search(self, **kw):
+		return self.gate.search_transcripts(
+			rooms=kw.pop("rooms", sorted(_CORPUS)),
+			reason=kw.pop("reason", "reviewing the Jones complaint"),
+			**kw,
+		)
+
+	def _statements(self):
+		return [(sql, v) for sql, v in self.db.statements if "tabChat Message" in sql]
+
+	def test_it_searches_each_named_room_separately(self) -> None:
+		"""Per room for the reason `_per_room_limits` exists: `seq` is a per-room counter, so
+		one ordering across a set hands every slot to the busiest room."""
+		self._search()
+		bound = [v.get("room") for _sql, v in self._statements()]
+		self.assertEqual(sorted(bound), sorted(_CORPUS))
+
+	def test_every_named_room_contributes_hits(self) -> None:
+		hits = self._search()
+		self.assertEqual(set(hits.per_room), set(_CORPUS))
+		self.assertEqual({row["room"] for row in hits.rows}, set(_CORPUS))
+
+	def test_the_filters_reach_the_statement_as_bound_values(self) -> None:
+		"""Keyed on what was ASKED, which is the fake's whole contract."""
+		self._search(
+			filters=self.gate.MessageFilters(
+				sender="ada@example.com",
+				origin="Google",
+				from_date="2026-01-01",
+				to_date="2026-06-30",
+				with_attachments=True,
+			)
+		)
+		for sql, values in self._statements():
+			self.assertEqual(values["sender"], "ada@example.com")
+			self.assertEqual(values["origin"], "Google")
+			self.assertEqual(values["from_date"], "2026-01-01")
+			self.assertIn("`has_attachments` = 1", sql)
+			# A filter, never an ordering. The two clocks disagree by the site offset, which is
+			# survivable when narrowing and not when sequencing.
+			self.assertIn("order by `seq` desc", sql)
+			self.assertNotIn("order by `creation`", sql)
+			self.assertNotIn("order by coalesce", sql)
+
+	def test_an_unfiltered_search_binds_nothing_extra(self) -> None:
+		"""Absent filters must not become `= ''`, which matches nothing and looks like no hits."""
+		self._search()
+		for _sql, values in self._statements():
+			for key in ("sender", "origin", "from_date", "to_date"):
+				self.assertNotIn(key, values)
+
+	def test_deleted_rows_are_matched_and_returned(self) -> None:
+		"""A deleted message that matches is a fact an investigator needs. The body is withheld
+		by the serialiser; dropping the row would make the search disagree with the transcript
+		beside it."""
+		hits = self._search()
+		self.assertTrue([r for r in hits.rows if r.get("is_deleted")])
+		for _sql, _values in self._statements():
+			self.assertNotIn("`is_deleted` = 0", _sql)
+
+	def test_the_audit_row_has_a_child_per_room_that_produced_a_hit(self) -> None:
+		"""A search returning hits from twelve rooms is twelve non-participant reads."""
+		hits = self._search()
+		self.assertEqual(len(self.recorded), 1)
+		recorded = self.recorded[0]
+		self.assertEqual(recorded["purpose"], "search")
+		self.assertEqual(recorded["actor_type"], "Admin")
+		self.assertEqual({r["room"] for r in recorded["rooms"]}, set(hits.per_room))
+		self.assertEqual(recorded["message_count"], len(hits.rows))
+
+	def test_a_room_that_matched_nothing_is_not_recorded_as_read(self) -> None:
+		"""The same rule `_write_audit` applies: one child row per room actually read."""
+		hits = self._search(rooms=["room-tiny", "room-empty"])
+		self.assertNotIn("room-empty", hits.per_room)
+		self.assertNotIn("room-empty", {r["room"] for r in self.recorded[0]["rooms"]})
+
+	def test_it_refuses_the_things_the_other_oversight_reads_refuse(self) -> None:
+		with self.assertRaises(self.gate.RetrievalRefused):
+			self._search(reason="because")
+		with self.assertRaises(self.gate.RetrievalRefused):
+			self._search(rooms=[])
+		with self.assertRaises(self.gate.RetrievalRefused):
+			self._search(rooms=[f"r{i}" for i in range(self.gate.MAX_OVERSIGHT_ROOMS + 1)])
+		self.permissions._has_oversight = lambda _user: False
+		with self.assertRaises(self.gate.RetrievalRefused):
+			self._search()
+		self.assertEqual(self.recorded, [], "a refused search still wrote an audit row")
+
+
 class TheRoomSetIsRefusedRatherThanTrimmed(unittest.TestCase):
 	"""An auditor's named rooms are never silently narrowed.
 

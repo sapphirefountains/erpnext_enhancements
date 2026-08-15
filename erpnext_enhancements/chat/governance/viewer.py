@@ -221,6 +221,72 @@ def _member_rows(room: str) -> list[dict[str, Any]]:
 
 
 @frappe.whitelist(methods=["POST"])
+@rate_limit(limit=120, seconds=3600, methods=["POST"])
+def find(
+	rooms: Any = None,
+	query: str = "",
+	reason: str = "",
+	reason_category: str = "",
+	sender: str = "",
+	from_date: str = "",
+	to_date: str = "",
+	origin: str = "",
+	with_attachments: Any = None,
+	limit: Any = None,
+) -> dict[str, Any]:
+	"""Filtered cross-room search returning **hits**, not a summary.
+
+	The third read on this surface, and each answers a different question. :func:`search`
+	returns a ranked, budgeted assembly — right for "what in these rooms is relevant", and it
+	may drop the middle of a thread. :func:`transcript` returns one room in full. This returns
+	every matching message across the named rooms, narrowed by sender, date range, origin or
+	attachment presence.
+
+	**Rate limited at 120/hour, matching `search` rather than the 240 the reads carry.** An
+	unthrottled all-rooms search is a bulk extraction tool wearing a reason, and this one
+	returns bodies.
+
+	**No include-deleted-content**, unlike the export bundle. A search returning deleted bodies
+	inline would surface forty withdrawn messages under one audit row, bypassing
+	``tombstone.expand``'s per-message event and its refusal. Deleted rows still *match* and
+	come back as tombstones with the body withheld; seeing through one stays its own act.
+	"""
+	from erpnext_enhancements.chat.api._common import message_payload
+
+	user = _require_auditor()
+	cleaned_reason, category = _require_reason(reason, reason_category)
+	named = _rooms(rooms)
+
+	hits = gate.search_transcripts(
+		rooms=named,
+		query=query or "",
+		reason=cleaned_reason,
+		reason_category=category,
+		filters=gate.MessageFilters(
+			sender=(sender or "").strip(),
+			from_date=(from_date or "").strip(),
+			to_date=(to_date or "").strip(),
+			origin=(origin or "").strip(),
+			with_attachments=bool(cint(with_attachments)),
+		),
+		limit=cint(limit) or None,
+		user=user,
+		request_id=audit.viewer_session_id(),
+	)
+
+	return {
+		"rooms": named,
+		"reason_category": category,
+		"messages": [message_payload(row) for row in hits.rows],
+		# Per room, so "twelve rooms searched, three produced anything" is legible. A room that
+		# matched nothing is absent here and absent from the audit row, which is the same rule.
+		"per_room": hits.per_room,
+		"rooms_searched": hits.rooms_searched,
+		"audit_row": hits.audit_row,
+	}
+
+
+@frappe.whitelist(methods=["POST"])
 @rate_limit(limit=240, seconds=3600, methods=["POST"])
 def members(room: str = "", reason: str = "", reason_category: str = "") -> dict[str, Any]:
 	"""Who was in one room, and when they left. **Facts, and never a verdict.**

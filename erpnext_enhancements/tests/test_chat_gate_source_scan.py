@@ -114,7 +114,7 @@ RETRIEVAL_TABLES: frozenset[str] = frozenset(
 #: distinctly named function cannot be reached by a caller who did not mean to
 #: reach it, and it shows up as itself in a stack trace and in a grep.
 PUBLIC_SYMBOLS: frozenset[str] = frozenset(
-	{"retrieve", "retrieve_for_oversight", "retrieve_transcript"}
+	{"retrieve", "retrieve_for_oversight", "retrieve_transcript", "search_transcripts"}
 )
 
 #: The one entry point Rule D exempts, conditionally — see
@@ -132,6 +132,11 @@ OVERSIGHT_SYMBOL: str = "retrieve_for_oversight"
 #: shape the oversight exemption covers, so it pays the same price: see
 #: :meth:`TestRuleDTheEntryPointDerivesItsOwnRoomSet.test_the_transcript_path_pays_for_its_exemption`.
 TRANSCRIPT_SYMBOL: str = "retrieve_transcript"
+
+#: The filtered cross-room search, added in v1.314.0. The third entry point that takes a
+#: caller-supplied room set, and it pays the same price — see
+#: :meth:`TestRuleDTheEntryPointDerivesItsOwnRoomSet.test_the_search_path_pays_for_its_exemption`.
+SEARCH_SYMBOL: str = "search_transcripts"
 
 #: The required first positional parameter of every SQL builder in the package.
 ALLOWED_ROOMS: str = "allowed_rooms"
@@ -724,8 +729,12 @@ class TestRuleDTheEntryPointDerivesItsOwnRoomSet(unittest.TestCase):
 			self.skipTest("chat/retrieval/ does not exist yet — Rule A is the live fence")
 		offenders: list[str] = []
 		for rel, func in self._entry_points():
-			if func.name == OVERSIGHT_SYMBOL:
-				continue  # see test_the_oversight_path_pays_for_its_exemption
+			# The oversight entry points name their rooms, because the audit row has to say what
+			# was read and "derive it from their membership" is incoherent for a read that is
+			# deliberately not about their membership. Each pays for the exemption in its own
+			# test below rather than inheriting it from this list.
+			if func.name in {OVERSIGHT_SYMBOL, SEARCH_SYMBOL}:
+				continue
 			smuggled = sorted(_all_param_names(func) & FORBIDDEN_ENTRY_PARAMS)
 			if smuggled:
 				offenders.append(f"{rel}:{func.lineno} {func.name}() accepts {smuggled}")
@@ -740,6 +749,47 @@ class TestRuleDTheEntryPointDerivesItsOwnRoomSet(unittest.TestCase):
 			"arguments from text.\n"
 			f"If the intent is to NARROW the search, the parameter is `{NARROWING_PARAM}`, "
 			"which is intersected with the derived set and therefore cannot widen it.",
+		)
+
+	def test_the_search_path_pays_for_its_exemption(self):
+		"""``search_transcripts`` names its rooms too, and owes the same controls.
+
+		It is the fourth public symbol on a package whose stated design is "one door", and the
+		third that takes a caller-supplied room set. Each one of those is a place the set might
+		not be bounded, so each is asserted rather than assumed — the alternative is a rule that
+		covers the two entry points somebody remembered.
+		"""
+		if not RETRIEVAL_DIR.is_dir():
+			self.skipTest("chat/retrieval/ does not exist yet")
+		source = (APP_DIR / GATE_REL).read_text(encoding="utf-8")
+		func = None
+		for node in ast.walk(ast.parse(source)):
+			if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == SEARCH_SYMBOL:
+				func = node
+		self.assertIsNotNone(func, f"{SEARCH_SYMBOL} is gone from {GATE_REL}")
+
+		params = _all_param_names(func)
+		self.assertIn("reason", params, "an oversight search no longer requires a reason")
+		self.assertIn("rooms", params, "an oversight search of 'everything' must not be expressible")
+
+		body = ast.dump(func)
+		self.assertIn("_has_oversight", body, "the search no longer checks the oversight role")
+		self.assertIn(
+			"record_or_refuse",
+			body,
+			"the search no longer writes its audit row through the fail-closed writer. A search "
+			"returning hits from twelve rooms is twelve non-participant reads.",
+		)
+		self.assertIn(
+			"MAX_OVERSIGHT_ROOMS",
+			body,
+			"the room bound is gone, so a caller can name an unbounded set",
+		)
+		self.assertNotIn(
+			"_cap_rooms",
+			ast.unparse(ast.Module(body=list(func.body), type_ignores=[])),
+			"the search trims the rooms the auditor named instead of refusing. A trimmed search "
+			"looks exactly like one that found nothing in those rooms.",
 		)
 
 	def test_the_transcript_path_pays_for_its_exemption(self):
