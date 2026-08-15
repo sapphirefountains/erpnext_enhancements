@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.295.0] - 2026-08-15
+
+**The retirement arithmetic the retention purge is blocked on — and a finding that says the
+purge is still not enough.** `chat/governance/purge_rules.py` marks the three derived
+DocTypes **BLOCKED** because Phase 5's index has a staleness story and no *retirement* story.
+This is that story's arithmetic, pure and executed. The field and its call sites land together
+in the next change; a field with no reader would be the "declared but unwired" antipattern this
+phase has spent six changes removing.
+
+### The finding, first, because it outranks the mechanism
+
+**Asking Triton about an old conversation re-manufactures that conversation as first-class
+content at the top of the same room.** Recorded as TASK-2026-01569 because it is a decision
+rather than a fix, and it is true *today*, independent of any retirement work.
+
+`chat/invoke/handler.py:275-295` posts the assistant's answer as a real `Chat Message` through
+`outbox.insert_message`, allocating a fresh `seq` off `seq_high_water`. The text is composed
+from exactly the chunk bodies and digest summaries retrieval handed it. And the indexing layer
+does not distinguish it: grepping `sender_kind` and `sync_origin` across `indexer.py`,
+`chunker.py` and `digest.py` returns **zero hits**. So the reply is chunked verbatim, embedded
+and shipped to the provider, and summarised into the room digest.
+
+Every retirement or purge mechanism available is a **floor**. Triton's restatement is written
+*above* every floor, and `retention._plan_rooms` ages each message by its own `creation` — so
+**the retention clock on the destroyed conversation's content restarts on the day somebody
+asked about it**, and restarts again every time anybody asks again. Purge a room's 2024
+conversation and, if anyone asked about it in 2025, the substance survives as a message, a
+verbatim chunk, an embedding at the provider and a line in a digest.
+
+`purge_rules.can_enable()` therefore stays `False` even once the mark is wired: **it is
+necessary and not sufficient.**
+
+### Added
+
+- **`chat/indexing/retire_rules.py`** — pure, imports nothing. One monotonic integer per room
+  meaning *"every message at or below this seq is gone forever"*: the mirror of
+  `seq_high_water`, making a room's live range `(retired_below_seq, seq_high_water]`.
+
+  **The boundary is solved by arithmetic rather than a re-chunk path**, and that is the central
+  call. A chunk straddling the mark covers surviving messages too, so deleting it wholesale
+  destroys *their* coverage permanently — nothing rebuilds a mid-range hole, because the
+  indexer's watermark is `max(last_seq)` over sealed chunks. So the mark **snaps down to a
+  sealed-chunk boundary**: afterwards no surviving chunk straddles it, and no future one can,
+  because the indexer reads only above the floor.
+
+  The price is a bounded **hold**, not lost coverage — messages between the snapped and the
+  requested mark wait until the window advances past their chunk's end, which is one chunk's
+  own span (1200 tokens, 20 messages, or a 45-minute gap) against a window measured in days.
+  `snap_to_chunk_boundary` returns that lag so a caller reports it rather than presenting a
+  partial retirement as a complete one.
+
+  The alternative — a mid-range rebuild — is worse on every axis: it re-runs the chunker over a
+  truncated stream where the inter-message gap is recomputed over surviving rows, so it trips
+  the gap rule where it did not before, moves `first_seq`, and collides with
+  `unique(room, first_seq)`; it needs a forced seal, changing what `sealed` means; and it pays
+  a fresh embedding per retirement.
+
+- **`tests/test_chat_retire_rules.py`** — 37 tests, executed rather than inspected.
+
+### Two corrections that came out of the review, both load-bearing
+
+- **The delete predicate keys on `first_seq`, not `last_seq`.** They are equivalent for a mark
+  that was snapped — but `retired_below_seq` is `read_only` on the DocField, which is not a
+  database constraint, and a System Manager at a bench prompt is exactly who sets these. On an
+  unsnapped mark, `last_seq <= mark` leaves the straddling chunk in place *while the purge is
+  authorised to destroy the messages inside it*: the chunk then holds the retired transcript
+  verbatim, is matched by the lexical tier, and can **never** be cleaned up, because the
+  monotonicity rule forbids lowering the mark to re-snap it. `first_seq` costs nothing and
+  closes the case.
+
+- **`is_straddler` is a detection predicate, not only a construction-time one.** The chunk
+  sweep reads a room's messages at one moment and commits later, so a mark committed between
+  those two points produces a straddler the snap never saw. Consumers re-check rather than
+  assuming the snap held.
+
+### Ships inert, and the reason is a gotcha in both directions
+
+`0` means nothing retired, and `ShipsInertTest` asserts every predicate answers "nothing to do"
+there. When the field lands, `Chat Room` is a **normal** DocType, so its `default` reaches every
+existing row in the one `ALTER` — the *opposite* of the Single behaviour, and exactly the case
+`CLAUDE.md` warns about in both directions. No backfill patch, and one keyed on emptiness would
+match zero rows.
+
 ## [1.294.1] - 2026-08-15
 
 **No chat client mentioned 429 anywhere, and four paths failed silently.** Not a hypothetical

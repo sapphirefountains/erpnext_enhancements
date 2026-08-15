@@ -889,6 +889,20 @@ jobs:
       # Pure: purge_rules.py imports nothing at all.
       - name: Chat purge rules (what survives a purge, and why it cannot run)
         run: python -m unittest erpnext_enhancements.tests.test_chat_purge_rules -v
+      # The prerequisite the purge is blocked on: retiring derived coverage of destroyed
+      # messages. Two assertions here came out of a design review and were both wrong in the
+      # obvious version. The delete predicate keys on first_seq, not last_seq - for a snapped
+      # mark the two are equivalent, but the field is read_only on the DocField, which is not
+      # a database constraint, and for a mark set by hand last_seq leaves a chunk holding the
+      # retired transcript verbatim that can never be cleaned up, because the monotonicity
+      # rule forbids lowering the mark to re-snap it. And is_straddler is a DETECTION
+      # predicate as well as a construction-time one: the chunk sweep reads a room's messages
+      # and commits later, so a mark committed in between produces a straddler the snap never
+      # saw.
+      #
+      # Pure: retire_rules.py imports nothing at all.
+      - name: Chat retirement rules (the boundary, by arithmetic rather than re-chunking)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_retire_rules -v
       # The assertion that 4.F as shipped CANNOT destroy anything: no delete_doc, no db.delete,
       # no DELETE literal, no set_value, no body column, in either module. This matters more
       # than the usual surface test because the destructive half was designed, reviewed by
