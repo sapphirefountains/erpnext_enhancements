@@ -37,7 +37,7 @@ So Phase 0 splits in two:
 |---|---|---|
 | **Now — no code required** | Meta Business Verification | company documents only |
 | | Google Ads developer token + Basic Access | an MCC account |
-| | Google Business Profile access request | a 60-day-old verified profile |
+| | Google Business Profile access request | locations **already** verified 60+ days (§5) |
 | | LinkedIn **Community Management, Development Tier** | a company page + a new app |
 | **After Phase 2 has a demonstrable integration** | Meta App Review (Advanced Access) | a reachable test build |
 | | LinkedIn **Community Management, Standard Tier** | screencast of the built app |
@@ -131,10 +131,38 @@ placeholder URLs.
 
 ### 5. Are the Google Business Profile locations verified?
 
-Google requires that you have managed a **verified, active Business Profile for at least 60
-days** before it will grant API access, and that the profile lists an official website. If any
-location is unverified, start that clock now — it is a hard 60-day wait that no application can
-shortcut.
+Google requires that you have **already** managed a **verified, active Business Profile for at
+least 60 days** before it will grant API access, and that the profile lists an official website.
+
+**The 60 days is a prerequisite, not a queue.** The clock runs on *verification*, not on the
+application — so if every location has been verified for two months you can apply today with no
+wait, and if any location is unverified, verifying it is what starts the clock. Nothing
+shortcuts it, and filing before the prerequisite is met gets a refusal rather than a place in
+a line.
+
+**Ask for reviews explicitly.** Reviews and local posts are not on the modern APIs — they are
+still on the legacy Google My Business v4.9, which needs *additional* allowlisting beyond the
+standard grant. A request that does not name them yields a grant that does not cover them.
+
+**The approval signal is a quota number, not an email.** The API quota in Cloud Console goes
+from **0 QPM to 300 QPM**. The approval email is easy to miss; the quota is not.
+
+### 5a. Two LinkedIn apps is a schema requirement, not just a filing one
+
+The Community Management Dev Tier request is only available on a **new developer application
+with no access to other API products**, so organic publishing and the Advertising API cannot
+live on one LinkedIn app. That is a filing constraint, and it is well documented.
+
+What follows from it is a *storage* constraint, and it is not documented anywhere else: **this
+system will hold two sets of LinkedIn credentials, for one platform.** Any credential design
+keyed one-client-id-per-platform — which is the obvious design, and the one every other
+platform here would suggest — breaks on LinkedIn the day the second app exists.
+
+As of 2026-08-15 nothing stores platform credentials at all: `Marketing Settings` holds enable
+flags and sync tuning, `Ad Account` holds identity and status, and there is no `client_id`,
+`client_secret` or `refresh_token` anywhere in `marketing/`. So this is a constraint to design
+*for*, not a migration to plan — which is the cheap moment to know it. It belongs in the
+connector's brief (TASK-2026-01476).
 
 ### 6. Cross-cutting, needed by more than one gate
 

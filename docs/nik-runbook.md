@@ -81,12 +81,24 @@ This gates the **largest single spend channel**, so it is the first of the ads g
 documented at ~5 business days. Set the API contact email to a mailbox someone actually reads —
 Google uses it for compliance notices, and an unread mailbox is how tokens get suspended.
 
-### 1.3 Google Business Profile access — **file today, because of a hard 60-day wait**
+### 1.3 Google Business Profile access — **check verification today; the 60 days is a prerequisite, not a queue**
 
-You must have managed a **verified, active Business Profile for at least 60 days** before Google
-will grant API access. **If any location is unverified, that clock has not started** — and no
-application shortcuts it. That is the only reason this sits in wave one; the GBP work itself is
-late in Phase 3.
+**The clock runs on profile verification, not on your application.** Google will not grant API
+access unless you have *already* managed a **verified, active Business Profile for at least 60
+days** — so this is a wait you either finished two months ago or have not started.
+
+That makes today's action a check rather than a filing:
+
+- **every location already verified for 60+ days** → apply now; there is no wait at all;
+- **any location unverified** → verifying it starts the 60-day clock, and only then can you
+  apply. Nothing shortcuts it.
+
+That is the only reason this sits in wave one; the GBP work itself is late in Phase 3. The
+profile must also list an official website.
+
+> This section previously read *"file today, because of a hard 60-day wait"*, which invites
+> precisely the wrong action — filing an application that will be refused, rather than
+> verifying the locations that start the clock. Corrected 2026-08-15.
 
 Say explicitly in the request that you need **reviews**, because reviews and local posts are not
 on the modern APIs — they are still on the legacy Google My Business v4.9, which needs *additional*
