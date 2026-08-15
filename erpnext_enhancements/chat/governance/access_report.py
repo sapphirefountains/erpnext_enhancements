@@ -36,7 +36,7 @@ whose first act is to break the admin is one that gets switched off. See
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Final
 
 import frappe
 
@@ -368,6 +368,62 @@ def compliance_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
 	return summary
 
 
+#: Governance events that put message **bodies** in front of somebody.
+#:
+#: These are content reads by any honest definition, and **none of them can appear in
+#: :func:`_content_rows`** — that query selects from ``Chat Retrieval Audit`` joined to its
+#: room child and filters ``r.was_participant = 0``, while these rows live on
+#: ``Chat Audit Log``, which has no ``was_participant`` column to join on. The exclusion is
+#: structural rather than an oversight, and it predates the events being enumerated here.
+#:
+#: Both export events are included, and that is a judgement worth stating. ``request_export``
+#: is the act that causes bodies to be assembled into a bundle — the worker reads messages and
+#: revisions during the build — and ``export_downloaded`` is the act that puts that bundle in
+#: somebody's hands. They are counted **separately** below rather than summed, so a reader can
+#: see a request that was never downloaded for what it is.
+BODY_READ_EVENTS: Final[frozenset[str]] = frozenset(
+	{
+		"tombstone_expanded",
+		"revision_history_read",
+		"export_requested",
+		"export_downloaded",
+	}
+)
+
+
+def body_read_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+	"""Where the body reads in this report were recorded, counted per chain.
+
+	**The report used to imply a completeness it did not have.** A reader counting the content
+	rows got the number of non-participant reads *that went through the retrieval path*, and
+	nothing said so — while a tombstone expansion, an edit-history read and an export all
+	returned message bodies and were filed on the governance chain, where the content query
+	cannot reach them.
+
+	Two figures, never one. They come from different tables with different guarantees: the
+	retrieval side carries a per-room ``was_participant`` and a seq range, the governance side
+	carries an ``affected_count`` and no participation at all. Adding them would produce a
+	number whose parts mean different things, which is a worse answer than either half.
+
+	Counts, not verdicts. This says what was recorded where; whether the split is acceptable is
+	a question for whoever reads it.
+	"""
+	via_retrieval = sum(1 for row in rows if row.get("kind") == KIND_CONTENT)
+	by_event: dict[str, int] = {}
+	for row in rows:
+		if row.get("kind") != KIND_GOVERNANCE:
+			continue
+		event = str(row.get("event_type") or "")
+		if event in BODY_READ_EVENTS:
+			by_event[event] = by_event.get(event, 0) + 1
+
+	return {
+		"via_retrieval_audit": via_retrieval,
+		"via_governance_log": sum(by_event.values()),
+		"via_governance_log_by_event": by_event,
+	}
+
+
 def category_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
 	"""How the categories are actually being used, and whether the vocabulary is holding up.
 
@@ -407,8 +463,10 @@ def category_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 __all__ = [
+	"BODY_READ_EVENTS",
 	"KIND_CONTENT",
 	"KIND_GOVERNANCE",
+	"body_read_summary",
 	"category_summary",
 	"REASON_CATEGORIES",
 	"REASON_MIN_LENGTH",
