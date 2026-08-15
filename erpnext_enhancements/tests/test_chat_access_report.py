@@ -500,5 +500,81 @@ class ComplianceSummaryTest(unittest.TestCase):
 		self.assertEqual(self.mod.compliance_summary(rows)[self.mod.REASON_MISSING], 1)
 
 
+class BodyReadSummaryTest(unittest.TestCase):
+	"""The report used to imply a completeness it did not have.
+
+	`_content_rows` selects from `Chat Retrieval Audit` and filters `r.was_participant = 0`.
+	A tombstone expansion, an edit-history read and an export all return message **bodies** and
+	are recorded on `Chat Audit Log`, which has no `was_participant` column to join on — so
+	they cannot appear in that query by construction. A reader counting content rows was
+	getting the non-participant reads that went through the *retrieval path*, and nothing said
+	so.
+
+	Decided 2026-08-15 (TASK-2026-01581): the rows stay where they are and the report stops
+	implying otherwise. Moving them would change what `tombstone_expanded` means for rows
+	already written, and `event_type` is signed.
+	"""
+
+	def setUp(self) -> None:
+		from erpnext_enhancements.chat.governance import access_report
+
+		self.mod = access_report
+
+	def _rows(self):
+		return [
+			{"kind": self.mod.KIND_CONTENT, "audit_name": "CRA-1"},
+			{"kind": self.mod.KIND_CONTENT, "audit_name": "CRA-2"},
+			{"kind": self.mod.KIND_GOVERNANCE, "event_type": "tombstone_expanded"},
+			{"kind": self.mod.KIND_GOVERNANCE, "event_type": "tombstone_expanded"},
+			{"kind": self.mod.KIND_GOVERNANCE, "event_type": "revision_history_read"},
+			{"kind": self.mod.KIND_GOVERNANCE, "event_type": "export_downloaded"},
+			# Acts about the data rather than reads of it. These must NOT be counted.
+			{"kind": self.mod.KIND_GOVERNANCE, "event_type": "oversight_role_granted"},
+			{"kind": self.mod.KIND_GOVERNANCE, "event_type": "retention_run"},
+			{"kind": self.mod.KIND_GOVERNANCE, "event_type": "chain_verification_failed"},
+		]
+
+	def test_the_two_chains_are_counted_separately(self) -> None:
+		"""Never one number. They come from different tables with different guarantees — the
+		retrieval side carries per-room participation and a seq range, the governance side an
+		`affected_count` and no participation at all."""
+		summary = self.mod.body_read_summary(self._rows())
+		self.assertEqual(summary["via_retrieval_audit"], 2)
+		self.assertEqual(summary["via_governance_log"], 4)
+		self.assertNotIn("total", summary, "the two figures were merged into one")
+
+	def test_each_governance_event_is_named_rather_than_lumped(self) -> None:
+		"""So a request that was never downloaded reads as what it is."""
+		by_event = self.mod.body_read_summary(self._rows())["via_governance_log_by_event"]
+		self.assertEqual(by_event["tombstone_expanded"], 2)
+		self.assertEqual(by_event["revision_history_read"], 1)
+		self.assertEqual(by_event["export_downloaded"], 1)
+
+	def test_acts_about_the_data_are_not_counted_as_reads_of_it(self) -> None:
+		"""A role grant is not somebody reading a message."""
+		by_event = self.mod.body_read_summary(self._rows())["via_governance_log_by_event"]
+		for event in ("oversight_role_granted", "retention_run", "chain_verification_failed"):
+			self.assertNotIn(event, by_event)
+
+	def test_every_body_read_event_is_one_the_writer_accepts(self) -> None:
+		"""The failure this catches is silent: rename an event type and this set stops matching
+		anything, so the second figure quietly reads zero and the report is misleading again —
+		in the same direction it was before."""
+		from erpnext_enhancements.chat import audit
+
+		unknown = sorted(self.mod.BODY_READ_EVENTS - set(audit.GOVERNANCE_EVENTS))
+		self.assertFalse(
+			unknown,
+			"these are counted as body reads but are not event types the writer can produce, "
+			f"so they will never match a row: {unknown}",
+		)
+
+	def test_an_empty_report_reports_zero_rather_than_nothing(self) -> None:
+		summary = self.mod.body_read_summary([])
+		self.assertEqual(summary["via_retrieval_audit"], 0)
+		self.assertEqual(summary["via_governance_log"], 0)
+		self.assertEqual(summary["via_governance_log_by_event"], {})
+
+
 if __name__ == "__main__":
 	unittest.main()

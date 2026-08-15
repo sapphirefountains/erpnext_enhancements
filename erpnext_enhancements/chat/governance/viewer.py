@@ -451,6 +451,12 @@ def access_log(
 		"rows": rows,
 		"compliance": access_report.compliance_summary(rows),
 		"categories": access_report.category_summary(rows),
+		# Two figures, deliberately not one. A reader counting the content rows was getting
+		# the non-participant reads that went through the RETRIEVAL path, with nothing saying
+		# so — while a tombstone expansion, an edit-history read and an export all returned
+		# message bodies and were filed on the governance chain, which `_content_rows` cannot
+		# reach (it filters `was_participant = 0`, and `Chat Audit Log` has no such column).
+		"body_reads": access_report.body_read_summary(rows),
 	}
 
 

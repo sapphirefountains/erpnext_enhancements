@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.313.0] - 2026-08-15
+
+**The access report implied a completeness it did not have.** Some non-participant reads of
+message bodies could not appear in the query that counts them.
+
+### Fixed
+
+`access_report._content_rows` is *the* definition of a non-participant content read: it selects
+from `Chat Retrieval Audit` joined to its room child and filters `r.was_participant = 0`. A
+tombstone expansion, an edit-history read and an export all return message **bodies** — and all
+are recorded on `Chat Audit Log`, which has **no `was_participant` column to join on**. They
+cannot appear in that query by construction. So a reader counting content rows was getting the
+non-participant reads *that went through the retrieval path*, with nothing saying so.
+
+`body_read_summary()` reports both figures, and the endpoint returns it as `body_reads`:
+`via_retrieval_audit`, `via_governance_log`, and a per-event breakdown of the second.
+
+**Two figures, never one.** They come from different tables with different guarantees — the
+retrieval side carries per-room participation and a seq range, the governance side an
+`affected_count` and no participation at all. Adding them would produce a number whose parts mean
+different things, which is a worse answer than either half. The per-event breakdown exists so a
+request that was never downloaded reads as what it is rather than disappearing into a total.
+
+**Both export events count, and that is a judgement rather than an obvious fact.**
+`request_export` is the act that causes bodies to be assembled — the worker reads messages and
+revisions during the build — and `export_downloaded` is the act that puts the bundle in somebody's
+hands. Counted separately for that reason.
+
+### Not done, deliberately
+
+**The rows stay on the governance chain.** Moving them to `Chat Retrieval Audit` was the
+alternative and was rejected: it changes what `tombstone_expanded` *means* for rows already
+written, and `event_type` is a signed field — so existing rows could not be re-filed without
+either leaving two meanings in one column or re-chaining the log. The defect was the report
+claiming more than it knew, not the filing. Fixing the claim costs no migration and takes no
+position on history.
+
+Decided under TASK-2026-01581 on delegation rather than by Nik choosing, so it is a reversible
+call and should be cited that way.
+
+### Tests
+
+`BodyReadSummaryTest` pins that the two chains are counted separately and never merged, that each
+governance event is named rather than lumped, and that acts *about* the data — a role grant, a
+retention run, a chain verification failure — are not counted as reads *of* it.
+
+It also asserts every member of `BODY_READ_EVENTS` is an event type the writer can actually
+produce. That failure is silent in the worst direction: rename an event and the set matches
+nothing, so the second figure quietly reads zero and the report is misleading again, exactly as it
+was before. Verified by planting both defects.
+
 ## [1.312.0] - 2026-08-15
 
 **The audit vault's third door, and a table that had none of them.** Layer 2's remaining holes,
