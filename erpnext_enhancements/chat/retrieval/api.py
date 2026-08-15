@@ -59,7 +59,7 @@ def get_chat_context(
 			room=room or None,
 			thread_root=thread_root or None,
 			restrict_to=_coerce_rooms(restrict_to),
-			purpose="mention",
+			purpose=gate.PURPOSE_MENTION,
 			request_id=request_id,
 		)
 	except gate.RetrievalRefused as exc:
