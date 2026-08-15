@@ -871,6 +871,19 @@ jobs:
       # Own step: no frappe import needed, the modules are only ever parsed.
       - name: Chat alert surface (logged first, never raises, no membership bypass)
         run: python -m unittest erpnext_enhancements.tests.test_chat_alerts_surface -v
+      # The push sender's status table, which its own docstring calls "the module" and which
+      # nothing asserted until v1.299.5. Only 404/410 may retire a subscription: retire too
+      # eagerly and one bad afternoon wipes the roster, too reluctantly and the table fills
+      # with dead rows -- and neither is visible for weeks, because the symptom is a
+      # notification that did not arrive.
+      #
+      # The load-bearing assertion is that a 429 alerts under a subsystem inside
+      # alert_rules.SELF_DELIVERING. An alert about push must not be delivered by push: the
+      # ops-space channel is a Chat Message, whose banner is the thing that just failed.
+      # Asserted against the rules module rather than against the literal "notifications", so
+      # it still holds if this call site is rewritten.
+      - name: Chat web push sender (status table, one alert per fan-out, not self-delivered)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_webpush_sender -v
       # What counts as drift, and what merely counts as SWITCHED OFF. This app ships dormant
       # - enabled=0, dry_run_mode=1, relay_outbound_enabled=0, relay_inbound_enabled=0 - so on
       # a shipped-state site every message has an empty gchat_message_name and no Google

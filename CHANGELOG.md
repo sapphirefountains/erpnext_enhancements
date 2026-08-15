@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.299.5] - 2026-08-15
+
+**A deferral conditioned on an observation that nothing made.** TASK-2026-01288's one
+remaining item was "honour `Retry-After` on a 429". The code had already argued, in writing,
+that a retry queue was not worth building *"until 429s are actually observed"* — and the only
+record of a 429 was a `frappe.logger("chat").debug` line.
+
+### Changed
+
+That reasoning is still right. A 429 costs **one missed banner, not a missing conversation**:
+the bell row exists, the unread counter moved, and the next message in the room tries again. A
+retry queue for push means a second outbox with its own leases, ordering and dead-letter
+story, which is a large thing to build for a failure nobody has seen.
+
+What was wrong is that nobody *could* see it. A debug line on a production site is written at
+a level nobody reads, in a file nobody tails, for an event nobody is paged about — so the
+condition that would justify building the queue could never be met. **A decision to wait for
+evidence has to be paired with something that would produce the evidence, or it is a decision
+never to do it.**
+
+So a rate-limited fan-out now raises one §4.H ops alert, which already solves the parts that
+make this awkward:
+
+- **the dedup key names the problem, not the occurrence** — scope is the push service's
+  origin, so every Chrome subscription on the site folds into one incident and the count rides
+  in `detail`, because a key containing the number that changes deduplicates nothing;
+- **repeats re-notify on a doubling schedule**, so a service rate-limiting us all afternoon is
+  one row that speaks up at 1, 2, 4, 8 rather than a mailbox full;
+- **it is delivered by email and not by chat**, and not by anyone remembering to choose that —
+  `notifications` is in `alert_rules.SELF_DELIVERING`, so the standing rule that an alert is
+  never delivered by the thing it is about already covers it. The ops-space channel is a
+  `Chat Message`, whose banner is the thing that just failed.
+
+One alert per fan-out rather than per device: a service rate-limiting us is rate-limiting
+every subscription it holds, and twenty rows would say the same thing twenty times. The
+accumulator is a **parameter**, not module state — this runs in background workers, where
+module state is shared between unrelated jobs and outlives the one that wrote it.
+
+`_post` now returns a `PostOutcome` NamedTuple. It was already three positional booleans whose
+order nothing enforced; a fourth and a fifth would have been five chances to swap two at a
+call site.
+
+### Added
+
+`tests/test_chat_webpush_sender.py` — the sender's status table is what its own docstring
+calls *"the module"*, and **nothing asserted any of it**. Ten checks: only 404 and 410 retire
+a subscription (403 is almost always a VAPID mismatch, and retiring on it would delete every
+subscription on the site the moment somebody rotated a key by mistake); 413 and 429 are
+branched rather than falling through to the generic reject; a 429 registers **even when the
+service sends no `Retry-After`**, which is the case most worth hearing about because it is the
+one where we cannot even say how long to wait; and the alert's subsystem is asserted to be
+inside `SELF_DELIVERING` *by reading the rules module*, so the property survives this call site
+being rewritten.
+
+Closes the last residual on TASK-2026-01288.
 ## [1.299.4] - 2026-08-15
 
 **All thirteen learner-runtime endpoints answered a GET, and the client had been saying they
