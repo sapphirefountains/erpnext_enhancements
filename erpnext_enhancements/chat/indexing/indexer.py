@@ -69,6 +69,13 @@ CHUNK_DOCTYPE = "Chat Context Chunk"
 MESSAGE_DOCTYPE = "Chat Message"
 ROOM_DOCTYPE = "Chat Room"
 
+#: ``Chat Message.sender_kind`` for the assistant's own replies. The value, not the
+#: ``sync_origin``, because `sender_kind` is *what kind of author this is* and is what every
+#: reader keys on — `handler.py` sets both and states the distinction at length. One constant,
+#: shared by the chunker and the digest, so the two cannot drift into disagreeing about what
+#: an assistant reply is.
+ASSISTANT_SENDER_KIND = "Triton"
+
 #: Messages read per room per pass. A bound rather than a preference: the first pass over a
 #: room with two years of history must not be one statement that loads it all into a worker.
 MESSAGES_PER_PASS: int = 2_000
@@ -327,6 +334,21 @@ def _messages_after(room: str, watermark: int, *, limit: int) -> list[dict[str, 
 	Deleted rows are excluded, and that is the invalidation contract rather than a filter:
 	a chunk is a verbatim copy, so indexing a deleted message would put its text somewhere
 	the delete does not reach.
+
+	**Triton's own replies are excluded for the same reason, one step removed.** The assistant
+	posts its answer as a real ``Chat Message`` through the ordinary outbox, and that answer is
+	composed from the chunk bodies and digest summaries retrieval just handed it. Indexing it
+	makes a *second* verbatim copy of the conversation it quoted — and one that outlives the
+	original, because every retention mechanism is a floor keyed on ``seq`` and the reply is
+	written at the top of the room with its own creation date. Asking about an old conversation
+	would restart the retention clock on its substance, every time anybody asked.
+
+	This is the narrow half of that fix (TASK-2026-01569): the **thread** tier is untouched,
+	because ``retrieval/gate._thread_messages`` reads ``Chat Message`` directly rather than
+	through chunks — so a follow-up in the same thread still sees the earlier answer, and the
+	cost of this exclusion is zero there. What it removes is the durable copy: the cross-room
+	chunk tier, which is where the assistant's restatement would otherwise become permanently
+	retrievable from *other* rooms.
 	"""
 	return (
 		frappe.db.sql(
@@ -337,10 +359,16 @@ def _messages_after(room: str, watermark: int, *, limit: int) -> list[dict[str, 
 		where `room` = %(room)s
 			and `seq` > %(watermark)s
 			and `is_deleted` = 0
+			and coalesce(`sender_kind`, '') != %(assistant)s
 		order by `seq` asc
 		limit %(limit)s
 		""",
-			{"room": room, "watermark": max(cint(watermark), 0), "limit": max(cint(limit), 0)},
+			{
+				"room": room,
+				"watermark": max(cint(watermark), 0),
+				"limit": max(cint(limit), 0),
+				"assistant": ASSISTANT_SENDER_KIND,
+			},
 			as_dict=True,
 		)
 		or []

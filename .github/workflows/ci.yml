@@ -906,6 +906,20 @@ jobs:
       # the retrieval gate needs this fragment.
       - name: Chat retirement rules (the boundary, by arithmetic rather than re-chunking)
         run: python -m unittest erpnext_enhancements.tests.test_chat_retire_rules -v
+      # The assistant's own answers must never become indexed content. handler.py posts
+      # Triton's reply as a REAL Chat Message through the ordinary outbox, and its text is
+      # composed from the chunk bodies and digest summaries retrieval just handed it - so
+      # indexing it made a second verbatim copy of the quoted conversation that OUTLIVES the
+      # original, because every retention mechanism is a floor keyed on seq and the reply sits
+      # at the top of the room with its own creation date.
+      #
+      # The exclusion is deliberately narrow: T0 (room digest) and T2 (cross-room chunks) are
+      # excluded; T1 (thread) is untouched because gate._thread_messages reads Chat Message
+      # directly, so a follow-up still sees the earlier answer at no cost. The suite asserts
+      # BOTH halves - a later tidy-up that "completes" the exclusion would quietly cost Triton
+      # the ability to follow up on itself.
+      - name: Chat assistant replies are not indexed (TASK-2026-01569)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_assistant_not_indexed -v
       # The assertion that 4.F as shipped CANNOT destroy anything: no delete_doc, no db.delete,
       # no DELETE literal, no set_value, no body column, in either module. This matters more
       # than the usual surface test because the destructive half was designed, reviewed by

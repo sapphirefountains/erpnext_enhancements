@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.296.0] - 2026-08-15
+
+**Triton's own answers are no longer indexed.** TASK-2026-01569, decided and implemented.
+
+The assistant posts its reply as a **real `Chat Message`** through the ordinary outbox,
+allocating a fresh `seq` off `seq_high_water`, and its text is composed from exactly the chunk
+bodies and digest summaries retrieval handed it. The indexing layer did not distinguish it, so
+the reply was chunked verbatim, embedded, shipped to the model provider, and summarised into
+the room digest.
+
+**Every retention mechanism available is a floor keyed on `seq`.** The reply sits at the *top*
+of the room with its own creation date, so asking about an old conversation restarted the
+retention clock on its substance — and restarted it again every time anybody asked again.
+Purge a room's 2024 conversation and, if anyone asked about it in 2025, the substance survived
+four ways.
+
+### The decision, and why it is the narrow option
+
+Three tiers read three different sources, which is what makes a narrow answer possible:
+
+| tier | source | change |
+|---|---|---|
+| T0 room digest | `digest._messages_for_digest` | **excluded** — a digest over the assistant's answers is a summary of a summary |
+| T2 cross-room chunks | `indexer._messages_after` | **excluded** — the durable copy, retrievable from *other* rooms forever |
+| T1 thread | `gate._thread_messages` | **untouched** — it reads `Chat Message` directly, so a follow-up still sees the earlier answer |
+
+So the cost is bounded and worth naming plainly: **Triton can no longer retrieve its own past
+answers across rooms or from a room digest.** It can still see them in the thread it said them
+in, which is where a follow-up actually asks. Both halves are asserted — a later tidy-up that
+"completed" the exclusion would quietly cost the thread continuity this deliberately keeps.
+
+### Added
+
+- **`tests/test_chat_assistant_not_indexed.py`** — 11 assertions, including that both filters
+  use **one shared constant** (two spellings of "what an assistant reply is" would drift, and
+  the drift would be invisible — one tier would quietly resume indexing), that the constant
+  matches what `handler.py` actually writes (the whole exclusion turns on one string agreeing
+  across two packages), and that the filter is **null-safe**: `sender_kind` defaults to `Human`
+  but legacy rows may hold `NULL`, and `NULL != 'Triton'` is `NULL` rather than true — an
+  unguarded comparison would have silently dropped every legacy message from the index instead
+  of only the assistant's.
+
+  Three mutations run — removing either filter, and renaming the constant — each caught.
+
+### What this does not fix, and is asserted to stay recorded
+
+The reply is still a `Chat Message` in the room, above every retention floor, with its own
+creation date. This stops it being **re-indexed**; it does not stop it **existing**. A purge
+still leaves the reply behind and only time ages it out. `purge_rules.can_enable()` stays
+`False`.
+
+**No backfill.** The exclusion applies to future indexing; chunks and digests already
+containing assistant replies are unaffected, and on a site where chat ships dormant there are
+none. Retiring any that do exist is the retirement path's job — which is why that arithmetic
+landed first.
+
 ## [1.295.1] - 2026-08-15
 
 **`retire_rules.py` shipped in the wrong package, and the invariant it would have broken was
