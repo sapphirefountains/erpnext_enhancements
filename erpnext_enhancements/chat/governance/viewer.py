@@ -44,7 +44,7 @@ from frappe.rate_limiter import rate_limit
 from frappe.utils import cint
 
 from erpnext_enhancements.chat import audit, permissions
-from erpnext_enhancements.chat.governance import access_report
+from erpnext_enhancements.chat.governance import access_report, export
 from erpnext_enhancements.chat.retrieval import gate
 
 #: A cap on how many rooms one oversight read may name. Not a permission — the permission is
@@ -190,6 +190,96 @@ def search(
 		"text": result.assembly.text() if result.assembly else "",
 		"citations": [c.as_dict() for c in result.manifest],
 		"audit_row": result.audit_row,
+	}
+
+
+def _member_rows(room: str) -> list[dict[str, Any]]:
+	"""Every membership row for one room, **including the departed ones**.
+
+	Unscoped, and registered in ``tests/test_chat_rawsql_guard.SYSTEM_CONTEXT_READS`` with the
+	reason. Departed rows are the point rather than an oversight: filtering to ``is_active = 1``
+	would make somebody who was in a room for six months and then left look like they were
+	never there, which is the single most useful thing this surface can say.
+
+	``export.MEMBER_FIELDS`` verbatim, and the omission in it is load-bearing.
+	``last_read_seq`` is **not** in that tuple and must not be added here — a read marker
+	advanced by a client is not evidence a human read anything, and a column that looks like
+	proof of reading invites exactly one inference from somebody who needs it to be true.
+	"""
+	if not room:
+		return []
+	return frappe.db.sql(
+		f"""
+		select {", ".join(f"`{f}`" for f in export.MEMBER_FIELDS)}
+		from `tabChat Room Member`
+		where `room` = %(room)s
+		order by `user` asc
+		""",
+		{"room": room},
+		as_dict=True,
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=240, seconds=3600, methods=["POST"])
+def members(room: str = "", reason: str = "", reason_category: str = "") -> dict[str, Any]:
+	"""Who was in one room, and when they left. **Facts, and never a verdict.**
+
+	This surface deliberately does **not** tell the auditor who could see what. ``left_seq``
+	is returned because it is a fact the row holds; nothing here composes it with a message's
+	``seq`` to compute a range, and no key is named "coverage", "could see" or "up to seq N".
+
+	**CQ-10 — whether a departed member keeps access to what was said while they were present
+	— is unanswered**, and ``chat/permissions.py`` fails closed on purpose;
+	``test_left_seq_is_not_read_by_the_permission_layer`` exists to keep it that way. A viewer
+	that rendered a computed visibility range would be answering that question in the UI while
+	the permission layer refuses to, and the two would disagree the first time anybody checked.
+
+	**One mutable row per person per room, not an event log.** ERPNext keeps a single
+	membership row and stamps it; somebody who left and rejoined is *indistinguishable* from
+	somebody who never left. So the honest answer is the row plus one flag, ``contradictory``,
+	for the combination that cannot be read at face value — still active, and carrying a
+	departure stamp. It is computed from the raw row **before** any active filter, because a
+	reactivation is exactly the case that would otherwise be filtered out of its own evidence.
+
+	Metadata rather than content: no message body is read, so this records an
+	``oversight_members_listed`` governance event rather than a ``Chat Retrieval Audit`` row.
+	A content read must go on the retrieval chain — ``Chat Audit Log`` has no
+	``was_participant`` column and ``access_report._content_rows`` filters on it — but this
+	reads no content, and putting it on the content chain would inflate the count of body
+	reads with acts that touched no body.
+	"""
+	user = _require_auditor()
+	cleaned_reason, category = _require_reason(reason, reason_category)
+	named = str(room or "").strip()
+	if not named:
+		raise OversightRefused(frappe._("Name the room whose membership you want to see."))
+
+	rows = _member_rows(named)
+	shaped = []
+	for row in rows:
+		record = {field: row.get(field) for field in export.MEMBER_FIELDS}
+		record["contradictory"] = bool(cint(row.get("is_active"))) and cint(row.get("left_seq")) > 0
+		shaped.append(record)
+
+	recorded = audit.record_governance_event(
+		event_type="oversight_members_listed",
+		actor=user,
+		room=named,
+		reason=cleaned_reason,
+		detail=json.dumps({"reason_category": category, "member_count": len(shaped)}, sort_keys=True),
+		affected_count=len(shaped),
+	)
+	if not recorded:
+		raise OversightRefused(
+			frappe._("This read could not be recorded, so it was refused.")
+		)
+
+	return {
+		"room": named,
+		"reason_category": category,
+		"members": shaped,
+		"audit_row": recorded,
 	}
 
 

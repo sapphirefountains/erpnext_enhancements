@@ -243,6 +243,82 @@ class SubjectViewTest(unittest.TestCase):
 		self.assertEqual(field.get("default"), "0")
 
 
+def _body_without_docstring(func):
+	"""A function's executable source, with its docstring removed.
+
+	`members()` explains the banned vocabulary at length in order to say why it does not use
+	it, and `_member_rows()` names `last_read_seq` to record why that column stays out. A scan
+	that could not tell prose from code would be satisfied only by deleting the explanation,
+	which is the wrong half to lose.
+	"""
+	stripped = ast.Module(body=list(func.body), type_ignores=[])
+	if (
+		stripped.body
+		and isinstance(stripped.body[0], ast.Expr)
+		and isinstance(stripped.body[0].value, ast.Constant)
+		and isinstance(stripped.body[0].value.value, str)
+	):
+		stripped.body = stripped.body[1:]
+	return ast.unparse(stripped)
+
+
+class MemberTimelineTest(unittest.TestCase):
+	"""Facts, never a verdict.
+
+	CQ-10 — whether a departed member keeps access to what was said while they were present —
+	is unanswered, and `chat/permissions.py` fails closed on it deliberately;
+	`test_left_seq_is_not_read_by_the_permission_layer` keeps it that way. A viewer that
+	rendered a computed visibility range would be answering in the UI the question the
+	permission layer refuses to answer, and would look the more authoritative of the two.
+	"""
+
+	#: The names this surface must not give a column. Assembled from parts so this list does
+	#: not itself become the string a future scan of THIS file trips over.
+	BANNED = ("cover" + "age", "could " + "see", "up to " + "seq")
+
+	def test_the_query_uses_the_shared_field_tuple(self):
+		"""A hand-written column list is how `last_read_seq` gets added by someone helpful."""
+		src = _body_without_docstring(_func(VIEWER, "_member_rows"))
+		self.assertIn("export.MEMBER_FIELDS", src)
+
+	def test_the_read_marker_is_never_selected(self):
+		"""`last_read_seq` is advanced by a client, so it is not evidence a human read
+		anything — and a column that looks like proof of reading invites exactly one
+		inference from somebody who needs it to be true."""
+		for name in ("_member_rows", "members"):
+			self.assertNotIn("last_read_seq", _body_without_docstring(_func(VIEWER, name)))
+
+	def test_the_departed_are_not_filtered_out(self):
+		"""Filtering to the active would make somebody who was in a room for six months and
+		then left look like they were never there."""
+		src = _body_without_docstring(_func(VIEWER, "_member_rows"))
+		self.assertNotIn("is_active", src)
+
+	def test_no_key_names_a_visibility_verdict(self):
+		src = _body_without_docstring(_func(VIEWER, "members")).lower()
+		for banned in self.BANNED:
+			self.assertNotIn(
+				banned,
+				src,
+				f"members() names {banned!r} in executable code. That is a claim about what "
+				"somebody was in a position to read, and CQ-10 is unanswered — the surface "
+				"reports the stamps and must not turn them into a range.",
+			)
+
+	def test_the_contradiction_flag_is_computed_before_any_active_filter(self):
+		"""A reactivated member is the case that would otherwise be filtered out of its own
+		evidence: still active, and carrying a departure stamp."""
+		src = _body_without_docstring(_func(VIEWER, "members"))
+		self.assertIn("contradictory", src)
+		self.assertIn("left_seq", src)
+
+	def test_it_refuses_when_the_record_cannot_be_written(self):
+		"""Fail-closed, like every other read on this surface."""
+		src = _body_without_docstring(_func(VIEWER, "members"))
+		self.assertIn("OversightRefused", src)
+		self.assertIn("oversight_members_listed", src)
+
+
 class ControllerFilenameTest(unittest.TestCase):
 	"""The `www/` rule, restated where it will actually be read."""
 

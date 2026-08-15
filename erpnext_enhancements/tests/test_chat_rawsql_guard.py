@@ -608,6 +608,24 @@ SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
 		"marker advanced by a client is not evidence a human read anything, and a column that "
 		"looks like proof of reading in a legal bundle invites exactly one inference."
 	),
+	# --- chat/governance/viewer.py: the member timeline (Phase 6 §4.B) -------------------
+	(
+		"governance/viewer.py",
+		"_member_rows",
+		"Chat Room Member",
+	): (
+		"Who was in one named room, for the oversight viewer's member timeline. Unscoped for "
+		"the same reason as the export's members.csv and with the same deliberate omission of "
+		"`is_active = 1`: filtering the departed out would make somebody who was in a room for "
+		"six months and then left look like they were never there, which is the one thing this "
+		"surface most needs to be able to say. Bounded by the room the auditor NAMED rather "
+		"than by their own membership — scoping it to the reader would return the rooms they "
+		"are in, which is precisely what an oversight read is not about. Reads no body column: "
+		"the fields are `export.MEMBER_FIELDS`, and `last_read_seq` stays out of that tuple on "
+		"purpose — a read marker a client advanced is not evidence a human read anything. Pays "
+		"for the read with an `oversight_members_listed` row on the governance chain, and "
+		"REFUSES if that row cannot be written."
+	),
 	# --- chat/governance/access_report.py: the subject reading their own membership ------
 	(
 		"governance/access_report.py",

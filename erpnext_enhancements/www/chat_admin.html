@@ -240,6 +240,47 @@
 	.ee-ov .ee-count { margin: 10px 0 0; font-size: 0.82rem; color: var(--ee-muted); }
 	.ee-ov .ee-empty { display: block; padding: 8px 0; color: var(--ee-muted); }
 
+	/* ---- member timeline ---------------------------------------------------------------
+	   Facts, never a verdict. Nothing here composes `left_seq` with a message's `seq` to
+	   compute what somebody was in a position to read: CQ-10 is unanswered, the permission
+	   layer fails closed on it deliberately, and a UI that answered the question the
+	   permission layer refuses to answer would be the more authoritative-looking of the two.
+
+	   The phrasing above is deliberate too. The banned column names for this surface are
+	   "coverage", "could see" and "up to seq N", and a disclaimer that spells one of them
+	   would trip any scan added later to enforce the ban — the same way this file's own
+	   no-realtime comment once tripped the no-realtime check. Say what it does not do without
+	   writing the words. */
+	.ee-ov .ee-members { width: 100%; margin: 10px 0 0; border-collapse: collapse; font-size: 0.85rem; }
+	.ee-ov .ee-members caption {
+		caption-side: top; text-align: left; padding: 0 0 8px;
+		font-size: 0.82rem; color: var(--ee-ink-soft);
+	}
+	.ee-ov .ee-members th, .ee-ov .ee-members td {
+		text-align: left; padding: 7px 10px 7px 0; border-bottom: 1px solid var(--ee-line);
+		vertical-align: top; overflow-wrap: anywhere;
+	}
+	.ee-ov .ee-members th {
+		font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em;
+		text-transform: uppercase; color: var(--ee-muted);
+	}
+	.ee-ov .ee-members td.ee-num { font-family: var(--ee-mono); font-variant-numeric: tabular-nums; }
+	.ee-ov .ee-flag {
+		display: inline-block; padding: 2px 8px; border-radius: 3px;
+		background: var(--ee-gone-bg); border: 1px solid var(--ee-gone);
+		color: var(--ee-gone); font-size: 0.74rem; font-weight: 600;
+	}
+	.ee-ov .ee-members-note {
+		max-width: 46rem; margin: 10px 0 0; padding: 8px 12px;
+		background: var(--ee-sunken); border-left: 3px solid var(--ee-line-firm);
+		font-size: 0.82rem; color: var(--ee-ink-soft);
+	}
+	.ee-ov .ee-who-btn {
+		margin: 12px 0 0; padding: 6px 14px; font: inherit; font-size: 0.84rem; font-weight: 600;
+		color: var(--ee-ink); background: var(--ee-paper);
+		border: 1px solid var(--ee-line-firm); border-radius: 3px; cursor: pointer;
+	}
+
 	.ee-ov .ee-assembly {
 		margin: 0; padding: 14px 16px;
 		background: var(--ee-sunken); border: 1px solid var(--ee-line); border-radius: 4px;
@@ -500,6 +541,73 @@
 		resultBox.appendChild(el("p", "ee-count",
 			messages.length + (messages.length === 1 ? " message" : " messages")
 			+ " shown, sequence " + payload.first_seq + " to " + payload.last_seq + "."));
+
+		var who = el("button", "ee-who-btn", "Who was in this room");
+		who.type = "button";
+		who.id = "ee-who-btn";
+		resultBox.appendChild(who);
+		resultBox.appendChild(el("div", null, ""));
+	}
+
+	function renderMembers(payload) {
+		recordRead(payload.audit_row);
+
+		var existing = document.getElementById("ee-members-region");
+		if (existing) { existing.parentNode.removeChild(existing); }
+
+		var region = el("div", null);
+		region.id = "ee-members-region";
+
+		var table = el("table", "ee-members");
+		var caption = el("caption",
+			null, "Everyone who has been in " + payload.room + ", including those who left.");
+		table.appendChild(caption);
+
+		var headRow = el("tr");
+		["Person", "Role", "Active", "Joined", "Left", "Left at seq", ""].forEach(function (label) {
+			headRow.appendChild(el("th", null, label));
+		});
+		var thead = el("thead");
+		thead.appendChild(headRow);
+		table.appendChild(thead);
+
+		var body = el("tbody");
+		(payload.members || []).forEach(function (row) {
+			var tr = el("tr");
+			tr.appendChild(el("td", null, row.user || ""));
+			tr.appendChild(el("td", null, row.role || ""));
+			tr.appendChild(el("td", null, row.is_active ? "yes" : "no"));
+			tr.appendChild(el("td", null, shortTime(row.joined_at)));
+			tr.appendChild(el("td", null, shortTime(row.left_at)));
+			var seqCell = el("td", "ee-num", row.left_seq ? String(row.left_seq) : "");
+			tr.appendChild(seqCell);
+			var flagCell = el("td");
+			if (row.contradictory) {
+				// Stated, not interpreted. The server flags the combination; the page says what
+				// the combination IS and stops there.
+				flagCell.appendChild(el("span", "ee-flag", "active, and stamped as departed"));
+			}
+			tr.appendChild(flagCell);
+			body.appendChild(tr);
+		});
+		table.appendChild(body);
+		region.appendChild(table);
+
+		if (!(payload.members || []).length) {
+			region.appendChild(el("p", "ee-empty", "No membership rows for this room."));
+		}
+
+		// The honest limit, stated where it is read rather than in a design document. This is
+		// the sentence that stops somebody reading the table as a timeline.
+		region.appendChild(el("p", "ee-members-note",
+			"One row per person per room, updated in place — not a log of comings and goings. "
+			+ "Somebody who left and rejoined looks exactly like somebody who never left, so a "
+			+ "row marked “active, and stamped as departed” is the system telling you it "
+			+ "cannot be read at face value. Whether a departed member kept access to what was "
+			+ "said while they were present is an open question here, so this page reports the "
+			+ "stamps and does not turn them into a range."));
+
+		resultBox.appendChild(region);
 	}
 
 	function renderSearch(payload) {
@@ -571,6 +679,16 @@
 	resultBox.addEventListener("click", function (event) {
 		var target = event.target;
 		if (!target) { return; }
+
+		if (target.id === "ee-who-btn") {
+			var reasons = currentReason();
+			call("erpnext_enhancements.chat.governance.viewer.members", {
+				room: loadedRoom,
+				reason: reasons.reason,
+				reason_category: reasons.reason_category
+			}, renderMembers);
+			return;
+		}
 
 		if (target.id === "ee-earlier") {
 			var why = currentReason();

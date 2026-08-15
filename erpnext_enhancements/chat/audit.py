@@ -111,12 +111,23 @@ _GOVERNANCE_INT_FIELDS = frozenset({"affected_count", "first_seq", "last_seq"})
 #: The events ``Chat Audit Log.event_type`` accepts. Mirrors the Select, and is checked rather
 #: than trusted: an unknown value would be rejected by Frappe at save time, i.e. *after* the act
 #: it was supposed to record already happened.
+#: **Must equal the DocField's Select**, which ``tests/test_chat_governance_audit.py`` asserts
+#: by set equality — and every ``event_type=`` literal at a call site must be a member, which
+#: the same suite scans for. Both checks exist because :func:`record_governance_event` answers
+#: an unknown event type by writing **no row at all** (it logs and returns ``None``): the act
+#: happens, the log does not record it, and nothing at the call site can tell. That is the same
+#: shape as the ``purpose`` coercion corrected in v1.307.1, one table over.
 GOVERNANCE_EVENTS = frozenset(
 	{
 		"oversight_role_granted",
 		"oversight_role_revoked",
 		"oversight_config_changed",
 		"oversight_rooms_listed",
+		# Who was in one room, and when they left. The inverse of `oversight_rooms_listed`,
+		# and deliberately not folded into it: "which rooms is this person in" and "who was in
+		# this room" are different acts, and a log that spelled them the same way could not
+		# answer either question about the other.
+		"oversight_members_listed",
 		"tombstone_expanded",
 		"export_requested",
 		"export_downloaded",

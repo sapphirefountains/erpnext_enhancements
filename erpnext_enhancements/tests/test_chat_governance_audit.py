@@ -476,6 +476,65 @@ class TheAuditPurposeVocabulary(unittest.TestCase):
 		self.assertIn(audit._DEFAULT_PURPOSE, audit._PURPOSES)
 
 
+class TheGovernanceEventVocabulary(unittest.TestCase):
+	"""Every ``event_type=`` a caller passes must be one the writer accepts.
+
+	``record_governance_event`` answers an unknown event type by writing **no row at all** — it
+	logs and returns ``None`` — so a caller with a typo does not get an error. It gets an act
+	that happened and a log that does not mention it, and nothing at the call site can tell the
+	difference. That is the same failure as the ``purpose`` coercion one table over, in a worse
+	direction: the retrieval writer at least stored *something*.
+
+	The retrieval side has :class:`TheAuditPurposeVocabulary` for exactly this reason; this is
+	the governance twin, added in v1.309.0 when the vocabulary grew for the first time since it
+	was written.
+	"""
+
+	def _event_literals(self) -> list[tuple[str, int, str]]:
+		found: list[tuple[str, int, str]] = []
+		for path in sorted(APP_DIR.rglob("*.py")):
+			try:
+				tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+			except SyntaxError:  # pragma: no cover
+				continue
+			for node in ast.walk(tree):
+				if not isinstance(node, ast.Call):
+					continue
+				name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+				if name != "record_governance_event":
+					continue
+				for kw in node.keywords:
+					if kw.arg == "event_type" and isinstance(kw.value, ast.Constant):
+						if isinstance(kw.value.value, str):
+							found.append((str(path.relative_to(APP_DIR)), node.lineno, kw.value.value))
+		return found
+
+	def test_the_scan_finds_the_call_sites(self) -> None:
+		"""Non-vacuity. A scan that matches nothing passes forever."""
+		self.assertGreaterEqual(len(self._event_literals()), 5)
+
+	def test_every_event_type_a_caller_passes_is_one_the_writer_accepts(self) -> None:
+		from erpnext_enhancements.chat import audit
+
+		bad = [
+			f"{rel}:{line} event_type={value!r}"
+			for rel, line, value in self._event_literals()
+			if value not in audit.GOVERNANCE_EVENTS
+		]
+		self.assertFalse(
+			bad,
+			"these call sites pass an event type the writer does not accept, so "
+			"`record_governance_event` logs and writes NOTHING — the act happens and the "
+			"governance log never mentions it:\n  " + "\n  ".join(bad),
+		)
+
+	# Set equality between GOVERNANCE_EVENTS and the DocField Select is NOT asserted here:
+	# `TheEventVocabularyIsClosed.test_the_constant_matches_the_doctype_select` above already
+	# does it, and two tests asserting one property is how a suite grows to the point where
+	# nobody can say what it covers. What this class adds is the half nothing checked — the
+	# CALL SITES, which is where a typo actually enters.
+
+
 class TheViewerSessionId(unittest.TestCase):
 	"""``request_id`` correlates the rows of one sitting, and must not leak the cookie."""
 

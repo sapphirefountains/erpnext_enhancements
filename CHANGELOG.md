@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.309.0] - 2026-08-15
+
+**The member timeline — who was in a room, and when they left.** The last read surface
+TASK-2026-01278 asks for, and the one where the interesting work is deciding what *not* to say.
+
+### Added
+
+`viewer.members()` returns `export.MEMBER_FIELDS` verbatim for one named room — **including the
+departed rows**, which are the point rather than an oversight. Filtering to `is_active = 1` would
+make somebody who was in a room for six months and then left look like they were never there,
+which is the single most useful thing this surface can say.
+
+`last_read_seq` is **not** in that tuple and must not be added. A read marker advanced by a client
+is not evidence a human read anything, and a column that looks like proof of reading invites
+exactly one inference from somebody who needs it to be true. The export bundle recorded that
+reasoning first; this reuses the tuple rather than restating it.
+
+**One boolean is added, and no verdict.** `contradictory` marks the combination that cannot be
+read at face value — still active, and carrying a departure stamp — computed from the raw row
+**before** any active filter, because a reactivation is exactly the case that would otherwise be
+filtered out of its own evidence.
+
+**What it deliberately does not do is compute what anyone was in a position to read.** `left_seq`
+is returned because it is a fact the row holds; nothing composes it with a message's `seq` into a
+range, and no key is named for such a range. CQ-10 — whether a departed member keeps access to
+what was said while they were present — is **unanswered**, `chat/permissions.py` fails closed on
+it deliberately, and `test_left_seq_is_not_read_by_the_permission_layer` exists to keep it that
+way. A viewer that rendered a computed visibility range would be answering in the UI the question
+the permission layer refuses to answer, and would look the more authoritative of the two.
+
+The page states the limit where it is read rather than in a design document: ERPNext keeps **one
+mutable row per person per room, not an event log**, so somebody who left and rejoined is
+indistinguishable from somebody who never left.
+
+### Changed
+
+New governance event `oversight_members_listed`. Deliberately not folded into
+`oversight_rooms_listed`: *"which rooms is this person in"* and *"who was in this room"* are
+different acts, and a log spelling them the same way could answer neither question about the
+other. It is a governance event rather than a `Chat Retrieval Audit` row because **no body is
+read** — a content read must go on the retrieval chain, but putting a metadata read there would
+inflate the count of body reads with acts that touched none. The read refuses if the row cannot
+be written.
+
+### Tests
+
+`TheGovernanceEventVocabulary` scans every `event_type=` literal at every `record_governance_event`
+call site and asserts membership in `GOVERNANCE_EVENTS`. This is the governance twin of the
+`purpose` scan added in v1.307.1, and it matters more here: the retrieval writer at least *stored*
+a coerced value, whereas `record_governance_event` answers an unknown event type by writing **no
+row at all** — the act happens, the log does not mention it, and nothing at the call site can tell.
+Set equality against the DocField Select is not re-asserted; `TheEventVocabularyIsClosed` already
+covers it, and two tests asserting one property is how a suite becomes something nobody can
+summarise.
+
+`MemberTimelineTest` pins the shared field tuple, the absence of the read marker, that the departed
+are not filtered out, that no key names a visibility verdict, and that the read fails closed. Its
+scans strip docstrings first, because `members()` names the banned vocabulary at length in order to
+explain why it does not use it — a scan that could not tell prose from code would be satisfied only
+by deleting the explanation.
+
+All five guards verified by breaking what they protect.
+
+### Fixed
+
+Two comments on the page were reworded so they no longer spell the terms they disclaim. This is the
+third time in one release series that prose has matched a scan for the thing the prose says is
+absent — after the no-realtime comment in v1.308.0 and the BLE001 markers before it. The rule is
+recorded on the page now: say what it does not do without writing the words.
+
 ## [1.308.0] - 2026-08-15
 
 **The oversight viewer becomes a viewer.** Until now `/chat_admin` was a search box that rendered
