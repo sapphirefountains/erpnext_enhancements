@@ -37,3 +37,41 @@ Two properties make that safe, and both must be preserved:
   name.
 - The HTTP call is **enqueued to a background worker**, so it can never block or fail a save.
   A synchronous call here would make every save on the site depend on Triton being up.
+
+## `url_safety.py` and `sse_filter.py`
+
+The **server-side** URL boundary for anything a model or a tool authored. Added v1.317.0 for
+TASK-2026-01501, whose client-side half shipped in v1.282.3.
+
+Both are deliberately **frappe-free** — standard library only — and that is a design
+requirement rather than a happy accident: `is_safe_url` runs inside the SSE relay's per-frame
+loop, and both are tested with no bench and no stub. `tests/test_url_safety.py` asserts the
+absence of `import frappe`, because a later one added for a single log line would break the
+place these exist for and would look harmless in review.
+
+**`url_safety.is_safe_url` is a verdict oracle, not an origin resolver.** It answers yes/no
+about a string; it never rewrites, canonicalises or returns a "cleaned" URL, because a
+sanitiser that returns a modified string invites callers to trust the modification.
+
+It is **not** a port of the client's `isSafeUrl`, and the reason is worth reading before
+anyone "simplifies" it back to `urljoin`: `urlsplit("/\evil.example")` reports an empty
+`netloc` and a harmless path, while every browser resolves the same string to
+`http://evil.example/` — the exact input the original fix existed to close. Normalising
+backslashes first fixes those cases and still leaves hundreds of disagreements on malformed
+authorities. So the goal is **soundness, not equivalence**:
+
+    is_safe_url(x) is True  =>  a browser also treats x as safe
+
+and never the converse. Over-refusal costs one link rendered as a plain label; under-refusal
+costs the boundary. `scripts/fuzz_url_safety.mjs | scripts/fuzz_url_safety_check.py` enforces
+that direction in CI against the real WHATWG parser — it is what caught the invalid-port and
+punycode holes, neither of which anyone foresaw.
+
+**`sse_filter`** reassembles the byte stream into frames so each can be inspected. Its one
+load-bearing rule: **if the transform changed nothing, emit the ORIGINAL bytes**, never a
+re-serialisation. In production that is nearly every frame, so the relay stays byte-identical
+to the old pass-through except where a frame was about to poison an `href`. That converts the
+risk from *rewriting* (which can corrupt an answer) to *reassembly* (pure and offline-testable
+at every byte offset). A broken filter here is worse than the bug it fixes and fails silently:
+the widget swallows JSON parse errors and the 200 went out before the first byte, so corruption
+presents as "the answer stopped mid-sentence" with no error anywhere.

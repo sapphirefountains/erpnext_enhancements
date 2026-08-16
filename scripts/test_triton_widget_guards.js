@@ -280,6 +280,13 @@ for (const { fn, destructive } of MUST_GUARD) {
 		['a.textContent = label', 'textContent, never innerHTML'],
 		['a.target = "_blank"', 'new-tab behaviour'],
 		['a.rel = "noopener"', 'the rel'],
+		// Added v1.317.0. This list described the SHAPE of the row and not its safety, so
+		// deleting the `isSafeUrl` call that v1.282.3 shipped reddened nothing -- the fix for a
+		// live `javascript:` sink was unguarded from the day it landed, by the suite written to
+		// guard that exact function. The server-side boundary now refuses these too, so this is
+		// defence in depth; it is asserted anyway, because "something else covers it" is how the
+		// first check went missing.
+		['isSafeUrl(s.url)', 'the URL scheme gate on the legacy sources row'],
 	];
 	const missing = required.filter(([needle]) => !body.includes(needle)).map(([, what]) => what);
 

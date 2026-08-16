@@ -11,10 +11,29 @@ so there is no CORS to open and no Triton credential in the browser. This module
   2. Forwards chat/session calls to Triton with that per-user token, so every
      conversation is attributed to the right person and reuses the same Triton
      ChatSession store as the Triton web app (shared history).
-  3. Relays Triton's Server-Sent Events stream straight back to the browser via
-     a streaming werkzeug Response, so the live token-by-token UX is preserved.
+  3. Relays Triton's Server-Sent Events stream back to the browser via a
+     streaming werkzeug Response, so the live token-by-token UX is preserved --
+     passing every complete frame through the URL boundary below on the way.
 
 Configuration lives in the "Triton Settings" single DocType.
+
+URL-VALUED FIELDS ARE SCRUBBED HERE, WHICH IS THE ONLY PLACE THAT CAN
+----------------------------------------------------------------------
+Everything this module returns is authored by a model or by a tool, and several
+of those values land in an `href`: `sources[].url` and `citations[].url` on the
+stream, `ui_metadata.sources[].url` on the `done` frame, and all of it again
+from `get_messages` when a chat is reopened.
+
+The widget has checked those with `isSafeUrl` since v1.282.3, and that check
+stays -- but it is a *rendering* decision, not a boundary: it protects the one
+DOM that calls it and nothing else. This proxy is the single point every
+consumer shares, so the refusal belongs here and the client's copy becomes
+defence in depth.
+
+The rule is `erpnext_enhancements.utils.url_safety.is_safe_url`, which is
+deliberately STRICTER than the browser rather than equivalent to it -- see that
+module for why equivalence is not reachable in Python, and why trying produced a
+check that failed open on the exact input the original fix existed to close.
 """
 from __future__ import annotations
 
@@ -25,6 +44,9 @@ import requests
 from frappe import _
 from frappe.utils import cint
 from werkzeug.wrappers import Response
+
+from erpnext_enhancements.utils.sse_filter import filter_sse_stream, scrub_sse_frame
+from erpnext_enhancements.utils.url_safety import scrub_urls
 
 # Re-mint a little before the token actually expires so an in-flight request
 # never races the expiry.
@@ -197,7 +219,19 @@ def _request(method: str, path: str, payload: dict | None = None):
 
         if not resp.content:
             return {}
-        return resp.json()
+
+        # Scrubbed HERE rather than in each caller, because the callers are the part that
+        # changes. `get_messages` replays the entire stream surface -- citations, sources and
+        # ui_metadata -- every time a chat is reopened, so a boundary that covered only
+        # `stream_query` would be bypassed by closing the widget and opening it again. Doing it
+        # at the single seam every non-streaming Triton response passes through also means the
+        # next endpoint someone adds is covered on the day it is written rather than the day
+        # somebody remembers.
+        #
+        # `scrub_urls` walks by key name and touches nothing else, so a payload with no
+        # URL-valued field comes back identical.
+        scrubbed, _blanked = scrub_urls(resp.json())
+        return scrubbed
 
 
 # ---------------------------------------------------------------------------
@@ -548,6 +582,12 @@ def _sse_error(message: str) -> bytes:
     return f"data: {json.dumps({'type': 'error', 'content': message})}\n\n".encode()
 
 
+# `scrub_sse_frame` deliberately lives in utils/sse_filter.py rather than here: it is the piece
+# where a mistake is SILENT (a frame rewritten when it did not need to be is a corrupted answer),
+# so it is the piece that most needs to be testable with no bench and no frappe stub. This module
+# imports frappe at the top and would drag that into every test of it.
+
+
 @frappe.whitelist()
 def stream_query(session_id: str, prompt: str | None = None, context: str | None = None,
                  hidden: int | str = 0, model: str | None = None,
@@ -600,9 +640,13 @@ def stream_query(session_id: str, prompt: str | None = None, context: str | None
                         except Exception:
                             pass
                     return
-                for chunk in r.iter_content(chunk_size=None):
-                    if chunk:
-                        yield chunk
+                # Frame-aware, not byte-for-byte: every complete frame goes through the URL
+                # boundary. `filter_sse_stream` yields once per input chunk and holds nothing
+                # back beyond an incomplete frame, so streaming latency is unchanged.
+                yield from filter_sse_stream(
+                    (chunk for chunk in r.iter_content(chunk_size=None) if chunk),
+                    scrub_sse_frame,
+                )
         except Exception as e:
             yield _sse_error(_("Connection error: {0}").format(e))
 
