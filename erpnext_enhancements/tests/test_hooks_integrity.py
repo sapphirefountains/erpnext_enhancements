@@ -221,5 +221,98 @@ class TestLogRetention(unittest.TestCase):
         )
 
 
+class ChatDocTypesAreReachableOnlyThroughAPermissionHook(unittest.TestCase):
+    """A new chat DocType must fail this by default rather than ship unguarded.
+
+    The rule, derived from the filesystem so it cannot be satisfied by remembering:
+
+        a chat DocType either ships **zero DocPerm** — unreachable by role, which is the
+        posture nearly all of them take — or it is registered in **both**
+        `permission_query_conditions` and `has_permission`.
+
+    Both, because they cover different paths and passing one proves nothing about the other:
+    the query-conditions hook filters `get_list` and report reads, while the single-document
+    hook covers everything else. The single-document hook is also the **realtime** boundary —
+    `doc_subscribe` runs the full document permission stack before joining a document room, so
+    a DocType with a DocPerm and no hook leaks over the socket even with every REST endpoint
+    locked down.
+
+    Child tables and Singles are exempt, and for the same reason rather than as a convenience:
+    neither has rows to filter. A child row's access is its parent's, and a Single is one row
+    whose DocPerm *is* the access decision. `Chat Settings` is the Single this exempts, and its
+    one DocPerm row is System Manager.
+
+    The pattern — glob the doctype directory rather than list the names — is the one already
+    proven by `test_chat_mcp_denylist.py`. Enumerating names in the test is the failure mode
+    the test exists to prevent: it passes forever and covers whatever was true when it was
+    written.
+    """
+
+    CHAT_DOCTYPE_DIR = APP_ROOT / "chat" / "doctype"
+
+    def _registers(self):
+        assignments = top_level_assignments()
+        out = {}
+        for key in ("permission_query_conditions", "has_permission"):
+            node = assignments[key]
+            self.assertIsInstance(
+                node,
+                ast.Dict,
+                f"{key} is no longer a dict literal in hooks.py; this guard reads it "
+                "statically and would otherwise silently cover nothing",
+            )
+            out[key] = {k.value for k in node.keys if isinstance(k, ast.Constant)}
+        return out
+
+    def _chat_doctypes(self):
+        import json
+
+        for path in sorted(self.CHAT_DOCTYPE_DIR.glob("*/*.json")):
+            # `<dir>/<dir>.json` is the DocType definition; siblings are test fixtures.
+            if path.parent.name != path.stem:
+                continue
+            yield json.loads(path.read_text(encoding="utf-8"))
+
+    def test_a_chat_doctype_with_docperm_is_registered_in_both_registers(self):
+        registers = self._registers()
+        unguarded = []
+        for definition in self._chat_doctypes():
+            name = definition.get("name")
+            if definition.get("istable") or definition.get("issingle"):
+                continue
+            if not (definition.get("permissions") or []):
+                continue
+            missing = [key for key, names in registers.items() if name not in names]
+            if missing:
+                unguarded.append(f"{name} (missing from {', '.join(sorted(missing))})")
+
+        self.assertEqual(
+            unguarded,
+            [],
+            "a chat DocType grants a role permission but has no row-level hook. Either give it "
+            "a permission_query_conditions AND a has_permission entry in hooks.py, or ship it "
+            'with "permissions": [] so no role can reach it at all. A DocPerm without a hook is '
+            "readable over the realtime socket as well as over REST.",
+        )
+
+    def test_the_two_registers_agree_on_chat(self):
+        """House doctrine is parity. A DocType in one register and not the other is the bug
+        shape that passes every list-view test and leaks a single-document read."""
+        registers = self._registers()
+        chat = {
+            definition.get("name")
+            for definition in self._chat_doctypes()
+            if not (definition.get("istable") or definition.get("issingle"))
+        }
+        in_query = registers["permission_query_conditions"] & chat
+        in_single = registers["has_permission"] & chat
+        self.assertEqual(
+            sorted(in_query),
+            sorted(in_single),
+            "permission_query_conditions and has_permission disagree about which chat "
+            "DocTypes they cover; the two hooks protect different paths and must be in step",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
