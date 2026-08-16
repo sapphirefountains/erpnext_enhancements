@@ -79,6 +79,26 @@ EXPECTED_DOCPERMS: dict[str, dict[str, frozenset[str]]] = {
 	# §F.18.4: a Single with no DocPerm cannot be opened at all, and this Single is the
 	# kill switch for the entire feature.
 	"Chat Settings": {"System Manager": frozenset({"read", "write"})},
+	# v1.318.0, TASK-2026-01321: `report` ONLY, and the absence of `read` is the whole
+	# justification rather than an oversight.
+	#
+	# A Script Report is refused unless the caller holds `report` on its `ref_doctype`
+	# (v16 `desk/query_report.py:49`), so the Triton Cost report — the task's "answerable
+	# without writing SQL" deliverable — cannot run against a zero-DocPerm doctype by anyone
+	# but Administrator. It would install cleanly, list, and throw when opened.
+	#
+	# Granting `read` instead would have re-opened exactly what this map exists to keep shut:
+	# the desk list view, the form view, /api/resource and export, over a table carrying
+	# `asked_by`, `room` and `thread_root` — a per-employee record of who asked the assistant
+	# what and when, which is why the doctype is also on the MCP denylist. Every one of those
+	# four paths checks `read`; none checks `report`. So this row widens reports and nothing
+	# else.
+	#
+	# The widening it DOES buy, recorded because it was a decision and was put to Nik
+	# explicitly: a System Manager can author their own Query Report over this table and
+	# select the columns the Triton Cost report deliberately never reads. Chosen over the
+	# narrower Chat Auditor grant.
+	"Triton Invocation Log": {"System Manager": frozenset({"report"})},
 	# §F.12/§F.18.4: an audit log nobody can read is not an audit log.
 	#
 	# `Chat Auditor` added in Phase 6 §4.A, and it is the exemption's whole point: the role
@@ -534,6 +554,22 @@ class TestZeroDocPerm(unittest.TestCase):
 			if data.get("issingle"):
 				# A Single has exactly one row and no list view; a query condition has
 				# nothing to filter.
+				continue
+			if not any("read" in rights for rights in perms.values()):
+				# Grants something, but not `read` — `Triton Invocation Log`'s `report`-only
+				# row is the case. BOTH hooks gate ROW access: the query condition narrows a
+				# `get_list`, the single-document hook answers "may this person read this
+				# row". Neither is consulted when no role holds `read`, because the list view,
+				# the form view and /api/resource all check `read` first and stop there.
+				#
+				# So the pair would be two functions the platform can never call, and a hook
+				# nobody calls is worse than no hook: it reads as protection. The control for
+				# a `report` grant is the Report's own `roles` child table, not a row filter.
+				#
+				# Keyed on `read` rather than on "has any DocPerm row" in all three places
+				# this rule is written — here, `test_hooks_integrity.py` and
+				# `test_chat_mcp_denylist.py` — so the three cannot drift into disagreeing
+				# about what makes a row reachable.
 				continue
 			if name in _AUDIT_DOCTYPES and set(perms) <= {"System Manager"}:
 				# §F.12's stated exception, and it is conditional rather than blanket. An audit
