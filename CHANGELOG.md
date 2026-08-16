@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.317.1] - 2026-08-15
+
+### Added
+
+- **A chat DocType with a DocPerm and no permission hook now fails the build.** TASK-2026-01311
+  asks for the coverage to be *"derived from the filesystem so a newly added DocType fails the
+  check by default"*, and that was the one item of its enumerated list with no guard — the
+  registration was correct, but only for as long as somebody remembered.
+
+  Two tests in `test_hooks_integrity.py` (already bench-free, already in CI, so no new step):
+  a chat DocType either ships `"permissions": []` — unreachable by role, the posture 17 of the
+  23 take — or it appears in **both** `permission_query_conditions` and `has_permission`; and the
+  two registers must agree on which chat DocTypes they cover.
+
+  Both, because they protect different paths and passing one proves nothing about the other. The
+  single-document hook is also the **realtime** boundary — `doc_subscribe` runs the full document
+  permission stack before joining a document room — so a DocType with a DocPerm and no hook leaks
+  over the socket even with every REST endpoint locked down.
+
+  Child tables and Singles are exempt for the same reason rather than as a convenience: neither
+  has rows to filter. A child row's access is its parent's, and a Single is one row whose DocPerm
+  *is* the decision. `Chat Settings` is the Single that exempts, and its one row is System Manager.
+
+  Globbing the doctype directory rather than listing names is the point, and follows the pattern
+  `test_chat_mcp_denylist.py` already proved: a test that enumerates names passes forever and
+  covers whatever was true the day it was written.
+
+  Verified by sabotage: unregistering `Chat Message` from `has_permission`, and giving a
+  currently-hookless DocType (`Chat Ops Alert`) a DocPerm row, each turn the suite red.
+
+### Verified, and already done
+
+The rest of TASK-2026-01311's enumerated list was checked against the tree rather than assumed,
+because "I reviewed it" is not a result and the task says so itself:
+
+- **The issuer claim check** — present at `chat/gchat/webhook.py`, under a comment block naming
+  itself *"THE line"*: `verify_oauth2_token()` checks signature, `exp` and `aud` but **not who
+  signed it**, so without the `email == CHAT_ISSUER` test any Google service account in the world
+  could mint a token this endpoint accepts.
+- **A rate limit on every whitelisted method, or an explicit exemption with a written reason** —
+  `chat/endpoints.py` carries `RATE_LIMIT` / `RATE_LIMIT_EXEMPT` with prose reasons, and
+  `test_chat_endpoint_surface.py::test_every_endpoint_has_a_rate_limit_decision` asserts set
+  equality against the source, so a new endpoint with neither fails.
+- **Inline serving restricted to a safe list excluding SVG** — `monkeypatches.py` widens v16's
+  four force-download extensions to fourteen (v16 serves `.xhtml`, `.svgz`, `.shtml`, `.mhtml`,
+  `.xsl`, `.xslt` and `.swf` **inline** from our own origin) and sets `nosniff`, which v16 sets
+  nowhere.
+
+**Still open on that task, and recorded rather than implied covered:** attachment types are not
+sniffed from the bytes — `Chat Attachment.content_type` is still taken from the producer's claim.
+The extension allowlist plus `nosniff` covers the serving path, so this is a narrower gap than it
+was, but it is not the byte-level check the task asks for.
+
 ## [1.317.0] - 2026-08-15
 
 **The URL boundary moves to the server.** TASK-2026-01501's client-side half shipped in v1.282.3;
