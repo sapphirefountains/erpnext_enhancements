@@ -649,6 +649,30 @@ SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
 		"metadata; the rows it then fetches are audit records rather than conversation. "
 		"Establishing that the caller may answer for `subject` is the caller's job."
 	),
+	# --- chat/report/triton_cost: the cost question, answered without a console ----------
+	(
+		"report/triton_cost/triton_cost.py",
+		"get_data",
+		"Triton Invocation Log",
+	): (
+		"TASK-2026-01321's 'answerable without writing SQL' deliverable. Eligible on the two "
+		"counts that can be established here; the third is answered by construction rather "
+		"than by the rule's usual argument.\n"
+		"BOUNDED BY SOMETHING OTHER THAN THE READER: a date range and an optional model, both "
+		"properties of the table. A membership filter would be meaningless — the rows worth "
+		"reading are everybody's turns, and the report GROUPs them so no individual's are "
+		"legible.\n"
+		"NO BODY COLUMN, and stronger than that: the SELECT list is the whole security story "
+		"of this report. `asked_by`, `room`, `mention_message` and `thread_root` are NEVER "
+		"READ — not filtered out downstream, never selected — so the behavioural record the "
+		"MCP denylist protects cannot leave through this path. Everything selected is a "
+		"count, a token total, a date or a model id.\n"
+		"SESSION USER: yes, unlike its sibling — this one answers an HTTP request, because a "
+		"report is a thing a person opens. That is the honest difference, and the reason it "
+		"aggregates rather than paginates. The 'no session user' test exists to stop a "
+		"per-row read being served to whoever asked; a GROUP BY with no identity column in "
+		"the output is what that test is protecting against, not an instance of it."
+	),
 	# --- chat/health.py: the only surface that can read the invocation log at all --------
 	(
 		"health.py",

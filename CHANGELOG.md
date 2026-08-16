@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.318.0] - 2026-08-15
+
+### Added
+
+- **"Triton Cost" report** — TASK-2026-01321's last deliverable: *"a report or chart over it so
+  'what did Triton cost last week' is answerable without writing SQL."* Everything needed was
+  already being recorded on `Triton Invocation Log`; nothing could read it without a console.
+
+  Turns, errors, prompt/completion/cached/context tokens, truncation count, worst degradation
+  rung, citation miss rate, average and slowest latency — grouped by day and model, defaulting to
+  the last seven days.
+
+  **It aggregates, and that is a privacy decision rather than a formatting one.** The table
+  carries `asked_by`, `room`, `mention_message` and `thread_root`; a per-row report over it is a
+  record of which employee asked the assistant what and when, which is precisely why the doctype
+  sits on the MCP denylist. Those four columns are **never selected** — not filtered downstream,
+  never read — so the property is checkable by reading the query rather than by trusting a
+  redaction step. The consequence is stated rather than discovered: **this report cannot answer
+  "who used it most."** That is a different report with a different justification.
+
+  One number is a quality signal wearing cost clothing: `Miss %` is citations the model invented
+  over citations it attempted. The invocation log's own docstring calls a rising miss rate a
+  *prompt regression* signal rather than a UI bug, and this is where it becomes visible without a
+  query. Its denominator is *attempted*, guarded on attempted rather than on resolved — guarding
+  on resolved reads naturally and is wrong in the case that matters most, where a day on which the
+  model invented **every** citation has resolved = 0 and would report a 0% miss rate: the worst
+  possible day rendering as the best.
+
+### Changed
+
+- **`Triton Invocation Log` gains one DocPerm row: System Manager, `report` only, no `read`.**
+  A Script Report is refused unless the caller holds `report` on its `ref_doctype` (v16
+  `desk/query_report.py:49`), and this doctype shipped zero DocPerm — so the report would have
+  installed cleanly, listed, and thrown when opened, which is the exact failure
+  `test_report_modules.py` exists to catch.
+
+  Withholding `read` is the point. The desk list view, the form view and `/api/resource` all check
+  `read` and none checks `report`, so all three stay shut on the per-employee record. Confirmed
+  against v16 that `get_filtered_data` passes rows through untouched when no User Permission
+  applies, so the aggregate still returns.
+
+  Stated because it was a decision and not a detail, and it was **put to Nik explicitly**: `report`
+  also lets a System Manager author their *own* Query Report over the table and select the columns
+  this report deliberately never reads. That widening was chosen over the narrower Chat Auditor
+  grant.
+
+- **The v1.317.1 hook-coverage guard now keys on `read` rather than on "has any DocPerm row".**
+  Both permission hooks gate row access and nothing else — the query-conditions hook narrows a
+  `get_list`, the single-document hook answers "may this person read *this row*". A `report`-only
+  grant makes no row reachable through either, so requiring hooks would mean writing two functions
+  the platform can never consult, and a hook nobody calls is worse than no hook: it reads as
+  protection. Verified the refinement did not weaken it — a real `read` grant without hooks still
+  fails, a `report`-only grant correctly does not.
+
 ## [1.317.1] - 2026-08-15
 
 ### Added
