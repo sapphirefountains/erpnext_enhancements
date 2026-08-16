@@ -264,7 +264,12 @@
  "name": "Triton Invocation Log",
  "naming_rule": "Random",
  "owner": "Administrator",
- "permissions": [],
+ "permissions": [
+  {
+   "report": 1,
+   "role": "System Manager"
+  }
+ ],
  "row_format": "Dynamic",
  "sort_field": "creation",
  "sort_order": "DESC",

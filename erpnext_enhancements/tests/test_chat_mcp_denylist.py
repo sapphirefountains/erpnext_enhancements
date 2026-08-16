@@ -87,6 +87,24 @@ DOCPERM_EXCEPTIONS = {
 		"hook pair, which is asserted separately below: without it, `read` on Chat Room "
 		"would mean read on every room in the company, DMs included."
 	),
+	"Triton Invocation Log": (
+		"**`report` only — no `read`, and that is the entire justification.** v1.318.0 added "
+		"the Triton Cost report (TASK-2026-01321's 'answerable without writing SQL'), and a "
+		"Script Report is refused unless the caller holds `report` on its `ref_doctype` "
+		"(v16 `desk/query_report.py:49`). Granting `read` instead would have opened the desk "
+		"list view, the form view and /api/resource onto a table carrying `asked_by`, `room` "
+		"and `thread_root` — a per-employee record of who asked the assistant what and when, "
+		"which is exactly why this doctype is on the MCP denylist. Withholding `read` keeps "
+		"all four of those shut: each checks `read`, and none checks `report`.\n"
+		"So this exception does NOT trigger the hook-pair requirement the failure message "
+		"below describes, and the sibling guard in `test_hooks_integrity.py` keys on `read` "
+		"for the same reason: both hooks gate ROW access, and no row is reachable here. "
+		"Writing them would produce two functions the platform can never consult.\n"
+		"What `report` does buy, stated because it was a decision and not a detail: a "
+		"System Manager can author their own Query Report over this table and select the "
+		"columns the Triton Cost report deliberately never reads. That widening was put to "
+		"Nik explicitly and chosen over the narrower Chat Auditor grant."
+	),
 	"Chat Retrieval Audit": (
 		"The decision #12 privileged-read log: System Manager, read and report only. It "
 		"records THAT a non-participant read happened, by whom and over which rooms — "

@@ -226,9 +226,23 @@ class ChatDocTypesAreReachableOnlyThroughAPermissionHook(unittest.TestCase):
 
     The rule, derived from the filesystem so it cannot be satisfied by remembering:
 
-        a chat DocType either ships **zero DocPerm** — unreachable by role, which is the
+        a chat DocType either grants **no role `read`** — unreachable by role, which is the
         posture nearly all of them take — or it is registered in **both**
         `permission_query_conditions` and `has_permission`.
+
+    **Keyed on `read`, not on "has any DocPerm row",** and the distinction is load-bearing
+    rather than a loophole. Both hooks gate row access and nothing else: the query-conditions
+    hook narrows a `get_list`, the single-document hook answers "may this person read *this
+    row*". A DocPerm that grants `report` alone — `Triton Invocation Log` is the one — makes no
+    row reachable through either path, because the list view, the form view and
+    `/api/resource` all check `read`. Requiring hooks there would mean writing two functions
+    that can never be consulted, and a hook nobody calls is worse than no hook: it reads as
+    protection.
+
+    What `report` alone *does* buy is the ability to run a report over the doctype, including
+    one somebody authors themselves. That is a real widening and it is why the grant was a
+    decision rather than a detail — but it is a decision about **reports**, and a permission
+    hook is not the control for it. The control is the Report's own `roles` child table.
 
     Both, because they cover different paths and passing one proves nothing about the other:
     the query-conditions hook filters `get_list` and report reads, while the single-document
@@ -273,14 +287,15 @@ class ChatDocTypesAreReachableOnlyThroughAPermissionHook(unittest.TestCase):
                 continue
             yield json.loads(path.read_text(encoding="utf-8"))
 
-    def test_a_chat_doctype_with_docperm_is_registered_in_both_registers(self):
+    def test_a_chat_doctype_granting_read_is_registered_in_both_registers(self):
         registers = self._registers()
         unguarded = []
         for definition in self._chat_doctypes():
             name = definition.get("name")
             if definition.get("istable") or definition.get("issingle"):
                 continue
-            if not (definition.get("permissions") or []):
+            grants_read = any(p.get("read") for p in (definition.get("permissions") or []))
+            if not grants_read:
                 continue
             missing = [key for key, names in registers.items() if name not in names]
             if missing:
@@ -289,10 +304,10 @@ class ChatDocTypesAreReachableOnlyThroughAPermissionHook(unittest.TestCase):
         self.assertEqual(
             unguarded,
             [],
-            "a chat DocType grants a role permission but has no row-level hook. Either give it "
-            "a permission_query_conditions AND a has_permission entry in hooks.py, or ship it "
-            'with "permissions": [] so no role can reach it at all. A DocPerm without a hook is '
-            "readable over the realtime socket as well as over REST.",
+            "a chat DocType grants a role `read` but has no row-level hook. Either give it "
+            "a permission_query_conditions AND a has_permission entry in hooks.py, or drop the "
+            "read grant so no role can reach its rows at all. A readable DocType without a hook "
+            "is exposed over the realtime socket as well as over REST.",
         )
 
     def test_the_two_registers_agree_on_chat(self):
