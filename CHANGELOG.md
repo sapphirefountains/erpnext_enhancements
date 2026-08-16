@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.317.0] - 2026-08-15
+
+**The URL boundary moves to the server.** TASK-2026-01501's client-side half shipped in v1.282.3;
+its own open item said the rest plainly — *"a client-side allowlist is a rendering decision, not a
+boundary."*
+
+### Added
+
+- **`utils/url_safety.py`** — `is_safe_url`, the authoritative answer, applied in
+  `triton_chat.py` to every URL-valued field Triton returns: `sources[].url` and
+  `citations[].url` on the stream, `ui_metadata.sources[].url` on the `done` frame, and all of it
+  again from `get_messages` when a chat is reopened. Scrubbed at `_request`, the one seam every
+  non-streaming Triton response passes through, so the next endpoint someone adds is covered on
+  the day it is written.
+
+  **It is not a port of the client's `isSafeUrl`, and that is the finding.** The obvious
+  implementation was built and then fuzzed against the real WHATWG parser:
+  `urlsplit("/\evil.example")` reports an empty `netloc` and a harmless path, while every browser
+  resolves it to `http://evil.example/` — *the exact input v1.282.3 existed to close*. So the
+  tempting translation reintroduces the original bug on the authoritative side while looking
+  faithful. Normalising backslashes first (what WHATWG does) fixed those cases and still left
+  **685 disagreements in 7,797 inputs**, mostly malformed authorities like
+  `HTTP:\user@evil.example/` where Python reports no userinfo and the browser reads a host.
+
+  Equivalence with a browser URL parser is not reachable in Python. So the goal is **soundness**:
+  `is_safe_url(x) → a browser also treats x as safe`, and never the converse. It gets there by
+  **never parsing ambiguous input** — two shapes recognised by strict patterns, everything else
+  refused on contact. Over-refusal costs one link rendered as a plain label (which is exactly what
+  `renderSources` already does with a falsy url); under-refusal costs the boundary.
+
+- **`utils/sse_filter.py`** — frame reassembly for the relay, which until now was
+  `for chunk in r.iter_content(): yield chunk` and inspected nothing.
+
+  One rule makes filtering a live stream safe: **if the transform changed nothing, emit the
+  ORIGINAL bytes**, never a re-serialisation. In production that is nearly every frame, so the
+  relay stays byte-identical to the old pass-through except where a frame was about to poison an
+  `href`. The risk moves from *rewriting* — which can corrupt an answer — to *reassembly*, which
+  is pure and testable at every byte offset. Multi-byte UTF-8 is safe **structurally**, not
+  defensively: the filter never decodes a chunk, only a complete frame, and `0x0A` cannot appear
+  inside a multi-byte sequence, so the delimiter is always a character-safe cut. Today's frames
+  are ASCII only because the producer's `json.dumps` defaults to `ensure_ascii=True` — a kwarg in
+  a different repo, not an invariant this app controls.
+
+  Getting this wrong is worse than the bug and **fails silently**: the widget swallows JSON parse
+  errors and the 200 goes out before the first byte, so corruption presents as "the answer stopped
+  mid-sentence" with no HTTP error, no Error Log row and no console message.
+
+- **`scripts/fuzz_url_safety.mjs` + `scripts/fuzz_url_safety_check.py`** — a differential fuzz
+  against the real client `isSafeUrl`, failing CI only in the vulnerability direction.
+
+  This is a gate and not a report because **a hand-picked corpus proves the cases somebody thought
+  of, which is exactly the set that does not contain the next bug** — the pre-v1.282.3 check had a
+  corpus, and the corpus did not contain `/\`. It earned its place immediately: the invalid-port
+  hole (`https://ok.example:99999/`, which matches "one to five digits" and which browsers reject
+  outright) and the punycode hole (`https://xn--a/`, an undecodable label) were both found by this
+  job going red, not by anyone foreseeing them. Now 0 looser across ~730,000 inputs on four seeds.
+
+- **`scripts/fixtures/url_safety_corpus.json`** — one corpus, both languages. Inputs are
+  **codepoint arrays, never JSON strings**, because the corpus is made of precisely the characters
+  that get eaten in transit; a heredoc mangled this repo's own backslashes twice while this change
+  was being written. `expect_py` may only ever be `false`, asserted as a schema rule, so a row
+  claiming the server is looser than the client is unwritable rather than merely failing.
+
+### Fixed
+
+- **The client-side guard was vacuous, and had been since the day it shipped.**
+  `scripts/test_triton_widget_guards.js` describes the sources row's *shape* — container class,
+  label chain, chip class, textContent, target, rel — and never asserted the `isSafeUrl` call.
+  Deleting the v1.282.3 fix reddened nothing. Verified by doing it: the suite passed, exit 0. Now
+  asserted, and verified to exit 1 when removed.
+
+### Deliberately not done
+
+- **No Content-Security-Policy**, and this is a measurement rather than a deferral. Frappe v16
+  emits `frappe.boot` in nonce-less inline `<script>` blocks (`templates/base.html`), and
+  `new Function()` is load-bearing in `script_manager.js`, `microtemplate.js` and `utils.js` — so
+  any CSP the Desk tolerates must carry both `unsafe-inline` and `unsafe-eval`. `javascript:` href
+  navigation is governed by `script-src`, which `unsafe-inline` permits. **The only CSP Desk
+  accepts is exactly the one that cannot block this sink.** Shipping it would be a large,
+  site-wide change that breaks Client Scripts and `depends_on` fields while buying nothing here.
+- **Markdown link targets in model prose are untouched** — the largest carrier by volume. In the
+  stream the construct arrives split across frames, so rewriting means either holding the stream
+  or a partial-link holdback whose failure mode is corrupted prose on every turn. Every consumer
+  of that carrier is already a DOM gated by `markdown.js`'s `isSafeUrl`. Recorded as a gap rather
+  than implied to be covered.
+
 ## [1.316.1] - 2026-08-15
 
 ### Changed

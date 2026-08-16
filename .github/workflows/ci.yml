@@ -594,6 +594,25 @@ jobs:
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q
       - name: Stripe Payments (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_stripe_payments.py -q
+      # The server-side URL boundary (v1.317.0). Its own step and pytest-style, matching the
+      # rule above: it installs no frappe stub because the modules under test import no
+      # frappe, and that importability IS the design requirement — the predicate runs inside
+      # the SSE relay's per-frame loop.
+      - name: Server-side URL boundary (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_url_safety.py -q
+      # The differential fuzz, and the reason it is a GATE rather than a report.
+      #
+      # A hand-picked corpus proves the cases somebody thought of, which is precisely the set
+      # that does not contain the next vulnerability: the pre-v1.282.3 check HAD a corpus and
+      # the corpus did not contain `/\`. While building the server predicate a "faithful port"
+      # of isSafeUrl passed 31 hand-picked rows and then failed this job with 685 inputs the
+      # browser treats as hostile; the port bound and the punycode rule were both added
+      # because THIS job went red, not because anyone foresaw them.
+      #
+      # Fails only in the vulnerability direction (server says safe, browser does not). It is
+      # a pipe rather than a new dependency — node and python are both already in this job.
+      - name: URL boundary must never be looser than the browser (differential fuzz)
+        run: node scripts/fuzz_url_safety.mjs | python scripts/fuzz_url_safety_check.py
       # A www/ controller whose filename contains a hyphen is never imported by
       # frappe, so its get_context() silently never runs. stripe-return.py was
       # broken this way from the day it was written until v1.159.10.
