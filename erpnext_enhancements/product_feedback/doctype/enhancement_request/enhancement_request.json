@@ -1,0 +1,310 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 1,
+ "autoname": "format:ER-{YYYY}-{#####}",
+ "creation": "2026-08-17 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "request_section",
+  "title",
+  "request_type",
+  "impact",
+  "column_break_head",
+  "status",
+  "requested_by",
+  "requested_at",
+  "detail_section",
+  "description",
+  "steps_to_reproduce",
+  "context_section",
+  "context_url",
+  "context_doctype",
+  "context_docname",
+  "column_break_context",
+  "context_user_agent",
+  "context_app_version",
+  "triage_section",
+  "decided_by",
+  "decided_at",
+  "decision_reason",
+  "column_break_triage",
+  "target_erpnext",
+  "target_triton",
+  "duplicate_of_task",
+  "breakdown_section",
+  "breakdown_summary",
+  "breakdown_model",
+  "breakdown_requested_at",
+  "breakdown_error",
+  "duplicate_candidates",
+  "proposed_tasks"
+ ],
+ "fields": [
+  {
+   "fieldname": "request_section",
+   "fieldtype": "Section Break",
+   "label": null
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_global_search": 1
+  },
+  {
+   "fieldname": "request_type",
+   "fieldtype": "Select",
+   "label": "Type",
+   "options": "Feature\nBug",
+   "default": "Bug",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "impact",
+   "fieldtype": "Select",
+   "label": "Impact",
+   "options": "Blocking my work\nPainful but I can work around it\nNice to have",
+   "default": "Painful but I can work around it",
+   "reqd": 1,
+   "in_standard_filter": 1,
+   "description": "The requester's own assessment. Deliberately not called Priority: it is an input to triage, not the priority of the work, and the generated Tasks carry their own."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break",
+   "label": null
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Submitted\nApproved\nBreakdown Ready\nBreakdown Failed\nTasks Created\nRejected\nDuplicate",
+   "default": "Submitted",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "The transition table lives in product_feedback/states.py and is enforced in validate(). The worker writes some transitions with db.set_value, which skips validate() — so the controller check is the backstop for desk and console edits, not the enforcement point."
+  },
+  {
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "options": "User",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Always frappe.session.user at submit time. A `requested_by` in the client payload is dropped, not honoured."
+  },
+  {
+   "fieldname": "requested_at",
+   "fieldtype": "Datetime",
+   "label": "Requested At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "detail_section",
+   "fieldtype": "Section Break",
+   "label": "What happened"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Text Editor",
+   "label": "Description",
+   "reqd": 1
+  },
+  {
+   "fieldname": "steps_to_reproduce",
+   "fieldtype": "Text Editor",
+   "label": "Steps to Reproduce",
+   "depends_on": "eval:doc.request_type==\"Bug\"",
+   "description": "Bugs only. A bug report without these costs a round trip that the reporter has already forgotten the answer to."
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "context_section",
+   "fieldtype": "Section Break",
+   "label": "Captured Context"
+  },
+  {
+   "fieldname": "context_url",
+   "fieldtype": "Data",
+   "label": "Page URL",
+   "read_only": 1,
+   "length": 500,
+   "description": "Captured by the SPA from the page the requester came from. Client-supplied and therefore untrusted: displayed as text, never followed and never used in a query."
+  },
+  {
+   "fieldname": "context_doctype",
+   "fieldtype": "Data",
+   "label": "DocType",
+   "read_only": 1,
+   "description": "Data, not a Link. The string arrives from a browser and a Link would make it a foreign key on a value nobody validated — and the doctype may have been renamed or removed since."
+  },
+  {
+   "fieldname": "context_docname",
+   "fieldtype": "Data",
+   "label": "Document",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_context",
+   "fieldtype": "Column Break",
+   "label": null
+  },
+  {
+   "fieldname": "context_user_agent",
+   "fieldtype": "Data",
+   "label": "Browser",
+   "read_only": 1,
+   "length": 300
+  },
+  {
+   "fieldname": "context_app_version",
+   "fieldtype": "Data",
+   "label": "App Version",
+   "read_only": 1,
+   "description": "The deploy version the requester was running. Answers 'is this already fixed?' before anyone opens the code."
+  },
+  {
+   "fieldname": "triage_section",
+   "fieldtype": "Section Break",
+   "label": "Triage"
+  },
+  {
+   "fieldname": "decided_by",
+   "fieldtype": "Link",
+   "label": "Decided By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "decided_at",
+   "fieldtype": "Datetime",
+   "label": "Decided At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "decision_reason",
+   "fieldtype": "Small Text",
+   "label": "Decision Reason",
+   "read_only": 1,
+   "description": "Mandatory on a rejection and shown to the requester. A rejection with no reason reads as being ignored, and the same request arrives again next month."
+  },
+  {
+   "fieldname": "column_break_triage",
+   "fieldtype": "Column Break",
+   "label": null
+  },
+  {
+   "fieldname": "target_erpnext",
+   "fieldtype": "Check",
+   "label": "Targets ERPNext",
+   "default": "0",
+   "read_only": 1,
+   "description": "Proposed by the model at approval time and overridable by the reviewer before the breakdown runs. Which Project this means is Product Feedback Settings.erpnext_project, not a hard-coded id."
+  },
+  {
+   "fieldname": "target_triton",
+   "fieldtype": "Check",
+   "label": "Targets Triton",
+   "default": "0",
+   "read_only": 1
+  },
+  {
+   "fieldname": "duplicate_of_task",
+   "fieldtype": "Link",
+   "label": "Duplicate Of",
+   "options": "Task",
+   "read_only": 1,
+   "description": "Set when the reviewer closes the request against an existing Task instead of creating new ones."
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "breakdown_section",
+   "fieldtype": "Section Break",
+   "label": "Proposed Work Breakdown"
+  },
+  {
+   "fieldname": "breakdown_summary",
+   "fieldtype": "Small Text",
+   "label": "Summary",
+   "read_only": 1,
+   "description": "The model's one-paragraph reading of the request. Shown above the proposal so a reviewer can spot a misunderstanding without reading every row."
+  },
+  {
+   "fieldname": "breakdown_model",
+   "fieldtype": "Data",
+   "label": "Model",
+   "read_only": 1
+  },
+  {
+   "fieldname": "breakdown_requested_at",
+   "fieldtype": "Datetime",
+   "label": "Breakdown Requested At",
+   "read_only": 1,
+   "description": "Stamped when the job is enqueued, not when it returns. The hourly sweeper uses it to find requests whose job the deploy FLUSHDB destroyed."
+  },
+  {
+   "fieldname": "breakdown_error",
+   "fieldtype": "Small Text",
+   "label": "Breakdown Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "duplicate_candidates",
+   "fieldtype": "Table",
+   "label": "Possible Duplicates",
+   "options": "Enhancement Request Duplicate Candidate",
+   "read_only": 1
+  },
+  {
+   "fieldname": "proposed_tasks",
+   "fieldtype": "Table",
+   "label": "Proposed Tasks",
+   "options": "Enhancement Request Proposed Task",
+   "description": "Nothing here has been written to a Project. The reviewer edits these rows and the confirm call is what creates the Tasks — see api/feedback.create_tasks."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-17 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Product Feedback",
+ "name": "Enhancement Request",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "if_owner": 1,
+   "read": 1,
+   "role": "All"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1,
+ "track_seen": 0,
+ "track_views": 0
+}

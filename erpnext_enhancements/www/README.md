@@ -20,6 +20,23 @@ Several standalone web pages live here, separate from the heavy desk app:
   deploy FLUSHDBs Redis and clears it; a hotfix without a restart does not. Do not advertise
   the route before the deploy carrying it has landed.
 
+- the **feedback SPA** at **`/feedback`** — employee bug/feature intake and the reviewer's
+  queue ([ADR 0010](../../decisions/adr/0010-employee-feedback-to-tasks.md)), chrome-free and
+  login-gated (`feedback.py` + `feedback.html`; front end in
+  [`public/js/feedback/`](../public/README.md), server surface in
+  [`api/feedback.py`](../api/README.md)).
+
+  **The second page here serving a whole URL subtree**, via
+  `{"from_route": "/feedback/<path:feedback_path>", "to_route": "feedback"}` — every
+  notification this feature sends links to `/feedback/request/ER-YYYY-NNNNN`, so the same
+  deep-link and `website_404` notes above apply to it verbatim.
+
+  **There is deliberately no feature gate in the controller.** It ships live: anybody who can
+  sign in can file. `Product Feedback Settings.paused` stops new *submissions* and is enforced
+  in `api.feedback.submit_request`, not here — pausing intake should still let people read what
+  they already filed and let a reviewer finish the queue, and a page that 404'd on pause would
+  take both away.
+
 This folder is each app's *shell* (page controller, HTML, service worker where applicable); front-end logic lives in [`public/js/kiosk/`](../public/README.md#kiosk-pwa-front-end) / `public/js/wall/` / `public/js/travel/` and the server endpoints in [`api/`](../api/README.md).
 
 ## Controller filenames: hyphens are silently fatal

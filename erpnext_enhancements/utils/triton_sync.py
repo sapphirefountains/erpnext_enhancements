@@ -37,9 +37,17 @@ def global_triton_sync(doc, method=None):
     # retrieval gate, which derives the asking user's allowed_rooms server-side.
     # Both failures are SILENT — the writes succeed either way — so nothing here
     # would ever tell you it was missing.
+    #
+    # "Product Feedback" is excluded for the loop reason, most directly of all: an
+    # Enhancement Request is saved several times in the course of one breakdown, and the
+    # thing doing the breaking down is Triton. Announcing each of those saves back to
+    # Triton is a POST per step of a conversation Triton is already in. The proposal it
+    # returns also quotes the requester's own words back, so the payload would carry
+    # employee-written complaints to an indexer with no mandate to hold them — the same
+    # pair of reasons as Chat, at smaller volume. ADR 0010.
     excluded_modules = [
         "Core", "System", "Setup", "Custom", "Data Migration", "Email",
-        "Integrations", "Telephony", "AI Governance", "Chat",
+        "Integrations", "Telephony", "AI Governance", "Chat", "Product Feedback",
     ]
 
     # Module-level exclusion is too coarse for the fountain-move intake: it lives
