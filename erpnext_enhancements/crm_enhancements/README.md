@@ -215,6 +215,7 @@ silently empty the board.
 
 - `sync_opportunity_tags` is one of several `Opportunity` `before_save` handlers; the others are Python ports in [`script_migrations/opportunity.py`](../script_migrations/README.md).
 - Converting an Opportunity to a Project provisions a Drive folder tree, but that's **non-fatal** and lives in the [Google Drive module](../google_drive/README.md) — the Project is created even if Drive fails.
+- **The hand-off carries `primary_contact` across (v1.320.0), but not the three fields beside it.** `primary_contact` is doc-local on every party — a Project's primary contact is a fact about that Project and never re-points the Customer's account-wide `is_primary_contact` (see `sync_contact.GLOBAL_PRIMARY_PARTY_DOCTYPES`). The read-through phone / email / job title are re-derived from the Contact by `sync_contact.apply_primary_contact_details`, *not* added to the field-mapping table: Project `on_update` pushes those same three back **down** onto the Contact and the job-title branch guards on `is not None`, so copying a blank across from an Opportunity that never had them filled would erase `Contact.custom_title`.
 
 
 ## Lead attribution (WP-1, v1.241.0)

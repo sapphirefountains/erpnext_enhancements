@@ -37,7 +37,7 @@ and restores in ``finally`` — the same shape as ``crm_enhancements/api.py``.
 import frappe
 from frappe.utils import cint, escape_html, flt, now_datetime, nowdate
 
-from erpnext_enhancements import contacts_ux
+from erpnext_enhancements import contacts_ux, sync_contact
 from erpnext_enhancements.crm_enhancements.fountain_move import (
 	DEFAULT_LEAD_SOURCE,
 	DEFAULT_VALUE_STREAM,
@@ -535,36 +535,9 @@ def _create_opportunity(req, customer, contact, address, settings, lead_source, 
 			"custom_notes_for_scheduling": _scheduling_note(req),
 		}
 	)
-	_attach_primary_contact_details(opportunity, contact)
+	sync_contact.apply_primary_contact_details(opportunity, contact)
 	opportunity.insert(ignore_permissions=True)
 	return opportunity.name
-
-
-def _attach_primary_contact_details(opportunity, contact):
-	"""Mirror the Contact's details onto the Opportunity's primary_contact_* fields.
-
-	``sync_contact.sync_from_main_doc`` pushes these DOWN onto the Contact on
-	update, and its job-title branch has no truthiness guard — so leaving them
-	blank here would blank the Contact's ``custom_title`` on the first save.
-	Setting them from the Contact we just resolved keeps the sync a no-op.
-
-	Guarded with ``has_field`` because these three fields exist only in the live
-	database (they are in neither the fixtures nor ``setup/custom_fields.py``), so
-	a fresh install genuinely does not have them.
-	"""
-	details = frappe.db.get_value(
-		"Contact", contact, ["custom_email", "custom_phone_number", "custom_mobile_number", "custom_title"],
-		as_dict=True,
-	) or {}
-	meta = frappe.get_meta("Opportunity")
-	mapping = {
-		"primary_contact_email": details.get("custom_email"),
-		"primary_contact_phone": details.get("custom_phone_number") or details.get("custom_mobile_number"),
-		"primary_contact_job_title": details.get("custom_title"),
-	}
-	for field, value in mapping.items():
-		if value and meta.has_field(field):
-			opportunity.set(field, value)
 
 
 def _opportunity_title(req):

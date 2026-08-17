@@ -31,12 +31,29 @@ class StubPermissionError(Exception):
 
 
 #: Tables the stub serves. Reset per test.
-STATE = {"Contact": {}, "Address": {}, "Dynamic Link": [], "permissions": True, "perm_calls": []}
+STATE = {
+	"Contact": {},
+	"Address": {},
+	"Dynamic Link": [],
+	"permissions": True,
+	"perm_calls": [],
+	# Fields the *site* has, per doctype — apply_primary_contact_details guards on
+	# these because the three primary_contact_* fields live only in the live
+	# database (neither the fixtures nor setup/custom_fields.py create them).
+	"fields": {},
+}
 
 
 def _reset():
 	STATE["Contact"] = {
-		"C-1": {"name": "C-1", "is_primary_contact": 1},
+		"C-1": {
+			"name": "C-1",
+			"is_primary_contact": 1,
+			"custom_email": "jane@acme.test",
+			"custom_phone_number": "801-555-0101",
+			"custom_mobile_number": "801-555-0199",
+			"custom_title": "Facilities Director",
+		},
 		"C-2": {"name": "C-2", "is_primary_contact": 0},
 		"C-3": {"name": "C-3", "is_primary_contact": 0},
 		# Linked to a different account entirely; must never be touched.
@@ -56,6 +73,20 @@ def _reset():
 	]
 	STATE["permissions"] = True
 	STATE["perm_calls"] = []
+	STATE["fields"] = {
+		"Project": {
+			"primary_contact",
+			"primary_contact_email",
+			"primary_contact_phone",
+			"primary_contact_job_title",
+		},
+		"Opportunity": {
+			"primary_contact",
+			"primary_contact_email",
+			"primary_contact_phone",
+			"primary_contact_job_title",
+		},
+	}
 
 
 def _matches(row, filters):
@@ -101,8 +132,16 @@ def _install_stub():
 				if target in table:
 					table[target][field] = value
 
-		def get_value(self, doctype, name, field):
-			return (STATE.get(doctype, {}).get(name) or {}).get(field)
+		def get_value(self, doctype, name, field, as_dict=False):
+			row = STATE.get(doctype, {}).get(name) or {}
+			# apply_primary_contact_details reads four Contact columns at once;
+			# every other caller reads a single one.
+			if isinstance(field, (list, tuple)):
+				if not row:
+					return None
+				values = {f: row.get(f) for f in field}
+				return values if as_dict else [values[f] for f in field]
+			return row.get(field)
 
 		def has_column(self, doctype, column):
 			return True
@@ -110,9 +149,14 @@ def _install_stub():
 		def exists(self, doctype, name):
 			return name in STATE.get(doctype, {})
 
+	def get_meta(doctype):
+		known = STATE["fields"].get(doctype, set())
+		return types.SimpleNamespace(has_field=lambda f: f in known)
+
 	frappe.throw = throw
 	frappe.has_permission = has_permission
 	frappe.get_all = get_all
+	frappe.get_meta = get_meta
 	frappe.db = _DB()
 	frappe.whitelist = lambda *a, **kw: (lambda fn: fn)
 	frappe._ = lambda s: s
@@ -251,6 +295,135 @@ class TestSyncFromMainDocIsDoctypeAgnostic(unittest.TestCase):
 
 		# The only document it reached for was the Contact.
 		self.assertEqual(written, [("Contact", "C-1")])
+
+
+class _FakeParty:
+	"""Just enough of a Project / Opportunity Document for the detail mirror."""
+
+	def __init__(self, doctype="Project", **fields):
+		self.doctype = doctype
+		self._fields = dict(fields)
+
+	def get(self, key, default=None):
+		return self._fields.get(key, default)
+
+	def set(self, key, value):
+		self._fields[key] = value
+
+
+class TestApplyPrimaryContactDetails(unittest.TestCase):
+	"""``apply_primary_contact_details`` — the write side, used wherever
+	``primary_contact`` is set without a browser (fountain-move intake, and the
+	Opportunity -> Project hand-off, TASK-2026-01585)."""
+
+	def setUp(self):
+		_reset()
+
+	def test_it_fills_the_three_read_through_fields(self):
+		doc = _FakeParty("Project", primary_contact="C-1")
+		sync_contact.apply_primary_contact_details(doc)
+
+		self.assertEqual(doc.get("primary_contact_email"), "jane@acme.test")
+		self.assertEqual(doc.get("primary_contact_phone"), "801-555-0101")
+		self.assertEqual(doc.get("primary_contact_job_title"), "Facilities Director")
+
+	def test_mobile_stands_in_for_a_missing_phone(self):
+		STATE["Contact"]["C-1"]["custom_phone_number"] = ""
+		doc = _FakeParty("Project", primary_contact="C-1")
+		sync_contact.apply_primary_contact_details(doc)
+		self.assertEqual(doc.get("primary_contact_phone"), "801-555-0199")
+
+	def test_an_explicit_contact_overrides_the_docs_own(self):
+		"""The intake path resolves its Contact before the doc carries the link."""
+		doc = _FakeParty("Opportunity")
+		sync_contact.apply_primary_contact_details(doc, "C-1")
+		self.assertEqual(doc.get("primary_contact_email"), "jane@acme.test")
+
+	def test_no_primary_contact_is_a_no_op(self):
+		doc = _FakeParty("Project")
+		sync_contact.apply_primary_contact_details(doc)
+		self.assertIsNone(doc.get("primary_contact_email"))
+
+	def test_a_field_the_site_lacks_is_skipped(self):
+		"""Fresh installs genuinely do not have these three."""
+		STATE["fields"]["Project"] = {"primary_contact"}
+		doc = _FakeParty("Project", primary_contact="C-1")
+		sync_contact.apply_primary_contact_details(doc)
+		self.assertIsNone(doc.get("primary_contact_job_title"))
+
+	def test_a_contact_with_nothing_on_it_writes_nothing(self):
+		"""The truthiness guard: an empty Contact must not blank what is there."""
+		doc = _FakeParty("Project", primary_contact="C-2", primary_contact_job_title="Owner")
+		sync_contact.apply_primary_contact_details(doc)
+		self.assertEqual(doc.get("primary_contact_job_title"), "Owner")
+
+	# -- the reason it derives instead of copying --------------------------------
+
+	def _run_down_sync(self, doc):
+		"""Run the party's ``on_update`` sync against the stubbed Contact table.
+
+		Returns the ``custom_title`` values the Contact was re-saved with — empty
+		when the sync decided nothing had changed.
+		"""
+		saved = []
+
+		class _Contact:
+			def __init__(self, row):
+				self.__dict__.update(row)
+				self.flags = types.SimpleNamespace()
+
+			def save(self):
+				saved.append(self.custom_title)
+
+		original = sys.modules["frappe"].get_doc
+		sys.modules["frappe"].get_doc = lambda dt, name: _Contact(STATE[dt][name])
+		try:
+			doc.is_new = lambda: True
+			for field in (
+				"primary_contact",
+				"primary_contact_job_title",
+				"primary_contact_phone",
+				"primary_contact_email",
+			):
+				setattr(doc, field, doc.get(field))
+			sync_contact.sync_from_main_doc(doc, "on_update")
+		finally:
+			sys.modules["frappe"].get_doc = original
+		return saved
+
+	def test_a_blank_job_title_copied_across_erases_the_contacts(self):
+		"""The hazard, stated first — this is what mapping the field straight from
+		the Opportunity would do on every deal created before v1.198.0 wired up
+		``primary_contact.js`` and left these three empty.
+
+		``sync_from_main_doc``'s job-title branch guards on ``is not None``, not on
+		truthiness, so an empty string propagates and wins.
+		"""
+		doc = _FakeParty("Project", primary_contact="C-1", primary_contact_job_title="")
+
+		self.assertEqual(self._run_down_sync(doc), [""])
+
+	def test_the_mirror_makes_that_round_trip_inert(self):
+		"""And the fix: derive the three from the Contact, and the push back down
+		finds nothing to change. This is why the hand-off calls the mirror instead
+		of adding three more rows to its field-mapping table."""
+		doc = _FakeParty("Project", primary_contact="C-1", primary_contact_job_title="")
+		sync_contact.apply_primary_contact_details(doc)
+
+		self.assertEqual(self._run_down_sync(doc), [], "the mirror is not inert")
+
+	def test_it_never_touches_the_account_wide_flag(self):
+		"""A Project's primary contact is a fact about that Project.
+
+		Carrying it over from the Opportunity must not re-point the Customer's
+		account-wide primary — the invariant `_assert_account` enforces on the
+		click path, restated for the programmatic one.
+		"""
+		doc = _FakeParty("Project", primary_contact="C-2")
+		sync_contact.apply_primary_contact_details(doc)
+
+		self.assertEqual(STATE["Contact"]["C-1"]["is_primary_contact"], 1)
+		self.assertEqual(STATE["Contact"]["C-2"]["is_primary_contact"], 0)
 
 
 class TestRepairPatchWinner(unittest.TestCase):
