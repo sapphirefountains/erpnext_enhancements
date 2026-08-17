@@ -116,13 +116,20 @@ class TestReportModules(unittest.TestCase):
                     "import path from the report name (%s)" % (report_name, expected, folder, path),
                 )
                 # Every sibling file Frappe loads by path must carry the same stem.
-                for suffix in (".json", ".py", ".js"):
+                # A Query Report has no controller — its whole definition is the
+                # ``query`` in the JSON and Frappe never imports a module for it —
+                # so the ``.py`` is required of Script Reports only.
+                required = [".json"]
+                if data.get("report_type") == "Script Report":
+                    required.append(".py")
+                if any(path.parent.glob("*.js")):
+                    required.append(".js")
+                for suffix in required:
                     sibling = path.parent / (expected + suffix)
-                    if suffix != ".js" or any(path.parent.glob("*.js")):
-                        self.assertTrue(
-                            sibling.exists(),
-                            "%r is missing %s (expected %s)" % (report_name, sibling.name, sibling),
-                        )
+                    self.assertTrue(
+                        sibling.exists(),
+                        "%r is missing %s (expected %s)" % (report_name, sibling.name, sibling),
+                    )
 
     def test_script_reports_define_execute(self):
         for data, _dir, _folder, path in REPORTS:
@@ -143,6 +150,29 @@ class TestReportModules(unittest.TestCase):
                     names,
                     "%r is a Script Report but %s defines no top-level execute()"
                     % (report_name, controller),
+                )
+
+    def test_query_reports_define_query(self):
+        """The counterpart of the ``execute`` check, for the other report type.
+
+        ``Report.execute_query_report`` throws "Must specify a Query to run" when
+        ``query`` is blank — which, like a missing controller, is a failure that
+        only appears when somebody opens the report.
+        """
+        for data, _dir, _folder, path in REPORTS:
+            if data.get("report_type") != "Query Report":
+                continue
+            with self.subTest(report=data.get("report_name")):
+                query = (data.get("query") or "").strip()
+                self.assertTrue(
+                    query,
+                    "%r is a Query Report with no query (%s)" % (data.get("report_name"), path),
+                )
+                # frappe.utils.safe_exec.check_safe_sql_query allows only these.
+                self.assertTrue(
+                    query.lower().startswith(("select", "explain", "with")),
+                    "%r must start with SELECT/EXPLAIN/WITH — check_safe_sql_query "
+                    "rejects anything else at run time (%s)" % (data.get("report_name"), path),
                 )
 
 

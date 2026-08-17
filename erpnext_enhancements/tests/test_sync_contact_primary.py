@@ -451,5 +451,294 @@ class TestRepairPatchWinner(unittest.TestCase):
 		self.assertEqual(self.pick(flagged, "C-NOT-FLAGGED"), "C-1")
 
 
+class _Dict(dict):
+	"""The attribute access frappe._dict gives get_all rows."""
+
+	__getattr__ = dict.get
+
+	def __setattr__(self, key, value):
+		self[key] = value
+
+
+class _ContactDoc:
+	"""Enough of a Contact document for the link-writing path.
+
+	``links`` is read as objects, appended to as a dict, and persisted by
+	``save`` — the three things :func:`sync_contact.import_contacts` does.
+	Saving rewrites this Contact's rows in ``STATE["Dynamic Link"]`` so the
+	assertions can read the links back the way the directory would.
+	"""
+
+	def __init__(self, name):
+		self.name = name
+		self.links = [
+			_Dict(link_doctype=row["link_doctype"], link_name=row["link_name"])
+			for row in STATE["Dynamic Link"]
+			if row["parenttype"] == "Contact" and row["parent"] == name
+		]
+		self.saves = 0
+
+	def append(self, table, row):
+		assert table == "links", table
+		self.links.append(_Dict(**row))
+
+	def save(self, ignore_permissions=False):
+		self.saves += 1
+		STATE["Dynamic Link"] = [
+			row
+			for row in STATE["Dynamic Link"]
+			if not (row["parenttype"] == "Contact" and row["parent"] == self.name)
+		] + [
+			{
+				"parent": self.name,
+				"parenttype": "Contact",
+				"link_doctype": link.link_doctype,
+				"link_name": link.link_name,
+			}
+			for link in self.links
+		]
+
+
+def _row_matches(row, filters):
+	"""``_matches`` plus the ``["in", [...]]`` operator the directory reads use."""
+	for key, want in (filters or {}).items():
+		got = row.get(key)
+		if isinstance(want, (list, tuple)) and len(want) == 2 and want[0] == "in":
+			if got not in want[1]:
+				return False
+		elif got != want:
+			return False
+	return True
+
+
+class TestImportContacts(unittest.TestCase):
+	"""Selective bulk import (TASK-2026-01590 / TASK-2026-01591).
+
+	The acceptance criterion is a subset: ticking two of five contacts must link
+	two, not five. The failure mode worth fencing is the one the feature exists
+	to avoid — an import that helpfully links everything it found, dragging a
+	whole account's directory onto one job.
+
+	The module stub is deliberately narrow (``get_all`` serves Dynamic Link and
+	nothing else, ``get_doc`` returns None), so this class widens it for its own
+	tests and restores it in ``tearDown``. Same local-override pattern the
+	primary-contact mirror tests above use.
+	"""
+
+	def setUp(self):
+		_reset()
+		# Five contacts on the account, one on a different account entirely.
+		STATE["Contact"]["C-4"] = {"name": "C-4", "is_primary_contact": 0}
+		STATE["Contact"]["C-5"] = {"name": "C-5", "is_primary_contact": 0}
+		for name in ("C-4", "C-5"):
+			STATE["Dynamic Link"].append(
+				{
+					"parent": name,
+					"parenttype": "Contact",
+					"link_doctype": "Customer",
+					"link_name": "ACME",
+				}
+			)
+		STATE["Directory Link Exclusion"] = []
+
+		self.frappe = sys.modules["frappe"]
+		self._saved = {
+			name: getattr(self.frappe, name) for name in ("get_all", "get_doc", "delete_doc")
+		}
+		self.frappe.get_all = self._get_all
+		self.frappe.get_doc = self._get_doc
+		self.frappe.delete_doc = self._delete_doc
+
+	def tearDown(self):
+		for name, fn in self._saved.items():
+			setattr(self.frappe, name, fn)
+		STATE.pop("Directory Link Exclusion", None)
+
+	# -- widened stub --------------------------------------------------------
+
+	def _get_all(self, doctype, filters=None, pluck=None, fields=None, **kwargs):
+		if doctype == "Contact":
+			# get_contacts_for_context passes the child-table filter form:
+			# [["Dynamic Link", "link_name", "in", [...]]].
+			wanted = set()
+			for f in filters or []:
+				if len(f) == 4 and f[0] == "Dynamic Link" and f[2] == "in":
+					wanted |= set(f[3])
+			names = {
+				row["parent"]
+				for row in STATE["Dynamic Link"]
+				if row["parenttype"] == "Contact" and row["link_name"] in wanted
+			}
+			return [_Dict(STATE["Contact"][n]) for n in sorted(names) if n in STATE["Contact"]]
+
+		table = STATE.get(doctype)
+		if table is None:
+			raise AssertionError(f"unexpected get_all on {doctype}")
+		rows = [_Dict(r) for r in table if _row_matches(r, filters)]
+		if pluck:
+			return [r[pluck] for r in rows]
+		return rows
+
+	def _get_doc(self, doctype, name=None, **kwargs):
+		if doctype == "Contact" and name in STATE["Contact"]:
+			return _ContactDoc(name)
+		return None
+
+	def _delete_doc(self, doctype, name, **kwargs):
+		STATE[doctype] = [r for r in STATE.get(doctype, []) if r.get("name") != name]
+
+	# -- helpers -------------------------------------------------------------
+
+	def _project_links(self):
+		"""Which Contacts now carry a link to PROJ-0001."""
+		return {
+			row["parent"]
+			for row in STATE["Dynamic Link"]
+			if row["parenttype"] == "Contact"
+			and row["link_doctype"] == "Project"
+			and row["link_name"] == "PROJ-0001"
+		}
+
+	# -- the criterion -------------------------------------------------------
+
+	def test_two_of_five_links_exactly_two(self):
+		result = sync_contact.import_contacts("Project", "PROJ-0001", ["C-2", "C-4"])
+
+		self.assertEqual(self._project_links(), {"C-2", "C-4"})
+		self.assertEqual(result["linked"], 2)
+
+	def test_the_contacts_left_unticked_are_untouched(self):
+		"""The whole point: an import is a selection, not a sweep."""
+		sync_contact.import_contacts("Project", "PROJ-0001", ["C-2"])
+
+		for name in ("C-1", "C-3", "C-4", "C-5", "C-OTHER"):
+			links = [
+				row
+				for row in STATE["Dynamic Link"]
+				if row["parent"] == name and row["link_doctype"] == "Project"
+			]
+			self.assertEqual(links, [], f"{name} was linked without being selected")
+
+	def test_the_client_may_send_the_selection_as_json(self):
+		"""``frappe.call`` posts the array as a JSON string."""
+		sync_contact.import_contacts("Project", "PROJ-0001", '["C-1", "C-3"]')
+
+		self.assertEqual(self._project_links(), {"C-1", "C-3"})
+
+	# -- counts the caller reports -------------------------------------------
+
+	def test_an_already_linked_contact_is_skipped_not_recounted(self):
+		"""The toast says how many were linked, so it must mean links created."""
+		STATE["Dynamic Link"].append(
+			{
+				"parent": "C-1",
+				"parenttype": "Contact",
+				"link_doctype": "Project",
+				"link_name": "PROJ-0001",
+			}
+		)
+
+		result = sync_contact.import_contacts("Project", "PROJ-0001", ["C-1", "C-2"])
+
+		self.assertEqual(result["linked"], 1)
+		self.assertEqual(result["skipped"], 1)
+		self.assertEqual(result["contacts"], ["C-2"])
+		# And the pre-existing link was not duplicated.
+		self.assertEqual(
+			len([r for r in STATE["Dynamic Link"] if r["parent"] == "C-1" and r["link_doctype"] == "Project"]),
+			1,
+		)
+
+	def test_a_contact_deleted_since_the_dialog_opened_is_skipped(self):
+		"""The list was accurate when it was built; a stale entry is not worth
+		throwing the other four links away over."""
+		result = sync_contact.import_contacts("Project", "PROJ-0001", ["C-GONE", "C-2"])
+
+		self.assertEqual(self._project_links(), {"C-2"})
+		self.assertEqual(result["linked"], 1)
+		self.assertEqual(result["skipped"], 1)
+
+	def test_the_same_contact_twice_links_once(self):
+		result = sync_contact.import_contacts("Project", "PROJ-0001", ["C-2", "C-2"])
+
+		self.assertEqual(result["linked"], 1)
+		self.assertEqual(self._project_links(), {"C-2"})
+
+	def test_an_empty_selection_writes_nothing(self):
+		result = sync_contact.import_contacts("Project", "PROJ-0001", [])
+
+		self.assertEqual(result, {"linked": 0, "skipped": 0, "contacts": []})
+		self.assertEqual(self._project_links(), set())
+
+	# -- permission ----------------------------------------------------------
+
+	def test_write_permission_on_the_target_is_required(self):
+		STATE["permissions"] = False
+
+		with self.assertRaises(StubPermissionError):
+			sync_contact.import_contacts("Project", "PROJ-0001", ["C-2"])
+
+		self.assertEqual(self._project_links(), set(), "a refused import still wrote a link")
+
+	def test_the_gate_is_write_on_the_document_being_edited(self):
+		sync_contact.import_contacts("Project", "PROJ-0001", ["C-2"])
+
+		self.assertIn(("Project", "write", "PROJ-0001", True), STATE["perm_calls"])
+
+	# -- what the dialog offers ----------------------------------------------
+
+	def test_importable_excludes_what_the_document_already_has(self):
+		"""Offering a contact that is already linked makes ticking it a no-op."""
+		STATE["Dynamic Link"].append(
+			{
+				"parent": "C-1",
+				"parenttype": "Contact",
+				"link_doctype": "Project",
+				"link_name": "PROJ-0001",
+			}
+		)
+		sources = [{"doctype": "Project", "name": "PROJ-0001"}, {"doctype": "Customer", "name": "ACME"}]
+
+		offered = {
+			c["name"]
+			for c in sync_contact.get_importable_contacts("Project", "PROJ-0001", sources)
+		}
+
+		self.assertNotIn("C-1", offered)
+		self.assertEqual(offered, {"C-2", "C-3", "C-4", "C-5"})
+
+	def test_importable_never_offers_a_deliberate_unlink(self):
+		"""A Contact hidden from this document stays hidden — a bulk import must
+		not be a way to undo an unlink nobody remembers making."""
+		STATE["Directory Link Exclusion"].append(
+			{
+				"name": "EXCL-1",
+				"source_doctype": "Project",
+				"source_name": "PROJ-0001",
+				"ref_doctype": "Contact",
+				"ref_name": "C-3",
+			}
+		)
+		sources = [{"doctype": "Customer", "name": "ACME"}]
+
+		offered = {
+			c["name"]
+			for c in sync_contact.get_importable_contacts("Project", "PROJ-0001", sources)
+		}
+
+		self.assertNotIn("C-3", offered)
+
+	def test_importable_stays_inside_the_parties_it_was_given(self):
+		"""Another account's contacts are not reachable by widening the dialog."""
+		sources = [{"doctype": "Customer", "name": "ACME"}]
+
+		offered = {
+			c["name"]
+			for c in sync_contact.get_importable_contacts("Project", "PROJ-0001", sources)
+		}
+
+		self.assertNotIn("C-OTHER", offered)
+
+
 if __name__ == "__main__":
 	unittest.main()
