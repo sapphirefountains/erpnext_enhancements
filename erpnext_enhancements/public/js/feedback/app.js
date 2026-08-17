@@ -15,6 +15,7 @@ import {
 	VIEW_NEW,
 	VIEW_MINE,
 	VIEW_REVIEW,
+	VIEW_ALL,
 	VIEW_REQUEST,
 	parseRoute,
 	buildRoute,
@@ -42,6 +43,9 @@ import {
 
 const PRIORITIES = ["Low", "Medium", "High", "Urgent"];
 
+/** Mirrors `api.feedback.draft_description`'s own guard. The server stays the authority. */
+const MIN_TITLE_FOR_DRAFT = 8;
+
 export class FeedbackApp {
 	constructor(root, boot) {
 		this.root = root;
@@ -58,6 +62,9 @@ export class FeedbackApp {
 			view: VIEW_NEW,
 			name: "",
 			detail: null,
+			// Admin-view filters. Not in the URL: a filtered admin list is something you scan,
+			// not something you link somebody to.
+			allFilters: { search: "", status: "", request_type: "", start: 0 },
 			busy: false,
 		};
 		// Captured once, at load, from the page they came *from*. Reading it later would
@@ -135,6 +142,7 @@ export class FeedbackApp {
 				view: VIEW_REVIEW,
 				label: `Review queue${this.state.reviewQueue.length ? ` (${this.state.reviewQueue.length})` : ""}`,
 			});
+			tabs.push({ view: VIEW_ALL, label: "All requests" });
 		}
 		for (const tab of tabs) {
 			const node = link(tab.label, buildRoute(tab.view), (href) => this.navigate(href));
@@ -170,6 +178,7 @@ export class FeedbackApp {
 		if (route.view === VIEW_REQUEST) return this.renderRequest(route.name);
 		if (route.view === VIEW_MINE) return this.renderMine();
 		if (route.view === VIEW_REVIEW) return this.renderReview();
+		if (route.view === VIEW_ALL) return this.renderAll();
 		return this.renderNew();
 	}
 
@@ -230,16 +239,31 @@ export class FeedbackApp {
 				this.showBanner(e.message, "bad");
 			} finally {
 				this.setBusy(draft, false, "Expand with AI");
+				// `setBusy` re-enables unconditionally; re-apply the title rule so a cleared
+				// title does not leave a live button behind.
+				syncDraft();
 			}
 		});
 		const descriptionField = field("Description", descInput);
 		const descriptionTools = el("div", "ee-fb-field-tools");
-		append(
-			descriptionTools,
-			draft,
-			el("span", "ee-fb-field-help", "Write a title, then expand it if you want a hand.")
-		);
+		const draftHelp = el("span", "ee-fb-field-help", "");
+		append(descriptionTools, draft, draftHelp);
 		append(descriptionField.row, descriptionTools);
+
+		// The button is disabled until there is a title to expand FROM. Without this, clicking
+		// it early threw the server's own "write a title first" guard back as a 417 — which is
+		// a correct refusal presented as a server error, and it showed up in the console as
+		// one. The server keeps that guard (it is the authority; this is a courtesy), so the
+		// two thresholds have to agree.
+		const syncDraft = () => {
+			const ready = titleInput.value.trim().length >= MIN_TITLE_FOR_DRAFT;
+			draft.disabled = !ready || this.state.busy;
+			draftHelp.textContent = ready
+				? "Expands your title into a description you can edit."
+				: "Write a title first, then this can expand it for you.";
+		};
+		titleInput.addEventListener("input", syncDraft);
+		syncDraft();
 
 		const attachments = this.buildAttachmentPicker();
 
@@ -377,6 +401,173 @@ export class FeedbackApp {
 			return;
 		}
 		append(this.pane, this.requestList(this.state.reviewQueue, { showRequester: true }));
+	}
+
+	/**
+	 * Every request, filterable — the admin view.
+	 *
+	 * Deliberately not the review queue. That one is work to do and excludes terminal states;
+	 * this one includes them, because the questions it answers are historical: what did we turn
+	 * down, what has this person filed, what came of it.
+	 *
+	 * Paged server-side. The filter state lives on `this.state.allFilters` rather than in the
+	 * URL — a filtered admin list is a thing you scan, not a thing you link somebody to, and
+	 * putting it in the URL would mean reconciling it with the router on every keystroke.
+	 */
+	async renderAll() {
+		clear(this.pane);
+		if (!this.state.isReviewer) {
+			append(this.pane, this.notice("Not for you", "Only a System Manager can see every request."));
+			return;
+		}
+		append(this.pane, el("div", "ee-fb-loading", "Loading…"));
+
+		let data;
+		try {
+			data = await call(M.ALL, this.state.allFilters);
+		} catch (e) {
+			clear(this.pane);
+			append(this.pane, this.notice("Could not load", e.message));
+			return;
+		}
+
+		clear(this.pane);
+		append(this.pane, this.allFilterBar(data), this.allTally(data), this.allTable(data));
+		if (data.total > data.page_size) append(this.pane, this.allPager(data));
+	}
+
+	allFilterBar(data) {
+		const bar = el("div", "ee-fb-filters");
+		const apply = (patch) => {
+			// Any filter change resets to page one: staying on page 4 of a narrower result set
+			// lands on an empty screen that reads as "nothing matches".
+			this.state.allFilters = { ...this.state.allFilters, ...patch, start: 0 };
+			this.renderAll();
+		};
+
+		const search = input("search", "Title or ER-2026-…", this.state.allFilters.search || "");
+		search.addEventListener("keydown", (ev) => {
+			if (ev.key === "Enter") apply({ search: search.value });
+		});
+
+		const status = select(
+			[{ value: "", label: "Any status" }].concat(
+				(data.statuses || []).map((s) => ({ value: s, label: s }))
+			),
+			this.state.allFilters.status || ""
+		);
+		status.addEventListener("change", () => apply({ status: status.value }));
+
+		const kind = select(
+			[{ value: "", label: "Any type" }].concat(
+				(data.request_types || []).map((t) => ({ value: t, label: t }))
+			),
+			this.state.allFilters.request_type || ""
+		);
+		kind.addEventListener("change", () => apply({ request_type: kind.value }));
+
+		append(
+			bar,
+			search,
+			status,
+			kind,
+			button("Search", "ee-fb-btn ee-fb-btn-small", () => apply({ search: search.value })),
+			button("Clear", "ee-fb-btn ee-fb-btn-small", () => apply({ search: "", status: "", request_type: "" }))
+		);
+		return bar;
+	}
+
+	allTally(data) {
+		const tally = el("div", "ee-fb-tally");
+		const counts = data.counts || {};
+		// Whole-table, not filtered — it is the denominator the page is read against.
+		for (const status of data.statuses || []) {
+			if (!counts[status]) continue;
+			const chip = statusPill(status);
+			append(chip, el("span", "ee-fb-tally-n", ` ${counts[status]}`));
+			tally.appendChild(chip);
+		}
+		const showing = data.rows.length;
+		append(
+			tally,
+			el(
+				"span",
+				"ee-fb-tally-total",
+				`${data.start + 1}–${data.start + showing} of ${data.total}`
+			)
+		);
+		return tally;
+	}
+
+	allTable(data) {
+		if (!data.rows.length) {
+			return this.notice("Nothing matches", "Try clearing the filters.");
+		}
+		const table = el("table", "ee-fb-table");
+		const thead = el("thead");
+		const hrow = el("tr");
+		for (const label of ["Request", "Type", "Impact", "Filed by", "Status", "Work", "Filed"]) {
+			const th = el("th", null, label);
+			th.scope = "col";
+			hrow.appendChild(th);
+		}
+		append(thead, hrow);
+		append(table, thead);
+
+		const tbody = el("tbody");
+		for (const row of data.rows) {
+			const tr = el("tr", "ee-fb-table-row");
+
+			const first = el("td", "ee-fb-cell-task");
+			append(
+				first,
+				link(row.title || row.name, buildRoute(VIEW_REQUEST, row.name), (href) => this.navigate(href)),
+				el("span", "ee-fb-task-name", ` ${row.name}`)
+			);
+			append(tr, first);
+
+			append(tr, el("td", "ee-fb-cell-quiet", row.request_type || ""));
+			append(tr, el("td", "ee-fb-cell-quiet", row.impact || ""));
+			append(tr, el("td", "ee-fb-cell-quiet", row.requester_name || ""));
+
+			const status = el("td");
+			append(status, statusPill(row.status));
+			append(tr, status);
+
+			append(tr, el("td", "ee-fb-cell-quiet", this.workSummary(row)));
+			append(tr, el("td", "ee-fb-cell-quiet", relativeTime(row.creation)));
+			tbody.appendChild(tr);
+		}
+		append(table, tbody);
+
+		const scroller = el("div", "ee-fb-table-wrap");
+		append(scroller, table);
+		return scroller;
+	}
+
+	/** "3/7" once work exists, the closing reason when it never will, else blank. */
+	workSummary(row) {
+		const tasks = row.tasks || { created: 0, done: 0 };
+		if (tasks.created) return `${tasks.done}/${tasks.created}`;
+		if (row.status === "Duplicate") return row.duplicate_of_task || "duplicate";
+		if (row.status === "Rejected") return "—";
+		return "";
+	}
+
+	allPager(data) {
+		const pager = el("div", "ee-fb-actions");
+		const go = (start) => {
+			this.state.allFilters = { ...this.state.allFilters, start };
+			this.renderAll();
+		};
+		const prev = button("Previous", "ee-fb-btn ee-fb-btn-small", () =>
+			go(Math.max(0, data.start - data.page_size))
+		);
+		prev.disabled = data.start <= 0;
+		const next = button("Next", "ee-fb-btn ee-fb-btn-small", () => go(data.start + data.page_size));
+		next.disabled = data.start + data.rows.length >= data.total;
+		append(pager, prev, next);
+		return pager;
 	}
 
 	requestList(rows, { showRequester }) {

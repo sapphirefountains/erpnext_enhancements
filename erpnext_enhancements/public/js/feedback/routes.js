@@ -37,6 +37,7 @@
 export const VIEW_NEW = "new";
 export const VIEW_MINE = "mine";
 export const VIEW_REVIEW = "review";
+export const VIEW_ALL = "all";
 export const VIEW_REQUEST = "request";
 
 const BASE = "/feedback";
@@ -55,6 +56,7 @@ export function parseRoute(pathname) {
 	const section = parts[1] || "";
 	if (section === VIEW_MINE) return { view: VIEW_MINE, name: "", bare: false };
 	if (section === VIEW_REVIEW) return { view: VIEW_REVIEW, name: "", bare: false };
+	if (section === VIEW_ALL) return { view: VIEW_ALL, name: "", bare: false };
 	if (section === VIEW_NEW) return { view: VIEW_NEW, name: "", bare: false };
 	if (section === VIEW_REQUEST && parts[2]) {
 		return { view: VIEW_REQUEST, name: decodeURIComponent(parts[2]), bare: false };
@@ -68,6 +70,7 @@ export function buildRoute(view, name) {
 	if (view === VIEW_REQUEST && name) return `${BASE}/request/${encodeURIComponent(name)}`;
 	if (view === VIEW_MINE) return `${BASE}/mine`;
 	if (view === VIEW_REVIEW) return `${BASE}/review`;
+	if (view === VIEW_ALL) return `${BASE}/all`;
 	// Explicit, so clicking the tab is distinguishable from arriving at the bare route — and
 	// so the form survives a refresh and can be linked to.
 	if (view === VIEW_NEW) return `${BASE}/new`;

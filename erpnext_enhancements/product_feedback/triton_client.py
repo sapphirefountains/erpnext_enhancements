@@ -95,11 +95,20 @@ def request_breakdown(
 	"""
 	from erpnext_enhancements import triton_chat
 
-	# Configuration is read BEFORE assuming anybody's identity. `get_settings()` calls
-	# `get_password()` on the gateway secret, which Frappe permission-checks — reading it
-	# inside the impersonation window asks the *reviewer* for permission to read a password
-	# field, and they do not have it. This exact bug made the chat digest raise
-	# PermissionError on every run; the fix is the ordering, not a permission grant.
+	# Configuration is read BEFORE assuming anybody's identity, and the reason is attribution
+	# rather than permission.
+	#
+	# An earlier version of this comment claimed `get_password()` is permission-checked and
+	# that reading it inside the impersonation window would raise for the reviewer. That was
+	# inherited from the chat client and is **not what v16 does**: `Document.get_password`
+	# delegates to `frappe.utils.password.get_decrypted_password`, which is a direct query
+	# against `__Auth` with no permission check at all (verified against the version-16 tree,
+	# 2026-08-17), and `get_cached_doc` does not check either.
+	#
+	# The ordering still matters. `frappe.set_user` moves the session for everything after it,
+	# so config read inside the window is read as the reviewer and — more importantly — the
+	# token cache below is keyed on the session user. Keep configuration outside the window and
+	# only the mint inside it.
 	settings = triton_chat.get_settings()
 	base_url = (settings.get("base_url") or "").strip()
 	if not base_url:
