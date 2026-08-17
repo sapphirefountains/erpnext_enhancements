@@ -157,6 +157,81 @@ def get_request(name):
 # ------------------------------------------------------------------------------- intake
 
 
+#: Recorded on the AI Model Usage row so description drafting is accounted for separately
+#: from the work breakdown and from email/SMS drafting.
+DRAFT_FEATURE = "feedback_description_draft"
+
+_DRAFT_SYSTEM = """\
+You help a Sapphire Fountains employee turn a one-line note about their ERPNext or Triton \
+software into a description a developer can act on.
+
+Expand what they wrote. Do not invent specifics they did not give you — no error messages \
+they did not quote, no screens they did not name, no numbers. Where a detail is missing and \
+matters, say what is missing rather than filling it in.
+
+Three short paragraphs at most, plain prose, no headings and no markdown. Write it in their \
+voice, first person, as the person who noticed it. For a bug: what happens, what they \
+expected, and what it stops them doing. For a feature: what they are trying to achieve and \
+why the current behaviour gets in the way.
+"""
+
+
+@frappe.whitelist(methods=["POST"])
+def draft_description(title=None, description=None, request_type=None):
+    """Expand a one-liner into a fuller description. **Persists nothing.**
+
+    Same doctrine as ``api/training_ai.py``: a drafting call returns transient text and writes
+    no record. What comes back lands in the requester's textarea, where they edit it and then
+    submit — so the description that reaches a reviewer is one a human signed off, not one a
+    model filed on their behalf.
+
+    Synchronous, and deliberately: Vertex returns in a few seconds, the requester is sitting
+    in front of the form waiting, and enqueuing would mean inventing a polling channel to save
+    a wait they are already having.
+
+    Runs on this app's own Vertex client rather than through Triton. It is a one-shot drafting
+    call with no need of the codebase, the boards or a session — routing it through the
+    planning endpoint would add a hop and an identity exchange to produce a paragraph.
+    """
+    _require_session()
+    if get_settings()["paused"]:
+        frappe.throw(_("New requests are paused right now."), frappe.ValidationError)
+
+    title = (title or "").strip()
+    if len(title) < 8:
+        frappe.throw(
+            _("Write a title first — there is nothing to expand from yet."), frappe.ValidationError
+        )
+
+    kind = (request_type or "").strip()
+    if kind not in VALID_REQUEST_TYPES:
+        kind = "Bug"
+
+    existing = frappe.utils.strip_html((description or "").strip())[:MAX_BODY_CHARS]
+    prompt = f"Type: {kind}\nTitle: {title}\n"
+    if existing:
+        prompt += f"\nWhat they have written so far, which you are expanding rather than replacing:\n{existing}\n"
+
+    try:
+        settings = frappe.get_single("Triton Settings")
+        from erpnext_enhancements.api.gemini import generate_content_with_vertex_ai
+
+        text, _thoughts = generate_content_with_vertex_ai(
+            prompt, _DRAFT_SYSTEM, settings, feature=DRAFT_FEATURE
+        )
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Enhancement Request description draft failed")
+        frappe.throw(
+            _("The draft could not be generated. Write the description yourself and submit — nothing is blocked."),
+            frappe.ValidationError,
+        )
+
+    text = (text or "").strip()
+    if not text:
+        frappe.throw(_("The model returned nothing. Try again, or just write it."), frappe.ValidationError)
+    return {"description": text[:MAX_BODY_CHARS]}
+
+
 @frappe.whitelist(methods=["POST"])
 def submit_request(payload=None, attachments=None):
     """File a new request as the session user.

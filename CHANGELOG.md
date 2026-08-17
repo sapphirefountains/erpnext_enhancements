@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.320.1] - 2026-08-17
+## [1.321.0] - 2026-08-17
 
 ### Fixed
 
@@ -45,6 +45,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Refresh button on the panel**, since status is read at load and the alternative was a
   full page reload.
+
+- **The breakdown now sees the codebase.** It was planning **blind**: Triton has no GitHub
+  integration, no filesystem tool, and nothing about either repository in its RAG corpus — so
+  a proposed task could name a module that does not exist, put a portal page in `api/`, or
+  describe work in a module whose whole point is something else. Plausible tasks, not accurate
+  ones, which is the complaint.
+
+  `product_feedback/codemap.py` builds a map of **this app's own source** and sends it in the
+  payload. Triton adds a map of its own repo (Triton `0.71.0`); neither side can see the
+  other's code, so each contributes the half it can actually observe.
+
+  **Not the source.** ~94k lines does not fit in a prompt, and a model that has read three
+  files at random is worse off than one that has read none — it will anchor on them. What goes
+  instead is what a new contributor reads first: the module map with its curated one-line
+  purpose per module, file listings for the packages where new code actually lands (`api/`,
+  `www/`, `patches/`, `utils/`, `scripts/`), and the Gotchas half of `CLAUDE.md`. About 5k
+  tokens, hard-capped.
+
+  **Read from the installed app** via `frappe.get_app_path`, so the map describes what is
+  deployed rather than what some checkout says, and cached against the deploy version because
+  that is exactly when it changes.
+
+  One thing worth knowing for anyone extending it: the per-module README H1 is **not** a
+  reliable purpose line. Newer modules write ``# `chat/` — what it covers`` but most older
+  ones write just ``# Chat``, and taking the module's own name as its description is worse
+  than leaving it blank because it reads like information. The purposes come from the root
+  README's module-map table, which is curated and complete; the H1 is only a fallback.
 
 ## [1.320.0] - 2026-08-17
 

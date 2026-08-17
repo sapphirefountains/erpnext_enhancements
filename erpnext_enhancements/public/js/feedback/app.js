@@ -209,6 +209,38 @@ export class FeedbackApp {
 		typeInput.addEventListener("change", syncSteps);
 		syncSteps();
 
+		// Expands the title into a fuller description. Fills the textarea rather than
+		// submitting anything — the requester edits it and is still the author.
+		const draft = button("Expand with AI", "ee-fb-btn ee-fb-btn-small", async () => {
+			this.setBusy(draft, true, "Drafting…");
+			try {
+				const result = await call(
+					M.DRAFT,
+					{
+						title: titleInput.value,
+						description: descInput.value,
+						request_type: typeInput.value,
+					},
+					{ timeout: 90000 }
+				);
+				descInput.value = result.description;
+				descInput.focus();
+				this.showBanner("Drafted from your title. Edit anything that is not right — you are the author.", "ok");
+			} catch (e) {
+				this.showBanner(e.message, "bad");
+			} finally {
+				this.setBusy(draft, false, "Expand with AI");
+			}
+		});
+		const descriptionField = field("Description", descInput);
+		const descriptionTools = el("div", "ee-fb-field-tools");
+		append(
+			descriptionTools,
+			draft,
+			el("span", "ee-fb-field-help", "Write a title, then expand it if you want a hand.")
+		);
+		append(descriptionField.row, descriptionTools);
+
 		const attachments = this.buildAttachmentPicker();
 
 		const submit = button("Submit", "ee-fb-btn ee-fb-btn-primary", async () => {
@@ -231,7 +263,7 @@ export class FeedbackApp {
 			field("Type", typeInput).row,
 			field("Title", titleInput).row,
 			field("Impact", impactInput, "Your read on it. It informs triage; it does not set the priority of the work.").row,
-			field("Description", descInput).row,
+			descriptionField.row,
 			stepsField.row,
 			attachments.row,
 			this.contextSummary(),

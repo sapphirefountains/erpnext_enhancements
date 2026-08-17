@@ -706,3 +706,12 @@ body .container {
 		animation: none !important;
 	}
 }
+
+/* The "Expand with AI" affordance under the description box. */
+.ee-fb-field-tools {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	margin-top: 4px;
+}
