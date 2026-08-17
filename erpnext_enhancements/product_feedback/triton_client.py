@@ -47,7 +47,15 @@ import frappe
 #: chat client's docstring records paying for.
 WORK_BREAKDOWN_PATH: str = "/api/v1/planning/work-breakdown"
 
+#: The "Expand with AI" button. Called by the *requester*, an ordinary employee — not a
+#: reviewer — which the bridge handles: it auto-provisions a Triton user on first mint, so
+#: somebody who has never opened Triton can still use the button.
+DRAFT_DESCRIPTION_PATH: str = "/api/v1/planning/draft-description"
+
 DEFAULT_TIMEOUT: int = 180
+
+#: Somebody is watching a spinner. Long enough for a paragraph, short enough to give up on.
+DRAFT_TIMEOUT: int = 60
 
 
 class TritonUnavailable(Exception):
@@ -93,8 +101,6 @@ def request_breakdown(
 	``breakdown.parse_breakdown``, which is stdlib-only so the parsing rules can be tested
 	without a bench.
 	"""
-	from erpnext_enhancements import triton_chat
-
 	# Configuration is read BEFORE assuming anybody's identity, and the reason is attribution
 	# rather than permission.
 	#
@@ -106,9 +112,37 @@ def request_breakdown(
 	# 2026-08-17), and `get_cached_doc` does not check either.
 	#
 	# The ordering still matters. `frappe.set_user` moves the session for everything after it,
-	# so config read inside the window is read as the reviewer and — more importantly — the
-	# token cache below is keyed on the session user. Keep configuration outside the window and
-	# only the mint inside it.
+	# and the token cache is keyed on the session user. Keep configuration outside the window
+	# and only the mint inside it. That is what `_call_as` does.
+	return _call_as(reviewer, WORK_BREAKDOWN_PATH, payload, timeout)
+
+
+def request_description_draft(
+	*,
+	user: str,
+	payload: dict[str, Any],
+	timeout: int = DRAFT_TIMEOUT,
+) -> dict[str, Any]:
+	"""Expand a one-liner into a description, **as ``user``** — the person filing the request.
+
+	Same transport and identity rules as :func:`request_breakdown`; only the path and the
+	caller differ. This one runs for any signed-in employee rather than a System Manager,
+	which is fine: the bridge auto-provisions a Triton user on first mint.
+
+	Returns Triton's ``{description, model, usage}``. Persists nothing on either side.
+	"""
+	return _call_as(user, DRAFT_DESCRIPTION_PATH, payload, timeout)
+
+
+def _call_as(user: str, path: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
+	"""Shared body of both calls: read config, assume the identity, post, restore.
+
+	Extracted rather than duplicated because the identity handling is the part that is easy to
+	get subtly wrong, and two copies means one of them eventually loses the ``finally``.
+	"""
+	from erpnext_enhancements import triton_chat
+
+	# Configuration is read BEFORE assuming anybody's identity — see request_breakdown.
 	settings = triton_chat.get_settings()
 	base_url = (settings.get("base_url") or "").strip()
 	if not base_url:
@@ -118,13 +152,12 @@ def request_breakdown(
 
 	previous = frappe.session.user
 	try:
-		# The token cache is keyed on the session user and this runs in a background job whose
-		# session is Administrator. See the module docstring.
-		frappe.set_user(reviewer)
-		return _post(base_url, WORK_BREAKDOWN_PATH, payload, timeout=timeout)
+		# The token cache is keyed on the session user and this may run in a background job
+		# whose session is Administrator. See the module docstring.
+		frappe.set_user(user)
+		return _post(base_url, path, payload, timeout=timeout)
 	finally:
-		# Restored on every path including the exception one. A job that left the session
-		# pointing at a coworker would attribute everything it did afterwards to them.
+		# Restored on every path including the exception one.
 		if previous:
 			frappe.set_user(previous)
 

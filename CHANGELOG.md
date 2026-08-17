@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.325.0] - 2026-08-17
+
+### Changed
+
+- **"Expand with AI" now drafts through Triton instead of this app's own Vertex client.**
+
+  It called `api/gemini.py`, which reads an API key from `Triton Settings.maps_api_key` and
+  posts it to the Vertex endpoint as `x-goog-api-key`. That key is empty on production — which
+  is what the reported `417` turned out to be — but the deciding evidence was broader:
+  **`AI Model Usage` records no successful call from that client for any feature, ever.** Not
+  `email_draft`, not `sms_draft`, not `morning_briefing`, not `training_quiz_draft`. Triton
+  logged eleven the same afternoon.
+
+  So "go and create an API key" was probably wrong advice, and the honest fix was to stop
+  depending on a path that has never once worked. The drafter now calls Triton's
+  `POST /api/v1/planning/draft-description` (Triton `>= 0.72.0`) through the existing
+  `product_feedback/triton_client.py` — the same transport, identity and error handling the
+  work breakdown already uses.
+
+  That client's two calls now share `_call_as`, which reads config, assumes the identity,
+  posts, and restores the session in a `finally`. Extracted rather than duplicated: the
+  identity handling is the easy thing to get subtly wrong, and two copies means one of them
+  eventually loses the `finally`.
+
+  `get_bootstrap`'s `ai_drafting` flag now reports whether **Triton** is reachable rather than
+  whether a Vertex key exists, so the button appears exactly when it can work. The prompt moved
+  to Triton with the call: it is model-facing text, and this side already sends facts rather
+  than instructions — the same split the code map follows.
+
+  **`api/gemini.py` is untouched and still wired to `communication.py`, `briefing.py` and
+  `training_ai.py`.** Those three remain non-functional until somebody sets that key. This
+  change does not fix them, and pretending otherwise would hide three broken features behind
+  one working button.
+
 ## [1.324.0] - 2026-08-17
 
 ### Fixed
