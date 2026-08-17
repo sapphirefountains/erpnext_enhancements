@@ -1,0 +1,127 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "creation": "2026-08-17 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "switch_section",
+  "paused",
+  "boards_section",
+  "erpnext_project",
+  "column_break_boards",
+  "triton_project",
+  "breakdown_section",
+  "max_proposed_tasks",
+  "duplicate_scan_limit",
+  "column_break_breakdown",
+  "breakdown_timeout",
+  "notify_section",
+  "reviewer_recipients"
+ ],
+ "fields": [
+  {
+   "fieldname": "switch_section",
+   "fieldtype": "Section Break",
+   "label": null
+  },
+  {
+   "fieldname": "paused",
+   "fieldtype": "Check",
+   "label": "Pause Intake",
+   "default": "0",
+   "description": "The kill switch, and it is named for the OFF state on purpose. A brand-new Single has no row in tabSingles at all, so get_single_value returns None until something saves it — an `enabled` field would therefore read falsy and ship the feature dead on arrival (CLAUDE.md). Naming it `paused` makes the absent-row state the running state. When on, /feedback still lists existing requests but refuses new submissions."
+  },
+  {
+   "fieldname": "boards_section",
+   "fieldtype": "Section Break",
+   "label": "Boards"
+  },
+  {
+   "fieldname": "erpnext_project",
+   "fieldtype": "Link",
+   "label": "ERPNext Project",
+   "options": "Project",
+   "description": "Where ERPNext work is written. Defaults to PRJ-00580 in code as well as here, so the feature works on a site whose seed patch has not run — but this field is what the allowlist checks, and a proposed task naming any other Project is dropped."
+  },
+  {
+   "fieldname": "column_break_boards",
+   "fieldtype": "Column Break",
+   "label": null
+  },
+  {
+   "fieldname": "triton_project",
+   "fieldtype": "Link",
+   "label": "Triton Project",
+   "options": "Project",
+   "description": "Where Triton work is written. Defaults to PRJ-00755."
+  },
+  {
+   "fieldname": "breakdown_section",
+   "fieldtype": "Section Break",
+   "label": "Breakdown"
+  },
+  {
+   "fieldname": "max_proposed_tasks",
+   "fieldtype": "Int",
+   "label": "Max Proposed Tasks",
+   "default": "12",
+   "description": "Hard clamp on what one breakdown may propose, applied after parsing. A model asked for a work breakdown will happily return forty rows; a proposal nobody reads to the end is worse than a short one."
+  },
+  {
+   "fieldname": "duplicate_scan_limit",
+   "fieldtype": "Int",
+   "label": "Duplicate Scan Limit",
+   "default": "400",
+   "description": "How many open Task subjects are sent for the duplicate check. Subjects only, most recently modified first — the two boards carry ~340 open tasks between them, so this is a ceiling rather than a sample."
+  },
+  {
+   "fieldname": "column_break_breakdown",
+   "fieldtype": "Column Break",
+   "label": null
+  },
+  {
+   "fieldname": "breakdown_timeout",
+   "fieldtype": "Int",
+   "label": "Breakdown Timeout (seconds)",
+   "default": "180",
+   "description": "Read timeout on the Triton call. Generous because this runs in a background job with nobody waiting on a spinner, and a truncated read costs a whole re-run."
+  },
+  {
+   "fieldname": "notify_section",
+   "fieldtype": "Section Break",
+   "label": "Notifications"
+  },
+  {
+   "fieldname": "reviewer_recipients",
+   "fieldtype": "Table",
+   "label": "Notify On New Request",
+   "options": "Product Feedback Reviewer",
+   "description": "Bell entry plus email when a request is filed. Empty means nobody is told and the review queue is the only surface — which is a valid choice, not an error."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-08-17 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Product Feedback",
+ "name": "Product Feedback Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

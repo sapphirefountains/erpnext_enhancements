@@ -7,6 +7,124 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.319.0] - 2026-08-17
+
+### Added
+
+- **`/feedback` — employees file bugs and feature requests; approved ones become tasks on
+  PRJ-00580 / PRJ-00755.** A new `Product Feedback` module, a portal SPA, and one call out to
+  Triton. Recorded as [ADR 0010](decisions/adr/0010-employee-feedback-to-tasks.md).
+
+  The route from "I noticed this" to "it's on the board" was a Google Chat message and somebody
+  transcribing it. The two dev boards are real production Projects — 287 tasks on PRJ-00580, 51
+  on PRJ-00755 — curated by hand by one person, so anything that let employees write to them
+  directly would destroy the curation, and anything that needed manual transcription kept the
+  bottleneck. This does the tedious half (turning a paragraph of complaint into properly shaped
+  tasks in the house style) and leaves the judgement half alone.
+
+  Lifecycle: anybody signed in files a request; a System Manager approves, rejects, or closes it
+  against an existing task; approval enqueues a background call to Triton's new
+  `POST /api/v1/planning/work-breakdown`, which returns a proposal; the reviewer edits the rows
+  and confirms; only then are `Task` documents created.
+
+  **ERPNext writes the tasks. Triton only proposes them.** Triton can already write to ERPNext
+  and using that would have been fewer moving parts — it would also mean a model's mistakes
+  landing directly on the two boards the company plans all of its engineering on, at a moment
+  when TASK-2026-01583 is open on shrinking exactly that write surface. The shape instead is the
+  one `api/training_ai.py` established: the drafting call **persists nothing**, and the accept
+  call is what writes rows and stamps a named person against them.
+  `tests/test_feedback_endpoint_surface.py` asserts structurally that only
+  `product_feedback/task_writer.py` constructs a `Task`, with a control asserting that module
+  still does — verified by reintroducing the bug.
+
+  **A task names a `target`, never a Project.** The model chooses from the closed set
+  `{"erpnext", "triton"}` and ERPNext maps that to a Project id from its own settings. A model
+  that could emit a project id could write onto a live customer job, and the request text it is
+  reasoning over is prose an employee typed. Same rule for `parent_task` and every duplicate
+  candidate: both must appear in the open-task list ERPNext sent, because a model asked to cite
+  a task id invents a plausible one rather than admitting it has none. The reviewer's
+  "ERPNext only" override is enforced by narrowing that enum *before* generation, not by
+  filtering afterwards — which would leave them wondering why half the plan vanished.
+
+  **The house style is not in a prompt constant.** Each Project's own `notes` field already
+  carries the methodology for its task tree ("one group task per workstream, leaf tasks whose
+  subjects state the outcome or the defect…"). ERPNext forwards that text. A constant would drift
+  from it the first time somebody edited the Project.
+
+  Native-first check (ADR 0002), verified against production 2026-08-17. **ERPNext `Issue`:**
+  rejected — one record on prod, from July 2025, customer-linked; it drags in Support Settings,
+  SLA machinery and the email inbox, and would still need ten custom fields. **Frappe
+  `Workflow`:** rejected for the lifecycle and this is the deviation that needed writing down —
+  a Workflow transition is a human action gated by a role, and three of this machine's
+  transitions are made by a background worker while the terminal one is an
+  accept-the-edited-proposal call rather than a `docstatus` bump. Modelling it as a Workflow
+  means a second status field for the machine states or transitions no human performs. `Task` +
+  `parent_task`, ToDo assignment and `Notification Log` are all used as-is.
+
+- **Durability without a second queue table.** The prod deploy `FLUSHDB`s the queue redis, so an
+  ordinary successful deploy destroys queued jobs silently — `enqueue` has already returned
+  success. `Chat Relay Job` exists for that reason and this feature deliberately does not get
+  one: **the status is the outbox.** A request sitting in `Approved` with no proposal *is* a lost
+  job, it is visible in the review queue, and an hourly sweeper re-drives it. A durable outbox
+  row is for work a human believes already happened; this is work a human is waiting on and can
+  re-drive with a button. `deduplicate=True` is not used — it drops the new enqueue while an
+  existing job is QUEUED **or STARTED**, so a running job would swallow the re-run meant to
+  replace it.
+
+- **The kill switch is named `paused`, not `enabled`.** A brand-new Single doctype has *no rows*
+  in `tabSingles` until something saves it, so every `get_single_value` answers `None` on the day
+  it ships — the trap `CLAUDE.md` records from the Chat Settings incident. An `enabled` field
+  would therefore have shipped the feature dead on arrival, and the fix would have been a patch
+  nobody knew to write. Naming it for the off state makes the absent-row state the running state.
+  `patches/seed_product_feedback_settings.py` writes the row anyway so the two Project ids are
+  visible and editable in the desk, but `get_settings()` applies every fallback itself and does
+  not depend on the patch having run.
+
+- **Bell plus email, and exactly one email.** `product_feedback/notify.py` inserts a
+  `Notification Log` row of type `Alert` and sends its own mail. That is not a double-send:
+  Frappe's own `hooks.py` ships `notification_skip_email_types = ["Alert"]` and that check runs
+  *before* the user's own settings, so an `Alert` row is bell-only by construction. `Alert` is
+  also in `notification_self_notify_types`, which matters because the reviewer who approves a
+  request is the same person the breakdown-ready notification goes to. `status_alerts._deliver`
+  was the obvious reuse and was rejected: it also fires SMS through the Triton gateway, and a
+  feature request is not an operational alert.
+
+- **Attachments are linked server-side, and the reason is a permission hole avoided.** The
+  requester holds `read` with `if_owner` on their own request and nothing more — granting write
+  would let them move `status`, and `Submitted -> Approved` is a *legal* transition, so the
+  transition table would wave a self-approval straight through. Frappe's `upload_file` calls
+  `check_write_permission(doctype, docname)`, which returns immediately when `doctype` is empty
+  (confirmed against the v16 tree), so the SPA uploads an unattached private File and
+  `submit_request` links it after checking the caller owns it and it is not already attached
+  elsewhere.
+
+- **The duplicate scan spells it `Canceled`, with one l.** Caught before shipping by reading
+  `frappe.get_meta("Task")` on production rather than trusting the reflex: this site's
+  `Task.status` offers `Open, Working, Invoiced, Completed, Canceled, Pending Review, Overdue,
+  Template`. `status not in (…"Cancelled"…)` matches every canceled row, so abandoned work
+  would have been offered to a reviewer as a live duplicate — and there is one such row on
+  PRJ-00580 today. It cannot be pinned by a bench-free test (`Task` is an ERPNext core doctype
+  and its JSON is not in this repo), so the constant carries a dated verification instead.
+
+### Changed
+
+- `utils/triton_sync.py` excludes the new `Product Feedback` module from the site-wide
+  `after_save` webhook. An `Enhancement Request` is saved several times during one breakdown and
+  the thing doing the breaking down is Triton, so each save would be a POST about a conversation
+  Triton is already in — and the payload would carry the requester's own words to an indexer with
+  no mandate to hold them. Same pair of reasons as Chat, at smaller volume.
+
+- `hooks.py`: `/feedback/<path:feedback_path>` added to `website_route_rules` (every notification
+  links to `/feedback/request/<name>`, so deep links must survive a hard refresh — and the
+  `website_404` cache trap applies, so do not advertise the route before the deploy lands), and
+  the breakdown sweeper appended to the existing `hourly` key.
+
+### Notes
+
+- Needs Triton `>= 0.70.0` for `POST /api/v1/planning/work-breakdown`. Until that deploys,
+  approving a request lands it in `Breakdown Failed` with a legible reason and a re-run button —
+  the feature degrades to a triage queue rather than breaking.
+
 ## [1.318.0] - 2026-08-15
 
 ### Added

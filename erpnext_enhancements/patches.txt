@@ -696,3 +696,13 @@ erpnext_enhancements.patches.clear_unsigned_chat_audit_reason_category
 # ignore_share_permission. `everyone = 1` would make one such row every non-Guest account at
 # once. Keyed on share_doctype, which is the fact that makes a row wrong. Safe twice.
 erpnext_enhancements.patches.purge_chat_docshares
+
+# Creates the Product Feedback Settings row. A brand-new Single doctype has NO rows in
+# tabSingles until something saves it -- migrate creates the DocType and stops, load_from_db
+# applies no defaults, and new_doc() (which does) runs on a fresh install and never again. So
+# every get_single_value would answer None on the day this ships. The code does not depend on
+# this patch (get_settings() applies its own fallbacks, and the kill switch is named `paused`
+# so the no-row state is the RUNNING state) -- this exists so the two Project ids are visible
+# and editable in the desk rather than being constants a reader has to find in Python. Fills
+# only fields with no stored row, never over a stored falsy value. Safe twice.
+erpnext_enhancements.patches.seed_product_feedback_settings

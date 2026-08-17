@@ -924,6 +924,12 @@ scheduler_events = {
 		# plaid_banking: refresh cached bank balances (self-throttled to
 		# refresh_poll_minutes; skips while paused, so a dead link can't storm)
 		"erpnext_enhancements.plaid_banking.core.tasks.scheduled_balance_refresh",
+		# product_feedback: re-drive approvals whose Triton call never ran. This IS the
+		# durability story for that feature — the prod deploy FLUSHDBs the queue redis, so
+		# an ordinary successful deploy destroys queued jobs silently and `enqueue` has
+		# already reported success. An Enhancement Request sitting in `Approved` with no
+		# proposal is the observable trace a lost job leaves; nothing else is. ADR 0010.
+		"erpnext_enhancements.product_feedback.breakdown.sweep_stalled_breakdowns",
 	],
 	"weekly": [
 		"erpnext_enhancements.tasks.suggest_truck_restocks",
@@ -956,8 +962,15 @@ extend_bootinfo = "erpnext_enhancements.boot.boot_session"
 # before the deploy carrying it has landed.
 #
 # The bare /chat path is matched by www/chat.html itself and needs no rule.
+#
+# /feedback works the same way (ADR 0010): one shell at www/feedback.html serving
+# every sub-path, so a hard refresh at /feedback/request/ER-2026-00001 renders it
+# rather than 404ing. Every notification product_feedback/notify.py sends links to
+# exactly such a URL, so this rule is what makes those links work at all — and the
+# same `website_404` trap above applies to it.
 website_route_rules = [
 	{"from_route": "/chat/<path:chat_path>", "to_route": "chat"},
+	{"from_route": "/feedback/<path:feedback_path>", "to_route": "feedback"},
 ]
 
 # Jinja methods available to Print Formats / web templates. The print sandbox

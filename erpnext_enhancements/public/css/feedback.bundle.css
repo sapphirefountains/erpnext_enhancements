@@ -1,0 +1,577 @@
+/*
+ * Feedback SPA styles — a single esbuild bundle (content-hashed filename), loaded by
+ * www/feedback.html through bundled_asset('feedback.bundle.css'). Same cache rationale as
+ * the JS: raw /assets paths are immutable for a year with no content hash. ADR 0008.
+ *
+ * The accent tokens are lifted verbatim from chat.bundle.css, including the reasoning, which
+ * is repeated rather than referenced because a copy that quietly drops the reasoning is a
+ * copy somebody "simplifies" back to one token.
+ *
+ * Three things here are load-bearing rather than cosmetic:
+ *
+ *   1. 100dvh, not 100vh. Under a mobile browser's collapsing toolbar 100vh puts the submit
+ *      button under the URL bar, and env(safe-area-inset-*) keeps it off the home indicator.
+ *   2. Focus outlines are never removed. :focus-visible is styled, not suppressed.
+ *   3. Status carries a non-colour cue — every pill has a glyph as well as a colour, built in
+ *      dom.js — because a colour-only indicator fails WCAG and fails anybody who cannot
+ *      distinguish it. Do not delete the glyph to tidy the markup.
+ */
+
+/*
+ * THE ACCENT IS THREE TOKENS, NOT ONE.
+ *
+ * Sapphire's brand blue is #00a0dd. Against white it is 2.97:1, and white against it is the
+ * same 2.97:1 — so as text on the light theme, OR as a background with white text on it, it
+ * fails WCAG AA (4.5:1) and does not clear the 3:1 floor for large text either. One token
+ * cannot serve both jobs, because the requirements point in opposite directions: text has to
+ * move away from the page background per theme, while a surface carrying white text has to
+ * stay dark in both.
+ *
+ *   --ee-brand          the brand exactly, for things carrying no text — tints, focus ring.
+ *   --ee-brand-ink      the accent used AS TEXT on the page background. Per theme.
+ *   --ee-brand-surface  the accent used AS A BACKGROUND with white text. Dark in both themes,
+ *                       because white does not get lighter at night.
+ */
+:root {
+	--ee-brand: #00a0dd;
+	--ee-brand-ink: #0077a8;
+	--ee-brand-surface: #0077a8;
+	--ee-bg: #ffffff;
+	--ee-bg-alt: #f6f8fa;
+	--ee-border: #d8dee4;
+	--ee-text: #1f2328;
+	--ee-muted: #656d76;
+	--ee-danger: #cf222e;
+	--ee-warn: #9a6700;
+	--ee-ok: #2da44e;
+	--ee-radius: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--ee-bg: #15181d;
+		--ee-bg-alt: #1c2027;
+		--ee-border: #333a44;
+		--ee-text: #e6edf3;
+		--ee-muted: #9aa4b1;
+		--ee-danger: #ff7b72;
+		--ee-warn: #d4a72c;
+		--ee-ok: #56d364;
+		/* Accent text moves the other way at night: #0077a8 on #15181d is 2.7:1, worse than
+		   the problem it fixes. --ee-brand-surface deliberately does NOT change. */
+		--ee-brand-ink: #4cc2f0;
+	}
+}
+
+body,
+.ee-fb-root {
+	margin: 0;
+	background: var(--ee-bg);
+	color: var(--ee-text);
+}
+
+/*
+ * Headings do not inherit the line above, and that is not obvious from reading it.
+ *
+ * Frappe's website stylesheet colours h1–h6 explicitly with its own --heading-color token,
+ * which is a fixed near-black and does NOT follow prefers-color-scheme. So every heading here
+ * would render black on the dark theme while everything around it inherited --ee-text
+ * correctly. An explicit colour beats inheritance, and the colour set on the root never
+ * reaches them. The chat bundle carries the identical rule; it is not optional.
+ */
+.ee-fb-root :is(h1, h2, h3, h4, h5, h6) {
+	color: var(--ee-text);
+}
+
+/* The website shell wraps page_content in containers that would letterbox a full-height
+   application. Overridden here rather than by removing the blocks, so an upgrade that
+   changes templates/web.html does not silently un-fix it. */
+body > .main-section,
+body .page_content,
+body .container {
+	max-width: none;
+	padding: 0;
+	margin: 0;
+}
+
+.ee-fb-root {
+	display: flex;
+	flex-direction: column;
+	/* dvh, not vh — see the header comment. */
+	min-height: 100dvh;
+	padding: 0 max(16px, env(safe-area-inset-left)) max(16px, env(safe-area-inset-bottom))
+		max(16px, env(safe-area-inset-right));
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	font-size: 15px;
+	line-height: 1.5;
+	box-sizing: border-box;
+}
+
+.ee-fb-root *,
+.ee-fb-root *::before,
+.ee-fb-root *::after {
+	box-sizing: inherit;
+}
+
+/* ------------------------------------------------------------------ boot + chrome */
+
+.ee-fb-boot {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	min-height: 60dvh;
+	color: var(--ee-muted);
+}
+
+.ee-fb-boot-mark {
+	font-size: 32px;
+}
+
+.ee-fb-header {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 20px 0 8px;
+	max-width: 900px;
+	width: 100%;
+	margin: 0 auto;
+}
+
+.ee-fb-title {
+	font-size: 20px;
+	margin: 0;
+}
+
+.ee-fb-who {
+	color: var(--ee-muted);
+	font-size: 13px;
+}
+
+.ee-fb-nav {
+	display: flex;
+	gap: 4px;
+	border-bottom: 1px solid var(--ee-border);
+	max-width: 900px;
+	width: 100%;
+	margin: 0 auto 16px;
+	overflow-x: auto;
+}
+
+.ee-fb-tab {
+	padding: 8px 12px;
+	border-bottom: 2px solid transparent;
+	color: var(--ee-muted);
+	text-decoration: none;
+	white-space: nowrap;
+}
+
+.ee-fb-tab:hover {
+	color: var(--ee-text);
+}
+
+.ee-fb-tab-active {
+	color: var(--ee-brand-ink);
+	border-bottom-color: var(--ee-brand);
+	font-weight: 600;
+}
+
+.ee-fb-pane {
+	max-width: 900px;
+	width: 100%;
+	margin: 0 auto;
+	padding-bottom: 48px;
+}
+
+.ee-fb-banner {
+	max-width: 900px;
+	width: 100%;
+	margin: 0 auto 12px;
+	padding: 10px 12px;
+	border-radius: var(--ee-radius);
+	border: 1px solid var(--ee-border);
+	background: var(--ee-bg-alt);
+}
+
+.ee-fb-banner-ok {
+	border-color: var(--ee-ok);
+}
+.ee-fb-banner-warn {
+	border-color: var(--ee-warn);
+}
+.ee-fb-banner-bad {
+	border-color: var(--ee-danger);
+}
+
+/* ------------------------------------------------------------------ forms */
+
+.ee-fb-form {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+
+.ee-fb-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.ee-fb-field-label {
+	font-weight: 600;
+	font-size: 13px;
+}
+
+.ee-fb-field-help {
+	color: var(--ee-muted);
+	font-size: 12px;
+}
+
+.ee-fb-input {
+	font: inherit;
+	color: var(--ee-text);
+	background: var(--ee-bg);
+	border: 1px solid var(--ee-border);
+	border-radius: var(--ee-radius);
+	padding: 8px 10px;
+	width: 100%;
+	max-width: 100%;
+}
+
+.ee-fb-textarea {
+	resize: vertical;
+	min-height: 90px;
+}
+
+.ee-fb-check {
+	width: auto;
+	margin: 0;
+}
+
+.ee-fb-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 4px;
+}
+
+.ee-fb-btn {
+	font: inherit;
+	padding: 8px 14px;
+	border-radius: var(--ee-radius);
+	border: 1px solid var(--ee-border);
+	background: var(--ee-bg-alt);
+	color: var(--ee-text);
+	cursor: pointer;
+}
+
+.ee-fb-btn:hover:not(:disabled) {
+	border-color: var(--ee-brand);
+}
+
+.ee-fb-btn:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+.ee-fb-btn-primary {
+	background: var(--ee-brand-surface);
+	border-color: var(--ee-brand-surface);
+	/* Literal white, not a token: --ee-brand-surface is fixed across both themes precisely so
+	   this stays 5.0:1 either way. A token here would follow the theme and break that. */
+	color: #ffffff;
+}
+
+.ee-fb-btn-small {
+	padding: 4px 10px;
+	font-size: 13px;
+}
+
+/* Never suppressed — a keyboard user who cannot see where they are cannot use this page. */
+.ee-fb-root :is(a, button, input, select, textarea):focus-visible {
+	outline: 2px solid var(--ee-brand);
+	outline-offset: 2px;
+}
+
+.ee-fb-link {
+	color: var(--ee-brand-ink);
+	text-decoration: none;
+}
+
+.ee-fb-link:hover {
+	text-decoration: underline;
+}
+
+.ee-fb-context {
+	color: var(--ee-muted);
+	font-size: 12px;
+	margin: 0;
+}
+
+.ee-fb-context-label {
+	font-weight: 600;
+}
+
+.ee-fb-attachments {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	font-size: 13px;
+}
+
+.ee-fb-attachment-ok {
+	color: var(--ee-ok);
+}
+.ee-fb-attachment-bad {
+	color: var(--ee-danger);
+}
+
+/* ------------------------------------------------------------------ lists */
+
+.ee-fb-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.ee-fb-list-item {
+	border: 1px solid var(--ee-border);
+	border-radius: var(--ee-radius);
+	padding: 12px;
+	background: var(--ee-bg-alt);
+}
+
+.ee-fb-list-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	font-weight: 600;
+}
+
+.ee-fb-list-meta {
+	color: var(--ee-muted);
+	font-size: 12px;
+	margin-top: 4px;
+}
+
+.ee-fb-list-error {
+	margin-top: 6px;
+	color: var(--ee-danger);
+	font-size: 13px;
+}
+
+.ee-fb-loading,
+.ee-fb-notice {
+	padding: 24px 0;
+	color: var(--ee-muted);
+}
+
+/* ------------------------------------------------------------------ status pills */
+
+.ee-fb-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 2px 8px;
+	border-radius: 999px;
+	border: 1px solid var(--ee-border);
+	font-size: 12px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+/* The glyph is the non-colour cue. It is not decoration. */
+.ee-fb-pill-mark {
+	font-weight: 700;
+}
+
+.ee-fb-pill-approved,
+.ee-fb-pill-breakdown-ready {
+	border-color: var(--ee-brand);
+	color: var(--ee-brand-ink);
+}
+
+.ee-fb-pill-tasks-created {
+	border-color: var(--ee-ok);
+	color: var(--ee-ok);
+}
+
+.ee-fb-pill-breakdown-failed,
+.ee-fb-pill-rejected {
+	border-color: var(--ee-danger);
+	color: var(--ee-danger);
+}
+
+.ee-fb-pill-duplicate {
+	border-color: var(--ee-warn);
+	color: var(--ee-warn);
+}
+
+/* ------------------------------------------------------------------ detail */
+
+.ee-fb-detail-head {
+	margin-bottom: 16px;
+}
+
+.ee-fb-detail-title {
+	font-size: 18px;
+	margin: 0 8px 0 0;
+	display: inline;
+}
+
+.ee-fb-section {
+	margin: 20px 0;
+}
+
+.ee-fb-section-title {
+	font-size: 14px;
+	margin: 0 0 6px;
+}
+
+.ee-fb-panel {
+	border: 1px solid var(--ee-border);
+	border-radius: var(--ee-radius);
+	padding: 14px;
+	background: var(--ee-bg-alt);
+}
+
+.ee-fb-panel-warn {
+	border-color: var(--ee-warn);
+}
+.ee-fb-panel-bad {
+	border-color: var(--ee-danger);
+}
+
+.ee-fb-hint,
+.ee-fb-summary {
+	color: var(--ee-muted);
+	font-size: 13px;
+	margin: 0 0 10px;
+}
+
+.ee-fb-reason {
+	border-left: 3px solid var(--ee-border);
+	padding-left: 10px;
+	margin: 6px 0;
+}
+
+.ee-fb-targets,
+.ee-fb-target {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.ee-fb-targets {
+	flex-wrap: wrap;
+	gap: 16px;
+	margin-bottom: 10px;
+}
+
+.ee-fb-duplicate {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 0;
+	border-top: 1px solid var(--ee-border);
+	font-size: 13px;
+}
+
+.ee-fb-confidence {
+	padding: 1px 6px;
+	border-radius: 999px;
+	border: 1px solid var(--ee-border);
+	font-size: 11px;
+	font-weight: 600;
+}
+
+.ee-fb-confidence-high {
+	border-color: var(--ee-danger);
+	color: var(--ee-danger);
+}
+
+.ee-fb-why {
+	color: var(--ee-muted);
+	flex: 1 1 240px;
+}
+
+/* ------------------------------------------------------------------ proposal rows */
+
+.ee-fb-rows {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-bottom: 12px;
+}
+
+.ee-fb-row {
+	border: 1px solid var(--ee-border);
+	border-radius: var(--ee-radius);
+	padding: 10px;
+	background: var(--ee-bg);
+}
+
+.ee-fb-row-done {
+	opacity: 0.7;
+	border-style: dashed;
+}
+
+.ee-fb-row-top {
+	display: grid;
+	grid-template-columns: auto 1fr 170px 110px 80px;
+	gap: 8px;
+	align-items: center;
+}
+
+@media (max-width: 720px) {
+	.ee-fb-row-top {
+		grid-template-columns: auto 1fr;
+	}
+}
+
+.ee-fb-row-meta {
+	color: var(--ee-muted);
+	font-size: 12px;
+	margin-top: 6px;
+}
+
+.ee-fb-rich {
+	font-size: 14px;
+}
+
+.ee-fb-rich :is(p, ul, ol) {
+	margin: 6px 0;
+}
+
+.ee-fb-rich pre {
+	overflow-x: auto;
+	background: var(--ee-bg-alt);
+	padding: 8px;
+	border-radius: var(--ee-radius);
+}
+
+.ee-fb-created {
+	margin: 0;
+	padding-left: 18px;
+}
+
+/* Any wide content scrolls inside itself; the page body never scrolls sideways. */
+.ee-fb-pane {
+	overflow-x: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ee-fb-root *,
+	.ee-fb-root *::before,
+	.ee-fb-root *::after {
+		transition: none !important;
+		animation: none !important;
+	}
+}

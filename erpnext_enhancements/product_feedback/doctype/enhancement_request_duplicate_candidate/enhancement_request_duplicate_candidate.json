@@ -1,0 +1,65 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "creation": "2026-08-17 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "task",
+  "task_subject",
+  "confidence",
+  "why"
+ ],
+ "fields": [
+  {
+   "fieldname": "task",
+   "fieldtype": "Link",
+   "label": "Task",
+   "options": "Task",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "task_subject",
+   "fieldtype": "Data",
+   "label": "Subject",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 4,
+   "description": "Copied from the Task at proposal time so the reviewer reads the subject without a second query, and so the row still says what it meant if the Task is later renamed."
+  },
+  {
+   "fieldname": "confidence",
+   "fieldtype": "Select",
+   "label": "Confidence",
+   "options": "High\nMedium\nLow",
+   "default": "Medium",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "why",
+   "fieldtype": "Small Text",
+   "label": "Why",
+   "in_list_view": 1,
+   "columns": 4,
+   "description": "The model's one-line justification. A duplicate flag with no reason is one the reviewer has to re-derive, which costs more than not flagging it."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-17 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Product Feedback",
+ "name": "Enhancement Request Duplicate Candidate",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

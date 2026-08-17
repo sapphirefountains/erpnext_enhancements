@@ -243,6 +243,22 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_payment_followup_wire -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
+      # The Enhancement Request lifecycle, and the boundary the feedback feature exists to
+      # hold. `test_feedback_states` pins the state enum against the DocType's own Select
+      # options (renaming one needs a data patch or existing rows refuse to save) and
+      # enumerates the whole transition cross-product, so `Submitted -> Tasks Created` cannot
+      # become reachable by accident — that pair IS the human approval gate.
+      #
+      # `test_feedback_endpoint_surface` asserts POST-only on every endpoint, that every name
+      # the SPA dials resolves, and — the one worth the most — that only
+      # product_feedback/task_writer.py constructs a Task. A model proposes, a human confirms,
+      # one module writes; that is easy to restate in a docstring and easy to undo in a hurry.
+      # Verified by reintroducing the bug: adding a Task literal to breakdown.py fails it.
+      - name: Enhancement Request states + feedback endpoint surface
+        run: >-
+          python -m unittest
+          erpnext_enhancements.tests.test_feedback_states
+          erpnext_enhancements.tests.test_feedback_endpoint_surface -v
       # Filesystem + ast only, its own step like every other bench-free suite that
       # installs no stub set. Guards the marketing data model's three silent-failure
       # promises: POSITIVE_DIALS agreeing with the JSON defaults it heals to, the
@@ -600,6 +616,18 @@ jobs:
       # the SSE relay's per-frame loop.
       - name: Server-side URL boundary (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_url_safety.py -q
+      # The seam between a language model and two live project boards. Everything downstream
+      # of `product_feedback/proposal.py` — the reviewer's screen, the confirm call, the Task
+      # rows on PRJ-00580/PRJ-00755 — treats its output as trustworthy, so this is where the
+      # trust is established. Two of its rules are security properties rather than tidiness: a
+      # task names a `target` from a closed set and never a Project id (else a bug report could
+      # write work onto a live customer job), and a `parent_task` or duplicate id must be one
+      # ERPNext actually sent (a model asked to cite an id invents a plausible one).
+      #
+      # pytest-style, and it needs its own step for that reason: `python -m unittest` collects
+      # nothing from plain `def test_*` functions and reports success.
+      - name: Work-breakdown parsing (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_feedback_breakdown_parse.py -q
       # The differential fuzz, and the reason it is a GATE rather than a report.
       #
       # A hand-picked corpus proves the cases somebody thought of, which is precisely the set

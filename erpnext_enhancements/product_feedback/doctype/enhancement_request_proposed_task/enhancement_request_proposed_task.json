@@ -1,0 +1,124 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "creation": "2026-08-17 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "include",
+  "subject",
+  "project",
+  "priority",
+  "expected_hours",
+  "column_break_placement",
+  "parent_task",
+  "group_subject",
+  "depends_on_idx",
+  "created_task",
+  "description_section",
+  "description"
+ ],
+ "fields": [
+  {
+   "fieldname": "include",
+   "fieldtype": "Check",
+   "label": "Include",
+   "default": "1",
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Unticked rows are not created. The reviewer drops a row rather than deleting it, so the proposal stays a complete record of what the model suggested."
+  },
+  {
+   "fieldname": "subject",
+   "fieldtype": "Data",
+   "label": "Subject",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 4
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "Refused unless it is one of the two Projects named in Product Feedback Settings. The model does not get to choose where work is written."
+  },
+  {
+   "fieldname": "priority",
+   "fieldtype": "Select",
+   "label": "Priority",
+   "options": "Low\nMedium\nHigh\nUrgent",
+   "default": "Medium",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "expected_hours",
+   "fieldtype": "Float",
+   "label": "Expected Hours",
+   "precision": "2",
+   "description": "Written to Task.expected_time. A model's estimate, kept because a wrong number a human can correct beats a blank field nobody fills in."
+  },
+  {
+   "fieldname": "column_break_placement",
+   "fieldtype": "Column Break",
+   "label": null
+  },
+  {
+   "fieldname": "parent_task",
+   "fieldtype": "Link",
+   "label": "Under Existing Task",
+   "options": "Task",
+   "description": "An existing group task on the same Project to nest under. Preferred over a new group: PRJ-00580 already carries its epics, and a new top-level node per request would bury them."
+  },
+  {
+   "fieldname": "group_subject",
+   "fieldtype": "Data",
+   "label": "New Group Subject",
+   "description": "Used only when parent_task is empty. All rows sharing a group_subject land under one newly created group Task."
+  },
+  {
+   "fieldname": "depends_on_idx",
+   "fieldtype": "Int",
+   "label": "Depends On Row",
+   "default": "0",
+   "description": "1-based idx of another row in this same table. 0 means no dependency. Resolved to a Task Depends On row after both tasks exist; self-references and cycles are dropped."
+  },
+  {
+   "fieldname": "created_task",
+   "fieldtype": "Link",
+   "label": "Created Task",
+   "options": "Task",
+   "read_only": 1,
+   "description": "Stamped after creation. Its presence is what makes the confirm call idempotent — a re-run skips any row that already has one."
+  },
+  {
+   "fieldname": "description_section",
+   "fieldtype": "Section Break",
+   "label": null
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Text Editor",
+   "label": "Description"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-17 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Product Feedback",
+ "name": "Enhancement Request Proposed Task",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
