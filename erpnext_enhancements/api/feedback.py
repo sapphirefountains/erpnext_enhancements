@@ -318,40 +318,24 @@ def get_request(name):
 # ------------------------------------------------------------------------------- intake
 
 
-#: Recorded on the AI Model Usage row so description drafting is accounted for separately
-#: from the work breakdown and from email/SMS drafting.
-DRAFT_FEATURE = "feedback_description_draft"
-
-_DRAFT_SYSTEM = """\
-You help a Sapphire Fountains employee turn a one-line note about their ERPNext or Triton \
-software into a description a developer can act on.
-
-Expand what they wrote. Do not invent specifics they did not give you — no error messages \
-they did not quote, no screens they did not name, no numbers. Where a detail is missing and \
-matters, say what is missing rather than filling it in.
-
-Three short paragraphs at most, plain prose, no headings and no markdown. Write it in their \
-voice, first person, as the person who noticed it. For a bug: what happens, what they \
-expected, and what it stops them doing. For a feature: what they are trying to achieve and \
-why the current behaviour gets in the way.
-"""
-
-
 def _ai_drafting_configured():
-    """Is there a Vertex key at all? A **boolean**, never the value.
+    """Can we reach Triton to draft? A **boolean**, never a secret.
 
-    Same shape as ``api/integrations_health.py``, which reports every integration secret as
-    ``configured: true/false`` and never returns one. The key is read server-side, coerced to a
-    bool here, and the value does not leave this function.
+    Checks the *Triton* connection rather than a Vertex key, because that is what the drafter
+    now uses. It used to call ``api/gemini.py``, a hand-rolled Vertex client reading
+    ``Triton Settings.maps_api_key``. That key is empty on production, and `AI Model Usage`
+    records **no successful call from that client for any feature, ever** — while Triton made
+    eleven the same afternoon. Debugging credentials that have never once worked was the worse
+    of the two options.
+
+    Same reporting shape as ``api/integrations_health.py``: secrets are read server-side and
+    reduced to ``configured: true/false``, never returned.
     """
     try:
-        from frappe.utils.password import get_decrypted_password
+        from erpnext_enhancements import triton_chat
 
-        return bool(
-            get_decrypted_password(
-                "Triton Settings", "Triton Settings", "maps_api_key", raise_exception=False
-            )
-        )
+        settings = triton_chat.get_settings()
+        return bool((settings.get("base_url") or "").strip()) and bool(settings.get("gateway_secret"))
     except Exception:
         return False
 
@@ -388,27 +372,33 @@ def draft_description(title=None, description=None, request_type=None):
         kind = "Bug"
 
     existing = frappe.utils.strip_html((description or "").strip())[:MAX_BODY_CHARS]
-    prompt = f"Type: {kind}\nTitle: {title}\n"
-    if existing:
-        prompt += f"\nWhat they have written so far, which you are expanding rather than replacing:\n{existing}\n"
-
     if not _ai_drafting_configured():
-        # Named, because the generic "could not be generated" sent somebody looking at the
-        # model for an hour when the answer was an empty field. Four features share this key
-        # (morning briefing, email/SMS drafting, training AI, this) so if it is missing they
-        # are all down together, and saying so is the difference between a bug report and a
-        # two-minute fix.
+        # Named rather than generic: "could not be generated" sent somebody looking at the
+        # model for an hour when the answer was an empty settings field.
         frappe.throw(
-            _("AI drafting is not configured — Triton Settings has no Vertex AI API key. Write the description yourself; nothing else is blocked."),
+            _("AI drafting is not configured — Triton Settings has no Gateway URL or secret. Write the description yourself; nothing else is blocked."),
             frappe.ValidationError,
         )
 
-    try:
-        settings = frappe.get_single("Triton Settings")
-        from erpnext_enhancements.api.gemini import generate_content_with_vertex_ai
+    from erpnext_enhancements.product_feedback import triton_client
 
-        text, _thoughts = generate_content_with_vertex_ai(
-            prompt, _DRAFT_SYSTEM, settings, feature=DRAFT_FEATURE
+    try:
+        result = triton_client.request_description_draft(
+            user=frappe.session.user,
+            payload={
+                "title": title,
+                "description": existing,
+                "request_type": kind,
+            },
+        )
+    except triton_client.TritonUnavailable as exc:
+        # `str(exc)` is safe by construction here — triton_client builds its messages from a
+        # status, a path and an enum, never from a response body.
+        frappe.throw(
+            _("The draft could not be generated ({0}). Write the description yourself; nothing is blocked.").format(
+                str(exc)
+            ),
+            frappe.ValidationError,
         )
     except Exception:
         frappe.log_error(frappe.get_traceback(), "Enhancement Request description draft failed")
@@ -417,7 +407,7 @@ def draft_description(title=None, description=None, request_type=None):
             frappe.ValidationError,
         )
 
-    text = (text or "").strip()
+    text = (result.get("description") or "").strip()
     if not text:
         frappe.throw(_("The model returned nothing. Try again, or just write it."), frappe.ValidationError)
     return {"description": text[:MAX_BODY_CHARS]}
