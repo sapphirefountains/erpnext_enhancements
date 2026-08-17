@@ -146,6 +146,163 @@ def get_bootstrap():
     }
 
 
+#: One page of the admin view. Large enough that most weeks fit on one screen, small enough
+#: that the two progress queries stay cheap.
+ADMIN_PAGE_SIZE = 50
+
+
+@frappe.whitelist(methods=["POST"])
+def get_all_requests(status=None, request_type=None, requester=None, search=None, start=0):
+    """Every request, filterable — the admin view. System Managers only.
+
+    Deliberately **not** the review queue. That one shows open work and excludes terminal
+    states, because a queue is a list of things to do; this one includes `Tasks Created`,
+    `Rejected` and `Duplicate`, because the questions it answers are historical — what did we
+    turn down, what did this person file, what came of it.
+
+    Returns the page, the unfiltered status tally, and per-request task progress.
+    """
+    _require_reviewer()
+
+    filters = {}
+    if status:
+        filters["status"] = status
+    if request_type:
+        filters["request_type"] = request_type
+    if requester:
+        filters["requested_by"] = requester
+
+    or_filters = None
+    if search:
+        # `name` as well as `title`: an ER id is the thing somebody pastes from an email.
+        term = f"%{search.strip()}%"
+        or_filters = {"title": ["like", term], "name": ["like", term]}
+
+    start = max(0, cint(start))
+    rows = frappe.get_all(
+        DOCTYPE,
+        filters=filters,
+        or_filters=or_filters,
+        fields=[
+            "name",
+            "title",
+            "status",
+            "request_type",
+            "impact",
+            "requested_by",
+            "decided_by",
+            "duplicate_of_task",
+            "creation",
+            "modified",
+        ],
+        order_by="creation desc",
+        limit_start=start,
+        limit_page_length=ADMIN_PAGE_SIZE,
+    )
+
+    total = frappe.db.count(DOCTYPE, filters=filters or None)
+    names = [row["name"] for row in rows]
+    progress = _task_progress(names)
+    people = _full_names({row["requested_by"] for row in rows} | {row["decided_by"] for row in rows})
+
+    for row in rows:
+        row["creation"] = str(row["creation"] or "")
+        row["modified"] = str(row["modified"] or "")
+        row["requester_name"] = people.get(row["requested_by"]) or row["requested_by"] or ""
+        row["decider_name"] = people.get(row["decided_by"]) or row["decided_by"] or ""
+        row["tasks"] = progress.get(row["name"], {"created": 0, "done": 0})
+
+    return {
+        "rows": rows,
+        "total": total,
+        "start": start,
+        "page_size": ADMIN_PAGE_SIZE,
+        "counts": _status_counts(),
+        "statuses": [state.value for state in RequestState],
+        "request_types": list(VALID_REQUEST_TYPES),
+    }
+
+
+def _status_counts():
+    """The whole-table tally, unaffected by the current filter.
+
+    Unfiltered on purpose: it is the denominator the filtered page is read against, and a
+    tally that moved with the filter would just restate the row count.
+    """
+    try:
+        rows = frappe.get_all(
+            DOCTYPE, fields=["status", "count(name) as n"], group_by="status", order_by="status asc"
+        )
+    except Exception:
+        return {}
+    return {row["status"]: cint(row["n"]) for row in rows if row.get("status")}
+
+
+def _task_progress(request_names):
+    """``{request: {"created": n, "done": n}}`` for a page of requests.
+
+    Two queries whatever the page size — one for the child rows that name a Task, one for
+    those Tasks' statuses — rather than a query per request. Same live-status reasoning as
+    `_created_task_rows`: the proposal cannot answer how the work is going.
+    """
+    if not request_names:
+        return {}
+
+    try:
+        children = frappe.get_all(
+            "Enhancement Request Proposed Task",
+            filters={"parent": ["in", list(request_names)], "created_task": ["is", "set"]},
+            fields=["parent", "created_task"],
+            limit_page_length=0,
+        )
+    except Exception:
+        return {}
+    if not children:
+        return {}
+
+    task_names = list({row["created_task"] for row in children if row.get("created_task")})
+    statuses = {}
+    if task_names:
+        try:
+            statuses = {
+                task["name"]: task["status"]
+                for task in frappe.get_all(
+                    "Task", filters={"name": ["in", task_names]}, fields=["name", "status"]
+                )
+            }
+        except Exception:
+            statuses = {}
+
+    out = {}
+    for row in children:
+        bucket = out.setdefault(row["parent"], {"created": 0, "done": 0})
+        task = row.get("created_task")
+        # A task that has been deleted counts as neither created nor done: the request no
+        # longer has that work, and counting it would report progress against nothing.
+        if task not in statuses:
+            continue
+        bucket["created"] += 1
+        if statuses[task] in _DONE_STATUSES:
+            bucket["done"] += 1
+    return out
+
+
+def _full_names(users):
+    """``{user: full_name}`` in one query, for the names a page needs."""
+    names = [u for u in users if u]
+    if not names:
+        return {}
+    try:
+        return {
+            row["name"]: row["full_name"]
+            for row in frappe.get_all(
+                "User", filters={"name": ["in", names]}, fields=["name", "full_name"]
+            )
+        }
+    except Exception:
+        return {}
+
+
 @frappe.whitelist(methods=["POST"])
 def get_request(name):
     """One request in full, including the proposal. Owner or reviewer only."""

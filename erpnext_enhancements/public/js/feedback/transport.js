@@ -23,6 +23,7 @@ const BOOT = (typeof window !== "undefined" && window.EE_FEEDBACK_BOOT) || {};
  */
 export const M = {
 	BOOTSTRAP: "erpnext_enhancements.api.feedback.get_bootstrap",
+	ALL: "erpnext_enhancements.api.feedback.get_all_requests",
 	GET: "erpnext_enhancements.api.feedback.get_request",
 	SUBMIT: "erpnext_enhancements.api.feedback.submit_request",
 	DRAFT: "erpnext_enhancements.api.feedback.draft_description",

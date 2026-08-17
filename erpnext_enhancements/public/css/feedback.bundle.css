@@ -715,3 +715,42 @@ body .container {
 	flex-wrap: wrap;
 	margin-top: 4px;
 }
+
+/* ------------------------------------------------------ the admin view (/feedback/all) */
+
+.ee-fb-filters {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 10px;
+}
+
+/* The search box takes the slack; the two selects stay their natural width. */
+.ee-fb-filters .ee-fb-input[type="search"] {
+	flex: 1 1 220px;
+	width: auto;
+}
+
+.ee-fb-filters select.ee-fb-input {
+	width: auto;
+	flex: 0 0 auto;
+}
+
+.ee-fb-tally {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-bottom: 10px;
+}
+
+.ee-fb-tally-n {
+	font-variant-numeric: tabular-nums;
+}
+
+.ee-fb-tally-total {
+	margin-left: auto;
+	color: var(--ee-muted);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}

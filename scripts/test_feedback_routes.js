@@ -87,6 +87,8 @@ function check(label, actual, expected) {
 
 	console.log('\nthe form has its own URL, so it survives a refresh and can be linked');
 	check('buildRoute(new)', buildRoute(VIEW_NEW), '/feedback/new');
+	check('buildRoute(all)', buildRoute(R.VIEW_ALL), '/feedback/all');
+	check('parseRoute(/feedback/all)', parseRoute('/feedback/all').view, R.VIEW_ALL);
 	check('parseRoute(/feedback/new)', parseRoute('/feedback/new'), {
 		view: VIEW_NEW,
 		name: '',
@@ -95,7 +97,7 @@ function check(label, actual, expected) {
 
 	console.log('\nonly the bare route is a landing');
 	check('bare /feedback is bare', parseRoute('/feedback').bare, true);
-	for (const explicit of ['/feedback/new', '/feedback/mine', '/feedback/review', '/feedback/request/ER-1']) {
+	for (const explicit of ['/feedback/new', '/feedback/mine', '/feedback/review', '/feedback/all', '/feedback/request/ER-1']) {
 		check(`${explicit} is not bare`, parseRoute(explicit).bare, false);
 		check(`${explicit} is never redirected`, landingView(explicit, true, true), null);
 	}

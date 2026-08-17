@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.321.0] - 2026-08-17
+## [1.322.0] - 2026-08-17
 
 ### Fixed
 
@@ -45,6 +45,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Refresh button on the panel**, since status is read at load and the alternative was a
   full page reload.
+
+- **An admin view at `/feedback/all`** — every request, filterable, System Managers only.
+
+  Deliberately **not** the review queue. That one excludes terminal states because a queue is
+  a list of things to do; this one includes `Tasks Created`, `Rejected` and `Duplicate`,
+  because the questions it answers are historical: what did we turn down, what has this person
+  filed, what came of it. Filter by status, type or a search over title and request id; the
+  status tally above the table is **unfiltered** on purpose, since it is the denominator the
+  filtered page is read against and a tally that moved with the filter would just restate the
+  row count.
+
+  Each row carries live work progress (`3/7`), for which `_task_progress` does **two queries
+  whatever the page size** — one for the child rows naming a Task, one for those Tasks'
+  statuses — rather than a query per request. A task that has since been deleted counts as
+  neither created nor done: the request no longer has that work, and counting it would report
+  progress against nothing.
 
 - **The breakdown now sees the codebase.** It was planning **blind**: Triton has no GitHub
   integration, no filesystem tool, and nothing about either repository in its RAG corpus — so
