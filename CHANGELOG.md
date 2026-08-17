@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.319.1] - 2026-08-17
+
+### Fixed
+
+- **"New request" on `/feedback` did nothing for anyone who reviews.** Reported within minutes
+  of the v1.319.0 deploy, by clicking the tab.
+
+  The tab linked to the bare `/feedback`, and `routeTo` treated *every* arrival there as a
+  fresh landing — resolving it to whichever view suited the caller. Both halves are correct on
+  their own; they compose into a redirect loop of one hop. A System Manager clicking "New
+  request" was sent straight back to the review queue, so **the form was unreachable for
+  anyone who reviews**, and a non-reviewer who had filed before was bounced to "My requests"
+  the same way. Only a first-time non-reviewer ever saw the form.
+
+  Two changes, because the bug needed both halves:
+
+  - **The form has its own URL, `/feedback/new`.** "Take me somewhere useful" (bare) and "I
+    want the form" (explicit) are different intentions and now have different addresses. The
+    form also survives a refresh and can be linked to, which it could not before.
+  - **The landing default is applied once, in `mount()`, and nowhere else.** It was in the
+    router, where it re-ran on every navigation. A router that keeps overriding the view
+    somebody just clicked is not routing.
+
+  The decision is now a pure `landingView()` in `routes.js` that returns `null` for every
+  explicit path — so "override the view somebody just clicked" is not expressible through it,
+  rather than merely not currently done.
+
+  `scripts/test_feedback_routes.js` guards the **composition**, which is where the bug lived:
+  the tab's own href must resolve to the form for all four audiences, and `landingView` must
+  return null for every explicit path. Verified by reintroducing the bug — it fails 4
+  assertions and names exactly the audiences that were affected. Nothing in CI could have
+  caught this before, because every piece was individually right.
+
 ## [1.319.0] - 2026-08-17
 
 ### Added

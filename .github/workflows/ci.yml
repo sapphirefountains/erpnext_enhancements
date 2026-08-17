@@ -1261,6 +1261,16 @@ jobs:
       # dimmed already-collected states have no real record to exercise them.
       - name: Pick routing line arithmetic + escaping (bench-free, node)
         run: node scripts/test_pick_routing_lines.js
+      # The /feedback router, written after a bug that shipped in v1.319.0 and was found by
+      # a human clicking the tab. "New request" linked to the bare /feedback and routeTo
+      # treated every arrival there as a fresh landing, so a System Manager was sent back to
+      # the review queue and the form was unreachable for anyone who reviews. Both halves
+      # were correct alone; only the composition was wrong, which is why nothing in CI saw
+      # it. This asserts the composition — the tab's own href must resolve to the form for
+      # every audience, and landingView must return null for every explicit path, so
+      # "override the view somebody just clicked" is not expressible.
+      - name: Feedback routing composition (bench-free, node)
+        run: node scripts/test_feedback_routes.js
       # Google address components -> Frappe Address fields. Every rule in that
       # mapping is a judgement call that looks arbitrary until it is wrong, and
       # the branches for UK/Nordic mailing towns and for states with no
