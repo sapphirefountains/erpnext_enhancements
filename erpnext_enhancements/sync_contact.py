@@ -447,6 +447,46 @@ def get_addresses_for_context(sources, context_doctype=None, context_name=None):
 
     return address_list
 
+
+def apply_primary_contact_details(doc, contact=None):
+    """Mirror a Contact's details onto a party's ``primary_contact_*`` fields.
+
+    The programmatic counterpart of what ``primary_contact.js`` does when a user
+    picks a contact on the form: any code that *sets* ``primary_contact`` without
+    a browser in the loop (the fountain-move intake, the Opportunity -> Project
+    hand-off) has to fill these three itself. Only non-empty values are written.
+
+    Leaving them blank is not the same as not calling this. The party's
+    ``on_update`` runs :func:`sync_from_main_doc`, which pushes the same three
+    fields back *down* onto the Contact — and its job-title branch has no
+    truthiness guard, so a blank ``primary_contact_job_title`` erases the
+    Contact's ``custom_title`` on the first save.
+
+    Guarded with ``has_field`` because these three fields exist only in the live
+    database (they are in neither the fixtures nor ``setup/custom_fields.py``), so
+    a fresh install genuinely does not have them.
+    """
+    contact = contact or doc.get("primary_contact")
+    if not contact:
+        return
+
+    details = frappe.db.get_value(
+        "Contact",
+        contact,
+        ["custom_email", "custom_phone_number", "custom_mobile_number", "custom_title"],
+        as_dict=True,
+    ) or {}
+    meta = frappe.get_meta(doc.doctype)
+    mapping = {
+        "primary_contact_email": details.get("custom_email"),
+        "primary_contact_phone": details.get("custom_phone_number") or details.get("custom_mobile_number"),
+        "primary_contact_job_title": details.get("custom_title"),
+    }
+    for field, value in mapping.items():
+        if value and meta.has_field(field):
+            doc.set(field, value)
+
+
 def sync_from_main_doc(doc, method):
     """Push a party's primary-contact convenience fields down onto the Contact.
 

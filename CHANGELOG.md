@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.320.0] - 2026-08-17
+
+### Added
+
+- **The Opportunity's primary contact now follows the deal into the Project.** TASK-2026-01585.
+  The Closed-Won hand-off copied twenty-odd fields, both parties' child tables, the notes and the
+  Drive folder — and dropped the one field that says who the deal was actually *with*. Delivery
+  opened a brand-new Project with an empty Primary Contact and went back to the Opportunity to
+  find out who to call. Measured on production before the fix: of the 95 Projects created from an
+  Opportunity, **53 came from one that had a primary contact and arrived without it**.
+
+  `primary_contact` is the same fieldname on both sides (`setup/custom_fields.py` provisions it
+  for every party doctype), so it is one row in `create_project_from_opportunity_background`'s
+  mapping table. The interesting part is the three read-through fields beside it.
+
+  **They are re-derived from the Contact, not copied across, and that is not a stylistic
+  choice.** Project `on_update` runs `sync_contact.sync_from_main_doc`, which pushes
+  `primary_contact_phone` / `_email` / `_job_title` straight back *down* onto that same Contact
+  — and the job-title branch guards on `is not None`, not on truthiness. Mapping the field
+  across would therefore hand an empty string to a Contact that had a real job title and erase
+  it, on every Opportunity created before v1.198.0 wired up `primary_contact.js` and left the
+  three blank. Deriving them from the Contact makes the round trip inert by construction.
+
+  That mirror already existed, written for the fountain-move intake against the identical hazard
+  (`fountain_move/conversion._attach_primary_contact_details`). It is now
+  `sync_contact.apply_primary_contact_details`, shared by both creation paths, next to the sync
+  it has to stay compatible with. Two tests state the hazard rather than describe it: one asserts
+  a blank job title *does* erase the Contact's, the next that running the mirror first makes the
+  same round trip write nothing.
+
+  **What this does not do:** a party's `primary_contact` is doc-local. Setting it on the Project
+  does not touch `Contact.is_primary_contact` or `Customer.customer_primary_contact` — the
+  account-wide flag only Customer and Supplier own, which `_assert_account` has refused to let
+  anything else write since v1.198.0. Fenced by a test, because the whole point of the field is
+  that a project-level decision is not a company-level one.
+
+  Existing Projects are untouched; this is the creation path only. The 53 already-converted
+  Projects still have a blank Primary Contact and would need a backfill patch to repair.
+
 ## [1.319.1] - 2026-08-17
 
 ### Fixed

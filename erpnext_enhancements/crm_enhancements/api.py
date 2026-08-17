@@ -18,6 +18,8 @@ No code here is changed by this docstring pass; comments only.
 
 import frappe
 
+from erpnext_enhancements import sync_contact
+
 
 def _notify_recipients(users):
 	"""Normalize the dialog's ``users`` payload into a clean list of user IDs.
@@ -175,9 +177,13 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 		1. Create a new Project, optionally applying ``project_template`` (with a
 		   guard that skips the template if the Task doctype's module is
 		   misconfigured, logging instead of crashing).
-		2. Copy direct field mappings, child tables, value-stream-derived
-		   ``project_type``, and Opportunity notes (both as a Project Comments
-		   child table and as rendered HTML in ``custom_opportunity_notes``).
+		2. Copy direct field mappings (including ``primary_contact`` — the deal's
+		   contact follows it into delivery, with the read-through phone / email /
+		   job title re-derived from the Contact by
+		   :func:`~erpnext_enhancements.sync_contact.apply_primary_contact_details`),
+		   child tables, value-stream-derived ``project_type``, and Opportunity
+		   notes (both as a Project Comments child table and as rendered HTML in
+		   ``custom_opportunity_notes``).
 		3. Insert with ``ignore_validate`` to dodge Workflow "Status cannot be
 		   Open" errors, then force ``status = "Active"`` if a Workflow overrode it.
 		4. Re-attach the Opportunity's File attachments to the Project.
@@ -290,9 +296,20 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 				"opportunity_amount": "custom_project_dollar_amount",
 				"custom_estimated_cost": "custom_project_cost",
 				"party_name": "customer",
+				# Who the deal was actually with. Same fieldname on both sides
+				# (setup/custom_fields.py provisions it for every party doctype),
+				# so this is a straight copy.
+				"primary_contact": "primary_contact",
 			}
 			for source_field, target_field in direct_mappings.items():
 				project.set(target_field, opp.get(source_field))
+
+			# The three read-through fields beside primary_contact are re-derived from
+			# the Contact rather than copied across from the Opportunity. Project's
+			# on_update pushes them straight back DOWN onto that same Contact
+			# (sync_contact.sync_from_main_doc), so carrying over an Opportunity whose
+			# copies were never filled would blank the Contact's own job title.
+			sync_contact.apply_primary_contact_details(project)
 
 			# Derive a single Project.project_type from the (possibly multiple)
 			# selected value streams, picking the highest-priority one present.
