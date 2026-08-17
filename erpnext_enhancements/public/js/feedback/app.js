@@ -18,7 +18,7 @@ import {
 	VIEW_REQUEST,
 	parseRoute,
 	buildRoute,
-	defaultView,
+	landingView,
 } from "./routes.js";
 import { captureContext } from "./context.js";
 import {
@@ -78,7 +78,17 @@ export class FeedbackApp {
 			this.fatal(e);
 			return;
 		}
-		this.routeTo(window.location.pathname, false);
+
+		// The one place the landing default is applied. Only a *bare* `/feedback` is
+		// redirected, and the URL is corrected so a refresh lands in the same place.
+		const preferred = landingView(
+			window.location.pathname,
+			this.state.isReviewer,
+			this.state.myRequests.length > 0
+		);
+		if (preferred) window.history.replaceState({}, "", buildRoute(preferred));
+
+		this.routeTo(window.location.pathname);
 	}
 
 	applyBootstrap(data) {
@@ -139,17 +149,17 @@ export class FeedbackApp {
 		this.routeTo(href);
 	}
 
+	/**
+	 * Resolve a path and render it. **Does not second-guess the caller.**
+	 *
+	 * The landing default lives in `mount()` and nowhere else. It used to live here, and the
+	 * two rules composed into a bug: "New request" linked to the bare `/feedback`, this method
+	 * read that as a fresh landing, and a reviewer was sent straight back to the queue — so the
+	 * tab appeared to do nothing and the form was unreachable for anyone who reviews. A router
+	 * that keeps overriding the view somebody just clicked is not routing.
+	 */
 	routeTo(pathname) {
 		const route = parseRoute(String(pathname).split("?")[0]);
-		// The bare route resolves to whichever view is useful for this person, and the URL is
-		// corrected so a refresh lands in the same place.
-		if (route.view === VIEW_NEW && String(pathname).replace(/\/+$/, "") === "/feedback") {
-			const preferred = defaultView(this.state.isReviewer, this.state.myRequests.length > 0);
-			if (preferred !== VIEW_NEW) {
-				window.history.replaceState({}, "", buildRoute(preferred));
-				route.view = preferred;
-			}
-		}
 		this.state.view = route.view;
 		this.state.name = route.name;
 		this.renderNav();
