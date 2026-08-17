@@ -86,24 +86,58 @@ export function checkbox(checked) {
 }
 
 /**
- * A status pill. Carries a **non-colour cue** as well as the colour class: a reviewer with
- * any colour-vision difference must be able to tell Rejected from Approved, and
- * `prefers-reduced-motion` users lose the only other differentiator this page has.
+ * A status pill. Carries a **non-colour cue** as well as the colour class: a reader with any
+ * colour-vision difference must be able to tell Rejected from Approved, and
+ * `prefers-reduced-motion` users lose the only other differentiator this page has. Do not
+ * delete the glyph to tidy the markup.
  */
-export function statusPill(status) {
-	const marks = {
-		Submitted: "•",
-		Approved: "▸",
-		"Breakdown Ready": "◆",
-		"Breakdown Failed": "!",
-		"Tasks Created": "✓",
-		Rejected: "✕",
-		Duplicate: "⧉",
-	};
+function pill(status, marks, prefix) {
 	const slug = String(status || "").toLowerCase().replace(/[^a-z]+/g, "-");
-	const node = el("span", `ee-fb-pill ee-fb-pill-${slug}`);
-	append(node, el("span", "ee-fb-pill-mark", marks[status] || "•"), el("span", null, status || ""));
+	const node = el("span", `ee-fb-pill ${prefix}-${slug || "unknown"}`);
+	append(node, el("span", "ee-fb-pill-mark", marks[status] || "•"), el("span", null, status || "—"));
 	return node;
+}
+
+/** `Enhancement Request.status`. */
+export function statusPill(status) {
+	return pill(
+		status,
+		{
+			Submitted: "•",
+			Approved: "▸",
+			"Breakdown Ready": "◆",
+			"Breakdown Failed": "!",
+			"Tasks Created": "✓",
+			Rejected: "✕",
+			Duplicate: "⧉",
+		},
+		"ee-fb-pill"
+	);
+}
+
+/**
+ * `Task.status`, for the work this request produced.
+ *
+ * A separate vocabulary from the request's on purpose — these are ERPNext's own Task states,
+ * read live off the board. **Spelled `Canceled`, one l**, which is what this site's Select
+ * actually offers; the British spelling matches nothing and would render as an unstyled
+ * fallback chip rather than an error.
+ */
+export function taskPill(status) {
+	return pill(
+		status,
+		{
+			Open: "•",
+			Working: "▸",
+			"Pending Review": "◆",
+			Overdue: "!",
+			Completed: "✓",
+			Canceled: "✕",
+			Invoiced: "✓",
+			Template: "⧉",
+		},
+		"ee-fb-task"
+	);
 }
 
 /** An internal link that routes client-side instead of reloading the shell. */
@@ -178,6 +212,14 @@ export function richText(html) {
 	};
 	copy(parsed.body, wrapper);
 	return wrapper;
+}
+
+/** "12 Aug" for a date, or "" — for a due date, where relative time reads as noise. */
+export function shortDate(value) {
+	if (!value) return "";
+	const when = new Date(String(value).replace(" ", "T"));
+	if (isNaN(when.getTime())) return "";
+	return when.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
 /** "3 minutes ago" / "12 Aug". Absolute past a day, because "6 days ago" needs arithmetic. */

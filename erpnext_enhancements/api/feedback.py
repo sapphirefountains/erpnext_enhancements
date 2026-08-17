@@ -603,6 +603,116 @@ def _review_queue():
     )
 
 
+#: Fields read back off a created Task. Live values, not the proposal's copy of them.
+_TASK_FIELDS = ["name", "subject", "status", "priority", "is_group", "parent_task", "exp_end_date"]
+
+#: `Task.status` values that mean the work is finished. Spelled `Canceled`, one l — that is
+#: what this site's Select actually offers (verified against production 2026-08-17), and the
+#: British spelling silently matches nothing.
+_DONE_STATUSES = ("Completed", "Canceled")
+
+
+def _created_task_rows(doc):
+    """The Tasks this request produced, flat and depth-tagged, read **live**.
+
+    Not from `proposed_tasks`. That child table is a frozen record of what was agreed, which
+    is exactly why it cannot answer this panel's question: a status moved to Completed, a
+    subject renamed on the board, a task reparented — none of that is in it. Before this
+    existed the panel rendered the proposal's own copy of the subject and no status at all,
+    so it never changed after the day it was written.
+
+    Groups come from the Tasks' own `parent_task`, not from the request. The group task
+    `task_writer` creates is deliberately not recorded on the request — nothing needed it
+    until now — and deriving it means the hierarchy stays right even if somebody reparents a
+    task by hand afterwards.
+
+    A row whose Task no longer exists is reported as missing rather than dropped. Deleting a
+    generated task is a normal thing to do (it is the first thing anybody does after a test
+    run), and a panel that quietly shrank would leave the request claiming work that is not
+    there.
+    """
+    names = []
+    for row in doc.get("proposed_tasks") or []:
+        name = (row.created_task or "").strip()
+        if name and name not in names:
+            names.append(name)
+    if not names:
+        return []
+
+    live = {
+        t["name"]: t
+        for t in frappe.get_all("Task", filters={"name": ["in", names]}, fields=_TASK_FIELDS)
+    }
+
+    parent_names = []
+    for name in names:
+        parent = (live.get(name, {}).get("parent_task") or "").strip()
+        if parent and parent not in parent_names and parent not in names:
+            parent_names.append(parent)
+    parents = {}
+    if parent_names:
+        parents = {
+            t["name"]: t
+            for t in frappe.get_all("Task", filters={"name": ["in", parent_names]}, fields=_TASK_FIELDS)
+        }
+
+    def shape(task, depth, missing=False, fallback=""):
+        if missing:
+            return {
+                "name": fallback,
+                "subject": "",
+                "status": "",
+                "priority": "",
+                "is_group": 0,
+                "parent_task": "",
+                "exp_end_date": "",
+                "depth": depth,
+                "missing": True,
+                "done": False,
+            }
+        return {
+            "name": task["name"],
+            "subject": task.get("subject") or "",
+            "status": task.get("status") or "",
+            "priority": task.get("priority") or "",
+            "is_group": cint(task.get("is_group")),
+            "parent_task": task.get("parent_task") or "",
+            "exp_end_date": str(task.get("exp_end_date") or ""),
+            "depth": depth,
+            "missing": False,
+            "done": (task.get("status") or "") in _DONE_STATUSES,
+        }
+
+    rows = []
+    emitted = set()
+
+    # Groups first, each followed by its own children, in the order the proposal listed them.
+    for parent_name in parent_names:
+        parent = parents.get(parent_name)
+        if parent:
+            rows.append(shape(parent, 0))
+        for name in names:
+            if name in emitted:
+                continue
+            task = live.get(name)
+            if task and (task.get("parent_task") or "") == parent_name:
+                rows.append(shape(task, 1 if parent else 0))
+                emitted.add(name)
+
+    # Anything left: nested under a task that was itself generated here, or top level.
+    for name in names:
+        if name in emitted:
+            continue
+        task = live.get(name)
+        if not task:
+            rows.append(shape(None, 0, missing=True, fallback=name))
+        else:
+            rows.append(shape(task, 1 if (task.get("parent_task") or "") else 0))
+        emitted.add(name)
+
+    return rows
+
+
 def _serialise(doc, full=False):
     """A request as plain JSON for the SPA. Never leaks a field the reader may not have."""
     out = {
@@ -662,6 +772,9 @@ def _serialise(doc, full=False):
                 }
                 for row in (doc.get("proposed_tasks") or [])
             ],
+            # Live, and therefore the only part of this payload that changes after the tasks
+            # are written. See `_created_task_rows`.
+            "created_tasks": _created_task_rows(doc),
             "duplicate_candidates": [
                 {
                     "task": row.task,

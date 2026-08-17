@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.320.1] - 2026-08-17
+
+### Fixed
+
+- **The "On the board" panel showed no task status, and never changed after the day it was
+  written.** It rendered `proposed_tasks` — the child table holding the *proposal*, which is a
+  frozen record of what was agreed. A status moved to Completed, a subject renamed on the
+  board, a task reparented by hand: none of that is in it, and none of it appeared.
+
+  The panel now reads **live `Task` rows**, via `api.feedback._created_task_rows`. That is the
+  only part of the request payload that changes after the tasks are created, and the
+  distinction is the point: the proposal answers "what did we agree to", the panel answers
+  "what has happened since", and rendering one to ask the other is why it looked frozen.
+
+### Added
+
+- **The created tasks are a table, with the group/subtask hierarchy.** Task (indented under
+  its group), live status, priority, due date. The hierarchy is derived from each Task's own
+  `parent_task` rather than from the request — the group task `task_writer` creates is not
+  recorded on the request, and deriving it means the tree stays right even if somebody
+  reparents a task by hand afterwards. It also surfaces the case where work was nested under
+  an **existing** epic, which is the outcome the breakdown prompt actively prefers.
+
+- **A status chip per task, and a completion count.** `taskPill()` carries ERPNext's own
+  `Task` vocabulary — separate from the request's, and spelled **`Canceled`, one l**, which is
+  what this site's Select offers. Every chip carries a glyph as well as a colour, because a
+  colour-only indicator fails anybody who cannot distinguish it; a completed row also recedes,
+  but the ✓ is what actually carries the state. The header reads "3 of 7 complete", or "All 7
+  complete" once it is. Group rows are excluded from that count — a container is not a unit of
+  work.
+
+- **A deleted task says so.** A row whose `Task` no longer exists renders as *"no longer on
+  the board"* with a `deleted` chip rather than vanishing. Deleting a generated task is a
+  normal thing to do — it is the first thing anybody does after a test run — and a panel that
+  quietly shrank would leave the request claiming work that is not there.
+
+- **A Refresh button on the panel**, since status is read at load and the alternative was a
+  full page reload.
+
 ## [1.320.0] - 2026-08-17
 
 ### Added

@@ -557,9 +557,140 @@ body .container {
 	border-radius: var(--ee-radius);
 }
 
-.ee-fb-created {
+/* ------------------------------------------------------- the created-tasks table */
+
+.ee-fb-created-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin-bottom: 8px;
+}
+
+.ee-fb-created-head .ee-fb-section-title {
 	margin: 0;
-	padding-left: 18px;
+	margin-right: auto;
+}
+
+.ee-fb-progress {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--ee-muted);
+}
+
+.ee-fb-progress-done {
+	color: var(--ee-ok);
+}
+
+/* The page body never scrolls sideways; a wide table scrolls inside this. */
+.ee-fb-table-wrap {
+	overflow-x: auto;
+	border: 1px solid var(--ee-border);
+	border-radius: var(--ee-radius);
+}
+
+.ee-fb-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 14px;
+}
+
+.ee-fb-table th {
+	text-align: left;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--ee-muted);
+	padding: 8px 10px;
+	background: var(--ee-bg-alt);
+	border-bottom: 1px solid var(--ee-border);
+	white-space: nowrap;
+}
+
+.ee-fb-table td {
+	padding: 8px 10px;
+	border-bottom: 1px solid var(--ee-border);
+	vertical-align: top;
+}
+
+.ee-fb-table tr:last-child td {
+	border-bottom: none;
+}
+
+.ee-fb-table-group {
+	background: var(--ee-bg-alt);
+	font-weight: 600;
+}
+
+/* Completed rows recede, but the ✓ glyph in the chip is what actually carries the state —
+   opacity alone is not a cue anybody can rely on. */
+.ee-fb-table-done .ee-fb-cell-task {
+	opacity: 0.72;
+}
+
+.ee-fb-table-missing {
+	opacity: 0.6;
+}
+
+.ee-fb-cell-quiet {
+	color: var(--ee-muted);
+	white-space: nowrap;
+}
+
+.ee-fb-cell-task {
+	min-width: 260px;
+}
+
+/* Depth is indentation only — the hierarchy is also legible from the group row's own
+   styling, so a narrow screen that squeezes this stays readable. */
+.ee-fb-depth-1 {
+	padding-left: 28px;
+}
+
+.ee-fb-task-name {
+	color: var(--ee-muted);
+	font-size: 12px;
+}
+
+.ee-fb-task-gone {
+	color: var(--ee-muted);
+	font-style: italic;
+	font-size: 12px;
+}
+
+.ee-fb-task-gone-pill {
+	border-color: var(--ee-border);
+	color: var(--ee-muted);
+}
+
+/* Task status chips. Separate vocabulary from the request's — these are ERPNext's own Task
+   states. `Canceled` is one l, which is what the site's Select offers. */
+.ee-fb-task-completed,
+.ee-fb-task-invoiced {
+	border-color: var(--ee-ok);
+	color: var(--ee-ok);
+}
+
+.ee-fb-task-working,
+.ee-fb-task-pending-review {
+	border-color: var(--ee-brand);
+	color: var(--ee-brand-ink);
+}
+
+.ee-fb-task-overdue {
+	border-color: var(--ee-danger);
+	color: var(--ee-danger);
+}
+
+.ee-fb-task-canceled {
+	border-color: var(--ee-warn);
+	color: var(--ee-warn);
+}
+
+.ee-fb-task-open,
+.ee-fb-task-template,
+.ee-fb-task-unknown {
+	border-color: var(--ee-border);
+	color: var(--ee-muted);
 }
 
 /* Any wide content scrolls inside itself; the page body never scrolls sideways. */
