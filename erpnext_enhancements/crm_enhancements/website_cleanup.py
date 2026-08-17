@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Bare domains in URL fields, and the 384 records they froze.
+"""Bare domains in URL fields, and the 408 records they froze.
 
 Five Property Setter fixtures — ``{Company,Customer,Lead,Opportunity,Supplier}-website-options``
 — set ``options = "URL"`` on the stock ``website`` Data field, which switches on frappe's
@@ -15,10 +15,9 @@ netloc, so ``validate_url`` returns False and the save throws *"'example.com' is
 URL"*. Anyone who writes a website down the way it is printed on a business card hits it.
 That is the reported bug (ER-2026-256819 → TASK-2026-01604).
 
-**And 384 existing CRM records could not be saved at all.** When this was written production
-held 281 of 739 Customers, 80 of 506 Opportunities, 14 of 35 Leads and 9 of 16 Lead
-``custom_account_website`` values with a scheme-less domain — plus 24 of 277 Suppliers, out of
-scope here, for 408 across the whole site. frappe re-validates *every*
+**And 408 existing records could not be saved at all.** When this was written production held
+281 of 739 Customers, 80 of 506 Opportunities, 24 of 277 Suppliers, 14 of 35 Leads and 9 of 16
+Lead ``custom_account_website`` values with a scheme-less domain. frappe re-validates *every*
 URL field on *every* save, so those records rejected edits that had nothing to do with the
 website — a phone number, a customer group, a background job touching the doc. Not a
 form-entry annoyance: 38% of the customer book frozen, and nothing in the error message says
@@ -45,9 +44,16 @@ afterwards, in ``_validate``. ``before_validate`` is the right one because it ru
 the ``flags.ignore_validate`` early return* and ahead of every other ``validate`` handler, so
 no other hook on these doctypes ever reads the half-fixed value.
 
-Wired for Lead / Customer / Opportunity in ``hooks.py``. Supplier and Company carry the same
-Property Setter and are **not** wired here — they are outside the CRM request that asked for
-this, and the sync already heals the Supplier path that had the cascade.
+**Wired for all five doctypes that carry a URL Property Setter** — Lead, Customer,
+Opportunity, Supplier and Company — even though only the first three are CRM and only they
+were in the request. The rule "every doctype we set ``options="URL"`` on" is one somebody can
+check against the fixtures; "the CRM ones" is a list that goes stale the first time a Supplier
+gets a bare domain typed into it. ``patches.backfill_website_scheme`` repairs the same five,
+and ``tests/test_website_cleanup.py`` asserts the two lists agree: a doctype patched but not
+wired is repaired once and re-breaks, a doctype wired but not patched keeps its frozen records.
+
+This module lives in ``crm_enhancements`` because that is where the request came from and
+where four of the five doctypes belong, not because Supplier and Company are CRM.
 """
 
 import frappe

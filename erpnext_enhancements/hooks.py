@@ -585,6 +585,12 @@ doc_events = {
 		],
 	},
 	"Supplier": {
+		# See the Lead block above — same fixture, same defect. 24 Suppliers were
+		# carrying a scheme-less website. The QuickBooks sync has healed this on its
+		# own save path since v1.36.0 (a parked vendor master cascaded into its Bills
+		# failing to resolve a party); this is the same function, on the desk path the
+		# sync never reaches.
+		"before_validate": "erpnext_enhancements.crm_enhancements.website_cleanup.add_missing_scheme",
 		"after_insert": "erpnext_enhancements.accounting_intake.filing.enqueue_supplier_folder",
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
 		"validate": [
@@ -593,6 +599,14 @@ doc_events = {
 			"erpnext_enhancements.sync_contact.set_supplier_primary_address_display",
 		],
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
+	},
+	# Company's only handler. `Company-website-options` is the fifth of the URL Property
+	# Setters, and the one record on this site is already fine — this is here so the
+	# rule is not "every doctype we set options=URL on, except the one nobody noticed".
+	# A Company save is rare and expensive (it rebuilds the chart of accounts on
+	# insert); a before_validate that touches one string does not add to that.
+	"Company": {
+		"before_validate": "erpnext_enhancements.crm_enhancements.website_cleanup.add_missing_scheme",
 	},
 	"Customer": {
 		# See the Lead block above — same fixture, same defect, and this is where it

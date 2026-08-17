@@ -11,8 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A CRM website field would not accept `example.com` — and 384 records could not be saved
-  at all** (TASK-2026-01604). The reported half is the obvious one: typing a domain the way it
+- **A website field would not accept `example.com` — and 408 records could not be saved at
+  all** (TASK-2026-01604). The reported half is the obvious one: typing a domain the way it
   is printed on a business card throws *"'example.com' is not a valid URL"*, because
   `urlparse` finds no scheme and frappe's `validate_url` returns False.
 
@@ -22,12 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they arrived **after** the data did. frappe re-validates *every* URL field on *every* save,
   so a record already holding a bare domain rejected edits that had nothing to do with its
   website: a phone number, a customer group, a background job touching the doc. On production
-  that was **281 of 739 Customers, 80 of 506 Opportunities, 14 of 35 Leads and 9 of 16 Lead
-  `custom_account_website` values** — 384 CRM records, more than a third of the customer book,
-  frozen with an error message that names a field the user was not editing.
+  that was **281 of 739 Customers, 80 of 506 Opportunities, 24 of 277 Suppliers, 14 of 35
+  Leads and 9 of 16 Lead `custom_account_website` values** — 408 records, more than a third of
+  the customer book among them, frozen with an error message that names a field the user was
+  not editing.
 
-  `crm_enhancements.website_cleanup.add_missing_scheme` runs on `before_validate` for Lead,
-  Customer and Opportunity and prefixes `https://`. `before_validate` rather than `validate`
+  `crm_enhancements.website_cleanup.add_missing_scheme` runs on `before_validate` for all five
+  doctypes that carry one of those Property Setters and prefixes `https://`. **All five, not
+  the three CRM ones the request named**: "every doctype we set `options = "URL"` on" is a rule
+  somebody can check against the fixtures, where "the CRM ones" is a list that goes stale the
+  first time a Supplier gets a bare domain typed into it. `before_validate` rather than `validate`
   because both are early enough (`_validate_data_fields` fires afterwards, in `_validate`) but
   only `before_validate` runs ahead of the `flags.ignore_validate` early return and ahead of
   every other `validate` handler — so nothing else on those doctypes ever reads the half-fixed
@@ -41,9 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   record somebody saves, and the records that needed it most were the ones nobody *could* save.
   Selects coarsely and lets `normalize_website` decide, so the patch cannot heal a value the
   hook would leave alone or skip one it would fix. Writes with
-  `db.set_value(update_modified=False)`: 384 `doc.save()` calls would fire `on_update` —
+  `db.set_value(update_modified=False)`: 408 `doc.save()` calls would fire `on_update` —
   attribution, the contact/address sync, the Drive hooks, the global Triton `after_save` — for
   a string edit, and several of those enqueue background work. Safe twice.
+
+  It covers the same five doctypes as the hook, and a test asserts the two lists are equal —
+  they fail in opposite directions and both quietly. A doctype in the patch but not in
+  `hooks.py` is repaired once and re-breaks the next time somebody types a domain; a doctype in
+  `hooks.py` but not the patch accepts new input and leaves its existing records frozen.
 
 ### Changed
 
@@ -62,10 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nobody can save, and visibly-wrong-but-editable beats frozen. Two tests state it so a later
   tidy-up has to argue with a test rather than a comment.
 
-  **Supplier and Company are deliberately still unwired** (24 Supplier records, no Company
-  ones). They carry the same Property Setter and the same defect, but they are outside the CRM
-  request this came from, and the sync already heals the Supplier save path that had the
-  cascade.
+  The sync's own coverage is why Supplier looked optional and was not: `_heal_invalid_urls`
+  fixed a Supplier the sync was writing, so the 24 frozen vendor records only ever failed for
+  the humans.
 
 ## [1.323.1] - 2026-08-17
 

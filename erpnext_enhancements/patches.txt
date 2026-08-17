@@ -707,13 +707,14 @@ erpnext_enhancements.patches.purge_chat_docshares
 # only fields with no stored row, never over a stored falsy value. Safe twice.
 erpnext_enhancements.patches.seed_product_feedback_settings
 
-# Prefixes https:// onto scheme-less website values on Lead / Customer / Opportunity.
-# Our own Property Setter fixtures put options="URL" on `website` AFTER the data was
-# imported, and frappe re-validates every URL field on every save -- so 384 CRM records
-# (281 of 739 Customers among them) rejected edits that had nothing to do with the
-# website. The before_validate hook shipped with this heals one on the way in; those
-# records need somebody to open them first, which is exactly what nobody was doing.
+# Prefixes https:// onto scheme-less website values on the five doctypes that carry a
+# `*-website-options` Property Setter. Our own fixtures put options="URL" on `website`
+# AFTER the data was imported, and frappe re-validates every URL field on every save --
+# so 408 records (281 of 739 Customers among them) rejected edits that had nothing to do
+# with the website. The before_validate hook shipped with this heals one on the way in;
+# those records need somebody to open them first, which is exactly what nobody was doing.
 # Selects coarsely and lets website_cleanup.normalize_website decide, so the patch and
-# the hook cannot disagree. db.set_value, not doc.save -- 384 on_update cascades for a
-# string edit. Safe twice: a healed value contains "://" and is then left alone.
+# the hook cannot disagree -- a test asserts they cover the same doctypes. db.set_value,
+# not doc.save -- 408 on_update cascades for a string edit. Safe twice: a healed value
+# contains "://" and is then left alone.
 erpnext_enhancements.patches.backfill_website_scheme

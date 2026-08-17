@@ -19,11 +19,11 @@ Without this patch each of those unfreezes only when a human happens to open it,
 at nothing (the hook now heals it), and saves — which is fine for the ones people touch
 and useless for the rest. With it they are valid on the next migrate.
 
-**Scope is the three doctypes the hook is wired to.** Supplier (24 rows) and Company
-carry the same Property Setter and are deliberately left alone: they are outside the CRM
-request this came from, and the QuickBooks sync already heals the Supplier save path that
-had the cascade (``mapping._heal_invalid_urls``). Repairing data whose entry path is not
-also fixed would be half a job in a way that is easy to mistake for a whole one.
+Supplier adds 24 more (and Company none — its single record is already fine), for 408.
+Those two are not CRM and were not in the request that prompted this; they are here
+because they carry the same Property Setter, and repairing data whose entry path is not
+also fixed would be half a job in a way that is easy to mistake for a whole one. The
+hook covers all five for the same reason.
 
 **The predicate is the writer's rule, not a SQL guess.** Rows are selected coarsely
 (non-empty) and the decision is made by :func:`normalize_website`, the same pure function
@@ -42,9 +42,10 @@ import frappe
 
 from erpnext_enhancements.crm_enhancements.website_cleanup import normalize_website
 
-#: The doctypes whose entry path this release also fixes. Keep in step with the
-#: ``before_validate`` wiring in hooks.py.
-DOCTYPES = ("Lead", "Customer", "Opportunity")
+#: The doctypes whose entry path this release also fixes — one per URL Property Setter
+#: fixture. Keep in step with the ``before_validate`` wiring in hooks.py: a doctype
+#: repaired here but not wired there is fixed until the next person types a domain.
+DOCTYPES = ("Lead", "Customer", "Opportunity", "Supplier", "Company")
 
 
 def execute():

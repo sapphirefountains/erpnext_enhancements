@@ -210,5 +210,55 @@ class TestDocEvent(unittest.TestCase):
 		self.assertTrue(callable(getattr(website_cleanup, "heal_url_fields", None)))
 
 
+class TestHookAndPatchAgree(unittest.TestCase):
+	"""The backfill and the hook must cover the same doctypes.
+
+	They are two halves of one fix and they fail in opposite directions. A doctype in
+	the patch but not in hooks.py is repaired once and re-breaks the next time somebody
+	types a domain. A doctype in hooks.py but not the patch accepts new input and leaves
+	its existing records frozen — the state this release exists to end.
+
+	``hooks.py`` is read with ``ast`` rather than imported, because importing it pulls in
+	frappe (the same reason ``test_hooks_integrity`` does).
+	"""
+
+	HANDLER = "erpnext_enhancements.crm_enhancements.website_cleanup.add_missing_scheme"
+
+	def _wired_doctypes(self):
+		import ast
+
+		source = (REPO_ROOT / "erpnext_enhancements" / "hooks.py").read_text(encoding="utf-8")
+		for node in ast.parse(source).body:
+			if isinstance(node, ast.Assign) and any(
+				isinstance(t, ast.Name) and t.id == "doc_events" for t in node.targets
+			):
+				doc_events = ast.literal_eval(node.value)
+				break
+		else:
+			raise AssertionError("no doc_events assignment in hooks.py")
+
+		wired = set()
+		for doctype, events in doc_events.items():
+			handlers = events.get("before_validate") or []
+			if isinstance(handlers, str):
+				handlers = [handlers]
+			if self.HANDLER in handlers:
+				wired.add(doctype)
+		return wired
+
+	def test_the_patch_covers_exactly_what_the_hook_is_wired_to(self):
+		from erpnext_enhancements.patches import backfill_website_scheme
+
+		self.assertEqual(self._wired_doctypes(), set(backfill_website_scheme.DOCTYPES))
+
+	def test_it_covers_every_doctype_with_a_url_property_setter(self):
+		"""One entry per `*-website-options` fixture. Leaving one out is how this
+		defect survived on a doctype nobody thought about for two years."""
+		self.assertEqual(
+			self._wired_doctypes(),
+			{"Lead", "Customer", "Opportunity", "Supplier", "Company"},
+		)
+
+
 if __name__ == "__main__":
 	unittest.main()
