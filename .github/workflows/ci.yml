@@ -362,6 +362,13 @@ jobs:
       # ticked, dragging a whole account's directory onto one job.
       - name: Primary contact/address scoping + bulk import (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_sync_contact_primary -v
+      # The URL-field rule, in the one place both callers share it: the CRM
+      # before_validate hook and the QuickBooks sync's _heal_invalid_urls. Most of the
+      # suite is the rule table, including the two clauses that look like oversights
+      # ("N/A" -> "https://N/A", mailto: left alone) and are load-bearing — the
+      # alternative to a nonsense URL here is a record nobody can save at all.
+      - name: CRM website scheme healing (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_website_cleanup -v
       # Own step, not folded into a multi-module list: each bench-free suite
       # installs its own `frappe` stub in setUpModule, and a separate process
       # keeps them from cross-talking.

@@ -449,6 +449,13 @@ doc_events = {
 	# bench (they check frappe.db.has_column), which is what keeps them safe
 	# during erpnext's own test bootstrap.
 	"Lead": {
+		# Accept a bare domain in any URL field. Our own Property Setter fixtures put
+		# options="URL" on `website` (stock ERPNext leaves it plain), which both rejects
+		# "example.com" on entry and — the expensive half — makes every record that
+		# already held one unsaveable for ANY edit. before_validate rather than validate:
+		# it runs ahead of the flags.ignore_validate early return and ahead of every
+		# other validate handler, so nothing reads the half-fixed value.
+		"before_validate": "erpnext_enhancements.crm_enhancements.website_cleanup.add_missing_scheme",
 		"validate": [
 			# Stamp custom_attribution_captured_on the first time any UTM value
 			# lands. Set once — a later edit never restates the acquisition date.
@@ -460,7 +467,12 @@ doc_events = {
 		],
 	},
 	"Opportunity": {
-		"before_validate": "erpnext_enhancements.sync_contact.sanitize_primary_address_link",
+		"before_validate": [
+			"erpnext_enhancements.sync_contact.sanitize_primary_address_link",
+			# See the Lead block above — same fixture, same defect, 80 of 506
+			# Opportunities were carrying a scheme-less website when this shipped.
+			"erpnext_enhancements.crm_enhancements.website_cleanup.add_missing_scheme",
+		],
 		"validate": [
 			# First-touch inheritance from the originating Lead (or Customer, for
 			# the fountain-move path, which creates Customer-party opportunities
@@ -573,6 +585,12 @@ doc_events = {
 		],
 	},
 	"Supplier": {
+		# See the Lead block above — same fixture, same defect. 24 Suppliers were
+		# carrying a scheme-less website. The QuickBooks sync has healed this on its
+		# own save path since v1.36.0 (a parked vendor master cascaded into its Bills
+		# failing to resolve a party); this is the same function, on the desk path the
+		# sync never reaches.
+		"before_validate": "erpnext_enhancements.crm_enhancements.website_cleanup.add_missing_scheme",
 		"after_insert": "erpnext_enhancements.accounting_intake.filing.enqueue_supplier_folder",
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
 		"validate": [
@@ -582,7 +600,19 @@ doc_events = {
 		],
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
+	# Company's only handler. `Company-website-options` is the fifth of the URL Property
+	# Setters, and the one record on this site is already fine — this is here so the
+	# rule is not "every doctype we set options=URL on, except the one nobody noticed".
+	# A Company save is rare and expensive (it rebuilds the chart of accounts on
+	# insert); a before_validate that touches one string does not add to that.
+	"Company": {
+		"before_validate": "erpnext_enhancements.crm_enhancements.website_cleanup.add_missing_scheme",
+	},
 	"Customer": {
+		# See the Lead block above — same fixture, same defect, and this is where it
+		# bit hardest: 281 of 739 Customers with a website held a scheme-less one, so
+		# more than a third of the book rejected every edit until this shipped.
+		"before_validate": "erpnext_enhancements.crm_enhancements.website_cleanup.add_missing_scheme",
 		# Inherit attribution from the Lead erpnext built this Customer from
 		# (Customer.lead_name is the reliable back-link; custom_opportunities is
 		# a child table populated after insert, so it is empty at validate time).
