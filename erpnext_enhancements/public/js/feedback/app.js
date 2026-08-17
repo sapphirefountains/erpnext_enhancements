@@ -43,6 +43,9 @@ import {
 
 const PRIORITIES = ["Low", "Medium", "High", "Urgent"];
 
+/** Mirrors `api.feedback.draft_description`'s own guard. The server stays the authority. */
+const MIN_TITLE_FOR_DRAFT = 8;
+
 export class FeedbackApp {
 	constructor(root, boot) {
 		this.root = root;
@@ -236,16 +239,31 @@ export class FeedbackApp {
 				this.showBanner(e.message, "bad");
 			} finally {
 				this.setBusy(draft, false, "Expand with AI");
+				// `setBusy` re-enables unconditionally; re-apply the title rule so a cleared
+				// title does not leave a live button behind.
+				syncDraft();
 			}
 		});
 		const descriptionField = field("Description", descInput);
 		const descriptionTools = el("div", "ee-fb-field-tools");
-		append(
-			descriptionTools,
-			draft,
-			el("span", "ee-fb-field-help", "Write a title, then expand it if you want a hand.")
-		);
+		const draftHelp = el("span", "ee-fb-field-help", "");
+		append(descriptionTools, draft, draftHelp);
 		append(descriptionField.row, descriptionTools);
+
+		// The button is disabled until there is a title to expand FROM. Without this, clicking
+		// it early threw the server's own "write a title first" guard back as a 417 — which is
+		// a correct refusal presented as a server error, and it showed up in the console as
+		// one. The server keeps that guard (it is the authority; this is a courtesy), so the
+		// two thresholds have to agree.
+		const syncDraft = () => {
+			const ready = titleInput.value.trim().length >= MIN_TITLE_FOR_DRAFT;
+			draft.disabled = !ready || this.state.busy;
+			draftHelp.textContent = ready
+				? "Expands your title into a description you can edit."
+				: "Write a title first, then this can expand it for you.";
+		};
+		titleInput.addEventListener("input", syncDraft);
+		syncDraft();
 
 		const attachments = this.buildAttachmentPicker();
 
