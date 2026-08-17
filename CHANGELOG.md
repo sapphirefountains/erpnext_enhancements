@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.323.1] - 2026-08-17
+
+### Fixed
+
+- **"Expand with AI" is hidden when Vertex is not configured, and names the cause when called
+  anyway.** The `417` this was reported as turned out not to be the title guard at all. The
+  Error Log said it plainly:
+
+  ```
+  ValidationError: Vertex AI API Key (maps_api_key) is missing in Triton Settings
+  ```
+
+  `Triton Settings.maps_api_key` is empty on this site, so `api/gemini.py` refuses — and the
+  generic *"The draft could not be generated"* buried the one fact that fixes it in two
+  minutes. **Four features share that key** — `api/briefing.py` (morning briefing),
+  `api/communication.py` (email/SMS drafting), `api/training_ai.py` (quiz + checkpoint
+  drafting) and this drafter — so when it is missing they are all down together. That is a
+  pre-existing condition rather than something this feature caused, but this is where it
+  surfaced.
+
+  `get_bootstrap` now reports `ai_drafting` as a **boolean** and the SPA hides the button when
+  it is false. A button that cannot work reads as a bug in the feature rather than a missing
+  setting, which is exactly how it was reported. The key is read server-side, coerced to a
+  bool, and never returned — the same shape `api/integrations_health.py` uses for every other
+  secret.
+
 ## [1.323.0] - 2026-08-17
 
 ### Added
