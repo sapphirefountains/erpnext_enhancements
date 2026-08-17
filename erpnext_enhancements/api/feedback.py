@@ -139,6 +139,10 @@ def get_bootstrap():
         "full_name": frappe.db.get_value("User", frappe.session.user, "full_name") or "",
         "is_reviewer": reviewer,
         "paused": settings["paused"],
+        # Whether the "Expand with AI" button is offered at all. A button that cannot work is
+        # worse than no button: it looks like a bug in the feature rather than a missing
+        # setting, which is exactly how this one was reported.
+        "ai_drafting": _ai_drafting_configured(),
         "request_types": list(VALID_REQUEST_TYPES),
         "impacts": list(VALID_IMPACTS),
         "my_requests": _my_requests(),
@@ -333,6 +337,25 @@ why the current behaviour gets in the way.
 """
 
 
+def _ai_drafting_configured():
+    """Is there a Vertex key at all? A **boolean**, never the value.
+
+    Same shape as ``api/integrations_health.py``, which reports every integration secret as
+    ``configured: true/false`` and never returns one. The key is read server-side, coerced to a
+    bool here, and the value does not leave this function.
+    """
+    try:
+        from frappe.utils.password import get_decrypted_password
+
+        return bool(
+            get_decrypted_password(
+                "Triton Settings", "Triton Settings", "maps_api_key", raise_exception=False
+            )
+        )
+    except Exception:
+        return False
+
+
 @frappe.whitelist(methods=["POST"])
 def draft_description(title=None, description=None, request_type=None):
     """Expand a one-liner into a fuller description. **Persists nothing.**
@@ -368,6 +391,17 @@ def draft_description(title=None, description=None, request_type=None):
     prompt = f"Type: {kind}\nTitle: {title}\n"
     if existing:
         prompt += f"\nWhat they have written so far, which you are expanding rather than replacing:\n{existing}\n"
+
+    if not _ai_drafting_configured():
+        # Named, because the generic "could not be generated" sent somebody looking at the
+        # model for an hour when the answer was an empty field. Four features share this key
+        # (morning briefing, email/SMS drafting, training AI, this) so if it is missing they
+        # are all down together, and saying so is the difference between a bug report and a
+        # two-minute fix.
+        frappe.throw(
+            _("AI drafting is not configured — Triton Settings has no Vertex AI API key. Write the description yourself; nothing else is blocked."),
+            frappe.ValidationError,
+        )
 
     try:
         settings = frappe.get_single("Triton Settings")

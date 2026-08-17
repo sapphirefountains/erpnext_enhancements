@@ -55,6 +55,7 @@ export class FeedbackApp {
 			fullName: this.boot.full_name || "",
 			isReviewer: false,
 			paused: false,
+			aiDrafting: false,
 			requestTypes: ["Feature", "Bug"],
 			impacts: [],
 			myRequests: [],
@@ -104,6 +105,7 @@ export class FeedbackApp {
 		const payload = data || {};
 		this.state.isReviewer = !!payload.is_reviewer;
 		this.state.paused = !!payload.paused;
+		this.state.aiDrafting = !!payload.ai_drafting;
 		this.state.requestTypes = payload.request_types || this.state.requestTypes;
 		this.state.impacts = payload.impacts || [];
 		this.state.myRequests = payload.my_requests || [];
@@ -246,6 +248,9 @@ export class FeedbackApp {
 		});
 		const descriptionField = field("Description", descInput);
 		const descriptionTools = el("div", "ee-fb-field-tools");
+		// Hidden entirely when Vertex is unconfigured. A button that cannot work reads as a
+		// bug in the feature rather than a missing setting -- which is how it was reported.
+		descriptionTools.hidden = !this.state.aiDrafting;
 		const draftHelp = el("span", "ee-fb-field-help", "");
 		append(descriptionTools, draft, draftHelp);
 		append(descriptionField.row, descriptionTools);
