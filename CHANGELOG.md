@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.324.0] - 2026-08-17
+
+### Fixed
+
+- **A CRM website field would not accept `example.com` — and 384 records could not be saved
+  at all** (TASK-2026-01604). The reported half is the obvious one: typing a domain the way it
+  is printed on a business card throws *"'example.com' is not a valid URL"*, because
+  `urlparse` finds no scheme and frappe's `validate_url` returns False.
+
+  The half nobody had reported is what made this urgent. Stock ERPNext ships `website` as a
+  plain `Data` field; five Property Setter fixtures of ours —
+  `{Company,Customer,Lead,Opportunity,Supplier}-website-options` — set `options = "URL"`, and
+  they arrived **after** the data did. frappe re-validates *every* URL field on *every* save,
+  so a record already holding a bare domain rejected edits that had nothing to do with its
+  website: a phone number, a customer group, a background job touching the doc. On production
+  that was **281 of 739 Customers, 80 of 506 Opportunities, 14 of 35 Leads and 9 of 16 Lead
+  `custom_account_website` values** — 384 CRM records, more than a third of the customer book,
+  frozen with an error message that names a field the user was not editing.
+
+  `crm_enhancements.website_cleanup.add_missing_scheme` runs on `before_validate` for Lead,
+  Customer and Opportunity and prefixes `https://`. `before_validate` rather than `validate`
+  because both are early enough (`_validate_data_fields` fires afterwards, in `_validate`) but
+  only `before_validate` runs ahead of the `flags.ignore_validate` early return and ahead of
+  every other `validate` handler — so nothing else on those doctypes ever reads the half-fixed
+  value.
+
+  It is **meta-driven, not a hardcoded `website`**: it heals every `Data` field whose `options`
+  is `URL`. That is what makes `Lead.custom_account_website` — a second URL field on a doctype
+  nobody would have thought to list — covered without a second list to keep in step.
+
+- **`patches.backfill_website_scheme` repairs the stored values once.** The hook only helps a
+  record somebody saves, and the records that needed it most were the ones nobody *could* save.
+  Selects coarsely and lets `normalize_website` decide, so the patch cannot heal a value the
+  hook would leave alone or skip one it would fix. Writes with
+  `db.set_value(update_modified=False)`: 384 `doc.save()` calls would fire `on_update` —
+  attribution, the contact/address sync, the Drive hooks, the global Triton `after_save` — for
+  a string edit, and several of those enqueue background work. Safe twice.
+
+### Changed
+
+- **`quickbooks_online.core.mapping._heal_invalid_urls` is now a one-line delegation** to
+  `crm_enhancements.website_cleanup.heal_url_fields`. The sync met this defect first (v1.36.0,
+  where a parked Customer/Supplier master cascaded into its Bills failing to resolve a party)
+  and has been healing it inside its own save path ever since — which is why the desk kept
+  throwing, and why some of this data has already been rewritten by one of the two callers.
+  Two implementations of "what counts as a fixable URL" would eventually disagree about a
+  record one of them had already changed.
+
+  **The rule is inherited verbatim, including the parts that look careless.** Anything with
+  `://`, or starting with `/`, `#`, `mailto:` or `tel:`, is left alone; every other non-empty
+  value is prefixed. There is no "does this look like a hostname" test, so a website field
+  holding `N/A` becomes `https://N/A`. That is the intended trade — the alternative is a record
+  nobody can save, and visibly-wrong-but-editable beats frozen. Two tests state it so a later
+  tidy-up has to argue with a test rather than a comment.
+
+  **Supplier and Company are deliberately still unwired** (24 Supplier records, no Company
+  ones). They carry the same Property Setter and the same defect, but they are outside the CRM
+  request this came from, and the sync already heals the Supplier save path that had the
+  cascade.
+
 ## [1.323.1] - 2026-08-17
 
 ### Fixed

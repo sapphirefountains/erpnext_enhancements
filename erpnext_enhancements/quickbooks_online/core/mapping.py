@@ -2975,25 +2975,19 @@ def _heal_invalid_urls(doc) -> list[str]:
 	can carry a ``website`` like ``www.fountainpeople.com`` with no ``http(s)://``.
 	ERPNext re-validates every URL-type field on save and rejects the scheme-less value
 	("'...' is not a valid URL"), parking the record -- which then cascades (that
-	vendor's bill payments can no longer resolve a supplier party). Normalise such
-	values in place by prefixing ``https://``. Returns the healed fieldnames.
+	vendor's bill payments can no longer resolve a supplier party). Returns the healed
+	fieldnames.
+
+	**The implementation moved to ``crm_enhancements.website_cleanup`` in v1.324.0** and
+	this is now a one-line delegation. The same defect turned out to be freezing 399
+	desk records that the sync never touches, so the fix had to exist as a doc_event
+	too -- and two copies of "what counts as a fixable URL" would eventually disagree
+	about a record one of them had already rewritten. The name is kept because it is
+	what the v1.36.0 changelog entry and the comment in ``_map_and_link`` refer to.
 	"""
-	try:
-		fields = frappe.get_meta(doc.doctype).fields or []
-	except Exception:
-		return []
-	healed = []
-	for df in fields:
-		if getattr(df, "fieldtype", None) != "Data" or (getattr(df, "options", "") or "") != "URL":
-			continue
-		value = doc.get(df.fieldname)
-		if not isinstance(value, str):
-			continue
-		stripped = value.strip()
-		if stripped and "://" not in stripped and not stripped.startswith(("/", "#", "mailto:", "tel:")):
-			doc.set(df.fieldname, "https://" + stripped)
-			healed.append(df.fieldname)
-	return healed
+	from erpnext_enhancements.crm_enhancements.website_cleanup import heal_url_fields
+
+	return heal_url_fields(doc)
 
 
 def _save_or_manual_review(entity_type: str, qbo_id: str, payload: dict, erpnext_doctype: str, doc):
