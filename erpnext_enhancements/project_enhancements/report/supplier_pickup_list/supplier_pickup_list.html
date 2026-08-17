@@ -1,0 +1,238 @@
+<!--
+	Print template for the Supplier Pickup List (TASK-2026-01588).
+
+	Frappe picks this up by filename: get_html_format() reads <report>.html out of
+	the report folder and query_report.js uses it as the custom format for both
+	Print and PDF, with no registration anywhere. Two things about that are worth
+	knowing before editing:
+
+	* It is bypassed the moment somebody picks specific columns in the print
+	  dialog -- get_print_template() falls back to print_grid then. That is fine;
+	  this sheet is the default, not a cage.
+	* `data` is get_data_for_print(), i.e. the rows *as currently sorted and
+	  filtered on screen*, so re-sorting the on-screen report changes the sheet.
+
+	This is a sheet somebody carries to a trade counter, so it is not the report
+	with a border round it. The tick box comes first because the whole point is
+	that it gets marked up at the counter; ordered/received/status are dropped,
+	since a number nobody acts on only makes the row slower to read; and each
+	supplier starts a new page, because a stop is one sheet handed to one person.
+
+	MIND THE TEMPLATE ENGINE. frappe.template.compile flattens every newline to a
+	space before compiling, so a `//` comment inside a template block would
+	swallow the rest of the file. It also escapes only the last apostrophe in
+	each text run, so apostrophes are avoided throughout -- both here and in the
+	markup. Use /* */ and rephrase. Even this comment is not inert: a template
+	block written out inside it would still be compiled and run.
+-->
+<style>
+	.spl-sheet {
+		font-size: 12pt;
+		color: #000;
+	}
+
+	.spl-group + .spl-group {
+		page-break-before: always;
+	}
+
+	.spl-head {
+		border-bottom: 2px solid #000;
+		padding-bottom: 6px;
+		margin-bottom: 10px;
+	}
+
+	.spl-kicker {
+		font-size: 10pt;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+
+	.spl-supplier {
+		font-size: 22pt;
+		font-weight: 700;
+		line-height: 1.15;
+		margin: 2px 0;
+	}
+
+	.spl-meta {
+		font-size: 10pt;
+		display: flex;
+		justify-content: space-between;
+	}
+
+	.spl-table {
+		width: 100%;
+		border-collapse: collapse;
+	}
+
+	.spl-table th {
+		font-size: 9pt;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		text-align: left;
+		border-bottom: 1px solid #000;
+		padding: 4px 6px;
+	}
+
+	.spl-table td {
+		padding: 7px 6px;
+		border-bottom: 1px solid #bbb;
+		vertical-align: top;
+	}
+
+	.spl-num {
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+
+	.spl-qty {
+		font-weight: 700;
+		font-size: 13pt;
+	}
+
+	.spl-uom {
+		font-size: 9pt;
+		font-weight: 400;
+	}
+
+	.spl-box {
+		display: inline-block;
+		width: 16px;
+		height: 16px;
+		border: 1.5px solid #000;
+	}
+
+	.spl-item-name {
+		font-size: 10pt;
+		color: #333;
+	}
+
+	.spl-sign {
+		margin-top: 22px;
+		font-size: 10pt;
+	}
+
+	.spl-rule {
+		display: inline-block;
+		border-bottom: 1px solid #000;
+		min-width: 220px;
+	}
+
+	.spl-rule-short {
+		min-width: 140px;
+	}
+
+	.spl-empty {
+		font-size: 12pt;
+		padding: 18px 0;
+	}
+
+	@media print {
+		@page {
+			size: A4;
+			margin: 12mm;
+		}
+		thead {
+			display: table-header-group;
+		}
+		tr {
+			page-break-inside: avoid;
+		}
+	}
+</style>
+
+{%
+	var groups = [];
+	var group_index = {};
+	for (var i = 0; i < data.length; i++) {
+		var row = data[i];
+		if (row.is_total_row) { continue; }
+		var key = row.supplier || "";
+		if (!(key in group_index)) {
+			group_index[key] = groups.length;
+			groups.push({
+				supplier: key,
+				supplier_name: row.supplier_name || key || __("All Suppliers"),
+				rows: [],
+			});
+		}
+		groups[group_index[key]].rows.push(row);
+	}
+	var printed_on = frappe.datetime.str_to_user(frappe.datetime.get_datetime_as_string());
+	/* A whole number prints as "3", not "3.000" -- this is read across a counter. */
+	var qty = function (value) {
+		value = value || 0;
+		return format_number(value, null, value % 1 === 0 ? 0 : 2);
+	};
+%}
+
+<div class="spl-sheet">
+	{% if (!groups.length) { %}
+		<div class="spl-head">
+			<div class="spl-kicker">{%= __("Supplier Pickup List") %}</div>
+			<div class="spl-supplier">{%= filters.supplier || __("All Suppliers") %}</div>
+			<div class="spl-meta"><div>{%= printed_on %}</div></div>
+		</div>
+		<div class="spl-empty">{%= __("Nothing outstanding.") %}</div>
+	{% } %}
+
+	{% for (var g = 0; g < groups.length; g++) { %}
+		<div class="spl-group">
+			<div class="spl-head">
+				<div class="spl-kicker">{%= __("Pickup List") %}</div>
+				<div class="spl-supplier">{%= groups[g].supplier_name %}</div>
+				<div class="spl-meta">
+					<div>
+						{%= printed_on %}
+						{% if (filters.project) { %} &middot; {%= __("Job") %} {%= filters.project %}{% } %}
+					</div>
+					<div>
+						{%= groups[g].rows.length %}
+						{%= groups[g].rows.length === 1 ? __("line") : __("lines") %}
+					</div>
+				</div>
+			</div>
+
+			<table class="spl-table">
+				<thead>
+					<tr>
+						<th style="width: 34px;"></th>
+						<th style="width: 15%;">{%= __("Qty") %}</th>
+						<th>{%= __("Item") %}</th>
+						<th style="width: 17%;">{%= __("Order") %}</th>
+						<th style="width: 13%;">{%= __("Expected") %}</th>
+						<th style="width: 13%;">{%= __("Job") %}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{% for (var r = 0; r < groups[g].rows.length; r++) { %}
+						{% var line = groups[g].rows[r]; %}
+						<tr>
+							<td><span class="spl-box"></span></td>
+							<td class="spl-num spl-qty">
+								{%= qty(line.pending_qty) %}
+								{% if (line.uom) { %}<div class="spl-uom">{%= line.uom %}</div>{% } %}
+							</td>
+							<td>
+								<div>{%= line.item_code || "" %}</div>
+								{% if (line.item_name && line.item_name !== line.item_code) { %}
+									<div class="spl-item-name">{%= line.item_name %}</div>
+								{% } %}
+							</td>
+							<td>{%= line.purchase_order || "" %}</td>
+							<td>{%= line.schedule_date ? frappe.datetime.str_to_user(line.schedule_date) : "" %}</td>
+							<td>{%= line.project || "" %}</td>
+						</tr>
+					{% } %}
+				</tbody>
+			</table>
+
+			<div class="spl-sign">
+				{%= __("Collected by") %} <span class="spl-rule"></span>
+				&nbsp;&nbsp;
+				{%= __("Date") %} <span class="spl-rule spl-rule-short"></span>
+			</div>
+		</div>
+	{% } %}
+</div>

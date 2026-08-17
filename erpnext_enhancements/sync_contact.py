@@ -27,7 +27,9 @@ Opportunity, Supplier, Customer — plus Master Project for the directory only):
    plain Data, so there is no automatic cascade).
 
 The whitelisted functions below back the in-form directory widget (list, link,
-unlink, set-primary).
+unlink, set-primary, and the bulk **import** pair :func:`get_importable_contacts`
+/ :func:`import_contacts`, which offer a related party's Contacts with tick
+boxes and link exactly the ones chosen).
 """
 import frappe
 
@@ -400,6 +402,119 @@ def get_contacts_for_context(sources, context_doctype=None, context_name=None):
         c.links = link_map.get(c.name, [])
 
     return contact_list
+
+@frappe.whitelist()
+def get_importable_contacts(target_doctype, target_name, sources=None):
+    """The related parties' Contacts that this document does not carry yet.
+
+    Backs the directory widget's **Import Contacts** dialog. Until now the only
+    way to put a Customer's people onto a Project or an Opportunity was Link
+    Existing, one Contact at a time, typed by name into a Link field — so the
+    common case (a new job for an account with five contacts) was five prompts
+    and a memory test.
+
+    ``sources`` is the same ``[{doctype, name}, ...]`` list
+    :func:`get_contacts_for_context` takes. The client already computes it
+    (``unified_tab_controller.get_all_party_sources``, which knows that an
+    Opportunity's party hangs off ``opportunity_from`` rather than
+    ``party_type``); re-deriving it here would be a second answer to "which
+    parties does this document inherit contacts from", free to drift from the
+    one the directory below the dialog is rendered from.
+
+    **This returns what is missing, not the directory.** A Contact already
+    linked straight to this document is dropped: offering it would make ticking
+    it a silent no-op and turn the "3 contacts linked" confirmation into a lie.
+    Contacts the user previously *unlinked* here are dropped too — they carry a
+    ``Directory Link Exclusion`` row and :func:`get_contacts_for_context`
+    already applies it — so a bulk import can never quietly undo a deliberate
+    unlink. Link Existing remains the way back for one that was hidden on
+    purpose, exactly as it is today.
+    """
+    frappe.has_permission(target_doctype, "read", doc=target_name, throw=True)
+
+    contacts = get_contacts_for_context(sources or [], target_doctype, target_name)
+    if not contacts:
+        return []
+
+    already_linked = set(
+        frappe.get_all(
+            "Dynamic Link",
+            filters={
+                "link_doctype": target_doctype,
+                "link_name": target_name,
+                "parenttype": "Contact",
+            },
+            pluck="parent",
+        )
+    )
+    return [c for c in contacts if c.get("name") not in already_linked]
+
+
+@frappe.whitelist()
+def import_contacts(target_doctype, target_name, contacts):
+    """Link exactly the chosen Contacts to one document, and no others.
+
+    The write half of the Import Contacts dialog. ``contacts`` is the list of
+    Contact names the user ticked (JSON string or list); every Contact outside
+    that list is left alone, including the ones the dialog offered and the user
+    did not choose. Ticking two of five links two.
+
+    Returns ``{"linked": n, "skipped": m, "contacts": [...]}`` — the caller
+    reports the number, so it has to be the number of links actually created,
+    not the number requested. A name that no longer exists, or that is already
+    linked, counts as skipped rather than raising: the dialog is built from a
+    list that was accurate when it was opened, and a Contact deleted or linked
+    in another tab in the meantime is not an error worth throwing an import
+    away over.
+
+    **The permission gate is write on the target document**, not on Contact.
+    Linking is a statement about this Project/Opportunity directory, which is
+    what the user has open and is editing; the Contact rows are saved with
+    ``ignore_permissions`` the same way :func:`link_existing_record` saves
+    them. That is deliberately one more check than ``link_existing_record``
+    performs today, not one fewer.
+    """
+    import json
+
+    if isinstance(contacts, str):
+        contacts = json.loads(contacts)
+    if not isinstance(contacts, (list, tuple)):
+        frappe.throw(frappe._("Pass the list of Contacts to import."))
+
+    names = [str(c).strip() for c in contacts if str(c or "").strip()]
+    if not names:
+        return {"linked": 0, "skipped": 0, "contacts": []}
+
+    frappe.has_permission(target_doctype, "write", doc=target_name, throw=True)
+
+    linked = []
+    skipped = []
+
+    # dict.fromkeys de-duplicates while preserving the order the user sees.
+    for name in dict.fromkeys(names):
+        if not frappe.db.exists("Contact", name):
+            skipped.append(name)
+            continue
+
+        contact = frappe.get_doc("Contact", name)
+        if any(
+            l.link_doctype == target_doctype and l.link_name == target_name
+            for l in contact.links
+        ):
+            skipped.append(name)
+        else:
+            contact.append(
+                "links", {"link_doctype": target_doctype, "link_name": target_name}
+            )
+            contact.save(ignore_permissions=True)
+            linked.append(name)
+
+        # Picking a Contact here is deliberate, so it also clears any prior
+        # "hidden from this directory" row — same as link_existing_record.
+        _remove_exclusion(target_doctype, target_name, "Contact", name)
+
+    return {"linked": len(linked), "skipped": len(skipped), "contacts": linked}
+
 
 @frappe.whitelist()
 def get_addresses_for_context(sources, context_doctype=None, context_name=None):

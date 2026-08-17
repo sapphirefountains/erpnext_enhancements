@@ -19,6 +19,13 @@
  * New Address open the quick-entry dialogs (contact_address_quick_entry.js), which
  * re-render this widget after insert.
  *
+ * Import Contacts is the bulk counterpart of Link Existing: it lists the related
+ * parties' contacts that this document does not carry yet, with tick boxes, and
+ * links exactly the ticked ones (`sync_contact.get_importable_contacts` /
+ * `import_contacts`). It only appears where there is something to import *from*,
+ * i.e. where `get_all_party_sources` finds a party besides the form itself —
+ * Project and Opportunity, not Customer or Supplier.
+ *
  * Set Primary is the exception, and deliberately so: only Customer and Supplier
  * write the account-wide `is_primary_contact` / `is_primary_address` flags through
  * that API. Every other form records its primary in its own doc-local field and
@@ -274,6 +281,24 @@ erpnext_enhancements.unified_controller = {
 		$('<button class="btn btn-sm btn-default">Link Existing</button>')
 			.appendTo(btn_container)
 			.on("click", () => this.link_existing_record("Contact"));
+
+		// Import Contacts only means something when this document inherits
+		// contacts from somewhere else — a Project from its Customer, an
+		// Opportunity from its Lead. On Customer / Supplier / Contact the only
+		// source is the form itself, so there is nothing to import *from* and the
+		// button would open an empty dialog.
+		//
+		// Hidden on an unsaved form too: the links would be written against the
+		// placeholder docname ("new-project-abc123"), which is not a document and
+		// stops existing the moment the form is saved under its real name.
+		const related_sources = sources.filter(
+			(s) => !(s.doctype === frm.doctype && s.name === frm.doc.name),
+		);
+		if (related_sources.length && !frm.is_new()) {
+			$('<button class="btn btn-sm btn-default">Import Contacts</button>')
+				.appendTo(btn_container)
+				.on("click", () => this.import_contacts(sources));
+		}
 
 		frappe.call({
 			method: "erpnext_enhancements.sync_contact.get_contacts_for_context",
@@ -567,6 +592,133 @@ erpnext_enhancements.unified_controller = {
 			`Add ${doctype}`,
 			"Add",
 		);
+	},
+
+	// ------------------------------------------------------------ bulk import
+	//
+	// Link Existing takes one Contact at a time, typed by name into a Link
+	// field. A new job for an account with five contacts was therefore five
+	// prompts and a memory test — and the people the user was trying to link
+	// were already listed on screen, four inches below the button.
+	//
+	// Import Contacts asks the server which of the related parties' contacts
+	// this document does NOT have yet, shows them with tick boxes, and links
+	// exactly the ticked ones. Nothing is written until the user confirms; the
+	// selection is the whole point, so an empty one is refused rather than
+	// quietly treated as "all".
+
+	contact_option_label: function (contact) {
+		const esc = frappe.utils.escape_html;
+		const full_name =
+			[contact.first_name, contact.last_name].filter(Boolean).join(" ") || contact.name;
+		const detail = [
+			contact.custom_title,
+			contact.custom_email,
+			contact.custom_phone_number || contact.custom_mobile_number,
+		]
+			.filter(Boolean)
+			.join(" · ");
+
+		// MultiCheck injects `label` into the DOM as HTML, so every piece of
+		// contact data going into it is escaped first — a contact whose name
+		// contains an angle bracket would otherwise render as markup.
+		return detail
+			? `${esc(full_name)} <span class="text-muted">— ${esc(detail)}</span>`
+			: esc(full_name);
+	},
+
+	import_contacts: function (sources) {
+		const frm = this.frm;
+
+		frappe.call({
+			method: "erpnext_enhancements.sync_contact.get_importable_contacts",
+			args: {
+				target_doctype: frm.doctype,
+				target_name: frm.doc.name,
+				sources: sources,
+			},
+			callback: (r) => {
+				const available = r.message || [];
+				if (!available.length) {
+					frappe.msgprint({
+						title: __("Nothing to import"),
+						indicator: "blue",
+						message: __(
+							"Every contact on the related records is already on this {0}.",
+							[__(frm.doctype)],
+						),
+					});
+					return;
+				}
+
+				const dialog = new frappe.ui.Dialog({
+					title: __("Import Contacts"),
+					size: "large",
+					fields: [
+						{
+							fieldtype: "HTML",
+							fieldname: "intro",
+							options: `<p class="text-muted">${__(
+								"Contacts on the related records that are not linked to this {0} yet. Only the ones you tick are linked.",
+								[__(frm.doctype)],
+							)}</p>`,
+						},
+						{
+							fieldtype: "MultiCheck",
+							fieldname: "contacts",
+							options: available.map((c) => ({
+								label: this.contact_option_label(c),
+								value: c.name,
+								checked: 0,
+							})),
+							columns: "22rem 2",
+							select_all: true,
+						},
+					],
+					primary_action_label: __("Import"),
+					primary_action: () => {
+						const selected = dialog.get_value("contacts") || [];
+						if (!selected.length) {
+							frappe.show_alert({
+								message: __("Select at least one contact"),
+								indicator: "orange",
+							});
+							return;
+						}
+
+						// Double-submitting would not corrupt anything — the
+						// server skips a contact it has already linked — but it
+						// would report the second, all-skipped run as "0 linked".
+						const $btn = dialog.get_primary_btn();
+						$btn.prop("disabled", true);
+
+						frappe.call({
+							method: "erpnext_enhancements.sync_contact.import_contacts",
+							args: {
+								target_doctype: frm.doctype,
+								target_name: frm.doc.name,
+								contacts: JSON.stringify(selected),
+							},
+							callback: (res) => {
+								dialog.hide();
+								const linked = (res.message && res.message.linked) || 0;
+								this.render_all();
+								frappe.show_alert({
+									message:
+										linked === 1
+											? __("1 contact linked")
+											: __("{0} contacts linked", [linked]),
+									indicator: linked ? "green" : "orange",
+								});
+							},
+							error: () => $btn.prop("disabled", false),
+						});
+					},
+				});
+
+				dialog.show();
+			},
+		});
 	},
 
 	set_primary_address: function (address_name) {

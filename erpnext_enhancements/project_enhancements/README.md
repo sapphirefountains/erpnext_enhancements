@@ -21,6 +21,8 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `page/project_dashboard/project_dashboard.py` | Shared backend for the dashboard (data / permission / inline-edit endpoints) **plus the Scope-tab task-tree export**: `_flatten_task_tree` reads the whole project in one `get_list` and links it in memory, because the on-screen grid loads children one level at a time and a file built from that would omit every branch the user did not expand | `check_permission`, `get_project_data`, `get_gantt_tasks_for_project`, `get_master_project_projects`, `update_task_*`, `add_task_dependency`, `publish_realtime_update`, `get_project_task_tree`, `export_project_tasks`, … | Whitelisted (called by the Custom HTML Block); `publish_realtime_update` via `doc_events`. NB the folder no longer defines a desk Page — only this module + `test_project_dashboard.py` remain. |
 | `print_data.py` | Pre-computed rows for the two Project Print Formats, including each Gantt bar's `left_pct`/`width_pct`. Computed in Python because the print sandbox has no date arithmetic to derive them per row, and a Print Format renders **server-side with no JavaScript**, so the browser SVG renderer cannot help | `project_schedule_rows`, `project_task_rows` | `jinja.methods` in `hooks.py` (callable from any Print Format / web template) |
 | `setup_print_formats.py` | Ships the **Project Schedule** (task tree + HTML/CSS Gantt bars) and **Project Task List** formats, idempotently upserted so template edits deploy on the next migrate | `ensure_project_print_formats` | `after_migrate` (above `ensure_chrome_pdf_generator`, which must see them) |
+| `report/supplier_pickup_list/` | **Supplier Pickup List** Script Report — unreceived Purchase Order lines by vendor, plus `supplier_pickup_list.html`, the driver-facing checklist print template | `execute`, `get_data` | Standard report (synced on migrate) |
+| `report/pending_items_by_project/` | **Pending Items by Project** Query Report — unreceived Purchase Order lines for one job. The whole report is the SQL in its `.json`; the `.js` holds the filter, the colouring and the reasoning | — | Standard report (synced on migrate) |
 
 Related code outside this folder:
 - `project_merge.py` (repo root) — merge one Project into another by re-pointing all linked docs. Whitelisted; called from `public/js/project_merge.js`.
@@ -203,6 +205,39 @@ A job's material sits at several vendors' will-call counters at once, and nothin
 - **Client:** [`public/js/project_enhancements/pick_routing_map.js`](../public/js/project_enhancements/pick_routing_map.js) — an extra-large dialog, ordered stop list beside the map. The optimisation is Google's `DirectionsService` with `optimizeWaypoints: true`, run in the browser, so the routing itself is still never done server-side. Stops whose Address was picked from the Places autocomplete arrive with coordinates and skip the geocode entirely — both for the fallback pins and as `DirectionsService` waypoints, which routes to the exact building rather than to Google's reading of the address text. Most Addresses have no stored point and geocode from text exactly as before; a run freely mixes the two. (The Routes API engine deliberately still sends text — see the comment on `intermediates`.) Finish at the shop (default), the job site, or a typed address.
 - **Settings:** `ERPNext Enhancements Settings.pickup_route_start_address` (Purchasing Controls) is where the run starts; blank falls back to the shop. The map reuses `Travel Settings.google_maps_api_key`, which needs the **Directions API** enabled on it as well as Maps JavaScript. That key is the shared desk maps key — its own field description in Travel Settings lists every API the desk features need, including **Places API (New)** for address autocomplete.
 - **Degrades in three steps, each still usable:** optimised route → geocoded pins in PO order (key without the Directions API) → an ordered list of Google Maps links (no key at all). "Open in Google Maps" works at every step.
+
+## Outstanding-material reports (v1.323.0)
+
+The Pick Routing Map answers "what is still out there for **this job**, and how do I drive it".
+Two reports answer the two questions either side of that, off the same data and the same rule.
+
+- **Supplier Pickup List** (`report/supplier_pickup_list/`, Script Report) — one vendor, every
+  job. The sheet somebody carries to a will-call counter. Filters: Supplier, Job, Expected On
+  or Before, Include Closed / Delivered. One row per unreceived Purchase Order line.
+- **Pending Items by Project** (`report/pending_items_by_project/`, Query Report) — one job,
+  every vendor, as a flat list rather than a map. Project filter, required.
+
+Three decisions are shared, and each one is load-bearing:
+
+- **"Still outstanding" is `procurement_project.SETTLED_PO_STATUSES`**, imported by the script
+  report and restated in the query report's SQL: submitted, `status` not `Closed`/`Delivered`,
+  and quantity left on the line. Taking `per_received < 100` alone — which is what "all
+  submitted POs not fully received" means literally — is not close: **81 of the 123** submitted
+  orders matching it on production are `Closed`, worth 161 dead item rows against the 148 live
+  ones. `Closed` is a deliberate "stop chasing this"; `Delivered` is a drop-ship.
+- **The project match is a union** — `ifnull(nullif(poi.project, ''), po.project)`, the row
+  winning and the header as fallback. 40 of the 148 live pending lines have no row project and
+  32 of those sit under an order whose header names the job. On PRJ-00566 the union returns 63
+  rows where a row-only match returns 37.
+- **Pending quantity is in the line's own UOM.** ERPNext maintains `received_qty` against `qty`
+  (`target_ref_field="qty"`), never `stock_qty`, so `qty - received_qty` is a number in `uom` —
+  which is why UOM is a column on both reports.
+
+`supplier_pickup_list.html` is the pickup checklist print format. Frappe wires it by filename
+alone (`get_html_format` reads `<report>.html` from the report folder), so there is no Print
+Format record and nothing to register: tick box first, supplier and date at the top, one page
+per supplier, and a signature line. It is bypassed if the user picks explicit columns in the
+print dialog — frappe falls back to `print_grid` then.
 
 ## `hooks.py` touchpoints
 

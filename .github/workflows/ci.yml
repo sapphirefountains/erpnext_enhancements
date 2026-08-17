@@ -356,8 +356,11 @@ jobs:
       # Contact/Address record, so only Customer and Supplier can own them. A
       # Project or Opportunity context must be refused, not quietly applied to
       # whichever account happened to be nearby. Also fences the Supplier path
-      # that the pick-up routing address ordering depends on.
-      - name: Primary contact/address scoping (bench-free)
+      # that the pick-up routing address ordering depends on, and the bulk
+      # Import Contacts pair — where the failure to guard against is the mirror
+      # image: an import that links everything it found rather than what was
+      # ticked, dragging a whole account's directory onto one job.
+      - name: Primary contact/address scoping + bulk import (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_sync_contact_primary -v
       # Own step, not folded into a multi-module list: each bench-free suite
       # installs its own `frappe` stub in setUpModule, and a separate process

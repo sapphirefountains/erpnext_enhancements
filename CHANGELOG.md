@@ -7,6 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.323.0] - 2026-08-17
+
+### Added
+
+- **Supplier Pickup List** (TASK-2026-01587) — a Script Report answering the question the Pick
+  Routing Map answers per *job*, but per *vendor*: one row per unreceived Purchase Order line,
+  filtered by Supplier, Job, expected date, newest promise first. A run to Automation Direct
+  should collect the parts for all four jobs waiting on them, and until now finding those four
+  meant opening four projects.
+
+  **It imports `procurement_project.SETTLED_PO_STATUSES` rather than restating the rule.** The
+  request asked for "all submitted Purchase Orders where `per_received < 100`, which is not
+  close on this data: of the **123** submitted orders matching that, **81 are Closed** — 161
+  item rows against 27 suppliers that nobody is going to collect, versus 148 live ones. Taken
+  literally the driver's sheet would have been more dead lines than real ones. `Closed` is a
+  deliberate "stop chasing this" and `Delivered` is a drop-ship that never comes here; the
+  *Include Closed / Delivered* filter brings them back for the office reconciling why an order
+  was closed short, and defaults off. The Pick Routing Map, the Project form's "+ Purchase
+  Receipt" button and this report now cannot disagree about what is outstanding.
+
+  Two more decisions worth stating. The line-level `qty - received_qty > 0` test is **not**
+  redundant with the order-level percentage — a two-line order half received reads 50 and
+  qualifies both its lines, one of which has nothing left to collect; the order-level test
+  stays because it is the shared rule and it lets MariaDB cut most orders before the join. And
+  the pending quantity is in the **line's own UOM**, never stock UOM: ERPNext maintains
+  `Purchase Order Item.received_qty` against `qty` (`target_ref_field="qty"`), so UOM is a
+  column rather than decoration — the live pending lines are mostly `Unit` but also `FT` and
+  `Square Foot`, and "6" at a trade counter is a different collection depending on which.
+
+- **A checklist print format for it** (TASK-2026-01588) — `supplier_pickup_list.html`. Frappe
+  wires this by filename alone: `get_html_format` reads `<report>.html` out of the report
+  folder and the report view uses it for Print and PDF, so there is no Print Format record and
+  nothing to register. Tick box first, because the sheet exists to be marked up at the counter;
+  supplier name at 22pt and the date across the top; one page per supplier, since a stop is one
+  sheet handed to one person; a Collected by / Date signature line. Ordered, received and PO
+  status are dropped — a number nobody acts on only makes the row slower to read.
+
+  Mind the template engine if you edit it. `frappe.template.compile` flattens every newline to
+  a space *before* compiling, so a `//` comment inside a template block swallows the rest of the
+  file, and it escapes only the last apostrophe in each text run. The file is written without
+  either, and says so at the top.
+
+- **Pending Items by Project** (TASK-2026-01589) — a Query Report: one job, every vendor, as a
+  flat list rather than a map. Supplier, item, expected delivery, ordered/received/pending, UOM.
+
+  **The project match is a union — the item-row project, falling back to the header — not
+  `Purchase Order Item.project` alone.** The item-row project is mandatory (WI-014) and
+  `cascade_project_to_items` fills blanks from the header on save, but blanks only, on save
+  only; rows written before that hook or through a path that bypasses it still carry one and
+  not the other. On production 40 of the 148 live pending lines have no row project and **32 of
+  those sit under an order whose header names the job**. Run against PRJ-00566, the job with the
+  most outstanding material, the union returns **63 rows where the row-only match returns 37**.
+  A report that quietly loses two fifths of a job is worse than no report, because it has the
+  same shape as good news.
+
+- **Import Contacts** on the party directory widget (TASK-2026-01590 / TASK-2026-01591) — the
+  bulk counterpart of Link Existing. It lists the related parties' contacts that this document
+  does *not* carry yet, with tick boxes, and links exactly the ticked ones: two of five links
+  two. Nothing is written until the dialog is confirmed, and an empty selection is refused
+  rather than quietly treated as "all".
+
+  Until now the only way to put a Customer's people onto a Project or an Opportunity was Link
+  Existing, one contact at a time, typed by name into a Link field — five prompts and a memory
+  test for a new job on an account with five contacts, while the people being typed were listed
+  on screen four inches below the button.
+
+  Two things it deliberately does not do. It never offers a contact already linked to the
+  document, because ticking it would be a silent no-op and the "3 contacts linked" confirmation
+  would be a lie — so the reported count is links actually created, and an already-linked or
+  since-deleted name counts as skipped rather than throwing the rest of the import away. And it
+  never offers a contact that was **unlinked** here on purpose: those carry a
+  `Directory Link Exclusion` row, which the dialog's source query already applies, so a bulk
+  import cannot become a way to undo an unlink nobody remembers making. Link Existing remains
+  the way back for one that was hidden deliberately.
+
+  The pair (`sync_contact.get_importable_contacts` / `import_contacts`) lives beside the rest
+  of the directory API rather than in the Project and Opportunity controllers, because the
+  client half is one shared widget — a second copy would be a second answer to "which parties
+  does this document inherit contacts from". `import_contacts` gates on **write permission on
+  the target document**, which is one check more than `link_existing_record` performs today,
+  not one fewer.
+
+### Changed
+
+- `tests/test_report_modules.py` required a `.py` beside every report JSON. That was true while
+  every report in this app was a Script Report; a **Query Report** has no controller — its whole
+  definition is the `query` in the JSON and Frappe never imports a module for it. The `.py` is
+  now required of Script Reports only, and Query Reports get the counterpart check the Script
+  Reports already had: a non-empty query that starts with SELECT/EXPLAIN/WITH, since
+  `check_safe_sql_query` rejects anything else at run time and a blank `query` throws "Must
+  specify a Query to run" — both failures that only appear when somebody opens the report.
+
 ## [1.322.0] - 2026-08-17
 
 ### Fixed
