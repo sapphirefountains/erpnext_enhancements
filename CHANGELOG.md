@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.321.0] - 2026-08-17
+
+### Fixed
+
+- **The "On the board" panel showed no task status, and never changed after the day it was
+  written.** It rendered `proposed_tasks` — the child table holding the *proposal*, which is a
+  frozen record of what was agreed. A status moved to Completed, a subject renamed on the
+  board, a task reparented by hand: none of that is in it, and none of it appeared.
+
+  The panel now reads **live `Task` rows**, via `api.feedback._created_task_rows`. That is the
+  only part of the request payload that changes after the tasks are created, and the
+  distinction is the point: the proposal answers "what did we agree to", the panel answers
+  "what has happened since", and rendering one to ask the other is why it looked frozen.
+
+### Added
+
+- **The created tasks are a table, with the group/subtask hierarchy.** Task (indented under
+  its group), live status, priority, due date. The hierarchy is derived from each Task's own
+  `parent_task` rather than from the request — the group task `task_writer` creates is not
+  recorded on the request, and deriving it means the tree stays right even if somebody
+  reparents a task by hand afterwards. It also surfaces the case where work was nested under
+  an **existing** epic, which is the outcome the breakdown prompt actively prefers.
+
+- **A status chip per task, and a completion count.** `taskPill()` carries ERPNext's own
+  `Task` vocabulary — separate from the request's, and spelled **`Canceled`, one l**, which is
+  what this site's Select offers. Every chip carries a glyph as well as a colour, because a
+  colour-only indicator fails anybody who cannot distinguish it; a completed row also recedes,
+  but the ✓ is what actually carries the state. The header reads "3 of 7 complete", or "All 7
+  complete" once it is. Group rows are excluded from that count — a container is not a unit of
+  work.
+
+- **A deleted task says so.** A row whose `Task` no longer exists renders as *"no longer on
+  the board"* with a `deleted` chip rather than vanishing. Deleting a generated task is a
+  normal thing to do — it is the first thing anybody does after a test run — and a panel that
+  quietly shrank would leave the request claiming work that is not there.
+
+- **A Refresh button on the panel**, since status is read at load and the alternative was a
+  full page reload.
+
+- **The breakdown now sees the codebase.** It was planning **blind**: Triton has no GitHub
+  integration, no filesystem tool, and nothing about either repository in its RAG corpus — so
+  a proposed task could name a module that does not exist, put a portal page in `api/`, or
+  describe work in a module whose whole point is something else. Plausible tasks, not accurate
+  ones, which is the complaint.
+
+  `product_feedback/codemap.py` builds a map of **this app's own source** and sends it in the
+  payload. Triton adds a map of its own repo (Triton `0.71.0`); neither side can see the
+  other's code, so each contributes the half it can actually observe.
+
+  **Not the source.** ~94k lines does not fit in a prompt, and a model that has read three
+  files at random is worse off than one that has read none — it will anchor on them. What goes
+  instead is what a new contributor reads first: the module map with its curated one-line
+  purpose per module, file listings for the packages where new code actually lands (`api/`,
+  `www/`, `patches/`, `utils/`, `scripts/`), and the Gotchas half of `CLAUDE.md`. About 5k
+  tokens, hard-capped.
+
+  **Read from the installed app** via `frappe.get_app_path`, so the map describes what is
+  deployed rather than what some checkout says, and cached against the deploy version because
+  that is exactly when it changes.
+
+  One thing worth knowing for anyone extending it: the per-module README H1 is **not** a
+  reliable purpose line. Newer modules write ``# `chat/` — what it covers`` but most older
+  ones write just ``# Chat``, and taking the module's own name as its description is worse
+  than leaving it blank because it reads like information. The purposes come from the root
+  README's module-map table, which is curated and complete; the H1 is only a fallback.
+
 ## [1.320.0] - 2026-08-17
 
 ### Added

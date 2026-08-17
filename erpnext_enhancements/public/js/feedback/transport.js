@@ -25,6 +25,7 @@ export const M = {
 	BOOTSTRAP: "erpnext_enhancements.api.feedback.get_bootstrap",
 	GET: "erpnext_enhancements.api.feedback.get_request",
 	SUBMIT: "erpnext_enhancements.api.feedback.submit_request",
+	DRAFT: "erpnext_enhancements.api.feedback.draft_description",
 	DECIDE: "erpnext_enhancements.api.feedback.review_decision",
 	RERUN: "erpnext_enhancements.api.feedback.rerun_breakdown",
 	SAVE_PROPOSAL: "erpnext_enhancements.api.feedback.save_proposal",

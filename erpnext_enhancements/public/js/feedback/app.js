@@ -34,7 +34,9 @@ import {
 	relativeTime,
 	richText,
 	select,
+	shortDate,
 	statusPill,
+	taskPill,
 	textarea,
 } from "./dom.js";
 
@@ -207,6 +209,38 @@ export class FeedbackApp {
 		typeInput.addEventListener("change", syncSteps);
 		syncSteps();
 
+		// Expands the title into a fuller description. Fills the textarea rather than
+		// submitting anything — the requester edits it and is still the author.
+		const draft = button("Expand with AI", "ee-fb-btn ee-fb-btn-small", async () => {
+			this.setBusy(draft, true, "Drafting…");
+			try {
+				const result = await call(
+					M.DRAFT,
+					{
+						title: titleInput.value,
+						description: descInput.value,
+						request_type: typeInput.value,
+					},
+					{ timeout: 90000 }
+				);
+				descInput.value = result.description;
+				descInput.focus();
+				this.showBanner("Drafted from your title. Edit anything that is not right — you are the author.", "ok");
+			} catch (e) {
+				this.showBanner(e.message, "bad");
+			} finally {
+				this.setBusy(draft, false, "Expand with AI");
+			}
+		});
+		const descriptionField = field("Description", descInput);
+		const descriptionTools = el("div", "ee-fb-field-tools");
+		append(
+			descriptionTools,
+			draft,
+			el("span", "ee-fb-field-help", "Write a title, then expand it if you want a hand.")
+		);
+		append(descriptionField.row, descriptionTools);
+
 		const attachments = this.buildAttachmentPicker();
 
 		const submit = button("Submit", "ee-fb-btn ee-fb-btn-primary", async () => {
@@ -229,7 +263,7 @@ export class FeedbackApp {
 			field("Type", typeInput).row,
 			field("Title", titleInput).row,
 			field("Impact", impactInput, "Your read on it. It informs triage; it does not set the priority of the work.").row,
-			field("Description", descInput).row,
+			descriptionField.row,
 			stepsField.row,
 			attachments.row,
 			this.contextSummary(),
@@ -401,7 +435,7 @@ export class FeedbackApp {
 			if (detail.status === "Breakdown Failed") append(this.pane, this.failedPanel(detail));
 			if (detail.status === "Breakdown Ready") append(this.pane, this.proposalPanel(detail));
 		}
-		if (detail.proposed_tasks.some((row) => row.created_task)) {
+		if ((detail.created_tasks || []).length) {
 			append(this.pane, this.createdPanel(detail));
 		}
 	}
@@ -700,18 +734,99 @@ export class FeedbackApp {
 		};
 	}
 
+	/**
+	 * What this request actually put on the board, with live status.
+	 *
+	 * Reads `detail.created_tasks`, which the server builds from the **Task** rows rather than
+	 * from the proposal — see `api/feedback._created_task_rows`. The proposal is a frozen
+	 * record of what was agreed; this panel answers what has happened since, and the two are
+	 * not the same question. Rendering the proposal's copy is why this panel used to show no
+	 * status and never changed.
+	 */
 	createdPanel(detail) {
+		const rows = detail.created_tasks || [];
 		const panel = el("section", "ee-fb-section");
-		append(panel, el("h3", "ee-fb-section-title", "On the board"));
-		const list = el("ul", "ee-fb-created");
-		for (const row of detail.proposed_tasks) {
-			if (!row.created_task) continue;
-			const item = el("li");
-			append(item, deskLink(`${row.created_task} — ${row.subject}`, `/app/task/${row.created_task}`));
-			list.appendChild(item);
+
+		let done = 0;
+		let live = 0;
+		for (const row of rows) {
+			if (row.missing || row.is_group) continue;
+			live += 1;
+			if (row.done) done += 1;
 		}
-		append(panel, list);
+
+		const head = el("div", "ee-fb-created-head");
+		append(head, el("h3", "ee-fb-section-title", "On the board"));
+		if (live) {
+			const complete = done === live;
+			const count = el(
+				"span",
+				`ee-fb-progress${complete ? " ee-fb-progress-done" : ""}`,
+				complete ? `All ${live} complete` : `${done} of ${live} complete`
+			);
+			append(head, count);
+		}
+		// Status is read at load. Without this the only way to see a task move is a full
+		// reload, which is the complaint this panel was rebuilt for.
+		const refresh = button("Refresh", "ee-fb-btn ee-fb-btn-small", () => this.renderRequest(detail.name));
+		append(head, refresh);
+		append(panel, head);
+
+		const table = el("table", "ee-fb-table");
+		const thead = el("thead");
+		const hrow = el("tr");
+		for (const label of ["Task", "Status", "Priority", "Due"]) {
+			const th = el("th", null, label);
+			th.scope = "col";
+			hrow.appendChild(th);
+		}
+		append(thead, hrow);
+		append(table, thead);
+
+		const tbody = el("tbody");
+		for (const row of rows) {
+			tbody.appendChild(this.createdRow(row));
+		}
+		append(table, tbody);
+
+		// Wide content scrolls inside its own container; the page body never scrolls sideways.
+		const scroller = el("div", "ee-fb-table-wrap");
+		append(scroller, table);
+		append(panel, scroller);
 		return panel;
+	}
+
+	createdRow(row) {
+		const tr = el("tr", "ee-fb-table-row");
+		if (row.is_group) tr.classList.add("ee-fb-table-group");
+		if (row.done) tr.classList.add("ee-fb-table-done");
+		if (row.missing) tr.classList.add("ee-fb-table-missing");
+
+		const first = el("td", `ee-fb-cell-task ee-fb-depth-${row.depth || 0}`);
+		if (row.missing) {
+			// Deleting a generated task is normal — it is the first thing anybody does after a
+			// test run — so say so rather than quietly shrinking the table.
+			append(
+				first,
+				el("span", "ee-fb-task-name", row.name),
+				el("span", "ee-fb-task-gone", " — no longer on the board")
+			);
+		} else {
+			append(
+				first,
+				deskLink(row.subject || row.name, `/app/task/${row.name}`),
+				el("span", "ee-fb-task-name", ` ${row.name}`)
+			);
+		}
+		append(tr, first);
+
+		const status = el("td");
+		append(status, row.missing ? el("span", "ee-fb-pill ee-fb-task-gone-pill", "deleted") : taskPill(row.status));
+		append(tr, status);
+
+		append(tr, el("td", "ee-fb-cell-quiet", row.missing ? "" : row.priority || ""));
+		append(tr, el("td", "ee-fb-cell-quiet", row.missing ? "" : shortDate(row.exp_end_date)));
+		return tr;
 	}
 
 	// ------------------------------------------------------------------ helpers

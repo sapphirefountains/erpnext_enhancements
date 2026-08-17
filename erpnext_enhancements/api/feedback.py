@@ -157,6 +157,81 @@ def get_request(name):
 # ------------------------------------------------------------------------------- intake
 
 
+#: Recorded on the AI Model Usage row so description drafting is accounted for separately
+#: from the work breakdown and from email/SMS drafting.
+DRAFT_FEATURE = "feedback_description_draft"
+
+_DRAFT_SYSTEM = """\
+You help a Sapphire Fountains employee turn a one-line note about their ERPNext or Triton \
+software into a description a developer can act on.
+
+Expand what they wrote. Do not invent specifics they did not give you — no error messages \
+they did not quote, no screens they did not name, no numbers. Where a detail is missing and \
+matters, say what is missing rather than filling it in.
+
+Three short paragraphs at most, plain prose, no headings and no markdown. Write it in their \
+voice, first person, as the person who noticed it. For a bug: what happens, what they \
+expected, and what it stops them doing. For a feature: what they are trying to achieve and \
+why the current behaviour gets in the way.
+"""
+
+
+@frappe.whitelist(methods=["POST"])
+def draft_description(title=None, description=None, request_type=None):
+    """Expand a one-liner into a fuller description. **Persists nothing.**
+
+    Same doctrine as ``api/training_ai.py``: a drafting call returns transient text and writes
+    no record. What comes back lands in the requester's textarea, where they edit it and then
+    submit — so the description that reaches a reviewer is one a human signed off, not one a
+    model filed on their behalf.
+
+    Synchronous, and deliberately: Vertex returns in a few seconds, the requester is sitting
+    in front of the form waiting, and enqueuing would mean inventing a polling channel to save
+    a wait they are already having.
+
+    Runs on this app's own Vertex client rather than through Triton. It is a one-shot drafting
+    call with no need of the codebase, the boards or a session — routing it through the
+    planning endpoint would add a hop and an identity exchange to produce a paragraph.
+    """
+    _require_session()
+    if get_settings()["paused"]:
+        frappe.throw(_("New requests are paused right now."), frappe.ValidationError)
+
+    title = (title or "").strip()
+    if len(title) < 8:
+        frappe.throw(
+            _("Write a title first — there is nothing to expand from yet."), frappe.ValidationError
+        )
+
+    kind = (request_type or "").strip()
+    if kind not in VALID_REQUEST_TYPES:
+        kind = "Bug"
+
+    existing = frappe.utils.strip_html((description or "").strip())[:MAX_BODY_CHARS]
+    prompt = f"Type: {kind}\nTitle: {title}\n"
+    if existing:
+        prompt += f"\nWhat they have written so far, which you are expanding rather than replacing:\n{existing}\n"
+
+    try:
+        settings = frappe.get_single("Triton Settings")
+        from erpnext_enhancements.api.gemini import generate_content_with_vertex_ai
+
+        text, _thoughts = generate_content_with_vertex_ai(
+            prompt, _DRAFT_SYSTEM, settings, feature=DRAFT_FEATURE
+        )
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Enhancement Request description draft failed")
+        frappe.throw(
+            _("The draft could not be generated. Write the description yourself and submit — nothing is blocked."),
+            frappe.ValidationError,
+        )
+
+    text = (text or "").strip()
+    if not text:
+        frappe.throw(_("The model returned nothing. Try again, or just write it."), frappe.ValidationError)
+    return {"description": text[:MAX_BODY_CHARS]}
+
+
 @frappe.whitelist(methods=["POST"])
 def submit_request(payload=None, attachments=None):
     """File a new request as the session user.
@@ -603,6 +678,116 @@ def _review_queue():
     )
 
 
+#: Fields read back off a created Task. Live values, not the proposal's copy of them.
+_TASK_FIELDS = ["name", "subject", "status", "priority", "is_group", "parent_task", "exp_end_date"]
+
+#: `Task.status` values that mean the work is finished. Spelled `Canceled`, one l — that is
+#: what this site's Select actually offers (verified against production 2026-08-17), and the
+#: British spelling silently matches nothing.
+_DONE_STATUSES = ("Completed", "Canceled")
+
+
+def _created_task_rows(doc):
+    """The Tasks this request produced, flat and depth-tagged, read **live**.
+
+    Not from `proposed_tasks`. That child table is a frozen record of what was agreed, which
+    is exactly why it cannot answer this panel's question: a status moved to Completed, a
+    subject renamed on the board, a task reparented — none of that is in it. Before this
+    existed the panel rendered the proposal's own copy of the subject and no status at all,
+    so it never changed after the day it was written.
+
+    Groups come from the Tasks' own `parent_task`, not from the request. The group task
+    `task_writer` creates is deliberately not recorded on the request — nothing needed it
+    until now — and deriving it means the hierarchy stays right even if somebody reparents a
+    task by hand afterwards.
+
+    A row whose Task no longer exists is reported as missing rather than dropped. Deleting a
+    generated task is a normal thing to do (it is the first thing anybody does after a test
+    run), and a panel that quietly shrank would leave the request claiming work that is not
+    there.
+    """
+    names = []
+    for row in doc.get("proposed_tasks") or []:
+        name = (row.created_task or "").strip()
+        if name and name not in names:
+            names.append(name)
+    if not names:
+        return []
+
+    live = {
+        t["name"]: t
+        for t in frappe.get_all("Task", filters={"name": ["in", names]}, fields=_TASK_FIELDS)
+    }
+
+    parent_names = []
+    for name in names:
+        parent = (live.get(name, {}).get("parent_task") or "").strip()
+        if parent and parent not in parent_names and parent not in names:
+            parent_names.append(parent)
+    parents = {}
+    if parent_names:
+        parents = {
+            t["name"]: t
+            for t in frappe.get_all("Task", filters={"name": ["in", parent_names]}, fields=_TASK_FIELDS)
+        }
+
+    def shape(task, depth, missing=False, fallback=""):
+        if missing:
+            return {
+                "name": fallback,
+                "subject": "",
+                "status": "",
+                "priority": "",
+                "is_group": 0,
+                "parent_task": "",
+                "exp_end_date": "",
+                "depth": depth,
+                "missing": True,
+                "done": False,
+            }
+        return {
+            "name": task["name"],
+            "subject": task.get("subject") or "",
+            "status": task.get("status") or "",
+            "priority": task.get("priority") or "",
+            "is_group": cint(task.get("is_group")),
+            "parent_task": task.get("parent_task") or "",
+            "exp_end_date": str(task.get("exp_end_date") or ""),
+            "depth": depth,
+            "missing": False,
+            "done": (task.get("status") or "") in _DONE_STATUSES,
+        }
+
+    rows = []
+    emitted = set()
+
+    # Groups first, each followed by its own children, in the order the proposal listed them.
+    for parent_name in parent_names:
+        parent = parents.get(parent_name)
+        if parent:
+            rows.append(shape(parent, 0))
+        for name in names:
+            if name in emitted:
+                continue
+            task = live.get(name)
+            if task and (task.get("parent_task") or "") == parent_name:
+                rows.append(shape(task, 1 if parent else 0))
+                emitted.add(name)
+
+    # Anything left: nested under a task that was itself generated here, or top level.
+    for name in names:
+        if name in emitted:
+            continue
+        task = live.get(name)
+        if not task:
+            rows.append(shape(None, 0, missing=True, fallback=name))
+        else:
+            rows.append(shape(task, 1 if (task.get("parent_task") or "") else 0))
+        emitted.add(name)
+
+    return rows
+
+
 def _serialise(doc, full=False):
     """A request as plain JSON for the SPA. Never leaks a field the reader may not have."""
     out = {
@@ -662,6 +847,9 @@ def _serialise(doc, full=False):
                 }
                 for row in (doc.get("proposed_tasks") or [])
             ],
+            # Live, and therefore the only part of this payload that changes after the tasks
+            # are written. See `_created_task_rows`.
+            "created_tasks": _created_task_rows(doc),
             "duplicate_candidates": [
                 {
                     "task": row.task,

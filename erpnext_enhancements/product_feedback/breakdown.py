@@ -41,6 +41,7 @@ from typing import Any
 import frappe
 from frappe.utils import cint, now_datetime
 
+from erpnext_enhancements.product_feedback.codemap import build_codemap
 from erpnext_enhancements.product_feedback.doctype.product_feedback_settings.product_feedback_settings import (
 	get_settings,
 )
@@ -187,9 +188,29 @@ def run_breakdown(request_name: str) -> None:
 	)
 	_record_usage(body, breakdown.model)
 
-	if breakdown.is_empty:
-		reasons = " ".join(breakdown.dropped) or "Triton proposed no tasks."
-		_fail(request_name, reasons)
+	# **No tasks is not automatically a failure.** The prompt explicitly tells the model that a
+	# request already covered by open work should come back as duplicates and few or no tasks —
+	# and then the first version of this recorded exactly that outcome as `Breakdown Failed`,
+	# throwing away the duplicate list that was the whole answer. A proposal with duplicates
+	# and nothing else is a result a reviewer can act on: they close the request against the
+	# task it duplicates.
+	#
+	# Only a response with nothing in it at all is a failure, and it is worth being loud about
+	# why: `{"summary": "", "tasks": [], "duplicates": []}` is a degenerate generation, not a
+	# considered "nothing to do", and the two are indistinguishable without the model's own
+	# finish reason. Triton now reports that; it is carried through here.
+	if breakdown.is_empty and not breakdown.duplicates:
+		reasons = " ".join(breakdown.dropped)
+		detail = (body or {}).get("finish_reason") or ""
+		summary = (breakdown.summary or "").strip()
+		if not reasons and not summary:
+			reasons = (
+				"The model returned an empty plan — no tasks, no duplicates, no summary. That is "
+				"a generation failure rather than a judgement that no work is needed."
+				+ (f" Model finish reason: {detail}." if detail else "")
+				+ " Re-running usually clears it."
+			)
+		_fail(request_name, reasons or summary)
 		return
 
 	try:
@@ -315,6 +336,11 @@ def build_payload(
 		},
 		"targets": sorted(target_projects),
 		"projects": {key: _project_brief(key, name) for key, name in target_projects.items()},
+		# A map of THIS repo's source, read from the installed app. Triton adds its own for the
+		# Triton repo — neither of us can see the other's code, so each side contributes the
+		# half it can actually observe. Without this the model plans blind and names modules
+		# and files that do not exist. See product_feedback/codemap.py.
+		"codebase": {"erpnext": build_codemap()},
 		"open_tasks": [
 			{
 				"name": name,
