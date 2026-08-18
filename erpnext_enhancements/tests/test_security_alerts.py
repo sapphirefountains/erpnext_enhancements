@@ -9,6 +9,11 @@ Run: python -m unittest erpnext_enhancements.tests.test_security_alerts
 
 import sys
 import types
+from pathlib import Path
+
+from jinja2 import Environment, FileSystemLoader
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 import unittest
 from pathlib import Path
 
@@ -29,7 +34,7 @@ def _install_frappe_stub():
         in_migrate=False, in_install=False, in_patch=False, in_import=False
     )
     frappe.local = types.SimpleNamespace(request=None)
-    frappe.log_error = lambda **kwargs: None
+    frappe.log_error = lambda *args, **kwargs: None
     frappe.sendmail = lambda **kwargs: None
     frappe.enqueue = lambda *args, **kwargs: None
     frappe.get_request_header = lambda name: None
@@ -44,8 +49,16 @@ def _install_frappe_stub():
 
     frappe.cache = _Cache()
 
+    # security_alerts builds its body with email_style, which renders the shared
+    # macros through frappe's template loader. Give the stub a real jinja
+    # environment rooted at the repo rather than mocking email_style out: the
+    # escaping assertions below are only worth anything if the real macros run.
+    _jenv = Environment(loader=FileSystemLoader(str(REPO_ROOT)), autoescape=False)
+    frappe.get_template = _jenv.get_template
+    frappe.render_template = lambda path, ctx=None: _jenv.get_template(path).render(**(ctx or {}))
+
     utils = types.ModuleType("frappe.utils")
-    utils.get_url = lambda: "https://erp.example.com"
+    utils.get_url = lambda path="": "https://erp.example.com" + (path or "")
     utils.escape_html = lambda s: (
         str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     )

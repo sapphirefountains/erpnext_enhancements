@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 import frappe
 from frappe.utils import escape_html, get_datetime, getdate, now_datetime
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements.project_enhancements.esign.tokens import hash_token, text_fingerprint
 
 SIGNABLE_CONTRACT_STATUSES = ("Out for Signature",)
@@ -448,7 +449,15 @@ def _email_signed_copy(request, pdf_url):
 		frappe.sendmail(
 			recipients=[request.signer_email],
 			subject=frappe._("Your signed agreement — {0}").format(request.project_contract),
-			message=message,
+			# The PDF-failure fallback above appends the frozen agreement_html to
+			# `message`, so the wrap happens here rather than at render time —
+			# the contract text belongs inside the chrome, not after it.
+			message=email_style.wrap(
+				message,
+				title=frappe._("Your signed agreement"),
+				eyebrow=request.project_contract,
+				tagline=True,
+			),
 			attachments=attachments,
 			reference_doctype="Contract Signature Request",
 			reference_name=request.name,
@@ -505,7 +514,9 @@ def _alert_staff_signed(request):
 			frappe.sendmail(
 				recipients=extra,
 				subject=subject,
-				message=content,
+				# Wrapped for the inbox only; the Notification Log row above keeps
+				# the unwrapped fragment for the desk bell panel.
+				message=email_style.wrap(content, title=subject, eyebrow="Contracts"),
 				reference_doctype="Contract Signature Request",
 				reference_name=request.name,
 			)

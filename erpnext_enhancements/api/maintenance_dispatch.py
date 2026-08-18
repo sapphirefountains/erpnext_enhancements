@@ -24,6 +24,8 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, cint, flt, formatdate, getdate, nowdate
 
+from erpnext_enhancements import email_style
+
 # Free-text preferred-days parsing (e.g. "Mon & Wed", "Tuesday/Thursday").
 WEEKDAY_TOKENS = {
     "monday": 0, "mon": 0,
@@ -186,17 +188,22 @@ def _send_tech_digest(technician, visits, today):
 
     email = frappe.db.get_value("User", technician, "email") or technician
     if email:
-        items = "".join(
-            f"<li>{frappe.utils.escape_html(s['customer'])} — "
-            f"{frappe.utils.escape_html(s['project'])} ({frappe.utils.escape_html(str(s['what']))})</li>"
-            for s in stops
+        # A numbered column rather than an <ol>: route order is the whole point
+        # of this email, and a table keeps it legible on a phone where a long
+        # customer name would otherwise wrap away from its number.
+        rows = [[str(i), s["customer"], s["project"], str(s["what"])] for i, s in enumerate(stops, 1)]
+        html = email_style.p(_("Your maintenance visits for {0}, in route order:").format(when)) + email_style.table(
+            ["#", _("Customer"), _("Project"), _("What")], rows
         )
-        html = _("<p>Your maintenance visits for {0}, in route order:</p>").format(when) + f"<ol>{items}</ol>"
         try:
             frappe.sendmail(
                 recipients=[email],
                 subject=_("Your maintenance route — {0} ({1} visit(s))").format(when, count),
-                message=html,
+                message=email_style.wrap(
+                    html,
+                    title=_("Your maintenance route"),
+                    eyebrow=_("Maintenance") + " · " + str(when),
+                ),
             )
         except Exception:
             frappe.log_error(frappe.get_traceback(), f"Dispatch digest email failed: {technician}")

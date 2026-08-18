@@ -24,6 +24,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, get_url, getdate, nowdate
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements.training.doctype.training_settings.training_settings import is_enabled
 
 
@@ -77,7 +78,9 @@ def _send(recipient, subject, body_html, reference_name=None):
 		frappe.sendmail(
 			recipients=[recipient.email],
 			subject=subject,
-			message=body_html,
+			# Wrapped for the inbox; the Notification Log row below deliberately
+			# keeps the unwrapped fragment for the desk bell panel.
+			message=email_style.wrap(body_html, title=subject, eyebrow=_("Training")),
 			reference_doctype="Training Assignment" if reference_name else None,
 			reference_name=reference_name,
 		)

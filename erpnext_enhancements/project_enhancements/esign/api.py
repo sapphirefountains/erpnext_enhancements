@@ -18,6 +18,7 @@ from frappe import _
 from frappe.rate_limiter import rate_limit
 from frappe.utils import escape_html, get_url, now_datetime, validate_email_address
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements.feature_flags import throw_if_contract_esign_disabled
 from erpnext_enhancements.project_enhancements.esign.providers import (
 	configured_provider_key,
@@ -314,7 +315,7 @@ def _email_invite(request, contract, signing_url, message=None):
 	frappe.sendmail(
 		recipients=[request.signer_email],
 		subject=_("Please sign: {0}").format(_contract_label(contract)),
-		message=frappe.render_template(
+		message=email_style.render(
 			INVITE_TEMPLATE,
 			{
 				"recipient_name": request.signer_name,
@@ -325,6 +326,10 @@ def _email_invite(request, contract, signing_url, message=None):
 				"company": _company_name(),
 				"site_url": get_url(),
 			},
+			title=_("Please sign your agreement"),
+			eyebrow=_contract_label(contract),
+			preheader=_("Your agreement is ready to review and sign."),
+			tagline=True,
 		),
 		reference_doctype="Contract Signature Request",
 		reference_name=request.name,

@@ -765,10 +765,21 @@ class TestReminders(unittest.TestCase):
         self.assertIn("if not recipients:", body)
 
     def test_digest_escapes_customer_supplied_values(self):
-        """frappe's Jinja has no autoescape and this is built by string join."""
+        """frappe's Jinja has no autoescape, and these values are customer-supplied.
+
+        The escaping moved rather than went away (v1.331.0): the rows are handed
+        to ``email_style.table()``, which escapes every cell it renders. This
+        asserts the chain of custody — the values reach the component, and the
+        digest no longer hand-builds HTML — while
+        ``test_email_design.test_structural_macros_escape_cells`` is what proves
+        ``table()`` escapes, by rendering it.
+        """
         body = self.src[self.src.index("def digest_awaiting_signature") :]
-        self.assertIn("escape_html(r.project_contract", body)
-        self.assertIn("escape_html(r.signer_email", body)
+        self.assertIn("r.project_contract", body)
+        self.assertIn("r.signer_email", body)
+        self.assertIn("email_style.table(", body)
+        self.assertNotIn("<td>", body, "the digest is hand-building HTML again")
+        self.assertNotIn("<table", body)
 
 
 class TestSettingsFlags(unittest.TestCase):

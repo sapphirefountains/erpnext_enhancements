@@ -16,6 +16,25 @@ drifting from whatever anybody edits on the site next — a bigger and worse cha
 than the one this task asked for. Repointing the recipients is the change; the
 templates stay where they are.
 
+.. note::
+
+   **Superseded in v1.331.0, and the reasoning above is worth keeping rather than
+   deleting, because it was correct on its own terms.** The objection was to
+   copying ~15k characters of hand-maintained *chrome* into the repo. The email
+   design system removed the chrome from the bodies entirely: each of these
+   Notifications is now 300–800 characters of content calling the shared ``ee_*``
+   macros, with the letterhead, palette and layout living in
+   ``templates/emails/_shell.html``. The drift the paragraph above predicted is
+   closed by construction — a Desk edit *cannot* change the letterhead, because
+   the letterhead is not in the field being edited.
+
+   All nineteen are therefore fixtured now, and this patch's recipient rows were
+   folded into ``fixtures/notification.json`` verbatim. That is the one thing to
+   be careful about: the fixture is now what sets these recipients on every
+   migrate, so a re-export from a site whose recipients have been edited in the
+   UI will capture the edit — and a hand edit made in the Desk will be reverted
+   by the next migrate rather than persisting. See ``docs/email-design-system.md``.
+
 The consequence, stated rather than hidden: if somebody edits these recipients in
 the UI later, nothing here puts them back. The fixtured six *are* re-applied on
 every migrate.

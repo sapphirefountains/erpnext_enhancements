@@ -7,6 +7,7 @@ as erpnext_enhancements.project_enhancements.<fn> from hooks.py and client scrip
 import frappe
 from frappe import _
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements import procurement_quantities
 
 
@@ -663,11 +664,17 @@ def send_project_start_reminders():
 	for project in projects:
 		subject = _("Project Reminder: {0} starts today").format(project.project_name or project.name)
 
-		message = f"""
-        <h3>{_("Project Reminder")}</h3>
-        <p>{_("The project <b>{0}</b> is expected to start today ({1}).").format(project.project_name or project.name, project.expected_start_date)}</p>
-        <p><a href="{frappe.utils.get_url_to_form('Project', project.name)}">{_("View Project")}</a></p>
-        """
+		message = email_style.wrap(
+			email_style.rich(
+				_("The project <b>{0}</b> is expected to start today ({1}).").format(
+					frappe.utils.escape_html(project.project_name or project.name),
+					project.expected_start_date,
+				)
+			)
+			+ email_style.button(frappe.utils.get_url_to_form("Project", project.name), _("View Project")),
+			title=subject,
+			eyebrow=_("Projects"),
+		)
 
 		frappe.sendmail(recipients=recipients, subject=subject, message=message)
 

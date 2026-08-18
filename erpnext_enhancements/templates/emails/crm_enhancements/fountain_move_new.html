@@ -1,45 +1,33 @@
 {# New fountain-move request converted. Sent to the Opportunity owner plus any
    configured extra recipients.
    Context: req (Fountain Move Request), opportunity_url, request_url.
-   NOTE: frappe's Jinja environment has NO autoescape (utils/jinja.py) — every
-   interpolated value below must carry |e. This is customer-supplied text. #}
-<h3>New fountain move request</h3>
 
-<p>
-	<b>{{ req.first_name|e }} {{ req.last_name|e }}</b>
-	bought a fountain at {{ req.purchase_location|e }} and wants it moved.
-</p>
+   A FRAGMENT — chrome comes from email_style.wrap() in fountain_move/notify.py.
 
-<table>
-	<tr><td style="padding:2px 12px 2px 0"><b>Contact</b></td>
-		<td style="padding:2px 0">{{ req.email|e }} &middot; {{ req.phone|e }}</td></tr>
-	<tr><td style="padding:2px 12px 2px 0"><b>Destination</b></td>
-		<td style="padding:2px 0">
-			{{ req.address_line1|e }}{% if req.address_line2 %}, {{ req.address_line2|e }}{% endif %},
-			{{ req.city|e }} {{ req.state|e }} {{ req.pincode|e }}
-		</td></tr>
-	<tr><td style="padding:2px 12px 2px 0"><b>Property</b></td>
-		<td style="padding:2px 0">{{ req.property_type|e }}</td></tr>
-	<tr><td style="padding:2px 12px 2px 0"><b>Weight</b></td>
-		<td style="padding:2px 0">{{ req.fountain_weight_lbs|e }} lbs</td></tr>
-	<tr><td style="padding:2px 12px 2px 0"><b>Water / electricity</b></td>
-		<td style="padding:2px 0">
-			{{ "yes" if req.water_access else "no" }} / {{ "yes" if req.electricity_access else "no" }}
-		</td></tr>
-	{% if preferred_slots %}
-	<tr><td style="padding:2px 12px 2px 0"><b>Preferred dates</b></td>
-		<td style="padding:2px 0">{{ preferred_slots|e }} <i>(preference only — confirm with the customer)</i></td></tr>
-	{% endif %}
-	{% if not req.address_autocompleted %}
-	<tr><td style="padding:2px 12px 2px 0"><b>Note</b></td>
-		<td style="padding:2px 0">Address was typed by hand, not picked from Google — worth confirming.</td></tr>
-	{% endif %}
-</table>
+   NOTE: frappe's Jinja environment has NO autoescape (utils/jinja.py). The
+   macros escape their own text arguments, so values handed to ee.kv() and
+   friends need no `|e`; anything interpolated into ee.rich() does. This is
+   customer-supplied text. #}
+{% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
 
-<p>
-	<a href="{{ opportunity_url }}">Open the opportunity</a> &middot;
-	<a href="{{ request_url }}">View the submission</a>
-</p>
+{{ ee.rich("<b>" ~ req.first_name|e ~ " " ~ req.last_name|e ~ "</b> bought a fountain at " ~ req.purchase_location|e ~ " and wants it moved.") }}
 
-<p>Photos of the fountain and the path to its destination are attached to the
-opportunity, the customer and the lead.</p>
+{% set address = req.address_line1 ~ (", " ~ req.address_line2 if req.address_line2 else "") ~ ", " ~ req.city ~ " " ~ req.state ~ " " ~ req.pincode %}
+{% set rows = [
+	("Contact", req.email ~ " · " ~ req.phone),
+	("Destination", address),
+	("Property", req.property_type),
+	("Weight", req.fountain_weight_lbs ~ " lbs"),
+	("Water / electricity", ("yes" if req.water_access else "no") ~ " / " ~ ("yes" if req.electricity_access else "no"))
+] %}
+{% if preferred_slots %}
+	{% set rows = rows + [("Preferred dates", preferred_slots ~ " (preference only — confirm with the customer)")] %}
+{% endif %}
+{% if not req.address_autocompleted %}
+	{% set rows = rows + [("Note", "Address was typed by hand, not picked from Google — worth confirming.")] %}
+{% endif %}
+{{ ee.kv(rows) }}
+
+{{ ee.links([(opportunity_url, "Open the opportunity"), (request_url, "View the submission")]) }}
+
+{{ ee.note("Photos of the fountain and the path to its destination are attached to the opportunity, the customer and the lead.") }}

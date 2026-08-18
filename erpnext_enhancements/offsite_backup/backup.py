@@ -68,6 +68,7 @@ from frappe.utils import (
 	time_diff_in_seconds,
 )
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements.offsite_backup import drive
 
 # Matches the ``timeout`` the jobs are enqueued with. Also the basis for deciding
@@ -883,7 +884,12 @@ def _send(recipients, subject, message):
 		frappe.sendmail(
 			recipients=recipients,
 			subject=subject,
-			message=f"<pre>{escape_html(message)}</pre>",
+			message=email_style.wrap(
+				(email_style.callout("This backup did not complete.", "danger") if "fail" in subject.lower() else "")
+				+ email_style.code(message),
+				title=subject,
+				eyebrow="Offsite backup",
+			),
 		)
 	except Exception:
 		frappe.log_error(

@@ -70,6 +70,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, get_datetime, get_url_to_form, now_datetime
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements.feature_flags import (
 	handoff_gate_enabled,
 	process_automation_enabled,
@@ -913,38 +914,36 @@ def send_weekly_sla_digest():
 		frappe.log_error(frappe.get_traceback(), "Hand-off SLA digest: report failed")
 		return
 
-	kpis = "".join(
-		f"<td style='padding:8px 14px;border:1px solid #ddd'>"
-		f"<div style='font-size:11px;color:#666'>{frappe.utils.escape_html(str(card.get('label')))}</div>"
-		f"<div style='font-size:20px;font-weight:700'>{frappe.utils.escape_html(str(card.get('value')))}</div>"
-		f"</td>"
-		for card in summary
+	kpis = email_style.kpis(
+		[{"label": str(card.get("label")), "value": str(card.get("value"))} for card in summary]
 	)
 
 	overdue = [row for row in data if row.get("_state_raw") == "Overdue"]
 	overdue.sort(key=lambda row: row.get("days_over") or 0, reverse=True)
-	rows_html = "".join(
-		"<tr>"
-		f"<td>{frappe.utils.escape_html(str(row.get('project') or ''))}</td>"
-		f"<td>{frappe.utils.escape_html(str(row.get('customer') or ''))}</td>"
-		f"<td>{frappe.utils.escape_html(str(row.get('step_number') or ''))}. "
-		f"{frappe.utils.escape_html(str(row.get('step_title') or ''))}</td>"
-		f"<td>{frappe.utils.escape_html(str(row.get('responsible_role') or ''))}</td>"
-		f"<td style='text-align:right'>{row.get('days_over') or 0}</td>"
-		"</tr>"
+	# Four columns, not five: the responsible role folds into the step cell,
+	# because five columns do not fit a phone even stacked.
+	table_rows = [
+		[
+			str(row.get("project") or ""),
+			str(row.get("customer") or ""),
+			f"{row.get('step_number') or ''}. {row.get('step_title') or ''}"
+			+ (f" ({row.get('responsible_role')})" if row.get("responsible_role") else ""),
+			row.get("days_over") or 0,
+		]
 		for row in overdue[:DIGEST_ROW_LIMIT]
-	)
+	]
 	truncated = (
-		f"<p><i>{frappe.utils.escape_html(_('Showing the {0} most overdue of {1}.').format(DIGEST_ROW_LIMIT, len(overdue)))}</i></p>"
+		email_style.note(_("Showing the {0} most overdue of {1}.").format(DIGEST_ROW_LIMIT, len(overdue)))
 		if len(overdue) > DIGEST_ROW_LIMIT
 		else ""
 	)
 	detail = (
-		"<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse'>"
-		"<tr><th>Project</th><th>Customer</th><th>Step</th><th>Responsible</th><th>Days over</th></tr>"
-		f"{rows_html}</table>"
+		email_style.table(
+			[_("Project"), _("Customer"), _("Step"), _("Days over")],
+			table_rows,
+		)
 		if overdue
-		else f"<p>{frappe.utils.escape_html(_('Nothing is overdue. Good week.'))}</p>"
+		else email_style.callout(_("Nothing is overdue. Good week."), "success")
 	)
 
 	try:
@@ -953,12 +952,16 @@ def send_weekly_sla_digest():
 			subject=_("Hand-Off SLA Compliance — week ending {0}").format(
 				frappe.utils.format_date(now_datetime())
 			),
-			message=(
-				f"<table style='border-collapse:collapse'><tr>{kpis}</tr></table>"
-				f"<p>{prose}</p>"
-				f"{truncated}{detail}"
-				f"<p><a href='{get_url_to_report('Hand-Off SLA Compliance')}'>"
-				f"{frappe.utils.escape_html(_('Open the full report'))}</a></p>"
+			message=email_style.wrap(
+				kpis
+				+ email_style.p(prose)
+				+ truncated
+				+ detail
+				+ email_style.button(
+					get_url_to_report("Hand-Off SLA Compliance"), _("Open the full report")
+				),
+				title=_("Hand-Off SLA Compliance"),
+				eyebrow=_("Week ending {0}").format(frappe.utils.format_date(now_datetime())),
 			),
 		)
 	except Exception:

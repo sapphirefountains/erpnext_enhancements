@@ -1,45 +1,37 @@
 {# Daily backstop listing every fountain-move request that needs a human.
    Sent only when at least one bucket is non-empty.
    Context: buckets (ordered dict of label -> list of request dicts), base_url.
-   NOTE: no autoescape in frappe's Jinja env — |e every interpolated value. #}
-<h3>Fountain move requests needing attention</h3>
 
-<p>
-	These submissions are not moving on their own. Each one is a real person who
-	filled in a form and is waiting to hear from us.
-</p>
+   A FRAGMENT — chrome comes from email_style.wrap() in fountain_move/notify.py.
+
+   The Email column was dropped when this moved onto the design system: five
+   columns do not fit a phone even stacked, the address is on the record one
+   click away, and the request ID is now the link. Four is the budget.
+
+   NOTE: no autoescape in frappe's Jinja env; ee.table() escapes its own cells. #}
+{% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
+
+{{ ee.p("These submissions are not moving on their own. Each one is a real person who filled in a form and is waiting to hear from us.") }}
 
 {% for label, rows in buckets.items() %}
 	{% if rows %}
-	<h4>{{ label|e }} ({{ rows|length }})</h4>
-	<table>
-		<tr>
-			<td style="padding:2px 12px 2px 0"><b>Request</b></td>
-			<td style="padding:2px 12px 2px 0"><b>Name</b></td>
-			<td style="padding:2px 12px 2px 0"><b>City</b></td>
-			<td style="padding:2px 12px 2px 0"><b>Email</b></td>
-			<td style="padding:2px 0"><b>Last change</b></td>
-		</tr>
+{{ ee.h(label ~ " (" ~ rows|length ~ ")") }}
+		{% set table_rows = [] %}
 		{% for row in rows %}
-		<tr>
-			<td style="padding:2px 12px 2px 0">
-				<a href="{{ base_url }}{{ row.name|urlencode }}">{{ row.name|e }}</a>
-			</td>
-			<td style="padding:2px 12px 2px 0">{{ row.first_name|e }} {{ row.last_name|e }}</td>
-			<td style="padding:2px 12px 2px 0">{{ row.city|e }}</td>
-			<td style="padding:2px 12px 2px 0">{{ row.email|e }}</td>
-			<td style="padding:2px 0">{{ row.modified|e }}</td>
-		</tr>
+			{% set _ = table_rows.append([
+				(base_url ~ row.name|urlencode, row.name),
+				row.first_name ~ " " ~ row.last_name,
+				row.city,
+				row.modified
+			]) %}
 		{% endfor %}
-	</table>
+{{ ee.table(["Request", "Name", "City", "Last change"], table_rows) }}
 	{% endif %}
 {% endfor %}
 
-<p style="color:#6c7680;font-size:90%">
-	<b>Failed</b> — conversion errored; open it for the traceback and a retry button.<br>
-	<b>Duplicate Review</b> — matched several accounts; a human must pick one.<br>
-	<b>Converting</b> — a worker claimed it and never finished, usually a killed job;
-	pressing Retry is safe, conversion resumes rather than duplicating.<br>
-	<b>New</b> — never converted. Often a captcha outage: the submission was kept
-	rather than thrown away, but was deliberately not auto-converted.
-</p>
+{{ ee.note_rich(
+	"<b>Failed</b> — conversion errored; open it for the traceback and a retry button.<br>"
+	"<b>Duplicate Review</b> — matched several accounts; a human must pick one.<br>"
+	"<b>Converting</b> — a worker claimed it and never finished, usually a killed job; pressing Retry is safe, conversion resumes rather than duplicating.<br>"
+	"<b>New</b> — never converted. Often a captcha outage: the submission was kept rather than thrown away, but was deliberately not auto-converted."
+) }}

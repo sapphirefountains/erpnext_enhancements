@@ -19,6 +19,12 @@ fixture **without an explicit `enabled: 1` imports disabled**, and re-disables
 itself on every migrate — which is how a Days Before alert can be configured,
 present, and silent.
 
+As of v1.331.0 the fixture covers **all nineteen** live Notifications, not six:
+the email design system adopted the thirteen that had only ever existed in the
+site database. So the fixture, not this patch, is what sets these recipients on
+every migrate — and the overlap test below pins that the two agree rather than
+that they are disjoint.
+
 Bench-free: reads the fixture JSON and the patch source.
 
 Run: python -m unittest erpnext_enhancements.tests.test_notification_recipients
@@ -48,6 +54,17 @@ VALID_GROUPS = {
 }
 EVERYONE = "company@sapphirefountains.com"
 
+# Notifications that keep a **role** recipient on purpose. Both are platform
+# alerts, and the reasoning is the patch's own (confirmed with Nik): a role
+# follows whoever is actually administering the system, where a shared inbox
+# nobody owns does not. Everything departmental goes to a group address.
+ROLE_RECIPIENT_BY_DESIGN = {"Error Log", "Integration Request"}
+
+# Notifications aimed at a named individual by design, addressed by document
+# field. "Point everything at groups" applied literally would break the one case
+# where a person is the entire purpose.
+PERSONAL_BY_DESIGN = {"New ToDo Created - Notify Creator and Assignee", "Remind Me Email"}
+
 
 def fixture_docs():
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
@@ -62,24 +79,43 @@ def patch_literal(name):
     raise AssertionError(f"{name} not found in the patch")
 
 
-class TestTheFixturedSix(unittest.TestCase):
+class TestTheFixturedNotifications(unittest.TestCase):
     def test_every_one_has_a_group_recipient(self):
         for doc in fixture_docs():
             rows = doc.get("recipients") or []
             self.assertTrue(rows, f"{doc['name']} has no recipients at all")
+            if doc["name"] in PERSONAL_BY_DESIGN or doc["name"] in ROLE_RECIPIENT_BY_DESIGN:
+                continue
             self.assertTrue(
                 any(row.get("cc") for row in rows),
                 f"{doc['name']} has no cc address",
             )
 
     def test_no_role_recipients_remain(self):
-        """A role resolves to individuals, which is the thing being replaced."""
+        """A role resolves to individuals, which is the thing being replaced.
+
+        Two platform alerts are exempt and named in ``ROLE_RECIPIENT_BY_DESIGN``;
+        the allowlist is the point, so a *new* role recipient still fails here.
+        """
         for doc in fixture_docs():
+            if doc["name"] in ROLE_RECIPIENT_BY_DESIGN:
+                continue
             for row in doc.get("recipients") or []:
                 self.assertIsNone(
                     row.get("receiver_by_role"),
                     f"{doc['name']} still notifies the {row.get('receiver_by_role')} role",
                 )
+
+    def test_the_personal_ones_keep_their_document_field(self):
+        """The exception the module docstring names, pinned rather than assumed."""
+        for doc in fixture_docs():
+            if doc["name"] not in PERSONAL_BY_DESIGN:
+                continue
+            rows = doc.get("recipients") or []
+            self.assertTrue(
+                any(row.get("receiver_by_document_field") for row in rows),
+                f"{doc['name']} lost its document-field recipient — it is aimed at a person",
+            )
 
     def test_every_address_is_a_known_group(self):
         for doc in fixture_docs():
@@ -119,11 +155,37 @@ class TestThePatchedSix(unittest.TestCase):
         for name, addresses in patch_literal("REPOINT").items():
             self.assertNotIn(EVERYONE, addresses, f"{name} would mail the entire company")
 
-    def test_it_does_not_touch_the_fixtured_six(self):
-        """Two sources of truth for one record is how they drift."""
-        fixtured = {doc["name"] for doc in fixture_docs()}
-        overlap = sorted(fixtured & set(patch_literal("REPOINT")))
-        self.assertEqual(overlap, [], f"handled by both the fixture and the patch: {overlap}")
+    def test_it_agrees_with_the_fixture_where_they_overlap(self):
+        """The patch and the fixture must not disagree about one record.
+
+        Until v1.331.0 these sets were disjoint and this test asserted exactly
+        that — two sources of truth for one record is how they drift. The email
+        design system fixtured all nineteen live Notifications, so the six this
+        patch repointed are now fixtured too, and the fixture is what applies on
+        every migrate.
+
+        Disjointness is therefore no longer available, so the stronger property
+        is pinned instead: where both name a record they must name the same
+        addresses. Editing the recipients in one place and not the other is the
+        actual failure, and this catches it.
+        """
+        fixtured = {doc["name"]: doc for doc in fixture_docs()}
+        for name, addresses in patch_literal("REPOINT").items():
+            if name not in fixtured:
+                continue
+            rows = fixtured[name].get("recipients") or []
+            in_fixture = {
+                part.strip()
+                for row in rows
+                for part in (row.get("cc") or "").split(",")
+                if part.strip()
+            }
+            self.assertEqual(
+                in_fixture,
+                set(addresses),
+                f"{name}: the patch says {sorted(addresses)} but the fixture says "
+                f"{sorted(in_fixture)}. The fixture wins on every migrate — make them agree.",
+            )
 
     def test_document_field_recipients_are_preserved(self):
         """Personal by design — `allocated_to`, `user`, `owner`. Applying "point

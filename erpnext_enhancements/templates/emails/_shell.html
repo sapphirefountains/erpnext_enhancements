@@ -1,0 +1,110 @@
+{# The one email layout. Every email this app sends renders through this file.
+
+   NO <html>/<head>/<body> here — frappe wraps whatever we emit in
+   frappe/templates/emails/standard.html, which supplies the document. That
+   wrapper is ALREADY full-width for us: its container is
+   width="{% raw %}{% if header or with_container %} 600 {% else %} 100% {% endif %}{% endraw %}"
+   and neither Notification.send_an_email nor any caller in this app passes
+   `header` or `with_container`. The narrow centred card this design replaced
+   was self-inflicted by a max-width div in the message body, not imposed by
+   the framework. Do not reintroduce one outside this file; tests/test_email_design.py
+   fails the build if you do.
+
+   TWO ENTRY SHAPES, ONE SHELL. `{% raw %}{% block body %}{% endraw %}` defaults to rendering a `body`
+   context variable, so:
+
+     * a file template writes `{% raw %}{% extends %}{% endraw %}` and overrides the block;
+     * email_style.wrap() renders this file with body=<html string> and never
+       extends anything.
+
+   Same for eyebrow / title / footer. One set of chrome, two doors.
+
+   The <style> block is a PROGRESSIVE ENHANCEMENT and nothing may depend on it.
+   Every element below already carries correct inline padding and font-size at
+   320px. Two reasons the block still earns its place, both verified against
+   this site's premailer: `.ee-md` descendant rules are the only way to reach
+   the tag soup that md_to_html() produces for the morning briefing (verified:
+   <h2 id="heading" style="color:#00263E; font-size:18px">), and the @media
+   rules survive premailer into a <style> tag. Outlook's Word engine ignores
+   both, which is why the inline styles have to stand alone. #}
+
+{%- set _logo = logo_url if logo_url is defined and logo_url else (ee_email_logo_url() if ee_email_logo_url is defined else "") -%}
+{%- set _title = title|default("", true) -%}
+{%- set _eyebrow = eyebrow|default("", true) -%}
+
+{# The inbox preview line. Must be first in the body and must be invisible. The
+   trailing entities stop Gmail from padding the preview with body text. #}
+{%- if preheader is defined and preheader %}
+<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#ffffff;opacity:0">{{ preheader|e }}&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;</div>
+{%- endif %}
+
+<style>
+	.ee-md h1,.ee-md h2{margin:22px 0 6px;font-family:Helvetica,Arial,sans-serif;font-size:18px;line-height:1.3;font-weight:700;color:#00263E}
+	.ee-md h3,.ee-md h4{margin:18px 0 4px;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;color:#00263E}
+	.ee-md p,.ee-md li{margin:0 0 10px;font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55;color:#1f2d38}
+	.ee-md a{color:#0077a8}
+	.ee-md code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;background:#f2f9fd;padding:1px 4px;border-radius:3px}
+	.ee-md pre{margin:14px 0;padding:12px 14px;background:#f2f9fd;border:1px solid #dbe4ea;border-left:3px solid #0077a8;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
+	.ee-md blockquote{margin:14px 0;padding:2px 0 2px 14px;border-left:3px solid #dbe4ea;color:#5b6b78}
+	.ee-md table{width:100%;border-collapse:collapse;font-size:14px}
+	.ee-md th{text-align:left;background:#f2f9fd;border-bottom:2px solid #dbe4ea;padding:9px 10px;color:#00263E}
+	.ee-md td{border-bottom:1px solid #dbe4ea;padding:9px 10px;color:#1f2d38}
+	@media only screen and (max-width:600px){
+		.ee-pad{padding-left:18px !important;padding-right:18px !important}
+		.ee-h1{font-size:22px !important}
+		.ee-kv-l,.ee-kv-v{display:block !important;width:100% !important;padding:3px 0 !important;border:0 !important;background:transparent !important}
+		.ee-kv-l{color:#5b6b78 !important;font-size:12px !important;text-transform:uppercase;letter-spacing:.05em}
+		.ee-kv-v{padding-bottom:10px !important;border-bottom:1px solid #dbe4ea !important}
+		.ee-btn,.ee-btn table,.ee-btn a{width:100% !important;display:block !important;text-align:center !important}
+		.ee-kpi{display:block !important;width:100% !important;margin-bottom:8px}
+	}
+</style>
+
+{#- Outlook's Word engine ignores max-width, so a ghost table pins the measure
+    for Outlook only. Verified to survive premailer's lxml round-trip on this
+    site (both halves of the conditional comment come through intact). -#}
+<!--[if mso]><table role="presentation" width="840" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:840px;margin:0 auto;border-collapse:collapse;background:#ffffff">
+
+	{#- Letterhead. The logo is an opaque PNG on white: Gmail and Outlook.com
+	    force-invert the page in dark mode but never invert image pixels, so a
+	    transparent navy wordmark would go navy-on-dark and disappear. The styled
+	    alt text keeps the letterhead branded when images are blocked, which is
+	    Outlook's default. -#}
+	<tr><td class="ee-pad" align="left" style="padding:24px 32px 16px;border-bottom:3px solid #0077a8">
+		{%- if _logo %}
+		<img src="{{ _logo }}" width="160" height="71" alt="Sapphire Fountains" style="display:block;border:0;outline:none;width:160px;height:auto;max-width:160px;font-family:Helvetica,Arial,sans-serif;font-size:17px;font-weight:700;color:#00263E;text-decoration:none">
+		{%- else %}
+		<div style="font-family:Helvetica,Arial,sans-serif;font-size:17px;font-weight:700;color:#00263E">Sapphire Fountains</div>
+		{%- endif %}
+	</td></tr>
+
+	{%- if _eyebrow or _title %}
+	<tr><td class="ee-pad" align="left" style="padding:26px 32px 0">
+		{%- if _eyebrow %}
+		<div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;color:#5b6b78;word-break:break-word">{{ _eyebrow|e }}</div>
+		{%- endif %}
+		{%- if _title %}
+		<h1 class="ee-h1" style="margin:6px 0 0;font-family:Helvetica,Arial,sans-serif;font-size:26px;line-height:1.25;font-weight:700;color:#00263E;word-break:break-word">{{ _title|e }}</h1>
+		{%- endif %}
+	</td></tr>
+	{%- endif %}
+
+	<tr><td class="ee-pad ee-md" align="left" style="padding:18px 32px 30px;font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55;color:#1f2d38">
+{% block body %}{{ body if body is defined else "" }}{% endblock %}
+	</td></tr>
+
+	<tr><td class="ee-pad" align="left" style="padding:18px 32px 30px;border-top:1px solid #dbe4ea;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.5;color:#5b6b78">
+{%- block footer %}
+		{%- if footer_note is defined and footer_note %}
+		<div style="margin-bottom:8px">{{ footer_note|e }}</div>
+		{%- endif %}
+		Automated notification from <a href="{{ site_url if site_url is defined and site_url else 'https://erp.sapphirefountains.com' }}" style="color:#0077a8;text-decoration:none">Sapphire Fountains ERP</a>.
+		{%- if tagline is defined and tagline %}<br><span style="color:#8a97a3">Add water. Make magic.</span>{% endif %}
+{%- endblock %}
+	</td></tr>
+
+</table>
+
+<!--[if mso]></td></tr></table><![endif]-->

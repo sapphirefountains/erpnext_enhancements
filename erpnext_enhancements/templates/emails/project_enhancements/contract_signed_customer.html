@@ -1,26 +1,16 @@
-{#
-  The customer's executed copy. NOTE: frappe's Jinja env has NO autoescape —
-  `|e` every interpolated value. The signed PDF rides along as an attachment.
-#}
-<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#111;max-width:560px">
+{# The customer's executed copy. The signed PDF rides along as an attachment.
 
-	<p>{% if signer_name %}Hi {{ signer_name|e }},{% else %}Hello,{% endif %}</p>
+   A FRAGMENT — chrome comes from email_style.wrap() in esign/lifecycle.py.
 
-	<p>Thank you for signing. Your fully executed agreement is attached to this email for your records.</p>
+   NOTE: frappe's Jinja env has NO autoescape — `|e` every interpolated value.
+   The macros below escape their own text arguments, so values passed into them
+   need no second `|e`; double-escaping is its own visible bug. #}
+{% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
 
-	<table style="margin:16px 0;border-collapse:collapse;font-size:14px">
-		<tr>
-			<td style="padding:4px 12px 4px 0;color:#6b7280">Agreement</td>
-			<td style="padding:4px 0"><b>{{ contract|e }}</b></td>
-		</tr>
-		<tr>
-			<td style="padding:4px 12px 4px 0;color:#6b7280">Signed</td>
-			<td style="padding:4px 0">{{ signed_on|e }}</td>
-		</tr>
-	</table>
+{{ ee.p("Hi " ~ signer_name ~ "," if signer_name else "Hello,") }}
 
-	<p style="color:#6b7280;font-size:13px">
-		Please keep the attached PDF. If you'd like a paper copy, or you have any
-		questions about the agreement, just reply to this email.
-	</p>
-</div>
+{{ ee.p("Thank you for signing. Your fully executed agreement is attached to this email for your records.") }}
+
+{{ ee.kv([("Agreement", contract), ("Signed", signed_on)]) }}
+
+{{ ee.note("Please keep the attached PDF. If you would like a paper copy, or you have any questions about the agreement, just reply to this email.") }}

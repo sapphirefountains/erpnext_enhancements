@@ -41,9 +41,12 @@ from urllib.parse import quote, urlparse
 import frappe
 import requests
 from frappe import _
+
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
 from twilio.request_validator import RequestValidator
+
+from erpnext_enhancements import email_style
 
 
 @frappe.whitelist(allow_guest=True)
@@ -766,21 +769,37 @@ def process_unified_recording(**kwargs):
             email_subject_type = "Voicemail" if is_voicemail else "Call Transcript"
 
             base_url = frappe.utils.get_url()
-            links_html = "<br><br><strong>System Links:</strong><ul>"
+            system_links = []
             if customer_name:
-                links_html += f'<li><a href="{base_url}/app/customer/{quote(customer_name)}">View Accounts in ERPNext</a></li>'
+                system_links.append((f"{base_url}/app/customer/{quote(customer_name)}", "View Accounts in ERPNext"))
             if contact_name:
-                links_html += f'<li><a href="{base_url}/app/contact/{quote(contact_name)}">View Contact in ERPNext</a></li>'
+                system_links.append((f"{base_url}/app/contact/{quote(contact_name)}", "View Contact in ERPNext"))
             if comm.name:
-                links_html += f'<li><a href="{base_url}/app/communication/{quote(comm.name)}">View Communication in ERPNext</a></li>'
-            links_html += "</ul>"
+                system_links.append((f"{base_url}/app/communication/{quote(comm.name)}", "View Communication in ERPNext"))
 
-            message_html = f"<strong>Caller:</strong> {display_name} ({customer_phone})<br><br><strong>Summary:</strong><br>{summary}<br><br><strong>Full Transcript:</strong><br><pre>{transcript}</pre>{links_html}"
+            # display_name, summary and transcript are caller-controlled and were
+            # interpolated into HTML raw here until this moved onto the design
+            # system; the components escape their own arguments, which closes it.
+            # Summary is human prose, transcript is machine output — prose() and
+            # code() respectively, not one <pre> for both.
+            message_html = (
+                email_style.kv([("Caller", display_name), ("Number", customer_phone)])
+                + email_style.h("Summary")
+                + email_style.prose(summary)
+                + email_style.h("Full transcript")
+                + email_style.code(transcript)
+                + email_style.h("System links")
+                + email_style.links(system_links)
+            )
 
             frappe.sendmail(
                 recipients=["info@sapphirefountains.com"],
                 subject=f"New Triton {email_subject_type} from {display_name}",
-                message=message_html,
+                message=email_style.wrap(
+                    message_html,
+                    title=f"New Triton {email_subject_type}",
+                    eyebrow=f"Telephony · {display_name}",
+                ),
                 attachments=email_attachments,
                 now=True
             )
@@ -932,12 +951,13 @@ def send_voicemail_email(subject, body, caller_number=None, **kwargs):
     (``now=True``). Returns ``{"status": ...}``; errors are logged and returned.
     """
     try:
-        message_html = f"<strong>Caller Number:</strong> {caller_number}<br><br><strong>Message/Summary:</strong><br>{body}"
+        # caller_number and body are caller-controlled; the components escape them.
+        message_html = email_style.kv([("Caller number", caller_number or "unknown")]) + email_style.prose(body)
 
         frappe.sendmail(
             recipients=["info@sapphirefountains.com"],
             subject=f"Triton Message: {subject}",
-            message=message_html,
+            message=email_style.wrap(message_html, title=subject, eyebrow="Telephony"),
             now=True
         )
         return {"status": "success"}

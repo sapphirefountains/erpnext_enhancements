@@ -62,7 +62,7 @@ erpnext_enhancements/                 ← the Python package (one folder per Fra
 ├── fixtures/                         ← exported records installed on migrate (custom fields, workflows…)
 ├── public/                           ← browser assets (JS form scripts, CSS, kiosk front-end)
 ├── www/                              ← the standalone Time Kiosk PWA (`/kiosk`)
-├── templates/                        ← Jinja web templates
+├── templates/                        ← Jinja web templates (incl. `emails/`, the email design system)
 └── tests/                            ← test suite
 
 sync_time_kiosk.py                    ← standalone REST tool: Job Intervals → Timesheets
@@ -256,9 +256,9 @@ See [`docs/development.md`](docs/development.md) and the [tests README](erpnext_
 - **Finance:** [Stripe Payments](erpnext_enhancements/stripe_payments/README.md) · [QuickBooks Online](erpnext_enhancements/quickbooks_online/README.md) · [QuickBooks Time](erpnext_enhancements/quickbooks_time/README.md) · [Plaid Banking](erpnext_enhancements/plaid_banking/README.md) · [Accounting Intake](erpnext_enhancements/accounting_intake/README.md)
 - **AI & integrations:** [AI Governance](erpnext_enhancements/ai_governance/README.md) · [Product Feedback](erpnext_enhancements/product_feedback/README.md) · [Assistant Tools (MCP)](erpnext_enhancements/assistant_tools/README.md) · [Assistant Skills](erpnext_enhancements/data/README.md) · [Morning Briefing](erpnext_enhancements/morning_briefing/README.md) · [Integration Hub](erpnext_enhancements/integration_hub/README.md) · [Google Drive](erpnext_enhancements/google_drive/README.md) · [Google Calendar](erpnext_enhancements/google_calendar/README.md) · [Device Management](erpnext_enhancements/device_management/README.md) · [MDM Integration](erpnext_enhancements/mdm_integration/README.md) · [Offsite Backup](erpnext_enhancements/offsite_backup/README.md)
 - **Dashboards:** [KPI Dashboards](erpnext_enhancements/kpi_dashboards/README.md) · [Custom HTML Blocks](erpnext_enhancements/custom_html_blocks/README.md) · [Workspace Sidebars](erpnext_enhancements/workspace_sidebar/README.md)
-- **Cross-cutting:** [API endpoints](erpnext_enhancements/api/README.md) · [Utils](erpnext_enhancements/utils/README.md) · [Fixtures](erpnext_enhancements/fixtures/README.md) · [Patches](erpnext_enhancements/patches/README.md) · [Migrate-time setup](erpnext_enhancements/setup/README.md) · [Script migrations](erpnext_enhancements/script_migrations/README.md) · [Frontend assets](erpnext_enhancements/public/README.md) · [Time Kiosk PWA](erpnext_enhancements/www/README.md) · [Tests](erpnext_enhancements/tests/README.md)
+- **Cross-cutting:** [Email design system](erpnext_enhancements/templates/emails/README.md) · [API endpoints](erpnext_enhancements/api/README.md) · [Utils](erpnext_enhancements/utils/README.md) · [Fixtures](erpnext_enhancements/fixtures/README.md) · [Patches](erpnext_enhancements/patches/README.md) · [Migrate-time setup](erpnext_enhancements/setup/README.md) · [Script migrations](erpnext_enhancements/script_migrations/README.md) · [Frontend assets](erpnext_enhancements/public/README.md) · [Time Kiosk PWA](erpnext_enhancements/www/README.md) · [Tests](erpnext_enhancements/tests/README.md)
 - **Build/codegen tools:** [Contract template pipeline](scripts/contract_templates/README.md) · [Form layout generator](scripts/layout/README.md)
-- **Guides & design docs:** [`docs/`](docs/README.md) — including [development.md](docs/development.md) (setup, tests, deploys)
+- **Guides & design docs:** [`docs/`](docs/README.md) — including [development.md](docs/development.md) (setup, tests, deploys) and [email-design-system.md](docs/email-design-system.md) (every email the app sends, and how to add one)
 - **Planning:** [`PLAN.md`](PLAN.md) · [`work-items/`](work-items/) · [`decisions/OPEN-DECISIONS.md`](decisions/OPEN-DECISIONS.md) (business) · [`decisions/adr/`](decisions/adr/README.md) (engineering)
 - **Reference:** [`CHANGELOG.md`](CHANGELOG.md) · [`hooks.py`](erpnext_enhancements/hooks.py) (annotated) · [`CLAUDE.md`](CLAUDE.md) and [`.claude/skills/`](.claude/skills/) (context for AI contributors)
 

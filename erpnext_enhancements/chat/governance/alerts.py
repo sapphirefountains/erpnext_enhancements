@@ -43,6 +43,7 @@ from typing import Any
 import frappe
 from frappe.utils import add_to_date, cint, escape_html, get_datetime, now_datetime
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements.chat.governance import alert_rules
 
 ALERT_DOCTYPE = "Chat Ops Alert"
@@ -477,7 +478,9 @@ def _to_email(subject: str, body: str) -> None:
 	frappe.sendmail(
 		recipients=recipients,
 		subject=subject[:200],
-		message=f"<pre>{escape_html(body[:4000])}</pre>",
+		message=email_style.wrap(
+			email_style.code(body[:4000]), title=subject[:200], eyebrow="Chat governance"
+		),
 		now=False,
 		# Not a Notification Log row, and not a Communication either: an alert is not
 		# correspondence with anybody and should not appear in a contact's timeline.
