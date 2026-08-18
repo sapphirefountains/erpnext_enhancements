@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.330.0] - 2026-08-18
+
+### Changed
+
+- **The Purchase Order sheet and its PDF filename now say the same thing, because they are
+  the same function call.** v1.328.0 (unreleased) printed the project on its own line under
+  the order number while the file was named `PO-2026-00262-PRJ-00706.pdf` — two renderings
+  of one idea, which is a thing that drifts. It already had: the filename bounds a long tail
+  of jobs with a `plus-N` marker and the template's loop listed every one, so an order
+  spanning four jobs would have printed one identifier and saved as another.
+
+  `purchase_order_filename` split into `purchase_order_document_id` (the stem) plus `.pdf`,
+  and the id is registered as a jinja method. The header now reads
+  `PO-2026-00262-PRJ-00706`, character-for-character the filename stem. Somebody holding a
+  printout next to the file it came from is exactly who this feature is for.
+
+  The project's readable name moved to a quieter line beneath, and is dropped entirely when
+  a project's `project_name` is just its docname — printing that under an identifier which
+  already contains it is the number twice and no information. That line is deliberately
+  *not* bounded the way the id is: the id is a name and has to stay a usable length, the
+  name line is the human aid, and `plus-N` on the id already says it is not the whole list.
+
+### Fixed
+
+- **A bench-free suite that broke when it shared a process with another one.**
+  `test_purchase_order_print_formats` now imports `po_pdf_filename` for the header's jinja
+  method, and `test_po_pdf_filename.setUpModule` was recovering its module with
+  `from erpnext_enhancements import po_pdf_filename`. That form reads
+  `getattr(package, "po_pdf_filename")` when the attribute is already set, and popping
+  `sys.modules` does not clear it — so it handed back the module bound to whichever `frappe`
+  stub imported it first and silently ignored the one just installed, failing every override
+  test with "module 'frappe' has no attribute 'get_doc'". `importlib.import_module` does the
+  real import. Both suites now pass in either order in one process, as well as separately.
+
+  Worth noting as a shape rather than a one-off: **CI giving each bench-free suite its own
+  step is what lets this kind of breakage hide.** The isolation is deliberate and load-bearing
+  (each suite installs a process-wide `frappe` stub in `setUpModule`), and the cost of it is
+  that cross-suite import coupling is never exercised by the pipeline.
+
 ## [1.329.0] - 2026-08-18
 
 ### Added
@@ -68,10 +107,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The Purchase Order says which job it is for, on the page and in the filename**
   (ER-2026-256847). A PO downloaded as a PDF was named `PO-2026-00262.pdf` and printed the
   project only per line, so the person filing them could not tell one order from another
-  without opening it. The order number now carries the project in both places: the sheet
-  prints it directly under the PO number in the identifier block, and the download is named
-  `PO-2026-00262-PRJ-00706.pdf`. Order number first, so a folder still sorts the way
-  everyone expects.
+  without opening it. The order number now carries the project in both places, and carries
+  it *identically*: the sheet's identifier block reads `PO-2026-00262-PRJ-00706` and the
+  download is named `PO-2026-00262-PRJ-00706.pdf` — the same string, from the same function
+  (`purchase_order_document_id`, exposed as a jinja method). Order number first, so a folder
+  still sorts the way everyone expects; the project's readable name prints under the
+  identifier, because nobody files by PRJ-00706.
+
+  Two renderings of one idea drift, and this pair briefly did: the id bounds a long tail of
+  jobs with a `plus-N` marker and the template loop it replaced listed every one, so an
+  order spanning four jobs would have printed one identifier and saved as another. Somebody
+  holding a printout next to the file it came from is exactly who this is for. That
+  readable-name line under it is deliberately *not* bounded — the id has to stay a usable
+  length, that line is the human aid, and `plus-N` already says the id is not the whole list.
 
   **The obvious fix does not work, and it fails silently, which is why it is worth
   recording.** Giving Purchase Order a title field holding "order + project" and letting

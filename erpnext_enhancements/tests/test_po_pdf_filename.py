@@ -23,6 +23,7 @@ What is worth pinning, all of it invisible until production:
 Run: python -m unittest erpnext_enhancements.tests.test_po_pdf_filename
 """
 
+import importlib
 import sys
 import types
 import unittest
@@ -99,9 +100,16 @@ def setUpModule():
         "erpnext_enhancements.procurement_project",
     ):
         sys.modules.pop(module, None)
-    from erpnext_enhancements import po_pdf_filename as mod
-
-    po_pdf_filename = mod
+    # `importlib.import_module`, NOT `from erpnext_enhancements import po_pdf_filename`.
+    # The `from package import submodule` form reads `getattr(package, "po_pdf_filename")`
+    # when that attribute is already set, and popping `sys.modules` does not clear it — so
+    # it hands back the module object bound to whichever `frappe` stub imported it first,
+    # and the stub installed two lines above is silently ignored. That is not theoretical:
+    # `test_purchase_order_print_formats` imports this module for the print header's jinja
+    # method, so running the two in one process made every override test here fail with
+    # "module 'frappe' has no attribute 'get_doc'". CI gives each suite its own step, which
+    # is exactly why a breakage like this can hide.
+    po_pdf_filename = importlib.import_module("erpnext_enhancements.po_pdf_filename")
 
 
 def _reset(docs=None, raise_on_get_doc=False):
@@ -164,6 +172,29 @@ class TestTheNamingRule(unittest.TestCase):
         out = self.name_for(row_projects=tuple(f"PRJ-0000{i}" for i in range(1, 7)))
         self.assertIn("plus-3", out)
         self.assertNotIn("PRJ-00004", out)
+
+    def test_the_filename_is_the_document_id_plus_pdf(self):
+        """The printed header uses the id; the download uses this. They are one string with
+        an extension on it, which is what makes "the sheet matches the file" structural
+        rather than a coincidence two functions have to keep agreeing on."""
+        for kwargs in (
+            {"project": "PRJ-00706"},
+            {},
+            {"row_projects": ("PRJ-00566",)},
+            {"row_projects": tuple(f"PRJ-0000{i}" for i in range(1, 7))},
+        ):
+            with self.subTest(kwargs):
+                doc = _po(**kwargs)
+                self.assertEqual(
+                    po_pdf_filename.purchase_order_filename(doc),
+                    po_pdf_filename.purchase_order_document_id(doc) + ".pdf",
+                )
+
+    def test_the_document_id_carries_no_extension(self):
+        """It is printed on a sheet a supplier reads. `.pdf` on a piece of paper is noise."""
+        self.assertFalse(
+            po_pdf_filename.purchase_order_document_id(_po(project="PRJ-00706")).endswith(".pdf")
+        )
 
     def test_separators_cannot_reach_the_filename(self):
         """frappe applies this rule to the docname before putting it in

@@ -1023,6 +1023,10 @@ jinja = {
 		# print format and the PDF filename name the job the same way. The two fields can
 		# disagree; a template working it out inline would be a third answer.
 		"erpnext_enhancements.procurement_project.purchase_order_projects",
+		# `PO-2026-00262-PRJ-00706` — the name the order goes by. The print format's
+		# header and the downloaded PDF's filename are the same string because they are
+		# this same call; two renderings of one idea drift.
+		"erpnext_enhancements.po_pdf_filename.purchase_order_document_id",
 	],
 }
 
