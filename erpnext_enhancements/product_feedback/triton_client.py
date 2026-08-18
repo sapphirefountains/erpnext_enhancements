@@ -27,11 +27,15 @@ no follow-up, nothing to continue, and a cached session id would only add the st
 recovery path that file needed. This posts once to a route that returns structured JSON and
 is done. See ADR 0010.
 
-The identity chain is otherwise identical: the reviewer's approval → the reviewer's Triton
-token → whatever Triton does under their name. **The token cache is keyed on the session
-user**, so this module sets the session for the exchange and restores it in a ``finally``.
-Without that, a background job mints a token for ``Administrator`` and the call runs as a
-superuser — the two-identity rule defeated by a cache key.
+The identity chain is otherwise identical: the human's action → that human's Triton token →
+whatever Triton does under their name. **The token cache is keyed on the session user**, so
+a caller running under the wrong session mints the wrong token — a background job left alone
+would mint one for ``Administrator`` and run as a superuser, the two-identity rule defeated
+by a cache key.
+
+``_call_as`` therefore impersonates **only when it has to**, and that condition is not a
+micro-optimisation: ``frappe.set_user`` overwrites ``session.sid`` with the username, which
+destroys a live browser session. Read its docstring before touching it.
 
 Indentation is tabs, per ``CLAUDE.md``.
 """
@@ -135,10 +139,34 @@ def request_description_draft(
 
 
 def _call_as(user: str, path: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
-	"""Shared body of both calls: read config, assume the identity, post, restore.
+	"""Shared body of both calls: read config, post as ``user``, restore.
 
 	Extracted rather than duplicated because the identity handling is the part that is easy to
 	get subtly wrong, and two copies means one of them eventually loses the ``finally``.
+
+	--------------------------------------------------------------------------------------
+	``frappe.set_user`` DESTROYS a live web session. Only impersonate when you must.
+	--------------------------------------------------------------------------------------
+
+	Read what it actually does (``frappe/__init__.py`` on version-16)::
+
+	    local.session.user = username
+	    local.session.sid = username      # <-- this one
+	    local.session.data = _dict()
+
+	It overwrites the **session id** with the username and empties the session data. In a
+	background job that is harmless: there is no browser session to damage, which is why the
+	work breakdown has always been able to use it.
+
+	In an HTTP request it logs the caller out. The request completes and returns normally, and
+	the session it was riding on is gone — so the *next* call comes back 403 and the person has
+	to sign in again. That shipped in v1.325.0: "Expand with AI" worked exactly once per login.
+	Restoring the user in the ``finally`` does not undo it, because ``set_user(previous)``
+	writes the *username* into ``sid`` a second time rather than the real session key.
+
+	So: impersonate only when the target differs from whoever is already on the session. The
+	drafter runs inside the requester's own request and needs no impersonation at all; the
+	breakdown runs in a job as Administrator and still does.
 	"""
 	from erpnext_enhancements import triton_chat
 
@@ -151,13 +179,17 @@ def _call_as(user: str, path: str, payload: dict[str, Any], timeout: int) -> dic
 		raise TritonUnavailable("Triton Settings has no Admin Webhook Secret, so no token can be minted.")
 
 	previous = frappe.session.user
+	if not user or user == previous:
+		# Already the right identity. The token cache is keyed on the session user, so this
+		# mints exactly the token we want without touching the session.
+		return _post(base_url, path, payload, timeout=timeout)
+
 	try:
-		# The token cache is keyed on the session user and this may run in a background job
-		# whose session is Administrator. See the module docstring.
 		frappe.set_user(user)
 		return _post(base_url, path, payload, timeout=timeout)
 	finally:
-		# Restored on every path including the exception one.
+		# Restored on every path including the exception one. Only reached in the background
+		# case, where there is no browser session for the sid clobber to break.
 		if previous:
 			frappe.set_user(previous)
 
