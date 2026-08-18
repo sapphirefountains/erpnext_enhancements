@@ -1,9 +1,17 @@
-"""The Project Number in the downloaded Purchase Order PDF filename (ER-2026-256847).
+"""The name a Purchase Order goes by, in its PDF filename and in its printed header
+(ER-2026-256847).
 
 Lisa receives Purchase Order PDFs and cannot tell which job each one is for without opening
 it, because the file is named after the order and nothing else: ``PO-2026-00262.pdf``. This
 makes it ``PO-2026-00262-PRJ-00706.pdf``. Order number first so a folder still sorts the way
 everyone already expects; the project is what you scan for once you are looking.
+
+**The printed sheet says the same string**, because ``purchase_order_document_id`` is a jinja
+method and the header calls it. That is not decoration: somebody holding a printout next to
+the file it came from is exactly who this is for, and the alternative — a template composing
+its own version of the same idea — drifts. It did, briefly: this bounds a long tail of jobs
+with a ``plus-N`` marker and the template loop it replaced listed every one, so an order
+spanning four jobs would have printed one identifier and saved as another.
 
 **Why this is a whitelisted-method override and not a `title_field`.** The obvious fix — give
 Purchase Order a title field holding "order + project" and let the PDF route use it — does not
@@ -33,7 +41,6 @@ use. Only the Desk download is renamed.
 """
 
 import frappe
-from frappe.utils.print_format import download_pdf as _frappe_download_pdf
 
 from erpnext_enhancements.procurement_project import purchase_order_projects
 
@@ -56,24 +63,35 @@ def _sanitize(value):
 	return str(value or "").replace(" ", "-").replace("/", "-").strip("-")
 
 
-def purchase_order_filename(doc):
-	"""``PO-2026-00262-PRJ-00706.pdf`` — or the plain docname when there is no project.
+def purchase_order_document_id(doc):
+	"""``PO-2026-00262-PRJ-00706`` — what this order is called, on the page and on disk.
 
-	Pure, and separate from the override, so the naming rule can be tested without a bench.
+	**The identifier the print format puts in its header and the filename stem are the same
+	string because they are the same function call.** They started out as two renderings of
+	the same idea, and two renderings drift: this one bounds a long tail of projects with a
+	``plus-N`` marker and the template's loop did not, so an order spanning four jobs would
+	have printed one thing and saved as another. Somebody comparing a PDF on their desk to
+	the file it came from is exactly the person this feature is for.
 
-	A blank project prints no suffix at all rather than a placeholder: 61 of the 158 orders on
-	production carry none, and `PO-2026-00262-none.pdf` would be a worse filename than the one
-	we started with.
+	Pure, and separate from the override below, so the rule can be tested without a bench.
+
+	A blank project appends nothing rather than a placeholder: 61 of the 158 orders on
+	production carry none, and ``PO-2026-00262-none`` would be worse than the plain docname.
 	"""
 	base = _sanitize(doc.name)
 	projects = [_sanitize(p) for p in purchase_order_projects(doc)]
 	projects = [p for p in projects if p]
 	if not projects:
-		return f"{base}.pdf"
+		return base
 	if len(projects) > MAX_PROJECTS_IN_NAME:
 		extra = len(projects) - MAX_PROJECTS_IN_NAME
 		projects = projects[:MAX_PROJECTS_IN_NAME] + [f"plus-{extra}"]
-	return "-".join([base, *projects]) + ".pdf"
+	return "-".join([base, *projects])
+
+
+def purchase_order_filename(doc):
+	"""The document id with ``.pdf`` on it, which is the whole difference between them."""
+	return f"{purchase_order_document_id(doc)}.pdf"
 
 
 @frappe.whitelist(allow_guest=True)
@@ -99,6 +117,12 @@ def download_pdf(
 	this route — and permission is enforced inside it, by `validate_print_permission` on the
 	document. Dropping the flag here would 403 those links.
 	"""
+	# Imported here, not at module scope. `purchase_order_document_id` above is now a
+	# jinja method, so frappe imports THIS module to build the template environment on
+	# every print render — dragging `frappe.utils.print_format` into that is a wider
+	# import than the feature needs, and on the PDF route it is the module mid-execution.
+	from frappe.utils.print_format import download_pdf as _frappe_download_pdf
+
 	result = _frappe_download_pdf(
 		doctype,
 		name,

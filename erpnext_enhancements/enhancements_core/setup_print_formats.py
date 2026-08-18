@@ -75,26 +75,36 @@ __CONTACT_BLOCK__
       <h2 style="margin:0; font-size:20px;">Purchase Order</h2>
     </div>
     <div style="display:table-cell; vertical-align:bottom; text-align:right; color:#777;">
-      <div style="font-size:14px; color:#222;"><b>{{ doc.name }}</b></div>
-      {#- The job, immediately under the order number, which is where ER-2026-256847 asked
-          for it: the person filing these cannot tell one PO from another without it.
+      {#- The identifier carries the job (ER-2026-256847): the person filing these cannot
+          tell one PO from another without it. `PO-2026-00262-PRJ-00706`, and NOT
+          `doc.name` on one line with the project under it — this is character-for-character
+          the PDF's filename, because it is the same function call. Somebody comparing the
+          sheet on their desk to the file it came from is who this is for, and two
+          renderings of one idea drift: the id bounds a long tail of jobs with `plus-N` and
+          a template loop here would not have.
 
-          Via the jinja hook rather than worked out inline, because `doc.project` and
-          `Purchase Order Item.project` can disagree and every report here matches on the
-          union of the two. A template deciding for itself would be a third answer to a
-          question this app already answers once. The number leads (it is the identifier
-          the filename carries too); the name follows because nobody files by PRJ-00706. -#}
+          Via the jinja hook rather than worked out inline for the same reason the id itself
+          exists: `doc.project` and `Purchase Order Item.project` can disagree, every report
+          here matches on the union, and a template deciding for itself would be a third
+          answer to a question this app already answers once. -#}
+      <div style="font-size:14px; color:#222;"><b>{{ purchase_order_document_id(doc) | e }}</b></div>
+      {#- The readable name under it, because nobody files by PRJ-00706. Dropped entirely
+          when the project has no name of its own, rather than printing the number twice.
+
+          Unbounded where the identifier above is capped, deliberately: the id is a *name*
+          and has to stay a usable length, while this line is the human aid and truncating
+          it would hide a job the order really is for. The `plus-N` on the id is already
+          the signal that it is not the whole list. -#}
       {%- set po_projects = purchase_order_projects(doc) %}
       {%- if po_projects %}
-      <div style="color:#222;">
-        {%- for project in po_projects %}
-        <div>
-          <b>{{ project | e }}</b>
-          {%- set project_name = frappe.db.get_value("Project", project, "project_name") %}
-          {%- if project_name and project_name != project %} <span style="color:#777;">&middot; {{ project_name | e }}</span>{% endif -%}
-        </div>
-        {%- endfor %}
-      </div>
+      {%- set project_names = [] %}
+      {%- for project in po_projects %}
+      {%- set project_name = frappe.db.get_value("Project", project, "project_name") %}
+      {%- if project_name and project_name != project %}{% set _ = project_names.append(project_name) %}{% endif %}
+      {%- endfor %}
+      {%- if project_names %}
+      <div style="color:#555;">{{ project_names | join(", ") | e }}</div>
+      {%- endif %}
       {%- endif %}
       <div>{{ frappe.format(doc.transaction_date, {"fieldtype": "Date"}) }}</div>
     </div>

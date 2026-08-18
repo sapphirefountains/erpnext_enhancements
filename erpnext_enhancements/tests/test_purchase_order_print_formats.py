@@ -109,15 +109,58 @@ class _Doc:
         return self.__dict__.get(key, default)
 
 
-def _stub_frappe():
+def _stub_frappe(project_name=None):
+    """`project_name` is a `(docname) -> str` hook for the one lookup that varies.
+
+    Per-project by default, because the header joins several: a stub answering every
+    lookup with one string would hide a template printing the same name twice. Pass
+    `lambda name: name` for the projects whose `project_name` IS their docname — there are
+    such rows, and printing that under an identifier already containing it is the number
+    twice and no information.
+    """
     import types
 
+    project_name = project_name or (lambda name: f"{name} Fountain")
     return types.SimpleNamespace(
         format=lambda v, opts=None: str(v),
         utils=types.SimpleNamespace(
             fmt_money=lambda v, currency=None: f"{currency or ''} {float(v or 0):,.2f}".strip()
         ),
-        db=types.SimpleNamespace(get_value=lambda dt, name, field: f"<{field}>"),
+        db=types.SimpleNamespace(
+            get_value=lambda dt, name, field: (
+                project_name(name) if dt == "Project" and field == "project_name" else f"<{field}>"
+            )
+        ),
+    )
+
+
+def _render(doc, letter_head="<div>LETTERHEAD</div>", project_name=None):
+    """Render the composed template with every jinja method the hook registers.
+
+    One helper rather than three copies: a template gaining a method it can call is a
+    template that raises `UndefinedError` at render time in every test that forgot to pass
+    it, and the useful failure is the one that says the *format* is wrong.
+
+    The methods are the real ones, not stand-ins. They are what decide which project the
+    sheet names when the header and item rows disagree, and what makes the printed
+    identifier the same string as the PDF's filename; a stub answering either differently
+    from production would make this suite worse than no suite.
+    """
+    from jinja2 import Environment
+
+    from erpnext_enhancements.po_pdf_filename import purchase_order_document_id
+    from erpnext_enhancements.procurement_project import purchase_order_projects
+
+    return (
+        Environment()
+        .from_string(_NAMESPACE["_HTML"])
+        .render(
+            doc=doc,
+            frappe=_stub_frappe(project_name),
+            letter_head=letter_head,
+            purchase_order_projects=purchase_order_projects,
+            purchase_order_document_id=purchase_order_document_id,
+        )
     )
 
 
@@ -156,81 +199,95 @@ def _sample(**overrides):
 class TestTheHeaderNamesTheJob(unittest.TestCase):
     """ER-2026-256847: the person filing these cannot tell one PO from another.
 
-    The failure this guards is not a blank space on a page -- it is naming the *wrong*
-    job. `Purchase Order.project` and `Purchase Order Item.project` can disagree, and a
-    template that read either one alone would be silently wrong on the documents where
-    they do. It calls the same `purchase_order_projects` the PDF filename calls.
+    Two failures are guarded, and neither is a blank space on a page.
+
+    **Naming the wrong job.** `Purchase Order.project` and `Purchase Order Item.project` can
+    disagree, and a template reading either alone is silently wrong on the documents where
+    they do. It calls the same `purchase_order_projects` everything else here calls.
+
+    **The sheet and the file disagreeing.** The printed identifier is character-for-character
+    the PDF's filename stem, because it is the same function call. Somebody holding the
+    printout next to the file it came from is exactly who this feature is for, and two
+    renderings of one idea drift — the id bounds a long tail of jobs with `plus-N`, and the
+    template loop this replaced would not have.
     """
 
     def setUp(self):
         try:
-            import jinja2  # noqa: F401
+            import jinja2
         except ImportError:  # pragma: no cover
             self.skipTest("jinja2 not installed")
 
     def render(self, **overrides):
-        from jinja2 import Environment
+        return _render(_sample(**overrides), letter_head="")
 
-        from erpnext_enhancements.procurement_project import purchase_order_projects
+    def test_the_identifier_carries_the_project(self):
+        self.assertIn("PO-2026-00262-PRJ-00706", self.render(project="PRJ-00706"))
 
-        return (
-            Environment()
-            .from_string(_NAMESPACE["_HTML"])
-            .render(
-                doc=_sample(**overrides),
-                frappe=_stub_frappe(),
-                letter_head="",
-                purchase_order_projects=purchase_order_projects,
-            )
-        )
+    def test_it_is_exactly_the_pdf_filename(self):
+        """The whole point. If these ever diverge the feature quietly stops being one."""
+        from erpnext_enhancements.po_pdf_filename import purchase_order_filename
 
-    def test_the_project_prints_beside_the_order_number(self):
-        out = self.render(project="PRJ-00706")
-        self.assertIn("PRJ-00706", out)
-        # Beside, not buried: it has to land between the order number and the date, which
-        # is the block the request circled.
-        self.assertLess(out.index("PO-2026-00262"), out.index("PRJ-00706"))
+        doc = _sample(project="PRJ-00706")
+        stem = purchase_order_filename(doc)[: -len(".pdf")]
+        self.assertIn(stem, _render(doc, ""))
+
+    def test_they_agree_on_the_bounded_long_tail(self):
+        """The case a second rendering gets wrong: past the cap the filename says `plus-N`
+        and a template loop would have listed every job."""
+        from erpnext_enhancements.po_pdf_filename import purchase_order_filename
+
+        doc = _sample(project=None)
+        doc.__dict__["items"] = [_Doc(project=f"PRJ-0000{i}") for i in range(1, 7)]
+        out = _render(doc, "")
+        self.assertIn("plus-3", out)
+        self.assertIn(purchase_order_filename(doc)[: -len(".pdf")], out)
 
     def test_a_row_project_is_found_when_the_header_has_none(self):
         """44 of 204 lines were once blank under a PO whose header named the job; the
-        reverse happens too, and the union is the only rule that is right either way."""
-        out = self.render(project=None)
-        self.assertIn("PRJ-00001", out)
+        reverse happens too, and the union is the only rule right either way."""
+        self.assertIn("PO-2026-00262-PRJ-00001", self.render(project=None))
 
-    def test_the_header_wins_and_the_rows_still_show(self):
+    def test_the_header_project_leads(self):
         out = self.render(project="PRJ-00706")
         self.assertLess(out.index("PRJ-00706"), out.index("PRJ-00001"))
 
+    def test_the_readable_name_prints_under_the_identifier(self):
+        """Nobody files by PRJ-00706. The number is the identifier; the name is what lets a
+        human use it."""
+        out = self.render(project="PRJ-00706")
+        self.assertIn("PRJ-00706 Fountain", out)
+        self.assertLess(out.index("PO-2026-00262-PRJ-00706"), out.index("PRJ-00706 Fountain"))
+
+    def test_a_project_with_no_name_of_its_own_prints_no_second_line(self):
+        """`project_name` equals the docname on some projects. Printing it under an
+        identifier that already contains it is the number twice and no information."""
+        doc = _sample(project="PRJ-00706")
+        doc.items[0].__dict__["project"] = "PRJ-00706"
+        out = _render(doc, "", project_name=lambda name: name)
+        after_id = out.split("PO-2026-00262-PRJ-00706", 1)[1].split("<table", 1)[0]
+        self.assertNotIn("PRJ-00706", after_id, "the project id was printed a second time")
+
     def test_a_purchase_order_on_no_project_prints_no_placeholder(self):
-        """61 of 158 orders carry no project. A dash or the word None in the identifier
-        block would be worse than the blank it replaces."""
+        """61 of 158 orders carry none. A dash or the word None in the identifier block
+        would be worse than the blank it replaces."""
         doc = _sample(project=None)
         doc.items[0].__dict__["project"] = None
-        from jinja2 import Environment
-
-        from erpnext_enhancements.procurement_project import purchase_order_projects
-
-        out = (
-            Environment()
-            .from_string(_NAMESPACE["_HTML"])
-            .render(
-                doc=doc,
-                frappe=_stub_frappe(),
-                letter_head="",
-                purchase_order_projects=purchase_order_projects,
-            )
-        )
+        out = _render(doc, "")
         self.assertNotIn("None", out)
         self.assertIn("PO-2026-00262", out)
 
-    def test_the_jinja_method_is_registered(self):
+    def test_both_jinja_methods_are_registered(self):
         """A template calling an unregistered method raises at render time -- i.e. the
         supplier gets no PDF at all, not a PDF missing a line."""
         hooks = HOOKS.read_text(encoding="utf-8")
-        self.assertIn(
-            "erpnext_enhancements.procurement_project.purchase_order_projects", hooks
-        )
-        self.assertIn("purchase_order_projects(doc)", _NAMESPACE["_HTML"])
+        for method in (
+            "erpnext_enhancements.procurement_project.purchase_order_projects",
+            "erpnext_enhancements.po_pdf_filename.purchase_order_document_id",
+        ):
+            with self.subTest(method):
+                self.assertIn(method, hooks)
+        self.assertIn("purchase_order_document_id(doc)", _NAMESPACE["_HTML"])
 
 
 class TestTheHeaderCarriesOurContactDetails(unittest.TestCase):
@@ -247,23 +304,7 @@ class TestTheHeaderCarriesOurContactDetails(unittest.TestCase):
             self.skipTest("jinja2 not installed")
 
     def render(self, letter_head="<div>LETTERHEAD</div>", **overrides):
-        from jinja2 import Environment
-
-        # The real jinja method, not a stand-in. It is what decides which project the
-        # sheet names when the header and the item rows disagree, and a stub answering
-        # that differently from production would make this suite worse than no suite.
-        from erpnext_enhancements.procurement_project import purchase_order_projects
-
-        return (
-            Environment()
-            .from_string(_NAMESPACE["_HTML"])
-            .render(
-                doc=_sample(**overrides),
-                frappe=_stub_frappe(),
-                letter_head=letter_head,
-                purchase_order_projects=purchase_order_projects,
-            )
-        )
+        return _render(_sample(**overrides), letter_head=letter_head)
 
     def test_no_placeholder_survives_composition(self):
         """A typo in any marker prints `__COMPANY_PHONE__` to a supplier. Three
