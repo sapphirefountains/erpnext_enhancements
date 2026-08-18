@@ -243,6 +243,14 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_payment_followup_wire -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
+      # Desk home-grid tile artwork. Filesystem + xml only -- no stub, so it sits on a
+      # plain step beside the other pure-filesystem suite. Guards a failure mode that is
+      # entirely silent: setup/desktop_icon_map.py names an SVG per tile and the
+      # after_migrate reconciler writes that path into Desktop Icon.logo_url, so a
+      # renamed label or a tile added without regenerating produces a 404 on an <img>
+      # and an empty square on the desk -- no exception, nothing in any log.
+      - name: Desk tile artwork matches the tile map
+        run: python -m unittest erpnext_enhancements.tests.test_desktop_icons -v
       # The Enhancement Request lifecycle, and the boundary the feedback feature exists to
       # hold. `test_feedback_states` pins the state enum against the DocType's own Select
       # options (renaming one needs a data patch or existing rows refuse to save) and

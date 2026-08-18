@@ -718,3 +718,11 @@ erpnext_enhancements.patches.seed_product_feedback_settings
 # not doc.save -- 408 on_update cascades for a string edit. Safe twice: a healed value
 # contains "://" and is then left alone.
 erpnext_enhancements.patches.backfill_website_scheme
+
+# Deletes the orphaned "Learning" Desktop Icon: it links to a Workspace of that name that no
+# longer exists (the Training module's workspace is "Training"), a leftover from the rename.
+# It is already invisible -- get_desktop_icons() drops any Link tile whose Workspace Sidebar
+# is missing, and there is no "Learning" sidebar either -- so this removes a row that can only
+# mislead the next person to read tabDesktop Icon, not a working tile. Guarded on the workspace
+# still being absent, so a real Learning workspace later makes this a no-op. Safe twice.
+erpnext_enhancements.patches.drop_stale_learning_tile
