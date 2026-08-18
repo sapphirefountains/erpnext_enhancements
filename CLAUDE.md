@@ -53,7 +53,7 @@ Verified, and all of them expensive to rediscover:
   `frappe.db.has_column(...)`. Preserve those guards; removing one turns a fresh-DB install
   into a crash.
 - **The repo is the source of truth for customizations, and deletion is two steps.**
-  ~425 Custom Fields and ~349 Property Setters live in `fixtures/*.json` and are applied by
+  ~521 Custom Fields and ~409 Property Setters live in `fixtures/*.json` and are applied by
   `bench migrate`. Removing a record from the JSON only stops managing it — it does **not**
   delete it from the database. You also need a one-shot patch calling
   `frappe.delete_doc(...)`. See [`fixtures/README.md`](erpnext_enhancements/fixtures/README.md).

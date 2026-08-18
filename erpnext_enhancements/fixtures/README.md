@@ -1,7 +1,7 @@
 # Fixtures — version-controlled customizations
 
 **The repo is the source of truth for all manual customizations.** Every manually
-created Custom Field (425) and Property Setter (349) on the live site lives in
+created Custom Field (521) and Property Setter (409) on the live site lives in
 `custom_field.json` / `property_setter.json` here and is applied by `bench migrate`.
 Changes made in Customize Form on the site do **not** survive: a deploy whose fixture
 files changed re-asserts every committed value, and a fresh site gets everything from
@@ -9,7 +9,7 @@ these files. Whether an *unchanged* fixture file is also re-applied depends on t
 bench's Frappe version — empirically on this bench, unchanged deploys have **not**
 reverted UI drift. So never rely on migrate to discipline drift: if the site has
 drifted, re-export and commit (or accept the revert on the next fixture-touching
-deploy). Note that deploys which do change these files re-import all ~774 records,
+deploy). Note that deploys which do change these files re-import all ~930 records,
 so expect `bench migrate` to run noticeably longer on those deploys.
 
 The other fixture files (workflow\*, notification, print_format) are the original

@@ -300,6 +300,13 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 				# (setup/custom_fields.py provisions it for every party doctype),
 				# so this is a straight copy.
 				"primary_contact": "primary_contact",
+				# The step-4 invoice terms, agreed on the deal and used by the
+				# hand-off note to Billing (crm_enhancements.handoff.billing_terms).
+				# Copied rather than fetched so the PM can revise them on the
+				# project without rewriting a closed opportunity; blank here still
+				# falls back to the Opportunity at send time.
+				"custom_first_invoice_percentage": "custom_first_invoice_percentage",
+				"custom_billing_email": "custom_billing_email",
 			}
 			for source_field, target_field in direct_mappings.items():
 				project.set(target_field, opp.get(source_field))

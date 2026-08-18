@@ -98,25 +98,60 @@
 		});
 	}
 
+	/**
+	 * The step-4 note to Billing.
+	 *
+	 * The "hack period" flow: ERPNext is not the accounting system yet, so the
+	 * compliant action is still a note to Billing, not an invoice. The
+	 * server-side `handoff_invoice_flow` setting decides which of these two
+	 * this button is; see erpnext_enhancements_settings.json.
+	 *
+	 * `billing_notice_context` resolves both halves server-side in one call —
+	 * who it goes to (the Project's or the Opportunity's Billing Email, else the
+	 * configured Billing route) and what to invoice (First Invoice Percentage,
+	 * and the money it works out to against the project amount). Billing used to
+	 * get a note that named neither, and had to go and ask.
+	 */
 	function open_billing_email(frm) {
-		// The "hack period" flow: ERPNext is not the accounting system yet, so
-		// the compliant action is still a note to Billing, not an invoice. The
-		// server-side `handoff_invoice_flow` setting decides which of these two
-		// this button is; see erpnext_enhancements_settings.json.
 		frappe
-			.xcall("erpnext_enhancements.crm_enhancements.handoff.resolve_attendees", {
-				opportunity: frm.doc.custom_opportunity || null,
+			.xcall("erpnext_enhancements.crm_enhancements.handoff.billing_notice_context", {
+				project: frm.doc.name,
 			})
-			.then((attendees) => {
+			.then((notice) => {
+				notice = notice || {};
+				const label = frm.doc.project_name || frm.doc.name;
+				const lines = [
+					__("Please set up the accounting project and send the invoice for {0} ({1}).", [
+						label,
+						frm.doc.customer || "",
+					]),
+				];
+				// Say nothing rather than guess: a percentage nobody set is not
+				// "0%", and a figure derived from an unknown project amount is
+				// worse than making Billing ask for it.
+				if (notice.first_invoice_percentage) {
+					if (notice.first_invoice_amount) {
+						lines.push(
+							__("First invoice: {0}% of {1} = {2}.", [
+								notice.first_invoice_percentage,
+								format_currency(notice.project_amount),
+								format_currency(notice.first_invoice_amount),
+							])
+						);
+					} else {
+						lines.push(__("First invoice: {0}% of the project amount.", [notice.first_invoice_percentage]));
+					}
+				} else {
+					lines.push(
+						__("First Invoice Percentage is not set on this project — confirm the amount with Sales.")
+					);
+				}
 				new frappe.views.CommunicationComposer({
 					doc: frm.doc,
 					frm: frm,
-					subject: __("Accounting project & invoice — {0}", [frm.doc.project_name || frm.doc.name]),
-					recipients: ((attendees && attendees.Billing) || []).join(", "),
-					message: __(
-						"Please set up the accounting project and send the invoice for {0} ({1}).",
-						[frm.doc.project_name || frm.doc.name, frm.doc.customer || ""]
-					),
+					subject: __("Accounting project & invoice — {0}", [label]),
+					recipients: (notice.recipients || []).join(", "),
+					message: lines.map((line) => `<p>${frappe.utils.escape_html(line)}</p>`).join(""),
 				});
 			});
 	}

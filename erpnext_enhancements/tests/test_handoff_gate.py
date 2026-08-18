@@ -687,6 +687,151 @@ class TestAttendeeResolution(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Step-4 billing routing and invoice terms
+# ---------------------------------------------------------------------------
+
+
+def _project(name="PROJ-0001", opportunity=None, **fields):
+	record = {"name": name, "custom_opportunity": opportunity}
+	record.update(fields)
+	STATE["records"][name] = record
+	STATE["docs"][name] = _StubDoc(name, doctype="Project", **{k: v for k, v in record.items() if k != "name"})
+	return name
+
+
+class TestBillingRouting(unittest.TestCase):
+	"""Where the step-4 note goes, and what it says about money.
+
+	The expensive failures here are both silent. A **Billing Email** override
+	that quietly replaced the default with nothing would send the hand-off note
+	into the void, and nobody finds out until an invoice is a fortnight late; a
+	percentage that defaulted to something instead of to silence would have
+	Billing invoice a number Sales never agreed.
+	"""
+
+	BILLING_COLUMNS = {
+		"custom_billing_email",
+		"custom_first_invoice_percentage",
+		"custom_project_dollar_amount",
+		"opportunity_amount",
+	}
+
+	def setUp(self):
+		_reset()
+		STATE["columns"].update(self.BILLING_COLUMNS)
+
+	def _configure(self, rows):
+		STATE["singles"]["handoff_attendees"] = [dict(row) for row in rows]
+
+	# -- recipients ---------------------------------------------------------
+
+	def test_blank_field_still_goes_to_the_configured_billing_route(self):
+		"""The field is an override. Blank must behave exactly as before it existed."""
+		self._configure([{"function": "Billing", "role": None, "email": "billing@sf.com"}])
+		project = _project(opportunity=_opportunity())
+		self.assertEqual(handoff.billing_notice_context(project)["recipients"], ["billing@sf.com"])
+
+	def test_unconfigured_site_falls_back_to_the_group_address(self):
+		"""An empty settings table must not resolve to an empty recipient list."""
+		project = _project(opportunity=_opportunity())
+		self.assertEqual(
+			handoff.billing_notice_context(project)["recipients"],
+			["billing@sapphirefountains.com"],
+		)
+
+	def test_project_billing_email_overrides_the_configured_route(self):
+		self._configure([{"function": "Billing", "role": None, "email": "billing@sf.com"}])
+		project = _project(opportunity=_opportunity(), custom_billing_email="ap@customer.com")
+		self.assertEqual(handoff.billing_notice_context(project)["recipients"], ["ap@customer.com"])
+
+	def test_opportunity_billing_email_is_used_when_the_project_has_none(self):
+		"""The desk mapper route: ERPNext's own mapping cannot carry the field."""
+		self._configure([{"function": "Billing", "role": None, "email": "billing@sf.com"}])
+		opportunity = _opportunity(custom_billing_email="ap@customer.com")
+		project = _project(opportunity=opportunity, custom_billing_email="")
+		self.assertEqual(handoff.billing_notice_context(project)["recipients"], ["ap@customer.com"])
+
+	def test_several_addresses_in_one_field(self):
+		project = _project(opportunity=_opportunity(), custom_billing_email="ap@customer.com; billing@sf.com")
+		self.assertEqual(
+			handoff.billing_notice_context(project)["recipients"],
+			["ap@customer.com", "billing@sf.com"],
+		)
+
+	def test_a_typod_override_falls_back_rather_than_sending_nowhere(self):
+		"""Worse than no override: an address nobody reads, and no bounce."""
+		self._configure([{"function": "Billing", "role": None, "email": "billing@sf.com"}])
+		project = _project(opportunity=_opportunity(), custom_billing_email="ap-at-customer.com")
+		self.assertEqual(handoff.billing_notice_context(project)["recipients"], ["billing@sf.com"])
+
+	# -- invoice terms ------------------------------------------------------
+
+	def test_percentage_and_amount_come_from_the_project(self):
+		project = _project(
+			opportunity=_opportunity(),
+			custom_first_invoice_percentage=50,
+			custom_project_dollar_amount=120000,
+		)
+		context = handoff.billing_notice_context(project)
+		self.assertEqual(context["first_invoice_percentage"], 50)
+		self.assertEqual(context["project_amount"], 120000)
+		self.assertEqual(context["first_invoice_amount"], 60000)
+
+	def test_terms_fall_back_to_the_opportunity_field_by_field(self):
+		"""Not whole-record: a project may carry the amount but not the percentage.
+
+		The unset percentage is spelled ``0`` rather than omitted because that is
+		what a real site returns — frappe declares Percent NOT NULL DEFAULT 0, so
+		a fallback keyed on ``is None`` would pass here and never fire in
+		production.
+		"""
+		opportunity = _opportunity(custom_first_invoice_percentage=25, opportunity_amount=1000)
+		project = _project(
+			opportunity=opportunity,
+			custom_first_invoice_percentage=0,
+			custom_billing_email="",
+			custom_project_dollar_amount=80000,
+		)
+		context = handoff.billing_notice_context(project)
+		self.assertEqual(context["first_invoice_percentage"], 25)
+		self.assertEqual(context["project_amount"], 80000)
+		self.assertEqual(context["first_invoice_amount"], 20000)
+
+	def test_unset_percentage_is_none_not_zero(self):
+		"""The note asks Billing to confirm with Sales; 0% would be a false answer."""
+		project = _project(
+			opportunity=_opportunity(),
+			custom_first_invoice_percentage=0,
+			custom_project_dollar_amount=120000,
+		)
+		context = handoff.billing_notice_context(project)
+		self.assertIsNone(context["first_invoice_percentage"])
+		self.assertIsNone(context["first_invoice_amount"])
+
+	def test_no_amount_means_no_derived_figure(self):
+		"""A percentage of an unknown amount is worse than making them ask."""
+		project = _project(opportunity=_opportunity(), custom_first_invoice_percentage=50)
+		context = handoff.billing_notice_context(project)
+		self.assertEqual(context["first_invoice_percentage"], 50)
+		self.assertIsNone(context["first_invoice_amount"])
+
+	def test_missing_columns_read_as_unconfigured_rather_than_raising(self):
+		"""doc_events and the desk mapper both run before the fields exist."""
+		STATE["columns"].difference_update(self.BILLING_COLUMNS)
+		project = _project(opportunity=_opportunity(), custom_billing_email="ap@customer.com")
+		context = handoff.billing_notice_context(project)
+		self.assertIsNone(context["first_invoice_percentage"])
+		self.assertEqual(context["recipients"], ["billing@sapphirefountains.com"])
+
+	def test_terms_resolve_for_an_opportunity_with_no_project_yet(self):
+		"""The desk mapper reads them off the deal, before any Project exists."""
+		opportunity = _opportunity(custom_billing_email="ap@customer.com", custom_first_invoice_percentage=40)
+		terms = handoff.billing_terms(opportunity=opportunity)
+		self.assertEqual(terms["billing_email"], "ap@customer.com")
+		self.assertEqual(terms["first_invoice_percentage"], 40)
+
+
+# ---------------------------------------------------------------------------
 # Escalation policy
 # ---------------------------------------------------------------------------
 
