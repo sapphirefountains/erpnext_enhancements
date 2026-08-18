@@ -77,6 +77,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the first deploy is clean; a later revision must ship under a **new filename** with
   `setup/desktop_icon_map.py` updated to match, or the change will appear to work on a fresh
   browser and nowhere else.
+## [1.325.1] - 2026-08-17
+
+### Fixed
+
+- **"Expand with AI" logged you out.** It worked exactly once per login: the draft came back,
+  and the next request — submitting the form — answered `403`. Signing in again bought one
+  more click.
+
+  `product_feedback/triton_client._call_as` called `frappe.set_user()` around every call, so
+  the token it minted was the right person's. That is correct in a background job and fatal in
+  a web request. From `frappe/__init__.py` on version-16:
+
+  ```python
+  local.session.user = username
+  local.session.sid = username      # <-- this one
+  local.session.data = _dict()
+  ```
+
+  It overwrites the **session id** with the username and empties the session data. The
+  breakdown has always used it safely because it runs in a job, where there is no browser
+  session to damage. The drafter runs inside the requester's own HTTP request, and destroyed it.
+
+  Restoring in the `finally` does not help: `set_user(previous)` writes the *username* into
+  `sid` a second time, not the real session key.
+
+  `_call_as` now impersonates **only when the target differs from the session user**. The
+  drafter is already running as the requester and needs no impersonation at all; the breakdown
+  still gets it, and still runs in a job where it is harmless.
+
 
 ## [1.325.0] - 2026-08-17
 
