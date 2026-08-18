@@ -1099,6 +1099,10 @@ after_install = [
 	# may never be saved again, so hanging the sync only off on_update would leave the
 	# `Logs To Clear` rows absent on every site that does not happen to edit the form.
 	"erpnext_enhancements.chat.retention.ensure_chat_log_retention",
+	# Desk tile artwork -- the same callable as the after_migrate entry below, and here
+	# for the usual reason: after_migrate does NOT run during `bench install-app`, so a
+	# fresh site would show grey letter avatars until somebody happened to run a migrate.
+	"erpnext_enhancements.setup.desktop_icons.sync_desktop_icons",
 ]
 
 # Run after each `bench migrate` (from global_enhancements)
@@ -1107,6 +1111,15 @@ after_migrate = [
 	"erpnext_enhancements.setup.supplier_groups.create_supplier_group_customizations",
 	# Hide the "Project" DocType link in the core Projects module sidebar (user request)
 	"erpnext_enhancements.setup.workspace_tweaks.hide_core_sidebar_items",
+	# Desk home-grid tile artwork. Every tile this app contributes rendered as a grey
+	# letter avatar because create_desktop_icons_from_workspace() assigns `icon.app_name`,
+	# a field Desktop Icon does not have (the real one is `app`) -- so `app` stays NULL,
+	# the filename-convention icon lookup fails its first guard, and the letter avatar is
+	# the only branch left. We set `logo_url`, which that upstream bug cannot reach. Also
+	# creates the tile -- and the Workspace Sidebar without which a tile never renders --
+	# for a workspace added after install, which core only ever does at install time.
+	# Idempotent, and contractually cannot raise: a desk tile is not worth a failed migrate.
+	"erpnext_enhancements.setup.desktop_icons.sync_desktop_icons",
 	# Mermaid.js Process Document charts — repo is the source of truth
 	"erpnext_enhancements.setup.process_documents.sync_process_documents",
 	# Projects-module dashboard widgets (Custom HTML Blocks) — repo is the source

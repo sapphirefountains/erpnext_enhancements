@@ -25,6 +25,31 @@ re-asserted on `after_migrate` by
 because Frappe syncs standard records from every app and a plain file would be overwritten by
 whichever app imported last.
 
+## Sidebars are also what make a desk tile visible
+
+The tiles on the Desk home grid are `Desktop Icon` records, not workspaces — but a tile of
+type `Link` only renders if a `Workspace Sidebar` of the same name exists **and has items**.
+`get_desktop_icons()` resolves each one through
+`bootinfo.workspace_sidebar_item[label.lower()]` and silently drops any tile whose sidebar is
+missing or empty.
+
+That is worth knowing in both directions:
+
+- A `Desktop Icon` created without a sidebar simply never appears, with no error. The stale
+  `Learning` tile removed in v1.326.0 had been invisible this way for exactly that reason.
+- A workspace added to this app *after* install gets neither record — core only builds them
+  during install/upgrade — so it is absent from the desk entirely. Training and Shipping both
+  were. [`setup/desktop_icons.py`](../erpnext_enhancements/setup/README.md) now creates the
+  pair on `after_migrate`, reusing Frappe's own `add_workspace_to_desktop`, which appends to
+  an existing sidebar rather than replacing it.
+
+Tile *artwork* is a separate matter and is **not** `Workspace.icon` — see the setup README.
+
+Note also that `desktop_icon` is an app-level sync folder exactly like `workspace_sidebar`
+(`frappe/model/sync.py` scans `["desktop_icon", "workspace_sidebar", "sidebar_item_group"]`),
+so the JSON-parse trap described below applies there too if this app ever ships one. It
+currently does not, deliberately.
+
 ## Why this document is here and not in the directory it describes
 
 It used to live at `erpnext_enhancements/workspace_sidebar/README.md`, and on 2026-07-31 it

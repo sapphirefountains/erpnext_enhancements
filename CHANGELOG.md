@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.326.0] - 2026-08-17
+
+### Added
+
+- **Every module this app puts on the Desk home grid now has a real icon.** All 31 tiles that
+  existed rendered as grey letter avatars — "A" for AI Governance, "C" for CRM Enhancements —
+  while Frappe's and ERPNext's own tiles showed artwork. (Two more modules had no tile at all;
+  see the next entry. 33 total.)
+
+  The cause was not a missing setting on our side. v16 picks a tile's image in a fixed order
+  (`frappe/public/js/frappe/ui/desktop_icon.html`): a filename-convention lookup that requires
+  `Desktop Icon.app`, then `logo_url`/`icon_image`, then the folder thumbnail, then the letter
+  avatar. Ours could only ever reach the last one, because
+  `create_desktop_icons_from_workspace()` assigns **`icon.app_name`** — a field `Desktop Icon`
+  does not have; the real one is `app` — so `app` stays NULL on every auto-created row and the
+  first branch fails its own guard. Confirmed on production: `app` NULL on all 31 rows.
+
+  Two things look like the fix and are not, both worth recording because each costs an
+  afternoon to rule out:
+
+  - **`Module Def` has no `icon` field** in v16. The four `module_def/*.json` files in this
+    repo are inert anyway (`module_def` is not in `IMPORTABLE_DOCTYPES`).
+  - **`Workspace.icon` does not drive the tile.** Frappe copies it once into the *hidden*
+    `Desktop Icon.icon` field, emits it as a dead `data-icon` attribute, and never reads it
+    back. All 31 workspaces already set a sensible value; it changes nothing.
+
+  So `setup/desktop_icons.py` writes `logo_url` on `after_migrate` and `after_install`,
+  pointing at artwork shipped in `public/desktop_icons/`. That branch the upstream bug cannot
+  reach, it needs one SVG per tile rather than a subtle/solid pair, and it does not depend on
+  the `Desktop Settings.icon_style` global. Setting `app` instead would have meant also
+  shipping the records as `desktop_icon/*.json`, because `bench migrate` runs v16's
+  `unset_standard_field_for_auto_generated_icons`, which clears `standard` on any icon whose
+  app has no on-disk JSON — a declarative route whose landing is gated on `modified`
+  timestamps, and which rewrites the whole row including `hidden` and user-dragged ordering.
+
+  The artwork is generated, not hand-drawn: `scripts/build_desktop_icons.py` composes each
+  28×28 tile from a lucide glyph in Frappe's own sprite — read via
+  `git show origin/version-16:` from the sibling checkout, since its working tree is on
+  `develop`/v17 where the sprite is a different lucide release with different names
+  (`chart-line`, not `line-chart`). Output is committed;
+  `tests/test_desktop_icons.py` fails the build if map and artwork drift, which they otherwise
+  would silently — a missing file is a 404 on an `<img>` and an empty square, no exception
+  anywhere. Colour groups the tiles into eight families so a 36-tile grid stays scannable.
+
+- **Training and Shipping have a desk tile at all now.** Both are public workspaces this app
+  ships, and neither had a `Desktop Icon` *or* a `Workspace Sidebar`, so neither appeared on
+  the desk. `create_desktop_icons()` only runs at install/upgrade, so any workspace added
+  afterwards is simply absent. The sidebar half is load-bearing and easy to miss:
+  `get_desktop_icons()` drops any `Link` tile whose `bootinfo.workspace_sidebar_item` entry is
+  missing or empty, so a tile without one never renders. `setup/desktop_icons.py` creates the
+  pair through Frappe's own `add_workspace_to_desktop`, which reuses an existing sidebar
+  rather than replacing it.
+
+### Fixed
+
+- **Removed the orphaned "Learning" desk tile** (`patches/drop_stale_learning_tile.py`). It
+  pointed at a Workspace named `Learning` that no longer exists — the Training module's
+  workspace is `Training` — a leftover from that rename. It was already invisible for the
+  sidebar reason above, so nothing changes on screen; this deletes a row that could only
+  mislead the next person to read `tabDesktop Icon`. Guarded on the workspace still being
+  absent, so a real `Learning` workspace later makes it a no-op.
+
+### Note
+
+- **Revising a tile icon in place will not reach devices that already cached it.** These are
+  raw `/assets` paths, served immutable for a year with no content hash — the same constraint
+  that made global JS/CSS ship as esbuild bundles (see `hooks.py`). New filenames are fine, so
+  the first deploy is clean; a later revision must ship under a **new filename** with
+  `setup/desktop_icon_map.py` updated to match, or the change will appear to work on a fresh
+  browser and nowhere else.
 ## [1.325.1] - 2026-08-17
 
 ### Fixed
