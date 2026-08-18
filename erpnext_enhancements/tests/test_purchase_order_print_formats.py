@@ -66,7 +66,17 @@ _NAMESPACE = {}
 def setUpModule():
     import types
 
-    sys.modules.setdefault("frappe", types.ModuleType("frappe"))
+    frappe = sys.modules.setdefault("frappe", types.ModuleType("frappe"))
+    # `procurement_project` (imported below for the real jinja method) needs this much of
+    # frappe at import time: `from frappe.utils import flt`, and `@frappe.whitelist()` on
+    # the two endpoints that live beside the function we want.
+    if not hasattr(frappe, "utils"):
+        utils = types.ModuleType("frappe.utils")
+        utils.flt = lambda v, precision=None: float(v or 0)
+        frappe.utils = utils
+        sys.modules["frappe.utils"] = utils
+    if not hasattr(frappe, "whitelist"):
+        frappe.whitelist = lambda *a, **kw: (lambda fn: fn)
     exec(compile(SETUP.read_text(encoding="utf-8"), str(SETUP), "exec"), _NAMESPACE)
 
 
@@ -143,6 +153,86 @@ def _sample(**overrides):
     return doc
 
 
+class TestTheHeaderNamesTheJob(unittest.TestCase):
+    """ER-2026-256847: the person filing these cannot tell one PO from another.
+
+    The failure this guards is not a blank space on a page -- it is naming the *wrong*
+    job. `Purchase Order.project` and `Purchase Order Item.project` can disagree, and a
+    template that read either one alone would be silently wrong on the documents where
+    they do. It calls the same `purchase_order_projects` the PDF filename calls.
+    """
+
+    def setUp(self):
+        try:
+            import jinja2  # noqa: F401
+        except ImportError:  # pragma: no cover
+            self.skipTest("jinja2 not installed")
+
+    def render(self, **overrides):
+        from jinja2 import Environment
+
+        from erpnext_enhancements.procurement_project import purchase_order_projects
+
+        return (
+            Environment()
+            .from_string(_NAMESPACE["_HTML"])
+            .render(
+                doc=_sample(**overrides),
+                frappe=_stub_frappe(),
+                letter_head="",
+                purchase_order_projects=purchase_order_projects,
+            )
+        )
+
+    def test_the_project_prints_beside_the_order_number(self):
+        out = self.render(project="PRJ-00706")
+        self.assertIn("PRJ-00706", out)
+        # Beside, not buried: it has to land between the order number and the date, which
+        # is the block the request circled.
+        self.assertLess(out.index("PO-2026-00262"), out.index("PRJ-00706"))
+
+    def test_a_row_project_is_found_when_the_header_has_none(self):
+        """44 of 204 lines were once blank under a PO whose header named the job; the
+        reverse happens too, and the union is the only rule that is right either way."""
+        out = self.render(project=None)
+        self.assertIn("PRJ-00001", out)
+
+    def test_the_header_wins_and_the_rows_still_show(self):
+        out = self.render(project="PRJ-00706")
+        self.assertLess(out.index("PRJ-00706"), out.index("PRJ-00001"))
+
+    def test_a_purchase_order_on_no_project_prints_no_placeholder(self):
+        """61 of 158 orders carry no project. A dash or the word None in the identifier
+        block would be worse than the blank it replaces."""
+        doc = _sample(project=None)
+        doc.items[0].__dict__["project"] = None
+        from jinja2 import Environment
+
+        from erpnext_enhancements.procurement_project import purchase_order_projects
+
+        out = (
+            Environment()
+            .from_string(_NAMESPACE["_HTML"])
+            .render(
+                doc=doc,
+                frappe=_stub_frappe(),
+                letter_head="",
+                purchase_order_projects=purchase_order_projects,
+            )
+        )
+        self.assertNotIn("None", out)
+        self.assertIn("PO-2026-00262", out)
+
+    def test_the_jinja_method_is_registered(self):
+        """A template calling an unregistered method raises at render time -- i.e. the
+        supplier gets no PDF at all, not a PDF missing a line."""
+        hooks = HOOKS.read_text(encoding="utf-8")
+        self.assertIn(
+            "erpnext_enhancements.procurement_project.purchase_order_projects", hooks
+        )
+        self.assertIn("purchase_order_projects(doc)", _NAMESPACE["_HTML"])
+
+
 class TestTheHeaderCarriesOurContactDetails(unittest.TestCase):
     """A supplier holding this PDF must be able to reach us without the buyer's inbox.
 
@@ -159,10 +249,20 @@ class TestTheHeaderCarriesOurContactDetails(unittest.TestCase):
     def render(self, letter_head="<div>LETTERHEAD</div>", **overrides):
         from jinja2 import Environment
 
+        # The real jinja method, not a stand-in. It is what decides which project the
+        # sheet names when the header and the item rows disagree, and a stub answering
+        # that differently from production would make this suite worse than no suite.
+        from erpnext_enhancements.procurement_project import purchase_order_projects
+
         return (
             Environment()
             .from_string(_NAMESPACE["_HTML"])
-            .render(doc=_sample(**overrides), frappe=_stub_frappe(), letter_head=letter_head)
+            .render(
+                doc=_sample(**overrides),
+                frappe=_stub_frappe(),
+                letter_head=letter_head,
+                purchase_order_projects=purchase_order_projects,
+            )
         )
 
     def test_no_placeholder_survives_composition(self):

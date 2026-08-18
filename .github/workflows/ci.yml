@@ -337,6 +337,17 @@ jobs:
       # Own step: installs its own frappe stub in setUpModule to exec the setup module.
       - name: Purchase Order print format (contents + delete vs disable)
         run: python -m unittest erpnext_enhancements.tests.test_purchase_order_print_formats -v
+      # The Project Number in the downloaded PO filename. Two things this pins that a
+      # code review will not: that frappe's own download_pdf is called unchanged with
+      # every argument it was handed -- frappe.call matches form_dict against OUR
+      # signature, so a parameter missing there is a print format the user picked and did
+      # not get -- and that no other doctype is renamed. This override sits on the route
+      # every doctype in the system prints through, so the plausible regression is a Sales
+      # Invoice renamed by a Purchase Order feature.
+      # Own step: installs its own frappe stub (incl. frappe.utils.print_format) in
+      # setUpModule.
+      - name: Purchase Order PDF filename (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_po_pdf_filename -v
       # Own step: installs its own frappe stub in setUpModule, so it must not
       # share a process with the other bench-free suites.
       - name: Administrator login alerts (bench-free)
@@ -1289,6 +1300,15 @@ jobs:
       # "override the view somebody just clicked" is not expressible.
       - name: Feedback routing composition (bench-free, node)
         run: node scripts/test_feedback_routes.js
+      # The one label on the feedback board that is not a status. `Tasks Created` is a
+      # TERMINAL state, so a request whose tasks were all finished read "Tasks Created"
+      # forever while the Work column beside it said 2/2 — nothing was broken, there was
+      # simply nothing that could ever move it. The fix is a display rule over the task
+      # counts the page already holds. The edge worth a CI step is 0/0: `done >= created`
+      # on its own calls a request with no work at all "finished", which is the entire
+      # plausible bug in a four-line function.
+      - name: Feedback derived status label (bench-free, node)
+        run: node scripts/test_feedback_status.js
       # Google address components -> Frappe Address fields. Every rule in that
       # mapping is a judgement call that looks arbitrary until it is wrong, and
       # the branches for UK/Nordic mailing towns and for states with no

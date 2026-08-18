@@ -7,6 +7,172 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.329.0] - 2026-08-18
+
+### Added
+
+- **The feedback board now says when a request is actually finished.** A request whose
+  tasks were all completed still read **Tasks Created** on `/feedback` — forever — while
+  the Work column beside it said `2/2`. Nothing was broken. `Tasks Created` is a *terminal*
+  state in `product_feedback/states.py`: its transition set is empty, deliberately, so the
+  same proposal can never be written to a Project twice. There was simply nothing that
+  could ever move it, and no status to move it to.
+
+  It now shows a filled **Tasks Completed** pill once every task the request produced is
+  `Completed` or `Canceled`.
+
+  **That pill is a display rule, not an eighth status**, and the distinction is the whole
+  design. The counts it reads (`tasks: {created, done}`) were already coming back from
+  `_task_progress` on the same two queries the page was making anyway, so the rule
+  (`public/js/feedback/status.js`) costs no column, no patch, no transition out of a state
+  that must stay terminal, and no `doc_event` on Task — which would have fired on every
+  Task save site-wide to keep a denormalised column in step. It also goes back off by
+  itself when somebody reopens a task, because the label **is** the tasks; a stored status
+  would have needed that hook to notice.
+
+  `tests/test_feedback_states.py` asserts the derived label never becomes a real
+  `RequestState` value. If somebody later adds a stored status of the same name, two
+  different things are spelled identically — one meaning "the column says so", one meaning
+  "the tasks say so" — and they disagree the first time a task is reopened. That test
+  failing is the point: it makes the collision a decision.
+
+  Three details worth their lines:
+
+  - **`0/0` is "nothing has been created", not "everything is finished".** `done >= created`
+    on its own paints a request with no work at all green, and that is the entire plausible
+    bug in a four-line function. It is the case `scripts/test_feedback_status.js` leads with.
+  - **The whole-table tally keeps counting stored statuses.** Those counts come from a
+    group-by and they sit beside the status filter, which also filters on the column. A
+    chip reading "Tasks Completed" that the dropdown could not then select would be worse
+    than one that agrees with it.
+  - **The detail header reads the same `_task_progress` the list rows do**, rather than
+    deriving from the `created_tasks` panel below it. Those rows include synthesized group
+    parents, which are not `proposed_tasks` entries and would inflate the denominator — two
+    views disagreeing about whether one request is finished is worse than one extra pair of
+    small queries.
+
+  `_my_requests` gained the same counts. The requester is the person who most wants to know
+  their request is done and the least likely to open the reviewer's table.
+
+  The pill is filled rather than outlined, which is what makes "work exists" and "work is
+  done" separable at a glance down a column. It carries white text, so it uses a new
+  `--ee-ok-surface` token rather than `--ee-ok` — for the reason already documented at the
+  top of `feedback.bundle.css`: `--ee-ok` is an ink that lightens at night (`#56d364`) and
+  white does not get lighter to match. The glyph differs too (double tick); colour is never
+  the only cue on that page.
+
+## [1.328.0] - 2026-08-18
+
+### Added
+
+- **The Purchase Order says which job it is for, on the page and in the filename**
+  (ER-2026-256847). A PO downloaded as a PDF was named `PO-2026-00262.pdf` and printed the
+  project only per line, so the person filing them could not tell one order from another
+  without opening it. The order number now carries the project in both places: the sheet
+  prints it directly under the PO number in the identifier block, and the download is named
+  `PO-2026-00262-PRJ-00706.pdf`. Order number first, so a folder still sorts the way
+  everyone expects.
+
+  **The obvious fix does not work, and it fails silently, which is why it is worth
+  recording.** Giving Purchase Order a title field holding "order + project" and letting
+  the PDF route use it is the first thing to try. Frappe v16 builds the download filename
+  from the docname and consults `title_field` nowhere on that path:
+
+  ```python
+  # frappe/utils/print_format.py, version-16
+  frappe.local.response.filename = "{name}.pdf".format(name=name.replace(" ", "-").replace("/", "-"))
+  ```
+
+  So the filename is changed the only way it can be: an `override_whitelisted_methods` entry
+  on `frappe.utils.print_format.download_pdf` (new `po_pdf_filename.py`). The Desk's
+  Print → PDF button calls exactly that method, and `/api/method/…` reaches it through
+  `api/v1.handle_rpc_call` → `handler.handle()` → `handler.execute_cmd`, whose first line
+  applies the override. *(Read with `git show origin/version-16:…`. A sibling `../frappe`
+  checkout is on `develop`/17.0.0-dev and its line numbers do not apply.)*
+
+  **That override sits on the route every doctype in the system prints through**, so it is a
+  decoration and not a reimplementation: it calls frappe's own function unchanged, with every
+  argument it was handed, and only then rewrites the filename — for Purchase Order alone.
+  Its signature has to mirror frappe's exactly, because `frappe.call` matches the request's
+  form_dict against *ours*; a parameter missing there is a print format or letterhead the
+  user picked and silently did not get. The rewrite sits in its own `try`: the PDF has
+  already been rendered by the time we touch the name, and losing the project off the end of
+  a filename is not worth a 500. The test suite's most valuable case is the one about a
+  different doctype — a Sales Invoice renamed by a Purchase Order feature is the regression
+  this could plausibly have shipped.
+
+  **Both the sheet and the filename resolve the project through one function**,
+  `procurement_project.purchase_order_projects`, exposed to templates via the `jinja` hook.
+  `Purchase Order.project` and `Purchase Order Item.project` can disagree — the reason
+  `cascade_project_to_items` exists and the reason every report here matches on the union —
+  so a template working it out inline would have been a third answer to a question this app
+  already answers once. It returns a **list**, not a string: on production every submitted
+  order resolves to exactly one project and all 61 orders with a blank header have blank rows
+  too, so a single-value function would look correct on every document that exists and be
+  silently wrong the first time somebody buys for two jobs on one order.
+
+  An order with no project appends nothing rather than a placeholder — 61 of the 158 orders
+  on production carry none, and `PO-2026-00262-none.pdf` would be worse than the name it
+  replaced.
+
+  **Not renamed:** email attachments and Drive uploads compose their names through
+  `frappe.attach_print`, a different code path, and the weasyprint generator has its own
+  route that this print format does not use. Only the Desk download.
+
+- **Two more Order Stage options on Purchase Order, and a partial receipt now moves the
+  stage** (ER-2026-256846). The field shipped in v1.289.0 with five stages and the request
+  described six; two had no option at all. `Awaiting Fulfillment` ("I have an answer but
+  we're waiting for fulfillment") and `Partially Fulfilled` ("the order has only been
+  partially fulfilled") fill the gaps:
+
+  ```
+  Created → Awaiting Confirmation → Awaiting Fulfillment
+          → Waiting for Delivery │ Waiting for Pickup
+          → Partially Fulfilled → Received
+  ```
+
+  **`Received` deliberately keeps its label** rather than becoming the "Fully Received" the
+  request literally worded, and the asymmetry behind that is the useful part: *adding* an
+  option leaves every stored value valid and needs no data migration at all, while *renaming*
+  one makes every row holding the old value refuse to save and needs each of them rewritten
+  in the same transaction. The two look equally cheap from outside. They are not, and this is
+  the opposite trap to the v1.280.3 one — here the right predicate is no predicate.
+
+  A partial Purchase Receipt used to leave the stage untouched, on the stated grounds that
+  the order was still waiting on the rest of the goods and the stage should keep saying so.
+  That reasoning held only while no option could say "some of it is here". One can now, so a
+  receipt covering part of an order sets `Partially Fulfilled`, and a cancellation that
+  leaves goods on site lands there too rather than falling all the way back to `Awaiting
+  Confirmation`. It does cost something — moving off `Waiting for Pickup` loses the fact that
+  the remainder is a trip rather than a truck — so that transition leaves a timeline comment
+  naming the stage it replaced, exactly as the cancel path already did. Moving off `Created`
+  or `Awaiting Confirmation` loses nothing and says nothing; a note on every partial receipt
+  would be noise on the orders that need it least.
+
+  A receipt covering *nothing* still changes nothing, and an order already `Received` is
+  never walked backwards by a later smaller receipt — `per_received` can read under 100
+  mid-flight on an amended document.
+
+  `backfill_stage_for` now returns `Partially Fulfilled` for a part-received order where it
+  used to fall through to `Awaiting Confirmation`, which was false the moment the first box
+  arrived. **No re-backfill ships with it, because none is needed**: production had zero
+  part-received orders when this landed (158 orders, checked), so the old rule and the new one
+  disagree on no stored row.
+
+  The Custom Field spec moved into `po_order_stage.field_definition()`, shared by the patch
+  that creates the field and the new `update_po_order_stage_options` that widens it — a spec
+  written out twice is two option lists waiting to disagree, and a stored value outside the
+  Select is a row nobody can save.
+
+### Notes
+
+Five Tasks on PRJ-00580 were closed as already-shipped rather than built again:
+`Supplier Pickup List` and its checklist print sheet (TASK-2026-01587 / 01588),
+`Pending Items by Project` (TASK-2026-01589, also covering the duplicate ER-2026-256805),
+and the Import Contacts multi-select dialog and its server-side subset linking
+(TASK-2026-01590 / 01591, shipped v1.323.0). TASK-2026-01613 (legacy Order Stage mapping)
+was already satisfied by `backfill_po_order_stage` in v1.289.0.
+
 ## [1.327.0] - 2026-08-17
 
 ### Added

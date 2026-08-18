@@ -10,6 +10,8 @@
  * Modelled on `public/js/chat/dom.js`.
  */
 
+import { displayStatus } from "./status.js";
+
 /** `el("div", "cls", "text")` — the workhorse. */
 export function el(tag, className, text) {
 	const node = document.createElement(tag);
@@ -98,16 +100,27 @@ function pill(status, marks, prefix) {
 	return node;
 }
 
-/** `Enhancement Request.status`. */
-export function statusPill(status) {
+/**
+ * `Enhancement Request.status`, with one label the column cannot hold.
+ *
+ * Pass the request's `tasks` progress and a finished request reads **Tasks Completed**
+ * instead of "Tasks Created". That is a display rule, not a status: `Tasks Created` is
+ * terminal in `states.py` and nothing may move a request past it. See `status.js`.
+ *
+ * `progress` is optional — the whole-table tally passes none, because it counts stored
+ * statuses and is the denominator the page is read against.
+ */
+export function statusPill(status, progress) {
 	return pill(
-		status,
+		displayStatus(status, progress),
 		{
 			Submitted: "•",
 			Approved: "▸",
 			"Breakdown Ready": "◆",
 			"Breakdown Failed": "!",
 			"Tasks Created": "✓",
+			// A distinct glyph, not the same tick: colour is never the only cue on this page.
+			"Tasks Completed": "✓✓",
 			Rejected: "✕",
 			Duplicate: "⧉",
 		},

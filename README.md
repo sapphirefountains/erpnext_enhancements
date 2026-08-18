@@ -143,7 +143,7 @@ Shared / cross-cutting code (not a Frappe module):
 | `doc_events` | Document lifecycle handlers | Contact-sync on most party doctypes, `script_migrations.*` ports, dashboard realtime updates, maintenance scheduling, **`"*": {after_save: global_triton_sync}`** (fires on every save site-wide) |
 | `scheduler_events` | Background jobs | **daily**: project reminders, predictive maintenance, customer inactivity, elapsed-time refresh, draft cleanup, location-log purge · **hourly**: QuickBooks token refresh, CDC poll, retry failed syncs |
 | `override_doctype_class` | Replace a core controller | `Task` → `task_enhancements.doctype.task.task.Task` |
-| `override_whitelisted_methods` | Replace a core endpoint | `opportunity.make_project` → `opportunity_enhancements.make_project` |
+| `override_whitelisted_methods` | Replace a core endpoint | `opportunity.make_project` → `opportunity_enhancements.make_project`; `frappe.utils.print_format.download_pdf` → `po_pdf_filename.download_pdf` (the Project Number in the downloaded PO filename — frappe builds that name from the docname and never consults `title_field`, so this is the only lever on it) |
 | `override_doctype_dashboards` | Customize the "connections" dashboard | `Project`, `Employee` |
 | `extend_bootinfo` | Per-session data shipped to the desk client | `boot.boot_session` — the live-collab doctype allowlist (`frappe.boot.collab_doctypes`) from ERPNext Enhancements Settings |
 | `after_migrate` | Idempotent setup after each migrate | `setup.custom_fields`, `setup.supplier_groups`, `setup.process_documents` (seeds/updates the Mermaid.js Process Document charts — repo is the source of truth) |

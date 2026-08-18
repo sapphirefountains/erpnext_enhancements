@@ -44,6 +44,10 @@
 	--ee-danger: #cf222e;
 	--ee-warn: #9a6700;
 	--ee-ok: #2da44e;
+	/* The done-green as a BACKGROUND with white text, the --ee-brand-surface of its
+	   colour. Deliberately absent from the dark block below: it stays dark in both
+	   themes because white does not get lighter at night. #fff on this is 5.1:1. */
+	--ee-ok-surface: #1a7f37;
 	--ee-radius: 8px;
 }
 
@@ -400,6 +404,21 @@ body .container {
 .ee-fb-pill-tasks-created {
 	border-color: var(--ee-ok);
 	color: var(--ee-ok);
+}
+
+/* Derived, not stored: every task this request produced is finished. See
+   public/js/feedback/status.js — `Tasks Created` is terminal and nothing may move a
+   request past it, so the finished state is a label over the task counts.
+
+   Filled rather than outlined, which is what makes "work exists" and "work is done"
+   separable at a glance down a column. It carries white text, so it uses a *surface*
+   token and not --ee-ok, for the reason stated at the top of this file: --ee-ok is an
+   ink that lightens at night (#56d364), and white does not get lighter to match. The
+   glyph differs too (double tick) — colour is never the only cue here. */
+.ee-fb-pill-tasks-completed {
+	border-color: var(--ee-ok-surface);
+	background: var(--ee-ok-surface);
+	color: #ffffff;
 }
 
 .ee-fb-pill-breakdown-failed,

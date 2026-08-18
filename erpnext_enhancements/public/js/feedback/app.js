@@ -486,6 +486,10 @@ export class FeedbackApp {
 		const tally = el("div", "ee-fb-tally");
 		const counts = data.counts || {};
 		// Whole-table, not filtered — it is the denominator the page is read against.
+		// Deliberately the STORED statuses, so no `statusPill` progress here: these counts
+		// come from a group-by and they mirror the status filter beside them, which also
+		// filters on the column. A chip reading "Tasks Completed" that the filter could not
+		// then select would be worse than one that agrees with the dropdown.
 		for (const status of data.statuses || []) {
 			if (!counts[status]) continue;
 			const chip = statusPill(status);
@@ -536,7 +540,7 @@ export class FeedbackApp {
 			append(tr, el("td", "ee-fb-cell-quiet", row.requester_name || ""));
 
 			const status = el("td");
-			append(status, statusPill(row.status));
+			append(status, statusPill(row.status, row.tasks));
 			append(tr, status);
 
 			append(tr, el("td", "ee-fb-cell-quiet", this.workSummary(row)));
@@ -583,7 +587,7 @@ export class FeedbackApp {
 			append(
 				head,
 				link(row.title || row.name, buildRoute(VIEW_REQUEST, row.name), (href) => this.navigate(href)),
-				statusPill(row.status)
+				statusPill(row.status, row.tasks)
 			);
 
 			const meta = el("div", "ee-fb-list-meta");
@@ -638,7 +642,7 @@ export class FeedbackApp {
 
 	detailHeader(detail) {
 		const head = el("header", "ee-fb-detail-head");
-		append(head, el("h2", "ee-fb-detail-title", detail.title), statusPill(detail.status));
+		append(head, el("h2", "ee-fb-detail-title", detail.title), statusPill(detail.status, detail.tasks));
 		const meta = el("div", "ee-fb-list-meta");
 		append(
 			meta,
