@@ -50,6 +50,33 @@ def cascade_project_to_items(doc, method=None):
 			row.project = project
 
 
+def purchase_order_projects(doc):
+	"""Every distinct project on one Purchase Order: header first, then row order.
+
+	The header ``Purchase Order.project`` and the row ``Purchase Order Item.project`` can
+	disagree, which is the reason :func:`cascade_project_to_items` exists and the reason every
+	report here matches on the union rather than on either alone. Two things that print the
+	job on the same document must not arrive at it two different ways, so the PDF filename and
+	the print format both call this.
+
+	**A list, not a string, and that is the load-bearing part.** On production today every
+	submitted order resolves to exactly one project, and all 61 orders with a blank header
+	have blank rows too — so a function returning a single value would look correct on every
+	document that exists. It would be wrong the first time somebody buys for two jobs on one
+	order, silently, by naming one of them. Returning the set makes the caller decide what to
+	do about it where a reader can see the decision.
+
+	Takes a document rather than a name: both callers already hold one, and re-reading the
+	rows would be a second query for data in front of us.
+	"""
+	projects = []
+	for value in [doc.get("project"), *(row.get("project") for row in doc.get("items") or [])]:
+		value = (value or "").strip()
+		if value and value not in projects:
+			projects.append(value)
+	return projects
+
+
 #: A Purchase Order with nothing left to receive. Same rule as
 #: ``api/pickup_routing.py::_is_outstanding`` — the *number*, not the label: ``Closed``
 #: can hide an order whose goods never turned up, and ``To Bill`` means they are already

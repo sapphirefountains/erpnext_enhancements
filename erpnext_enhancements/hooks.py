@@ -1019,6 +1019,10 @@ jinja = {
 		"erpnext_enhancements.water_engineering.issues.we_design_issues",
 		"erpnext_enhancements.project_enhancements.print_data.project_schedule_rows",
 		"erpnext_enhancements.project_enhancements.print_data.project_task_rows",
+		# The union of Purchase Order.project and Purchase Order Item.project, so the PO
+		# print format and the PDF filename name the job the same way. The two fields can
+		# disagree; a template working it out inline would be a third answer.
+		"erpnext_enhancements.procurement_project.purchase_order_projects",
 	],
 }
 
@@ -1542,7 +1546,16 @@ fixtures = [
 ]
 
 override_whitelisted_methods = {
-	"erpnext.crm.doctype.opportunity.opportunity.make_project": "erpnext_enhancements.opportunity_enhancements.make_project"
+	"erpnext.crm.doctype.opportunity.opportunity.make_project": "erpnext_enhancements.opportunity_enhancements.make_project",
+	# The Project Number in the downloaded Purchase Order PDF filename (ER-2026-256847).
+	# This is the ONLY lever on that filename: frappe v16 builds it from the docname and
+	# never consults `title_field`, so the obvious title-field fix fails silently. The route
+	# reaches this hook via api/v1.handle_rpc_call -> handler.execute_cmd, whose first line
+	# is override_whitelisted_method(). Note the blast radius -- every doctype in the system
+	# prints through here -- which is why the override calls frappe's own function unchanged
+	# and only rewrites the filename afterwards, for Purchase Order alone. See
+	# po_pdf_filename.py.
+	"frappe.utils.print_format.download_pdf": "erpnext_enhancements.po_pdf_filename.download_pdf",
 }
 
 override_doctype_dashboards = {

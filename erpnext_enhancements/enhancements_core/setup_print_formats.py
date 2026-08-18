@@ -76,6 +76,26 @@ __CONTACT_BLOCK__
     </div>
     <div style="display:table-cell; vertical-align:bottom; text-align:right; color:#777;">
       <div style="font-size:14px; color:#222;"><b>{{ doc.name }}</b></div>
+      {#- The job, immediately under the order number, which is where ER-2026-256847 asked
+          for it: the person filing these cannot tell one PO from another without it.
+
+          Via the jinja hook rather than worked out inline, because `doc.project` and
+          `Purchase Order Item.project` can disagree and every report here matches on the
+          union of the two. A template deciding for itself would be a third answer to a
+          question this app already answers once. The number leads (it is the identifier
+          the filename carries too); the name follows because nobody files by PRJ-00706. -#}
+      {%- set po_projects = purchase_order_projects(doc) %}
+      {%- if po_projects %}
+      <div style="color:#222;">
+        {%- for project in po_projects %}
+        <div>
+          <b>{{ project | e }}</b>
+          {%- set project_name = frappe.db.get_value("Project", project, "project_name") %}
+          {%- if project_name and project_name != project %} <span style="color:#777;">&middot; {{ project_name | e }}</span>{% endif -%}
+        </div>
+        {%- endfor %}
+      </div>
+      {%- endif %}
       <div>{{ frappe.format(doc.transaction_date, {"fieldtype": "Date"}) }}</div>
     </div>
   </div>

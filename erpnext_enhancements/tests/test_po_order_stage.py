@@ -10,7 +10,8 @@ What is actually worth pinning here, all of it invisible until production:
 * **The backfill rule**, because the patch it drives cannot key on emptiness. The column's
   default is written into every existing row by the ALTER that adds it, so the predicate
   has to be the writer's own rule and a test is the only thing that keeps the two in step.
-* **The Select options come from ``STAGES``**, so the field, the backfill and the hooks
+* **The Select options come from ``STAGES``**, via the one ``field_definition()`` that
+  both patches call,, so the field, the backfill and the hooks
   cannot drift onto different spellings. A stored value that is no longer a valid option
   makes the row refuse to save.
 * **The hooks no-op when the column is missing**, because they fire during erpnext's own
@@ -35,6 +36,7 @@ HOOKS = APP / "hooks.py"
 PATCHES_TXT = APP / "patches.txt"
 FIELD_PATCH = APP / "patches/add_po_order_stage_field.py"
 BACKFILL_PATCH = APP / "patches/backfill_po_order_stage.py"
+OPTIONS_PATCH = APP / "patches/update_po_order_stage_options.py"
 
 # Mutable state the frappe stub reads at call time.
 STATE = {"has_column": True, "orders": {}, "comments": [], "errors": [], "raise_on": None}
@@ -149,10 +151,26 @@ class TestTheBackfillRule(unittest.TestCase):
             self.rule(1, "To Receive and Bill", 0), po_order_stage.AWAITING_CONFIRMATION
         )
 
-    def test_a_partial_receipt_is_still_waiting(self):
+    def test_a_part_received_order_says_so(self):
+        """Before v1.328.0 there was no such option and this fell through to `Awaiting
+        Confirmation`, which is false the moment the first box arrives. Nothing was
+        re-backfilled when the option was added: production had zero part-received orders
+        at the time, so the old rule and the new one disagree on no stored row."""
         self.assertEqual(
-            self.rule(1, "To Receive and Bill", 99.9), po_order_stage.AWAITING_CONFIRMATION
+            self.rule(1, "To Receive and Bill", 99.9), po_order_stage.PARTIALLY_FULFILLED
         )
+        self.assertEqual(
+            self.rule(1, "To Receive and Bill", 0.1), po_order_stage.PARTIALLY_FULFILLED
+        )
+
+    def test_nothing_received_is_still_only_awaiting_confirmation(self):
+        self.assertEqual(
+            self.rule(1, "To Receive and Bill", 0), po_order_stage.AWAITING_CONFIRMATION
+        )
+
+    def test_closed_beats_part_received(self):
+        """Closed means we have stopped waiting, whatever turned up."""
+        self.assertEqual(self.rule(1, "Closed", 40), po_order_stage.RECEIVED)
 
     def test_none_per_received_is_not_a_crash(self):
         self.assertEqual(
@@ -174,13 +192,62 @@ class TestAdvanceOnReceipt(unittest.TestCase):
         po_order_stage.advance_on_receipt(_Receipt("PR-1", ["PO-1"]))
         self.assertEqual(STATE["orders"]["PO-1"][po_order_stage.FIELD], po_order_stage.RECEIVED)
 
-    def test_a_partial_receipt_leaves_the_stage_alone(self):
-        """Still waiting on the rest of the goods; the stage should keep saying so."""
+    def test_a_partial_receipt_marks_the_order_partially_fulfilled(self):
+        """Left alone until v1.328.0, for want of an option that could say "some of it is
+        here". `Partially Fulfilled` says more than the stage it replaces, not less."""
         _reset(orders={"PO-1": _order(po_order_stage.WAITING_FOR_DELIVERY, 40)})
         po_order_stage.advance_on_receipt(_Receipt("PR-1", ["PO-1"]))
         self.assertEqual(
-            STATE["orders"]["PO-1"][po_order_stage.FIELD], po_order_stage.WAITING_FOR_DELIVERY
+            STATE["orders"]["PO-1"][po_order_stage.FIELD], po_order_stage.PARTIALLY_FULFILLED
         )
+
+    def test_a_receipt_covering_nothing_changes_nothing(self):
+        """Zero received is not a fact about this order, and overwriting a hand-set stage
+        with `Partially Fulfilled` on the strength of it would be a lie."""
+        _reset(orders={"PO-1": _order(po_order_stage.WAITING_FOR_PICKUP, 0)})
+        po_order_stage.advance_on_receipt(_Receipt("PR-1", ["PO-1"]))
+        self.assertEqual(
+            STATE["orders"]["PO-1"][po_order_stage.FIELD], po_order_stage.WAITING_FOR_PICKUP
+        )
+        self.assertEqual(STATE["comments"], [])
+
+    def test_a_partial_receipt_names_the_stage_it_replaced(self):
+        """Moving off `Waiting for Pickup` loses the fact that the rest is a trip rather
+        than a truck. The comment turns an unrecoverable overwrite into a one-click
+        restore -- the same bargain the cancel path already makes."""
+        _reset(orders={"PO-1": _order(po_order_stage.WAITING_FOR_PICKUP, 40)})
+        po_order_stage.advance_on_receipt(_Receipt("PR-1", ["PO-1"]))
+        self.assertEqual(len(STATE["comments"]), 1)
+        body = STATE["comments"][0][2]
+        self.assertIn(po_order_stage.WAITING_FOR_PICKUP, body)
+        self.assertIn("PR-1", body)
+
+    def test_no_comment_when_the_replaced_stage_said_less(self):
+        """`Created` and `Awaiting Confirmation` record nothing `Partially Fulfilled` does
+        not. A note on every partial receipt would be noise on the orders needing it
+        least."""
+        for stage in (po_order_stage.CREATED, po_order_stage.AWAITING_CONFIRMATION):
+            with self.subTest(stage):
+                _reset(orders={"PO-1": _order(stage, 40)})
+                po_order_stage.advance_on_receipt(_Receipt("PR-1", ["PO-1"]))
+                self.assertEqual(
+                    STATE["orders"]["PO-1"][po_order_stage.FIELD],
+                    po_order_stage.PARTIALLY_FULFILLED,
+                )
+                self.assertEqual(STATE["comments"], [])
+
+    def test_a_second_partial_receipt_does_not_rewrite_the_same_stage(self):
+        _reset(orders={"PO-1": _order(po_order_stage.PARTIALLY_FULFILLED, 60)})
+        po_order_stage.advance_on_receipt(_Receipt("PR-2", ["PO-1"]))
+        self.assertNotIn("_update_modified", STATE["orders"]["PO-1"])
+        self.assertEqual(STATE["comments"], [])
+
+    def test_a_received_order_is_never_walked_backwards(self):
+        """A smaller receipt against a complete order does not make it less complete, and
+        `per_received` can read under 100 mid-flight on an amended document."""
+        _reset(orders={"PO-1": _order(po_order_stage.RECEIVED, 40)})
+        po_order_stage.advance_on_receipt(_Receipt("PR-2", ["PO-1"]))
+        self.assertEqual(STATE["orders"]["PO-1"][po_order_stage.FIELD], po_order_stage.RECEIVED)
 
     def test_it_advances_from_any_stage_including_created(self):
         _reset(orders={"PO-1": _order(po_order_stage.CREATED, 100)})
@@ -202,7 +269,7 @@ class TestAdvanceOnReceipt(unittest.TestCase):
         po_order_stage.advance_on_receipt(_Receipt("PR-1", ["PO-1", "PO-2", "PO-1"]))
         self.assertEqual(STATE["orders"]["PO-1"][po_order_stage.FIELD], po_order_stage.RECEIVED)
         self.assertEqual(
-            STATE["orders"]["PO-2"][po_order_stage.FIELD], po_order_stage.WAITING_FOR_DELIVERY
+            STATE["orders"]["PO-2"][po_order_stage.FIELD], po_order_stage.PARTIALLY_FULFILLED
         )
 
     def test_a_receipt_with_no_purchase_order_does_nothing(self):
@@ -251,10 +318,49 @@ class TestRevertOnCancel(unittest.TestCase):
         self.assertEqual(STATE["comments"], [])
 
     def test_an_order_still_fully_received_keeps_received(self):
-        """One of several receipts cancelled, and the rest still cover the order."""
+        """One of several receipts canceled, and the rest still cover the order."""
         _reset(orders={"PO-1": _order(po_order_stage.RECEIVED, 100)})
         po_order_stage.revert_on_receipt_cancel(_Receipt("PR-1", ["PO-1"]))
         self.assertEqual(STATE["orders"]["PO-1"][po_order_stage.FIELD], po_order_stage.RECEIVED)
+
+    def test_an_order_left_part_received_lands_on_partially_fulfilled(self):
+        """Where it lands is read back off `per_received`, not remembered: cancelling one
+        of several receipts can leave goods on site, and `Awaiting Confirmation` would
+        then be as false as the `Received` it replaced."""
+        _reset(orders={"PO-1": _order(po_order_stage.RECEIVED, 45)})
+        po_order_stage.revert_on_receipt_cancel(_Receipt("PR-1", ["PO-1"]))
+        self.assertEqual(
+            STATE["orders"]["PO-1"][po_order_stage.FIELD], po_order_stage.PARTIALLY_FULFILLED
+        )
+        self.assertIn("PR-1", STATE["comments"][0][2])
+
+    def test_partially_fulfilled_falls_back_when_nothing_is_left(self):
+        _reset(orders={"PO-1": _order(po_order_stage.PARTIALLY_FULFILLED, 0)})
+        po_order_stage.revert_on_receipt_cancel(_Receipt("PR-1", ["PO-1"]))
+        self.assertEqual(
+            STATE["orders"]["PO-1"][po_order_stage.FIELD], po_order_stage.AWAITING_CONFIRMATION
+        )
+
+    def test_partially_fulfilled_that_is_still_true_is_left_alone(self):
+        _reset(orders={"PO-1": _order(po_order_stage.PARTIALLY_FULFILLED, 45)})
+        po_order_stage.revert_on_receipt_cancel(_Receipt("PR-1", ["PO-1"]))
+        self.assertNotIn("_update_modified", STATE["orders"]["PO-1"])
+        self.assertEqual(STATE["comments"], [])
+
+    def test_only_the_stages_this_module_writes_are_eligible(self):
+        """A hand-set stage is somebody's own account of the order, and a canceled receipt
+        is no reason to overrule it."""
+        for stage in (
+            po_order_stage.CREATED,
+            po_order_stage.AWAITING_CONFIRMATION,
+            po_order_stage.AWAITING_FULFILLMENT,
+            po_order_stage.WAITING_FOR_DELIVERY,
+            po_order_stage.WAITING_FOR_PICKUP,
+        ):
+            with self.subTest(stage):
+                _reset(orders={"PO-1": _order(stage, 0)})
+                po_order_stage.revert_on_receipt_cancel(_Receipt("PR-1", ["PO-1"]))
+                self.assertEqual(STATE["orders"]["PO-1"][po_order_stage.FIELD], stage)
 
 
 class TestTheHooksAreSafeToFire(unittest.TestCase):
@@ -285,17 +391,34 @@ class TestTheHooksAreSafeToFire(unittest.TestCase):
 
 
 class TestTheStagesAreTheOnesAsked(unittest.TestCase):
-    def test_five_stages_in_order(self):
+    def test_seven_stages_in_order(self):
+        """The six ER-2026-256846 asked for, plus `Created` for the draft an order starts
+        as. `Received` is deliberately NOT relabelled "Fully Received" as the request
+        literally worded it: renaming an option makes every row holding the old value
+        refuse to save, where adding one costs nothing. Adding and renaming look equally
+        cheap from outside and are not."""
         self.assertEqual(
             po_order_stage.STAGES,
             (
                 "Created",
                 "Awaiting Confirmation",
+                "Awaiting Fulfillment",
                 "Waiting for Delivery",
                 "Waiting for Pickup",
+                "Partially Fulfilled",
                 "Received",
             ),
         )
+
+    def test_every_informative_stage_is_a_real_stage(self):
+        for stage in po_order_stage.INFORMATIVE_STAGES:
+            self.assertIn(stage, po_order_stage.STAGES)
+
+    def test_the_stages_that_say_nothing_extra_are_not_informative(self):
+        """Getting this set wrong is a comment on every partial receipt, or none."""
+        self.assertNotIn(po_order_stage.CREATED, po_order_stage.INFORMATIVE_STAGES)
+        self.assertNotIn(po_order_stage.AWAITING_CONFIRMATION, po_order_stage.INFORMATIVE_STAGES)
+        self.assertNotIn(po_order_stage.PARTIALLY_FULFILLED, po_order_stage.INFORMATIVE_STAGES)
 
     def test_the_default_is_the_first_stage(self):
         self.assertEqual(po_order_stage.DEFAULT_STAGE, po_order_stage.STAGES[0])
@@ -328,16 +451,49 @@ class TestItIsWiredUp(unittest.TestCase):
         end = hooks.index("\n\t},", start)
         self.assertNotIn("po_order_stage", hooks[start:end])
 
-    def test_the_field_patch_builds_its_options_from_stages(self):
-        """Hard-coded options in the patch would drift from the module the hooks use,
-        and a stored value outside the Select makes the row refuse to save."""
-        source = FIELD_PATCH.read_text(encoding="utf-8")
-        self.assertIn('"\\n".join(STAGES)', source)
-        self.assertIn("from erpnext_enhancements.po_order_stage import", source)
+    def test_the_field_options_are_the_stages(self):
+        """Hard-coded options anywhere would drift from the module the hooks use, and a
+        stored value outside the Select makes the row refuse to save."""
+        self.assertEqual(
+            po_order_stage.field_definition()["options"],
+            "\n".join(po_order_stage.STAGES),
+        )
+
+    def test_both_patches_build_the_field_from_the_one_spec(self):
+        """Two patches touch this field -- one creates it, one widens it. A spec written
+        out twice is two option lists waiting to disagree."""
+        for patch in (FIELD_PATCH, OPTIONS_PATCH):
+            with self.subTest(patch.name):
+                source = patch.read_text(encoding="utf-8")
+                self.assertIn(
+                    "from erpnext_enhancements.po_order_stage import field_definition", source
+                )
+                self.assertIn("field_definition()", source)
 
     def test_the_field_allows_editing_after_submit(self):
         """Every transition the buyer cares about happens after submission."""
-        self.assertIn('"allow_on_submit": 1', FIELD_PATCH.read_text(encoding="utf-8"))
+        self.assertEqual(po_order_stage.field_definition()["allow_on_submit"], 1)
+
+    def test_the_field_is_visible_and_filterable_in_the_list(self):
+        """The actual feature for a list of a hundred-odd orders: "what am I waiting on"
+        is a filter, not a scroll."""
+        spec = po_order_stage.field_definition()
+        self.assertEqual(spec["in_list_view"], 1)
+        self.assertEqual(spec["in_standard_filter"], 1)
+
+    def test_the_options_patch_runs_after_the_field_exists(self):
+        text = PATCHES_TXT.read_text(encoding="utf-8")
+        create = text.index("erpnext_enhancements.patches.add_po_order_stage_field")
+        widen = text.index("erpnext_enhancements.patches.update_po_order_stage_options")
+        self.assertLess(create, widen, "the field must exist before its options are widened")
+
+    def test_the_options_patch_carries_no_data_migration(self):
+        """Purely additive: every stored value is still a valid option. A backfill here
+        would be a predicate matching nothing, committing, and logging itself a success --
+        the v1.280.3 shape of failure."""
+        source = OPTIONS_PATCH.read_text(encoding="utf-8")
+        self.assertNotIn("set_value", source)
+        self.assertNotIn("frappe.db.sql", source)
 
     def test_the_backfill_never_keys_on_emptiness(self):
         """Purchase Order is a normal doctype: the ALTER that adds the column writes the

@@ -726,3 +726,11 @@ erpnext_enhancements.patches.backfill_website_scheme
 # mislead the next person to read tabDesktop Icon, not a working tile. Guarded on the workspace
 # still being absent, so a real Learning workspace later makes this a no-op. Safe twice.
 erpnext_enhancements.patches.drop_stale_learning_tile
+
+# Widens Order Stage from five options to seven: `Awaiting Fulfillment` and `Partially
+# Fulfilled`, the two states ER-2026-256846 asked for that the field shipped without.
+# Purely ADDITIVE, which is why it carries no data migration -- every stored value is still
+# a valid option. A rename would have been the opposite (rows holding a dropped value refuse
+# to save) and is exactly why `Received` was not relabelled "Fully Received". Safe twice
+# (create_custom_fields with update=True, from the same spec the create patch uses).
+erpnext_enhancements.patches.update_po_order_stage_options
