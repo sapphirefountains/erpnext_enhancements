@@ -39,6 +39,16 @@ gated by a role.
 The three terminal states are terminal. `Tasks Created` cannot be walked back, which is what
 stops one proposal being written to a board twice.
 
+**Which is also why the board shows a "Tasks Completed" pill that is not a status.** A request
+whose tasks are all finished stays on `Tasks Created` forever — correctly; nothing may move it
+— so it read that way while the Work column beside it said `2/2`. The finished state is a
+*display* rule over the task counts the API already returns
+([`public/js/feedback/status.js`](../public/js/feedback/status.js)), not an eighth option in
+the Select. It costs no column, no patch and no hook on Task, and it goes back off by itself
+when a task is reopened, because the label **is** the tasks. `tests/test_feedback_states.py`
+asserts the derived label never becomes a real `RequestState` — if it ever does, two different
+things are spelled the same and they disagree the first time somebody reopens a task.
+
 ## File map
 
 | File | What it does |

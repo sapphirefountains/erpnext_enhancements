@@ -1300,6 +1300,15 @@ jobs:
       # "override the view somebody just clicked" is not expressible.
       - name: Feedback routing composition (bench-free, node)
         run: node scripts/test_feedback_routes.js
+      # The one label on the feedback board that is not a status. `Tasks Created` is a
+      # TERMINAL state, so a request whose tasks were all finished read "Tasks Created"
+      # forever while the Work column beside it said 2/2 — nothing was broken, there was
+      # simply nothing that could ever move it. The fix is a display rule over the task
+      # counts the page already holds. The edge worth a CI step is 0/0: `done >= created`
+      # on its own calls a request with no work at all "finished", which is the entire
+      # plausible bug in a four-line function.
+      - name: Feedback derived status label (bench-free, node)
+        run: node scripts/test_feedback_status.js
       # Google address components -> Frappe Address fields. Every rule in that
       # mapping is a judgement call that looks arbitrary until it is wrong, and
       # the branches for UK/Nordic mailing towns and for states with no

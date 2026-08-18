@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.329.0] - 2026-08-18
+
+### Added
+
+- **The feedback board now says when a request is actually finished.** A request whose
+  tasks were all completed still read **Tasks Created** on `/feedback` — forever — while
+  the Work column beside it said `2/2`. Nothing was broken. `Tasks Created` is a *terminal*
+  state in `product_feedback/states.py`: its transition set is empty, deliberately, so the
+  same proposal can never be written to a Project twice. There was simply nothing that
+  could ever move it, and no status to move it to.
+
+  It now shows a filled **Tasks Completed** pill once every task the request produced is
+  `Completed` or `Canceled`.
+
+  **That pill is a display rule, not an eighth status**, and the distinction is the whole
+  design. The counts it reads (`tasks: {created, done}`) were already coming back from
+  `_task_progress` on the same two queries the page was making anyway, so the rule
+  (`public/js/feedback/status.js`) costs no column, no patch, no transition out of a state
+  that must stay terminal, and no `doc_event` on Task — which would have fired on every
+  Task save site-wide to keep a denormalised column in step. It also goes back off by
+  itself when somebody reopens a task, because the label **is** the tasks; a stored status
+  would have needed that hook to notice.
+
+  `tests/test_feedback_states.py` asserts the derived label never becomes a real
+  `RequestState` value. If somebody later adds a stored status of the same name, two
+  different things are spelled identically — one meaning "the column says so", one meaning
+  "the tasks say so" — and they disagree the first time a task is reopened. That test
+  failing is the point: it makes the collision a decision.
+
+  Three details worth their lines:
+
+  - **`0/0` is "nothing has been created", not "everything is finished".** `done >= created`
+    on its own paints a request with no work at all green, and that is the entire plausible
+    bug in a four-line function. It is the case `scripts/test_feedback_status.js` leads with.
+  - **The whole-table tally keeps counting stored statuses.** Those counts come from a
+    group-by and they sit beside the status filter, which also filters on the column. A
+    chip reading "Tasks Completed" that the dropdown could not then select would be worse
+    than one that agrees with it.
+  - **The detail header reads the same `_task_progress` the list rows do**, rather than
+    deriving from the `created_tasks` panel below it. Those rows include synthesized group
+    parents, which are not `proposed_tasks` entries and would inflate the denominator — two
+    views disagreeing about whether one request is finished is worse than one extra pair of
+    small queries.
+
+  `_my_requests` gained the same counts. The requester is the person who most wants to know
+  their request is done and the least likely to open the reviewer's table.
+
+  The pill is filled rather than outlined, which is what makes "work exists" and "work is
+  done" separable at a glance down a column. It carries white text, so it uses a new
+  `--ee-ok-surface` token rather than `--ee-ok` — for the reason already documented at the
+  top of `feedback.bundle.css`: `--ee-ok` is an ink that lightens at night (`#56d364`) and
+  white does not get lighter to match. The glyph differs too (double tick); colour is never
+  the only cue on that page.
+
 ## [1.328.0] - 2026-08-18
 
 ### Added

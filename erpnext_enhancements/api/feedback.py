@@ -815,13 +815,22 @@ def _link_attachments(request_name, attachments):
 
 
 def _my_requests():
-    return frappe.get_all(
+    rows = frappe.get_all(
         DOCTYPE,
         filters={"requested_by": frappe.session.user},
         fields=["name", "title", "status", "request_type", "impact", "creation", "modified"],
         order_by="creation desc",
         limit=100,
     )
+    # `tasks` is what turns a finished request's pill from "Tasks Created" into
+    # "Tasks Completed" (see public/js/feedback/status.js). The requester is the person who
+    # most wants to know their request is done and the one least likely to open the admin
+    # table, so this list needs it even though only the reviewer's table needed it first.
+    # Two queries for the whole page whatever its size, and this list is capped at 100.
+    progress = _task_progress([row["name"] for row in rows])
+    for row in rows:
+        row["tasks"] = progress.get(row["name"], {"created": 0, "done": 0})
+    return rows
 
 
 def _review_queue():
@@ -1031,6 +1040,13 @@ def _serialise(doc, full=False):
             # Live, and therefore the only part of this payload that changes after the tasks
             # are written. See `_created_task_rows`.
             "created_tasks": _created_task_rows(doc),
+            # The same counts the list rows carry, from the same function on purpose. The
+            # detail header could have derived them from `created_tasks` above, and it would
+            # have been wrong in a way nobody would notice for months: those rows include the
+            # synthesized group parents, which are not `proposed_tasks` entries and would
+            # inflate the denominator. Two views disagreeing about whether one request is
+            # finished is worse than one extra pair of small queries.
+            "tasks": _task_progress([doc.name]).get(doc.name, {"created": 0, "done": 0}),
             "duplicate_candidates": [
                 {
                     "task": row.task,

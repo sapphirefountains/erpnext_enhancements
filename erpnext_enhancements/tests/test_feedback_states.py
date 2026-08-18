@@ -20,6 +20,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_feedback_states
 """
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from erpnext_enhancements.product_feedback.states import (
 )
 
 APP = Path(__file__).resolve().parents[1]
+SPA_STATUS_JS = APP / "public" / "js" / "feedback" / "status.js"
 DOCTYPE_JSON = (
 	APP / "product_feedback" / "doctype" / "enhancement_request" / "enhancement_request.json"
 )
@@ -136,6 +138,35 @@ class TestTransitions(unittest.TestCase):
 		"""A row loaded before the default applied must not raise on save."""
 		self.assertTrue(is_legal("", RequestState.APPROVED.value))
 		self.assertTrue(is_open(""))
+class TestTheDerivedLabelIsNotAStatus(unittest.TestCase):
+	"""The SPA shows a label this machine deliberately cannot produce.
+
+	`Tasks Created` is terminal, so a request whose work is all finished can never be moved
+	anywhere — and it read "Tasks Created" on the board forever while the column beside it
+	said 2/2. The fix is a display rule in `public/js/feedback/status.js` over the task
+	counts the page already holds, not an eighth status.
+
+	**The hazard is that somebody later adds a stored status of the same name.** Then two
+	different things are spelled identically — one meaning "the column says so", one meaning
+	"the tasks say so" — and they disagree the first time a task is reopened. This test
+	failing is the point: it makes that a decision instead of a collision.
+	"""
+
+	def _derived_label(self):
+		source = SPA_STATUS_JS.read_text(encoding="utf-8")
+		match = re.search(r'export const TASKS_COMPLETED = "([^"]+)"', source)
+		self.assertIsNotNone(match, "status.js no longer exports TASKS_COMPLETED")
+		return match.group(1)
+
+	def test_the_derived_label_is_not_a_request_state(self):
+		self.assertNotIn(self._derived_label(), {s.value for s in RequestState})
+
+	def test_it_derives_from_the_terminal_state_that_cannot_move(self):
+		"""If `Tasks Created` ever stops being terminal, the display rule stops being the
+		right shape and this whole approach wants revisiting."""
+		source = SPA_STATUS_JS.read_text(encoding="utf-8")
+		self.assertIn(f'"{RequestState.TASKS_CREATED.value}"', source)
+		self.assertEqual(LEGAL_TRANSITIONS[RequestState.TASKS_CREATED], frozenset())
 
 
 if __name__ == "__main__":
