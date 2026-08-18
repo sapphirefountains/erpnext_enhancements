@@ -89,6 +89,13 @@ module [`process_steps.py`](../process_steps.py):
   that step's box in the bar** (v1.286.3), under its due date, rather than in a shared row
   beneath it — several steps can be actionable at once (5 and 6, then 7), and the shared
   row had to reprint each step's title on its buttons to say which box they belonged to.
+  Step 4's email is prefilled by `crm_enhancements.handoff.billing_notice_context`
+  (v1.327.0): it goes to the **Billing Email** on the Project, else the one on its
+  Opportunity, else the configured Billing route (`billing@sapphirefountains.com`), and it
+  names the **First Invoice Percentage** and the money that works out to against the
+  project amount. Both fields are Custom Fields on Opportunity *and* Project — Sales
+  agrees them on the deal, the PM can revise them on the project. Blank percentage prints
+  "confirm the amount with Sales" rather than a figure nobody set.
 - **Notifications** — completing a step notifies the *new* current step's responsible
   person (SMS + Notification Log via `status_alerts._deliver`); the last completion
   posts a "process complete" comment instead. Roles resolve per project at send time:

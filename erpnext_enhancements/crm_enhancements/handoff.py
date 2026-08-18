@@ -41,13 +41,29 @@ better thing to gate on.
 Attendees are configured, never hard-coded: **ERPNext Enhancements Settings →
 Hand-Off Attendee Roles** maps each function (Sales / Production / Billing) to an
 explicit address or a Role whose holders are invited.
+
+**Step 4's note to Billing (v1.327.0).** The other communication this module
+routes is the "Create Accounting Project & Send Invoice" note, composed from the
+Project's step-4 button. It used to take the configured Billing list and say
+nothing about money, which left Billing to go and find out how much of the deal
+to invoice — so the deal now carries the answer. **First Invoice Percentage** and
+**Billing Email** are Custom Fields on *both* Opportunity and Project;
+:func:`billing_terms` resolves them field by field, Project over Opportunity, and
+:func:`billing_notice_context` hands the composer the recipients, the percentage
+and the money it works out to. A blank Billing Email means the configured Billing
+route, which is still ``billing@sapphirefountains.com`` — the field is an
+override, not a redirect that had to be filled in for the old behaviour to keep
+working.
 """
+
+import re
 
 import frappe
 from frappe import _
 from frappe.utils import (
 	add_to_date,
 	cint,
+	flt,
 	get_datetime,
 	get_url_to_form,
 	getdate,
@@ -432,6 +448,173 @@ def resolve_project_attendees(project):
 	resolved = resolve_attendees(doc.custom_opportunity if doc.custom_opportunity else None)
 	resolved["Sales"] = _dedupe(team + resolved.get("Sales", []))
 	return resolved
+
+
+# ---------------------------------------------------------------------------
+# Billing routing and invoice terms (step 4)
+# ---------------------------------------------------------------------------
+
+#: The invoice terms, carried on **both** Opportunity and Project under the same
+#: fieldnames. The Opportunity is where Sales agrees them; the Project's copy is
+#: seeded from it at creation and, once edited, wins — the PM is the one holding
+#: the deal by the time step 4 comes round.
+BILLING_EMAIL_FIELD = "custom_billing_email"
+FIRST_INVOICE_PERCENTAGE_FIELD = "custom_first_invoice_percentage"
+
+#: The Currency field the first-invoice percentage is a percentage *of*, per
+#: doctype. Both are the sell price, not the cost.
+AMOUNT_FIELD = {"Project": "custom_project_dollar_amount", "Opportunity": "opportunity_amount"}
+
+
+def _billing_terms_row(doctype, name):
+	"""``(billing_email, first_invoice_percentage, amount)`` off one record.
+
+	All three blank when the record or the columns are missing. Guarded on the
+	columns rather than on the values because ``doc_events`` and the desk mapper
+	both run during ERPNext's own test bootstrap, before this app's Custom Fields
+	exist — a missing column has to read as "not configured", not raise.
+	"""
+	if not name:
+		return None, None, None
+	fields = [BILLING_EMAIL_FIELD, FIRST_INVOICE_PERCENTAGE_FIELD]
+	try:
+		if not all(frappe.db.has_column(doctype, field) for field in fields):
+			return None, None, None
+		amount_field = AMOUNT_FIELD.get(doctype)
+		if amount_field and frappe.db.has_column(doctype, amount_field):
+			fields = [*fields, amount_field]
+		else:
+			amount_field = None
+		row = frappe.db.get_value(doctype, name, fields, as_dict=True)
+	except Exception:
+		return None, None, None
+	if not row:
+		return None, None, None
+	return (
+		row.get(BILLING_EMAIL_FIELD),
+		row.get(FIRST_INVOICE_PERCENTAGE_FIELD),
+		row.get(amount_field) if amount_field else None,
+	)
+
+
+def billing_terms(project=None, opportunity=None):
+	"""The step-4 invoice terms for a project: address, percentage, and base.
+
+	Resolved field by field, Project first and Opportunity as the fallback —
+	*not* whole-record, because a Project created through the desk mapper carries
+	neither field (ERPNext's own mapping table does not know about them) while its
+	Opportunity carries both, and a Project whose PM has set only the percentage
+	must still inherit the address.
+
+	``opportunity`` is looked up from ``Project.custom_opportunity`` when not
+	given; pass it to save the read, or on its own to resolve terms for a deal
+	that has no project yet.
+	"""
+	email = percentage = amount = None
+	if project:
+		email, percentage, amount = _billing_terms_row("Project", project)
+		if opportunity is None:
+			try:
+				opportunity = frappe.db.get_value("Project", project, "custom_opportunity")
+			except Exception:
+				opportunity = None
+	# Falsy, not ``is None``: frappe declares Percent and Currency columns NOT NULL
+	# DEFAULT 0, so an unfilled percentage reads 0.0 off a real site and None only
+	# off a dict. Keying the fallback on None would make it fire in tests and
+	# never in production — the Opportunity's terms would be silently unreachable
+	# on every project that has an amount and an address.
+	if opportunity and not (email and percentage and amount):
+		opp_email, opp_percentage, opp_amount = _billing_terms_row("Opportunity", opportunity)
+		email = email or opp_email
+		percentage = percentage or opp_percentage
+		amount = amount or opp_amount
+	return {
+		"billing_email": (email or "").strip() or None,
+		"first_invoice_percentage": flt(percentage) or None,
+		"amount": flt(amount) or None,
+	}
+
+
+def billing_recipients(project=None, opportunity=None, billing_email=None):
+	"""Where the step-4 "create the accounting project & invoice" note is sent.
+
+	An explicit **Billing Email** on the Project (or, failing that, the
+	Opportunity) is an override and replaces the list — that is the whole point
+	of the field, and the composer shows the addresses for editing before
+	anything is sent. With the field blank it falls through to the configured
+	**Billing** attendee rows, and then to ``billing@sapphirefountains.com``, so
+	the default route is unchanged from before the field existed.
+
+	Accepts several addresses in the one field, comma- or semicolon-separated.
+
+	The fallback deliberately reads the settings directly rather than going
+	through :func:`resolve_attendees`, which permission-checks the Opportunity:
+	the PM clicking this button on a Project need not be able to read the deal,
+	and the Billing list does not depend on it anyway.
+	"""
+	if billing_email is None:
+		billing_email = billing_terms(project=project, opportunity=opportunity)["billing_email"]
+	if billing_email:
+		explicit = _dedupe(_split_addresses(billing_email))
+		if explicit:
+			return explicit
+		# A typo'd address is worse than no override: it would silently send the
+		# hand-off note nowhere. Fall through to the configured route instead.
+	return _configured_billing()
+
+
+def _split_addresses(value):
+	"""One free-text address field -> a list. Commas, semicolons, newlines."""
+	return [part for part in re.split(r"[,;\n]", str(value or "")) if part.strip()]
+
+
+def _configured_billing():
+	"""The Billing attendee rows, or the fallback address when none are set."""
+	rows = _configured_rows()["Billing"]
+	addresses = []
+	for row in rows:
+		if row.get("email"):
+			addresses.append(row.get("email"))
+		else:
+			addresses.extend(_role_holder_emails(row.get("role")))
+	if not rows:
+		addresses.append(FALLBACK_ATTENDEES["Billing"])
+	return _dedupe(addresses)
+
+
+@frappe.whitelist()
+def billing_notice_context(project):
+	"""Everything the step-4 composer prefills itself with, in one call.
+
+	The button opens a dialog on a click, so the round trips are visible: this
+	returns the recipients *and* the invoice terms rather than making the client
+	resolve attendees and then read two fields off two doctypes.
+
+	``first_invoice_amount`` is the money the percentage works out to, computed
+	here so the note carries a figure Billing can invoice against rather than a
+	percentage they have to apply themselves. It is ``None`` when either half is
+	missing — a percentage of an unknown amount is worse than silence.
+	"""
+	if not frappe.has_permission("Project", "read", doc=project):
+		frappe.throw(_("Not permitted to read this Project."), frappe.PermissionError)
+
+	terms = billing_terms(project=project)
+	opportunity = None
+	try:
+		opportunity = frappe.db.get_value("Project", project, "custom_opportunity")
+	except Exception:
+		opportunity = None
+
+	percentage = terms["first_invoice_percentage"]
+	amount = terms["amount"]
+	return {
+		"recipients": billing_recipients(opportunity=opportunity, billing_email=terms["billing_email"]),
+		"first_invoice_percentage": percentage,
+		"project_amount": amount,
+		"first_invoice_amount": (
+			flt(flt(amount) * flt(percentage) / 100.0, 2) if percentage and amount else None
+		),
+	}
 
 
 # ---------------------------------------------------------------------------

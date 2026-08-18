@@ -25,7 +25,12 @@ hand-off process engine (``process_steps.seed_process_steps``).
 import frappe
 from erpnext.crm.doctype.opportunity.opportunity import make_project as original_make_project
 
-from erpnext_enhancements.crm_enhancements.handoff import throw_if_handoff_missing
+from erpnext_enhancements.crm_enhancements.handoff import (
+	BILLING_EMAIL_FIELD,
+	FIRST_INVOICE_PERCENTAGE_FIELD,
+	billing_terms,
+	throw_if_handoff_missing,
+)
 
 
 @frappe.whitelist()
@@ -34,7 +39,10 @@ def make_project(source_name, target_doc=None):
 
 	Overrides ``erpnext...opportunity.make_project`` (see module docstring). Delegates
 	to the original mapper, then sets ``custom_opportunity`` on the resulting
-	(unsaved) Project document so the origin Opportunity is recorded.
+	(unsaved) Project document so the origin Opportunity is recorded, and copies
+	across the step-4 invoice terms (``custom_first_invoice_percentage`` /
+	``custom_billing_email``) that ERPNext's own mapping table has no way to know
+	about.
 
 	Args:
 	    source_name (str): Name (ID) of the source Opportunity.
@@ -43,7 +51,7 @@ def make_project(source_name, target_doc=None):
 
 	Returns:
 	    Document: The mapped Project document (not yet saved) with
-	    ``custom_opportunity`` populated.
+	    ``custom_opportunity`` and the invoice terms populated.
 
 	Raises:
 	    frappe.ValidationError: When the source Opportunity is Closed Won and its
@@ -59,5 +67,16 @@ def make_project(source_name, target_doc=None):
 	target = original_make_project(source_name, target_doc)
 
 	target.custom_opportunity = source_name
+
+	# The step-4 invoice terms. ERPNext's own mapping table cannot know about
+	# them, so without this the desk route produces a Project that is blank where
+	# the background creator's is filled in. `billing_terms` would fall back to
+	# the Opportunity at send time either way; the point of copying is that the
+	# PM can *see* and revise the terms on the project.
+	terms = billing_terms(opportunity=source_name)
+	if terms["first_invoice_percentage"] is not None:
+		target.set(FIRST_INVOICE_PERCENTAGE_FIELD, terms["first_invoice_percentage"])
+	if terms["billing_email"]:
+		target.set(BILLING_EMAIL_FIELD, terms["billing_email"])
 
 	return target

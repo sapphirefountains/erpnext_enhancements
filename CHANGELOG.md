@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.327.0] - 2026-08-17
+
+### Added
+
+- **The hand-off note to Billing now says who and how much.** PRO-0204 step 4 is "Create
+  Accounting Project & Send Invoice", and its button on the Project composes a note to
+  Billing. That note named neither the address it should go to on this particular deal nor
+  the amount to invoice — it addressed the configured Billing list and said "please set up
+  the accounting project and send the invoice for <project>", leaving Billing to go back to
+  Sales and ask how much of it. Two Custom Fields close that loop, on **Opportunity and
+  Project both**:
+
+  - **First Invoice Percentage** (`custom_first_invoice_percentage`, Percent) — how much of
+    the project amount goes on the first invoice.
+  - **Billing Email** (`custom_billing_email`, Data/Email) — where the note is addressed.
+
+  Sales agrees them on the deal; both are copied onto the Project at creation so the PM can
+  revise them without editing a closed Opportunity. They land in a new **Initial Invoice**
+  section on the Budget tab of each form.
+
+  `crm_enhancements.handoff` gained `billing_terms` / `billing_recipients` /
+  `billing_notice_context` (whitelisted), and `process_steps.js` calls the last of these
+  instead of `resolve_attendees`: one round trip, and the composer opens with the recipients,
+  the percentage, and the money it works out to against the project amount.
+
+  **The Billing Email is an override, and blank still means `billing@sapphirefountains.com`.**
+  Resolution runs Project field → Opportunity field → the configured **Billing** attendee
+  rows → the `billing@` fallback, so a site that fills nothing in behaves exactly as it did
+  before the fields existed. Several addresses can go in the one field (comma- or
+  semicolon-separated). An address that fails validation falls through to the configured
+  route rather than being used: a typo that sends the note nowhere is worse than no override
+  at all, and there is no bounce to notice.
+
+  **Neither field ships a `default`, deliberately.** These are normal doctypes, where a new
+  column's default is written into every existing row by the `ALTER` itself (v1.280.3) — a
+  default of "50%" would have been a term nobody agreed, asserted retroactively across 227
+  historical opportunities. Blank percentage prints "confirm the amount with Sales" in the
+  note instead of a figure, and a percentage of an unknown project amount prints no derived
+  money at all.
+
+  Terms resolve **field by field**, not whole-record. A Project created through the desk
+  "Create > Project" button carries neither field — ERPNext's own mapping table cannot know
+  about them — while its Opportunity carries both; a Project whose PM set only the percentage
+  must still inherit the address. `opportunity_enhancements.make_project` now copies both
+  across as well, so the desk route produces the same document the background creator does;
+  the fallback is what makes it correct either way, the copy is what makes it *visible*.
+
+  The **Hand-Off Process** tab break on Opportunity was repointed from
+  `custom_notes_relating_to_budget` to `custom_billing_email` — the new section anchors where
+  the tab used to, and two custom fields sharing one `insert_after` land in whichever order
+  frappe's meta happens to walk them. One of those orders drops the Initial Invoice section
+  inside the Hand-Off Process tab.
+
+### Changed
+
+- `fixtures/README.md` and `CLAUDE.md` quoted 425 Custom Fields / 349 Property Setters; the
+  files have held 513 / 409 for some time. Corrected to the real counts (521 / 409 after this
+  change).
+
 ## [1.326.0] - 2026-08-17
 
 ### Added
@@ -77,6 +136,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the first deploy is clean; a later revision must ship under a **new filename** with
   `setup/desktop_icon_map.py` updated to match, or the change will appear to work on a fresh
   browser and nowhere else.
+
 ## [1.325.1] - 2026-08-17
 
 ### Fixed
