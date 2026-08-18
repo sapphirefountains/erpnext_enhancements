@@ -21,6 +21,7 @@ and got a confirmation; our plumbing is not their problem.
 import frappe
 from frappe.utils import add_to_date, cint, get_url_to_form
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements.crm_enhancements.fountain_move import (
 	MAX_CONVERSION_ATTEMPTS,
 	preferred_slots_text,
@@ -141,7 +142,9 @@ def _send(recipients, subject, template, context, req):
 	if not recipients:
 		return False
 	try:
-		message = frappe.render_template(f"{TEMPLATE_DIR}/{template}", context)
+		message = email_style.render(
+			f"{TEMPLATE_DIR}/{template}", context, title=subject, eyebrow="Fountain Move"
+		)
 		frappe.sendmail(
 			recipients=recipients,
 			subject=subject,

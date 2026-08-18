@@ -33,6 +33,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_to_date, cint, get_url, get_url_to_form, getdate, now_datetime, today
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements.feature_flags import process_automation_enabled
 
 
@@ -86,7 +87,9 @@ def _deliver(recipients, message, subject, reference_doctype, reference_docname,
 					frappe.sendmail(
 						recipients=[address],
 						subject=subject,
-						message=f"<pre style='font-family:inherit;white-space:pre-wrap'>{frappe.utils.escape_html(message)}</pre>",
+						message=email_style.wrap(
+							email_style.prose(message), title=subject, eyebrow="Hand-off"
+						),
 						reference_doctype=reference_doctype,
 						reference_name=reference_docname,
 					)

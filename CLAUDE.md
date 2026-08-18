@@ -103,6 +103,25 @@ Verified, and all of them expensive to rediscover:
   `git show origin/version-16:<path>` instead. Two design documents in one day cited v17
   line numbers as v16 fact before this was noticed; a claim about the framework is only
   worth as much as the tree it was read from.
+- **Frappe's email wrapper is already full-width, and a narrow email is always your own
+  doing.** `frappe/templates/emails/standard.html` sets its container to
+  `width="{% if header or with_container %} 600 {% else %} 100% {% endif %}"`, and nothing in
+  this app passes either argument — so the framework gives us 100% width, no card, no
+  padding. Every centred box this app ever sent came from a `max-width` div written into the
+  message body. All email chrome now lives in `templates/emails/_shell.html`; add a container
+  anywhere else and `tests/test_email_design.py` fails the build. Related, and both verified
+  on prod rather than assumed: Premailer keeps `@media` blocks *and* inlines descendant rules
+  onto the attribute-less tags `md_to_html()` emits (the only way to style the morning
+  briefing), and MSO conditional comments survive its lxml round-trip. See
+  [`docs/email-design-system.md`](docs/email-design-system.md).
+- **A `Notification` body *can* `{% extends %}` a file template — don't.** frappe's jenv keeps
+  its loader through `overlay()`, so inheritance resolves from a DB-stored string. But in a
+  child template anything outside a `{% block %}` is **silently discarded**, and a mistyped
+  extends path raises inside `Notification.send()`'s own `except`, which logs an Error Log and
+  drops the email. Both failures are invisible in a field people edit through the Desk, so
+  Notification bodies call the `ee_*` Jinja globals instead. For the same reason they use
+  `doc.get("field")`, never `doc.field`: a Document raises `AttributeError` on a missing
+  field, and that is another silently dropped email.
 - **Merging to `main` does more than deploy this app's code.** The prod deploy `FLUSHDB`s
   **both** redis instances — `:13000` and `:11000` — and restarts the bench. The `:11000`
   flush destroys every queued background job, silently, whether or not it had anything to

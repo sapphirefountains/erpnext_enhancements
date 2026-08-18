@@ -27,6 +27,8 @@ import frappe
 from frappe import _
 from frappe.utils import flt, get_datetime, nowdate
 
+from erpnext_enhancements import email_style
+
 
 def process_maintenance_submission(record_name):
     """
@@ -497,10 +499,18 @@ def email_customer_service_report(doc):
     frappe.sendmail(
         recipients=[email],
         subject=_("Your Sapphire Fountains service report — {0}").format(doc.name),
-        message=_(
-            "Hello,<br><br>Attached is the service report for your recent water-feature "
-            "maintenance visit. Please keep it for your records.<br><br>"
-            "Thank you for choosing Sapphire Fountains."
+        message=email_style.wrap(
+            email_style.p(_("Hello,"))
+            + email_style.p(
+                _(
+                    "Attached is the service report for your recent water-feature "
+                    "maintenance visit. Please keep it for your records."
+                )
+            )
+            + email_style.p(_("Thank you for choosing Sapphire Fountains.")),
+            title=_("Your service report"),
+            eyebrow=_("Maintenance"),
+            tagline=True,
         ),
         attachments=[
             frappe.attach_print(

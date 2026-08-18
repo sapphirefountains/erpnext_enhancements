@@ -61,6 +61,7 @@ from typing import Any
 
 import frappe
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements.product_feedback.doctype.product_feedback_settings.product_feedback_settings import (
 	reviewer_users,
 )
@@ -253,7 +254,12 @@ def _send(recipients: list[str], *, subject: str, body: str, request_name: str) 
 			frappe.sendmail(
 				recipients=[address],
 				subject=subject[:140],
-				message=f"{body}<p><a href='{frappe.utils.get_url(link)}'>Open the request</a></p>",
+				message=email_style.wrap(
+					email_style.raw(body)
+					+ email_style.button(frappe.utils.get_url(link), "Open the request"),
+					title=subject[:140],
+					eyebrow="Feedback",
+				),
 				reference_doctype=DOCTYPE,
 				reference_name=request_name,
 				# Queued, not sent inline: this runs inside the transaction that made the

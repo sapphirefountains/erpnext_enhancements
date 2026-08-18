@@ -1,0 +1,201 @@
+{# The email component macros. Every piece of styled markup this app emails lives
+   here, exactly once. Nothing else in the app may contain an email hex colour or
+   an email <td>; docs/email-design-system.md is the guide.
+
+   TWO RULES, both load-bearing:
+
+   1. **This file may not reference `frappe`.** No get_url, no _(), no
+      escape_html. Translated strings and absolute URLs arrive as arguments.
+      That buys three things: `{% import %}` works without `with context`; the
+      bench-free test renders this file under a vanilla jinja2 Environment with
+      no frappe stub at all; and a macro has no route to site state.
+
+   2. **frappe's Jinja env has NO autoescape.** Every macro therefore `|e`s its
+      own text arguments, so a caller may hand it raw user input. URLs are
+      emitted UNESCAPED on purpose — entity-escaping a get_url() breaks the
+      link — so callers must pass a URL they trust; email_style.button() runs
+      them through utils.url_safety first.
+
+   Styling is inline and already correct at 320px. The @media block in
+   _shell.html only improves it; nothing here may depend on that block. #}
+
+{%- set TONES = {
+	"primary": {"fg": "#0077a8", "bg": "#eef7fb", "br": "#b8dced"},
+	"success": {"fg": "#17753f", "bg": "#edf7f1", "br": "#b6ddc6"},
+	"warning": {"fg": "#8a5a00", "bg": "#fdf6e8", "br": "#e8d5a8"},
+	"danger":  {"fg": "#a02a2a", "bg": "#fcefef", "br": "#e8bcbc"},
+	"info":    {"fg": "#0077a8", "bg": "#f2f9fd", "br": "#b8dced"}
+} -%}
+{%- set INK = "#00263E" -%}
+{%- set BODY_INK = "#1f2d38" -%}
+{%- set MUTED = "#5b6b78" -%}
+{%- set RULE = "#dbe4ea" -%}
+{%- set SURFACE = "#f2f9fd" -%}
+{%- set SANS = "Helvetica,Arial,sans-serif" -%}
+{%- set MONO = "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" -%}
+{%- set WRAP = "word-break:break-word;overflow-wrap:anywhere" -%}
+
+
+{# A sub-heading inside the body. #}
+{% macro h(text) -%}
+<h2 style="margin:24px 0 8px;font-family:{{ SANS }};font-size:17px;line-height:1.3;font-weight:700;color:{{ INK }}">{{ text|e }}</h2>
+{%- endmacro %}
+
+
+{# A paragraph of plain text. #}
+{% macro p(text) -%}
+<p style="margin:0 0 12px;font-family:{{ SANS }};font-size:15px;line-height:1.55;color:{{ BODY_INK }};{{ WRAP }}">{{ text|e }}</p>
+{%- endmacro %}
+
+
+{# A paragraph of TEMPLATE-AUTHORED markup — prose carrying inline <b>, <i> or a
+   link. Its argument is NOT escaped, so the template must `|e` every value it
+   interpolates. That is the same contract every template in this directory has
+   always had; this macro only supplies the styling.
+
+   Prefer p(): use rich() when, and only when, the sentence needs inline markup. #}
+{% macro rich(html) -%}
+<p style="margin:0 0 12px;font-family:{{ SANS }};font-size:15px;line-height:1.55;color:{{ BODY_INK }};{{ WRAP }}">{{ html }}</p>
+{%- endmacro %}
+
+
+{# Small print — the explanatory aside under the main content. #}
+{% macro note(text) -%}
+<p style="margin:14px 0 0;font-family:{{ SANS }};font-size:13px;line-height:1.5;color:{{ MUTED }};{{ WRAP }}">{{ text|e }}</p>
+{%- endmacro %}
+
+
+{# Small print carrying inline markup. Same escaping contract as rich(). #}
+{% macro note_rich(html) -%}
+<p style="margin:14px 0 0;font-family:{{ SANS }};font-size:13px;line-height:1.5;color:{{ MUTED }};{{ WRAP }}">{{ html }}</p>
+{%- endmacro %}
+
+
+{# Human sentences that happen to contain newlines — an SMS body reflowed for
+   email, an alert message. Body font, newlines preserved, no box. This is NOT
+   code(): four senders historically used <pre> for both, and it was wrong for
+   these two. #}
+{% macro prose(text) -%}
+<div style="margin:0 0 12px;font-family:{{ SANS }};font-size:15px;line-height:1.55;color:{{ BODY_INK }};white-space:pre-wrap;{{ WRAP }}">{{ text|e }}</div>
+{%- endmacro %}
+
+
+{# Machine output — a traceback, a transcript, a backup log. Scrolls inside its
+   own container so a 300-character line cannot force the whole email sideways.
+   frappe's .body-table is table-layout:fixed, which makes that a real risk. #}
+{% macro code(text) -%}
+<div style="margin:14px 0;padding:12px 14px;background:{{ SURFACE }};border:1px solid {{ RULE }};border-left:3px solid #0077a8;font-family:{{ MONO }};font-size:13px;line-height:1.45;color:{{ BODY_INK }};white-space:pre-wrap;{{ WRAP }};overflow-x:auto">{{ text|e }}</div>
+{%- endmacro %}
+
+
+{# Label/value facts. Percentage split so it stays usable unstacked at 320px;
+   the @media block stacks it when it can. `rows` is [(label, value), ...]. #}
+{% macro kv(rows) -%}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;margin:16px 0;font-family:{{ SANS }};font-size:14px">
+{%- for label, value in rows %}
+	<tr>
+		<td class="ee-kv-l" width="32%" valign="top" style="width:32%;padding:8px 12px 8px 10px;background:{{ SURFACE }};border-bottom:1px solid {{ RULE }};color:{{ MUTED }};font-weight:700;{{ WRAP }}">{{ label|e }}</td>
+		<td class="ee-kv-v" valign="top" style="padding:8px 10px;border-bottom:1px solid {{ RULE }};color:{{ BODY_INK }};{{ WRAP }}">{{ (value if value not in (None, "") else "—")|e }}</td>
+	</tr>
+{%- endfor %}
+</table>
+{%- endmacro %}
+
+
+{# A data table. Keep to four columns or fewer — five does not fit a phone even
+   stacked; if you need more, link to the report instead.
+
+   A cell may be a plain value, or a ``(url, label)`` pair to render as a link.
+   The label is escaped; the URL, as everywhere here, is not. #}
+{% macro table(headers, rows) -%}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;margin:16px 0;font-family:{{ SANS }};font-size:14px">
+	<tr>
+{%- for head in headers %}
+		<th align="left" style="padding:9px 10px;background:{{ SURFACE }};border-bottom:2px solid {{ RULE }};color:{{ INK }};font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;{{ WRAP }}">{{ head|e }}</th>
+{%- endfor %}
+	</tr>
+{%- for row in rows %}
+	<tr>
+{%- for cell in row %}
+{%- if cell is not string and cell is iterable and cell|length == 2 %}
+		<td valign="top" style="padding:9px 10px;border-bottom:1px solid {{ RULE }};{{ WRAP }}"><a href="{{ cell[0] }}" style="color:#0077a8;text-decoration:underline">{{ cell[1]|e }}</a></td>
+{%- else %}
+		<td valign="top" style="padding:9px 10px;border-bottom:1px solid {{ RULE }};color:{{ BODY_INK }};{{ WRAP }}">{{ (cell if cell not in (None, "") else "—")|e }}</td>
+{%- endif %}
+{%- endfor %}
+	</tr>
+{%- endfor %}
+</table>
+{%- endmacro %}
+
+
+{# A strip of headline numbers. `cards` is [{"label","value","tone"}, ...].
+   Table cells that the @media block turns into full-width blocks. #}
+{% macro kpis(cards) -%}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;margin:16px 0">
+	<tr>
+{%- for card in cards %}
+{%- set t = TONES.get(card.get("tone")) or TONES["info"] %}
+		<td class="ee-kpi" valign="top" width="{{ (100 / (cards|length))|round|int }}%" style="width:{{ (100 / (cards|length))|round|int }}%;padding:12px 14px;background:{{ t.bg }};border:1px solid {{ t.br }};font-family:{{ SANS }}">
+			<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:{{ MUTED }};{{ WRAP }}">{{ card.get("label")|e }}</div>
+			<div style="margin-top:4px;font-size:22px;font-weight:700;line-height:1.15;color:{{ t.fg }};{{ WRAP }}">{{ card.get("value")|e }}</div>
+		</td>
+{%- endfor %}
+	</tr>
+</table>
+{%- endmacro %}
+
+
+{# A boxed aside. The tone word must also appear in the text — Gmail's forced
+   dark mode is free to mangle the colour, so colour never carries meaning alone. #}
+{% macro callout(text, tone="info") -%}
+{%- set t = TONES.get(tone) or TONES["info"] %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;margin:16px 0">
+	<tr><td style="padding:12px 14px;background:{{ t.bg }};border:1px solid {{ t.br }};border-left:4px solid {{ t.fg }};font-family:{{ SANS }};font-size:14px;line-height:1.5;color:{{ BODY_INK }};white-space:pre-wrap;{{ WRAP }}">{{ text|e }}</td></tr>
+</table>
+{%- endmacro %}
+
+
+{% macro bullets(items) -%}
+<ul style="margin:0 0 14px;padding-left:22px;font-family:{{ SANS }};font-size:15px;line-height:1.55;color:{{ BODY_INK }}">
+{%- for item in items %}
+	<li style="margin:0 0 5px;{{ WRAP }}">{{ item|e }}</li>
+{%- endfor %}
+</ul>
+{%- endmacro %}
+
+
+{# A list of links. `items` is [(url, label), ...]. URLs are NOT escaped. #}
+{% macro links(items) -%}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:14px 0;border-collapse:collapse">
+{%- for url, label in items %}
+	<tr><td style="padding:3px 0;font-family:{{ SANS }};font-size:14px;line-height:1.5"><a href="{{ url }}" style="color:#0077a8;text-decoration:underline;{{ WRAP }}">{{ label|e }}</a></td></tr>
+{%- endfor %}
+</table>
+{%- endmacro %}
+
+
+{# The call to action. Table-wrapped rather than a bare padded <a> so Outlook
+   renders the fill; bgcolor AND background so Outlook and the rest agree. #}
+{% macro button(url, label, tone="primary") -%}
+{%- set t = TONES.get(tone) or TONES["primary"] %}
+<table role="presentation" class="ee-btn" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0;border-collapse:separate">
+	<tr><td align="center" bgcolor="{{ t.fg }}" style="border-radius:24px;background:{{ t.fg }}">
+		<a href="{{ url }}" style="display:inline-block;padding:13px 30px;font-family:{{ SANS }};font-size:15px;font-weight:700;line-height:1;color:#ffffff;text-decoration:none;border-radius:24px">{{ label|e }}</a>
+	</td></tr>
+</table>
+{%- endmacro %}
+
+
+{# The copy-this-link escape hatch. Corporate mail clients strip buttons, and a
+   signing or payment link that cannot be reached is a support call. #}
+{% macro button_fallback(url) -%}
+<p style="margin:12px 0 0;font-family:{{ SANS }};font-size:12px;line-height:1.5;color:{{ MUTED }}">If the button does not work, copy this link into your browser:<br><span style="{{ WRAP }}">{{ url }}</span></p>
+{%- endmacro %}
+
+
+{# A short status word. Always renders the word, never colour alone. #}
+{% macro pill(label, tone="info") -%}
+{%- set t = TONES.get(tone) or TONES["info"] %}
+<span style="display:inline-block;padding:3px 10px;background:{{ t.bg }};border:1px solid {{ t.br }};border-radius:12px;font-family:{{ SANS }};font-size:12px;font-weight:700;color:{{ t.fg }}">{{ label|e }}</span>
+{%- endmacro %}

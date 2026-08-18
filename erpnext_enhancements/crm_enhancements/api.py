@@ -18,6 +18,7 @@ No code here is changed by this docstring pass; comments only.
 
 import frappe
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements import sync_contact
 
 
@@ -513,8 +514,19 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 
 		if project_doc:
 			subject = f"New Project Created: {project_doc.get('project_name')}"
-			message = f"""
-				<p>A new project has been created from Opportunity <b>{opportunity_name}</b>.</p>
-				<p><a href="{frappe.utils.get_url_to_form('Project', project_doc.get('name'))}">Click here to view the project</a></p>
-			"""
+			message = email_style.wrap(
+				email_style.rich(
+					"A new project has been created from Opportunity <b>"
+					+ frappe.utils.escape_html(opportunity_name)
+					+ "</b>."
+				)
+				+ email_style.kv(
+					[("Project", project_doc.get("project_name")), ("Opportunity", opportunity_name)]
+				)
+				+ email_style.button(
+					frappe.utils.get_url_to_form("Project", project_doc.get("name")), "View the project"
+				),
+				title=subject,
+				eyebrow="Projects",
+			)
 			frappe.sendmail(recipients=[user], subject=subject, message=message)

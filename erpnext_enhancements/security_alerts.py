@@ -34,7 +34,10 @@ alert that cannot be sent must never be able to block a login.
 """
 
 import frappe
+
 from frappe.utils import get_url
+
+from erpnext_enhancements import email_style
 
 #: Minimum gap between *failure* emails. Successes are never throttled — there
 #: should be almost none, and each one matters. Failures arrive in bursts (a
@@ -87,17 +90,27 @@ def format_alert(status, ip_address, user_agent, subject_line, when, site_url):
 	if subject_line:
 		rows.append(("Logged as", subject_line))
 
-	body = ["<p>The <b>Administrator</b> account recorded a <b>%s</b>.</p><table>" % verb]
-	for label, value in rows:
-		body.append(f"<tr><td><b>{label}</b>&nbsp;&nbsp;</td><td>{frappe.utils.escape_html(str(value))}</td></tr>")
-	body.append("</table>")
+	body = [
+		email_style.rich("The <b>Administrator</b> account recorded a <b>%s</b>." % verb),
+		email_style.kv([(label, str(value)) for label, value in rows]),
+	]
 	if not failed:
 		body.append(
-			"<p>If this was not you or another administrator acting deliberately, treat it as an "
-			"intrusion: rotate the Administrator password immediately and review "
-			"<i>Activity Log</i> and <i>Server Script</i> for anything created since this login.</p>"
+			email_style.callout(
+				"If this was not you or another administrator acting deliberately, treat it as an "
+				"intrusion: rotate the Administrator password immediately and review Activity Log "
+				"and Server Script for anything created since this login.",
+				"danger",
+			)
 		)
-	return subject, "".join(body)
+	return subject, email_style.wrap(
+		"".join(body),
+		title=subject,
+		eyebrow="Security",
+		# The tone is stated in the callout as well as carried by colour: Gmail's
+		# forced dark mode is free to recolour it, and this is the one alert where
+		# the reader must not miss the severity.
+	)
 
 
 def _recipients():

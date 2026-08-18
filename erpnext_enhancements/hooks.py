@@ -1027,6 +1027,32 @@ jinja = {
 		# header and the downloaded PDF's filename are the same string because they are
 		# this same call; two renderings of one idea drift.
 		"erpnext_enhancements.po_pdf_filename.purchase_order_document_id",
+		# The email design system (docs/email-design-system.md). Notification
+		# bodies are Jinja strings edited through the Desk, so they reach the
+		# shared chrome through these globals rather than {% extends %}: in a
+		# child template anything outside a {% block %} is silently discarded,
+		# and a mistyped extends path raises inside Notification.send()'s own
+		# except, which logs an Error Log and drops the email.
+		#
+		# Registered as individual functions, NOT the module: get_jinja_hooks
+		# exports every function of a module-valued entry into the global Jinja
+		# namespace, and `wrap`/`table`/`render` reaching every Print Format and
+		# web template on the site is not a trade worth making. The ee_ prefix
+		# is what keeps them distinguishable there.
+		"erpnext_enhancements.email_style.ee_email",
+		"erpnext_enhancements.email_style.ee_button",
+		"erpnext_enhancements.email_style.ee_doc_button",
+		"erpnext_enhancements.email_style.ee_kv",
+		"erpnext_enhancements.email_style.ee_table",
+		"erpnext_enhancements.email_style.ee_kpis",
+		"erpnext_enhancements.email_style.ee_callout",
+		"erpnext_enhancements.email_style.ee_code",
+		"erpnext_enhancements.email_style.ee_prose",
+		"erpnext_enhancements.email_style.ee_pill",
+		# The letterhead logo URL. Computed in Python because it must be
+		# absolute (an email client has no site origin) and cache-busted with
+		# the deploy token, which is www/ page context, not a Jinja global.
+		"erpnext_enhancements.email_style.ee_email_logo_url",
 	],
 }
 
@@ -1396,12 +1422,40 @@ fixtures = [
 				"name",
 				"in",
 				[
+					# The six this app has always managed.
 					"Maintenance Review Needed",
 					"Maintenance Finalized",
 					"Maintenance Reading Out of Range",
 					"Maintenance Contract Renewal Due",
 					"High Escalation Risk Call",
 					"Compliance Flag on Call",
+					# The thirteen that were created in the Desk UI and existed
+					# only in the site database until v1.331.0. Adopting them is
+					# what `patches/repoint_notifications_to_group_emails.py`
+					# argued against, and its objection was right at the time:
+					# transplanting ~40k characters of hand-copied chrome into
+					# the repo would have drifted immediately. That is no longer
+					# what happens — each body is now 300-800 characters of
+					# *content* calling the shared ee_* macros, and the chrome it
+					# used to carry cannot be edited from the Desk at all,
+					# because it is not in the field being edited.
+					#
+					# The recipients in fixtures/notification.json are the exact
+					# rows that patch installed. Re-exporting these from a site
+					# whose recipients have been edited will overwrite them.
+					"New Lead Created",
+					"New Opportunity",
+					"Email Team on Opportunity Won",
+					"New Project Created",
+					"Project Type Change Alert",
+					"Task Completed",
+					"New ToDo Created - Notify Creator and Assignee",
+					"Remind Me Email",
+					"New Fiscal Year Created",
+					"Material Request Received",
+					"Material Request Submission Notification",
+					"Error Log",
+					"Integration Request",
 				],
 			]
 		],

@@ -25,6 +25,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, get_url, get_url_to_form
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements.travel_management.ics import trip_ics_attachment
 
 TEMPLATE_DIR = "erpnext_enhancements/templates/emails/travel"
@@ -88,7 +89,11 @@ def _send(recipient, subject, template, context, doc, attachments=None):
 		frappe.sendmail(
 			recipients=[recipient.email],
 			subject=subject,
-			message=message,
+			# Chrome for the email only. The Notification Log row below keeps the
+			# UNWRAPPED fragment on purpose: that content is rendered in the desk
+			# bell panel, which supplies its own frame, and a letterhead inside a
+			# dropdown notification is noise.
+			message=email_style.wrap(message, title=subject, eyebrow=_("Travel")),
 			reference_doctype="Travel Trip",
 			reference_name=doc.name,
 			attachments=attachments or [],

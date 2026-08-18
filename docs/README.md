@@ -20,6 +20,7 @@ anything.
 | [PRODUCT_CONFIGURATOR.md](PRODUCT_CONFIGURATOR.md) | The configure-to-order product model and its pricing rules |
 | [FLEET_VEHICLE_MAINTENANCE.md](FLEET_VEHICLE_MAINTENANCE.md) | Fleet vehicle maintenance scheduling |
 | [DOCUMENT_MERGE.md](DOCUMENT_MERGE.md) | Duplicate document merging and its fail-closed philosophy |
+| [email-design-system.md](email-design-system.md) | The one email layout, its components and palette, how to add an email, and an inventory of every email the app sends |
 | [UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md](UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md) | Quick Entry and form-layout conventions |
 | [attribution-runbook.md](attribution-runbook.md) | Lead attribution: the settings, the website ingress payload contract, and the one tickbox that turns enforcement off |
 | [website-capture/](website-capture/) | The WordPress half: the first-touch UTM mu-plugin, the Fluent Forms hidden fields and webhook mapping, and why a JS-injected field never reaches ERPNext |

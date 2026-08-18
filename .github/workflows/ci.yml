@@ -645,6 +645,14 @@ jobs:
       # the SSE relay's per-frame loop.
       - name: Server-side URL boundary (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_url_safety.py -q
+      # The email design system (v1.331.0). Its own step and pytest-style, and — like the
+      # URL boundary above — it installs no frappe stub at all, because
+      # templates/emails/_components.html is forbidden from importing frappe and renders
+      # under a vanilla jinja2 Environment. That importability IS the design requirement,
+      # and this suite is what enforces it, along with the escaping contract, the WCAG
+      # contrast floor, and the rule that no email may reimpose a centred container.
+      - name: Email design system (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_email_design.py -q
       # The seam between a language model and two live project boards. Everything downstream
       # of `product_feedback/proposal.py` — the reviewer's screen, the confirm call, the Task
       # rows on PRJ-00580/PRJ-00755 — treats its output as trustworthy, so this is where the

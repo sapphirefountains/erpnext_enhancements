@@ -1,6 +1,246 @@
 [
  {
   "doctype": "Notification",
+  "name": "Task Completed",
+  "channel": "Email",
+  "document_type": "Task",
+  "event": "Value Change",
+  "subject": "Task Completed: {{ doc.subject }}",
+  "send_to_all_assignees": 1,
+  "attach_print": 0,
+  "recipients": [
+   {
+    "cc": "operations@sapphirefountains.com"
+   }
+  ],
+  "condition": "doc.status == \"Completed\"",
+  "value_changed": "status",
+  "enabled": 1,
+  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Task ID\", doc.name),\n\t(\"Project\", (frappe.db.get_value(\"Project\", doc.get(\"project\"), \"project_name\") ~ \" (\" ~ doc.get(\"project\") ~ \")\") if doc.get(\"project\") else None),\n\t(\"Completed by\", frappe.get_fullname(doc.get(\"completed_by\")) if doc.get(\"completed_by\") else None),\n\t(\"Completed on\", doc.get_formatted(\"completed_on\") if doc.get(\"completed_on\") else None)\n]) }}\n{{ ee_doc_button(doc, \"View the task\") }}\n{% endset %}\n{{ ee_email(body, title=doc.subject, eyebrow=\"Projects · Task completed\") }}"
+ },
+ {
+  "doctype": "Notification",
+  "name": "New Lead Created",
+  "channel": "Email",
+  "document_type": "Lead",
+  "event": "New",
+  "subject": "New Lead Created: {{ doc.lead_name }}",
+  "send_to_all_assignees": 1,
+  "attach_print": 0,
+  "recipients": [
+   {
+    "cc": "sales@sapphirefountains.com"
+   }
+  ],
+  "enabled": 1,
+  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Lead\", doc.name),\n\t(\"Name\", doc.get(\"lead_name\")),\n\t(\"Company\", doc.get(\"company_name\")),\n\t(\"Email\", doc.get(\"email_id\")),\n\t(\"Phone\", doc.get(\"mobile_no\") or doc.get(\"phone\")),\n\t(\"Source\", doc.get(\"source\"))\n]) }}\n{{ ee_doc_button(doc, \"Open the lead\") }}\n{% endset %}\n{{ ee_email(body, title=\"New lead: \" ~ (doc.get(\"lead_name\") or doc.name), eyebrow=\"Sales\") }}"
+ },
+ {
+  "doctype": "Notification",
+  "name": "New Opportunity",
+  "channel": "Email",
+  "document_type": "Opportunity",
+  "event": "New",
+  "subject": "New Opportunity from {{ doc.customer_name }}: {{ doc.title }}",
+  "send_to_all_assignees": 0,
+  "attach_print": 0,
+  "recipients": [
+   {
+    "cc": "sales@sapphirefountains.com"
+   }
+  ],
+  "enabled": 1,
+  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Opportunity\", doc.name),\n\t(\"Customer\", doc.get(\"customer_name\") or doc.get(\"party_name\")),\n\t(\"Source\", doc.get(\"source\")),\n\t(\"Expected value\", doc.get_formatted(\"opportunity_amount\") if doc.get(\"opportunity_amount\") else None)\n]) }}\n{{ ee_doc_button(doc, \"Open the opportunity\") }}\n{% endset %}\n{{ ee_email(body, title=\"New opportunity: \" ~ (doc.get(\"title\") or doc.name), eyebrow=\"Sales\") }}"
+ },
+ {
+  "doctype": "Notification",
+  "name": "Email Team on Opportunity Won",
+  "channel": "Email",
+  "document_type": "Opportunity",
+  "event": "Save",
+  "subject": "{{ doc.custom_opportunity_name}} - Status: Closed Won",
+  "send_to_all_assignees": 0,
+  "attach_print": 0,
+  "recipients": [
+   {
+    "cc": "operations@sapphirefountains.com, billing@sapphirefountains.com, production@sapphirefountains.com, sales@sapphirefountains.com"
+   }
+  ],
+  "condition": "doc.status == \"Closed Won\" and doc.get_doc_before_save() and doc.get_doc_before_save().status != \"Closed Won\"",
+  "enabled": 1,
+  "message": "{% set body %}\n{{ ee_callout(\"This opportunity is Closed Won. Hand-off starts now.\", \"success\") }}\n{{ ee_kv([\n\t(\"Opportunity\", doc.name),\n\t(\"Customer\", doc.get(\"customer_name\") or doc.get(\"party_name\")),\n\t(\"Value\", doc.get_formatted(\"opportunity_amount\") if doc.get(\"opportunity_amount\") else None),\n\t(\"Owner\", frappe.get_fullname(doc.get(\"opportunity_owner\")) if doc.get(\"opportunity_owner\") else None)\n]) }}\n{{ ee_doc_button(doc, \"Open the opportunity\") }}\n{% endset %}\n{{ ee_email(body, title=(doc.get(\"custom_opportunity_name\") or doc.name) ~ \" — Closed Won\", eyebrow=\"Sales · Closed Won\") }}"
+ },
+ {
+  "doctype": "Notification",
+  "name": "New Project Created",
+  "channel": "Email",
+  "document_type": "Project",
+  "event": "New",
+  "subject": "New Project Created: {{ doc.project_name }}",
+  "send_to_all_assignees": 0,
+  "attach_print": 0,
+  "recipients": [
+   {
+    "cc": "billing@sapphirefountains.com"
+   }
+  ],
+  "enabled": 1,
+  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Project\", doc.name),\n\t(\"Name\", doc.get(\"project_name\")),\n\t(\"Customer\", doc.get(\"customer\")),\n\t(\"Type\", doc.get(\"project_type\")),\n\t(\"Expected start\", doc.get_formatted(\"expected_start_date\") if doc.get(\"expected_start_date\") else None)\n]) }}\n{{ ee_doc_button(doc, \"Open the project\") }}\n{% endset %}\n{{ ee_email(body, title=\"New project: \" ~ (doc.get(\"project_name\") or doc.name), eyebrow=\"Projects\") }}"
+ },
+ {
+  "doctype": "Notification",
+  "name": "Project Type Change Alert",
+  "channel": "Email",
+  "document_type": "Project",
+  "event": "Value Change",
+  "subject": "Project Stage Changed for: {{ doc.project_name }}",
+  "send_to_all_assignees": 0,
+  "attach_print": 0,
+  "recipients": [
+   {
+    "cc": "billing@sapphirefountains.com, operations@sapphirefountains.com"
+   }
+  ],
+  "value_changed": "project_type",
+  "enabled": 1,
+  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Project\", doc.name),\n\t(\"Name\", doc.get(\"project_name\")),\n\t(\"Customer\", doc.get(\"customer\")),\n\t(\"New stage\", doc.get(\"project_type\"))\n]) }}\n{{ ee_doc_button(doc, \"Open the project\") }}\n{% endset %}\n{{ ee_email(body, title=\"Project stage changed: \" ~ (doc.get(\"project_name\") or doc.name), eyebrow=\"Projects\") }}"
+ },
+ {
+  "doctype": "Notification",
+  "name": "New Fiscal Year Created",
+  "channel": "Email",
+  "document_type": "Fiscal Year",
+  "event": "New",
+  "subject": "New Fiscal Year {{ doc.name }} - Review Required",
+  "send_to_all_assignees": 0,
+  "attach_print": 0,
+  "recipients": [
+   {
+    "cc": "billing@sapphirefountains.com"
+   }
+  ],
+  "condition": "doc.auto_created == 1",
+  "enabled": 1,
+  "message": "{% set body %}\n{{ ee_callout(\"This fiscal year was created automatically. Check the dates before anything posts into it.\", \"warning\") }}\n{{ ee_kv([\n\t(\"Fiscal Year\", doc.name),\n\t(\"Starts\", doc.get_formatted(\"year_start_date\") if doc.get(\"year_start_date\") else None),\n\t(\"Ends\", doc.get_formatted(\"year_end_date\") if doc.get(\"year_end_date\") else None)\n]) }}\n{{ ee_doc_button(doc, \"Review the fiscal year\") }}\n{% endset %}\n{{ ee_email(body, title=\"New fiscal year — review required\", eyebrow=\"Finance\") }}"
+ },
+ {
+  "doctype": "Notification",
+  "name": "Material Request Received",
+  "channel": "Email",
+  "document_type": "Material Request",
+  "event": "Value Change",
+  "subject": "Material Request {{ doc.name }} has been received",
+  "send_to_all_assignees": 0,
+  "attach_print": 0,
+  "recipients": [
+   {
+    "cc": "operations@sapphirefountains.com, billing@sapphirefountains.com, production@sapphirefountains.com"
+   }
+  ],
+  "condition": "doc.status == \"Received\" or doc.status == \"Partially Received\"",
+  "value_changed": "status",
+  "enabled": 1,
+  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Request\", doc.name),\n\t(\"Status\", doc.get(\"status\")),\n\t(\"Type\", doc.get(\"material_request_type\")),\n\t(\"Required by\", doc.get_formatted(\"schedule_date\") if doc.get(\"schedule_date\") else None)\n]) }}\n{{ ee_doc_button(doc, \"Open the material request\") }}\n{% endset %}\n{{ ee_email(body, title=\"Material request received: \" ~ doc.name, eyebrow=\"Procurement\") }}"
+ },
+ {
+  "doctype": "Notification",
+  "name": "Material Request Submission Notification",
+  "channel": "Email",
+  "document_type": "Material Request",
+  "event": "Submit",
+  "subject": "New Material Request Submitted: {{ doc.name }}",
+  "send_to_all_assignees": 0,
+  "attach_print": 0,
+  "recipients": [
+   {
+    "cc": "operations@sapphirefountains.com, billing@sapphirefountains.com"
+   }
+  ],
+  "enabled": 1,
+  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Request\", doc.name),\n\t(\"Type\", doc.get(\"material_request_type\")),\n\t(\"Requested by\", frappe.get_fullname(doc.get(\"owner\")) if doc.get(\"owner\") else None),\n\t(\"Required by\", doc.get_formatted(\"schedule_date\") if doc.get(\"schedule_date\") else None)\n]) }}\n{{ ee_doc_button(doc, \"Open the material request\") }}\n{% endset %}\n{{ ee_email(body, title=\"Material request submitted: \" ~ doc.name, eyebrow=\"Procurement\") }}"
+ },
+ {
+  "doctype": "Notification",
+  "name": "New ToDo Created - Notify Creator and Assignee",
+  "channel": "Email",
+  "document_type": "ToDo",
+  "event": "New",
+  "subject": "ToDo: {{ doc.reference_name}}{% if doc.reference_type %} [For {{ doc.reference_type }} {{ doc.reference_name }}]{% endif %}",
+  "send_to_all_assignees": 1,
+  "attach_print": 0,
+  "recipients": [
+   {
+    "receiver_by_document_field": "allocated_to"
+   },
+   {
+    "receiver_by_document_field": "assigned_by"
+   },
+   {
+    "receiver_by_document_field": "sender"
+   },
+   {
+    "receiver_by_document_field": "owner"
+   }
+  ],
+  "enabled": 1,
+  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Allocated to\", frappe.get_fullname(doc.get(\"allocated_to\")) if doc.get(\"allocated_to\") else None),\n\t(\"Assigned by\", frappe.get_fullname(doc.get(\"assigned_by\")) if doc.get(\"assigned_by\") else None),\n\t(\"Priority\", doc.get(\"priority\")),\n\t(\"Due\", doc.get_formatted(\"date\") if doc.get(\"date\") else None)\n]) }}\n{% if doc.get(\"description\") %}{{ ee_prose(doc.description) }}{% endif %}\n{{ ee_doc_button(doc, \"Open the to-do\") }}\n{% endset %}\n{{ ee_email(body, title=\"To-do: \" ~ (doc.get(\"reference_name\") or doc.name), eyebrow=\"Tasks\") }}"
+ },
+ {
+  "doctype": "Notification",
+  "name": "Remind Me Email",
+  "channel": "Email",
+  "document_type": "Reminder",
+  "event": "Value Change",
+  "subject": "{{ doc.reminder_doctype }} Reminder",
+  "send_to_all_assignees": 1,
+  "attach_print": 0,
+  "recipients": [
+   {
+    "receiver_by_document_field": "user"
+   }
+  ],
+  "condition": "doc.notified==1",
+  "value_changed": "notified",
+  "enabled": 1,
+  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Document\", (doc.get(\"reminder_doctype\") ~ \" \" ~ doc.get(\"reminder_docname\")) if doc.get(\"reminder_docname\") else doc.get(\"reminder_doctype\")),\n\t(\"Remind at\", doc.get_formatted(\"remind_at\") if doc.get(\"remind_at\") else None)\n]) }}\n{% if doc.get(\"description\") %}{{ ee_prose(doc.description) }}{% endif %}\n{{ ee_doc_button(doc, \"Open the reminder\") }}\n{% endset %}\n{{ ee_email(body, title=(doc.get(\"reminder_doctype\") or \"Document\") ~ \" reminder\", eyebrow=\"Reminders\") }}"
+ },
+ {
+  "doctype": "Notification",
+  "name": "Error Log",
+  "channel": "Email",
+  "document_type": "Error Log",
+  "event": "New",
+  "subject": "[Error] {{ doc.method }}",
+  "send_to_all_assignees": 0,
+  "attach_print": 0,
+  "recipients": [
+   {
+    "receiver_by_role": "System Manager"
+   }
+  ],
+  "enabled": 1,
+  "message": "{% set body %}\n{{ ee_callout(\"An unhandled error was logged on the site.\", \"danger\") }}\n{{ ee_kv([(\"Method\", doc.get(\"method\")), (\"Logged\", doc.get_formatted(\"creation\") if doc.get(\"creation\") else None)]) }}\n{{ ee_code((doc.get(\"error\") or \"\")[:4000]) }}\n{{ ee_doc_button(doc, \"Open the error log\") }}\n{% endset %}\n{{ ee_email(body, title=\"[Error] \" ~ (doc.get(\"method\") or doc.name), eyebrow=\"Platform\") }}"
+ },
+ {
+  "doctype": "Notification",
+  "name": "Integration Request",
+  "channel": "Email",
+  "document_type": "Integration Request",
+  "event": "Save",
+  "subject": "[Error] {{ doc.integration_request_service }}",
+  "send_to_all_assignees": 0,
+  "attach_print": 0,
+  "recipients": [
+   {
+    "receiver_by_role": "System Manager"
+   }
+  ],
+  "condition": "doc.status==\"Failed\"",
+  "enabled": 1,
+  "message": "{% set body %}\n{{ ee_callout(\"An outbound integration request failed.\", \"danger\") }}\n{{ ee_kv([\n\t(\"Service\", doc.get(\"integration_request_service\")),\n\t(\"Status\", doc.get(\"status\")),\n\t(\"Reference\", (doc.get(\"reference_doctype\") ~ \" \" ~ doc.get(\"reference_docname\")) if doc.get(\"reference_docname\") else None)\n]) }}\n{{ ee_code((doc.get(\"error\") or doc.get(\"output\") or \"\")[:4000]) }}\n{{ ee_doc_button(doc, \"Open the integration request\") }}\n{% endset %}\n{{ ee_email(body, title=\"[Error] \" ~ (doc.get(\"integration_request_service\") or doc.name), eyebrow=\"Platform\") }}"
+ },
+ {
+  "doctype": "Notification",
   "enabled": 1,
   "name": "Maintenance Review Needed",
   "channel": "Email",
@@ -14,7 +254,8 @@
    {
     "cc": "operations@sapphirefountains.com"
    }
-  ]
+  ],
+  "message": "{% set body %}\n{{ ee_callout(\"This maintenance record is waiting on a review before it can be finalized.\", \"warning\") }}\n{{ ee_kv([\n\t(\"Record\", doc.name),\n\t(\"Project\", doc.get(\"project\")),\n\t(\"Technician\", doc.get(\"technician\")),\n\t(\"Visit date\", doc.get_formatted(\"visit_date\") if doc.get(\"visit_date\") else None)\n]) }}\n{{ ee_doc_button(doc, \"Review the record\") }}\n{% endset %}\n{{ ee_email(body, title=\"Review required: \" ~ doc.name, eyebrow=\"Maintenance\") }}"
  },
  {
   "doctype": "Notification",
@@ -29,7 +270,7 @@
   "send_to_all_assignees": 0,
   "attach_print": 1,
   "print_format": "Maintenance Record Print",
-  "message": "Maintenance Record {{ doc.name }} has been finalized.\n\nA draft Sales Invoice ({{ doc.sales_invoice }}) has been generated for your review and standard GL posting.\n\nPlease check the ERPNext Sales Invoice list for the corresponding draft.",
+  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Record\", doc.name),\n\t(\"Project\", doc.get(\"project\")),\n\t(\"Draft Sales Invoice\", doc.get(\"sales_invoice\"))\n]) }}\n{{ ee_p(\"A draft Sales Invoice has been generated for your review and standard GL posting. Check the Sales Invoice list for the corresponding draft.\") }}\n{{ ee_doc_button(doc, \"Open the record\") }}\n{% endset %}\n{{ ee_email(body, title=\"Maintenance completed: \" ~ doc.name, eyebrow=\"Maintenance\") }}",
   "recipients": [
    {
     "cc": "billing@sapphirefountains.com"
@@ -46,43 +287,7 @@
   "event": "Submit",
   "condition": "doc.has_out_of_range_readings",
   "send_to_all_assignees": 0,
-  "message": "Maintenance Record {{ doc.name }} for project {{ doc.project }} was submitted with out-of-range water chemistry readings:\n\n{% for row in doc.chemistry_readings %}{% if row.out_of_range %}- {{ row.reading }}{% if row.serial_no %} ({{ row.serial_no }}){% endif %}: {{ row.reading_value }} {{ row.uom or '' }} (target {{ row.min_value }}–{{ row.max_value }})\n{% endif %}{% endfor %}\nTechnician: {{ doc.technician }}",
-  "recipients": [
-   {
-    "cc": "service_repair@sapphirefountains.com"
-   }
-  ]
- },
- {
-  "doctype": "Notification",
-  "enabled": 1,
-  "name": "High Escalation Risk Call",
-  "channel": "Email",
-  "subject": "High escalation risk call: {{ doc.custom_caller_name or doc.from }}",
-  "document_type": "Call Log",
-  "event": "Value Change",
-  "value_changed": "custom_escalation_risk",
-  "condition": "doc.custom_escalation_risk == 'High'",
-  "send_to_all_assignees": 0,
-  "message": "A call was flagged HIGH escalation risk by post-call analysis.\n\nCaller: {{ doc.custom_caller_name or 'Unknown' }} ({{ doc.from }})\nSentiment: {{ doc.custom_sentiment or 'n/a' }}\nIntent: {{ doc.type_of_call or 'n/a' }}\nAgent: {{ doc.custom_agent_name or doc.employee_user_id or 'n/a' }}\n\nSummary:\n{{ doc.summary or 'n/a' }}\n\nFollow-up actions:\n{{ doc.custom_follow_up_actions or 'none recorded' }}\n\nOpen the call: {{ frappe.utils.get_url() }}/app/call-log/{{ doc.name }}",
-  "recipients": [
-   {
-    "cc": "service_repair@sapphirefountains.com"
-   }
-  ]
- },
- {
-  "doctype": "Notification",
-  "enabled": 1,
-  "name": "Compliance Flag on Call",
-  "channel": "Email",
-  "subject": "Compliance flag on call: {{ doc.custom_caller_name or doc.from }}",
-  "document_type": "Call Log",
-  "event": "Value Change",
-  "value_changed": "custom_has_compliance_flags",
-  "condition": "doc.custom_has_compliance_flags",
-  "send_to_all_assignees": 0,
-  "message": "Post-call analysis raised compliance flag(s) on this call.\n\nCaller: {{ doc.custom_caller_name or 'Unknown' }} ({{ doc.from }})\nAgent: {{ doc.custom_agent_name or doc.employee_user_id or 'n/a' }}\n\nFlags:\n{{ doc.custom_compliance_flags or 'n/a' }}\n\nSummary:\n{{ doc.summary or 'n/a' }}\n\nOpen the call: {{ frappe.utils.get_url() }}/app/call-log/{{ doc.name }}",
+  "message": "{% set body %}\n{{ ee_callout(\"This record was submitted with out-of-range water chemistry readings.\", \"warning\") }}\n{% set readings = [] %}\n{% for row in doc.get(\"chemistry_readings\") or [] %}{% if row.out_of_range %}{% set _ = readings.append([\n\trow.reading ~ (\" (\" ~ row.serial_no ~ \")\" if row.serial_no else \"\"),\n\t(row.reading_value|string) ~ \" \" ~ (row.uom or \"\"),\n\t(row.min_value|string) ~ \"–\" ~ (row.max_value|string)\n]) %}{% endif %}{% endfor %}\n{{ ee_table([\"Reading\", \"Value\", \"Target\"], readings) }}\n{{ ee_kv([(\"Record\", doc.name), (\"Project\", doc.get(\"project\")), (\"Technician\", doc.get(\"technician\"))]) }}\n{{ ee_doc_button(doc, \"Open the record\") }}\n{% endset %}\n{{ ee_email(body, title=\"Water chemistry out of range: \" ~ doc.name, eyebrow=\"Maintenance\") }}",
   "recipients": [
    {
     "cc": "service_repair@sapphirefountains.com"
@@ -101,10 +306,46 @@
   "days_in_advance": 30,
   "condition": "doc.status == 'Active'",
   "send_to_all_assignees": 0,
-  "message": "Maintenance contract {{ doc.name }} for {{ doc.customer }} reaches the end of its term on {{ doc.end_date }}.\n\nPer the Maintenance Services Agreement (§9.2), non-renewal requires 30 days' written notice. With auto-renewal enabled this contract will renew for another one-year term unless its Non-Renewal Notice flag is set; otherwise it expires the day after {{ doc.end_date }} and stops generating visits.\n\nDecide now: let it renew, adjust the rate, or set the non-renewal notice.",
+  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Contract\", doc.name),\n\t(\"Customer\", doc.get(\"customer\")),\n\t(\"Term ends\", doc.get_formatted(\"end_date\") if doc.get(\"end_date\") else None),\n\t(\"Status\", doc.get(\"status\"))\n]) }}\n{{ ee_p(\"Per the Maintenance Services Agreement (§9.2), non-renewal requires 30 days of written notice. With auto-renewal enabled this contract renews for another one-year term unless its Non-Renewal Notice flag is set; otherwise it expires the day after the end date and stops generating visits.\") }}\n{{ ee_callout(\"Decide now: let it renew, adjust the rate, or set the non-renewal notice.\", \"warning\") }}\n{{ ee_doc_button(doc, \"Open the contract\") }}\n{% endset %}\n{{ ee_email(body, title=\"Renewal due: \" ~ doc.name, eyebrow=\"Maintenance\") }}",
   "recipients": [
    {
     "cc": "operations@sapphirefountains.com"
+   }
+  ]
+ },
+ {
+  "doctype": "Notification",
+  "enabled": 1,
+  "name": "High Escalation Risk Call",
+  "channel": "Email",
+  "subject": "High escalation risk call: {{ doc.custom_caller_name or doc.from }}",
+  "document_type": "Call Log",
+  "event": "Value Change",
+  "value_changed": "custom_escalation_risk",
+  "condition": "doc.custom_escalation_risk == 'High'",
+  "send_to_all_assignees": 0,
+  "message": "{% set body %}\n{{ ee_callout(\"Post-call analysis flagged this call as HIGH escalation risk.\", \"danger\") }}\n{{ ee_kv([\n\t(\"Caller\", (doc.get(\"custom_caller_name\") or \"Unknown\") ~ \" (\" ~ (doc.get(\"from\") or \"\") ~ \")\"),\n\t(\"Sentiment\", doc.get(\"custom_sentiment\")),\n\t(\"Intent\", doc.get(\"type_of_call\")),\n\t(\"Agent\", doc.get(\"custom_agent_name\") or doc.get(\"employee_user_id\"))\n]) }}\n{{ ee_h(\"Summary\") }}\n{{ ee_prose(doc.get(\"summary\") or \"Not recorded.\") }}\n{{ ee_h(\"Follow-up actions\") }}\n{{ ee_prose(doc.get(\"custom_follow_up_actions\") or \"None recorded.\") }}\n{{ ee_doc_button(doc, \"Open the call\") }}\n{% endset %}\n{{ ee_email(body, title=\"High escalation risk: \" ~ (doc.get(\"custom_caller_name\") or doc.get(\"from\") or doc.name), eyebrow=\"Telephony\") }}",
+  "recipients": [
+   {
+    "cc": "service_repair@sapphirefountains.com"
+   }
+  ]
+ },
+ {
+  "doctype": "Notification",
+  "enabled": 1,
+  "name": "Compliance Flag on Call",
+  "channel": "Email",
+  "subject": "Compliance flag on call: {{ doc.custom_caller_name or doc.from }}",
+  "document_type": "Call Log",
+  "event": "Value Change",
+  "value_changed": "custom_has_compliance_flags",
+  "condition": "doc.custom_has_compliance_flags",
+  "send_to_all_assignees": 0,
+  "message": "{% set body %}\n{{ ee_callout(\"Post-call analysis raised compliance flag(s) on this call.\", \"danger\") }}\n{{ ee_kv([\n\t(\"Caller\", (doc.get(\"custom_caller_name\") or \"Unknown\") ~ \" (\" ~ (doc.get(\"from\") or \"\") ~ \")\"),\n\t(\"Agent\", doc.get(\"custom_agent_name\") or doc.get(\"employee_user_id\"))\n]) }}\n{{ ee_h(\"Flags\") }}\n{{ ee_prose(doc.get(\"custom_compliance_flags\") or \"Not recorded.\") }}\n{{ ee_h(\"Summary\") }}\n{{ ee_prose(doc.get(\"summary\") or \"Not recorded.\") }}\n{{ ee_doc_button(doc, \"Open the call\") }}\n{% endset %}\n{{ ee_email(body, title=\"Compliance flag: \" ~ (doc.get(\"custom_caller_name\") or doc.get(\"from\") or doc.name), eyebrow=\"Telephony\") }}",
+  "recipients": [
+   {
+    "cc": "service_repair@sapphirefountains.com"
    }
   ]
  }

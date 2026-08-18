@@ -53,6 +53,8 @@ import json
 import frappe
 from frappe.utils import add_days, formatdate, get_last_day, getdate, today
 
+from erpnext_enhancements import email_style
+
 #: The Report Builder report whose saved date window this module owns.
 REPORT_NAME = "Brian's Closed Won"
 
@@ -189,7 +191,11 @@ def _send_period(start, end):
 	frappe.sendmail(
 		recipients=recipients,
 		subject=f"{AUTO_EMAIL_REPORT_NAME} — {formatdate(start)} to {formatdate(end)}",
-		message=content,
+		message=email_style.wrap(
+			email_style.raw(content),
+			title=AUTO_EMAIL_REPORT_NAME,
+			eyebrow=f"Sales · {formatdate(start)} to {formatdate(end)}",
+		),
 		reference_doctype="Report",
 		reference_name=REPORT_NAME,
 	)

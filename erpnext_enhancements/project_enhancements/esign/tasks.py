@@ -24,6 +24,8 @@ as ``maintenance_nudge_sent`` and the morning dispatch digest.
 import frappe
 from frappe.utils import add_to_date, date_diff, escape_html, getdate, now_datetime
 
+from erpnext_enhancements import email_style
+
 BATCH = 50
 
 DIGEST_LIMIT = 200
@@ -295,18 +297,22 @@ def digest_awaiting_signature():
 		anchor = row.first_sent_on or row.sent_on
 		return date_diff(today, getdate(anchor)) if anchor else ""
 
-	items = "".join(
-		"<tr>"
-		f"<td>{escape_html(r.project_contract or '')}</td>"
-		f"<td>{escape_html(r.signer_email or '')}</td>"
-		f"<td>{days_out(r)}</td>"
-		f"<td>{'yes' if r.view_count else 'no'}</td>"
-		f"<td>{r.reminders_sent or 0}</td>"
-		"</tr>"
+	# Four columns, not five: "Opened" and "Reminders" fold into one Activity
+	# cell, because five columns do not fit a phone even stacked.
+	table_rows = [
+		[
+			r.project_contract or "",
+			r.signer_email or "",
+			days_out(r),
+			("opened" if r.view_count else "not opened")
+			+ (f" · {r.reminders_sent} reminder(s)" if r.reminders_sent else ""),
+		]
 		for r in rows
-	)
+	]
 	truncated = (
-		f"<p><i>{escape_html(frappe._('Showing the {0} longest-outstanding of {1}.').format(len(rows), total))}</i></p>"
+		email_style.note(
+			frappe._("Showing the {0} longest-outstanding of {1}.").format(len(rows), total)
+		)
 		if total > len(rows)
 		else ""
 	)
@@ -314,12 +320,22 @@ def digest_awaiting_signature():
 		frappe.sendmail(
 			recipients=recipients,
 			subject=frappe._("{0} agreement(s) still awaiting signature").format(total),
-			message=(
-				f"<p>{escape_html(frappe._('These agreements have been sent for signature and are not signed yet.'))}</p>"
-				f"{truncated}"
-				"<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse'>"
-				"<tr><th>Contract</th><th>Sent to</th><th>Days out</th><th>Opened</th><th>Reminders</th></tr>"
-				f"{items}</table>"
+			message=email_style.wrap(
+				email_style.p(
+					frappe._("These agreements have been sent for signature and are not signed yet.")
+				)
+				+ truncated
+				+ email_style.table(
+					[
+						frappe._("Contract"),
+						frappe._("Sent to"),
+						frappe._("Days out"),
+						frappe._("Activity"),
+					],
+					table_rows,
+				),
+				title=frappe._("{0} agreement(s) still awaiting signature").format(total),
+				eyebrow=frappe._("Contracts"),
 			),
 		)
 	except Exception:

@@ -21,6 +21,7 @@ convention), ``briefing_use_gemini`` cost switch, and the
 import frappe
 from frappe.utils import add_days, cint, now_datetime, nowdate
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements.api.task_dashboard import CLOSED_TASK_STATUSES, STAFF_ROLES
 
 RETENTION_DAYS = 60
@@ -416,7 +417,11 @@ def _send_briefing_email(doc):
 	frappe.sendmail(
 		recipients=[doc.user],
 		subject=f"Morning Briefing — {doc.date}",
-		message=frappe.utils.md_to_html(doc.content or ""),
+		message=email_style.wrap(
+			email_style.markdown(doc.content or ""),
+			title="Morning Briefing",
+			eyebrow=str(doc.date),
+		),
 	)
 
 

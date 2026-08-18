@@ -20,6 +20,7 @@ from __future__ import annotations
 import frappe
 from frappe.utils import flt
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements.stripe_payments.core.checkout import create_payment
 from erpnext_enhancements.stripe_payments.core.utils import get_secret, get_settings
 from erpnext_enhancements.stripe_payments.core.webhooks import handle_webhook
@@ -84,10 +85,15 @@ def send_payment_link(stripe_payment, via="email", to=None):
 	frappe.sendmail(
 		recipients=[recipient],
 		subject=f"Payment link — {label}",
-		message=(
-			f"<p>Hello,</p><p>You can pay {frappe.utils.escape_html(label)} securely online here:</p>"
-			f'<p><a href="{sp.checkout_url}">Pay now</a></p>'
-			f"<p>Thank you,<br>Sapphire Fountains</p>"
+		message=email_style.wrap(
+			email_style.p("Hello,")
+			+ email_style.p(f"You can pay {label} securely online here:")
+			+ email_style.button(sp.checkout_url, "Pay now")
+			+ email_style.button_fallback(sp.checkout_url)
+			+ email_style.p("Thank you, Sapphire Fountains"),
+			title=f"Payment link — {label}",
+			eyebrow="Billing",
+			tagline=True,
 		),
 	)
 	return {"sent": True, "via": "email", "to": recipient}

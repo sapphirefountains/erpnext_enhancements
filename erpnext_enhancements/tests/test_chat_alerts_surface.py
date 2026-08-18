@@ -304,8 +304,18 @@ class EmailTest(unittest.TestCase):
 			self.assertIsNone(value.value)
 
 	def test_the_body_is_escaped(self):
-		"""It carries a caller-supplied detail string into HTML."""
-		self.assertIn("escape_html", _calls(_func(ALERTS, "_to_email")))
+		"""It carries a caller-supplied detail string into HTML.
+
+		The escaping moved rather than went away (v1.331.0): the body now goes
+		through ``email_style.code()``, and the macro escapes its own argument.
+		This asserts the chain of custody — that the detail string reaches a
+		component instead of being interpolated raw — while
+		``test_email_design.test_text_macros_escape_their_argument`` is what
+		proves ``code()`` actually escapes, by rendering it.
+		"""
+		calls = _calls(_func(ALERTS, "_to_email"))
+		self.assertIn("code", calls, "the alert body no longer goes through an escaping component")
+		self.assertIn("wrap", calls)
 
 
 class SurfaceTest(unittest.TestCase):

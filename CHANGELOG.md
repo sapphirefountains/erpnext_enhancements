@@ -7,6 +7,136 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.331.0] - 2026-08-18
+
+### Added
+
+- **One email design system, and every email in the app now uses it.** Mail went out from
+  three surfaces that shared no chrome, no palette and no layout — 13 Jinja templates, ~26
+  inline `frappe.sendmail` call sites, and 21 `Notification` records — and the visible
+  result was a narrow centred box that wasted most of a phone screen.
+
+  There is now a single layout (`templates/emails/_shell.html`), a single set of component
+  macros (`templates/emails/_components.html` — **the only email markup left in the app**),
+  and a Python entry point (`email_style.py`) modelled on the existing
+  `project_enhancements/contract_style.py`. The layout is fluid `width:100%` capped at
+  840px: full-bleed on a phone, capped before body copy runs 1400px wide on a desktop.
+  Guide and full inventory in [`docs/email-design-system.md`](docs/email-design-system.md).
+
+  Two findings are worth recording, because both were counter-intuitive and both cost time
+  to establish:
+
+  **The centred box was self-inflicted.** Frappe's `templates/emails/standard.html` sets
+  its container to `width="{% if header or with_container %} 600 {% else %} 100% {% endif %}"`,
+  and neither `Notification.send_an_email` nor any caller in this app passes either
+  argument — so the framework container was *already* 100% wide with no card and no
+  padding. The 640px box came from a `max-width` div hand-written into the message body.
+  Nothing upstream needed overriding; the fix was to stop re-imposing a container, which
+  `tests/test_email_design.py` now enforces.
+
+  **The good-looking emails were the unmanaged ones.** Of the 21 `Notification` records,
+  13 had been built in the Desk UI and carried 2–5.7k characters of hand-copied letterhead
+  each, existing only in the site database. The six that *were* in git were plain text
+  whose `\n` line breaks collapsed into a single run-on paragraph in every mail client —
+  a live defect, not a cosmetic one, and fixed here as a side effect.
+
+- **Component macros** covering everything the app actually emails: `kv` (label/value
+  facts), `table`, `kpis`, `callout`, `code`, `prose`, `bullets`, `links`, `button` +
+  `button_fallback`, `pill`, `rich`/`note`. Available as `email_style.<name>()` in Python
+  and as `ee_<name>()` Jinja globals inside a `Notification` body.
+
+  `prose()` and `code()` are deliberately separate. Four senders used to emit their whole
+  body as `<pre>`; two really are machine output (offsite backup, call transcripts) and
+  two are human sentences that merely contain newlines (status alerts, chat governance) —
+  the old `status_alerts` markup said so itself with an inline `font-family:inherit`
+  override on its `<pre>`.
+
+### Changed
+
+- **All 19 live `Notification` records are now fixtured**, each body reduced from 2–5.7k
+  characters of chrome to 300–800 characters of content. This reverses the decision
+  documented in `patches/repoint_notifications_to_group_emails.py`, and that docstring has
+  been updated rather than left to contradict the repo. Its objection was correct on its
+  own terms — copying ~40k characters of hand-maintained letterhead into git would have
+  drifted immediately — but the chrome is no longer *in* the bodies, so a Desk edit cannot
+  change the letterhead at all. The recipient rows that patch installed were carried into
+  the fixture verbatim; the trade, stated plainly, is that the fixture now sets those
+  recipients on every migrate, so a hand edit in the Desk will be reverted rather than
+  persist.
+
+- **Notification bodies use the `ee_*` Jinja globals, not `{% extends %}`.** Inheritance
+  *does* work from a DB-stored string — frappe's jenv keeps its loader through `overlay()`,
+  verified against prod — but in a child template anything outside a `{% block %}` is
+  silently discarded, and a mistyped extends path raises inside `Notification.send()`'s own
+  `except`, which logs an Error Log and drops the email. Neither failure is survivable in a
+  field people edit through the Desk. The globals are registered in `hooks.py` **individually
+  and `ee_`-prefixed**, because `get_jinja_hooks` exports every function of a module-valued
+  entry into the global Jinja namespace of every Print Format and web template on the site.
+
+- **Colour now carries meaning, and three values are banned.** Chrome is navy `#00263E`
+  and `#0077a8`; green/amber/red are reserved for completed/attention/failed. `#1E9E5A`
+  (the old CTA green, **3.52:1** with white text) and `#00A1DE` (the old link blue,
+  **2.90:1**) both failed WCAG AA and were carried by all 13 hand-written bodies; `#00a0dd`
+  remains barred from carrying text at 2.97:1, the same rule
+  `scripts/test_chat_source_rules.js` already enforces for the chat CSS. The guard suite
+  computes these ratios rather than trusting a comment.
+
+- **The travel templates now escape their interpolations.** All six rendered user-typed
+  hotel names, activities and PNRs raw; the macros escape their own arguments, which closes
+  it. `api/telephony.py` had the same hole on `display_name`, `summary` and `transcript` and
+  is closed the same way — a security fix that arrives as a consequence of the redesign
+  rather than as a separate change.
+
+- **Three digests lost a column.** `fountain_move_digest`, the awaiting-signature digest
+  and the hand-off SLA digest were all five columns wide, which does not fit a phone even
+  stacked. Email dropped from the fountain digest (it is on the record, and the ID is now a
+  link); Opened and Reminders folded into one Activity cell; Responsible folded into the
+  Step cell.
+
+- **The letterhead logo ships in the repo** at `public/images/email/logo.png` instead of
+  pointing at a site `File` record, which is deletable from the Desk and absent on a fresh
+  site. It is **opaque, not transparent**: Gmail and Outlook.com force-invert the page in
+  dark mode but never invert image pixels, so a transparent navy wordmark would go
+  navy-on-dark and vanish. The URL is built in Python because it must be absolute (an email
+  client has no site origin) and cache-busted with the deploy token — `deploy_version` is
+  `www/` page context, not a Jinja global, so a template cannot reach it.
+
+### Fixed
+
+- **`email_style` logging can no longer take a send down with it.** Every degradation path
+  in the module ended in `frappe.log_error`, which writes to the database — so on a dead
+  connection the handler guarding the send raises and the "never raises" promise quietly
+  becomes false. That is the same shape as the background-job trap already documented in
+  `CLAUDE.md`. All logging now goes through a `_log()` helper that swallows its own
+  failures. CI found it the blunter way, through a test stub whose `log_error` took a
+  different signature.
+
+- **`Maintenance Review Needed` had no message body at all** and fell back to a Frappe
+  default. It now has one.
+
+### Notes
+
+- **Two mechanics were verified against this site rather than assumed.** Premailer
+  preserves `@media` blocks *and* inlines `.ee-md` descendant rules onto the attribute-less
+  tags `md_to_html()` produces — which is the only way to style the morning briefing, whose
+  HTML this app does not generate (verified output:
+  `<h2 id="heading" style="color:#00263E; font-size:18px">`). MSO conditional comments also
+  survive Premailer's lxml round-trip, which is what lets the Outlook ghost table pin the
+  840px measure that Outlook's Word engine would otherwise ignore.
+
+  Even so, **the `<style>` block is a progressive enhancement and no layout decision
+  depends on it**: our markup lands inside `<body>`, and Gmail's handling of a body-level
+  `<style>` is the least predictable part of the design, so every element already carries
+  correct inline padding and font-size at 320px.
+
+- **New bench-free pytest suite** `tests/test_email_design.py`, with its own step in
+  `ci.yml`. Like the URL-boundary suite it installs **no frappe stub at all** — because
+  `_components.html` is forbidden from importing frappe and renders under a vanilla
+  `jinja2.Environment`, a property the suite itself asserts. It also guards the escaping
+  contract (including that escaping happens exactly *once* — double-escaping is not a safety
+  bug and no `<script>` assertion would catch it), the contrast floor, the ban on
+  re-imposing a container, and that every `frappe.sendmail` call site goes through
+  `email_style`.
 ## [1.330.0] - 2026-08-18
 
 ### Changed

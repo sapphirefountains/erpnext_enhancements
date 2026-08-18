@@ -71,6 +71,7 @@ from frappe.utils import (
 	validate_email_address,
 )
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements.feature_flags import handoff_gate_enabled, process_automation_enabled
 from erpnext_enhancements.utils.working_days import add_working_days
 
@@ -735,11 +736,16 @@ def _send_invite(event, attendees, subject, label, link):
 		frappe.sendmail(
 			recipients=attendees,
 			subject=subject,
-			message=(
-				f"<p>{frappe.utils.escape_html(_('You are invited to the Closed-Won hand-off meeting for {0}.').format(label))}</p>"
-				f"<p><b>{frappe.utils.escape_html(_('When'))}:</b> "
-				f"{frappe.utils.escape_html(frappe.utils.format_datetime(event.starts_on))}</p>"
-				f"<p><a href='{link}'>{frappe.utils.escape_html(link)}</a></p>"
+			message=email_style.wrap(
+				email_style.p(
+					_("You are invited to the Closed-Won hand-off meeting for {0}.").format(label)
+				)
+				+ email_style.kv(
+					[(_("When"), frappe.utils.format_datetime(event.starts_on))]
+				)
+				+ email_style.button(link, _("Open the hand-off")),
+				title=subject,
+				eyebrow=_("Hand-off"),
 			),
 			attachments=[{"fname": f"{frappe.scrub(event.name)}.ics", "fcontent": ics}],
 			reference_doctype=event.reference_doctype,

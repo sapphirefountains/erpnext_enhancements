@@ -37,6 +37,7 @@ from __future__ import annotations
 import frappe
 from frappe.utils import add_days, cint, flt, getdate, now_datetime, nowdate
 
+from erpnext_enhancements import email_style
 from erpnext_enhancements.stripe_payments.core.utils import error_snippet, is_enabled
 
 DEFAULT_RETRY_DAYS = "2,4,7"
@@ -361,7 +362,11 @@ def _email_customer(inv, invoice, attempt, final):
                 f"<p>We'll automatically try again over the next few days. To avoid an interruption, please "
                 f"contact {frappe.utils.escape_html(company)} if your card details have changed.</p>"
             )
-        frappe.sendmail(recipients=[email], subject=subject, message=body)
+        frappe.sendmail(
+            recipients=[email],
+            subject=subject,
+            message=email_style.wrap(body, title=subject, eyebrow="Billing", tagline=True),
+        )
     except Exception:
         frappe.log_error(frappe.get_traceback(), "Dunning: customer email failed")
 
