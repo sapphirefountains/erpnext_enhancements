@@ -512,6 +512,7 @@ def _course_card(course, assignment, attempt):
         "self_enrol": bool(cint(course.allow_self_enrollment)),
         "assignment": assignment.name if assignment else None,
         "assignment_status": assignment.status if assignment else None,
+        "signoff_with": _signoff_supervisor_name(course.name, _learner()),
         "due_date": assignment.due_date if assignment else None,
         "attempt": attempt.name if attempt else None,
         "attempt_status": attempt.status if attempt else None,
@@ -1278,13 +1279,27 @@ def finish_attempt(attempt):
     # it. Deliberately reported as `outstanding` rather than thrown, like every
     # other unmet gate, so the player shows the learner what is left.
     if _signoff_outstanding(doc):
+        supervisor = None
+        if not outstanding:
+            # Everything else is done, so this is the moment the learner has
+            # finished their half and the request means something. Raising it any
+            # earlier would ping a supervisor about somebody three lessons in.
+            #
+            # Until v1.334.0 it was never raised at all: `training.signoff` held a
+            # complete request-and-notify implementation that nothing called, so no
+            # supervisor was ever told, `Training Assignment.status` was never moved
+            # to "Awaiting Sign-off" by any code path, and the learner was told to
+            # go and ask somebody in person.
+            supervisor = _request_signoff_for(doc)
         outstanding.append(
             {
                 "lesson_key": None,
                 "title": _("Supervisor sign-off"),
                 "reasons": [
-                    _("A supervisor still has to confirm you can do this in practice. "
-                      "Ask them to record a sign-off once they have watched you.")
+                    _("{0} has been asked to confirm you can do this in practice.").format(supervisor)
+                    if supervisor
+                    else _("A supervisor still has to confirm you can do this in practice. "
+                           "Ask them to record a sign-off once they have watched you.")
                 ],
             }
         )
@@ -1374,6 +1389,14 @@ def _finished_attempt_payload(doc, passed, score, outstanding, completion):
         "passed": bool(passed),
         "attempt": doc.name,
         "status": doc.status,
+        # The ATTEMPT's status is In Progress / Passed / Failed / Abandoned.
+        # "Awaiting Sign-off" is a TRAINING ASSIGNMENT status and can never appear
+        # in the field above -- which is what the player was testing until
+        # v1.334.0, so its sign-off view was unreachable by construction quite
+        # apart from nothing ever setting the status. Both are sent, named for the
+        # record they come from.
+        "assignment_status": _assignment_status(doc),
+        "signoff_with": _signoff_supervisor_name(doc.course, doc.user),
         "score": score,
         "outstanding": outstanding or [],
         "completion": completion,
@@ -1401,6 +1424,77 @@ def _signoff_outstanding(doc):
     from erpnext_enhancements.training import signoff
 
     return signoff.signoff_outstanding(doc.course, doc.user)
+
+
+def _assignment_status(doc):
+    """This attempt's assignment status, or None when it is not assigned.
+
+    Read fresh rather than cached: ``_request_signoff_for`` moves it to
+    "Awaiting Sign-off" earlier in the same request, and the payload has to carry
+    the value the learner is actually in.
+    """
+    assignment = getattr(doc, "assignment", None) or frappe.db.get_value(
+        "Training Assignment",
+        {"user": doc.user, "course": doc.course, "status": ["in", OPEN_STATUSES]},
+        "name",
+    )
+    if not assignment:
+        return None
+    return frappe.db.get_value("Training Assignment", assignment, "status")
+
+
+def _signoff_supervisor_name(course, user):
+    """Who the open sign-off request is with, as a name a learner will recognise.
+
+    Returns None when there is no open request, which is also the answer when the
+    course does not want one -- the caller does not need to distinguish, because
+    both mean "there is nobody to name".
+    """
+    if not frappe.db.exists("DocType", "Training Signoff"):
+        return None
+    supervisor = frappe.db.get_value(
+        "Training Signoff",
+        {"course": course, "user": user, "docstatus": 0},
+        "supervisor_user",
+        order_by="creation desc",
+    )
+    if not supervisor:
+        return None
+    return frappe.db.get_value("User", supervisor, "full_name") or supervisor
+
+
+def _request_signoff_for(doc):
+    """Open the sign-off request and notify the supervisor. Never fails the finish.
+
+    Returns the supervisor's full name for the learner-facing message, or None.
+
+    ``signoff.request_signoff`` throws when the site has nobody who could sign --
+    no reports-to, and no Training Manager with an Employee record. That is a real
+    configuration problem and worth an Error Log, but it is not worth reporting by
+    failing the last click of a course somebody has just finished, which is the one
+    thing this function's caller promises not to do. So it degrades to the generic
+    "ask a supervisor" message, which is exactly where the learner was before.
+    """
+    from erpnext_enhancements.training import signoff
+
+    try:
+        result = signoff.request_signoff(
+            course=doc.course,
+            assignment=getattr(doc, "assignment", None),
+            attempt=doc.name,
+        ) or {}
+    except Exception:
+        frappe.log_error(
+            f"Could not raise a sign-off request for {doc.user} on {doc.course}\n"
+            f"{frappe.get_traceback()}",
+            "Training sign-off",
+        )
+        return None
+
+    supervisor = result.get("supervisor")
+    if not supervisor:
+        return None
+    return frappe.db.get_value("User", supervisor, "full_name") or supervisor
 
 
 def _competent_signoff(doc):

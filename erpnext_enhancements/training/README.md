@@ -124,6 +124,16 @@ publishing, assignment), [`../api/training.py`](../api/README.md) (the learner
 runtime) and [`../api/training_ai.py`](../api/README.md) (quiz and checkpoint
 drafting). All four phases are built and merged.
 
+**"Built and merged" was doing a lot of work in that sentence until v1.334.0.**
+Six whitelisted functions across [`signoff.py`](signoff.py) and
+[`portal.py`](portal.py) shipped complete in v1.215.0 with **no caller of any
+kind** — no supervisor was ever notified, `Training Assignment.status` was never
+set to `Awaiting Sign-off` by any code path, and a client contact could only be
+put on the portal by building the User by hand. `tests/test_training_endpoint_surface.py`
+now fails the build for any whitelisted function in either module that nothing
+calls, and it walks the AST rather than grepping, so a comment *about* an
+endpoint does not count as a caller.
+
 ## Authoring a course
 
 Open a Training Course and press **Open Builder**, or go straight to

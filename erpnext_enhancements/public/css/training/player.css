@@ -559,6 +559,14 @@
 	background: var(--tr-surface-alt);
 }
 
+/* Who the request went to. Emphasised rather than muted, unlike the note below
+   it: this is the one line on the view that reports something the system has
+   actually done on the learner's behalf, and it is the answer to the question
+   they are on this screen to ask. */
+.tr-signoff-who {
+	font-weight: 600;
+}
+
 .tr-signoff-note {
 	color: var(--tr-muted);
 	font-size: 0.9rem;

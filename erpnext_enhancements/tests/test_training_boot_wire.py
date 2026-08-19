@@ -1028,7 +1028,21 @@ class TestFinishAttemptHasOneSerializer(unittest.TestCase):
     def test_the_shape_carries_score_on_every_path(self):
         keys = _returned_keys("_finished_attempt_payload")
         self.assertEqual(
-            keys, {"passed", "attempt", "status", "score", "outstanding", "completion"}
+            keys,
+            {
+                "passed",
+                "attempt",
+                "status",
+                # The ATTEMPT's status. "Awaiting Sign-off" is a Training Assignment
+                # status and cannot appear in it, which is why the two travel
+                # separately and are named for the record each comes from -- the
+                # player tested the wrong one until v1.334.0.
+                "assignment_status",
+                "signoff_with",
+                "score",
+                "outstanding",
+                "completion",
+            },
         )
 
     def test_the_reopened_path_reads_the_recorded_score(self):

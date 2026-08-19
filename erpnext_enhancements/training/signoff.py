@@ -200,9 +200,16 @@ def request_signoff(course, user=None, assignment=None, attempt=None):
 	)
 	if existing:
 		# Not an error. A learner pressing the button twice should be told the
-		# request is already with somebody, not shown a failure.
+		# request is already with somebody, not shown a failure -- and told *who*,
+		# which this row knows. Returning None for the supervisor here made a repeat
+		# request indistinguishable from an unroutable one to every caller.
 		_mark_assignment_awaiting(assignment, course, learner)
-		return {"signoff": existing, "created": False, "supervisor": None, "notified": False}
+		return {
+			"signoff": existing,
+			"created": False,
+			"supervisor": frappe.db.get_value(SIGNOFF_DOCTYPE, existing, "supervisor_user"),
+			"notified": False,
+		}
 
 	supervisor, source = resolve_supervisor(course, learner)
 	if not supervisor:

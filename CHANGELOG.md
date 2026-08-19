@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.334.0] - 2026-08-19
+
+### Added
+
+- **The sign-off round trip actually runs now.** `training/signoff.py` has held a
+  complete request-notify-record implementation since v1.215.0 and **nothing called any
+  of it**. The consequences ran further than "a missing button":
+
+  - Nothing called `request_signoff`, so no supervisor was ever told a learner was
+    waiting, and `_mark_assignment_awaiting` — the only writer of
+    `Training Assignment.status = "Awaiting Sign-off"` — never ran. Four places in
+    `player.js` and four more modules read that status; it was set by nothing.
+  - Nothing called `record_signoff`, which is where the *learner is notified*. The
+    obvious Desk path — fill in the outcome, press Submit — files a completely valid
+    attestation and tells nobody, while the learner sits on a screen that says they
+    are waiting for exactly this.
+  - Nothing called `get_signoff_queue`, whose docstring reads "for a supervisor's
+    dashboard".
+
+  Finishing the content now raises the request server-side, which is the honest
+  trigger: finishing *is* the learner saying they are ready, and a button would be one
+  more thing not to press. It fires only when the sign-off is the last thing
+  outstanding — raising it three lessons in would ping a supervisor about somebody who
+  has barely started. `Training Signoff` gains a form script with a **Record sign-off**
+  action and, like the Q&A form before it, a warning the moment `outcome` is edited
+  directly, because that is the path a supervisor will take and it is the silent one.
+  The list view calls the queue endpoint and shows what is waiting for you — not the
+  same thing as a saved filter, since the server resolves "may act on" differently for
+  a Training Manager than a supervisor and drops your own requests from either.
+
+- **The customer training portal is reachable.** `training/portal.py`'s three endpoints
+  were likewise callerless. `Contact` gains **Grant / Revoke training portal access**
+  (manager-only, matching `_require_manager`, with the welcome email off by default
+  because access is routinely prepared days before anyone wants the client to know),
+  and `Customer` gains a **Training** view answering the question the endpoint was
+  written for: are the people who operate this client's fountain trained, and has any
+  of it expired.
+
+- **Six Phase 4 doctypes and both Script Reports reach the Training workspace.**
+  `Training Signoff`, `Training Certificate`, `Training Badge`, `Training Badge Award`,
+  `Training Learner Stat` and `Training Question Thread` had no desk navigation at all,
+  so a supervisor told to record a sign-off had to know the doctype's name and type it
+  into the awesomebar. New `Verification`, `Recognition` and `Reports` cards; note that
+  a Card Break without a matching block in the workspace's `content` renders nowhere,
+  which is how a link can exist in the JSON and still be invisible.
+
+### Fixed
+
+- **The player tested an attempt's status against an assignment's vocabulary.**
+  `Training Attempt.status` is `In Progress / Passed / Failed / Abandoned`.
+  `"Awaiting Sign-off"` is a **`Training Assignment`** status and cannot appear in that
+  field — but `player.js` compared `state.status` against it in two places. Those
+  branches, and the whole `renderSignoff` view behind them, could not have fired no
+  matter what the server wrote. That is a separate defect from nothing setting the
+  status, and it would have outlived the fix for it. Both statuses now travel as
+  distinct keys named for the record each comes from, and the sign-off view names who
+  the request went to.
+
+- `signoff.request_signoff` returned `supervisor: None` when a draft request already
+  existed, making a repeat request indistinguishable from an unroutable one to every
+  caller. It returns the supervisor already on the row.
+
+### Tests
+
+- `EveryTrainingEndpointHasACallerTest` widens the existing Q&A reachability check to
+  `signoff.py` and `portal.py`. Two properties are deliberate: it scans **whole
+  modules**, so an endpoint added next year fails by default — the narrow scoping of
+  the original is precisely why it caught nothing while the same defect sat in two
+  sibling modules — and it matches on **AST references and comment-stripped JS**, never
+  raw text. Every module here carries long comments explaining the orphaning it guards
+  against, so a substring scan would be satisfied by prose about an endpoint and report
+  a caller that does not exist. Verified by removing the new wiring and confirming all
+  six reappear as orphans.
+
+
 ## [1.333.0] - 2026-08-19
 
 ### Fixed

@@ -335,6 +335,173 @@ class TheBoardIsReachableTest(unittest.TestCase):
         self.assertIn("row.is_me", src)
 
 
+class EveryTrainingEndpointHasACallerTest(unittest.TestCase):
+    """The same check as the Q&A one, widened to the modules that failed it.
+
+    ``EveryQaEndpointHasACallerTest`` was written for ``training/qa.py`` alone, and
+    that scoping is exactly why it caught nothing when the identical defect was
+    sitting in two sibling modules. Six whitelisted functions across
+    ``training/signoff.py`` and ``training/portal.py`` shipped in v1.215.0 and had
+    no caller of any kind until v1.334.0:
+
+    * **sign-off** — nothing raised a request, so no supervisor was ever notified
+      and ``Training Assignment.status`` was never moved to "Awaiting Sign-off" by
+      any code path. The player branches on that string in four places and its
+      whole sign-off view was unreachable. Nothing recorded a verdict through the
+      endpoint either, so the obvious Desk path filed a correct attestation and
+      never told the learner sitting on a "waiting for sign-off" screen.
+    * **portal** — a client contact could only be put on the portal by building
+      the User by hand and remembering the role, and nothing could answer "are the
+      people who operate this client's fountain trained?".
+
+    Scanning whole modules rather than naming functions is the point: an endpoint
+    added next year fails this by default, which is the property the narrower test
+    did not have.
+    """
+
+    MODULES = {
+        "training/signoff.py": "training.signoff",
+        "training/portal.py": "training.portal",
+    }
+
+    # Everything that could dial one. Deliberately broad -- a caller in an unusual
+    # place is still a caller, and the failure this guards against is "nowhere".
+    CALLER_PATHS = (
+        "api/training.py",
+        "api/training_author.py",
+        "www/training.html",
+        "public/js/training/player.js",
+        "public/js/training/training_portal_access.js",
+        "public/js/training/training_customer_view.js",
+        "training/doctype/training_signoff/training_signoff.js",
+        "training/doctype/training_signoff/training_signoff_list.js",
+        "training/doctype/training_assignment/training_assignment.py",
+        "hooks.py",
+    )
+
+    def _endpoints(self, relative):
+        names = []
+        source = (APP / relative).read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for dec in node.decorator_list:
+                target = dec.func if isinstance(dec, ast.Call) else dec
+                if getattr(target, "attr", "") == "whitelist":
+                    names.append(node.name)
+        return sorted(names)
+
+    @staticmethod
+    def _python_references(source):
+        """Attribute and name references only -- never comments or docstrings.
+
+        This distinction is the difference between a guard and a formality. Every
+        module here carries long comments explaining the very orphaning this test
+        exists to prevent, so a plain substring scan is satisfied by *prose about*
+        an endpoint and reports a caller that does not exist. Walking the AST means
+        only code counts.
+        """
+        found = set()
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Attribute):
+                found.add(node.attr)
+            elif isinstance(node, ast.Name):
+                found.add(node.id)
+        return found
+
+    @staticmethod
+    def _stripped_js(source):
+        """JS with its comments removed, for the same reason.
+
+        ``(?<!:)`` keeps ``https://`` in a string literal from truncating the rest
+        of its line, which would hide a real call sitting after a URL.
+        """
+        source = re.sub(r"/\*.*?\*/", " ", source, flags=re.S)
+        return re.sub(r"(?<!:)//[^\n]*", " ", source)
+
+    def _callers(self):
+        """Everything that could dial an endpoint, with commentary excluded."""
+        found = set()
+        blobs = []
+        for relative in self.CALLER_PATHS:
+            path = APP / relative
+            if not path.exists():
+                continue
+            source = path.read_text(encoding="utf-8")
+            if path.suffix == ".py":
+                found |= self._python_references(source)
+            else:
+                blobs.append(self._stripped_js(source))
+        return found, "\n".join(blobs)
+
+    def _is_called(self, name):
+        references, text = self._callers()
+        return name in references or name in text
+
+    def test_the_scan_finds_them(self):
+        for relative in self.MODULES:
+            with self.subTest(module=relative):
+                self.assertGreaterEqual(len(self._endpoints(relative)), 3)
+
+    def test_every_endpoint_is_reachable_from_somewhere(self):
+        orphans = []
+        for relative in self.MODULES:
+            orphans += [
+                f"{relative}::{name}"
+                for name in self._endpoints(relative)
+                if not self._is_called(name)
+            ]
+        self.assertEqual(
+            orphans,
+            [],
+            f"{orphans} are whitelisted and nothing calls them. That is how sign-off and the "
+            "customer portal shipped complete and did nothing for four months. Wire it or "
+            "delete it -- an endpoint with no caller is a maintained liability and, if it is "
+            "also allow_guest, an attack surface.",
+        )
+
+    def test_the_supervisor_can_record_from_the_desk(self):
+        js = APP / "training/doctype/training_signoff/training_signoff.js"
+        self.assertTrue(js.exists(), "Training Signoff has no form script")
+        self.assertIn("record_signoff", js.read_text(encoding="utf-8"))
+
+    def test_the_signoff_form_warns_that_a_plain_submit_does_not_notify(self):
+        """The same trap as the Q&A form, and the reason a button alone is not enough.
+
+        The controller is thorough, so filling the outcome in and pressing Submit
+        files a valid attestation. The notification lives in the endpoint, not in
+        the controller -- and the learner is on a screen that says they are waiting
+        for exactly this.
+        """
+        src = (APP / "training/doctype/training_signoff/training_signoff.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("does not notify", src)
+
+    def test_the_request_is_raised_when_the_learner_finishes(self):
+        """Not from a button. Finishing the content *is* the learner saying they are
+        ready, and a button would be one more thing to not press."""
+        src = API.read_text(encoding="utf-8")
+        self.assertIn("_request_signoff_for", src)
+        self.assertIn("signoff.request_signoff", src)
+
+    def test_the_awaiting_status_is_carried_to_the_client_separately(self):
+        """`Training Attempt.status` is In Progress / Passed / Failed / Abandoned.
+        "Awaiting Sign-off" is a Training Assignment status and cannot appear in it,
+        so the two travel as different keys named for the record each comes from."""
+        self.assertIn("assignment_status", API.read_text(encoding="utf-8"))
+        player = (APP / "public/js/training/player.js").read_text(encoding="utf-8")
+        self.assertIn("state.assignmentStatus", player)
+        self.assertNotIn('state.status === "Awaiting Sign-off"', player)
+
+    def test_the_form_scripts_are_registered(self):
+        """A form script that hooks.py does not list never loads, which would make
+        the buttons above true in the repo and absent in the desk."""
+        hooks = (APP / "hooks.py").read_text(encoding="utf-8")
+        self.assertIn("training/training_portal_access.js", hooks)
+        self.assertIn("training/training_customer_view.js", hooks)
+
+
 class TheClientStillPostsTest(unittest.TestCase):
     """The server rule is only safe because the client already obeyed it."""
 
