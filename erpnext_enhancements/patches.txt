@@ -734,3 +734,20 @@ erpnext_enhancements.patches.drop_stale_learning_tile
 # to save) and is exactly why `Received` was not relabelled "Fully Received". Safe twice
 # (create_custom_fields with update=True, from the same spec the create patch uses).
 erpnext_enhancements.patches.update_po_order_stage_options
+
+# Moves Order Stage out of More Info -> Order Status and up to the top of the Purchase Order
+# form, under the supplier (ER-2026-276347). The field spec lives in
+# po_order_stage.field_definition(), and NOTHING re-reads it without a patch entry -- the
+# field is is_system_generated, so no fixture sync touches it either. Editing that function
+# alone changes a file and ships nothing, which is indistinguishable from a change that
+# worked. Safe twice (create_custom_fields with update=True, from the one shared spec).
+erpnext_enhancements.patches.move_po_order_stage_to_header
+
+# Pins the Purchase Order list columns so Order Stage sits beside the status pill, where
+# ER-2026-276347 asked for it. `in_list_view` was already 1 and cannot place a column:
+# frappe derives the default column set from FIELD ORDER, and a custom field sorts after
+# every standard one, so the flag alone put the stage last. A List View Settings row is the
+# only lever on order -- and it is subtractive, keeping only the columns it names, which is
+# why the spec reproduces the five that were already showing. Does not overwrite a row
+# somebody configured through the Desk. Safe twice.
+erpnext_enhancements.patches.seed_po_list_columns

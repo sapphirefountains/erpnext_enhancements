@@ -119,13 +119,29 @@ def field_definition():
 	* **`allow_on_submit`.** Every transition the buyer cares about — ordered, confirmed,
 	  collected — happens after the order is submitted. Without this the field would be
 	  editable only in the one state where it is always `Created`, i.e. useless.
-	* **`insert_after: tracking_section`** puts it at the top of the Order Status section,
-	  above the `status` ERPNext computes. Deliberately not `insert_after: status`, which is
-	  already the anchor for `custom_approval_stamp_section`; two custom fields sharing an
-	  anchor resolve in an order nobody controls, and losing that race would drop this field
-	  inside the collapsible Approval section.
+	* **`insert_after: supplier_name`** puts it directly under the supplier at the top of
+	  the first tab. It began at `tracking_section` — the top of the Order Status section,
+	  above the `status` ERPNext computes — which is where it *belongs* by subject and the
+	  wrong place for it by use: that section is inside the More Info tab, behind a
+	  collapsed heading, so setting the stage cost four clicks and finding it cost knowing
+	  it was there (ER-2026-276347). Field order is also list-column order, and from
+	  position 118 the stage could never sit beside `status` in the list.
+
+	  Deliberately not `insert_after: status`, which is already the anchor for
+	  `custom_approval_stamp_section`; two custom fields sharing an anchor resolve in an
+	  order nobody controls, and losing that race would drop this field inside the
+	  collapsible Approval section.
 	* **`in_standard_filter`** is the actual feature for a list of a hundred-odd orders:
-	  "what am I waiting on" is a filter, not a scroll.
+	  "what am I waiting on" is a filter, not a scroll. It also earns the stage a group-by
+	  entry in the list sidebar for free — frappe builds that from the Link and Select
+	  fields carrying this flag.
+	* **`in_list_view`** is necessary and *not sufficient* for a list column. Frappe builds
+	  the default column set from field order, so the flag alone put the stage last; and a
+	  Select in a list cell is coloured by `frappe.utils.guess_colour`, which word-matches a
+	  fixed vocabulary (Open, Pending, Closed, Completed, Confirmed …) that none of the
+	  seven stage names hit — so all seven rendered the same grey. Position comes from the
+	  `List View Settings` row `seed_po_list_columns` writes, colour from
+	  `public/js/purchase_order_list.js`.
 	"""
 	return {
 		"fieldname": FIELD,
@@ -135,7 +151,7 @@ def field_definition():
 		# one of the stages and reports can rely on it.
 		"options": "\n".join(STAGES),
 		"default": DEFAULT_STAGE,
-		"insert_after": "tracking_section",
+		"insert_after": "supplier_name",
 		"allow_on_submit": 1,
 		"no_copy": 1,
 		"in_standard_filter": 1,
@@ -147,6 +163,42 @@ def field_definition():
 			"'Partially Fulfilled', and one that completes it sets 'Received'."
 		),
 	}
+
+
+def list_view_columns():
+	"""The pinned column set for the Purchase Order list, in order.
+
+	`in_list_view` alone gets a field *into* the default column set and gives no say over
+	*where*: frappe builds that set from field order, so the stage — a custom field, and
+	therefore appended after every standard one — came out last, behind Grand Total and the
+	two percent columns. ER-2026-276347 asked for it beside the status pill specifically,
+	and the only lever on column order is a `List View Settings` row, which
+	`seed_po_list_columns` writes from this list.
+
+	**Pinning is subtractive as well as ordering**, which is the part worth knowing before
+	editing this: frappe's `reorder_listview_fields` keeps only the columns named here and
+	drops the rest. So this deliberately reproduces the five columns the list already showed
+	— it adds Order Stage and takes nothing away. Grand Total, `per_billed` and
+	`per_received` carry `in_list_view` on erpnext's own doctype and were not rendering
+	before this; adding them here would be a change nobody asked for, arriving under the
+	banner of one that was.
+
+	The first entry is the title column. Frappe fixes that one in place regardless of what
+	this says — it is listed because the Desk's own List Settings dialog writes it, and a
+	row that does not look like the dialog's output invites someone to "fix" it.
+
+	`status_field` is not a fieldname. It is the sentinel frappe matches against the
+	computed indicator pill (erpnext's "To Receive and Bill" / "To Bill" / "Closed"), which
+	is a column type rather than a field.
+	"""
+	return [
+		{"label": "Supplier Name", "fieldname": "supplier_name"},
+		{"label": "Order Stage", "fieldname": FIELD},
+		{"type": "Status", "label": "Status", "fieldname": "status_field"},
+		{"label": "Date", "fieldname": "transaction_date"},
+		{"label": "Required By", "fieldname": "schedule_date"},
+		{"label": "Project", "fieldname": "project"},
+	]
 
 
 def backfill_stage_for(docstatus, status, per_received):
