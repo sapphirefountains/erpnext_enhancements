@@ -1886,6 +1886,18 @@ assistant_tools = [
 	"erpnext_enhancements.assistant_tools.save_water_design.SaveWaterDesign",
 	# v1.93.0 Water Engineering controls — read-only control-panel reader.
 	"erpnext_enhancements.assistant_tools.control_panel_status.ControlPanelStatus",
+	# v1.335.0 Inventory -- read-only Item naming advisor, implementing the ERPNext Item
+	# Naming Schema SOP (docs/item-naming-schema.md). ADVISORY ONLY: there is no Item
+	# doc_event anywhere in this app and nothing here blocks a save -- the SOP itself says
+	# compliance is procedural, and a third of the live catalogue would fail the comma rule.
+	#
+	# All judgement lives in the pure inventory_enhancements.item_naming_rules (no frappe,
+	# so CI actually executes it); inventory_enhancements.item_naming does the reads. That
+	# split is load-bearing here rather than stylistic: block occupancy is a character-level
+	# rule that a MariaDB regex gets wrong in both directions -- anchored, it reports
+	# PDT-0008 free while the sole record of that product holds it; unanchored, the
+	# five-digit "(deleted)" family collapses onto four-digit slots that are genuinely free.
+	"erpnext_enhancements.assistant_tools.item_naming_check.ItemNamingCheck",
 ]
 
 # Paths are relative to the app package dir (frappe.get_app_path).

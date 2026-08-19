@@ -7,6 +7,142 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.335.0] - 2026-08-19
+
+### Added
+
+- **The Item naming standard is now something a machine can check, and the check is honest
+  about what it cannot decide.** Sapphire Fountains has a new controlled SOP — *ERPNext Item
+  Naming Schema* v1.0, Process Owner Purchasing Agent — that defines a seven-segment
+  `item_name` schema, four Item Code families, and an approved category vocabulary. Until now
+  it lived only as a Word document, and the way it got applied was a long prompt someone
+  pasted into a Claude session by hand.
+
+  That arrangement had two problems. The prompt hand-authored SQL for each check, and the SQL
+  was wrong. And it embedded a snapshot of the catalogue — how many items exist, which
+  `PDT-` numbers are taken, which records are duplicates — that was stale the day it was
+  written.
+
+  This release lands four things: [`docs/item-naming-schema.md`](docs/item-naming-schema.md)
+  (the SOP converted, with the places live data disagreed with it recorded inline),
+  `inventory_enhancements/item_naming_rules.py` (the schema as executable rules — no Frappe,
+  no I/O, so CI actually runs it), `inventory_enhancements/item_naming.py` (the reads), and
+  the `item_naming_check` MCP tool with the `ee-item-naming-validator` assistant skill in
+  front of it.
+
+  **It is advisory, and deliberately so.** There is no `Item` doc_event and nothing blocks a
+  save. The SOP says compliance is procedural because ERPNext applies no naming series to
+  Item, and a third of the live catalogue would fail the comma rule today (190 of 581 names
+  carry no comma at all) — anything that blocked a save would fire constantly on legitimate
+  edits to records that were already there. The tool reports; a human acts.
+
+- **Two ways to get `PDT-` block occupancy wrong, both of which were live.** This is why the
+  arithmetic is in Python and asserted in CI rather than written as a MariaDB regex.
+
+  The obvious query is `WHERE item_code REGEXP '^PDT-[0-9]{4}$'`. It reports **`PDT-0008` as
+  free**, because the `$` rejects the trailing text on
+  `PDT-0008 VFD BYPASS W/MOTOR PROTECTION, 5HP - copy` — which is the *only* record of the 5HP
+  VFD bypass. Hand that answer to somebody and they reissue a number that is in use.
+
+  Loosen the anchor to fix it and it breaks the other way. `CAST(REGEXP_SUBSTR(item_code,
+  '[0-9]+') AS UNSIGNED)` swallows the fifteen five-digit QuickBooks-era codes —
+  `PDT-00000 (deleted)` through `PDT-00013 (deleted)`, `PDT-00040 (deleted)`, and the live
+  placeholder `PDT-00051` — collapsing them onto four-digit slots 0–13, 40 and 51, every one
+  of which is genuinely free. **`PDT-0051` and `PDT-00051` are different items**, and the one
+  that looks like a typo is the real level sensor.
+
+  `item_naming_rules.block_slot()` is the single place that boundary is decided: exactly the
+  declared width in digits, **not followed by another digit**, trailing text allowed. Trailing
+  text is allowed because a number is taken however badly the record is named; a further digit
+  is refused because that is a different code family. It is unit-tested against those literal
+  production strings rather than against a paraphrase, because every defect here is a defect
+  of *character* and an invented fixture rounds exactly those off.
+
+- **A third trap, in the name checks: MariaDB's PAD SPACE collation makes the obvious
+  trailing-whitespace query always false.** `SELECT COUNT(*) FROM tabItem WHERE item_name <>
+  TRIM(item_name)` returns **0** on a corpus that has three offenders, because non-binary
+  string comparison ignores trailing spaces. `item_name LIKE '%,'` returns **0** against a real
+  trailing comma, because that record — `PLATE, WALL, COROSIVE RESISTANT, STAINLESS STEEL, ` —
+  has a space after it. Both need `BINARY` or a `TRIM` on the left-hand side, and any
+  acceptance criterion written the naive way passes vacuously while the defect sits there.
+  The checks are done in Python, on the string, where a trailing space is still a character;
+  WI-070's acceptance criteria are all written in the corrected form with a note saying why. It is
+  also now a bullet in `CLAUDE.md`'s Gotchas list, because it generalises past this doctype:
+  the failure direction is *passes*, so any check written the obvious way reports clean
+  forever and nobody goes looking.
+
+- **What the tool refuses to guess.** Only three of the seven name segments are decidable:
+  CATEGORY has a controlled vocabulary, SIZE and RATING have recognisable token shapes.
+  SUB-CATEGORY, KEY FEATURE, MATERIAL and PACKAGING have neither, and nothing can tell that
+  `BRASS` in position 4 is a MATERIAL while `BRASS` in position 3 is a KEY FEATURE. Segments
+  come back positionally with `slots_are_positional: true` and no claim to have been
+  classified. Likewise there is no `stock_uom` finding — the `Unit` / `Nos` split is a
+  governance question the SOP raises at C-10 and nobody has yet answered, and a check that
+  fired on about 40% of correct records is a check people learn to ignore.
+
+  Block occupancy is reported and never allocated. The blocks are sparse and *semantic* — PDT
+  spans 0 to 701 — so which one a new product belongs in is a judgement about what the product
+  is, and `MAX() + 1` would be a confident wrong answer.
+
+- **Every count is read at call time; nothing is written down.** This is the rule the whole
+  change is built around, and the catalogue proved the point while the work was being done.
+  The SOP's audit counted 713 Item records. A re-check the same morning returned 715. A second
+  re-check a few hours later returned 716 — someone had created `10591716` at 10:51 that
+  morning. Nothing was wrong with the audit; the catalogue is a live table people add to during
+  the working day. The approved category vocabulary *is* a constant, because it is policy
+  rather than measurement, and the tool serves it so there is exactly one copy of it.
+
+  Relatedly: **`disabled` discriminates nothing on this doctype.** All 716 rows carry
+  `disabled = 0`. A filter on it returns everything or nothing depending which way it was
+  written, and both look plausible. The only marker separating a live record from a QuickBooks
+  tombstone is the `(deleted)` suffix in the code.
+
+- **[WI-070](work-items/WI-070-item-naming-hygiene.md) — the cleanup backlog the SOP
+  identified, sequenced.** 135 of the catalogue's rows are a QuickBooks shadow master: every
+  one carries a `(deleted)` suffix and every one has `item_name` identical to `item_code`.
+  Retiring them is the cheapest action available — it removes 135 of the 190 self-named rows
+  and 135 of the 210 non-uppercase names in one step, leaving 75 live names to normalise
+  rather than 210.
+
+  It is sequenced behind WI-028 for a reason found in the data: 218 Sales Invoice lines, 74
+  Quotation lines, 15 Purchase Order lines and 7 Purchase Invoice lines still point at
+  `(deleted)` codes. Every one of those parents is a **draft** — zero submitted documents,
+  zero Stock Ledger Entries — and WI-028 bulk-deletes the draft Sales Invoice and Quotation
+  mirror, so running the retirement first means carefully preserving 45 codes of which 32 stop
+  being referenced days later.
+
+### Fixed
+
+- **Three defects in the SOP itself, recorded rather than silently patched.** The document is
+  not ours to amend, so `docs/item-naming-schema.md` carries the SOP's text unaltered with
+  dated verification notes beside the places it disagrees with production.
+
+  **D-7 is not executable as written.** It says to retire the `PDT-0008 … - copy` record after
+  confirming it redundant "against the numbered `PDT-` record". There is no numbered `PDT-0008`
+  in `tabItem` — the copy is the only record of that product, and following D-7 literally would
+  delete it. It needs renaming in place instead, and 0008 must never be reissued.
+
+  **Tier 3 sends `SUBPANELT` to `PANEL, SUB`, and `PANEL` is on neither Tier 1 nor Tier 2** —
+  so the SOP's own prescribed replacement fails its own Step 4.1.
+  `item_naming_rules.TIER3_REPLACEMENT_UNAPPROVED` computes that set rather than listing it, so
+  a validator can never hand somebody a correction that would itself be rejected.
+
+  **§5 Step 1.3 says five duplicate pairs; Appendix D-3 lists three** — and the two are
+  different questions. Name collisions are mechanical: under the normalisation this app uses
+  (uppercase, then strip every non-alphanumeric character) there are four colliding groups. The
+  D-3 VARIONAUT pair collides on *nothing*, because the same pump is described in two word
+  orders — which is precisely the case no normalisation can catch, and why the tool also
+  returns scored near-neighbours and leaves the judgement to a person. A duplicate count is a
+  property of the normalisation rule, not of the data; the payload states the rule it used.
+
+  Also newly recorded: eight unapproved leading words live on two or more records each that
+  Tier 3 does not list — `BATTERIES`, `FERRULES`, `PENS`, `SCOURING PADS`, `PRINTER FILAMENT`,
+  `SHARPIES`, `UNI-INSERT`, `UNI-SHIM`. All routed to the Process Owner in WI-070 bucket G
+  rather than resolved here.
+
+- **`PLAN.md`'s companion-documents line was already stale**, claiming 66 work items when 69
+  existed. Corrected to 70 in the same pass rather than made one worse.
+
 ## [1.334.1] - 2026-08-19
 
 ### Fixed

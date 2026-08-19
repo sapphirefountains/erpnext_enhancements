@@ -16,6 +16,7 @@ assistants, registered via the `assistant_skills` hook in `hooks.py`.
 | `maintenance_dispatcher.md` | Maintenance scheduling and dispatch workflow |
 | `time_tracking_analyst.md` | Time-tracking analysis |
 | `ai_write_confirmation.md` | How the AI write-confirmation gate works, from the assistant's point of view |
+| `item_naming_validator.md` | Checking a proposed Item Code and Item Name against the naming SOP before the record is created |
 
 ## Skills are prompts, not permissions
 

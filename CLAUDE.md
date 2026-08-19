@@ -81,6 +81,18 @@ Verified, and all of them expensive to rediscover:
   one you assume.** Check which you are on before choosing the predicate, and prefer a
   backfill keyed on the *rule the writer applies* over one keyed on emptiness: emptiness is a
   fact about the schema migration, not about the data.
+- **A trailing-space check written in SQL is always false, so the query reports clean on data
+  that is genuinely broken.** MariaDB's default collation is PAD SPACE: non-binary string
+  comparison ignores trailing spaces, so `WHERE item_name <> TRIM(item_name)` returns **0** on
+  a table with three offenders. Two siblings of the same trap — `LIKE '%,'` misses a trailing
+  comma when the row also ends in a space (`PLATE, WALL, ... STAINLESS STEEL, ` does), and
+  `col <> UPPER(col)` never fires under a `_ci` collation, so a case audit reports full
+  compliance. All three were live on `tabItem` and all three were found only because the SOP's
+  own hand-counted figures disagreed with the query (v1.335.0). Use `BINARY`, compare
+  `LENGTH()`, or do the check in Python where a trailing space is still a character —
+  `inventory_enhancements/item_naming_rules.py` takes the last route and says why. **Note the
+  failure direction: it passes.** An acceptance criterion or KPI written the obvious way
+  reports clean forever and nobody goes looking.
 - **A `www/` controller whose filename contains a hyphen is never imported by Frappe**, so
   its `get_context()` silently never runs. `stripe-return.py` was broken this way from the
   day it was written. `scripts/check_www_controllers.py` guards it in CI.

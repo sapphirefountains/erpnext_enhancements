@@ -87,6 +87,12 @@ EXPLICIT_READONLY = {
     "kpi_dashboard_status",
     "project_pickup_route",
     "training_course_catalog",
+    # v1.335.0 -- the Item naming advisor. Read-only by construction: it composes
+    # frappe.get_list reads and a pure rules module, and there is no Item doc_event
+    # for it to trip. Listed here rather than left to FAC's category detector for the
+    # reason the training tools record above -- unclassified, is_mutating() falls to
+    # the fail-closed default and the tool answers with a confirmation card.
+    "item_naming_check",
 }
 
 # This app's own *write* tools (assistant_tools/<name>.py). They must gate even
