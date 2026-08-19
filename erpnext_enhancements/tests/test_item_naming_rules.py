@@ -512,5 +512,90 @@ class ProductionCorpusTest(unittest.TestCase):
 			)
 
 
+class CorpusAuditTest(unittest.TestCase):
+	"""`audit()` — the entry point every non-AI surface goes through."""
+
+	def test_collision_groups_finds_the_four_way_and_orders_worst_first(self):
+		groups = rules.collision_groups(CORPUS)
+		self.assertEqual(groups[0]["count"], 4, "the GMCB four-way is the worst group and must lead")
+		self.assertEqual(
+			groups[0]["codes"], ["GMCB-1B-1", "GMCB-1B-10", "GMCB-1B-6", "GMCB-1C-10"]
+		)
+		self.assertTrue(all(g["count"] > 1 for g in groups), "a group of one is not a collision")
+
+	def test_a_record_is_told_who_it_collides_with_not_merely_that_it_does(self):
+		rows = {row["item_code"]: row for row in rules.audit(CORPUS, BRANDS)}
+		findings = [
+			f for f in rows["GMCB-1B-1"]["findings"] if f["code"] == rules.DUPLICATE_NAME_NORMALISED
+		]
+		self.assertEqual(len(findings), 1)
+		self.assertEqual(sorted(findings[0]["matches"]), ["GMCB-1B-10", "GMCB-1B-6", "GMCB-1C-10"])
+
+	def test_audit_covers_every_record_and_never_throws(self):
+		rows = rules.audit(CORPUS, BRANDS)
+		self.assertEqual(len(rows), len(CORPUS))
+		self.assertEqual({r["item_code"] for r in rows}, {r["item_code"] for r in CORPUS})
+
+	def test_audit_does_no_per_row_similarity_scoring(self):
+		"""The O(n²) regression guard, and the reason it is worth a test of its own.
+
+		`evaluate()` scores near-neighbours by document frequency over the WHOLE corpus, so it
+		costs a pass per candidate. Calling it once per record — which is the obvious
+		simplification, and does not look wrong — turns a linear audit into a quadratic one.
+		Poisoning `similar_records` is the only way to assert the absence of a call.
+		"""
+		original = rules.similar_records
+		calls = []
+
+		def poisoned(*args, **kwargs):
+			calls.append(args)
+			raise AssertionError(
+				"audit() called similar_records — that is O(n) per row and makes the audit "
+				"quadratic. Near-neighbour scoring belongs to evaluate(), one candidate at a time."
+			)
+
+		rules.similar_records = poisoned
+		try:
+			rules.audit(CORPUS, BRANDS)
+		finally:
+			rules.similar_records = original
+		self.assertEqual(calls, [])
+
+	def test_evaluate_still_does_score_neighbours(self):
+		"""The other half of the same rule — the guard above must not be satisfiable by
+		deleting the feature."""
+		result = rules.evaluate(
+			{"item_code": "2622-015", "item_name": 'VALVE, BALL, UTILITY, SOC, PVC, 1-1/2", EPDM'},
+			CORPUS,
+		)
+		self.assertTrue(result["similar"], "evaluate() must still return near neighbours")
+
+	def test_tombstones_are_flagged_by_the_suffix_not_by_disabled(self):
+		"""Every live row carries `disabled = 0`, so the suffix is the only marker there is."""
+		rows = {row["item_code"]: row for row in rules.audit(CORPUS, BRANDS)}
+		self.assertTrue(rows["PDT-00000 (deleted)"]["is_tombstone"])
+		self.assertFalse(rows["PDT-0009"]["is_tombstone"])
+		self.assertFalse(
+			rows[PDT_00051_PLACEHOLDER]["is_tombstone"],
+			"PDT-00051 is a live placeholder, not a tombstone — it carries no (deleted) suffix",
+		)
+
+	def test_sort_puts_stop_above_fix_above_pass(self):
+		rows = sorted(rules.audit(CORPUS, BRANDS), key=rules.audit_sort_key)
+		seen = [rules.SEVERITY_ORDER.get(r["verdict"], 9) for r in rows]
+		self.assertEqual(seen, sorted(seen), "rows must be ordered worst-first")
+
+	def test_summarise_counts_live_rows_separately(self):
+		summary = rules.summarise(rules.audit(CORPUS, BRANDS))
+		self.assertEqual(summary["rows"], len(CORPUS))
+		self.assertEqual(summary["live_rows"] + summary["tombstone_rows"], summary["rows"])
+		self.assertEqual(summary["normalisation"], rules.NORMALISATION)
+
+	def test_summarise_reports_no_compliance_figure_for_an_empty_corpus(self):
+		"""None rather than 0.0 or 100.0 — both of those are claims, and neither is true of
+		nothing."""
+		self.assertIsNone(rules.summarise([])["compliance_pct"])
+
+
 if __name__ == "__main__":
 	unittest.main()

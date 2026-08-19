@@ -135,3 +135,57 @@ def check_caller_upsert_idempotent():
 	_cleanup()
 	frappe.db.commit()
 	return "OK — repeated caller resolution leaves Customer/Contact untouched"
+
+
+def check_item_naming_reads():
+	"""Prove the three live reads behind the Item naming advisor. Read-only, writes nothing.
+
+	    bench --site <site> execute erpnext_enhancements.dev_checks.check_item_naming_reads
+
+	The rules themselves run bench-free in ``tests/test_item_naming_rules`` and are exercised on
+	every push. What CI structurally cannot reach is the I/O around them, there being no Frappe
+	integration-test job in this repo — so this covers exactly the three things that only a real
+	bench can answer, and nothing the unit suite already proves.
+	"""
+	from erpnext_enhancements.inventory_enhancements import item_naming
+	from erpnext_enhancements.inventory_enhancements import item_naming_rules as rules
+
+	corpus, meta = item_naming.read_corpus()
+	assert corpus, "read_corpus returned nothing — the catalogue is not empty"
+	assert meta["total"] >= meta["visible"], f"visible {meta['visible']} exceeds total {meta['total']}"
+	# The honesty property: a permission-filtered read must SAY it was filtered, or a caller
+	# reads "no duplicate found" as a fact about the catalogue rather than about themselves.
+	assert meta["permission_filtered"] == (meta["visible"] < meta["total"]), (
+		f"permission_filtered={meta['permission_filtered']} disagrees with "
+		f"visible={meta['visible']} of total={meta['total']}"
+	)
+
+	# The reserved-code union. A Configurable Product holds its PDT- number from the moment it
+	# is created and its Item is generated from that number afterwards, so an Item-only scan has
+	# a window where the number is allocated and invisible.
+	reserved = item_naming.read_reserved_codes()
+	assert "PDT" in reserved and "SRV" in reserved, f"reserved prefixes missing: {sorted(reserved)}"
+	if frappe.db.exists("DocType", "Configurable Product"):
+		configured = frappe.get_all("Configurable Product", pluck="name")
+		missing = [c for c in configured if c not in reserved["PDT"]]
+		assert not missing, f"Configurable Products absent from PDT occupancy: {missing}"
+
+	# The whole corpus through the whole rule set. The catalogue is full of malformed strings —
+	# a validator that throws on the records it exists to find is worse than none.
+	result = item_naming.audit_corpus(include_deleted=True)
+	assert result["summary"]["rows"] == len(corpus), "audit dropped rows"
+	pct = result["summary"]["compliance_pct"]
+	assert pct is None or 0.0 <= pct <= 100.0, f"compliance_pct out of range: {pct}"
+
+	# And the one-candidate path, which is the tool's and the form's.
+	sample = corpus[0]["item_code"]
+	one = item_naming.inspect_item_naming(item_code=sample, item_name=corpus[0].get("item_name"))
+	assert one["success"], "inspect_item_naming refused a record read straight out of the corpus"
+	assert one["verdict"] in (rules.VERDICT_PASS, rules.VERDICT_FIX, rules.VERDICT_STOP), one["verdict"]
+
+	return (
+		f"OK — {meta['visible']} of {meta['total']} Items readable, "
+		f"{result['summary']['tombstone_rows']} tombstones, "
+		f"compliance {pct if pct is None else round(pct, 1)}%, "
+		f"{len(reserved['PDT'])} codes in PDT occupancy"
+	)

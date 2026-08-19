@@ -7,6 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.337.0] - 2026-08-19
+
+### Added
+
+- **The item-naming check had exactly one caller, and it was an LLM.** v1.335.0 landed the SOP
+  as executable rules and wired them to an MCP tool. That made the check available to anyone
+  holding a conversation with an assistant and to nobody else — invisible in the Desk, absent
+  from the Item form where records are actually created, and unmeasurable over time.
+
+  The engine was never the problem. `inventory_enhancements/item_naming_rules.py` imports only
+  `re` and `typing`, takes plain dicts, and is executed on every push against verbatim
+  production strings. What was missing was reach. This release adds four more callers of that
+  same engine and one deliberate AI affordance beside them.
+
+  **No new rules anywhere.** Every surface is a thin caller. Two definitions of "compliant"
+  that disagree by one row is a bug report nobody can close, so the report, the form, the KPI
+  and the MCP tool all go through `audit()` or `check_item()` and none of them re-implements a
+  judgement in SQL.
+
+- **Item Naming Audit** — a Script Report under Inventory Enhancements, and the work list WI-070
+  is executed from. Sorted worst-first: a STOP (a duplicate, a name four records share, a code
+  that collides) sits above a FIX (a record that is merely untidy), because an alphabetical
+  list buries the first behind the second and the exercise is abandoned on day two. The 135
+  QuickBooks tombstones are hidden by default — they are 100% `item_code = item_name`, so they
+  fail nearly every check and would otherwise *be* the list, and they are one batch retirement
+  rather than 135 decisions.
+
+  It ships without a bulk-fix toolbar, unlike `Account Data Quality` which has one. Almost
+  nothing here is that shape: which amperage a breaker is, which of two duplicate records is
+  the real part, and whether a code and name are swapped are judgements that need a vendor
+  catalogue open. The one genuinely mechanical pass — uppercasing 75 names — belongs to WI-070
+  bucket C, where it ships with the rollback export a bulk write needs.
+
+- **An advisory on the Item form**, with two buttons under *Naming*. The form is where bad
+  records are created, so it is where the check is worth the most.
+
+  The split between them is the whole design. `refresh` runs `mode="record"` — the checks that
+  read only the record in hand — and reads **no corpus at all**; a full check on every form
+  open would read the entire catalogue every time anybody so much as looked at an Item. Only
+  **Check naming** runs `mode="full"`, adding duplicates, block occupancy and scored
+  neighbours, and only when somebody has asked.
+
+  Still advisory, and still deliberately: no `Item` doc_event exists anywhere in this app,
+  nothing calls `frappe.validated = false`, and no save is interrupted. The SOP says compliance
+  is procedural, and a third of the live catalogue would fail the comma rule today.
+
+- **Check with Triton** — a second opinion, scoped to the parts a rule cannot decide. The
+  deterministic check runs **first** and its findings go into the prompt as context, declared
+  authoritative. Triton is asked only for what `item_naming_rules` explicitly refuses to guess:
+  parsing a vendor description into the seven segments, choosing a CATEGORY from Appendix A,
+  deciding whether a near-neighbour is the same physical part under a different code, and
+  telling a swapped code/name from a merely wrong one.
+
+  That last one is the reason the button exists. The VARIONAUT pair — `4010052576503` and
+  `57650`, the same pump under two codes and two word orders — collides on *nothing* under any
+  normalisation, and no amount of regex will ever find it. It needs judgement, and now there is
+  somewhere to get judgement that is not a person reading 581 rows.
+
+  Declaring the findings authoritative in the prompt is not politeness. Without it the model
+  re-litigates them, and a confident second opinion that contradicts a regex is worse than no
+  second opinion at all: the reader cannot tell which half to trust.
+
+- **`item_naming_compliance_pct`** on the nightly Product snapshot, with a seeded `KPI Target`.
+  `snapshots.py` documents why the target matters — an ungraded metric renders as a plain grey
+  number nobody disbelieves, which is how a labour KPI read 3600× high for months. 100 is
+  seeded because for a *compliance* percentage that is the definition rather than a chosen
+  threshold; deciding some level of non-compliance is acceptable is the Process Owner's call
+  and they can lower the row.
+
+### Changed
+
+- **`item_naming_rules` gained a corpus entry point, and it is not `evaluate()` in a loop.**
+  `evaluate()` scores near-neighbours by inverse document frequency across the whole corpus —
+  right for one candidate, and O(n) per candidate, so running it per record makes an audit
+  quadratic. `audit()` instead does one pass of the per-record checks plus **one** grouping
+  pass for name collisions, and is linear.
+
+  The obvious simplification here is to call `evaluate` per row, and it does not look wrong —
+  it looks like reuse. So `tests/test_item_naming_rules.py` poisons `similar_records` and
+  asserts `audit()` never reaches it, with a companion test asserting `evaluate()` still does,
+  so the guard cannot be satisfied by deleting the feature.
+
+### Fixed
+
+- **A local check that could not see a live one.** `item_naming.read_corpus` goes through
+  `frappe.get_list`, which applies DocPerms — correct, and it means a user who cannot see every
+  Item gets a duplicate check against the subset they can see. "No duplicate found" then means
+  "none that you can see", which is a different claim. Every payload now carries `visible`
+  beside `total`, the report says so in its header when they differ, and
+  `dev_checks.check_item_naming_reads` asserts the flag agrees with the counts rather than
+  being decorative.
+
 ## [1.336.0] - 2026-08-19
 
 ### Added
