@@ -597,5 +597,95 @@ class CorpusAuditTest(unittest.TestCase):
 		self.assertIsNone(rules.summarise([])["compliance_pct"])
 
 
+class SelfDuplicateTest(unittest.TestCase):
+	"""A record is not its own duplicate — and a proposal that collides still is.
+
+	Both halves matter, and the second is why this class exists rather than a single
+	assertion. The bug (v1.337.0) was that `evaluate` never excluded the candidate's own
+	code, so every saved Item matched itself on `item_code` and came back STOP. The obvious
+	fix — always exclude — would silently destroy the check the whole feature is *for*:
+	somebody about to re-create a record that already exists. The two cases are opposite
+	readings of the same corpus and only the caller knows which one it is asking.
+	"""
+
+	SAVED = {
+		"item_code": "806-020",
+		"item_name": 'ELBOW, 90, SOC, PVC, 2" SCH80',
+		"item_group": "Products",
+		"stock_uom": "Unit",
+	}
+
+	def test_a_saved_record_is_not_its_own_duplicate(self):
+		result = rules.evaluate(self.SAVED, CORPUS, BRANDS, existing=True)
+		self.assertEqual(result["duplicates"]["exact"], [])
+		self.assertNotIn(rules.DUPLICATE_CODE_EXACT, codes_of(result["findings"]))
+		self.assertEqual(result["verdict"], rules.VERDICT_PASS, result["findings"])
+
+	def test_a_proposal_that_collides_is_still_a_stop(self):
+		"""The half a careless fix would delete. `item_code` is the primary key, so this is
+		somebody about to re-create a record that is already there — the failure SOP §5
+		Step 1.3 opens with."""
+		result = rules.evaluate(self.SAVED, CORPUS, BRANDS, existing=False)
+		self.assertEqual([d["item_code"] for d in result["duplicates"]["exact"]], ["806-020"])
+		self.assertIn(rules.DUPLICATE_CODE_EXACT, codes_of(result["findings"]))
+		self.assertEqual(result["verdict"], rules.VERDICT_STOP)
+
+	def test_a_saved_record_does_not_collide_with_its_own_name_either(self):
+		"""The name check has the same shape and would have had the same bug."""
+		result = rules.evaluate(self.SAVED, CORPUS, BRANDS, existing=True)
+		self.assertEqual(result["duplicates"]["normalised_name"], [])
+		self.assertNotIn(rules.DUPLICATE_NAME_NORMALISED, codes_of(result["findings"]))
+
+	def test_a_saved_record_still_sees_a_real_name_collision(self):
+		"""Excluding itself must not excuse it. Four breakers share one name; re-checking one
+		of them must still report the other three."""
+		row = next(r for r in CORPUS if r["item_code"] == "GMCB-1B-1")
+		result = rules.evaluate(
+			{"item_code": row["item_code"], "item_name": row["item_name"],
+			 "item_group": row["item_group"], "stock_uom": "Nos"},
+			CORPUS, BRANDS, existing=True,
+		)
+		matched = {r["item_code"] for r in result["duplicates"]["normalised_name"]}
+		self.assertEqual(matched, {"GMCB-1B-6", "GMCB-1B-10", "GMCB-1C-10"})
+		self.assertEqual(result["verdict"], rules.VERDICT_STOP)
+
+	def test_self_exclusion_is_exact_not_normalised(self):
+		"""The subtle half. Excluding by the normalised code would also drop a genuine
+		punctuation-variant sibling — which is precisely the collision
+		`duplicate_code_normalised` exists to report, so the exclusion would have quietly
+		disabled another check while fixing this one."""
+		corpus = list(CORPUS) + [
+			{"item_code": "806020", "item_name": "ELBOW, 90, SOC, PVC, 2 INCH", "item_group": "Products"}
+		]
+		result = rules.evaluate(self.SAVED, corpus, BRANDS, existing=True)
+		self.assertEqual(
+			[r["item_code"] for r in result["duplicates"]["normalised_code"]],
+			["806020"],
+			"a sibling differing only in punctuation must survive self-exclusion",
+		)
+
+	def test_a_record_is_never_its_own_nearest_neighbour(self):
+		"""True in both modes — a proposal whose code is taken is reported by `duplicates`,
+		and listing it again at a score of 1.0 tells the reader nothing."""
+		for existing in (True, False):
+			result = rules.evaluate(self.SAVED, CORPUS, BRANDS, existing=existing)
+			self.assertNotIn(
+				"806-020", [r["item_code"] for r in result["similar"]], f"existing={existing}"
+			)
+
+	def test_block_occupancy_already_drew_this_distinction(self):
+		"""`check_block` has always excluded the record from its own slot. This pins that the
+		two agree, so a future edit cannot fix one and regress the other."""
+		occupied = rules.occupancy([r["item_code"] for r in CORPUS], "PDT")
+		findings, _report = rules.check_block("PDT-0009", occupied)
+		self.assertEqual(findings, [], "a record must not occupy its own slot against itself")
+
+	def test_the_payload_states_which_question_was_asked(self):
+		"""A reader cannot interpret a duplicate result without knowing which mode produced
+		it, so the answer carries the flag."""
+		self.assertTrue(rules.evaluate(self.SAVED, CORPUS, BRANDS, existing=True)["existing"])
+		self.assertFalse(rules.evaluate(self.SAVED, CORPUS, BRANDS)["existing"])
+
+
 if __name__ == "__main__":
 	unittest.main()

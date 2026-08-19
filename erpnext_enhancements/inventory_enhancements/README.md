@@ -75,6 +75,17 @@ per-record checks plus one grouping pass for collisions. `tests/test_item_naming
 `similar_records` to assert `audit()` never reaches for it, because the obvious simplification
 does not look wrong.
 
+### A proposal and a saved record ask opposite questions
+
+`evaluate(..., existing=)` is not a nicety. `item_code` is the primary key, so an exact code
+match in the corpus means *a collision* when checking a proposed new Item and *this very row*
+when re-checking a saved one. Getting it wrong made every saved Item a STOP (v1.337.1). The form
+always sends `existing: 1`; the MCP tool exposes it and defaults to false.
+
+Self-exclusion is matched on the **exact** code, never the normalised one — otherwise it would
+also drop a punctuation-variant sibling, which is the collision `duplicate_code_normalised`
+exists to find.
+
 ### The Triton button
 
 `item_naming_triton.py` runs the deterministic check **first** and sends its findings to Triton as

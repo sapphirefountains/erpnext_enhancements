@@ -35,6 +35,11 @@ function ina_args(frm) {
 		item_name: frm.doc.item_name,
 		item_group: frm.doc.item_group,
 		stock_uom: frm.doc.stock_uom,
+		// Everything here runs on a SAVED record — `refresh` returns early when the form is
+		// new — so an exact code match in the corpus is this row, not a collision with a
+		// different one. Without this every saved Item reported as a duplicate of itself and
+		// the verdict was always STOP, which carries no information at all.
+		existing: 1,
 	};
 }
 
