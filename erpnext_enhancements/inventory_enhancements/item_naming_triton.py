@@ -88,7 +88,7 @@ def naming_review_available() -> dict:
 
 
 @frappe.whitelist(methods=["POST"])
-def review_item(item_code=None, item_name=None, item_group=None, stock_uom=None) -> dict:
+def review_item(item_code=None, item_name=None, item_group=None, stock_uom=None, existing=False) -> dict:
 	"""Deterministic check first, then Triton on what is left. Persists nothing.
 
 	Returns ``{"verdict", "findings", "text"}`` — the local verdict and findings are the
@@ -111,6 +111,7 @@ def review_item(item_code=None, item_name=None, item_group=None, stock_uom=None)
 		item_group=item_group,
 		stock_uom=stock_uom,
 		mode="full",
+		existing=existing,
 	)
 
 	try:

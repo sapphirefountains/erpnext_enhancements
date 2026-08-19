@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.337.1] - 2026-08-19
+
+### Fixed
+
+- **Every saved Item reported itself as a duplicate, so the naming check always said STOP.**
+  Opening any Item and using **Naming → Check naming** returned
+  `duplicate_code_exact: An Item with this exact code already exists` — naming the record you
+  were looking at. The record was matching itself.
+
+  `evaluate()` was written for one caller and one question: *this Item does not exist yet — may
+  I create it?* For that question a code already in the catalogue is a collision and a STOP,
+  which is the failure the SOP opens with, so it passed `exclude_code=None` deliberately. The
+  Item form added in v1.337.0 asks the opposite question — *this Item exists; is it named
+  correctly?* — and `item_code` is the primary key, so an exact match there can only ever be
+  the row itself.
+
+  `evaluate()` now takes `existing`, and the callers say which question they are asking: the
+  form always sends true (its `refresh` returns early on an unsaved doc), the MCP tool exposes
+  it and defaults to false, and `check_item(mode="full")` and `inspect_item_naming()` thread it
+  through. `check_block()` had drawn this distinction for block numbers since v1.335.0; this is
+  the same rule finally applied to codes and names.
+
+  **The obvious fix would have broken something quieter.** Always excluding the candidate's own
+  code deletes the duplicate check that the whole feature exists for, so the tests pin both
+  halves: a saved record must not match itself, *and* a proposal whose code is taken must still
+  be a STOP. Self-exclusion is also matched **exactly** rather than on the normalised code —
+  excluding by the normalised form would additionally drop a genuine punctuation-variant
+  sibling (`806020` while re-checking `806-020`), which is precisely the collision
+  `duplicate_code_normalised` exists to report, so the careless fix would have disabled a
+  second check while repairing the first.
+
+  Two things were never affected and are worth knowing, because they are why this was not
+  caught sooner. The form's **headline** runs `mode="record"`, which reads no corpus and so has
+  nothing to match against — it was right while the button beside it was wrong. And the **Item
+  Naming Audit** report goes through `audit()`, which groups collisions across the corpus and
+  only emits a finding for a group of more than one, so a record alone in its group was never
+  reported.
+
 ## [1.337.0] - 2026-08-19
 
 ### Added

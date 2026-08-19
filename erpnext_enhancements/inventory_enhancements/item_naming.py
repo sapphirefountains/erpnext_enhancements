@@ -133,11 +133,17 @@ def inspect_item_naming(
 	item_group=None,
 	stock_uom=None,
 	similar_limit=rules.DEFAULT_SIMILAR_LIMIT,
+	existing=False,
 ):
 	"""Check one proposed Item against the schema. Read-only; returns findings.
 
 	The whole payload, including the refusal, is a plain dict — no exception is raised for
 	a bad candidate, because "this candidate is wrong" is the answer, not an error.
+
+	``existing`` says whether this record is already saved. It changes what an exact code
+	match *means* — a collision for a proposal, the record itself for a saved row — and
+	getting it wrong made every saved Item report as a STOP in v1.337.0. See
+	:func:`item_naming_rules.evaluate`.
 	"""
 	total = frappe.db.count("Item")
 	if total > CORPUS_CEILING:
@@ -167,6 +173,7 @@ def inspect_item_naming(
 		brands=read_brands(),
 		reserved_codes=read_reserved_codes(),
 		similar_limit=similar_limit,
+		existing=bool(existing),
 	)
 	result["success"] = True
 	result["corpus"] = meta
@@ -265,8 +272,22 @@ def audit_corpus(include_deleted=False, severity=None, family=None, code=None):
 	return {"rows": out, "summary": summary, "corpus": meta}
 
 
+def _as_bool(value):
+	"""Coerce an HTTP argument to a bool. Whitelisted args arrive as strings.
+
+	Handles the three spellings a caller might reasonably send — ``1``, ``"1"``, ``"true"``
+	— rather than `cint`, which reads ``"true"`` as 0 and would silently turn a saved record
+	back into a proposal.
+	"""
+	if isinstance(value, str):
+		return value.strip().lower() in ("1", "true", "yes")
+	return bool(value)
+
+
 @frappe.whitelist()
-def check_item(item_code=None, item_name=None, item_group=None, stock_uom=None, mode="record"):
+def check_item(
+	item_code=None, item_name=None, item_group=None, stock_uom=None, mode="record", existing=False
+):
 	"""Check one proposed or existing Item. Read-only, advisory, writes nothing.
 
 	Two modes, and the split is not a micro-optimisation:
@@ -277,6 +298,10 @@ def check_item(item_code=None, item_name=None, item_group=None, stock_uom=None, 
 	            whole catalogue every time anybody opens an Item.
 	``full``    adds duplicates, block occupancy and near neighbours. What the button calls,
 	            on demand, when somebody has actually asked.
+
+	``existing`` matters only in ``full`` mode, where it stops a saved record matching itself.
+	``record`` mode reads no corpus, so it has nothing to match against and is unaffected —
+	which is why the form's headline was right while its button was wrong.
 
 	The brand list is read in both modes: it is a handful of rows, and without it a
 	brand-led name falls through to `name_category_unapproved`, which is a STOP where a
@@ -295,6 +320,7 @@ def check_item(item_code=None, item_name=None, item_group=None, stock_uom=None, 
 			item_name=item_name,
 			item_group=item_group,
 			stock_uom=stock_uom,
+			existing=_as_bool(existing),
 		)
 		result["mode"] = "full"
 		return result

@@ -1037,6 +1037,13 @@ def find_duplicates(code: str | None, name: str | None, corpus, exclude_code: st
 	``corpus`` is any iterable of dicts carrying ``item_code`` and ``item_name``; the
 	caller's query shape is the caller's business.
 
+	``exclude_code`` drops one record from the comparison — the record being re-checked, so
+	it does not match itself. It is compared **exactly**, not normalised, and that is the
+	whole point: ``item_code`` is the primary key, so an exact match identifies precisely
+	one record and precisely the right one. Excluding by the normalised form would also
+	drop a genuine punctuation-variant sibling — ``806020`` while re-checking ``806-020`` —
+	which is exactly the collision :data:`DUPLICATE_CODE_NORMALISED` exists to report.
+
 	What this cannot see is the more common failure. Two records for one physical part
 	under two vendor numbers and two differently-worded names collide on nothing — the
 	live pair is `PUMP, VARIONAUT, 150, 24 V, /DMX/02` against
@@ -1044,7 +1051,7 @@ def find_duplicates(code: str | None, name: str | None, corpus, exclude_code: st
 	order differs. :func:`similar_records` is the surface for that, and the judgement
 	stays with the reader.
 	"""
-	skip = normalise(exclude_code) if exclude_code else None
+	skip = (exclude_code or "").strip()
 	want_code = normalise(code)
 	want_name = normalise(name)
 	exact: list[dict] = []
@@ -1052,7 +1059,7 @@ def find_duplicates(code: str | None, name: str | None, corpus, exclude_code: st
 	by_name: list[dict] = []
 	for row in corpus or ():
 		row_code = row.get("item_code") or ""
-		if skip and normalise(row_code) == skip:
+		if skip and row_code.strip() == skip:
 			continue
 		if code and row_code.strip() == (code or "").strip():
 			exact.append(_row(row))
@@ -1133,12 +1140,14 @@ def similar_records(
 	candidate = tokens(name)
 	if not candidate:
 		return []
-	skip = normalise(exclude_code) if exclude_code else None
+	# Exact, not normalised — see find_duplicates. A near neighbour whose code differs only
+	# in punctuation is the single most useful row this function can return.
+	skip = (exclude_code or "").strip()
 
 	rows: list[tuple[dict, tuple[str, ...]]] = []
 	frequency: dict[str, int] = {}
 	for row in corpus or ():
-		if skip and normalise(row.get("item_code")) == skip:
+		if skip and str(row.get("item_code") or "").strip() == skip:
 			continue
 		row_tokens = tokens(row.get("item_name"))
 		rows.append((row, row_tokens))
@@ -1181,6 +1190,7 @@ def evaluate(
 	reserved_codes: dict | None = None,
 	similar_limit: int = DEFAULT_SIMILAR_LIMIT,
 	min_score: float = DEFAULT_SIMILARITY_MIN_SCORE,
+	existing: bool = False,
 ) -> dict:
 	"""Everything this module can say about one proposed Item, in one dict.
 
@@ -1192,6 +1202,23 @@ def evaluate(
 	                    `PDT-` number from the moment it is created, and its Item is
 	                    generated from that number afterwards, so for as long as that gap
 	                    is open the number is allocated and `tabItem` cannot see it.
+	``existing``        is this candidate a record that is ALREADY SAVED?
+
+	**``existing`` is not a nicety, and the default is not the safe one — it is the correct
+	one for a different question.** The two callers ask opposite things of the same corpus:
+
+	* Proposing a *new* item, ``existing=False``. Its code appearing in the corpus is a
+	  collision and a STOP — somebody is about to re-create a record that is already there,
+	  which is the failure the SOP opens with.
+	* Re-checking a *saved* item, ``existing=True``. Its code appears in the corpus because
+	  **it is that row**. ``item_code`` is the primary key, so an exact match can only ever
+	  be the record itself; reporting it is reporting that a thing is identical to itself.
+	  That shipped in v1.337.0 and made every saved record a STOP, which is worse than a
+	  false positive — a verdict that is always STOP carries no information at all, and a
+	  check nobody can pass is a check people learn to close.
+
+	:func:`check_block` has always drawn this distinction for numbers; this is the same rule
+	applied to codes and names.
 
 	Nothing here raises on bad input and nothing here writes. An unparseable candidate
 	comes back as findings, which is the whole contract: the caller decides what a
@@ -1214,7 +1241,9 @@ def evaluate(
 	block_findings, block = check_block(item_code, occupied)
 	findings.extend(block_findings)
 
-	duplicates = find_duplicates(item_code, item_name, corpus, exclude_code=None)
+	# The record being re-checked is not its own duplicate. See `existing` above.
+	self_code = item_code if existing else None
+	duplicates = find_duplicates(item_code, item_name, corpus, exclude_code=self_code)
 	findings.extend(duplicate_findings(duplicates))
 
 	findings.extend(check_name(item_name, item_code, brands))
@@ -1227,7 +1256,11 @@ def evaluate(
 		"family": family,
 		"findings": findings,
 		"duplicates": duplicates,
+		# Neighbours always exclude the candidate's own code: a proposed new code that is
+		# already taken is reported by `duplicates`, and listing it again as its own nearest
+		# neighbour at a score of 1.0 tells the reader nothing.
 		"similar": similar_records(item_name, corpus, similar_limit, min_score, exclude_code=item_code),
+		"existing": bool(existing),
 		"block": block,
 		"segments": {
 			"values": populated,

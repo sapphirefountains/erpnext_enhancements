@@ -29,10 +29,11 @@ class ItemNamingCheck(BaseTool):
         super().__init__()
         self.name = "item_naming_check"  # must match module filename
         self.description = (
-            "Check a proposed ERPNext Item Code and Item Name against the Sapphire "
-            "Fountains Item Naming Schema BEFORE the record is created, and return "
-            "findings plus a STOP/FIX/PASS verdict. Read-only — it never creates or "
-            "edits an Item, and nothing it reports blocks a save. "
+            "Check an ERPNext Item Code and Item Name against the Sapphire "
+            "Fountains Item Naming Schema — before the record is created, or on one that "
+            "already exists — and return findings plus a STOP/FIX/PASS verdict. Read-only "
+            "— it never creates or edits an Item, and nothing it reports blocks a save. "
+            "Pass 'existing': true when re-checking an Item that is already in ERPNext. "
             "Pass 'item_code' (required) and, when you have one, 'item_name'; "
             "'item_group' and 'stock_uom' are checked when supplied. "
             "Returns: exact and normalised duplicate matches (with the normalisation "
@@ -87,6 +88,17 @@ class ItemNamingCheck(BaseTool):
                     "type": "integer",
                     "description": "How many near-neighbour records to return (default 8).",
                 },
+                "existing": {
+                    "type": "boolean",
+                    "description": (
+                        "True when this Item ALREADY EXISTS and you are re-checking it; "
+                        "false (the default) when it is a new one being proposed. It "
+                        "changes what an exact code match means: a collision for a "
+                        "proposal, the record itself for a saved row. Set it true when "
+                        "the user names an item that is already in ERPNext, or every "
+                        "saved record reports as a duplicate of itself."
+                    ),
+                },
             },
             "required": ["item_code"],
         }
@@ -114,6 +126,7 @@ class ItemNamingCheck(BaseTool):
             item_group=args.get("item_group"),
             stock_uom=args.get("stock_uom"),
             similar_limit=limit,
+            existing=bool(args.get("existing")),
         )
         result.setdefault("item_code", item_code)
         return result
