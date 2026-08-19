@@ -819,6 +819,10 @@
 			}
 			state.attempt = attempt.attempt || state.attempt;
 			if (attempt.status) state.status = attempt.status;
+			// Carried separately from the attempt's own status because they are
+			// different records with different vocabularies; see renderSignoff.
+			if (course.assignment_status) state.assignmentStatus = course.assignment_status;
+			if (course.signoff_with) state.signoffWith = course.signoff_with;
 			// The attempt carries the per-lesson progress map, and the course view
 			// needs it: without this `state.progress` is only ever populated by
 			// get_lesson, so the outline had nothing to read and every lesson showed
@@ -842,7 +846,13 @@
 			head.appendChild(bar);
 
 			if (course.summary) main.appendChild(el("p", "tr-course-summary", course.summary));
-			if (state.status === "Awaiting Sign-off") {
+			// The ASSIGNMENT's status, not the attempt's. Training Attempt.status is
+			// In Progress / Passed / Failed / Abandoned -- "Awaiting Sign-off" is not
+			// one of its options and never was, so testing state.status against it
+			// here could not have matched whatever the server wrote. That is a
+			// separate bug from nothing setting the status, and it would have
+			// outlived the fix for it.
+			if (state.assignmentStatus === "Awaiting Sign-off") {
 				go("signoff");
 				return;
 			}
@@ -1208,6 +1218,8 @@
 					setBusy(false);
 					result = result || {};
 					if (result.status) state.status = result.status;
+					if (result.assignment_status) state.assignmentStatus = result.assignment_status;
+					if (result.signoff_with) state.signoffWith = result.signoff_with;
 
 					// Not thrown, deliberately: the server reports what is left
 					// rather than erroring, so the learner can be sent back to it.
@@ -1233,8 +1245,9 @@
 						completion: result.completion,
 					};
 					// A course that wants hands-on verification is passed but not
-					// finished — the sign-off view says who has to watch them.
-					go(state.status === "Awaiting Sign-off" ? "signoff" : "results");
+					// finished — the sign-off view says who has to watch them. Reads
+					// the assignment status for the reason given at the course view.
+					go(state.assignmentStatus === "Awaiting Sign-off" ? "signoff" : "results");
 				})
 				.catch(function (err) {
 					setBusy(false);
@@ -1472,6 +1485,15 @@
 			);
 			if (course.signoff_instructions) {
 				box.appendChild(el("p", "tr-signoff-what", course.signoff_instructions));
+			}
+			// Who it is with. Finishing the course raises the request server-side and
+			// emails them, so this is a statement about something that has actually
+			// happened rather than a hint to go and find somebody -- which is what
+			// this view said while `request_signoff` had no caller.
+			if (state.signoffWith) {
+				box.appendChild(
+					el("p", "tr-signoff-who", fmt(t("Asked {0} to confirm it."), [state.signoffWith]))
+				);
 			}
 			// Deliberately no "remind them" button: chasing a supervisor is the
 			// escalation job's business, and a learner-triggered nag would be one

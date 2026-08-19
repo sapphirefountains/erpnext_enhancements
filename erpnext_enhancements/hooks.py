@@ -179,6 +179,10 @@ doctype_js = {
 		# agreements this customer is a party to. Viewer first (shared renderer).
 		"public/js/project_enhancements/contract_viewer.js",
 		"public/js/project_enhancements/contracts_tab.js",
+		# training: "are the people who operate this client's fountain trained?" --
+		# completions with expiry computed against today. The endpoint answering it
+		# had no caller until v1.334.0.
+		"public/js/training/training_customer_view.js",
 	],
 	"Timesheet": ["public/js/vue.global.js", "public/js/comments.js", "public/js/timesheet.js"],
 	"Sales Order": [
@@ -224,6 +228,11 @@ doctype_js = {
 		"public/js/comments.js",
 		"public/js/contact.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
+		# training: grant/revoke a client contact's portal login. training/portal.py
+		# has held the whole flow since v1.215.0 with no caller at all, so the only
+		# way to put a client on the portal was to build the User by hand and
+		# remember the role -- the sequence that module exists to stop.
+		"public/js/training/training_portal_access.js",
 	],
 	"Address": [
 		"public/js/vue.global.js",
@@ -930,6 +939,12 @@ scheduler_events = {
 		# killed tab). Bounds progress loss at one flush interval rather than a
 		# whole lesson.
 		"erpnext_enhancements.training.progress.flush_stale_attempts",
+		# training: stat the GCS object behind every video asset, stamp
+		# last_verified_on, and repair size/mime from what the bucket actually
+		# holds. TrainingVideoAsset._derive_status has always deferred to this by
+		# name while the module did not exist, so nothing ever moved an asset out
+		# of Available -- a deleted video stayed green until a learner hit play.
+		"erpnext_enhancements.training.drive_media.verify_video_assets",
 		# QuickBooks Online sync jobs moved to staggered cron entries above to stop
 		# the three from racing on the Settings doc (TimestampMismatchError). See the
 		# "cron" section.

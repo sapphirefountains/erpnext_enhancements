@@ -35,11 +35,20 @@ Desk, where the document plainly names who attested and the version history show
 who pressed submit. It is not available through a one-call endpoint, because
 "Training Manager signs off own training" is exactly the line an auditor reads out.
 
-**The completion gate is not here.** This module leaves a submitted ``Competent``
-sign-off in the database and stops. Whether a completion may be issued is decided
-on ``Training Completion.validate``, because a completion recorded by hand in the
-Desk has to hit the same gate as one earned in the player, and only the controller
-sees both. :func:`has_competent_signoff` is the one implementation of that query.
+**The completion gate is decided here and enforced on the controller.**
+:func:`signoff_outstanding` is the one implementation of "this course wants a
+sign-off and does not have one". ``Training Completion`` calls it from
+``validate`` and ``before_submit``; ``api.training.finish_attempt`` calls it too,
+to *report* the requirement to the learner rather than throw. One predicate, two
+readings of it, so the gate and the screen explaining the gate cannot disagree.
+
+That arrangement is younger than this module. Until v1.333.0 the docstring here
+claimed the gate lived on ``Training Completion.validate`` and that
+:func:`has_competent_signoff` was its one implementation. Neither was true:
+``training_completion.py`` contained no sign-off logic at all, the only
+enforcement was a second, independent copy inside ``api/training.py``, and
+:func:`has_competent_signoff` was dead code. So a completion created by hand in
+the Desk -- on a course requiring hands-on attestation -- was issued without one.
 """
 
 import frappe
@@ -191,9 +200,16 @@ def request_signoff(course, user=None, assignment=None, attempt=None):
 	)
 	if existing:
 		# Not an error. A learner pressing the button twice should be told the
-		# request is already with somebody, not shown a failure.
+		# request is already with somebody, not shown a failure -- and told *who*,
+		# which this row knows. Returning None for the supervisor here made a repeat
+		# request indistinguishable from an unroutable one to every caller.
 		_mark_assignment_awaiting(assignment, course, learner)
-		return {"signoff": existing, "created": False, "supervisor": None, "notified": False}
+		return {
+			"signoff": existing,
+			"created": False,
+			"supervisor": frappe.db.get_value(SIGNOFF_DOCTYPE, existing, "supervisor_user"),
+			"notified": False,
+		}
 
 	supervisor, source = resolve_supervisor(course, learner)
 	if not supervisor:
@@ -328,25 +344,62 @@ def _assert_may_sign(doc, caller):
 # -------------------------------------------------------------------- queries
 
 
-def has_competent_signoff(course, learner_user):
-	"""Whether a submitted ``Competent`` sign-off exists.
+def competent_signoff_name(course, learner_user):
+	"""The submitted ``Competent`` sign-off backing this learner, if any.
 
-	The shape ``Training Completion.validate`` checks, written once here so the
-	gate and the endpoint that satisfies it cannot disagree. ``docstatus 1``
-	rather than "not 2": a draft sign-off is a request, not an attestation, and a
-	cancelled one is a withdrawal.
+	The single expression of what "signed off" means, because every caller wants
+	the same four-clause filter and previously three of them wrote it out
+	separately. ``docstatus 1`` rather than "not 2": a draft sign-off is a request,
+	not an attestation, and a cancelled one is a withdrawal.
 	"""
-	return bool(
-		frappe.db.exists(
-			SIGNOFF_DOCTYPE,
-			{
-				"course": course,
-				"user": learner_user,
-				"outcome": COMPETENT,
-				"docstatus": 1,
-			},
-		)
+	if not frappe.db.exists("DocType", SIGNOFF_DOCTYPE):
+		return None
+	return frappe.db.get_value(
+		SIGNOFF_DOCTYPE,
+		{
+			"course": course,
+			"user": learner_user,
+			"outcome": COMPETENT,
+			"docstatus": 1,
+		},
+		"name",
 	)
+
+
+def has_competent_signoff(course, learner_user):
+	"""Whether a submitted ``Competent`` sign-off exists."""
+	return bool(competent_signoff_name(course, learner_user))
+
+
+def signoff_outstanding(course, learner_user):
+	"""Whether *course* demands a supervisor sign-off that *learner_user* lacks.
+
+	The one place that rule is written. Both the completion gate and the player's
+	"here is what is left" list read it, because two implementations of a
+	compliance check drift, and the way this one drifted was that only one of them
+	existed on the path an auditor would care about.
+
+	Matched on the course rather than the course version on purpose: somebody who
+	was watched draining a basin last month has been watched draining a basin. A
+	material content change supersedes their completion and sends them back through
+	the material, which is the right lever -- re-observing them physically because a
+	paragraph was rewritten is not.
+
+	Returns False when Training Signoff is not migrated, so a site part-way through
+	Phase 4 can still finish courses rather than being unable to complete anything
+	at all. That is logged rather than silent: a requirement that cannot be enforced
+	must not also be invisible.
+	"""
+	if not cint(frappe.db.get_value("Training Course", course, "require_supervisor_signoff")):
+		return False
+	if not frappe.db.exists("DocType", SIGNOFF_DOCTYPE):
+		frappe.log_error(
+			f"{course} requires a supervisor sign-off but {SIGNOFF_DOCTYPE} is not migrated "
+			"on this site; the requirement cannot be enforced.",
+			"Training sign-off",
+		)
+		return False
+	return not has_competent_signoff(course, learner_user)
 
 
 @frappe.whitelist()

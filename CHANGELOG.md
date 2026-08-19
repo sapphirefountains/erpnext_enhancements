@@ -7,6 +7,201 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.334.0] - 2026-08-19
+
+### Added
+
+- **The sign-off round trip actually runs now.** `training/signoff.py` has held a
+  complete request-notify-record implementation since v1.215.0 and **nothing called any
+  of it**. The consequences ran further than "a missing button":
+
+  - Nothing called `request_signoff`, so no supervisor was ever told a learner was
+    waiting, and `_mark_assignment_awaiting` — the only writer of
+    `Training Assignment.status = "Awaiting Sign-off"` — never ran. Four places in
+    `player.js` and four more modules read that status; it was set by nothing.
+  - Nothing called `record_signoff`, which is where the *learner is notified*. The
+    obvious Desk path — fill in the outcome, press Submit — files a completely valid
+    attestation and tells nobody, while the learner sits on a screen that says they
+    are waiting for exactly this.
+  - Nothing called `get_signoff_queue`, whose docstring reads "for a supervisor's
+    dashboard".
+
+  Finishing the content now raises the request server-side, which is the honest
+  trigger: finishing *is* the learner saying they are ready, and a button would be one
+  more thing not to press. It fires only when the sign-off is the last thing
+  outstanding — raising it three lessons in would ping a supervisor about somebody who
+  has barely started. `Training Signoff` gains a form script with a **Record sign-off**
+  action and, like the Q&A form before it, a warning the moment `outcome` is edited
+  directly, because that is the path a supervisor will take and it is the silent one.
+  The list view calls the queue endpoint and shows what is waiting for you — not the
+  same thing as a saved filter, since the server resolves "may act on" differently for
+  a Training Manager than a supervisor and drops your own requests from either.
+
+- **The customer training portal is reachable.** `training/portal.py`'s three endpoints
+  were likewise callerless. `Contact` gains **Grant / Revoke training portal access**
+  (manager-only, matching `_require_manager`, with the welcome email off by default
+  because access is routinely prepared days before anyone wants the client to know),
+  and `Customer` gains a **Training** view answering the question the endpoint was
+  written for: are the people who operate this client's fountain trained, and has any
+  of it expired.
+
+- **Six Phase 4 doctypes and both Script Reports reach the Training workspace.**
+  `Training Signoff`, `Training Certificate`, `Training Badge`, `Training Badge Award`,
+  `Training Learner Stat` and `Training Question Thread` had no desk navigation at all,
+  so a supervisor told to record a sign-off had to know the doctype's name and type it
+  into the awesomebar. New `Verification`, `Recognition` and `Reports` cards; note that
+  a Card Break without a matching block in the workspace's `content` renders nowhere,
+  which is how a link can exist in the JSON and still be invisible.
+
+### Fixed
+
+- **The player tested an attempt's status against an assignment's vocabulary.**
+  `Training Attempt.status` is `In Progress / Passed / Failed / Abandoned`.
+  `"Awaiting Sign-off"` is a **`Training Assignment`** status and cannot appear in that
+  field — but `player.js` compared `state.status` against it in two places. Those
+  branches, and the whole `renderSignoff` view behind them, could not have fired no
+  matter what the server wrote. That is a separate defect from nothing setting the
+  status, and it would have outlived the fix for it. Both statuses now travel as
+  distinct keys named for the record each comes from, and the sign-off view names who
+  the request went to.
+
+- `signoff.request_signoff` returned `supervisor: None` when a draft request already
+  existed, making a repeat request indistinguishable from an unroutable one to every
+  caller. It returns the supervisor already on the row.
+
+### Tests
+
+- `EveryTrainingEndpointHasACallerTest` widens the existing Q&A reachability check to
+  `signoff.py` and `portal.py`. Two properties are deliberate: it scans **whole
+  modules**, so an endpoint added next year fails by default — the narrow scoping of
+  the original is precisely why it caught nothing while the same defect sat in two
+  sibling modules — and it matches on **AST references and comment-stripped JS**, never
+  raw text. Every module here carries long comments explaining the orphaning it guards
+  against, so a substring scan would be satisfied by prose about an endpoint and report
+  a caller that does not exist. Verified by removing the new wiring and confirming all
+  six reappear as orphans.
+
+
+## [1.333.0] - 2026-08-19
+
+### Fixed
+
+- **A Training Completion entered by hand in the Desk bypassed the supervisor sign-off
+  requirement entirely.** `training/signoff.py` has documented the gate as living on
+  `Training Completion.validate` since the day it was written — *"a completion recorded by
+  hand in the Desk has to hit the same gate as one earned in the player, and only the
+  controller sees both"*. **It was never written there.** `training_completion.py` contained
+  no sign-off logic at all, and `has_competent_signoff`, described in the same paragraph as
+  "the one implementation of that query", had no callers and was dead code.
+
+  The only enforcement in the system was a private second copy inside
+  `api.training.finish_attempt`, which covers exactly one path: a learner finishing in the
+  player. Every other route to a completion — a manager recording pre-existing training, an
+  import, a script — skipped it.
+
+  On this site the single course carrying `require_supervisor_signoff` is **"Draining a
+  Fountain Basin Safely"**, so the bypass was available on precisely the record whose whole
+  purpose is proving somebody was watched doing the thing before being certified to do it
+  alone.
+
+  The rule now has one implementation, `signoff.signoff_outstanding`, with two readings of
+  it: `Training Completion` calls it from `validate` (on insert) and `before_submit` and
+  **throws**; `api.training.finish_attempt` calls it and **reports** the requirement to the
+  learner alongside every other unmet gate, which is what the player has always needed.
+  `api/training.py`'s copies of both queries now delegate rather than restate them.
+
+  Deliberately *not* enforced on every save: a completion issued years ago must not start
+  failing because the course has since begun requiring a sign-off. The document records what
+  was true when it was issued. `before_submit` is the moment of issuance and therefore the
+  moment the gate has to hold — a draft can be created while the requirement is unmet and
+  submitted afterwards, and submitted is what makes this document an attestation somebody may
+  be shown.
+
+  Note what made this survivable for so long: the duplicate looked like the gate. Anyone
+  reading `finish_attempt` saw a sign-off check being enforced and had no reason to go
+  looking for the one that governs the other paths. **Two implementations of a compliance
+  rule is how one of them ends up not existing.**
+
+### Changed
+
+- `training.signoff.competent_signoff_name` is now the single expression of what "signed
+  off" means — the four-clause filter (course, user, `Competent`, `docstatus 1`) that three
+  separate call sites previously wrote out for themselves. `has_competent_signoff` is a thin
+  boolean over it, and it now has callers.
+
+### Tests
+
+- `tests/test_training_runtime_regressions.py` gains `TestTheCompletionControllerRefuses`
+  and a delegation test, and its existing sign-off assertions follow the rule to its new
+  home. The four that broke were doing their job: they pinned the properties (the course
+  flag is read, only a submitted `Competent` counts, the lookup is course-scoped not
+  version-scoped, an unmigrated site can still finish) to a specific file, and the move made
+  them fail loudly rather than silently stop checking anything.
+
+
+## [1.332.0] - 2026-08-19
+
+### Added
+
+- **The training video health check that the doctype was already written around.**
+  `TrainingVideoAsset._derive_status` promotes Draft to Available and then explicitly
+  refuses to touch `Missing` or `Error`, on the stated grounds that *"the hourly check in
+  `training/drive_media.py` is what sets Missing / Error"*. **That module did not exist.**
+  Neither did anything else that wrote `last_verified_on`, a field declared on the doctype
+  since v1.207.0 and, on a repo-wide grep, read by nobody and written by nothing.
+
+  So nothing ever moved an asset out of `Available`. A video whose GCS object had been
+  deleted — or whose copy never really landed — stayed green in the authoring UI and failed
+  in front of a learner at play time. The status field looked like a health signal and was
+  a write-once constant.
+
+  `training/drive_media.py` now stats the object behind each asset on the existing `hourly`
+  scheduler list, stamps `last_verified_on`, and repairs `size_bytes` / `mime_type` from
+  what the bucket actually holds, so a record converges on the truth however the row was
+  first created. Work is bounded twice over — assets are re-checked no more often than
+  every 12 hours and no more than 200 per run, oldest-verified first — because an hourly
+  job whose cost grows with the library is a future incident.
+
+  **Absent is not unreachable, and the distinction is the whole design.** A 404 is GCS
+  stating the object is gone: that earns `Missing`. A 403, a timeout, a 5xx or an expired
+  key mean we could not ask, and are recorded as `last_error` with the status left alone —
+  marking a healthy video `Missing` after one bad thirty seconds would send an author to
+  rebuild a file that is exactly where they left it. An inconclusive check also declines to
+  stamp `last_verified_on`, so the asset stays at the head of the queue and is retried
+  rather than silently shelved for twelve hours.
+
+### Fixed
+
+- **`copy_from_drive` uploaded the video correctly and then recorded nothing about it.**
+  It stamped `gcs_object`, `gcs_synced_on`, `status` and `last_error` while holding both
+  the buffer and the content type, and wrote neither `size_bytes` nor `mime_type`. Only
+  `api.training_author.register_video_asset` ever filled those, from the Drive probe — so
+  an asset registered by hand in the Desk form, which
+  [`docs/training-video-drive-runbook.md`](docs/training-video-drive-runbook.md) warns
+  against and nothing enforces, was copied perfectly while its record went on saying the
+  file was zero bytes of unknown type. The copy now records what it actually sent, which
+  makes it self-healing regardless of how the row was created.
+
+  This was not hypothetical: production's only video asset, `TRN-VID-00001`, carried
+  `size_bytes = 0` and a null `mime_type` for sixteen days while the object itself was a
+  healthy 24,298,433-byte `video/mp4` matching its Drive source byte for byte.
+
+  Related: the object name is derived from the mime type via `_extension_for`, which falls
+  back to `mp4`. With `mime_type` empty a `.webm` source would have been stored under a
+  `.mp4` object name and served with the wrong `Content-Type`. It happened not to bite
+  because the one asset really was mp4.
+
+### Verified
+
+- **HTTP 206 byte-range serving, on production, for the first time.**
+  `training.gcs_media.test_connection()` returned
+  `{"ok": true, "range_ok": true}` — bucket, key, V4 signing, playback and byte-range
+  seeking all confirmed against `sf-erpnext-training-media`. This was step 5 of the
+  TASK-2026-01150 runbook and had never been run since the infrastructure was applied on
+  2026-08-02; the standing note in this changelog that *"HTTP-206 range serving remains
+  unverified"* is now settled. It matters because a bucket answering a seek with 200-and-
+  the-whole-file leaves the player working while every watch-coverage figure it reports is
+  wrong rather than absent — the worst failure mode this feature has.
 ## [1.331.1] - 2026-08-19
 
 ### Changed

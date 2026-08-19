@@ -105,6 +105,12 @@ regardless of what any endpoint does.
 - `tasks.py` — the scheduled due-reminder and escalation jobs.
 - `gcs_media.py` — signs short-lived playback URLs and copies video from Drive
   into the private bucket. See **Video** below.
+- `drive_media.py` — the hourly health check behind every video asset: stats the
+  GCS object, stamps `last_verified_on`, repairs `size_bytes` / `mime_type`, and
+  is the only thing that ever sets `Missing`. `TrainingVideoAsset._derive_status`
+  has always deferred to it by name; until v1.332.0 the module did not exist, so
+  nothing moved an asset out of `Available` and a deleted video stayed green until
+  a learner pressed play.
 - `roles.py` — granting the Training Learner role durably. Read this before
   touching role assignment; see **Access** below.
 - `setup.py` — starter Training Categories (`after_migrate`, insert-only).
@@ -117,6 +123,16 @@ Endpoints live in [`../api/training_author.py`](../api/README.md) (authoring,
 publishing, assignment), [`../api/training.py`](../api/README.md) (the learner
 runtime) and [`../api/training_ai.py`](../api/README.md) (quiz and checkpoint
 drafting). All four phases are built and merged.
+
+**"Built and merged" was doing a lot of work in that sentence until v1.334.0.**
+Six whitelisted functions across [`signoff.py`](signoff.py) and
+[`portal.py`](portal.py) shipped complete in v1.215.0 with **no caller of any
+kind** — no supervisor was ever notified, `Training Assignment.status` was never
+set to `Awaiting Sign-off` by any code path, and a client contact could only be
+put on the portal by building the User by hand. `tests/test_training_endpoint_surface.py`
+now fails the build for any whitelisted function in either module that nothing
+calls, and it walks the AST rather than grepping, so a comment *about* an
+endpoint does not count as a caller.
 
 ## Authoring a course
 

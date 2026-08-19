@@ -272,7 +272,16 @@ def copy_from_drive(video_asset):
 			_status, done = downloader.next_chunk()
 		buffer.seek(0)
 
-		object_name = object_name_for(asset.name, _extension_for(asset.mime_type))
+		# What we are about to send, measured rather than trusted. An asset
+		# registered by hand in the Desk arrives with size_bytes = 0 and a null
+		# mime_type -- only `register_video_asset` fills those from the Drive probe
+		# -- and this used to copy such a row perfectly while leaving the record
+		# still saying nothing about it. Recording both here makes the copy
+		# self-healing however the row was created.
+		uploaded_bytes = buffer.getbuffer().nbytes
+		content_type = (asset.mime_type or "").strip() or "video/mp4"
+
+		object_name = object_name_for(asset.name, _extension_for(content_type))
 		storage = _storage_service()
 		if storage is None:
 			return {"ok": False, "reason": "no_storage_client"}
@@ -281,7 +290,7 @@ def copy_from_drive(video_asset):
 			bucket=_bucket(),
 			name=object_name,
 			media_body=MediaIoBaseUpload(
-				buffer, mimetype=asset.mime_type or "video/mp4", chunksize=8 * 1024 * 1024, resumable=True
+				buffer, mimetype=content_type, chunksize=8 * 1024 * 1024, resumable=True
 			),
 		).execute()
 
@@ -293,10 +302,12 @@ def copy_from_drive(video_asset):
 				"gcs_synced_on": frappe.utils.now_datetime(),
 				"status": "Available",
 				"last_error": "",
+				"size_bytes": uploaded_bytes,
+				"mime_type": content_type,
 			},
 			update_modified=False,
 		)
-		return {"ok": True, "gcs_object": object_name}
+		return {"ok": True, "gcs_object": object_name, "size_bytes": uploaded_bytes}
 
 	except Exception:
 		message = frappe.get_traceback()
