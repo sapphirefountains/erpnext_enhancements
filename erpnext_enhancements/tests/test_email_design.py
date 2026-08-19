@@ -277,6 +277,74 @@ def test_button_label_is_still_escaped(macros):
 
 
 # ---------------------------------------------------------------------------
+# The body cell is `class="ee-pad ee-md"`, and the shell styles the markdown body
+# through DESCENDANT selectors — `.ee-md table{width:100%}` and
+# `.ee-md td{border-bottom:…;padding:9px 10px}` — because md_to_html() emits tags
+# with no attributes to style inline. Premailer inlines those onto every table and
+# td in the body, the component macros' own included.
+#
+# So a macro that omits `width` on a table, or `padding`/`border` on a td, does not
+# get the browser default. It gets the markdown body's. That is how the CTA ended up
+# a 772x60 coloured bar containing a 212x41 link: 19% of the button was the button,
+# and clicking the colour did nothing (v1.331.2).
+
+
+def _tags(html, tag):
+	for m in re.finditer(rf"<{tag}\b[^>]*>", html):
+		style = re.search(r'style="([^"]*)"', m.group(0))
+		yield m.group(0), (style.group(1) if style else "")
+
+
+def test_every_macro_td_declares_padding_and_border():
+	"""Declaring only one of the two is the trap: `links` set padding and still
+	inherited a divider rule under every row."""
+	body = _read(EMAIL_DIR, "_components.html")
+	body = re.sub(r"\{#.*?#\}", "", body, flags=re.S)  # drop the doc comments
+	for tag, style in _tags(body, "td"):
+		assert "padding" in style, f"td inherits .ee-md padding: {tag}"
+		assert re.search(r"(?<!-)border\s*:", style) or "border-bottom" in style, (
+			f"td inherits the .ee-md divider rule: {tag}"
+		)
+
+
+def test_every_macro_table_declares_its_width():
+	body = _read(EMAIL_DIR, "_components.html")
+	body = re.sub(r"\{#.*?#\}", "", body, flags=re.S)
+	for tag, style in _tags(body, "table"):
+		assert "width" in style, f"table inherits .ee-md width:100%: {tag}"
+
+
+def test_the_whole_button_is_the_link(macros):
+	"""The coloured pill and the anchor must be the same box.
+
+	Verified in a browser against the premailer output of a real sent message:
+	with these three declarations the anchor is 100% of the cell, 0 dead pixels on
+	every edge; without them it was 19%.
+	"""
+	out = str(macros.button("https://x.test", "Open the opportunity"))
+	table = next(s for _, s in _tags(out, "table"))
+	td = next(s for _, s in _tags(out, "td"))
+	a = next(s for _, s in _tags(out, "a"))
+
+	assert "width:auto" in table, "the cell stretches the full measure, the anchor does not"
+	assert "padding:0" in td, "padded cell = coloured space outside the anchor"
+	assert "border:0" in td
+
+	# The padding belongs to the anchor: its own box is what the client makes
+	# clickable. Moving it to the td would restore the dead border exactly.
+	assert "padding:13px 30px" in a
+	assert "display:inline-block" in a
+
+
+def test_the_button_still_fills_for_outlook():
+	"""Word ignores inline-block, so without `mso-padding-alt` the `padding:0` above
+	would shrink the fill to the bare text there. Only the label is the hit target in
+	Outlook either way — that needs <v:roundrect> and a hard-coded width."""
+	body = _read(EMAIL_DIR, "_components.html")
+	assert "mso-padding-alt:13px 30px" in body
+
+
+# ---------------------------------------------------------------------------
 # Responsiveness is a progressive enhancement, never a dependency.
 
 

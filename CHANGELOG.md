@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.334.1] - 2026-08-19
+
+### Fixed
+
+- **Only the middle fifth of an email button was a link.** The call-to-action in every
+  templated email — "Open the opportunity", "View the task", and the rest — rendered as
+  a wide coloured bar, but the clickable region was just the text in the centre. Clicking
+  the colour did nothing.
+
+  Measured against the premailer output of a real sent message: the coloured cell was
+  **772×60**, the anchor inside it **212×41** — 280px of dead colour on each side and
+  ~10px top and bottom. **18.9% of what looks like the button was the button.**
+
+  The macro was not at fault; what the macro *omitted* was. The body cell carries
+  `class="ee-pad ee-md"`, and the shell styles the markdown body through descendant
+  selectors — `.ee-md table{width:100%}` and
+  `.ee-md td{border-bottom:1px solid #dbe4ea;padding:9px 10px}` — because `md_to_html()`
+  emits tags with no attributes to style inline. Premailer inlines those onto **every**
+  table and td in the body, the component macros' own included. `button()` declared no
+  `width` on its table and no `padding`/`border` on its cell, so it inherited the
+  markdown body's: the cell stretched the full measure while the `<a>` stayed the width
+  of its own text.
+
+  The padding stays on the `<a>` — the anchor's own box is what a client makes
+  clickable, and moving it to the td would restore the dead border exactly. The cell now
+  declares `padding:0;border:0` and the table `width:auto`, so the pill and the anchor
+  are the same box: **100% clickable, 0 dead pixels on every edge**, verified in a
+  browser with the inlined rules reproduced as premailer emits them.
+
+  `mso-padding-alt` hands Outlook's Word engine the same padding, since it ignores
+  `inline-block` and would otherwise shrink the fill to the bare text. Known limit: in
+  Outlook desktop only the label is the hit target. Fixing that needs a `<v:roundrect>`
+  with `<w:anchorlock/>`, which costs a hard-coded pixel width per label — not worth it
+  for the clients in use here.
+
+- **`links()` drew a divider under every row** for the same reason: it declared `padding`
+  on its cell but not `border`, so it inherited the `.ee-md` bottom rule. Declaring only
+  one of the two is the trap.
+
+- **`tests/test_email_design.py` now fails the build** when any macro table omits `width`
+  or any macro td omits `padding` or `border`. Both new assertions fail on the pre-fix
+  file, catching exactly the two macros that were wrong. The rule is written up in
+  [`docs/email-design-system.md`](docs/email-design-system.md).
+
 ## [1.334.0] - 2026-08-19
 
 ### Added

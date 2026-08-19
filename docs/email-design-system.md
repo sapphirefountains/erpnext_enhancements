@@ -86,6 +86,17 @@ Two mechanics, both verified against this site rather than assumed:
   `<h2 id="heading" style="color:#00263E; font-size:18px">`). The `@media` block only
   tightens padding and stacks the fact table.
 
+  **The `.ee-md` rules reach the component macros too, and that cuts both ways.** They
+  are descendant selectors on the body cell, so `.ee-md table{width:100%}` and
+  `.ee-md td{border-bottom:…;padding:9px 10px}` land on *every* table and td in the
+  body, not only the generated ones. A macro that omits `width` on a table, or
+  `padding`/`border` on a td, therefore does not get the browser default — it gets the
+  markdown body's. `button()` omitted all three and shipped a 772×60 coloured bar
+  wrapped around a 212×41 link: 19% of what looked like the button was the button, and
+  clicking the colour did nothing (v1.331.2). **Declare `width` on every macro table
+  and `padding` *and* `border` on every macro td**; `tests/test_email_design.py` fails
+  the build otherwise.
+
 ---
 
 ## Palette
