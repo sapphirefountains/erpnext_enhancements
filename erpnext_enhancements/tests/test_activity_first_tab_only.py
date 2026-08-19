@@ -141,6 +141,46 @@ class TestTheDetailsTabIsLeftAlone(unittest.TestCase):
         self.assertIn("if (!active)", script())
 
 
+class TestAFooterAlreadyInAPaneIsLeftAlone(unittest.TestCase):
+    """The premise does not hold on ERPNext's CRM doctypes, and ignoring that hid
+    the feed completely.
+
+    This script exists because ``.form-footer`` is a *sibling* of the tab panes, so
+    it follows you onto every tab. On Lead, Opportunity and Prospect that is false:
+    ``erpnext/public/js/utils/crm_activities.js`` runs
+    ``$(cur_form_footer).appendTo(this.all_activities_wrapper)`` and moves the whole
+    footer into the "Activities" tab. Bootstrap then shows it on that tab and hides
+    it on the rest — exactly the behaviour this script was written to produce.
+
+    Applying our rule on top subtracts rather than adds: Activities is not the first
+    tab, so the feed was hidden there too, and Details never had it because the pane
+    holding it was closed. Verified on the live Opportunity form — the footer measured
+    5049px tall on the Activities tab and 0 the moment ``apply()`` ran (v1.331.1).
+
+    Pinned statically because the interaction is between two apps' scripts and the
+    failure is silent: the feature keeps "working", on a form nobody can see it on.
+    """
+
+    def test_it_skips_a_footer_that_lives_inside_a_tab_pane(self):
+        self.assertIn('closest(".tab-pane")', script())
+
+    def test_it_clears_the_class_rather_than_only_skipping(self):
+        """The relocation happens during form refresh, so an earlier paint may
+        already have set the class — bailing without clearing leaves it stuck on."""
+        body = script()
+        pane_guard = body.index('closest(".tab-pane")')
+        tail = body[pane_guard : pane_guard + 400]
+        self.assertIn("classList.remove(HIDDEN_CLASS)", tail)
+
+    def test_the_guard_runs_before_the_first_tab_check(self):
+        """Order matters: `toggle(..., !on_first_tab())` would re-add the class."""
+        body = script()
+        self.assertLess(
+            body.index('closest(".tab-pane")'),
+            body.index("classList.toggle(HIDDEN_CLASS"),
+        )
+
+
 class TestItSurvivesFrappeRerendering(unittest.TestCase):
     def test_it_hooks_the_tab_event(self):
         self.assertIn("shown.bs.tab", script())

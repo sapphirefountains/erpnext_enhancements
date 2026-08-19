@@ -25,6 +25,17 @@
  * bottom of that form and there is no "other tab" for it to be wrong on. A form
  * whose first tab is open is left alone for the same reason: the point is to stop
  * the feed following you around, not to hide it.
+ *
+ * And nothing to a form where the footer is ALREADY inside a tab pane. ERPNext's
+ * CRM doctypes — Lead, Opportunity, Prospect — move it there themselves:
+ * `erpnext/public/js/utils/crm_activities.js` does
+ * `$(cur_form_footer).appendTo(this.all_activities_wrapper)`, relocating the whole
+ * footer into the "Activities" tab. The premise this script is built on ("a sibling
+ * of the tab panes, so it follows you onto every tab") is then false — Bootstrap
+ * already scopes it to that one pane. Hiding it on every tab but the first only
+ * removes the last tab it was reachable from, and on Opportunity that left the
+ * activity feed with nowhere to show at all: invisible on Details because its host
+ * pane was closed, invisible on Activities because this script closed it (v1.331.1).
  */
 frappe.provide("erpnext_enhancements.activity_tabs");
 
@@ -54,7 +65,18 @@ frappe.provide("erpnext_enhancements.activity_tabs");
 		document.querySelectorAll(".form-page").forEach((wrapper) => {
 			// `.form-footer` is where the timeline lives; a page without one (a
 			// new doc, a print view) has nothing to toggle.
-			if (!wrapper.querySelector(".form-footer")) return;
+			const footer = wrapper.querySelector(".form-footer");
+			if (!footer) return;
+			// Already inside a pane — ERPNext's CRM doctypes move it into their
+			// "Activities" tab. Bootstrap shows it on that tab and hides it on the
+			// rest, which is the whole of what this script exists to do; adding our
+			// rule on top only takes away the one tab it was still reachable from.
+			// `remove` and not merely `return`: the relocation happens during form
+			// refresh, so an earlier paint may already have set the class.
+			if (footer.closest(".tab-pane")) {
+				wrapper.classList.remove(HIDDEN_CLASS);
+				return;
+			}
 			wrapper.classList.toggle(HIDDEN_CLASS, !on_first_tab(wrapper));
 		});
 	}
