@@ -1384,44 +1384,31 @@ def _finished_attempt_payload(doc, passed, score, outstanding, completion):
 def _signoff_outstanding(doc):
     """True when the course wants a supervisor sign-off and does not have one.
 
-    "Has one" means a **submitted** Training Signoff recording *Competent* for
-    this learner on this course. A draft is a request, not a verification, and
-    "Needs More Practice" is the supervisor explicitly declining.
+    Delegates to ``training.signoff``, which owns the rule. This used to be a
+    private second implementation, and the cost of that was not the duplication:
+    it was that ``Training Completion`` had *no* copy, so the only enforcement in
+    the system sat on the one path that runs in the player. A completion typed
+    into the Desk skipped the requirement entirely.
 
-    Matched on the course rather than the course version on purpose: somebody who
-    was watched draining a basin last month has been watched draining a basin. A
-    material change to the *content* supersedes their completion and sends them
-    back through the material, which is the right lever — re-observing them
-    physically because a paragraph was rewritten is not.
+    Read here to *report* the gate rather than throw it — the player lists it
+    alongside every other unmet requirement, and the controller is what refuses.
 
-    Returns False when the doctype is absent, so a site that has not migrated
-    Phase 4 can still finish a course rather than being unable to complete
-    anything at all.
+    Imported inside the function rather than at module scope: ``signoff`` pulls in
+    the notification stack behind it, and the bench-free suites that import this
+    module stub ``frappe`` wholesale. A top-level import here broke
+    ``test_training_heartbeat_wire`` on a missing ``frappe.utils.get_url``.
     """
-    if not cint(frappe.db.get_value("Training Course", doc.course, "require_supervisor_signoff")):
-        return False
-    if not frappe.db.exists("DocType", "Training Signoff"):
-        frappe.log_error(
-            f"{doc.course} requires a supervisor sign-off but Training Signoff is not migrated "
-            "on this site; the requirement cannot be enforced.",
-            "Training sign-off",
-        )
-        return False
-    return not frappe.db.exists(
-        "Training Signoff",
-        {"course": doc.course, "user": doc.user, "outcome": "Competent", "docstatus": 1},
-    )
+    from erpnext_enhancements.training import signoff
+
+    return signoff.signoff_outstanding(doc.course, doc.user)
 
 
 def _competent_signoff(doc):
     """The submitted Competent sign-off backing this completion, if any."""
-    if not frappe.db.exists("DocType", "Training Signoff"):
-        return None
-    return frappe.db.get_value(
-        "Training Signoff",
-        {"course": doc.course, "user": doc.user, "outcome": "Competent", "docstatus": 1},
-        "name",
-    )
+    from erpnext_enhancements.training import signoff
+
+    return signoff.competent_signoff_name(doc.course, doc.user)
+
 
 def _refresh_attempt_summary(doc, coverage=None):
     """Write the attempt's denormalised counters from the progress blob.

@@ -37,6 +37,19 @@ class TrainingCompletion(Document):
 		self._snapshot_version()
 		self._resolve_learner()
 		self._stamp_completed_on()
+		# Only on the way in. Re-saving or amending a completion issued years ago
+		# must not fail because the course has since started requiring a sign-off:
+		# the document records what was true when it was issued.
+		if self.is_new():
+			self._require_signoff()
+
+	def before_submit(self):
+		"""The moment of issuance, and therefore the moment the gate must hold.
+
+		Checked here as well as on insert because a draft can be created while the
+		requirement is unmet and submitted afterwards, and *submitted* is what makes
+		this document an attestation somebody may be shown."""
+		self._require_signoff()
 
 	def before_cancel(self):
 		"""Refuse the cancel *before* it happens rather than throwing out of
@@ -52,6 +65,40 @@ class TrainingCompletion(Document):
 		self.db_set("status", "Revoked", update_modified=False)
 
 	# ------------------------------------------------------------------ helpers
+
+	def _require_signoff(self):
+		"""Refuse a completion on a course that demands hands-on verification.
+
+		**This gate did not exist until v1.333.0**, despite ``training/signoff.py``
+		documenting it as living precisely here. The only enforcement was a private
+		copy inside ``api.training.finish_attempt``, which covers exactly one path:
+		a learner finishing in the player. A ``Training Completion`` created by hand
+		in the Desk -- which is the ordinary way a manager records that somebody was
+		trained before the module existed -- skipped it entirely. On this site the
+		single course carrying ``require_supervisor_signoff`` is "Draining a Fountain
+		Basin Safely", so the bypass was available on exactly the record whose whole
+		purpose is proving somebody was watched doing it.
+
+		Delegates to ``signoff.signoff_outstanding`` rather than repeating the query,
+		because a second implementation of a compliance rule is how this happened.
+
+		Imported inside the method, not at module scope: this is a doctype controller
+		and ``signoff`` pulls in the notification stack behind it.
+		"""
+		from erpnext_enhancements.training import signoff
+
+		if not self.course or not self.user:
+			return
+
+		if signoff.signoff_outstanding(self.course, self.user):
+			frappe.throw(
+				_("{0} requires a supervisor to confirm hands-on competence before a "
+				  "completion can be issued. Record a submitted Training Signoff of "
+				  "'Competent' for this learner on this course first.").format(
+					self.course_title_snapshot or self.course
+				),
+				title=_("Supervisor sign-off outstanding"),
+			)
 
 	def _snapshot_version(self):
 		"""Copy the version's identity in once. Guarded on 'not already set' so an

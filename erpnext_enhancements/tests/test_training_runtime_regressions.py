@@ -34,6 +34,12 @@ APP = REPO_ROOT / "erpnext_enhancements"
 RUNTIME = APP / "api/training.py"
 GRADING = APP / "training/grading.py"
 DOCTYPES = APP / "training/doctype"
+# The sign-off rule lives here as of v1.333.0. It used to be a private copy inside
+# api/training.py -- and the reason that mattered is that Training Completion had
+# no copy at all, so the only enforcement sat on the player's path and a
+# hand-entered Desk completion walked straight past it.
+SIGNOFF = APP / "training/signoff.py"
+COMPLETION = DOCTYPES / "training_completion/training_completion.py"
 
 
 def _src():
@@ -66,6 +72,18 @@ def _fn(name):
     start = src.index(f"def {name}")
     nxt = src.find("\ndef ", start + 1)
     return src[start : nxt if nxt != -1 else len(src)]
+
+
+def _sfn(name):
+    """A top-level function body from training/signoff.py."""
+    src = SIGNOFF.read_text(encoding="utf-8")
+    start = src.index(f"def {name}")
+    nxt = src.find("\ndef ", start + 1)
+    return src[start : nxt if nxt != -1 else len(src)]
+
+
+def _completion_src():
+    return COMPLETION.read_text(encoding="utf-8")
 
 
 class TestPayloadFieldNamesExist(unittest.TestCase):
@@ -144,32 +162,82 @@ class TestSignoffGateIsEnforced(unittest.TestCase):
         self.assertIn("_signoff_outstanding", _fn("finish_attempt"))
 
     def test_the_helper_reads_the_course_flag(self):
-        body = _fn("_signoff_outstanding")
-        self.assertIn("require_supervisor_signoff", body)
+        self.assertIn("require_supervisor_signoff", _sfn("signoff_outstanding"))
 
     def test_only_a_submitted_competent_signoff_counts(self):
         """A draft is a request, not a verification; 'Needs More Practice' is the
         supervisor explicitly declining. Either one satisfying the gate would make
         it decorative."""
-        body = _fn("_signoff_outstanding")
-        self.assertIn('"outcome": "Competent"', body)
+        body = _sfn("competent_signoff_name")
+        self.assertIn("COMPETENT", body)
         self.assertIn('"docstatus": 1', body)
 
     def test_it_reports_rather_than_throws(self):
-        """Reported as outstanding like every other unmet gate, so the player can
-        tell the learner what is left instead of showing an error."""
+        """The *player's* reading of the gate reports it as outstanding like every
+        other unmet requirement, so the learner is told what is left instead of
+        being shown an error. The controller is what refuses -- see
+        TestTheCompletionControllerRefuses."""
         self.assertNotIn("frappe.throw", _fn("_signoff_outstanding"))
+        self.assertNotIn("frappe.throw", _sfn("signoff_outstanding"))
 
     def test_a_site_without_the_doctype_can_still_finish(self):
         """Phase 4 may not be migrated everywhere. Not being able to complete any
         course at all is a worse failure than an unenforced gate, so the absence is
         logged and skipped rather than blocking."""
-        body = _fn("_signoff_outstanding")
-        self.assertIn('frappe.db.exists("DocType", "Training Signoff")', body)
+        body = _sfn("signoff_outstanding")
+        self.assertIn('frappe.db.exists("DocType", SIGNOFF_DOCTYPE)', body)
         self.assertIn("log_error", body)
 
     def test_the_completion_records_which_signoff_unlocked_it(self):
         self.assertIn("_competent_signoff", _fn("_issue_completion"))
+
+    def test_the_runtime_delegates_rather_than_re_implementing(self):
+        """One rule, one implementation. Two copies is how the controller ended up
+        with none: the player's copy looked like the gate, so nobody went looking
+        for the one that governs every other way a completion can be created."""
+        body = _fn("_signoff_outstanding")
+        self.assertIn("signoff.signoff_outstanding", body)
+        self.assertNotIn("frappe.db.exists", body)
+        self.assertIn("signoff.competent_signoff_name", _fn("_competent_signoff"))
+
+
+class TestTheCompletionControllerRefuses(unittest.TestCase):
+    """The gate that governs every path, not just the player's.
+
+    ``training/signoff.py`` documented this gate as living on Training Completion
+    from the day it was written. It did not exist there. The only enforcement was
+    inside ``api.training.finish_attempt``, so a completion created by hand in the
+    Desk -- the ordinary way a manager records pre-existing training -- was issued
+    on a course requiring hands-on attestation without one.
+
+    Source assertions rather than behavioural ones because this file is bench-free
+    and a Document controller cannot be instantiated without a site. The bench
+    suite exercises the throw itself.
+    """
+
+    def test_the_controller_has_a_signoff_gate_at_all(self):
+        self.assertIn("_require_signoff", _completion_src())
+
+    def test_it_fires_on_insert_and_on_submit(self):
+        """Insert catches a completion typed straight into the Desk; submit catches
+        a draft made while the requirement was unmet and submitted afterwards.
+        Submitted is what makes this document an attestation."""
+        src = _completion_src()
+        self.assertIn("def before_submit", src)
+        submit = src[src.index("def before_submit") : src.index("def before_cancel")]
+        self.assertIn("_require_signoff", submit)
+        validate = src[src.index("def validate") : src.index("def before_submit")]
+        self.assertIn("_require_signoff", validate)
+        self.assertIn("is_new()", validate)
+
+    def test_it_delegates_to_the_one_rule(self):
+        self.assertIn("signoff.signoff_outstanding", _completion_src())
+
+    def test_it_throws_rather_than_reporting(self):
+        """A controller has nowhere to report to. Refusing the write is the point."""
+        src = _completion_src()
+        body = src[src.index("def _require_signoff") : src.index("def _snapshot_version")]
+        self.assertIn("frappe.throw", body)
 
 
 class TestDroppedPayloadKeysAreLoud(unittest.TestCase):
@@ -309,12 +377,11 @@ class TestSignoffMatchesTheCourseNotTheVersion(unittest.TestCase):
     """
 
     def test_the_lookup_is_scoped_to_the_course(self):
-        body = _fn("_signoff_outstanding")
-        self.assertIn('"course": doc.course', body)
+        self.assertIn('"course": course', _sfn("competent_signoff_name"))
 
     def test_it_is_not_scoped_to_the_version(self):
-        body = _fn("_signoff_outstanding")
-        self.assertNotIn("course_version", body)
+        self.assertNotIn("course_version", _sfn("competent_signoff_name"))
+        self.assertNotIn("course_version", _sfn("signoff_outstanding"))
 
     def test_the_harness_says_so_rather_than_failing(self):
         """The smoke test must skip with a reason when a prior sign-off exists,

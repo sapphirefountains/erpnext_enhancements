@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.333.0] - 2026-08-19
+
+### Fixed
+
+- **A Training Completion entered by hand in the Desk bypassed the supervisor sign-off
+  requirement entirely.** `training/signoff.py` has documented the gate as living on
+  `Training Completion.validate` since the day it was written — *"a completion recorded by
+  hand in the Desk has to hit the same gate as one earned in the player, and only the
+  controller sees both"*. **It was never written there.** `training_completion.py` contained
+  no sign-off logic at all, and `has_competent_signoff`, described in the same paragraph as
+  "the one implementation of that query", had no callers and was dead code.
+
+  The only enforcement in the system was a private second copy inside
+  `api.training.finish_attempt`, which covers exactly one path: a learner finishing in the
+  player. Every other route to a completion — a manager recording pre-existing training, an
+  import, a script — skipped it.
+
+  On this site the single course carrying `require_supervisor_signoff` is **"Draining a
+  Fountain Basin Safely"**, so the bypass was available on precisely the record whose whole
+  purpose is proving somebody was watched doing the thing before being certified to do it
+  alone.
+
+  The rule now has one implementation, `signoff.signoff_outstanding`, with two readings of
+  it: `Training Completion` calls it from `validate` (on insert) and `before_submit` and
+  **throws**; `api.training.finish_attempt` calls it and **reports** the requirement to the
+  learner alongside every other unmet gate, which is what the player has always needed.
+  `api/training.py`'s copies of both queries now delegate rather than restate them.
+
+  Deliberately *not* enforced on every save: a completion issued years ago must not start
+  failing because the course has since begun requiring a sign-off. The document records what
+  was true when it was issued. `before_submit` is the moment of issuance and therefore the
+  moment the gate has to hold — a draft can be created while the requirement is unmet and
+  submitted afterwards, and submitted is what makes this document an attestation somebody may
+  be shown.
+
+  Note what made this survivable for so long: the duplicate looked like the gate. Anyone
+  reading `finish_attempt` saw a sign-off check being enforced and had no reason to go
+  looking for the one that governs the other paths. **Two implementations of a compliance
+  rule is how one of them ends up not existing.**
+
+### Changed
+
+- `training.signoff.competent_signoff_name` is now the single expression of what "signed
+  off" means — the four-clause filter (course, user, `Competent`, `docstatus 1`) that three
+  separate call sites previously wrote out for themselves. `has_competent_signoff` is a thin
+  boolean over it, and it now has callers.
+
+### Tests
+
+- `tests/test_training_runtime_regressions.py` gains `TestTheCompletionControllerRefuses`
+  and a delegation test, and its existing sign-off assertions follow the rule to its new
+  home. The four that broke were doing their job: they pinned the properties (the course
+  flag is read, only a submitted `Competent` counts, the lookup is course-scoped not
+  version-scoped, an unmigrated site can still finish) to a specific file, and the move made
+  them fail loudly rather than silently stop checking anything.
+
+
 ## [1.332.0] - 2026-08-19
 
 ### Added
