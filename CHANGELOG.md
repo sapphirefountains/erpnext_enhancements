@@ -7,6 +7,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.331.1] - 2026-08-19
+
+### Changed
+
+- **The Closed Won alert is now gated by the framework, not only by its own condition.**
+  It ran on `Save` with a Python condition that reimplemented the transition test itself
+  (`doc.status == "Closed Won" and doc.get_doc_before_save() and
+  doc.get_doc_before_save().status != "Closed Won"`). Correct — and worth nothing the
+  moment `condition_type` went NULL, because the condition was the *only* gate.
+
+  It now runs on `Value Change` of `status`, with the condition narrowed to
+  `doc.status == "Closed Won"`. `evaluate_alert` compares the field against
+  `get_doc_before_save()` **before** any condition is consulted and does not consult
+  `condition_type` to do it, and `run_notifications` only maps `on_change` to
+  "Value Change" when `not self.flags.in_insert` — so an Opportunity created directly as
+  Closed Won still sends nothing, exactly as the old `get_doc_before_save()` guard did.
+
+  Same emails, but the worst case if a field is lost again is one mail per *status
+  change* rather than one per *save*.
+
+- **Every fixture now declares the fields `bench migrate` would otherwise erase**, and
+  `tests/test_fixture_completeness.py` fails the build when one stops doing so.
+
+  Audited all 15 fixture files against the live site. Two more exposures, neither of
+  them currently visible, which is the point — the first one wasn't either:
+
+  - `Notification.notification_type` (default `Alert`) and `message_type` (default
+    `Markdown`) are NULL on all nineteen managed records. Latent, not live: frappe reads
+    the first as `self.notification_type or "Alert"`, and the second only in
+    `export_module_json`, which is for app-shipped standard notifications. Declared as
+    `Alert` / `HTML` — `HTML` being what the `ee_*` macros actually emit.
+  - The two managed **Print Formats** have `print_format_for`, `page_number` NULL and
+    `margin_*`, `font_size` at 0 against doctype defaults of `DocType`, `Hide`, 15 and
+    14. Nothing renders wrong: both are custom formats whose own CSS does the work, and
+    22 of the 66 formats on the site — mostly app-shipped ERPNext ones — also sit at
+    margin 0. The exposure is that the values cannot be *held*: tune a margin in the
+    Desk and the next deploy reverts it, with nothing in any diff to show why. Declared
+    at their current values rather than at the doctype defaults, so this change moves no
+    pixels; **choosing real margins is a separate decision.**
+
+  Everything else is clean — Dashboard, Dashboard Chart, Number Card, Custom Field,
+  Property Setter, Custom DocPerm, Role, Role Profile, Web Page, Workflow, Workflow
+  State and Workflow Action Master all declare every field that is non-empty on prod.
+  The remaining undeclared fields are `Check`es defaulting to `'0'`, where NULL and 0 are
+  both falsy and nothing observable changes.
+
+  One more consequence of delete-and-re-insert worth knowing: **`creation` resets too.**
+  Both Print Formats read `creation == modified == 2026-08-18 15:12:09`, the timestamp of
+  the deploy that re-inserted them, not the date they were written.
+
+### Fixed
+
+- **"Closed Won" emails for opportunities that were not Closed Won.** Since the v1.331.0
+  deploy, every save of any Opportunity mailed operations@, billing@, production@ and
+  sales@ a "— Status: Closed Won" notice. CRM-OPP-2026-00153 is in *Negotiation/Review*
+  and sent two.
+
+  The condition on the notification was correct and was never evaluated. `condition_type`
+  is a v16 addition to `Notification`, and v16's `evaluate_alert` reads
+  `if alert.condition_type == "Python" and alert.condition:` — a NULL `condition_type` does
+  not fall back to running the condition, it **skips the check and sends unconditionally**.
+
+  Nothing in this app set that field, and nothing had to: the column shipped with
+  `default: "Python"`, and MariaDB writes a column default into every existing row as part
+  of the `ALTER`, so the site was correct from the day it upgraded. **Fixture sync is what
+  undid it.** `import_doc` does not merge a fixture over the stored document — it
+  `delete_doc`s the document and re-inserts it from the JSON, and `frappe.get_doc(dict)
+  .insert()` applies no DocField defaults (those fire in `new_doc()`). Every key the JSON
+  omits comes back empty. v1.331.0 rewrote `fixtures/notification.json` for the email
+  redesign; the deploy's `bench migrate` re-inserted all nineteen managed Notifications at
+  15:12 on 2026-08-18, and each lost its `condition_type`.
+
+  The evidence is a clean cut at that timestamp: **50 Opportunity saves before it produced
+  0 Closed Won emails; the 2 saves after it produced 2.** And the only two Notification
+  records on the site that still had `condition_type = "Python"` were the two this app does
+  *not* manage as fixtures. This was never one notification — **all nineteen conditions
+  were dead**, including "Task Completed" (`status == "Completed"`) and both Call Log
+  alerts.
+
+  Fix: `fixtures/notification.json` now declares `"condition_type": "Python"` on every
+  entry, and `tests/test_notification_recipients.py` fails the build if one omits it.
+  Worth carrying forward past this field — **a fixture is the whole document, not a patch
+  over it; anything the JSON does not name is erased rather than left alone.**
+
+- **The activity feed was unreachable on Opportunity, Lead and Prospect.** Not hidden on
+  the wrong tabs — hidden on *all* of them, which is why the audit trail could not be
+  consulted to diagnose the emails above.
+
+  `activity_first_tab_only.js` (v1.259.4, cascade fix v1.299.2) is built on the premise
+  that Frappe renders the timeline into `.form-footer`, a *sibling* of the tab panes, so it
+  follows you onto every tab. On ERPNext's three CRM doctypes that premise is false:
+  `erpnext/public/js/utils/crm_activities.js` runs
+  `$(cur_form_footer).appendTo(this.all_activities_wrapper)` and moves the entire footer
+  **into the "Activities" tab**. Bootstrap then scopes it to that one pane, which is
+  precisely the behaviour our script exists to produce.
+
+  Layering our rule on top only subtracted: Activities is not the first tab, so the feed
+  was hidden there too, and Details never had it because the pane holding it was closed.
+  Confirmed on the live form — the footer measured 5049px on the Activities tab and
+  collapsed to 0 the moment `apply()` ran.
+
+  `apply()` now leaves a footer that already sits inside a `.tab-pane` alone, and clears
+  the class rather than merely skipping, because the relocation happens during form refresh
+  and an earlier paint may already have set it.
+
 ## [1.331.0] - 2026-08-18
 
 ### Added

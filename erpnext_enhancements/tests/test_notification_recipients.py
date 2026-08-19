@@ -138,6 +138,69 @@ class TestTheFixturedNotifications(unittest.TestCase):
         for doc in fixture_docs():
             self.assertEqual(doc.get("enabled"), 1, f"{doc['name']} has no explicit enabled: 1")
 
+    def test_a_condition_is_paired_with_the_type_that_evaluates_it(self):
+        """v16 `evaluate_alert` reads
+        `if alert.condition_type == "Python" and alert.condition:` — a `condition` under
+        any other `condition_type` is decoration, and the alert fires unconditionally.
+
+        That these fixtures *declare* `condition_type` at all is pinned in
+        `test_fixture_completeness`, alongside the rest of the fields fixture sync
+        erases. This test is the narrower, semantic half: the two must agree.
+        """
+        for doc in fixture_docs():
+            if not doc.get("condition"):
+                continue
+            self.assertEqual(
+                doc.get("condition_type"),
+                "Python",
+                f"{doc['name']} has a `condition` but condition_type is "
+                f"{doc.get('condition_type')!r}; frappe only evaluates it under Python",
+            )
+
+
+class TestTheClosedWonAlertIsGatedByTheFramework(unittest.TestCase):
+    """Belt as well as braces, after the condition silently stopped being read.
+
+    The alert used to run on `Save` with a Python condition that reimplemented the
+    before/after comparison itself:
+    `doc.status == "Closed Won" and doc.get_doc_before_save()
+     and doc.get_doc_before_save().status != "Closed Won"`.
+
+    Correct, and worth nothing the moment `condition_type` went NULL — the condition
+    was the ONLY gate, so losing it meant an email on every save of every Opportunity.
+
+    On `Value Change` the transition test moves into the framework, which does it in
+    `evaluate_alert` before any condition is consulted and does not depend on
+    `condition_type` at all:
+
+        doc_before_save = doc.get_doc_before_save()
+        if cast(fieldtype, doc.get(alert.value_changed)) == cast(fieldtype, before):
+            return
+
+    `run_notifications` also only maps `on_change` to "Value Change" when
+    `not self.flags.in_insert`, so an Opportunity created directly as Closed Won still
+    sends nothing — the same behaviour the old `get_doc_before_save()` guard gave.
+
+    Same emails as before, but the worst case if a field is lost again is one mail per
+    *status change* rather than one per *save*.
+    """
+
+    def alert(self):
+        return next(d for d in fixture_docs() if d["name"] == "Email Team on Opportunity Won")
+
+    def test_it_fires_on_a_value_change_not_on_every_save(self):
+        self.assertEqual(self.alert()["event"], "Value Change")
+
+    def test_the_watched_field_is_status(self):
+        self.assertEqual(self.alert()["value_changed"], "status")
+
+    def test_the_condition_no_longer_reimplements_the_transition(self):
+        """Keeping the old before/after clause under Value Change would be dead code
+        that reads like the gate, hiding where the gate actually is."""
+        condition = self.alert()["condition"]
+        self.assertNotIn("get_doc_before_save", condition)
+        self.assertIn("Closed Won", condition)
+
     def test_the_fixtures_are_still_allowlisted(self):
         """A fixture file is only synced for the names in the hooks filter."""
         hooks = HOOKS.read_text(encoding="utf-8")
