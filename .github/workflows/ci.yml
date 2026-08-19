@@ -226,6 +226,15 @@ jobs:
       # disabled and re-disable on every migrate.
       - name: Notification recipients (group addresses, and the exceptions)
         run: python -m unittest erpnext_enhancements.tests.test_notification_recipients -v
+      # A fixture is the WHOLE document. `sync_fixtures` deletes each record and
+      # re-inserts it from the JSON, and `frappe.get_doc(dict).insert()` applies no
+      # DocField defaults -- so a field the JSON omits comes back NULL rather than at
+      # its default, on every migrate, with nothing in any diff to show it. That is
+      # how all nineteen Notification conditions went dead at once in v1.331.0
+      # (`condition_type` NULL => frappe skips the condition and sends
+      # unconditionally). Pins the fields where NULL is observably different.
+      - name: Fixture completeness (fields migrate would silently erase)
+        run: python -m unittest erpnext_enhancements.tests.test_fixture_completeness -v
       # The activity feed and its stylesheet are two halves of one behaviour, and
       # they fail silently apart: a class nothing styles, or a rule nothing sets.
       # Also pins that the first tab is found POSITIONALLY -- several of our

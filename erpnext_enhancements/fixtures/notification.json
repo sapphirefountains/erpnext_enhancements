@@ -13,6 +13,9 @@
     "cc": "operations@sapphirefountains.com"
    }
   ],
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "condition": "doc.status == \"Completed\"",
   "value_changed": "status",
   "enabled": 1,
@@ -32,6 +35,9 @@
     "cc": "sales@sapphirefountains.com"
    }
   ],
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "enabled": 1,
   "message": "{% set body %}\n{{ ee_kv([\n\t(\"Lead\", doc.name),\n\t(\"Name\", doc.get(\"lead_name\")),\n\t(\"Company\", doc.get(\"company_name\")),\n\t(\"Email\", doc.get(\"email_id\")),\n\t(\"Phone\", doc.get(\"mobile_no\") or doc.get(\"phone\")),\n\t(\"Source\", doc.get(\"source\"))\n]) }}\n{{ ee_doc_button(doc, \"Open the lead\") }}\n{% endset %}\n{{ ee_email(body, title=\"New lead: \" ~ (doc.get(\"lead_name\") or doc.name), eyebrow=\"Sales\") }}"
  },
@@ -49,6 +55,9 @@
     "cc": "sales@sapphirefountains.com"
    }
   ],
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "enabled": 1,
   "message": "{% set body %}\n{{ ee_kv([\n\t(\"Opportunity\", doc.name),\n\t(\"Customer\", doc.get(\"customer_name\") or doc.get(\"party_name\")),\n\t(\"Source\", doc.get(\"source\")),\n\t(\"Expected value\", doc.get_formatted(\"opportunity_amount\") if doc.get(\"opportunity_amount\") else None)\n]) }}\n{{ ee_doc_button(doc, \"Open the opportunity\") }}\n{% endset %}\n{{ ee_email(body, title=\"New opportunity: \" ~ (doc.get(\"title\") or doc.name), eyebrow=\"Sales\") }}"
  },
@@ -57,7 +66,7 @@
   "name": "Email Team on Opportunity Won",
   "channel": "Email",
   "document_type": "Opportunity",
-  "event": "Save",
+  "event": "Value Change",
   "subject": "{{ doc.custom_opportunity_name}} - Status: Closed Won",
   "send_to_all_assignees": 0,
   "attach_print": 0,
@@ -66,7 +75,11 @@
     "cc": "operations@sapphirefountains.com, billing@sapphirefountains.com, production@sapphirefountains.com, sales@sapphirefountains.com"
    }
   ],
-  "condition": "doc.status == \"Closed Won\" and doc.get_doc_before_save() and doc.get_doc_before_save().status != \"Closed Won\"",
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
+  "condition": "doc.status == \"Closed Won\"",
+  "value_changed": "status",
   "enabled": 1,
   "message": "{% set body %}\n{{ ee_callout(\"This opportunity is Closed Won. Hand-off starts now.\", \"success\") }}\n{{ ee_kv([\n\t(\"Opportunity\", doc.name),\n\t(\"Customer\", doc.get(\"customer_name\") or doc.get(\"party_name\")),\n\t(\"Value\", doc.get_formatted(\"opportunity_amount\") if doc.get(\"opportunity_amount\") else None),\n\t(\"Owner\", frappe.get_fullname(doc.get(\"opportunity_owner\")) if doc.get(\"opportunity_owner\") else None)\n]) }}\n{{ ee_doc_button(doc, \"Open the opportunity\") }}\n{% endset %}\n{{ ee_email(body, title=(doc.get(\"custom_opportunity_name\") or doc.name) ~ \" — Closed Won\", eyebrow=\"Sales · Closed Won\") }}"
  },
@@ -84,6 +97,9 @@
     "cc": "billing@sapphirefountains.com"
    }
   ],
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "enabled": 1,
   "message": "{% set body %}\n{{ ee_kv([\n\t(\"Project\", doc.name),\n\t(\"Name\", doc.get(\"project_name\")),\n\t(\"Customer\", doc.get(\"customer\")),\n\t(\"Type\", doc.get(\"project_type\")),\n\t(\"Expected start\", doc.get_formatted(\"expected_start_date\") if doc.get(\"expected_start_date\") else None)\n]) }}\n{{ ee_doc_button(doc, \"Open the project\") }}\n{% endset %}\n{{ ee_email(body, title=\"New project: \" ~ (doc.get(\"project_name\") or doc.name), eyebrow=\"Projects\") }}"
  },
@@ -101,6 +117,9 @@
     "cc": "billing@sapphirefountains.com, operations@sapphirefountains.com"
    }
   ],
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "value_changed": "project_type",
   "enabled": 1,
   "message": "{% set body %}\n{{ ee_kv([\n\t(\"Project\", doc.name),\n\t(\"Name\", doc.get(\"project_name\")),\n\t(\"Customer\", doc.get(\"customer\")),\n\t(\"New stage\", doc.get(\"project_type\"))\n]) }}\n{{ ee_doc_button(doc, \"Open the project\") }}\n{% endset %}\n{{ ee_email(body, title=\"Project stage changed: \" ~ (doc.get(\"project_name\") or doc.name), eyebrow=\"Projects\") }}"
@@ -119,6 +138,9 @@
     "cc": "billing@sapphirefountains.com"
    }
   ],
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "condition": "doc.auto_created == 1",
   "enabled": 1,
   "message": "{% set body %}\n{{ ee_callout(\"This fiscal year was created automatically. Check the dates before anything posts into it.\", \"warning\") }}\n{{ ee_kv([\n\t(\"Fiscal Year\", doc.name),\n\t(\"Starts\", doc.get_formatted(\"year_start_date\") if doc.get(\"year_start_date\") else None),\n\t(\"Ends\", doc.get_formatted(\"year_end_date\") if doc.get(\"year_end_date\") else None)\n]) }}\n{{ ee_doc_button(doc, \"Review the fiscal year\") }}\n{% endset %}\n{{ ee_email(body, title=\"New fiscal year — review required\", eyebrow=\"Finance\") }}"
@@ -137,6 +159,9 @@
     "cc": "operations@sapphirefountains.com, billing@sapphirefountains.com, production@sapphirefountains.com"
    }
   ],
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "condition": "doc.status == \"Received\" or doc.status == \"Partially Received\"",
   "value_changed": "status",
   "enabled": 1,
@@ -156,6 +181,9 @@
     "cc": "operations@sapphirefountains.com, billing@sapphirefountains.com"
    }
   ],
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "enabled": 1,
   "message": "{% set body %}\n{{ ee_kv([\n\t(\"Request\", doc.name),\n\t(\"Type\", doc.get(\"material_request_type\")),\n\t(\"Requested by\", frappe.get_fullname(doc.get(\"owner\")) if doc.get(\"owner\") else None),\n\t(\"Required by\", doc.get_formatted(\"schedule_date\") if doc.get(\"schedule_date\") else None)\n]) }}\n{{ ee_doc_button(doc, \"Open the material request\") }}\n{% endset %}\n{{ ee_email(body, title=\"Material request submitted: \" ~ doc.name, eyebrow=\"Procurement\") }}"
  },
@@ -182,6 +210,9 @@
     "receiver_by_document_field": "owner"
    }
   ],
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "enabled": 1,
   "message": "{% set body %}\n{{ ee_kv([\n\t(\"Allocated to\", frappe.get_fullname(doc.get(\"allocated_to\")) if doc.get(\"allocated_to\") else None),\n\t(\"Assigned by\", frappe.get_fullname(doc.get(\"assigned_by\")) if doc.get(\"assigned_by\") else None),\n\t(\"Priority\", doc.get(\"priority\")),\n\t(\"Due\", doc.get_formatted(\"date\") if doc.get(\"date\") else None)\n]) }}\n{% if doc.get(\"description\") %}{{ ee_prose(doc.description) }}{% endif %}\n{{ ee_doc_button(doc, \"Open the to-do\") }}\n{% endset %}\n{{ ee_email(body, title=\"To-do: \" ~ (doc.get(\"reference_name\") or doc.name), eyebrow=\"Tasks\") }}"
  },
@@ -199,6 +230,9 @@
     "receiver_by_document_field": "user"
    }
   ],
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "condition": "doc.notified==1",
   "value_changed": "notified",
   "enabled": 1,
@@ -218,6 +252,9 @@
     "receiver_by_role": "System Manager"
    }
   ],
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "enabled": 1,
   "message": "{% set body %}\n{{ ee_callout(\"An unhandled error was logged on the site.\", \"danger\") }}\n{{ ee_kv([(\"Method\", doc.get(\"method\")), (\"Logged\", doc.get_formatted(\"creation\") if doc.get(\"creation\") else None)]) }}\n{{ ee_code((doc.get(\"error\") or \"\")[:4000]) }}\n{{ ee_doc_button(doc, \"Open the error log\") }}\n{% endset %}\n{{ ee_email(body, title=\"[Error] \" ~ (doc.get(\"method\") or doc.name), eyebrow=\"Platform\") }}"
  },
@@ -235,12 +272,18 @@
     "receiver_by_role": "System Manager"
    }
   ],
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "condition": "doc.status==\"Failed\"",
   "enabled": 1,
   "message": "{% set body %}\n{{ ee_callout(\"An outbound integration request failed.\", \"danger\") }}\n{{ ee_kv([\n\t(\"Service\", doc.get(\"integration_request_service\")),\n\t(\"Status\", doc.get(\"status\")),\n\t(\"Reference\", (doc.get(\"reference_doctype\") ~ \" \" ~ doc.get(\"reference_docname\")) if doc.get(\"reference_docname\") else None)\n]) }}\n{{ ee_code((doc.get(\"error\") or doc.get(\"output\") or \"\")[:4000]) }}\n{{ ee_doc_button(doc, \"Open the integration request\") }}\n{% endset %}\n{{ ee_email(body, title=\"[Error] \" ~ (doc.get(\"integration_request_service\") or doc.name), eyebrow=\"Platform\") }}"
  },
  {
   "doctype": "Notification",
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "enabled": 1,
   "name": "Maintenance Review Needed",
   "channel": "Email",
@@ -259,6 +302,9 @@
  },
  {
   "doctype": "Notification",
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "enabled": 1,
   "name": "Maintenance Finalized",
   "channel": "Email",
@@ -279,6 +325,9 @@
  },
  {
   "doctype": "Notification",
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "enabled": 1,
   "name": "Maintenance Reading Out of Range",
   "channel": "Email",
@@ -296,6 +345,9 @@
  },
  {
   "doctype": "Notification",
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "enabled": 1,
   "name": "Maintenance Contract Renewal Due",
   "channel": "Email",
@@ -315,6 +367,9 @@
  },
  {
   "doctype": "Notification",
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "enabled": 1,
   "name": "High Escalation Risk Call",
   "channel": "Email",
@@ -333,6 +388,9 @@
  },
  {
   "doctype": "Notification",
+  "notification_type": "Alert",
+  "message_type": "HTML",
+  "condition_type": "Python",
   "enabled": 1,
   "name": "Compliance Flag on Call",
   "channel": "Email",

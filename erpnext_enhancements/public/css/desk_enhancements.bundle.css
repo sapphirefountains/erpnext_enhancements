@@ -1388,6 +1388,15 @@ mark {
    Do not "clean this up" by narrowing the blanket rule instead: it exists
    because something was hiding the comment box on some doctypes, and that
    something was never identified.
+
+   The "sibling of the tab panes" premise above does NOT hold everywhere, and
+   this rule is powerful enough to matter where it doesn't. ERPNext's CRM
+   doctypes — Lead, Opportunity, Prospect — move the footer INTO their
+   "Activities" tab (crm_activities.js). Bootstrap then hides it on every other
+   tab by itself, and this rule took away the one tab that was left, so the feed
+   was invisible everywhere (v1.331.1). The JS half now refuses to set the class
+   on a footer that already lives in a `.tab-pane`; that guard is what keeps this
+   selector safe, so keep the two halves in step.
    ========================================================================== */
 .form-page.ee-activity-off-tab .form-footer {
     display: none !important;
