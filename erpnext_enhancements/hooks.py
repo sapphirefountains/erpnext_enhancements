@@ -269,6 +269,11 @@ doctype_list_js = {
 	"Task": "public/js/project_enhancements/task_gantt.js",
 	"File": "public/js/global_enhancements/file_list.js",
 	"Item": "public/js/item_list.js",
+	# procurement — the Order Stage pill: a real colour per stage (frappe's
+	# guess_colour() matches none of the seven names, so all seven came out grey),
+	# click-to-change from the row, and a bulk "Set Order Stage" action. EXTENDS
+	# erpnext's own purchase_order_list.js rather than replacing it.
+	"Purchase Order": "public/js/purchase_order_list.js",
 	"Call Log": "public/js/global_enhancements/call_log_list.js",
 	"Document Intake": "public/js/accounting_intake/document_intake_list.js",
 	# fountain_move — "Send Intake Link" / "Copy Public Link" + status indicators

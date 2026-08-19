@@ -22,6 +22,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_po_order_stage
 """
 
 import ast
+import re
 import sys
 import types
 import unittest
@@ -37,6 +38,13 @@ PATCHES_TXT = APP / "patches.txt"
 FIELD_PATCH = APP / "patches/add_po_order_stage_field.py"
 BACKFILL_PATCH = APP / "patches/backfill_po_order_stage.py"
 OPTIONS_PATCH = APP / "patches/update_po_order_stage_options.py"
+MOVE_PATCH = APP / "patches/move_po_order_stage_to_header.py"
+SEED_PATCH = APP / "patches/seed_po_list_columns.py"
+LIST_JS = APP / "public/js/purchase_order_list.js"
+
+# Every patch that writes the field. A spec written out twice is two option lists waiting
+# to disagree, and a stored value outside the Select makes the row refuse to save.
+FIELD_PATCHES = (FIELD_PATCH, OPTIONS_PATCH, MOVE_PATCH)
 
 # Mutable state the frappe stub reads at call time.
 STATE = {"has_column": True, "orders": {}, "comments": [], "errors": [], "raise_on": None}
@@ -459,10 +467,10 @@ class TestItIsWiredUp(unittest.TestCase):
             "\n".join(po_order_stage.STAGES),
         )
 
-    def test_both_patches_build_the_field_from_the_one_spec(self):
-        """Two patches touch this field -- one creates it, one widens it. A spec written
-        out twice is two option lists waiting to disagree."""
-        for patch in (FIELD_PATCH, OPTIONS_PATCH):
+    def test_every_patch_builds_the_field_from_the_one_spec(self):
+        """Three patches touch this field -- one creates it, one widens it, one moves it.
+        A spec written out twice is two option lists waiting to disagree."""
+        for patch in FIELD_PATCHES:
             with self.subTest(patch.name):
                 source = patch.read_text(encoding="utf-8")
                 self.assertIn(
@@ -476,10 +484,23 @@ class TestItIsWiredUp(unittest.TestCase):
 
     def test_the_field_is_visible_and_filterable_in_the_list(self):
         """The actual feature for a list of a hundred-odd orders: "what am I waiting on"
-        is a filter, not a scroll."""
+        is a filter, not a scroll. Necessary and not sufficient -- `in_list_view` gets the
+        field into the default column set and has no say over where; see
+        `list_view_columns`."""
         spec = po_order_stage.field_definition()
         self.assertEqual(spec["in_list_view"], 1)
         self.assertEqual(spec["in_standard_filter"], 1)
+
+    def test_the_stage_sits_at_the_top_of_the_form(self):
+        """ER-2026-276347: it used to anchor to `tracking_section`, inside the More Info
+        tab behind a collapsed heading -- right by subject, wrong by use."""
+        self.assertEqual(po_order_stage.field_definition()["insert_after"], "supplier_name")
+
+    def test_the_stage_does_not_share_an_anchor_with_the_approval_section(self):
+        """`custom_approval_stamp_section` anchors on `status`. Two custom fields sharing
+        an anchor resolve in an order nobody controls, and losing that race would drop the
+        stage inside the collapsible Approval section."""
+        self.assertNotEqual(po_order_stage.field_definition()["insert_after"], "status")
 
     def test_the_options_patch_runs_after_the_field_exists(self):
         text = PATCHES_TXT.read_text(encoding="utf-8")
@@ -512,6 +533,150 @@ class TestItIsWiredUp(unittest.TestCase):
         source = BACKFILL_PATCH.read_text(encoding="utf-8")
         self.assertIn("frappe.log_error", source)
         self.assertIn("has_column", source)
+
+    def test_the_move_patch_runs_after_the_field_exists(self):
+        text = PATCHES_TXT.read_text(encoding="utf-8")
+        create = text.index("erpnext_enhancements.patches.add_po_order_stage_field")
+        move = text.index("erpnext_enhancements.patches.move_po_order_stage_to_header")
+        self.assertLess(create, move, "the field must exist before it can be moved")
+
+    def test_the_move_is_shipped_as_a_patch_and_not_only_an_edit(self):
+        """`field_definition()` is not a fixture and nothing re-reads it on migrate. An
+        edit with no patch beside it changes a file and ships nothing -- which looks
+        exactly like a change that worked."""
+        self.assertIn("erpnext_enhancements.patches.move_po_order_stage_to_header",
+                      PATCHES_TXT.read_text(encoding="utf-8"))
+
+
+class TestTheListColumnsArePinned(unittest.TestCase):
+    """`in_list_view` alone cannot place a column: frappe builds the default column set
+    from FIELD ORDER, so a custom field lands last however the flag is set. The only lever
+    on order is the `List View Settings` row `seed_po_list_columns` writes."""
+
+    def setUp(self):
+        self.columns = po_order_stage.list_view_columns()
+        self.fieldnames = [column["fieldname"] for column in self.columns]
+
+    def test_the_stage_sits_immediately_before_the_status_pill(self):
+        """The column ER-2026-276347 circled. `status_field` is not a fieldname -- it is
+        the sentinel frappe matches against the computed indicator pill."""
+        self.assertEqual(
+            self.fieldnames.index(po_order_stage.FIELD),
+            self.fieldnames.index("status_field") - 1,
+        )
+
+    def test_it_names_the_field_the_module_writes(self):
+        """A pinned column naming a field that does not exist is a column that renders
+        nothing, silently."""
+        self.assertIn(po_order_stage.FIELD, self.fieldnames)
+
+    def test_it_takes_nothing_away_that_was_already_showing(self):
+        """Pinning is subtractive -- `reorder_listview_fields` keeps only the columns named
+        here and drops the rest -- so this list has to reproduce what was there before it
+        adds to it. Dropping a column under the banner of adding one is the failure."""
+        for fieldname in ("supplier_name", "transaction_date", "schedule_date", "project"):
+            with self.subTest(fieldname):
+                self.assertIn(fieldname, self.fieldnames)
+
+    def test_the_title_column_comes_first(self):
+        """Frappe fixes the title column in place regardless, but the Desk's own List
+        Settings dialog writes it first, and a row that does not look like the dialog's
+        output invites someone to "fix" it."""
+        self.assertEqual(self.fieldnames[0], "supplier_name")
+
+    def test_every_column_carries_a_label(self):
+        for column in self.columns:
+            with self.subTest(column["fieldname"]):
+                self.assertTrue(column.get("label"))
+
+    def test_the_seed_patch_reads_the_one_spec(self):
+        source = SEED_PATCH.read_text(encoding="utf-8")
+        self.assertIn("list_view_columns", source)
+
+    def test_the_seed_patch_does_not_overwrite_a_row_somebody_configured(self):
+        """This app is not the only thing that writes `List View Settings`: the Desk's own
+        List Settings dialog does, from a menu any System Manager can reach."""
+        source = SEED_PATCH.read_text(encoding="utf-8")
+        self.assertIn("frappe.db.exists", source)
+        self.assertIn("already name", source.lower() + source)
+
+    def test_the_seed_patch_is_registered(self):
+        self.assertIn(
+            "erpnext_enhancements.patches.seed_po_list_columns",
+            PATCHES_TXT.read_text(encoding="utf-8"),
+        )
+
+
+class TestTheListScriptCoversEveryStage(unittest.TestCase):
+    """The colours are the readable-at-a-glance half of ER-2026-276347. Frappe colours a
+    Select cell with `guess_colour()`, which word-matches a fixed vocabulary that none of
+    the seven stage names hit -- so without this script all seven render the same grey."""
+
+    def setUp(self):
+        self.source = LIST_JS.read_text(encoding="utf-8")
+
+    def _js_stages(self):
+        block = re.search(r"const STAGES = \[(.*?)\];", self.source, re.S)
+        self.assertIsNotNone(block, "the script must declare a STAGES list")
+        return tuple(re.findall(r'"([^"]+)"', block.group(1)))
+
+    def _js_colours(self):
+        block = re.search(r"const COLOURS = \{(.*?)\};", self.source, re.S)
+        self.assertIsNotNone(block, "the script must declare a COLOURS map")
+        return dict(re.findall(r'"?([A-Za-z ]+?)"?:\s*"([a-z-]+)"', block.group(1)))
+
+    def test_the_script_lists_the_same_stages_in_the_same_order(self):
+        """A stage the script does not know renders grey; a stage the script invents gets
+        written and then refuses to save, because it is not one of the Select's options."""
+        self.assertEqual(self._js_stages(), po_order_stage.STAGES)
+
+    def test_every_stage_has_a_colour(self):
+        colours = self._js_colours()
+        for stage in po_order_stage.STAGES:
+            with self.subTest(stage):
+                self.assertIn(stage, colours)
+
+    def test_every_colour_is_one_frappe_actually_renders(self):
+        """An invented colour name is not an error -- it is an unstyled pill, which looks
+        like the bug this file exists to fix."""
+        known = {
+            "green", "cyan", "blue", "orange", "yellow", "gray", "grey",
+            "red", "pink", "darkgrey", "purple", "light-blue",
+        }
+        for stage, colour in self._js_colours().items():
+            with self.subTest(stage):
+                self.assertIn(colour, known)
+
+    def test_it_extends_erpnexts_settings_rather_than_replacing_them(self):
+        """erpnext's own purchase_order_list.js owns get_indicator, add_fields and the
+        Close / Reopen actions. A bare assignment drops all three and the list still looks
+        fine, which is why this is asserted rather than trusted."""
+        normalised = " ".join(self.source.split())
+        self.assertIn(
+            'frappe.listview_settings["Purchase Order"] = '
+            'frappe.listview_settings["Purchase Order"] || {};',
+            normalised,
+        )
+        # The three things a bare assignment would drop, each re-derived from what was
+        # already there rather than restated.
+        self.assertIn("settings.add_fields || []", self.source)
+        self.assertIn("Object.assign({}, settings.formatters", self.source)
+        self.assertIn("original_onload", self.source)
+
+    def test_the_click_does_not_also_filter_the_list(self):
+        """A click on a list cell is frappe's filter-by-this-value gesture, and a list row
+        sits inside a link."""
+        self.assertIn("preventDefault", self.source)
+        self.assertIn("stopPropagation", self.source)
+
+    def test_a_cancelled_order_gets_no_picker(self):
+        """A cancelled document cannot be saved at all, so a picker there would be a
+        control that always fails."""
+        self.assertIn("docstatus", self.source)
+
+    def test_the_script_is_registered_on_the_list(self):
+        hooks = HOOKS.read_text(encoding="utf-8")
+        self.assertIn('"Purchase Order": "public/js/purchase_order_list.js"', hooks)
 
 
 if __name__ == "__main__":

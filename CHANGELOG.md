@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.336.0] - 2026-08-19
+
+### Added
+
+- **The Purchase Order stage is now the second thing you see in the list, in colour, and
+  you can change it without opening the order** (ER-2026-276347). The field itself shipped
+  in v1.289.0 and gained its full option list in v1.328.0; what it did not have was a
+  place. It sat in More Info → Order Status, behind a tab and a collapsed heading, so
+  reading it meant knowing it was there and setting it cost four clicks on the one field a
+  buyer touches most. It now anchors to `supplier_name` — directly under the supplier at
+  the top of the first tab — and appears in the list as a colour-coded pill immediately
+  left of the status pill, where the request asked for it. Clicking a pill opens a stage
+  picker over the row and writes the choice straight away; a **Set Order Stage** action
+  covers a multi-row selection.
+
+  **`in_list_view` was already `1`, and the request is proof that a flag is not a
+  feature.** It had been set since v1.328.0 and verified on production before any of this
+  was written. Two things it cannot do, both worth writing down because both are invisible
+  until somebody looks at the list:
+
+  1. **It gets a field into the default column set and has no say over where.** Frappe
+     derives that set from **field order**, and a custom field sorts after every standard
+     one, so the stage came out last — behind Grand Total, `per_billed` and `per_received`
+     — however the flag was set. The only lever on column order is a `List View Settings`
+     row, which `Purchase Order` did not have (the one row on this whole site was `Item`).
+     `seed_po_list_columns` writes one from `po_order_stage.list_view_columns()`.
+
+     That row is **subtractive as well as ordering**: `reorder_listview_fields` keeps only
+     the columns it names and drops every other one. So the spec deliberately reproduces
+     the five columns the list was already showing and adds a sixth. Grand Total and the
+     two percent columns carry `in_list_view` on erpnext's own doctype and were not
+     rendering before this; adding them here would have been a change nobody asked for,
+     arriving under the banner of one that was.
+
+  2. **A Select in a list cell is coloured by `frappe.utils.guess_colour()`, which
+     word-matches a fixed vocabulary** — Pending, Review, Open, Urgent, Failed, Rejected,
+     Closed, Completed, Confirmed, Approved, Submitted, and a handful more. Not one of
+     *Created*, *Awaiting Confirmation*, *Awaiting Fulfillment*, *Waiting for Delivery*,
+     *Waiting for Pickup*, *Partially Fulfilled* or *Received* hits it, so all seven
+     stages render the same grey. A pill that is always grey is a label, not an indicator,
+     and the whole complaint was about reading the list at a glance. The colours come from
+     a `formatters` entry in the new `public/js/purchase_order_list.js`, and carry meaning
+     rather than variety: grey is "nothing has happened yet", warm is "somebody owes us an
+     answer", cool is "it is on its way", green is "done".
+
+  **A change to `field_definition()` with no patch beside it edits a file and ships
+  nothing**, which looks exactly like a change that worked. The field is created with
+  `create_custom_fields()` and is therefore `is_system_generated = 1`, which the fixture
+  export filters out on purpose — so no fixture carries it and `bench migrate` re-reads
+  the spec only when a patch tells it to. `move_po_order_stage_to_header` is that patch;
+  like the create and widen patches before it, it builds the field from the one shared
+  spec so the three cannot drift onto different option lists.
+
+  It anchors to `supplier_name` and deliberately **not** to `status`, which is already the
+  anchor for `custom_approval_stamp_section`: two custom fields sharing an anchor resolve
+  in an order nobody controls, and losing that race would drop the stage inside the
+  collapsible Approval section — a worse hiding place than the one this is fixing.
+
+  **The row-level write goes through `frappe.db.set_value`, not a new endpoint.** That is
+  `frappe.client.set_value`, which loads the document and calls `save()`, so permissions
+  are checked per document and the edit is versioned like any other. It reaches a
+  *submitted* order only because `custom_order_stage` is `allow_on_submit`: a save on a
+  submitted document runs as `update_after_submit`, which permits exactly the
+  allow-on-submit fields and throws on anything else. A **cancelled** order cannot be
+  saved at all, so those get a plain, unclickable pill instead of a control that would
+  always fail. The click also has to `preventDefault()` and `stopPropagation()` — a list
+  row sits inside a link, and a click on a list cell is frappe's own
+  filter-by-this-value gesture.
+
+  The new list script **extends** `frappe.listview_settings["Purchase Order"]` rather than
+  assigning it. erpnext's own `purchase_order_list.js` owns `get_indicator` (the To
+  Receive and Bill / To Bill / Closed pill), `add_fields` — which that indicator reads
+  `per_received`, `per_billed` and `advance_payment_status` from — and the Close / Reopen
+  action items. A bare assignment drops all three, and the list still looks fine, so the
+  test suite asserts it rather than trusting the comment.
+
+  *(Framework behaviour above was read with `git show v16.30.0:…` against the version
+  production actually runs, and the absence of a column cap was confirmed against the
+  deployed bundle itself rather than the source: `list.bundle` slices columns at
+  `max_number_of_fields = 50`, so nothing was being truncated. A sibling `../frappe`
+  checkout is on `develop`/17.0.0-dev and its behaviour does not apply.)*
+
 ## [1.335.0] - 2026-08-19
 
 ### Added
