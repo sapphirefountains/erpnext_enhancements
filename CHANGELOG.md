@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.332.0] - 2026-08-19
+
+### Added
+
+- **The training video health check that the doctype was already written around.**
+  `TrainingVideoAsset._derive_status` promotes Draft to Available and then explicitly
+  refuses to touch `Missing` or `Error`, on the stated grounds that *"the hourly check in
+  `training/drive_media.py` is what sets Missing / Error"*. **That module did not exist.**
+  Neither did anything else that wrote `last_verified_on`, a field declared on the doctype
+  since v1.207.0 and, on a repo-wide grep, read by nobody and written by nothing.
+
+  So nothing ever moved an asset out of `Available`. A video whose GCS object had been
+  deleted — or whose copy never really landed — stayed green in the authoring UI and failed
+  in front of a learner at play time. The status field looked like a health signal and was
+  a write-once constant.
+
+  `training/drive_media.py` now stats the object behind each asset on the existing `hourly`
+  scheduler list, stamps `last_verified_on`, and repairs `size_bytes` / `mime_type` from
+  what the bucket actually holds, so a record converges on the truth however the row was
+  first created. Work is bounded twice over — assets are re-checked no more often than
+  every 12 hours and no more than 200 per run, oldest-verified first — because an hourly
+  job whose cost grows with the library is a future incident.
+
+  **Absent is not unreachable, and the distinction is the whole design.** A 404 is GCS
+  stating the object is gone: that earns `Missing`. A 403, a timeout, a 5xx or an expired
+  key mean we could not ask, and are recorded as `last_error` with the status left alone —
+  marking a healthy video `Missing` after one bad thirty seconds would send an author to
+  rebuild a file that is exactly where they left it. An inconclusive check also declines to
+  stamp `last_verified_on`, so the asset stays at the head of the queue and is retried
+  rather than silently shelved for twelve hours.
+
+### Fixed
+
+- **`copy_from_drive` uploaded the video correctly and then recorded nothing about it.**
+  It stamped `gcs_object`, `gcs_synced_on`, `status` and `last_error` while holding both
+  the buffer and the content type, and wrote neither `size_bytes` nor `mime_type`. Only
+  `api.training_author.register_video_asset` ever filled those, from the Drive probe — so
+  an asset registered by hand in the Desk form, which
+  [`docs/training-video-drive-runbook.md`](docs/training-video-drive-runbook.md) warns
+  against and nothing enforces, was copied perfectly while its record went on saying the
+  file was zero bytes of unknown type. The copy now records what it actually sent, which
+  makes it self-healing regardless of how the row was created.
+
+  This was not hypothetical: production's only video asset, `TRN-VID-00001`, carried
+  `size_bytes = 0` and a null `mime_type` for sixteen days while the object itself was a
+  healthy 24,298,433-byte `video/mp4` matching its Drive source byte for byte.
+
+  Related: the object name is derived from the mime type via `_extension_for`, which falls
+  back to `mp4`. With `mime_type` empty a `.webm` source would have been stored under a
+  `.mp4` object name and served with the wrong `Content-Type`. It happened not to bite
+  because the one asset really was mp4.
+
+### Verified
+
+- **HTTP 206 byte-range serving, on production, for the first time.**
+  `training.gcs_media.test_connection()` returned
+  `{"ok": true, "range_ok": true}` — bucket, key, V4 signing, playback and byte-range
+  seeking all confirmed against `sf-erpnext-training-media`. This was step 5 of the
+  TASK-2026-01150 runbook and had never been run since the infrastructure was applied on
+  2026-08-02; the standing note in this changelog that *"HTTP-206 range serving remains
+  unverified"* is now settled. It matters because a bucket answering a seek with 200-and-
+  the-whole-file leaves the player working while every watch-coverage figure it reports is
+  wrong rather than absent — the worst failure mode this feature has.
+
 ## [1.331.0] - 2026-08-18
 
 ### Added

@@ -930,6 +930,12 @@ scheduler_events = {
 		# killed tab). Bounds progress loss at one flush interval rather than a
 		# whole lesson.
 		"erpnext_enhancements.training.progress.flush_stale_attempts",
+		# training: stat the GCS object behind every video asset, stamp
+		# last_verified_on, and repair size/mime from what the bucket actually
+		# holds. TrainingVideoAsset._derive_status has always deferred to this by
+		# name while the module did not exist, so nothing ever moved an asset out
+		# of Available -- a deleted video stayed green until a learner hit play.
+		"erpnext_enhancements.training.drive_media.verify_video_assets",
 		# QuickBooks Online sync jobs moved to staggered cron entries above to stop
 		# the three from racing on the Settings doc (TimestampMismatchError). See the
 		# "cron" section.

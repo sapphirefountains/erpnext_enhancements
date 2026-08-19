@@ -502,6 +502,17 @@ jobs:
       # compares, rather than asserting the implementation's own output.
       - name: Training media (V4 signed URL canonical request)
         run: python -m unittest erpnext_enhancements.tests.test_training_gcs_media -v
+      # The health check that TrainingVideoAsset._derive_status had always deferred
+      # to by name while the module did not exist. Two properties here are the ones
+      # that fail silently in production: the due-for-verification query must name
+      # the never-verified case explicitly rather than leaning on frappe emitting
+      # `coalesce(col,'0001-01-01')` for a `<` comparison -- an undocumented internal
+      # that is currently the only reason a brand-new asset is ever looked at -- and
+      # an unreachable object must NOT be recorded as a missing one, because a 403 or
+      # a timeout means we could not ask, and condemning a good video sends an author
+      # to rebuild a file that is exactly where they left it.
+      - name: Training media health check (verify queue, absent vs unreachable)
+        run: python -m unittest erpnext_enhancements.tests.test_training_drive_media -v
       # Regressions for four defects that shipped in 1.207.0-1.209.0 and were
       # found by an adversarial review afterwards. Three of them were ORDERING
       # bugs -- work done in validate() that Frappe needs before validate runs --

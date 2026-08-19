@@ -105,6 +105,12 @@ regardless of what any endpoint does.
 - `tasks.py` — the scheduled due-reminder and escalation jobs.
 - `gcs_media.py` — signs short-lived playback URLs and copies video from Drive
   into the private bucket. See **Video** below.
+- `drive_media.py` — the hourly health check behind every video asset: stats the
+  GCS object, stamps `last_verified_on`, repairs `size_bytes` / `mime_type`, and
+  is the only thing that ever sets `Missing`. `TrainingVideoAsset._derive_status`
+  has always deferred to it by name; until v1.332.0 the module did not exist, so
+  nothing moved an asset out of `Available` and a deleted video stayed green until
+  a learner pressed play.
 - `roles.py` — granting the Training Learner role durably. Read this before
   touching role assignment; see **Access** below.
 - `setup.py` — starter Training Categories (`after_migrate`, insert-only).
