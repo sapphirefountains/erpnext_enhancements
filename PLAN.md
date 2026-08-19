@@ -6,7 +6,7 @@ This plan was built against the **live systems on 14 July 2026** (production `er
 
 Companion documents:
 - [`decisions/OPEN-DECISIONS.md`](decisions/OPEN-DECISIONS.md) — the 7 business decisions **with their 14 Jul 2026 resolutions** (OD-1 No-JDH · OD-2 follow-Utah-law/branch-b w/ CPA written confirmation as sign-off gate · OD-3 rename Rent→Events · OD-4 branch a · OD-5 Jan 1 committed, sooner if possible · OD-6 bulk delete · OD-7 no surcharge at launch)
-- [`work-items/`](work-items/) — 66 self-contained work items (WI-001 … WI-066; WI-061 ON HOLD per OD-1)
+- [`work-items/`](work-items/) — 70 self-contained work items (WI-001 … WI-070; WI-061 ON HOLD per OD-1)
 
 ---
 
@@ -261,8 +261,9 @@ The brief's §8 chain appears explicitly: **WI-021** (kiosk = source of hours) +
 | [WI-067](work-items/WI-067-qbo-mapper-data-fidelity.md) | QBO mapper data fidelity: qty fix + sales-tax import + sell-side reconciliation guard, then resync; unblocks pre-2026 Sales Invoice posting | 0 | DATA | M | v1.244.0 + v1.246.0 deployed |
 | [WI-068](work-items/WI-068-group-account-remap.md) | Move 1,813 draft pre-2026 JE lines off group accounts (`- General` children + AR/AP merge); unblocks all pre-2026 GL posting | 0 | DATA | M | verified backup |
 | [WI-069](work-items/WI-069-general-ledger-reclassification.md) | Reclassify `- General` balances into real children where the vendor determines it (61500, 60100 only) — **not** blocking | 1 | DATA | S | WI-068 + backlog submitted |
+| [WI-070](work-items/WI-070-item-naming-hygiene.md) | Item naming hygiene — normalise 75 live Item Names, retire the 135-row `(deleted)` shadow master, fix the SOP Appendix D defects | 1 | DATA | M | WI-028 (one bucket), WI-050 |
 
-Type distribution: 20 DATA · 27 CONFIG · 12 FIXTURE · 10 APP_CODE (5 of which are Phase 2) · 0 SERVER_SCRIPT — consistent with the brief's expectation that this project is mostly configuration and data, not code. (WI-061 is ON HOLD per OD-1 and excluded from scheduling.)
+Type distribution: 21 DATA · 27 CONFIG · 12 FIXTURE · 10 APP_CODE (5 of which are Phase 2) · 0 SERVER_SCRIPT — consistent with the brief's expectation that this project is mostly configuration and data, not code. (WI-061 is ON HOLD per OD-1 and excluded from scheduling.)
 
 ---
 

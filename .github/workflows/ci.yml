@@ -200,6 +200,21 @@ jobs:
       # out of the list it is supposed to be in.
       - name: Assistant tool redaction (what the read tools must never return)
         run: python -m unittest erpnext_enhancements.tests.test_assistant_tools_redaction -v
+      # Its own step, and NOT appended to the assistant-tool step above, because that
+      # step runs under the sys.modules stub set test_assistant_tools_schema installs
+      # and this suite deliberately imports no frappe at all -- item_naming_rules takes
+      # only `re` and `typing`, which is what puts it in this tier in the first place.
+      #
+      # It guards the rule that made the hand-written version of this check wrong in
+      # both directions. A block-allocated number is occupied by any code beginning with
+      # the prefix and exactly the declared digits, however badly the rest of that record
+      # is named -- `^PDT-[0-9]{4}$` reports PDT-0008 free while the sole record of that
+      # product holds it -- and by nothing whose digits run wider, or the five-digit
+      # "(deleted)" family lands on four-digit slots that are genuinely free. Asserted
+      # against the literal production strings, because both defects are defects of
+      # character and a paraphrased fixture rounds exactly those off.
+      - name: Item naming schema (the block-occupancy boundary, on the real strings)
+        run: python -m unittest erpnext_enhancements.tests.test_item_naming_rules -v
       # KPI Snapshot's DocPerms had to widen past System Manager for the KPI
       # assistant tool to be visible to the managers who own the numbers, and a
       # DocPerm is doctype-wide -- so the widening only stays safe while the row

@@ -1,4 +1,4 @@
-"""Order Stage moves to the top of the Purchase Order form (v1.335.0).
+"""Order Stage moves to the top of the Purchase Order form (v1.336.0).
 
 ER-2026-276347: *"it's also way too hidden to be of use to me"*. The field shipped at
 `insert_after: tracking_section` — the top of the Order Status section, which is where it

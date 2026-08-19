@@ -1,4 +1,4 @@
-"""Pin the Purchase Order list columns, with Order Stage beside the status pill (v1.335.0).
+"""Pin the Purchase Order list columns, with Order Stage beside the status pill (v1.336.0).
 
 ER-2026-276347 asked for the stage to be readable *in the list*, in the column the reporter
 circled. `in_list_view` was already `1` on the field and had been since v1.328.0 — it is
