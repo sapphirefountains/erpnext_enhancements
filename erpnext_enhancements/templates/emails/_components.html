@@ -165,22 +165,49 @@
 {%- endmacro %}
 
 
-{# A list of links. `items` is [(url, label), ...]. URLs are NOT escaped. #}
+{# A list of links. `items` is [(url, label), ...]. URLs are NOT escaped.
+
+   `border:0` for the same reason as button(): premailer inlines the shell's
+   `.ee-md td{border-bottom:1px solid #dbe4ea}` onto this cell, which drew a rule
+   under every link in the list. Declaring padding is not enough — declare both. #}
 {% macro links(items) -%}
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:14px 0;border-collapse:collapse">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:auto;margin:14px 0;border-collapse:collapse">
 {%- for url, label in items %}
-	<tr><td style="padding:3px 0;font-family:{{ SANS }};font-size:14px;line-height:1.5"><a href="{{ url }}" style="color:#0077a8;text-decoration:underline;{{ WRAP }}">{{ label|e }}</a></td></tr>
+	<tr><td style="padding:3px 0;border:0;font-family:{{ SANS }};font-size:14px;line-height:1.5"><a href="{{ url }}" style="color:#0077a8;text-decoration:underline;{{ WRAP }}">{{ label|e }}</a></td></tr>
 {%- endfor %}
 </table>
 {%- endmacro %}
 
 
 {# The call to action. Table-wrapped rather than a bare padded <a> so Outlook
-   renders the fill; bgcolor AND background so Outlook and the rest agree. #}
+   renders the fill; bgcolor AND background so Outlook and the rest agree.
+
+   `width:auto` on the table and `padding:0;border:0` on the cell are NOT
+   redundant defaults — they are overrides, and without them the whole coloured
+   pill is not the link.
+
+   The body cell carries `class="ee-pad ee-md"`, and the shell declares
+   `.ee-md table{width:100%}` and `.ee-md td{border-bottom:1px solid …;padding:9px 10px}`
+   so that md_to_html()'s attribute-less tags get styled at all. Premailer inlines
+   those descendant rules onto EVERY table and td in the body, this one included.
+   The cell then stretched the full measure while the <a> stayed the width of its
+   own text, so the coloured bar was 772x60 and the link inside it 212x41 — 19% of
+   what looks like the button. Clicking the colour did nothing (v1.331.2).
+
+   So every macro here that draws a td must declare `padding` AND `border`, and
+   every table its `width`, or it silently inherits the markdown body's. Measured
+   in a browser against the premailer output of a real sent message: 100% of the
+   pill is the anchor, 0 dead pixels on any edge.
+
+   The padding stays on the <a>, never on the td: the anchor's own box is what the
+   client makes clickable. `mso-padding-alt` hands Outlook's Word engine the same
+   padding, since it ignores inline-block — the fill is then the right size there,
+   though only the text is the hit target. A <v:roundrect> with <w:anchorlock/>
+   would fix that too, at the cost of a hard-coded pixel width per label. #}
 {% macro button(url, label, tone="primary") -%}
 {%- set t = TONES.get(tone) or TONES["primary"] %}
-<table role="presentation" class="ee-btn" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0;border-collapse:separate">
-	<tr><td align="center" bgcolor="{{ t.fg }}" style="border-radius:24px;background:{{ t.fg }}">
+<table role="presentation" class="ee-btn" cellpadding="0" cellspacing="0" border="0" style="width:auto;margin:20px 0;border-collapse:separate">
+	<tr><td align="center" bgcolor="{{ t.fg }}" style="padding:0;border:0;border-radius:24px;background:{{ t.fg }};mso-padding-alt:13px 30px">
 		<a href="{{ url }}" style="display:inline-block;padding:13px 30px;font-family:{{ SANS }};font-size:15px;font-weight:700;line-height:1;color:#ffffff;text-decoration:none;border-radius:24px">{{ label|e }}</a>
 	</td></tr>
 </table>
