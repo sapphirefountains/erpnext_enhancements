@@ -154,6 +154,10 @@ doctype_js = {
 		"public/js/vue.global.js",
 		"public/js/comments.js",
 		"public/js/item.js",
+		# v1.337.0 -- the naming advisor. Advisory only: a headline on refresh (record-only
+		# checks, no corpus read) plus two on-demand buttons. There is deliberately no Item
+		# doc_event to pair it with; nothing here blocks a save.
+		"public/js/item_naming_advisor.js",
 		"public/js/water_engineering/pump_curve_chart.js",
 	],
 	# water_engineering: shared fountain "design canvas" renderer (window.WaterFountain),

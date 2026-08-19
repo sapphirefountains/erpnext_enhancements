@@ -45,6 +45,7 @@ an invisible property of the reader.
 """
 
 import frappe
+from frappe import _
 
 from erpnext_enhancements.inventory_enhancements import item_naming_rules as rules
 
@@ -220,4 +221,97 @@ def corpus_context(corpus):
 			"Measured at call time. Nothing here is a constant — quote it from this response "
 			"or not at all."
 		),
+	}
+
+
+# --- the corpus audit ----------------------------------------------------------
+
+
+def audit_corpus(include_deleted=False, severity=None, family=None, code=None):
+	"""Every Item, checked, filtered, and summarised. Backs the Item Naming Audit report.
+
+	Filters are applied **after** the audit rather than inside the query, and that is the
+	point: the summary counts describe the whole corpus while the rows describe what was
+	asked for. A report whose headline figure moved every time somebody ticked a filter
+	would be a report nobody could quote.
+
+	``include_deleted`` defaults to False. The 135 QuickBooks tombstones are 100%
+	``item_code = item_name`` and would otherwise be most of the list, drowning the live
+	defects that somebody can actually act on.
+	"""
+	corpus, meta = read_corpus()
+	rows = rules.audit(corpus, brands=read_brands())
+	summary = rules.summarise(rows)
+
+	wanted_severity = (severity or "").strip().upper()
+	wanted_family = (family or "").strip().lower()
+	wanted_code = (code or "").strip()
+
+	out = []
+	for row in rows:
+		if not include_deleted and row["is_tombstone"]:
+			continue
+		if not row["findings"]:
+			continue
+		if wanted_severity and wanted_severity not in {"", "ANY"} and row["verdict"] != wanted_severity:
+			continue
+		if wanted_family and wanted_family not in {"", "any"} and row["family"] != wanted_family:
+			continue
+		if wanted_code and not any(f["code"] == wanted_code for f in row["findings"]):
+			continue
+		out.append(row)
+
+	out.sort(key=rules.audit_sort_key)
+	return {"rows": out, "summary": summary, "corpus": meta}
+
+
+@frappe.whitelist()
+def check_item(item_code=None, item_name=None, item_group=None, stock_uom=None, mode="record"):
+	"""Check one proposed or existing Item. Read-only, advisory, writes nothing.
+
+	Two modes, and the split is not a micro-optimisation:
+
+	``record``  the checks that read only the record in hand — case, separators, whitespace,
+	            category, code family shape. **No corpus read at all.** This is what the Item
+	            form calls on every refresh, and a corpus read there would mean reading the
+	            whole catalogue every time anybody opens an Item.
+	``full``    adds duplicates, block occupancy and near neighbours. What the button calls,
+	            on demand, when somebody has actually asked.
+
+	The brand list is read in both modes: it is a handful of rows, and without it a
+	brand-led name falls through to `name_category_unapproved`, which is a STOP where a
+	`name_category_is_brand` FIX is the truthful answer.
+	"""
+	if not frappe.has_permission("Item", "read"):
+		frappe.throw(_("You do not have read access to Items."), frappe.PermissionError)
+
+	mode = (mode or "record").strip().lower()
+	if mode not in ("record", "full"):
+		frappe.throw(_("mode must be 'record' or 'full'."), frappe.ValidationError)
+
+	if mode == "full":
+		result = inspect_item_naming(
+			item_code=item_code,
+			item_name=item_name,
+			item_group=item_group,
+			stock_uom=stock_uom,
+		)
+		result["mode"] = "full"
+		return result
+
+	brands = read_brands()
+	findings = []
+	findings.extend(rules.check_code(item_code))
+	findings.extend(rules.check_name(item_name, item_code, brands))
+	findings.extend(rules.check_supporting(item_group, stock_uom))
+	findings.extend(rules.check_code_name_agreement(item_code, item_name))
+	return {
+		"success": True,
+		"mode": "record",
+		"item_code": item_code,
+		"family": rules.classify_code_family(item_code),
+		"verdict": rules.verdict(findings),
+		"findings": findings,
+		# Stated so a caller can never mistake a record-mode PASS for "no duplicate exists".
+		"checked": "this record only — no duplicate, block-occupancy or neighbour check was run",
 	}

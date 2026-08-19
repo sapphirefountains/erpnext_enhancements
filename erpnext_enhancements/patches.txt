@@ -751,3 +751,9 @@ erpnext_enhancements.patches.move_po_order_stage_to_header
 # why the spec reproduces the five that were already showing. Does not overwrite a row
 # somebody configured through the Desk. Safe twice.
 erpnext_enhancements.patches.seed_po_list_columns
+# v1.337.0 -- gives item_naming_compliance_pct a KPI Target so it renders graded rather than
+# as a bare grey number. snapshots.py records why that matters: an ungraded metric is one
+# nobody disbelieves, which is how a labour KPI read 3600x high for months. 100 is the
+# definition of "compliant", not a chosen threshold -- the Process Owner lowers it if some
+# level of non-compliance is acceptable. Does not touch a row somebody has edited. Safe twice.
+erpnext_enhancements.patches.seed_item_naming_kpi_target

@@ -16,7 +16,9 @@ This module holds the data model and the audit page.
 | `doctype/inventory_scanner_settings/` | Single — scanner configuration |
 | `page/inventory_scanner_audit/` | Desk audit view over count sessions |
 | `item_naming_rules.py` | The Item naming schema as executable rules. No Frappe, no I/O |
-| `item_naming.py` | The reads behind it — corpus, brands, reserved codes |
+| `item_naming.py` | The reads behind it — corpus, brands, reserved codes, and the audit |
+| `item_naming_triton.py` | The "Check with Triton" button — deterministic findings as context |
+| `report/item_naming_audit/` | The naming work list, worst-first |
 
 ## The count flow
 
@@ -49,6 +51,43 @@ legitimate edits to records that were already there.
 The rules module lives here rather than under `assistant_tools/` because nothing in the app
 outside `assistant_tools/` and `tests/` may import that package (`TestFacOptionalInvariant`),
 and Item-master vocabulary has to stay reachable from a report or a patch.
+
+### Four callers, one engine
+
+`item_naming_rules.py` is the only place a naming judgement is made. Everything else is a thin
+caller, and that is load-bearing rather than tidy: two definitions of "compliant" that disagree
+by one row is a bug report nobody can close.
+
+| Surface | Entry point | Notes |
+|---|---|---|
+| **Item Naming Audit** report | `report/item_naming_audit/` | The work list. Worst-first, tombstones hidden by default |
+| **Item form** | `public/js/item_naming_advisor.js` | Headline on refresh, two buttons under *Naming* |
+| **KPI** `item_naming_compliance_pct` | `kpi_dashboards/snapshots.py` | Nightly, on the Product dashboard |
+| **MCP** `item_naming_check` | `assistant_tools/item_naming_check.py` | For Triton and any MCP client |
+
+Two costs worth knowing before editing the form script. `refresh` calls `check_item(mode="record")`,
+which reads **no corpus** — a full check on every form open would read the whole catalogue every
+time anybody looked at an Item. Only the buttons call `mode="full"`.
+
+And `audit()` is deliberately **not** `evaluate()` in a loop: `evaluate` scores near-neighbours by
+document frequency across the whole corpus, so per-record it is O(n²). `audit()` does one pass of
+per-record checks plus one grouping pass for collisions. `tests/test_item_naming_rules.py` poisons
+`similar_records` to assert `audit()` never reaches for it, because the obvious simplification
+does not look wrong.
+
+### The Triton button
+
+`item_naming_triton.py` runs the deterministic check **first** and sends its findings to Triton as
+context, so the model is asked only for what the rules refuse to decide — parsing a vendor
+description into segments, choosing a category, and whether two records are the same physical
+part. The prompt declares the findings authoritative; without that the model re-litigates them,
+and a confident second opinion that contradicts a regex is worse than none.
+
+It goes through `triton_chat._request` rather than being a third Triton client. That seam already
+refuses when the assistant is off, mints the token **under the current session user**, retries a
+stale-token 401, and scrubs URLs. Do **not** reach for `chat/invoke/triton_client.ask()` here: it
+calls `frappe.set_user` unconditionally, which on an HTTP request overwrites `session.sid` and
+logs the user out — that shipped as v1.325.0.
 
 ### Two traps that made the obvious query wrong
 

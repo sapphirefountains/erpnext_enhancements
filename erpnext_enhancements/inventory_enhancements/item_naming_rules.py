@@ -1240,3 +1240,144 @@ def evaluate(
 		"normalisation": NORMALISATION,
 		"similarity": {"limit": similar_limit, "min_score": min_score},
 	}
+
+
+# --- the corpus audit ----------------------------------------------------------
+
+#: Worst first. Used to sort an audit so the records that must not be transacted against
+#: sit above the ones that are merely untidy — the ordering `Account Data Quality` uses for
+#: the same reason: an alphabetical list puts six hundred dormant records ahead of the fifty
+#: that matter, and the exercise is abandoned on day two.
+SEVERITY_ORDER: Final[dict[str, int]] = {STOP: 0, FIX: 1, NOTE: 2, VERDICT_PASS: 3}
+
+
+def collision_groups(corpus) -> list[dict]:
+	"""Every set of records whose names are identical under :data:`NORMALISATION`.
+
+	One pass over the corpus, which is the whole reason this exists separately from
+	:func:`find_duplicates`. That function answers "does this *one* candidate collide", and
+	answering it for every record in turn is quadratic. This answers "what collides with what"
+	for the entire corpus at once, and the audit needs exactly that.
+
+	Groups are returned largest first. A group of four is a worse problem than two groups of
+	two: it means four records nobody can tell apart, which is SOP D-2 exactly.
+	"""
+	buckets: dict[str, list[dict]] = {}
+	for row in corpus or ():
+		key = normalise(row.get("item_name"))
+		if not key:
+			continue
+		buckets.setdefault(key, []).append(row)
+
+	out: list[dict] = []
+	for key, rows in buckets.items():
+		if len(rows) < 2:
+			continue
+		codes = sorted(str(r.get("item_code") or "") for r in rows)
+		out.append({
+			"key": key,
+			"codes": codes,
+			"count": len(rows),
+			"item_name": rows[0].get("item_name") or "",
+		})
+	out.sort(key=lambda group: (-group["count"], group["key"]))
+	return out
+
+
+def audit(corpus, brands=()) -> list[dict]:
+	"""Every record in the corpus, with its findings and its verdict.
+
+	``corpus`` is any iterable of dicts carrying ``item_code``, ``item_name``, ``item_group``
+	and ``stock_uom``. Returns one row per record, in input order — sorting is the caller's,
+	because a report and a KPI want different orders and neither wants to re-sort.
+
+	--------------------------------------------------------------------------------------
+	This is deliberately NOT :func:`evaluate` in a loop, and the difference is asymptotic
+	--------------------------------------------------------------------------------------
+
+	:func:`evaluate` scores near-neighbours with :func:`similar_records`, which weights shared
+	tokens by their document frequency **over the whole corpus**. That is the right thing for
+	one candidate and it costs a pass over every record, so running it per record is O(n²) —
+	on a catalogue of a few hundred that is hundreds of thousands of comparisons to produce a
+	column nobody asked for.
+
+	So this does two things instead. Per record: the checks that read only that record, all of
+	which are pure string work. Across the corpus: **one** grouping pass for name collisions,
+	via :func:`collision_groups`. Total cost is linear.
+
+	Near-neighbour scoring is therefore absent from the audit **on purpose**, not by oversight.
+	It is an interactive, one-candidate feature — "what does this new item look like" — and
+	`tests/test_item_naming_rules.py` asserts this function never reaches for it, because the
+	obvious simplification is to call `evaluate` here and it would not look wrong.
+	"""
+	corpus = list(corpus or ())
+
+	# item_code -> the other codes sharing its normalised name.
+	collides_with: dict[str, list[str]] = {}
+	for group in collision_groups(corpus):
+		for code in group["codes"]:
+			collides_with[code] = [other for other in group["codes"] if other != code]
+
+	rows: list[dict] = []
+	for row in corpus:
+		code = row.get("item_code")
+		name = row.get("item_name")
+		findings: list[dict] = []
+		findings.extend(check_code(code))
+		findings.extend(check_name(name, code, brands))
+		findings.extend(check_supporting(row.get("item_group"), row.get("stock_uom")))
+		findings.extend(check_code_name_agreement(code, name))
+
+		others = collides_with.get(str(code or ""))
+		if others:
+			findings.append(
+				finding(
+					DUPLICATE_NAME_NORMALISED,
+					f"{len(others) + 1} records share this name after normalisation: "
+					f"{', '.join(others)}. Either they are the same item, or they need whatever "
+					"tells them apart.",
+					matches=others,
+				)
+			)
+
+		rows.append({
+			"item_code": str(code or ""),
+			"item_name": str(name or ""),
+			"item_group": row.get("item_group") or "",
+			"stock_uom": row.get("stock_uom") or "",
+			"family": classify_code_family(code),
+			"is_tombstone": DELETED_MARKER in str(code or "").lower(),
+			"findings": findings,
+			"verdict": verdict(findings),
+		})
+	return rows
+
+
+def audit_sort_key(row: dict) -> tuple:
+	"""Worst first, then by code. Deterministic, so two runs list rows in one order."""
+	return (SEVERITY_ORDER.get(row.get("verdict"), 9), row.get("item_code") or "")
+
+
+def summarise(rows) -> dict:
+	"""Counts an audit can be quoted from — computed here so no caller invents its own.
+
+	Every number a surface prints should come from this, because two definitions of
+	"compliant" that disagree by one row is a bug report nobody can close.
+	"""
+	rows = list(rows or ())
+	live = [r for r in rows if not r.get("is_tombstone")]
+	by_code: dict[str, int] = {}
+	for row in rows:
+		for item in row.get("findings") or ():
+			key = item.get("code")
+			by_code[key] = by_code.get(key, 0) + 1
+	passing = sum(1 for r in live if r.get("verdict") == VERDICT_PASS)
+	return {
+		"rows": len(rows),
+		"live_rows": len(live),
+		"tombstone_rows": len(rows) - len(live),
+		"passing_live_rows": passing,
+		"compliance_pct": (passing / len(live) * 100.0) if live else None,
+		"findings_by_code": dict(sorted(by_code.items(), key=lambda kv: (-kv[1], kv[0]))),
+		"normalisation": NORMALISATION,
+	}

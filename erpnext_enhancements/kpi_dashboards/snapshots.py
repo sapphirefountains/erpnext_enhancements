@@ -1040,6 +1040,36 @@ def _product_metrics():
 				_scalar("select count(*) from `tabItem` where is_sales_item=1 and disabled=0 and coalesce(custom_item_identifier,'')<>''")
 			)
 			add("item_identifier_completeness_pct", "Item Identifier Completeness", with_id / total_sellable * 100.0, "%", "Item", metrics.HIGHER)
+	# --- item naming compliance, per the SOP (v1.337.0) ---
+	#
+	# Computed by running the SAME rules the Item Naming Audit report and the Item form use --
+	# `item_naming_rules.audit` -- rather than by a second SQL definition of "compliant". Two
+	# definitions that disagree by one row is a bug report nobody can close, and this is a
+	# number people will quote at each other.
+	#
+	# Wrapped because an aggregator raising sinks the whole Product department: the batch loop
+	# catches per department, not per metric. A naming figure is worth less than the eight
+	# metrics above it.
+	if _exists("Item"):
+		try:
+			from erpnext_enhancements.inventory_enhancements import item_naming
+			from erpnext_enhancements.inventory_enhancements import item_naming_rules as naming
+
+			corpus, _corpus_meta = item_naming.read_corpus()
+			summary = naming.summarise(naming.audit(corpus, brands=item_naming.read_brands()))
+			# `compliance_pct` is None on an empty catalogue, and `add` drops None rather than
+			# publishing a 0% that reads as a catastrophe or a 100% that reads as a triumph.
+			add(
+				"item_naming_compliance_pct",
+				"Item Naming Compliance",
+				summary.get("compliance_pct"),
+				"%",
+				"Item",
+				metrics.HIGHER,
+			)
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), "Item naming compliance KPI failed")
+
 	if has("Item", "custom_rated_gpm") and has("Item", "custom_pump_hp"):
 		pumps = flt(_scalar("select count(*) from `tabItem` where item_group='Pumps'"))
 		if pumps:
