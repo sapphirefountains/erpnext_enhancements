@@ -34,5 +34,14 @@
         "status": "Published",
         "visibility": "Public",
         "content_file": "ai_write_confirmation.md"
+    },
+    {
+        "skill_id": "ee-item-naming-validator",
+        "title": "Item Naming Validator Workflow",
+        "description": "Validate or propose an ERPNext Item Code and Item Name against the naming schema: run the duplicate search, check the code family and block occupancy, build the seven-segment name, and report STOP/FIX/PASS. Read-only; never writes.",
+        "skill_type": "Workflow",
+        "status": "Published",
+        "visibility": "Public",
+        "content_file": "item_naming_validator.md"
     }
 ]

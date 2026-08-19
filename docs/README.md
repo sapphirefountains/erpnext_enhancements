@@ -31,6 +31,7 @@ anything.
 | [marketing-platform-approvals.md](marketing-platform-approvals.md) | Phase 0: the six external approval packets, the pre-flight checklist, the quota sheet, and the LinkedIn filing order that a rejection makes expensive |
 | [industry-type-proposal.md](industry-type-proposal.md) | Proposed keep/merge/retire list for the 89 Industry Type values, from live usage counts. A proposal — nothing executed |
 | [opportunity-field-guide.md](opportunity-field-guide.md) | Field-by-field guide to the Opportunity form |
+| [item-naming-schema.md](item-naming-schema.md) | The Item naming SOP, converted from the controlled DOCX — the seven name segments, the four code families, the approved category vocabulary, and the live checks that disagreed with it |
 | [pick-routing-map-po-details.md](pick-routing-map-po-details.md) | Spike: three ways to show PO item detail on the Pick Routing Map, and why the inline one wins |
 | [workspace-sidebars.md](workspace-sidebars.md) | The `Workspace Sidebar` records, and why Frappe's importable app-level directories may contain nothing but JSON |
 | [pdf-generation.md](pdf-generation.md) | Why PDF generation fails on both backends, and the runbook to fix the host |
