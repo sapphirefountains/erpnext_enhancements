@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.340.3] - 2026-08-20
+
+### Fixed
+
+- **A `409 ALREADY_EXISTS` on subscription create is a recovery, not a failure.** Running
+  `recover_subscription_for` on prod returned this for both coworkers:
+
+      create: GoogleChatAPIError: workspaceevents.subscriptions.create returned
+      HTTP 409 ALREADY_EXISTS after 1 attempt(s):
+      Subscription associated with the resource already exists.
+
+  **The subscriptions were never gone.** Google allows one per `(principal, target resource)` and
+  still held both. What had been lost was the *pointer* to them: renewal had been broken for
+  months (1.340.2) so they ran to expiry, the recreate deadlocked on the uid (1.340.1), and
+  releasing that uid — the fix that broke the deadlock — discarded the only handle we had. Create
+  cannot repair that, because the thing already exists and **the 409 does not name it**.
+
+  `ensure_subscription_for_user` now falls back to `subscriptions.list` and adopts the incumbent,
+  writing its real uid, state and expiry onto the row. `list_subscriptions` had existed in
+  `events_client` since the module was written and was called from nowhere; this is its first
+  caller. A 409 whose subscription the list cannot produce is still reported as a failure — an
+  adoption path that swallowed those would turn a broken create into a silent success.
+
+  Adoption records `renewed=False`, so `last_renewed` is not stamped. Nothing was renewed, and a
+  `last_renewed` that lies about the one event it exists to record is exactly what disguised the
+  broken `ttl` patch for months: the field read as a recent date on subscriptions whose renewal
+  had never once succeeded.
+
+  This also corrects an assumption carried through 1.340.1: `classify_due` says Google *"deletes
+  an expired subscription outright"*, and the 409 is evidence it does not — at minimum it retains
+  the resource well past `expireTime`. The comment is left in place rather than rewritten on one
+  data point, but adoption means the code no longer depends on which is true.
+
 ## [1.340.2] - 2026-08-20
 
 ### Fixed

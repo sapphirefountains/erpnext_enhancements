@@ -546,6 +546,23 @@ def subscription_payload(
 	return {"name": "operations/xyz", "done": True, "response": resource}
 
 
+class _AlreadyExists(Exception):
+	"""The 409 ``subscriptions.create`` answers with when the principal already owns one.
+
+	Shaped like ``GoogleChatAPIError``: a ``status`` and a ``google_status``, and **no resource
+	name anywhere**, which is the entire difficulty. Google says something exists and declines to
+	say what, so the only route back to the uid is a list call.
+	"""
+
+	def __init__(self) -> None:
+		super().__init__(
+			"workspaceevents.subscriptions.create returned HTTP 409 ALREADY_EXISTS after 1 "
+			"attempt(s): Subscription associated with the resource already exists."
+		)
+		self.status = 409
+		self.google_status = "ALREADY_EXISTS"
+
+
 class FakeEventsClient:
 	"""A ``WorkspaceEventsClient`` double that answers with real parsed ``Subscription``s.
 
@@ -561,6 +578,8 @@ class FakeEventsClient:
 		self.expire_epoch: float | None = None
 		self.state = "ACTIVE"
 		self.next_subscription_id = SUBSCRIPTION_ID
+		#: What Google already holds for this principal, as ``subscriptions.list`` would return it.
+		self.existing: list[dict[str, Any]] = []
 
 	def fail_next(self, method: str, error: Exception) -> None:
 		self.failures[method] = error
@@ -584,6 +603,10 @@ class FakeEventsClient:
 
 	def reactivate_subscription(self, name: str) -> events.Subscription:
 		return self._answer("reactivate", subscriptions.subscription_uid_of(name))
+
+	def list_subscriptions(self, *, filter_expression: str, **_kwargs: Any) -> dict[str, Any]:
+		self.calls.append(("list", filter_expression))
+		return {"subscriptions": list(self.existing)}
 
 
 class AlertRecorder:
@@ -1048,6 +1071,61 @@ def test_recovery_recreates_a_coworker_with_no_row_at_all_and_sweeps_the_gap(mon
 	assert _close(
 		swept[0]["since"], lapsed, seconds=1
 	), "the window comes from the superseded row, so it covers exactly the dead interval"
+
+
+def test_a_create_that_bounces_with_409_adopts_what_google_already_has(monkeypatch: Any) -> None:
+	"""Prod, 2026-08-20: recovery failed on both coworkers with 409 ALREADY_EXISTS.
+
+	The subscriptions were never gone. Renewal had been broken for months (v1.340.2) so they ran
+	to expiry, the recreate deadlocked on the uid (v1.340.1), and releasing that uid to break the
+	deadlock discarded the only pointer we had to subscriptions Google still held. Creating
+	cannot fix that — Google allows one per (principal, target) and refuses the duplicate without
+	naming the incumbent. The list call is the way back.
+	"""
+	now = FRAPPE.utils.now_datetime()
+	lapsed = now - timedelta(hours=2)
+	seed_subscription(state="DELETED", subscription_uid=None, expire_time=lapsed)
+	monkeypatch.setattr(reconcile, "reconcile_rooms_for_user", lambda user, **kwargs: {"status": "ok"})
+	client = FakeEventsClient()
+	client.fail_next("create", _AlreadyExists())
+	client.existing = [subscription_payload(subscription_id=SUBSCRIPTION_ID)]
+
+	summary = subscriptions.recover_subscription_for(
+		USER, client_factory=lambda subject: client, alert=AlertRecorder()
+	)
+
+	assert summary["status"] == "ok", summary
+	assert [entry["user"] for entry in summary["recovered"]] == [USER]
+	fresh = subscriptions.active_subscription_for(USER)
+	assert fresh and fresh["state"] == "ACTIVE"
+	assert fresh["subscription_uid"] == SUBSCRIPTION_ID, "the lost pointer is what we came back for"
+	assert not fresh["last_renewed"], (
+		"an adoption renews nothing, and a last_renewed that lies about the one event it records "
+		"is what hid the broken ttl patch for months"
+	)
+	assert [call[0] for call in client.calls] == ["create", "list"]
+
+
+def test_a_create_that_bounces_with_no_recoverable_subscription_still_fails() -> None:
+	"""A 409 whose subscription the list cannot produce is a real failure, not a silent pass.
+
+	Adoption must not become a way for a broken create to report success. If Google says one
+	exists and then does not return it — a different target, or an entry with no ``expireTime``,
+	which ``parse_subscription`` refuses on purpose — the coworker is still uncovered and somebody
+	has to be told.
+	"""
+	client = FakeEventsClient()
+	client.fail_next("create", _AlreadyExists())
+	client.existing = []
+	alerts = AlertRecorder()
+
+	summary = subscriptions.ensure_subscription_for_user(
+		USER, client_factory=lambda subject: client, alert=alerts
+	)
+
+	assert summary["status"] == "failed", summary
+	assert "ALREADY_EXISTS" in summary["reason"]
+	assert alerts.with_prefix("subscription-create-failed:")
 
 
 def test_recovery_is_idempotent_and_leaves_a_covered_coworker_alone() -> None:
