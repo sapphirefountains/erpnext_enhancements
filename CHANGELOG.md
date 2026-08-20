@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.339.0] - 2026-08-19
+
+### Added
+
+- **Three more doctypes name themselves after a party, and none of them was checked.** A
+  Project, an Opportunity and an Address all exist to belong to somebody, and their names are
+  the only place that shows on a list view. The Item naming check shipped in v1.335.0 covers
+  the catalogue; this covers the records that point at customers.
+
+  The intended shape is `<Party> - <what we are doing for them>` on a Project and an
+  Opportunity, and the party alone on an Address. A new `Party Naming Audit` report lists
+  every record that misses it, a `Why?` advisory appears on all three forms, and
+  `crm_enhancements/party_naming_rules.py` holds every judgement with no Frappe import, so CI
+  executes it on every push.
+
+  Advisory, like the Item check and for the same reason: there is no validate hook on any of
+  the three and no save is blocked. 769 of 823 Opportunity titles are currently a bare party
+  name, so anything that blocked would fire constantly on records that predate the rule.
+
+- **Matching the party is not equality, and the data is what settled that.** Of the 164
+  Projects that already use the separator, 55 lead with the customer name verbatim — and 42
+  lead with a *shortening* of it: `West Jordan` for *West Jordan Parks and Recreation*,
+  `Hess Construction` for *Hess Construction LLC*. Those 42 are good practice, not errors.
+  Nobody wants `West Jordan Parks and Recreation - Splash Pad Controller`.
+
+  So the test is a leading **word-sequence** match in either direction, not a character one.
+  Words matter: a character-prefix test passes `O` against *Ore Designs, Inc.* and would wave
+  through any name sharing a first letter. `Ore` passes, `O` does not, and `Landmark` against
+  a customer of *CEM Aquatics* fails as it should — that one is named for the site rather than
+  for who pays, which is the single most common real defect.
+
+- **Out of scope is silence, not a pass**, and it keys on a field that already exists.
+  Only Projects typed Build, Design, Events, Rent or Service are checked; the other 101 are
+  internal and are not badly named, they are a different kind of record. The property that
+  makes this maintainable is that nobody enumerates them: the leftover stage templates
+  (`Stage 1 - Predesign`) and the software backlog living in the Project doctype
+  (`Better filtering - 1.5`) both carry no `project_type` and fall out on their own. `Rent` is
+  still accepted although WI-065 renamed it to `Events` and no live row uses it — accepting a
+  value that cannot appear costs nothing, and a half-applied rename that started flagging real
+  work would cost a morning.
+
+  Likewise 442 of 1,011 Addresses are linked to nothing at all. They are counted in the
+  report header rather than listed: "belongs to nobody" is a real finding and a different one
+  from "badly named", and 442 rows of it would drown everything actionable.
+
+### Fixed
+
+- **Address titles that append the type themselves produce a doubled one.** Frappe builds an
+  Address name as `address_title + "-" + address_type` in `autoname` (verified against frappe
+  version-16), so a title of `Charles Cunniffe Architects - Office` on a record typed *Billing*
+  becomes `Charles Cunniffe Architects - Office-Billing`. The title should be the party alone
+  and the qualifier arrives on its own. Now reported as `title_carries_qualifier`.
+
+  Two more consequences of that `autoname` are recorded rather than fixed. Its separator is
+  `-`, not ` - ` — that is frappe core, not ours, and matching a spaced form would mean
+  overriding core and renaming 1,011 records. And it runs **once, at insert**: change
+  `address_type` afterwards and the name keeps the old suffix, which eight live records
+  already do (`DELIVERY-Billing` is typed *Shipping*). That is a NOTE rather than a FIX,
+  because the remedy is a rename and renames ripple through every Dynamic Link and every
+  linked Sales Order, Purchase Order and Invoice.
+
+- **The party an Address belongs to no longer depends on child-row order.** An Address may
+  carry several links at once — 42 live records link to a Customer *and* a Project *and* an
+  Opportunity — and frappe's own `autoname` resolves that by taking `links[0]`, whichever
+  happened to be written first. The check orders them deliberately (Customer, Supplier,
+  Project, Opportunity) so the same address always resolves to the same party.
+
+- **25 Opportunity titles carry trailing whitespace**, and the SQL form of that check cannot
+  see them: MariaDB's PAD SPACE collation makes `title <> TRIM(title)` always false. Compared
+  by length, in Python, where a trailing space is still a character — the same trap already
+  recorded in `CLAUDE.md`.
+
 ## [1.338.0] - 2026-08-20
 
 ### Added
