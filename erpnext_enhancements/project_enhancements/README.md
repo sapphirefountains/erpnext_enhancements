@@ -206,6 +206,8 @@ and the production data volumes.
 
 A job's material sits at several vendors' will-call counters at once, and nothing in Desk answered "what is still out there, and what is the shortest way round to collect it?". The **Pick Routing Map** button in the Budget tab's *Material Pickup* section now does.
 
+Since v1.338.0 the same machinery runs the question the other way round — see [Supplier Pick Sheet](#supplier-pick-sheet-v13380) below.
+
 - **Server:** [`api/pickup_routing.py`](../api/pickup_routing.py) → `get_pickup_route_data(project, scope)`. One round-trip: the Google Maps browser key, the depot, the job-site address, and one *stop* per supplier pick-up address carrying the Purchase Orders and lines behind it. Gated on `Project.check_permission("read")` **and nothing more** — the purchasing reads use `frappe.get_all` (ignore-permissions), matching the Procurement Tracker higher up the same tab. See the [api README's security model](../api/README.md#security-model).
 - **Which POs:** the union of the header `Purchase Order.project` and the item-row `Purchase Order Item.project` — they disagree on real data, and either alone drops POs. `scope` is `outstanding` (default: submitted, `status` not `Closed`/`Delivered`, `per_received < 100`), `submitted`, or `all` (drafts too).
 - **Where each stop is:** a four-step chain — `po.dispatch_address` → `po.supplier_address` → `Supplier.supplier_primary_address` → the Address directory (`Dynamic Link`), preferring a `Shipping`/`Warehouse`/`Shop`/`Plant` address type. `po.shipping_address` is **excluded on purpose**: on this site it is our own yard on nearly every PO. The winning step comes back in `address_source`, and a supplier that resolves to nothing is still returned with `address: null` so the UI can link to the vendor record that needs an address.
@@ -213,14 +215,31 @@ A job's material sits at several vendors' will-call counters at once, and nothin
 - **Settings:** `ERPNext Enhancements Settings.pickup_route_start_address` (Purchasing Controls) is where the run starts; blank falls back to the shop. The map reuses `Travel Settings.google_maps_api_key`, which needs the **Directions API** enabled on it as well as Maps JavaScript. That key is the shared desk maps key — its own field description in Travel Settings lists every API the desk features need, including **Places API (New)** for address autocomplete.
 - **Degrades in three steps, each still usable:** optimised route → geocoded pins in PO order (key without the Directions API) → an ordered list of Google Maps links (no key at all). "Open in Google Maps" works at every step.
 
+## Supplier Pick Sheet (v1.338.0)
+
+The Pick Routing Map is *one job, every vendor*. This is the same run turned inside out — **one vendor, every job** — because a crew already driving to Harrington should come back with everything Harrington is holding, not with one project's worth. Two entry points, both landing in the same dialog:
+
+- **Supplier form → Pick Sheet**, a toolbar button ([`public/js/procurement/supplier_pick_sheet.js`](../public/js/procurement/supplier_pick_sheet.js)). A toolbar button rather than a Custom Field Button like the Project one, which needed a specific home on the Budget tab and paid a migration for it — Supplier's layout is stock, so a custom field would buy a fixture, a patch and a deletion procedure and nothing else.
+- **Supplier list → Actions → Pick Sheet**, for several vendors at once, registered in [`supplier_list.js`](../public/js/global_enhancements/supplier_list.js)'s existing `onload` (a second file assigning `listview_settings.onload` would clobber the `get_args` override that lives there). Several suppliers means several stops, so the optimiser and the 23-waypoint ceiling apply exactly as on a project run.
+
+- **Server:** `get_supplier_pick_data(suppliers, scope)` in the same [`api/pickup_routing.py`](../api/pickup_routing.py). Same stops, same `scope` rules, same four-step address chain, same money guard — sharing the code is the point, because two sheets that disagree about whether a PO is still outstanding is precisely what [`docs/pick-routing-map-po-details.md`](../../docs/pick-routing-map-po-details.md) rejected option (a) to avoid. `suppliers` takes a name, a list, or the JSON array a form-encoded caller sends; an empty list is **refused**, because an empty sheet reads as "nothing to collect".
+- **Two differences, both structural.** `project` is `null` — there is no single job site to finish at, so that finish option greys itself out — and **every line carries its own `project`**, not its order's. One PO routinely spans jobs (`Purchase Order Item.project` is mandatory for exactly that reason), and the header is only a fallback for rows predating the rule.
+- **The lines regroup by job, not by order.** At the counter the crew quotes PO numbers; at the tailgate the pile has to be split before anything is unloaded, and that is the sort the sheet prints. Each stop also carries a `projects` rollup — "Sorts into: PRJ-00566 (4 lines) · PRJ-00590 (2 lines)" — computed server-side from the same lines the tables print, so the summary and the tick boxes cannot drift.
+- **Permission is `Purchase Order` read**, stricter than the project endpoint and for a reason: that one is anchored to a job the caller can already open, this one is anchored to nothing. See the [api README's security model](../api/README.md#security-model).
+- **A supplier with nothing outstanding is still named on the sheet.** "Ferguson has nothing" and "we forgot Ferguson" look identical otherwise, and only one of them means the crew can skip the stop.
+
+Related but not the same thing: the **Supplier Pickup List** report below answers the same question as a flat, filterable, printable grid. This is the map-and-tick-box surface — drive-time ordering, per-line tick boxes and a signature block — and it is what somebody hands a driver.
+
 ## Outstanding-material reports (v1.323.0)
 
 The Pick Routing Map answers "what is still out there for **this job**, and how do I drive it".
 Two reports answer the two questions either side of that, off the same data and the same rule.
 
 - **Supplier Pickup List** (`report/supplier_pickup_list/`, Script Report) — one vendor, every
-  job. The sheet somebody carries to a will-call counter. Filters: Supplier, Job, Expected On
-  or Before, Include Closed / Delivered. One row per unreceived Purchase Order line.
+  job, as a filterable grid. Filters: Supplier, Job, Expected On or Before, Include Closed /
+  Delivered. One row per unreceived Purchase Order line. The [Supplier Pick Sheet](#supplier-pick-sheet-v13380)
+  answers the same question as a routed, tick-boxed sheet instead; the report is the one you
+  filter and export, the sheet is the one you hand a driver.
 - **Pending Items by Project** (`report/pending_items_by_project/`, Query Report) — one job,
   every vendor, as a flat list rather than a map. Project filter, required.
 

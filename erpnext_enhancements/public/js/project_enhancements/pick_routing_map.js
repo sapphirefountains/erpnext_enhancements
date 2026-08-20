@@ -1,22 +1,33 @@
 /**
- * Project form — Pick Routing Map (Budget tab).
+ * Pick Routing Map / Supplier Pick Sheet — the shared pick-up run.
  *
  * Targets: the `custom_btn_pick_routing_map` Button on the Project form's Budget
  *   tab, under the "Material Pickup" section (created by
- *   `patches/add_project_pick_routing_button.py`).
- * Loaded via: hooks.py `doctype_js["Project"]`.
+ *   `patches/add_project_pick_routing_button.py`), and — via the
+ *   `erpnext_enhancements.pick_routing` namespace exported at the foot of this
+ *   file — the Supplier form button and Supplier list action in
+ *   `public/js/procurement/supplier_pick_sheet.js` and
+ *   `public/js/global_enhancements/supplier_list.js`.
+ * Loaded via: hooks.py `doctype_js["Project"]`, `doctype_js["Supplier"]` and
+ *   `doctype_list_js["Supplier"]`.
  *
- * A job's material sits at several vendors' will-call counters at once. This
- * opens an extra-large dialog listing every supplier with material still to
- * collect, and drives Google's DirectionsService with `optimizeWaypoints: true`
- * to put them in drive-time order for one round trip out of the shop.
+ * Two scopes, one machine:
+ *  - **Project mode.** A job's material sits at several vendors' will-call
+ *    counters at once; this lists every supplier still holding some of it and
+ *    puts them in drive-time order for one round trip out of the shop.
+ *  - **Supplier mode** (v1.338.0). The same run turned inside out: one counter,
+ *    every job. A crew driving to Harrington anyway should come back with
+ *    everything Harrington is holding, so the lines regroup by JOB — that is the
+ *    sort that matters at the tailgate, not the one at the counter.
  *
- * Data comes from erpnext_enhancements.api.pickup_routing.get_pickup_route_data
- * in one call: `{ api_key, scope, project, depot, stops, routable_count }`. Each
- * stop is one supplier pick-up address with the Purchase Orders behind it, and
- * carries `address: null` when nothing could be resolved for that vendor — those
- * are listed separately rather than dropped, so the missing Supplier address is
- * visible and fixable.
+ * Data comes from erpnext_enhancements.api.pickup_routing in one call —
+ * `get_pickup_route_data` or `get_supplier_pick_data`, whose payloads are the
+ * same shape: `{ api_key, scope, mode, project, depot, stops, routable_count }`.
+ * Each stop is one supplier pick-up address with the Purchase Orders behind it,
+ * and carries `address: null` when nothing could be resolved for that vendor —
+ * those are listed separately rather than dropped, so the missing Supplier
+ * address is visible and fixable. In supplier mode `project` is null (the run
+ * belongs to no single job) and every line carries its own.
  *
  * Four things this file is careful about:
  *  - **The map is built after `d.show()`, never before.** A dialog body is
@@ -95,6 +106,12 @@
 		}
 		.sheet-stop-name { font-size: 14px; font-weight: 700; }
 		.sheet-stop-addr { color: #555; margin: 2px 0 5px 27px; }
+		.sheet-jobs { margin: 0 0 6px 27px; color: #555; }
+		.sheet-job { margin: 0 0 8px 0; page-break-inside: avoid; }
+		.sheet-job-head {
+			margin: 6px 0 3px 27px; font-weight: 700; font-size: 12px;
+			border-left: 3px solid #333; padding-left: 6px;
+		}
 		.sheet-po { margin: 0 0 7px 27px; }
 		.sheet-po-head { font-weight: 600; color: #555; margin-bottom: 2px; }
 		table { width: 100%; border-collapse: collapse; }
@@ -260,6 +277,11 @@
 			.ee-pickroute-detail > summary::-webkit-details-marker { display: none; }
 			.ee-pickroute-detail > summary::before { content: '\\25B8'; }
 			.ee-pickroute-detail[open] > summary::before { content: '\\25BE'; }
+			.ee-pickroute-job-group { margin-top: 8px; }
+			.ee-pickroute-job-head {
+				font-size: var(--text-sm); font-weight: 700; color: var(--text-color);
+				border-left: 3px solid var(--text-muted); padding-left: 6px;
+			}
 			.ee-pickroute-po-group { margin-top: 6px; }
 			.ee-pickroute-po-head {
 				font-size: var(--text-xs); color: var(--text-muted); font-weight: 600;
@@ -357,6 +379,10 @@
 		if (stop.amount != null && stop.currency) {
 			bits.push(format_currency(stop.amount, stop.currency));
 		}
+		// Only worth saying when there is more than one — on a project run there
+		// is almost always exactly one, and "1 job" on every row is noise.
+		const jobs = (stop.projects || []).length;
+		if (jobs > 1) bits.push(__('{0} jobs', [jobs]));
 		return bits.join(' · ');
 	}
 
@@ -419,6 +445,77 @@
 		return lines + ' · ' + __('{0} still to collect', [open]);
 	}
 
+	/** "PRJ-00566 — Riverbend Fountain", or the bare ID, or the unassigned bucket. */
+	function projectLabel(project, projectName) {
+		if (!project) return __('No job on the line');
+		return [project, projectName].filter(Boolean).join(' — ');
+	}
+
+	/**
+	 * The lines at one stop, grouped the way the run needs them read.
+	 *
+	 * Project mode groups by purchase order, because the counter hands material
+	 * over an order at a time and that is the number the crew quotes.
+	 *
+	 * Supplier mode groups by JOB first and by order inside it. At a supplier the
+	 * crew is collecting for four jobs in one armful, and the sort that matters is
+	 * not the one at the counter — it is the one at the tailgate, where the pile
+	 * has to be split before anything gets unloaded. `Purchase Order Item.project`
+	 * is per line and one PO routinely spans jobs, so this genuinely re-cuts the
+	 * data rather than just re-titling the same groups.
+	 *
+	 * Returns `[{ key, label, orders: [{ po, items }] }]` in first-seen order.
+	 */
+	function stopGroups(stop, byProject) {
+		const pos = stop.purchase_orders || [];
+		if (!byProject) {
+			return [
+				{
+					key: '',
+					label: null,
+					orders: pos.map((po) => ({ po: po, items: po.items || [] })),
+				},
+			];
+		}
+
+		const index = new Map();
+		const out = [];
+		const groupFor = (project, projectName) => {
+			const key = project || '';
+			let group = index.get(key);
+			if (!group) {
+				group = { key: key, label: projectLabel(project, projectName), orders: [], byPo: new Map() };
+				index.set(key, group);
+				out.push(group);
+			}
+			return group;
+		};
+		const entryFor = (group, po) => {
+			let entry = group.byPo.get(po.name);
+			if (!entry) {
+				entry = { po: po, items: [] };
+				group.byPo.set(po.name, entry);
+				group.orders.push(entry);
+			}
+			return entry;
+		};
+
+		pos.forEach((po) => {
+			const lines = po.items || [];
+			if (!lines.length) {
+				// An order with no lines still gets an entry, so the "No lines on
+				// this order." message survives the regroup. Dropping it would turn
+				// a data problem into an invisible one.
+				entryFor(groupFor(null, null), po);
+				return;
+			}
+			lines.forEach((line) => {
+				entryFor(groupFor(line.project, line.project_name), po).items.push(line);
+			});
+		});
+		return out;
+	}
+
 	function poGroupHeadText(po) {
 		const bits = [po.name];
 		if (po.status) bits.push(po.status);
@@ -427,38 +524,51 @@
 	}
 
 	/** Compact per-line list for the dialog's left pane (narrow, phone-first). */
-	function stopLinesHtml(stop) {
-		const groups = (stop.purchase_orders || []).map((po) => {
-			const rows = (po.items || [])
-				.map((line) => {
-					const m = lineModel(line);
-					const qty = m.done
-						? __('collected')
-						: __('{0} {1}', [qtyText(m.outstanding), m.uom]);
-					const sub = m.received
-						? ' <span class="ee-pickroute-line-sub">' +
-							esc(__('({0} of {1} received)', [qtyText(m.received), qtyText(m.ordered)])) +
-							'</span>'
-						: '';
-					return (
-						'<div class="ee-pickroute-line' + (m.done ? ' is-done' : '') + '">' +
-							'<span class="ee-pickroute-line-code">' + esc(m.code) + '</span>' +
-							'<span class="ee-pickroute-line-name" title="' + esc(m.name) + '">' +
-								esc(m.name) + '</span>' +
-							'<span class="ee-pickroute-line-qty">' + esc(qty) + sub + '</span>' +
-						'</div>'
-					);
-				})
-				.join('');
-			return (
-				'<div class="ee-pickroute-po-group">' +
-					'<div class="ee-pickroute-po-head">' + esc(poGroupHeadText(po)) + '</div>' +
-					(rows || '<div class="ee-pickroute-line is-done">' +
-						esc(__('No lines on this order.')) + '</div>') +
-				'</div>'
-			);
-		});
-		return groups.join('');
+	function stopLinesHtml(stop, byProject) {
+		return stopGroups(stop, byProject)
+			.map((group) => {
+				const body = group.orders.map(orderLinesHtml).join('');
+				if (!group.label) return body;
+				return (
+					'<div class="ee-pickroute-job-group">' +
+						'<div class="ee-pickroute-job-head">' + esc(group.label) + '</div>' +
+						body +
+					'</div>'
+				);
+			})
+			.join('');
+	}
+
+	/** One purchase order's lines inside a stop, for the dialog's left pane. */
+	function orderLinesHtml(entry) {
+		const rows = (entry.items || [])
+			.map((line) => {
+				const m = lineModel(line);
+				const qty = m.done
+					? __('collected')
+					: __('{0} {1}', [qtyText(m.outstanding), m.uom]);
+				const sub = m.received
+					? ' <span class="ee-pickroute-line-sub">' +
+						esc(__('({0} of {1} received)', [qtyText(m.received), qtyText(m.ordered)])) +
+						'</span>'
+					: '';
+				return (
+					'<div class="ee-pickroute-line' + (m.done ? ' is-done' : '') + '">' +
+						'<span class="ee-pickroute-line-code">' + esc(m.code) + '</span>' +
+						'<span class="ee-pickroute-line-name" title="' + esc(m.name) + '">' +
+							esc(m.name) + '</span>' +
+						'<span class="ee-pickroute-line-qty">' + esc(qty) + sub + '</span>' +
+					'</div>'
+				);
+			})
+			.join('');
+		return (
+			'<div class="ee-pickroute-po-group">' +
+				'<div class="ee-pickroute-po-head">' + esc(poGroupHeadText(entry.po)) + '</div>' +
+				(rows || '<div class="ee-pickroute-line is-done">' +
+					esc(__('No lines on this order.')) + '</div>') +
+			'</div>'
+		);
 	}
 
 	// --------------------------------------------------------------- controller
@@ -468,8 +578,14 @@
 	 * the three render modes the Google key can actually support.
 	 */
 	class PickRoutingMap {
-		constructor(frm, data, dialog) {
-			this.frm = frm;
+		/**
+		 * `source` is how to re-fetch when the scope drop-down changes:
+		 * `{ method, args }`, with `scope` merged in. A form reference would not
+		 * do — the supplier sheet is also launched from the Supplier LIST, where
+		 * there is no `frm` at all.
+		 */
+		constructor(source, data, dialog) {
+			this.source = source;
 			this.data = data;
 			this.dialog = dialog;
 			this.$body = dialog.fields_dict.route.$wrapper;
@@ -545,8 +661,23 @@
 			return this.data.depot.address;
 		}
 
+		/**
+		 * The job this run belongs to — `{}` in supplier mode, where it belongs to
+		 * no single job. Every read goes through here for that reason: the server
+		 * sends `project: null` on a supplier payload, and a bare
+		 * `data.project.site_address` throws before the dialog ever paints.
+		 */
+		project() {
+			return this.data.project || {};
+		}
+
+		/** Is this a supplier-scoped run (one counter, every job)? */
+		isSupplierMode() {
+			return this.data.mode === 'supplier';
+		}
+
 		destination() {
-			if (this.finish === 'site') return this.data.project.site_address || this.origin();
+			if (this.finish === 'site') return this.project().site_address || this.origin();
 			if (this.finish === 'custom') return (this.customFinish || '').trim() || this.origin();
 			return this.origin();
 		}
@@ -576,7 +707,7 @@
 		}
 
 		controlsHtml() {
-			const hasSite = !!this.data.project.site_address;
+			const hasSite = !!this.project().site_address;
 			const scopeOptions = SCOPE_LABELS.map(
 				(o) =>
 					'<option value="' + o.value + '"' +
@@ -662,7 +793,11 @@
 			if (!stops.length && !excluded.length && !unroutable.length) {
 				this.$list.append(
 					'<div class="ee-pickroute-empty">' +
-						esc(__('No purchase orders on this project match that filter.')) +
+						esc(
+							this.isSupplierMode()
+								? __('Nothing to collect from these suppliers under that filter.')
+								: __('No purchase orders on this project match that filter.')
+						) +
 					'</div>'
 				);
 				return;
@@ -787,7 +922,7 @@
 					' data-detail-key="' + esc(stop.key) + '"' +
 					(this.expanded.has(stop.key) ? ' open' : '') + '>' +
 					'<summary>' + esc(stopLinesLabel(stop)) + '</summary>' +
-					stopLinesHtml(stop) +
+					stopLinesHtml(stop, this.isSupplierMode()) +
 				'</details>'
 			);
 		}
@@ -868,8 +1003,8 @@
 			this.generation++;
 			const generation = this.generation;
 			frappe.call({
-				method: 'erpnext_enhancements.api.pickup_routing.get_pickup_route_data',
-				args: { project: this.frm.doc.name, scope: scope },
+				method: this.source.method,
+				args: Object.assign({}, this.source.args, { scope: scope }),
 				freeze: true,
 				freeze_message: __('Rebuilding the run...'),
 				callback: (r) => {
@@ -1640,9 +1775,23 @@
 			win.setTimeout(() => win.print(), 250);
 		}
 
+		/**
+		 * What this sheet is *of* — the job in project mode, the vendors in
+		 * supplier mode. Printed under the heading, and it is the line the person
+		 * holding the paper reads first to know whether it is theirs.
+		 */
+		sheetSubtitle() {
+			if (this.isSupplierMode()) {
+				return (this.data.suppliers || [])
+					.map((s) => s.supplier_name || s.name)
+					.join(', ');
+			}
+			const project = this.project();
+			return [project.name, project.project_name].filter(Boolean).join(' — ');
+		}
+
 		pickSheetHtml() {
-			const project = this.data.project || {};
-			const title = [project.name, project.project_name].filter(Boolean).join(' — ');
+			const title = this.sheetSubtitle();
 			const scope = SCOPE_LABELS.find((o) => o.value === this.scope);
 			const stops = this.displayStops();
 			const overflow = this.overflowStops();
@@ -1692,10 +1841,12 @@
 
 			return (
 				'<!doctype html><html><head><meta charset="utf-8">' +
-				'<title>' + esc(__('Pick sheet') + ' — ' + (project.name || '')) + '</title>' +
+				'<title>' + esc(__('Pick sheet') + ' — ' + title) + '</title>' +
 				'<style>' + PICK_SHEET_CSS + '</style></head><body>' +
 					'<div class="sheet-head">' +
-						'<h1>' + esc(__('Pick sheet')) + '</h1>' +
+						'<h1>' + esc(this.isSupplierMode()
+							? __('Supplier pick sheet')
+							: __('Pick sheet')) + '</h1>' +
 						'<div class="sheet-sub">' + esc(title) + '</div>' +
 						'<div class="sheet-meta">' +
 							esc(__('Printed {0}', [frappe.datetime.str_to_user(frappe.datetime.now_datetime())])) +
@@ -1719,37 +1870,16 @@
 
 		sheetStopHtml(stop, seq) {
 			const contact = [stop.contact, stop.phone].filter(Boolean).join(' · ');
-			const tables = (stop.purchase_orders || [])
-				.map((po) => {
-					const rows = (po.items || [])
-						.map((line) => {
-							const m = lineModel(line);
-							return (
-								'<tr' + (m.done ? ' class="is-done"' : '') + '>' +
-									'<td class="tick">' + (m.done ? '&#9745;' : '&#9744;') + '</td>' +
-									'<td class="code">' + esc(m.code) + '</td>' +
-									'<td>' + esc(m.name) + '</td>' +
-									'<td class="num"><b>' + esc(qtyText(m.outstanding)) + '</b></td>' +
-									'<td class="num">' + esc(qtyText(m.ordered)) + '</td>' +
-									'<td class="num">' + esc(qtyText(m.received)) + '</td>' +
-									'<td>' + esc(m.uom) + '</td>' +
-								'</tr>'
-							);
-						})
-						.join('');
-					if (!rows) return '';
+			const byProject = this.isSupplierMode();
+			const tables = stopGroups(stop, byProject)
+				.map((group) => {
+					const body = group.orders.map(sheetOrderTableHtml).join('');
+					if (!body) return '';
+					if (!group.label) return body;
 					return (
-						'<div class="sheet-po">' +
-							'<div class="sheet-po-head">' + esc(poGroupHeadText(po)) + '</div>' +
-							'<table><thead><tr>' +
-								'<th class="tick"></th>' +
-								'<th>' + esc(__('Item')) + '</th>' +
-								'<th>' + esc(__('Description')) + '</th>' +
-								'<th class="num">' + esc(__('Collect')) + '</th>' +
-								'<th class="num">' + esc(__('Ordered')) + '</th>' +
-								'<th class="num">' + esc(__('Received')) + '</th>' +
-								'<th>' + esc(__('UOM')) + '</th>' +
-							'</tr></thead><tbody>' + rows + '</tbody></table>' +
+						'<div class="sheet-job">' +
+							'<div class="sheet-job-head">' + esc(group.label) + '</div>' +
+							body +
 						'</div>'
 					);
 				})
@@ -1765,6 +1895,7 @@
 						esc(stop.address || __('No address on file')) +
 						(contact ? ' · ' + esc(contact) : '') +
 					'</div>' +
+					(byProject ? sheetJobRollupHtml(stop) : '') +
 					(tables || '<div class="sheet-meta">' + esc(__('No lines on this stop.')) + '</div>') +
 				'</div>'
 			);
@@ -1796,6 +1927,73 @@
 		}
 	}
 
+	/**
+	 * One purchase order as a printable table. Shared by both sheets, so a driver
+	 * holding a supplier sheet and one holding a project sheet read the same
+	 * arithmetic for the same line.
+	 *
+	 * Returns '' for an order with no lines: on paper an empty bordered table is
+	 * indistinguishable from a printing fault.
+	 */
+	function sheetOrderTableHtml(entry) {
+		const rows = (entry.items || [])
+			.map((line) => {
+				const m = lineModel(line);
+				return (
+					'<tr' + (m.done ? ' class="is-done"' : '') + '>' +
+						'<td class="tick">' + (m.done ? '&#9745;' : '&#9744;') + '</td>' +
+						'<td class="code">' + esc(m.code) + '</td>' +
+						'<td>' + esc(m.name) + '</td>' +
+						'<td class="num"><b>' + esc(qtyText(m.outstanding)) + '</b></td>' +
+						'<td class="num">' + esc(qtyText(m.ordered)) + '</td>' +
+						'<td class="num">' + esc(qtyText(m.received)) + '</td>' +
+						'<td>' + esc(m.uom) + '</td>' +
+					'</tr>'
+				);
+			})
+			.join('');
+		if (!rows) return '';
+		return (
+			'<div class="sheet-po">' +
+				'<div class="sheet-po-head">' + esc(poGroupHeadText(entry.po)) + '</div>' +
+				'<table><thead><tr>' +
+					'<th class="tick"></th>' +
+					'<th>' + esc(__('Item')) + '</th>' +
+					'<th>' + esc(__('Description')) + '</th>' +
+					'<th class="num">' + esc(__('Collect')) + '</th>' +
+					'<th class="num">' + esc(__('Ordered')) + '</th>' +
+					'<th class="num">' + esc(__('Received')) + '</th>' +
+					'<th>' + esc(__('UOM')) + '</th>' +
+				'</tr></thead><tbody>' + rows + '</tbody></table>' +
+			'</div>'
+		);
+	}
+
+	/**
+	 * "Sorts into: PRJ-00566 (4 lines) · PRJ-00590 (2 lines)" under a supplier stop.
+	 *
+	 * The question this sheet exists to answer at the tailgate. Printed above the
+	 * tables as well as being their grouping, because the crew needs to know how
+	 * many piles they are making BEFORE they start lifting — the counts come from
+	 * the server's rollup, which is computed from the same lines the tables are.
+	 */
+	function sheetJobRollupHtml(stop) {
+		const jobs = stop.projects || [];
+		if (jobs.length < 2) return '';
+		const bits = jobs.map((job) => {
+			const label = projectLabel(job.project, job.project_name);
+			const count = job.line_count === 1
+				? __('1 line')
+				: __('{0} lines', [job.line_count]);
+			return esc(label + ' (' + count + ')');
+		});
+		return (
+			'<div class="sheet-jobs"><b>' + esc(__('Sorts into')) + ':</b> ' +
+				bits.join(' · ') +
+			'</div>'
+		);
+	}
+
 	function markerHtml(stop, seq) {
 		return (
 			'<div style="min-width:180px">' +
@@ -1819,16 +2017,18 @@
 
 	// ------------------------------------------------------------------- launch
 
-	function openPickRoutingMap(frm) {
-		if (frm.is_new()) {
-			frappe.msgprint(__('Please save the Project before building a pick route.'));
-			return;
-		}
+	/**
+	 * Fetch a run and put it on screen. One implementation for both scopes —
+	 * `source` says which endpoint answers and with what, `title` names the
+	 * dialog. Everything after the response is identical, which is the whole
+	 * reason the two payloads share a shape.
+	 */
+	function openRun(source, title) {
 		ensureStyles();
 
 		frappe.call({
-			method: 'erpnext_enhancements.api.pickup_routing.get_pickup_route_data',
-			args: { project: frm.doc.name },
+			method: source.method,
+			args: source.args,
 			freeze: true,
 			freeze_message: __('Working out the run...'),
 			callback: (r) => {
@@ -1839,7 +2039,7 @@
 				}
 
 				const dialog = new frappe.ui.Dialog({
-					title: __('Pick Routing Map'),
+					title: title,
 					size: 'extra-large',
 					fields: [{ fieldtype: 'HTML', fieldname: 'route' }],
 				});
@@ -1847,7 +2047,7 @@
 				// Build only once the modal is on screen and sized — see the
 				// header note on the 0x0 trap.
 				dialog.show();
-				const controller = new PickRoutingMap(frm, data, dialog);
+				const controller = new PickRoutingMap(source, data, dialog);
 				controller.updatePrimaryAction();
 				// Secondary, not primary: the map is the point of this dialog and
 				// "Open in Google Maps" is what the driver reaches for. The sheet is
@@ -1858,9 +2058,62 @@
 		});
 	}
 
+	function openPickRoutingMap(frm) {
+		if (frm.is_new()) {
+			frappe.msgprint(__('Please save the Project before building a pick route.'));
+			return;
+		}
+		openRun(
+			{
+				method: 'erpnext_enhancements.api.pickup_routing.get_pickup_route_data',
+				args: { project: frm.doc.name },
+			},
+			__('Pick Routing Map')
+		);
+	}
+
+	/**
+	 * The same run for one or more suppliers, across every job.
+	 *
+	 * `suppliers` is an array of Supplier names. Exported (below) rather than
+	 * bound to a form here, because both callers live elsewhere: the Supplier form
+	 * button and the Supplier list's bulk action, neither of which this file
+	 * should know about.
+	 */
+	function openSupplierPickSheet(suppliers) {
+		const names = (suppliers || []).filter(Boolean);
+		if (!names.length) {
+			frappe.msgprint(__('Pick at least one supplier.'));
+			return;
+		}
+		openRun(
+			{
+				method: 'erpnext_enhancements.api.pickup_routing.get_supplier_pick_data',
+				// Sent as an array; the endpoint also accepts a bare name and a
+				// JSON string, so a form-encoded caller is not a broken caller.
+				args: { suppliers: names },
+			},
+			names.length === 1
+				? __('Pick Sheet — {0}', [names[0]])
+				: __('Pick Sheet — {0} suppliers', [names.length])
+		);
+	}
+
 	frappe.ui.form.on('Project', {
 		custom_btn_pick_routing_map: function (frm) {
 			openPickRoutingMap(frm);
 		},
 	});
+
+	// The two supplier entry points are in their own files (a Supplier form
+	// button, a Supplier list action) and reach the machinery through here. A
+	// namespace rather than a second copy of 1900 lines: the optimiser, the three
+	// degradation steps and the sheet must not fork.
+	// `provide` returns the namespace it created, so the exports go through that
+	// object rather than through a bare `erpnext_enhancements.…` global — which
+	// would be a ReferenceError, not a falsy read, in any context where the
+	// global is not yet defined.
+	const ns = frappe.provide('erpnext_enhancements.pick_routing');
+	ns.openSupplierPickSheet = openSupplierPickSheet;
+	ns.openProjectPickRoute = openPickRoutingMap;
 })();
