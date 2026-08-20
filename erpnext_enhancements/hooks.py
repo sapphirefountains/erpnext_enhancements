@@ -1932,6 +1932,15 @@ assistant_tools = [
 	# PDT-0008 free while the sole record of that product holds it; unanchored, the
 	# five-digit "(deleted)" family collapses onto four-digit slots that are genuinely free.
 	"erpnext_enhancements.assistant_tools.item_naming_check.ItemNamingCheck",
+	# v1.339.0 CRM -- read-only naming advisor for the three doctypes that name themselves
+	# after a party. Same posture as item_naming_check: advisory, no doc_event, every
+	# judgement in the pure crm_enhancements.party_naming_rules so CI executes it.
+	#
+	# requires_permission is a single DocType and this tool spans three, so it gates on the
+	# most broadly readable (Address) for VISIBILITY and re-checks the doctype actually
+	# asked for inside execute(). Gating on the most restrictive would hide it from anyone
+	# holding Opportunity but not Project, for no reason they could see.
+	"erpnext_enhancements.assistant_tools.party_naming_check.PartyNamingCheck",
 ]
 
 # Paths are relative to the app package dir (frappe.get_app_path).

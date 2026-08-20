@@ -52,6 +52,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   report header rather than listed: "belongs to nobody" is a real finding and a different one
   from "badly named", and 442 rows of it would drown everything actionable.
 
+- **`party_naming_check`, an MCP tool over the same engine.** Pass a `doctype` and a `name` to
+  check one record; pass the doctype alone to audit the whole thing. It spans three doctypes
+  while `requires_permission` is a single DocType, so it gates *visibility* on `Address` — the
+  most broadly readable of the three — and re-checks the doctype actually asked for inside
+  `execute`. Gating on the most restrictive would have hidden it from anyone holding
+  Opportunity but not Project, for no reason they could see.
+
+  Its description tells the model the thing a naive reading gets wrong: **out of scope is not a
+  pass.** When `in_scope` is false the answer is "not checked, and here is why", never
+  "compliant".
+
+- **Three nightly KPI metrics**, each with a seeded `KPI Target`:
+  `project_naming_compliance_pct` on Operations, and `opportunity_naming_compliance_pct` plus
+  `address_naming_compliance_pct` on Sales — addresses sit with Sales because they are account
+  data, the same reason `Account Data Quality` is a CRM report. All three are computed by
+  calling the rules module rather than by a second SQL definition of "compliant", and all three
+  measure **in-scope records only**, so 100% is reachable rather than aspirational.
+
 ### Fixed
 
 - **Address titles that append the type themselves produce a doubled one.** Frappe builds an
@@ -78,6 +96,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   see them: MariaDB's PAD SPACE collation makes `title <> TRIM(title)` always false. Compared
   by length, in Python, where a trailing space is still a character — the same trap already
   recorded in `CLAUDE.md`.
+
+- **A leading "The" was flagging three Projects for nothing.** `Chateaux Deer Valley` against a
+  customer of *The Chateaux Deer Valley*, and `Little America` against *The Little America Hotel
+  - Salt Lake City*, are the same party by any reading. A leading article is now dropped from
+  both sides before comparing — and *only* a leading one, because dropping it anywhere would
+  stop distinguishing a party from a different one that merely contains the word.
+
+  Found by running the rule against all 146 distinct (prefix, customer) pairs on in-scope
+  Projects rather than against fixtures: **94 pass and 52 do not**. The failures are worth
+  knowing by class, because most are the check earning its keep — projects named for the site
+  or the general contractor (`Landmark` for *CEM Aquatics*, `Gold Dust` for *Greg Young
+  Construction*), typos in the **customer record itself** (`Harwoo`, `Holly` vs `Holli`,
+  `Jamie Christiensen`), and a handful named after the wrong person entirely. Acronyms (`LHM`
+  for *Larry H Miller Corp*, `SLC Parks & Rec*`) and surname-only forms (`Carey Residence` for
+  *BJ Carey*) are reported too, and that is a judgement rather than an oversight: a rule loose
+  enough to accept them would also accept `Landmark` for *CEM Aquatics*, which is the defect
+  this check exists to find.
 
 ## [1.338.0] - 2026-08-20
 
