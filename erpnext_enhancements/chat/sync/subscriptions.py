@@ -1802,6 +1802,87 @@ def check_subscription_health(
 	return raised
 
 
+def _last_known_expiry(user: str) -> datetime | None:
+	"""When this coworker's most recent subscription actually lapsed, if we still know.
+
+	Read from the superseded rows, which is the only place it survives — the whole reason a
+	replacement gets a *new* row rather than reusing the old one. Without it a recovery sweep
+	has no window and would either re-read everything or nothing.
+	"""
+	rows = frappe.get_all(
+		SUBSCRIPTION_DOCTYPE,
+		filters={"target_user": user, "expire_time": ["is", "set"]},
+		fields=["expire_time"],
+		order_by="expire_time desc",
+		limit=1,
+	)
+	return _as_datetime(rows[0]["expire_time"]) if rows else None
+
+
+def recover_subscription_for(
+	user: str = "",
+	*,
+	client_factory: Callable[[str], Any] | None = None,
+	alert: AlertSink | None = None,
+) -> dict[str, Any]:
+	"""Put a subscription back for a coworker who has none, and sweep the gap it left.
+
+		bench --site <site> execute \\
+			erpnext_enhancements.chat.sync.subscriptions.recover_subscription_for \\
+			--kwargs "{'user': 'someone@example.com'}"
+
+	Pass no ``user`` to recover the whole roster.
+
+	**The gap this fills.** Nothing in this app *creates* a missing subscription.
+	:func:`renew_due_subscriptions` iterates :func:`_rows`, which skips ``DELETED`` — so once a
+	subscription lapses and its row is superseded, the coworker is uncovered and the hourly job
+	will never look at them again. :func:`check_subscription_health` notices and *alerts*
+	(``subscription-missing``), but an alert is not a repair, and the repair was a hand-typed
+	``bench execute`` nobody would find under pressure. That was the state prod was left in on
+	2026-08-20 after the uid collision (v1.340.1) marked both live rows ``DELETED``.
+
+	Idempotent: a coworker with an ``ACTIVE`` subscription is skipped, not given a second one.
+	The sweep window comes from the superseded row's ``expire_time``, so it covers exactly the
+	dead interval; with no recorded expiry the sweep is skipped rather than run unbounded —
+	``reconcile_rooms_for_user`` with ``since=None`` would re-read every room from the start.
+	"""
+	alert = alert or raise_operator_alert
+	summary: dict[str, Any] = {"status": "ok", "reason": "", "recovered": [], "skipped": [], "failed": []}
+
+	ok, reason = _gate()
+	if not ok:
+		summary["status"] = "skipped"
+		summary["reason"] = reason
+		return summary
+
+	targets = [user] if user else _roster()
+	for target in targets:
+		existing = active_subscription_for(target)
+		if existing and existing.get("state") == STATE_ACTIVE:
+			summary["skipped"].append(target)
+			continue
+
+		# Read the window *before* creating: ensure_subscription_for_user writes a fresh row
+		# whose expire_time would otherwise become the newest one and collapse the gap to zero.
+		since = _last_known_expiry(target)
+		created = ensure_subscription_for_user(target, client_factory=client_factory, alert=alert)
+		if created.get("status") != "created":
+			summary["failed"].append(
+				{"user": target, "detail": created.get("reason") or created.get("status")}
+			)
+			continue
+
+		if since is not None:
+			_sweep_gap(target, since=since, alert=alert)
+		summary["recovered"].append(
+			{"user": target, "since": str(since) if since else "", "swept": since is not None}
+		)
+
+	if summary["failed"]:
+		summary["status"] = "partial" if summary["recovered"] else "failed"
+	return summary
+
+
 def _roster() -> list[str]:
 	"""The coworkers who are supposed to have a subscription each.
 
