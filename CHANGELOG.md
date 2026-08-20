@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.340.1] - 2026-08-20
+
+### Fixed
+
+- **Chat subscription recreates were deadlocked on a uid the superseded row still held, and
+  inbound sync for two coworkers had been dead for a day.** A Workspace Events subscription id
+  is **deterministic**: base64-decoding the id segment of a live one reads
+  `s:-:<google user id>:<app>`, so the same coworker against the same `spaces/-` target is
+  handed back *the same name* every time it is created. `_recreate_one` was written against the
+  opposite belief — `active_subscription_for` still said a recreated subscription is "genuinely
+  a different subscription with a different name" — so it marked the old row `DELETED` and left
+  `subscription_uid` on it. That column is unique table-wide. The replacement therefore arrived
+  carrying a uid the dead row was still claiming, and the write died on
+  `IntegrityError (1062) Duplicate entry ... for key 'subscription_uid'`.
+
+  It could not recover on its own, and that is the part worth remembering. `_rows` skips
+  `DELETED`, so the hourly scheduler dropped the dead row after the first attempt — but
+  `_row_by_uid` did **not** filter on state, so every redelivered `subscriptions.expired`
+  CloudEvent found it again and re-ran the identical doomed recreate. Two coworkers reached 27
+  consecutive failures. **The worst consequence was silent**: the failing write sits *upstream*
+  of `_sweep_gap`, so the reconciliation sweep — the only way to recover messages, because
+  Workspace Events has no replay — never ran once in ~24 hours of outage.
+
+  Four changes, because one alone leaves a way back in: a superseded row now **releases** its
+  uid; `_apply_subscription` treats a collision as recoverable rather than fatal, releasing the
+  stale claim and retrying instead of aborting before the sweep; `_recreate_one` is idempotent
+  against a redelivered expiry, the way `_renew_one` already was; and `_row_by_uid` prefers the
+  live claimant. `release_superseded_subscription_uids` clears the existing wreckage — releases
+  the stranded uids, deletes the placeholder rows each failed attempt leaked (a create commits
+  its row *before* calling Google, by design), and resets the counters that only ever counted
+  this.
+
+  **The test suite asserted the bug was impossible.** `test_chat_subscriptions.py` set
+  `client.next_subscription_id = "sub-alice-0002"` before each recreate — inventing the fresh id
+  the real API will never return — and the in-memory store enforced its unique indexes on
+  `insert` only, never on `set_value`, which is the exact write that failed in production. Both
+  are fixed, and the five tests covering this now fail against the old code, which is the only
+  thing that makes them worth having.
+
 ## [1.340.0] - 2026-08-20
 
 ### Added
