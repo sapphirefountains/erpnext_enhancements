@@ -110,6 +110,18 @@ class _UniqueValidationError(_ValidationError):
 	"""What a **non-primary-key** unique index raises. The one the ADR forgets."""
 
 
+class _IntegrityError(Exception):
+	"""What the **driver** raises when an ``UPDATE`` hits a non-PK unique index.
+
+	Deliberately *not* the same class as :class:`_UniqueValidationError`. frappe translates
+	a unique collision raised by ``doc.insert()``, but ``frappe.db.set_value`` goes straight
+	to SQL and the driver's own error propagates untranslated — so one constraint surfaces
+	under two class names depending on which route reached it. Production hit this one:
+	``IntegrityError: (1062, "Duplicate entry '...' for key 'subscription_uid'")``, on the
+	``_apply_subscription`` write, and code catching only the other name would sail past it.
+	"""
+
+
 class _NameError(Exception):
 	pass
 
@@ -278,7 +290,23 @@ def _db_set_value(doctype: str, name: str, values: Any, value: Any = None, **_kw
 	row = STORE.table(doctype).get(name)
 	if row is None:
 		return
-	row.update(dict(values) if isinstance(values, dict) else {values: value})
+	incoming = dict(values) if isinstance(values, dict) else {values: value}
+
+	# The unique indexes apply to UPDATE too, and modelling that is the whole reason this
+	# stub caught nothing for the uid collision that took inbound sync down: the store
+	# enforced uniqueness on insert only, so the one write that actually failed in
+	# production — _apply_subscription's set_value — passed here every time.
+	for column in UNIQUE_COLUMNS.get(doctype, ()):
+		if column not in incoming:
+			continue
+		candidate = incoming[column]
+		if not candidate:
+			continue
+		for other_name, other in STORE.table(doctype).items():
+			if other_name != name and other.get(column) == candidate:
+				raise _IntegrityError(1062, f"Duplicate entry '{candidate}' for key '{column}'")
+
+	row.update(incoming)
 
 
 def _db_sql(query: str, params: Any = None, **_kwargs: Any) -> list[Any]:
@@ -830,7 +858,14 @@ def test_an_expired_subscription_is_recreated_and_the_gap_is_swept(monkeypatch: 
 	now = FRAPPE.utils.now_datetime()
 	old = seed_subscription(expire_time=now - timedelta(minutes=5), renew_after=now - timedelta(days=1))
 	client = FakeEventsClient()
-	client.next_subscription_id = "sub-alice-0002"
+	# NOT a fresh id. Workspace Events subscription ids are deterministic per
+	# (authorizing user, target resource) — base64 of the id segment reads
+	# "s:-:<google user id>:<app>" — so a recreate is handed back the *same* name. This
+	# test used to set next_subscription_id = "sub-alice-0002", and that single invented
+	# line is what hid a table-wide unique collision that took inbound sync down for two
+	# coworkers for a day (v1.340.1). The default already is SUBSCRIPTION_ID; it is
+	# restated here because the whole point of the test is that it repeats.
+	client.next_subscription_id = SUBSCRIPTION_ID
 	alerts = AlertRecorder()
 
 	swept: list[dict[str, Any]] = []
@@ -848,7 +883,12 @@ def test_an_expired_subscription_is_recreated_and_the_gap_is_swept(monkeypatch: 
 	assert verdict == "recreated"
 	assert STORE.table(subscriptions.SUBSCRIPTION_DOCTYPE)[old]["state"] == "DELETED"
 	fresh = subscriptions.active_subscription_for(USER)
-	assert fresh and fresh["subscription_uid"] == "sub-alice-0002" and fresh["state"] == "ACTIVE"
+	assert fresh and fresh["subscription_uid"] == SUBSCRIPTION_ID and fresh["state"] == "ACTIVE"
+	assert fresh["name"] != old, "the replacement is a new row, so the gap stays on the record"
+	assert STORE.table(subscriptions.SUBSCRIPTION_DOCTYPE)[old]["subscription_uid"] in (None, ""), (
+		"the superseded row has to release the uid: it is unique table-wide and the "
+		"replacement arrives carrying the same one"
+	)
 	assert swept and swept[0]["user"] == USER, (
 		"recreating the subscription stops the gap growing; only the sweep recovers what was "
 		"said while it was dead, and Workspace Events has no replay"
@@ -864,13 +904,115 @@ def test_a_lapsed_row_is_recreated_by_the_scheduler_without_any_event(monkeypatc
 	monkeypatch.setattr(reconcile, "reconcile_rooms_for_user", lambda user, **kwargs: {"status": "ok"})
 
 	client = FakeEventsClient()
-	client.next_subscription_id = "sub-alice-0003"
+	# Deterministic again — see the note in the lifecycle test above.
+	client.next_subscription_id = SUBSCRIPTION_ID
 	summary = subscriptions.renew_due_subscriptions(
 		client_factory=lambda subject: client, alert=AlertRecorder()
 	)
 
 	assert summary["recreated"] == 1, summary
 	assert [call[0] for call in client.calls] == ["create"]
+
+
+def test_a_recreate_survives_a_uid_a_superseded_row_still_claims(monkeypatch: Any) -> None:
+	"""The production deadlock, reproduced: a dead row holding the uid its replacement needs.
+
+	Rows written before v1.340.1 kept ``subscription_uid`` when they were marked ``DELETED``,
+	and the index is unique table-wide — so the replacement, which Google names identically,
+	could not be written at all. 27 consecutive failures for two coworkers, and because the
+	failing write sits upstream of the gap sweep, not one of the lost messages was fetched.
+	"""
+	now = FRAPPE.utils.now_datetime()
+	stale = seed_subscription(
+		state="DELETED",
+		subscription_uid=SUBSCRIPTION_ID,
+		expire_time=now - timedelta(days=2),
+	)
+	live = seed_subscription(
+		subscription_uid="sub-alice-superseded",
+		expire_time=now - timedelta(minutes=5),
+		renew_after=now - timedelta(days=1),
+	)
+	swept: list[str] = []
+	monkeypatch.setattr(
+		reconcile,
+		"reconcile_rooms_for_user",
+		lambda user, **kwargs: swept.append(user) or {"status": "ok"},
+	)
+	client = FakeEventsClient()
+	client.next_subscription_id = SUBSCRIPTION_ID
+
+	summary = subscriptions.renew_due_subscriptions(
+		client_factory=lambda subject: client, alert=AlertRecorder()
+	)
+
+	assert summary["recreated"] == 1, summary
+	table = STORE.table(subscriptions.SUBSCRIPTION_DOCTYPE)
+	assert table[stale]["subscription_uid"] in (
+		None,
+		"",
+	), "the superseded row has to give the uid up; nothing else can ever claim it"
+	assert table[live]["state"] == "DELETED"
+	fresh = subscriptions.active_subscription_for(USER)
+	assert fresh and fresh["subscription_uid"] == SUBSCRIPTION_ID
+	assert swept == [USER], "and the gap sweep has to be reached, which is the point of all of it"
+
+
+def test_a_redelivered_expiry_does_not_supersede_the_replacement(monkeypatch: Any) -> None:
+	"""Pub/Sub redelivers, so the second `expired` must not replace the replacement.
+
+	This is what made one failed recreate unbounded rather than a single error: ``_rows``
+	skips ``DELETED`` so the scheduler let the dead row go, but ``_row_by_uid`` did not filter
+	on state, so every redelivery found it again and re-ran the identical doomed recreate.
+	"""
+	now = FRAPPE.utils.now_datetime()
+	seed_subscription(expire_time=now - timedelta(minutes=5), renew_after=now - timedelta(days=1))
+	monkeypatch.setattr(reconcile, "reconcile_rooms_for_user", lambda user, **kwargs: {"status": "ok"})
+	client = FakeEventsClient()
+	event = decisions.parse_pubsub_envelope(
+		fixtures.subscription_expired_event(subscription_id=SUBSCRIPTION_ID)
+	)
+
+	first = subscriptions.handle_lifecycle_event(
+		event, client_factory=lambda subject: client, alert=AlertRecorder()
+	)
+	rows_after_first = len(STORE.rows(subscriptions.SUBSCRIPTION_DOCTYPE))
+	second = subscriptions.handle_lifecycle_event(
+		event, client_factory=lambda subject: client, alert=AlertRecorder()
+	)
+
+	assert first == "recreated"
+	assert second == "already_recreated"
+	assert (
+		len(STORE.rows(subscriptions.SUBSCRIPTION_DOCTYPE)) == rows_after_first
+	), "a redelivered expiry must not mint another row"
+	assert [call[0] for call in client.calls] == ["create"], "nor call Google a second time"
+
+
+def test_a_failed_create_reuses_its_placeholder_instead_of_leaking_another() -> None:
+	"""The row is committed before the Google call, so a failure leaves one behind — reuse it.
+
+	Leaking one per attempt is how a stuck recreate produced a pile of dead rows per coworker,
+	each of which the scheduler then classified ``renew`` on every pass, forever, because a
+	placeholder has no ``expire_time`` to reason about.
+	"""
+	client = FakeEventsClient()
+	client.fail_next("create", RuntimeError("Google said no"))
+	first = subscriptions.ensure_subscription_for_user(
+		USER, client_factory=lambda subject: client, alert=AlertRecorder()
+	)
+	after_first = len(STORE.rows(subscriptions.SUBSCRIPTION_DOCTYPE))
+
+	client.fail_next("create", RuntimeError("Google said no again"))
+	subscriptions.ensure_subscription_for_user(
+		USER, client_factory=lambda subject: client, alert=AlertRecorder()
+	)
+
+	assert first["status"] == "failed"
+	assert after_first == 1, "the placeholder is committed before the call, on purpose"
+	assert (
+		len(STORE.rows(subscriptions.SUBSCRIPTION_DOCTYPE)) == after_first
+	), "the second attempt has to adopt the abandoned placeholder, not add to the pile"
 
 
 # ---------------------------------------------------------------------------

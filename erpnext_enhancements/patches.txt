@@ -762,3 +762,10 @@ erpnext_enhancements.patches.seed_item_naming_kpi_target
 # 100 is the definition of "compliant", not a chosen threshold, and the denominator is
 # in-scope records only, so it is reachable. Does not touch a row somebody has edited.
 erpnext_enhancements.patches.seed_party_naming_kpi_targets
+# v1.340.1 -- Workspace Events subscription ids are deterministic per (user, target), so a
+# recreate is handed back the uid the superseded row was still holding, and the unique index
+# refused it: 27 consecutive failures for two coworkers, inbound Chat sync dead for their
+# spaces, and the gap sweep that recovers the lost messages never reached. Releases the uid
+# from superseded rows, deletes the placeholders each failed attempt leaked, and resets the
+# counters that only counted this. Safe twice.
+erpnext_enhancements.patches.release_superseded_subscription_uids

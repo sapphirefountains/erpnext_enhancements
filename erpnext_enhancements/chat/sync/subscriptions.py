@@ -553,6 +553,51 @@ def _update(name: str, values: Mapping[str, Any]) -> None:
 	frappe.db.set_value(SUBSCRIPTION_DOCTYPE, name, dict(values), update_modified=True)
 
 
+def _is_uid_collision(exc: BaseException) -> bool:
+	"""Did this write bounce off the unique index on ``subscription_uid``?
+
+	Matched on the exception **text** rather than its class, deliberately. The same collision
+	arrives as a raw pymysql ``IntegrityError`` (1062) when it comes through
+	``frappe.db.set_value``, and as ``frappe.exceptions.UniqueValidationError`` when it comes
+	through the Document layer. Catching one class only would fail open on the other — the
+	trap that made an earlier dedupe in this app silently useless — and the index name is the
+	one thing both spellings carry.
+	"""
+	text = str(exc)
+	if "subscription_uid" in text:
+		return True
+	unique_error = getattr(frappe, "UniqueValidationError", None)
+	return bool(unique_error) and isinstance(exc, unique_error)
+
+
+def _release_uid_claim(uid: str, *, keep: str) -> list[str]:
+	"""Clear ``subscription_uid`` from every row holding ``uid`` except ``keep``.
+
+	The uid identifies a *subscription*, and Workspace Events makes that identity permanent
+	per ``(authorizing user, target resource)`` — so at most one row may claim it and it has
+	to be the live one. A superseded row keeps its state, expiry and ``last_error``; it just
+	stops claiming an identity that now belongs to its replacement.
+
+	Returns the rows it released, for the debug log. Never raises on an empty uid.
+	"""
+	if not uid:
+		return []
+	holders = frappe.get_all(
+		SUBSCRIPTION_DOCTYPE,
+		filters={"subscription_uid": uid},
+		fields=["name"],
+		limit=RENEW_BATCH_SIZE,
+	)
+	released: list[str] = []
+	for holder in holders:
+		holder_name = str(holder.get("name") or "")
+		if not holder_name or holder_name == keep:
+			continue
+		_update(holder_name, {"subscription_uid": None})
+		released.append(holder_name)
+	return released
+
+
 def _as_datetime(value: Any) -> datetime | None:
 	if not value:
 		return None
@@ -618,13 +663,48 @@ def _rows(*, include_deleted: bool = False, limit: int = RENEW_BATCH_SIZE) -> li
 	return [dict(row) for row in rows]
 
 
+def _orphan_placeholder_for(user: str) -> str:
+	"""The newest committed-but-never-completed placeholder row for this coworker, or ``""``.
+
+	A placeholder is a row whose Google call never landed: ``STATE_UNSPECIFIED``, no uid, no
+	expiry. Reusing one is safe *because* it carries no identity — no lifecycle event can
+	resolve to it, nothing links to it, and there is no expiry for the scheduler to act on.
+
+	``["is", "not set"]`` rather than ``["in", [None, ""]]``: the DocField carries
+	``unique: 1``, so frappe coerces the empty string to ``NULL`` on the way in, and
+	``IN (NULL, '')`` never matches a ``NULL`` — the filter would match nothing, forever, and
+	the leak it exists to stop would look fixed.
+	"""
+	if not user:
+		return ""
+	rows = frappe.get_all(
+		SUBSCRIPTION_DOCTYPE,
+		filters={
+			"target_user": user,
+			"state": STATE_UNSPECIFIED,
+			"subscription_uid": ["is", "not set"],
+		},
+		fields=["name"],
+		order_by="creation desc",
+		limit=1,
+	)
+	return str(rows[0]["name"]) if rows else ""
+
+
 def active_subscription_for(user: str) -> dict[str, Any] | None:
 	"""This coworker's current subscription row, or ``None``.
 
 	"Current" means not ``DELETED``: a lapsed subscription is marked ``DELETED`` and a fresh
-	row is inserted for its replacement, because a recreated subscription is genuinely a
-	different subscription with a different name and a different expiry, and collapsing the
-	two would erase the record of the gap the reconciliation sweep then has to cover.
+	row is inserted for its replacement, so the record of the gap the reconciliation sweep has
+	to cover survives instead of being overwritten.
+
+	**The replacement is a new row but not a new subscription**, and the distinction cost a day
+	of inbound sync. This docstring used to claim a recreated subscription is *genuinely a
+	different subscription with a different name*; it is not. Workspace Events ids are
+	deterministic per ``(authorizing user, target resource)``, so the replacement is handed back
+	the same name — which is why the superseded row has to release its ``subscription_uid``
+	(the column is unique table-wide) rather than keep it as history. See
+	:func:`_recreate_one` and ``patches/release_superseded_subscription_uids``.
 	"""
 	rows = frappe.get_all(
 		SUBSCRIPTION_DOCTYPE,
@@ -685,7 +765,22 @@ def _apply_subscription(
 	if renewed:
 		values["last_renewed"] = now_local
 
-	_update(name, values)
+	try:
+		_update(name, values)
+	except Exception as exc:
+		if not _is_uid_collision(exc):
+			raise
+		# Another row is still claiming this uid — a superseded one that kept its claim. See
+		# _recreate_one for why the id repeats at all. Release the stale claim and write once
+		# more: raising here aborts the caller *before* its gap sweep, so the recreate fails
+		# and the messages it exists to recover are never fetched.
+		released = _release_uid_claim(uid_from_name, keep=name)
+		_log_debug(
+			"chat subscriptions: released a stale claim on %s held by %s",
+			uid_from_name,
+			", ".join(released) or "<nothing>",
+		)
+		_update(name, values)
 
 	if lifetime <= 0:
 		alert(
@@ -804,18 +899,31 @@ def ensure_subscription_for_user(
 
 	row_name = ""
 	try:
-		doc = frappe.get_doc(
-			{
-				"doctype": SUBSCRIPTION_DOCTYPE,
-				"target_resource": target,
-				"target_user": user,
-				"state": STATE_UNSPECIFIED,
-				"event_types": "\n".join(event_types),
-				"consecutive_failures": 0,
-				"event_count": 0,
-			}
-		).insert(ignore_permissions=True)
-		row_name = doc.name
+		# Adopt an abandoned placeholder rather than adding to the pile. A create that fails
+		# after its row is committed — the docstring above explains why the row goes first —
+		# leaves a uid-less row behind, and a *repeating* failure leaked one per attempt: 27
+		# per coworker in the uid collision this shipped with (v1.340.1). Reuse preserves the
+		# insert-before-call guarantee exactly — the row is still there, still committed,
+		# before Google is asked for anything.
+		row_name = _orphan_placeholder_for(user)
+		if row_name:
+			_update(
+				row_name,
+				{"target_resource": target, "event_types": "\n".join(event_types), "last_error": ""},
+			)
+		else:
+			doc = frappe.get_doc(
+				{
+					"doctype": SUBSCRIPTION_DOCTYPE,
+					"target_resource": target,
+					"target_user": user,
+					"state": STATE_UNSPECIFIED,
+					"event_types": "\n".join(event_types),
+					"consecutive_failures": 0,
+					"event_count": 0,
+				}
+			).insert(ignore_permissions=True)
+			row_name = doc.name
 		# Committed before the network call — see the docstring. A guarded commit: a failure
 		# here means the placeholder may be lost, which degrades to the invisible-orphan case
 		# rather than to a crash.
@@ -1158,11 +1266,31 @@ def _recreate_one(
 	user = str(row.get("target_user") or "")
 	old_expiry = _as_datetime(row.get("expire_time"))
 
+	# Idempotent for the same reason _renew_one is: the trigger is a Pub/Sub delivery, and
+	# Pub/Sub redelivers. Without this, a redelivered `expired` for a subscription already
+	# replaced supersedes the *replacement* and creates another, on every redelivery.
+	fresh = _read(name) if name else None
+	if fresh is not None:
+		if str(fresh.get("state") or "") == STATE_DELETED:
+			return "already_recreated"
+		fresh_expiry = _as_datetime(fresh.get("expire_time"))
+		if fresh_expiry is not None and fresh_expiry > now_local:
+			return "already_recreated"
+
 	if name:
 		_update(
 			name,
 			{
 				"state": STATE_DELETED,
+				# Released, not kept. Workspace Events subscription ids are **deterministic**:
+				# base64 of the id segment reads "s:-:<google user id>:<app>", so the same
+				# coworker against the same spaces/- target is handed back the same name every
+				# time. The replacement therefore arrives carrying *this* uid, and
+				# subscription_uid is unique table-wide — so a history row that keeps its claim
+				# makes every future recreate die on a 1062. It did, 27 times in a row, for two
+				# coworkers, and the gap sweep below never ran once (v1.340.1). History is
+				# state/expire_time/last_error; the identity belongs to whoever is live.
+				"subscription_uid": None,
 				"last_error": (
 					"expired and permanently deleted by Google; recreated. Google does not keep an "
 					"expired subscription in any state, so this row is history rather than a thing "
@@ -1436,15 +1564,34 @@ def _suspension_reason_of(parsed: decisions.ParsedEvent) -> str:
 
 
 def _row_by_uid(uid: str) -> dict[str, Any] | None:
+	"""The row claiming this uid — the **live** one, when the claim is somehow shared.
+
+	A superseded row releases its uid (:func:`_release_uid_claim`), so this is normally
+	unambiguous. The live-first ordering is for rows predating that release: routing a
+	lifecycle event to a ``DELETED`` row is what turned one failed recreate into an unbounded
+	loop, because :func:`_rows` skips ``DELETED`` and this lookup did not — the scheduler
+	dropped the dead row while every redelivered event kept resurrecting it.
+
+	Falls back to a superseded row rather than ``None``, so
+	``handle_lifecycle_event``'s "a subscription we do not know" alert keeps meaning what it
+	says. :func:`_recreate_one`'s own guard is what makes landing on a dead row harmless.
+	"""
 	if not uid:
 		return None
-	rows = frappe.get_all(
-		SUBSCRIPTION_DOCTYPE,
-		filters={"subscription_uid": uid},
-		fields=list(_ROW_FIELDS),
-		limit=1,
-	)
-	return dict(rows[0]) if rows else None
+	for filters in (
+		{"subscription_uid": uid, "state": ["!=", STATE_DELETED]},
+		{"subscription_uid": uid},
+	):
+		rows = frappe.get_all(
+			SUBSCRIPTION_DOCTYPE,
+			filters=filters,
+			fields=list(_ROW_FIELDS),
+			order_by="creation desc",
+			limit=1,
+		)
+		if rows:
+			return dict(rows[0])
+	return None
 
 
 # --------------------------------------------------------------------------------------
