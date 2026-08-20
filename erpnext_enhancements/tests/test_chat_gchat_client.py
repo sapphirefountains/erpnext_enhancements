@@ -948,9 +948,7 @@ def test_notification_options_are_refused_under_the_human_identity() -> None:
 		identity=AuthIdentity.APP,
 		notification_options={"notificationType": "NOTIFICATION_TYPE_SILENT"},
 	)
-	assert (
-		app_call.query["createMessageNotificationOptions.notificationType"] == "NOTIFICATION_TYPE_SILENT"
-	)
+	assert app_call.query["createMessageNotificationOptions.notificationType"] == "NOTIFICATION_TYPE_SILENT"
 
 
 @pytest.mark.parametrize(
@@ -1591,10 +1589,11 @@ def test_ttl_is_omitted_by_default_because_omitted_means_the_maximum() -> None:
 	assert (call.body or {})["notificationEndpoint"] == {"pubsubTopic": PUBSUB_TOPIC}
 	assert call.query["validateOnly"] == "false"
 
-	# The renewal patch too: same field, same reasoning, and an empty body is correct.
+	# The renewal patch is the *opposite*: same field, and the body must carry it. An empty
+	# body here is a 400 "ttl field must be set" — see the dedicated test below.
 	patch = build_patch_subscription_call(SUBSCRIPTION, ttl=None)
 	assert patch.query["updateMask"] == "ttl"
-	assert patch.body == {}
+	assert patch.body == {"ttl": "0s"}
 
 	explicit = build_create_subscription_call(
 		target_resource=chat_target_resource(),
@@ -1603,6 +1602,42 @@ def test_ttl_is_omitted_by_default_because_omitted_means_the_maximum() -> None:
 		ttl="3600s",
 	)
 	assert (explicit.body or {})["ttl"] == "3600s"
+
+
+def test_a_renewal_patch_always_carries_the_ttl_its_mask_promises() -> None:
+	"""``updateMask=ttl`` with no ``ttl`` in the body is a 400, and it broke every renewal.
+
+	Google answers ``HTTP 400 INVALID_ARGUMENT: ttl field must be set``. Not a nicety —
+	**no renewal this app ever issued succeeded.** Both live subscriptions had
+	``last_renewed`` equal to their create date and 16 consecutive failures apiece; they ran
+	to their 7-day expiry and died, which is the only reason the recreate path (and the uid
+	collision that lived in it, v1.340.1) was ever reached.
+
+	The asymmetry with ``create`` is the whole trap and is why this is asserted rather than
+	assumed: on ``create`` ``ttl`` is an unset input field and omission *is* the maximum; on
+	``patch`` the mask is a promise about the body.
+	"""
+	default = build_patch_subscription_call(SUBSCRIPTION, ttl=None)
+	# The literal, not the constant it is checking: a test that imports MAX_TTL cannot
+	# catch MAX_TTL changing, and "0s" is the wire value Google actually requires.
+	assert default.body == {
+		"ttl": "0s"
+	}, "a mask naming ttl with an empty body is the 400 that killed every renewal"
+
+	explicit_ttl = build_patch_subscription_call(SUBSCRIPTION, ttl="3600s")
+	assert explicit_ttl.body == {"ttl": "3600s"}
+
+	# A mask over some other field must not acquire a ttl it never asked for.
+	other = build_patch_subscription_call(SUBSCRIPTION, ttl=None, update_mask="eventTypes")
+	assert other.body == {}, "only a mask that names ttl gets one injected"
+
+	# And the create side keeps the opposite convention, deliberately.
+	created = build_create_subscription_call(
+		target_resource=chat_target_resource(),
+		event_types=MESSAGE_EVENT_TYPES,
+		pubsub_topic=PUBSUB_TOPIC,
+	)
+	assert "ttl" not in (created.body or {})
 	with pytest.raises(ValueError, match="protobuf duration"):
 		build_create_subscription_call(
 			target_resource=chat_target_resource(),

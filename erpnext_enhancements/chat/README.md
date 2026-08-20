@@ -324,6 +324,21 @@ later entry silently replaces the earlier one. Reusing them would have deleted t
 QuickBooks jobs with nothing reporting it. `tests/test_hooks_integrity.py` exists for
 exactly this; pick a free minute and let it prove you did.
 
+**Nothing here *creates* a missing subscription, and that is a deliberate hole with a manual
+lever.** `renew_due_subscriptions` iterates rows that are not `DELETED`, so once a subscription
+lapses and its row is superseded, that coworker is uncovered and the hourly job will never look at
+them again. `check_subscription_health` raises `subscription-missing`, but an alert is not a
+repair. The repair is an operator command, not a cron, because minting a Workspace Events
+subscription consumes a per-user cap and a job that did it automatically on every tick would paper
+over the failure that made it necessary:
+
+    bench --site <site> execute         erpnext_enhancements.chat.sync.subscriptions.recover_subscription_for         --kwargs "{'user': 'someone@example.com'}"
+
+Pass no user to recover the whole roster. It is idempotent, and it sweeps the gap using the
+superseded row's `expire_time` as the window. This was written after 2026-08-20, when a uid
+collision left prod with four `DELETED` rows, zero coverage, and an hourly job reporting itself
+perfectly healthy — see CHANGELOG 1.340.1 and 1.340.2.
+
 ### Why the Pub/Sub puller is a cron and not a daemon
 
 ADR §G.4.2 names a long-running streaming-pull worker as the ideal and a bounded

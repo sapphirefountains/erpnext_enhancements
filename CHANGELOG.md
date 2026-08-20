@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.340.2] - 2026-08-20
+
+### Fixed
+
+- **No subscription renewal this app ever issued had succeeded.** `build_patch_subscription_call`
+  sent `updateMask=ttl` with an **empty body**, and Google answers that with
+  `HTTP 400 INVALID_ARGUMENT: ttl field must be set`. A comment sat directly above the `body=`
+  argument defending it — *"An empty body is correct when ttl is omitted: the mask says 'set ttl',
+  the absent value says 'to the maximum'. It is not a mistake to be defended against."* That
+  reasoning is true of **create**, where `ttl` is an unset input field, and false of **patch**,
+  where the mask is a promise about the body. The patch now sends `"0s"`, Google's own spelling of
+  "the maximum" for a field that has to be present, and only when the mask actually names `ttl`.
+
+  This is the root cause of the 1.340.1 incident rather than a second bug beside it. Renewals had
+  been failing for as long as the code existed; `last_renewed` on both live subscriptions equalled
+  their **create** date, 2026-08-13, with 16 consecutive failures apiece. Every subscription
+  therefore ran to its full 7-day expiry and died, which is the *only* reason the recreate path —
+  and the uid collision living in it — was ever reached. Fixing recreate without this would have
+  reset a 7-day fuse.
+
+  **Corrected timeline**, since 1.340.1 got it wrong: renewals began failing 2026-08-19 ~14:32 (the
+  first `renew_after`), alerts fired from 15:28, and the subscriptions stayed *alive* until their
+  expiry on 2026-08-20 at 14:32:03 (james.harris@) and 14:47:48 (nikolas.bradshaw@). Actual inbound
+  sync outage: ~1.5 hours, not ~24.
+
+### Added
+
+- **`recover_subscription_for`, because nothing in this app *creates* a missing subscription.**
+  `renew_due_subscriptions` iterates `_rows`, which skips `DELETED` — so once a subscription lapses
+  and its row is superseded, the coworker is uncovered and the hourly job never looks at them
+  again. `check_subscription_health` notices and raises `subscription-missing`, but an alert is not
+  a repair. That gap is why prod sat with four `DELETED` rows, zero coverage and a *clean* hourly
+  job after 1.340.1 deployed: the deadlock was gone and there was still nothing to un-stick it.
+
+      bench --site <site> execute           erpnext_enhancements.chat.sync.subscriptions.recover_subscription_for           --kwargs "{'user': 'someone@example.com'}"
+
+  Pass no user to recover the whole roster. Idempotent — an `ACTIVE` subscription is skipped, not
+  duplicated. The sweep window is read from the superseded row's `expire_time` **before** the new
+  row is written, since otherwise the fresh expiry becomes the newest one and collapses the gap to
+  zero; with no recorded expiry the sweep is skipped rather than run unbounded, because
+  `reconcile_rooms_for_user(since=None)` re-reads every room from the beginning.
+
 ## [1.340.1] - 2026-08-20
 
 ### Fixed
@@ -28,7 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CloudEvent found it again and re-ran the identical doomed recreate. Two coworkers reached 27
   consecutive failures. **The worst consequence was silent**: the failing write sits *upstream*
   of `_sweep_gap`, so the reconciliation sweep — the only way to recover messages, because
-  Workspace Events has no replay — never ran once in ~24 hours of outage.
+  Workspace Events has no replay — never ran once. (The outage window stated here when 1.340.1
+  shipped, ~24 hours, was wrong: the *alerts* began 2026-08-19 15:28 but the subscriptions did
+  not lapse until 2026-08-20 14:32 and 14:47. See 1.340.2 for the corrected timeline and for
+  what was actually failing on the 19th.)
 
   Four changes, because one alone leaves a way back in: a superseded row now **releases** its
   uid; `_apply_subscription` treats a collision as recoverable rather than fatal, releasing the

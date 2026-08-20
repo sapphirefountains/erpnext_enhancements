@@ -1015,6 +1015,56 @@ def test_a_failed_create_reuses_its_placeholder_instead_of_leaking_another() -> 
 	), "the second attempt has to adopt the abandoned placeholder, not add to the pile"
 
 
+def test_recovery_recreates_a_coworker_with_no_row_at_all_and_sweeps_the_gap(monkeypatch: Any) -> None:
+	"""The state prod was left in: every row DELETED, nobody covered, nothing to renew.
+
+	``renew_due_subscriptions`` cannot fix this — ``_rows`` skips ``DELETED``, so the hourly job
+	sees an empty list and does nothing while both coworkers stay uncovered. Before v1.340.2 the
+	only repair was a hand-typed ``bench execute``.
+	"""
+	now = FRAPPE.utils.now_datetime()
+	lapsed = now - timedelta(hours=2)
+	seed_subscription(state="DELETED", subscription_uid=None, expire_time=lapsed)
+	swept: list[dict[str, Any]] = []
+	monkeypatch.setattr(
+		reconcile,
+		"reconcile_rooms_for_user",
+		lambda user, **kwargs: swept.append({"user": user, **kwargs}) or {"status": "ok"},
+	)
+	client = FakeEventsClient()
+
+	idle = subscriptions.renew_due_subscriptions(client_factory=lambda subject: client, alert=AlertRecorder())
+	assert idle["checked"] == 0, "the hourly job cannot see a superseded row, which is the point"
+
+	summary = subscriptions.recover_subscription_for(
+		USER, client_factory=lambda subject: client, alert=AlertRecorder()
+	)
+
+	assert summary["status"] == "ok", summary
+	assert [entry["user"] for entry in summary["recovered"]] == [USER]
+	fresh = subscriptions.active_subscription_for(USER)
+	assert fresh and fresh["state"] == "ACTIVE"
+	assert swept and swept[0]["user"] == USER, "the gap has to be swept, not just the row replaced"
+	assert _close(
+		swept[0]["since"], lapsed, seconds=1
+	), "the window comes from the superseded row, so it covers exactly the dead interval"
+
+
+def test_recovery_is_idempotent_and_leaves_a_covered_coworker_alone() -> None:
+	"""Running it twice, or against a healthy roster, must not mint a second subscription."""
+	seed_subscription()
+	client = FakeEventsClient()
+
+	summary = subscriptions.recover_subscription_for(
+		USER, client_factory=lambda subject: client, alert=AlertRecorder()
+	)
+
+	assert summary["skipped"] == [USER], summary
+	assert summary["recovered"] == []
+	assert client.calls == [], "an ACTIVE subscription must not be touched"
+	assert len(STORE.rows(subscriptions.SUBSCRIPTION_DOCTYPE)) == 1
+
+
 # ---------------------------------------------------------------------------
 # The master switch
 # ---------------------------------------------------------------------------

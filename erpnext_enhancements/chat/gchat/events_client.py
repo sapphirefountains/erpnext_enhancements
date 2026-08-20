@@ -161,6 +161,12 @@ _PUBSUB_TOPIC_RE: Final[re.Pattern[str]] = re.compile(r"projects/[a-z0-9-]+/topi
 # A protobuf Duration in its JSON form: seconds, optional fraction, mandatory trailing `s`.
 _TTL_RE: Final[re.Pattern[str]] = re.compile(r"\d+(\.\d+)?s")
 
+#: Google's own spelling of "the maximum lifetime" for a ``ttl`` that has to be *present*.
+#: Omitting the field says the same thing on ``create``, where ``ttl`` is simply an unset
+#: input — but not on ``patch``, where naming ``ttl`` in ``updateMask`` is a promise that the
+#: body carries it. See :func:`build_patch_subscription_call`.
+MAX_TTL: Final[str] = "0s"
+
 # RFC-3339 with an explicit offset. Parsed by hand rather than handed straight to
 # `datetime.fromisoformat` because Google emits nanosecond precision and `fromisoformat`
 # accepts 0, 3 or 6 fractional digits — a 9-digit `expireTime` raises, and it raises inside
@@ -296,8 +302,11 @@ def validate_ttl(ttl: str | None) -> str | None:
 	input-only and unspecified means *"use the maximum possible duration"*, so asking for a
 	shorter one buys nothing and costs a renewal.
 
-	``"0s"`` is permitted because Google documents it as also meaning "the maximum", but
-	omission says it more clearly and is what the builders do.
+	``"0s"`` — :data:`MAX_TTL` — is permitted because Google documents it as also meaning
+	"the maximum". Which spelling is correct depends on the call: ``create`` omits the field,
+	``patch`` **must** send it, because ``updateMask`` naming ``ttl`` is a promise that the
+	body carries one. Returning ``None`` here means "caller's choice of spelling", and the
+	two builders choose differently on purpose.
 	"""
 	if ttl is None:
 		return None
@@ -605,9 +614,23 @@ def build_patch_subscription_call(
 	if not mask:
 		raise ValueError("updateMask must name at least one field; a patch with an empty mask is a no-op.")
 
+	# **A patch that names ttl in its mask must carry ttl.** Omitting it is a flat 400
+	# INVALID_ARGUMENT — "ttl field must be set" — and this was not a validation nicety: it
+	# meant no renewal this app ever issued succeeded. Every subscription ran to its 7-day
+	# expiry and died, which is what dragged the recreate path (and the uid collision that
+	# lived in it) into play at all. `last_renewed` on both live rows equalled their create
+	# date, 16 consecutive failures apiece, and nobody noticed for as long as recreate
+	# happened to paper over it (v1.340.2).
+	#
+	# The reasoning that used to sit here — "the mask says set ttl, the absent value says to
+	# the maximum" — is true of *create*, where ttl is an unset input field, and false of
+	# *patch*, where the mask is a promise about the body. Only inject when the mask
+	# actually names ttl, so a future mask over some other field is unaffected.
 	body: dict[str, Any] = {}
 	if duration is not None:
 		body["ttl"] = duration
+	elif "ttl" in [field.strip() for field in mask.split(",")]:
+		body["ttl"] = MAX_TTL
 
 	resource = {
 		"name": f"subscriptions/{dryrun.DRYRUN_MARKER}{dryrun.dryrun_hash(subscription)}",
@@ -621,8 +644,6 @@ def build_patch_subscription_call(
 		http_method="PATCH",
 		path=f"/{WORKSPACE_EVENTS_VERSION}/{subscription}",
 		query={"updateMask": mask, "validateOnly": _qbool(validate_only)},
-		# An empty body is correct when ttl is omitted: the mask says "set ttl", the absent
-		# value says "to the maximum". It is not a mistake to be defended against.
 		body=body,
 		host=WORKSPACE_EVENTS_HOST,
 		requires_identity=AuthIdentity.USER,
