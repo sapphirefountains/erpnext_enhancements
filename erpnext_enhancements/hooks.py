@@ -88,6 +88,7 @@ doctype_js = {
 	"Opportunity": [
 		"public/js/opportunity.js",
 		"public/js/crm_enhancements/opportunity.js",
+		"public/js/party_naming_advisor.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
 		# primary_contact.js binds five doctypes but was listed under "Lead" only, so
 		# on the other four it ran only if the user had opened a Lead earlier in the
@@ -111,6 +112,7 @@ doctype_js = {
 		"public/js/project_merge.js",
 		"public/js/project_enhancements.js",
 		"public/js/project.js",
+		"public/js/party_naming_advisor.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
 		"public/js/global_enhancements/primary_contact.js",
 		"project_enhancements/doctype/project/project.js",
@@ -252,6 +254,12 @@ doctype_js = {
 		"public/js/vue.global.js",
 		"public/js/comments.js",
 		"project_enhancements/doctype/address/address.js",
+		# v1.339.0 -- the party-naming advisor, bound to Project, Opportunity and Address.
+		# Advisory only: a headline on refresh from a record-only check (no corpus read) and
+		# a 'Why?' button. There is deliberately no validate hook on any of the three -- 769
+		# of 823 Opportunity titles are a bare party name, so anything that blocked a save
+		# would fire constantly on records that predate the rule.
+		"public/js/party_naming_advisor.js",
 	],
 	# device_management (MDM/EMM)
 	"Managed Device": "device_management/doctype/managed_device/managed_device.js",

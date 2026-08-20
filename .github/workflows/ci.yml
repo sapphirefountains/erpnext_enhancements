@@ -215,6 +215,19 @@ jobs:
       # character and a paraphrased fixture rounds exactly those off.
       - name: Item naming schema (the block-occupancy boundary, on the real strings)
         run: python -m unittest erpnext_enhancements.tests.test_item_naming_rules -v
+      # Its own step for the same reason as the one above: this suite imports no frappe at
+      # all -- party_naming_rules takes only `re` and `typing` -- and appending it to a step
+      # that installs sys.modules stubs would put it under a stub set it does not want.
+      #
+      # It guards the two properties the obvious implementation gets wrong. First, matching
+      # the party is NOT equality: of 164 Projects using the separator, 55 lead with the
+      # customer name verbatim and 42 with a shortening of it, so an equality rule would flag
+      # 42 records that are right and the people maintaining them would stop reading. Second,
+      # out of scope is silence rather than a pass -- 101 of 644 Projects are internal and
+      # excluded by their own project_type, which is what keeps leftover stage templates and
+      # the software backlog out without anybody maintaining a list.
+      - name: Party naming (a shortening of the party passes; internal records are silent)
+        run: python -m unittest erpnext_enhancements.tests.test_party_naming_rules -v
       # KPI Snapshot's DocPerms had to widen past System Manager for the KPI
       # assistant tool to be visible to the managers who own the numbers, and a
       # DocPerm is doctype-wide -- so the widening only stays safe while the row
