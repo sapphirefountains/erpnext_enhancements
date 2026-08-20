@@ -252,6 +252,23 @@ def words(value: str | None) -> tuple[str, ...]:
 	return tuple(_WORD.findall((value or "").upper()))
 
 
+#: Dropped from the front of both sides before comparing. ``The Chateaux Deer Valley`` and
+#: ``Chateaux Deer Valley`` are the same party by any reading, and three live Projects were
+#: flagged for nothing but this. Deliberately *only* a leading article — dropping "The"
+#: anywhere would make ``The Gateway`` and ``Gateway`` indistinguishable from a customer
+#: genuinely called something else that happens to contain the word.
+LEADING_ARTICLES: Final[frozenset[str]] = frozenset({"THE"})
+
+
+def _significant(value: str | None) -> tuple[str, ...]:
+	"""Words with a leading article removed. Never returns empty for a non-empty input:
+	a party literally named "The" keeps its only word rather than becoming unmatchable."""
+	found = words(value)
+	if len(found) > 1 and found[0] in LEADING_ARTICLES:
+		return found[1:]
+	return found
+
+
 def party_matches(candidate: str | None, party: str | None) -> bool:
 	"""Is ``candidate`` the party, allowing either to be a shortening of the other?
 
@@ -264,8 +281,15 @@ def party_matches(candidate: str | None, party: str | None) -> bool:
 	Symmetric, because both over- and under-specification are recognisable: somebody writing
 	``Hess Construction LLC`` where the customer is recorded as ``Hess Construction`` has not
 	made a mistake worth a finding.
+
+	**What it still refuses, on purpose.** An acronym is not derivable from the name it
+	stands for — ``LHM`` against *Larry H Miller Corp*, ``SLC Parks & Rec`` against *Salt Lake
+	County Parks & Recreation* — and neither is a surname against a full name, ``Carey
+	Residence`` against *BJ Carey*. Both are reported. That is a judgement rather than an
+	oversight: a rule loose enough to accept them would also accept ``Landmark`` for *CEM
+	Aquatics*, and the site-named projects are the defect this check exists to find.
 	"""
-	left, right = words(candidate), words(party)
+	left, right = _significant(candidate), _significant(party)
 	if not left or not right:
 		return False
 	shorter, longer = (left, right) if len(left) <= len(right) else (right, left)

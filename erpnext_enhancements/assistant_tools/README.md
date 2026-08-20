@@ -184,6 +184,7 @@ Listed in `hooks.py` order. Every tool here must also appear in exactly one
 | `save_water_design` | Water Engineering | **write (gated)** — creates/updates a Water Feature Design (child tables replaced wholesale), then recomputes |
 | `control_panel_status` | Water Engineering | a Control Panel Design's power/nameplate, UI screens, I/O points, interlock checklist and lighting/solenoid rollups |
 | `item_naming_check` | Inventory | a proposed Item Code/Name against the naming SOP — duplicates, scored neighbours, code family, `PDT-`/`SRV-` block occupancy, every mechanical name defect, and a STOP/FIX/PASS verdict. Advisory: there is no `Item` doc_event and nothing blocks a save |
+| `party_naming_check` | CRM | whether a Project, Opportunity or Address is named after the party it belongs to — one record, or the whole doctype audited. Advisory; out of scope is NOT a pass, and the payload says which. Spans three doctypes, so it gates visibility on `Address` and re-checks the one asked for inside `execute` |
 
 ## Classification is mandatory
 

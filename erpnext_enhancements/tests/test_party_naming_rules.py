@@ -125,6 +125,26 @@ class PartyMatchTest(unittest.TestCase):
 		the customer is recorded short has not made a mistake worth reporting."""
 		self.assertTrue(rules.party_matches("Hess Construction LLC", "Hess Construction"))
 
+	def test_a_leading_article_is_ignored(self):
+		"""Three live Projects were flagged for nothing but a dropped 'The'."""
+		self.assertTrue(rules.party_matches("Chateaux Deer Valley", "The Chateaux Deer Valley"))
+		self.assertTrue(rules.party_matches("Little America", "The Little America Hotel - Salt Lake City"))
+		self.assertTrue(rules.party_matches("Gateway Fountain", "The Gateway"))
+
+	def test_only_a_LEADING_article_is_ignored(self):
+		"""Dropping 'The' anywhere would stop distinguishing a party from a different one that
+		merely contains the word."""
+		self.assertTrue(rules.party_matches("The", "The"), "a party literally named 'The' stays matchable")
+		self.assertFalse(rules.party_matches("The", "The Gateway"), "a bare article is not a party name")
+
+	def test_acronyms_and_surnames_are_still_reported(self):
+		"""A judgement, not an oversight. A rule loose enough to accept these would also accept
+		'Landmark' for 'CEM Aquatics', and the site-named projects are the defect this exists
+		to find."""
+		self.assertFalse(rules.party_matches("LHM", "Larry H Miller Corp"))
+		self.assertFalse(rules.party_matches("SLC Parks & Rec", "Salt Lake County Parks & Recreation"))
+		self.assertFalse(rules.party_matches("Carey Residence", "BJ Carey"))
+
 	def test_an_empty_side_never_matches(self):
 		self.assertFalse(rules.party_matches("", "Hess Construction LLC"))
 		self.assertFalse(rules.party_matches("Hess Construction LLC", ""))

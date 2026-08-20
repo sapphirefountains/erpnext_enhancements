@@ -757,3 +757,8 @@ erpnext_enhancements.patches.seed_po_list_columns
 # definition of "compliant", not a chosen threshold -- the Process Owner lowers it if some
 # level of non-compliance is acceptable. Does not touch a row somebody has edited. Safe twice.
 erpnext_enhancements.patches.seed_item_naming_kpi_target
+# v1.339.0 -- KPI Targets for the three party-naming compliance metrics, for the same reason
+# the item one has one: an ungraded metric renders as a bare grey number nobody disbelieves.
+# 100 is the definition of "compliant", not a chosen threshold, and the denominator is
+# in-scope records only, so it is reachable. Does not touch a row somebody has edited.
+erpnext_enhancements.patches.seed_party_naming_kpi_targets

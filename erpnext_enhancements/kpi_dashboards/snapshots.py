@@ -224,6 +224,39 @@ def _finance_metrics():
 	return {"values": values, "freshness": freshness}
 
 
+def _party_naming_pct(doctype):
+	"""Percentage of in-scope ``doctype`` records named after the party they belong to.
+
+	Computed by running the SAME rules the Party Naming Audit report and the three form
+	advisories use — `crm_enhancements.party_naming_rules` — rather than by a second SQL
+	definition of "compliant". Two definitions that disagree by one row is a bug report
+	nobody can close, and this is a number people will quote at each other.
+
+	**The denominator is in-scope records, not all of them**, and that is the whole reason
+	this is a helper rather than a query. An internal Project is not badly named, it is a
+	different kind of record; counting the 101 of them as failures would make the figure
+	describe the taxonomy rather than the naming. Same for the 442 Addresses linked to
+	nothing — there is no party to name them after.
+
+	Returns None when nothing is in scope, and `add` drops None rather than publishing a 0%
+	that reads as a catastrophe or a 100% that reads as a triumph.
+	"""
+	if not _exists(doctype):
+		return None
+	try:
+		from erpnext_enhancements.crm_enhancements import party_naming
+		from erpnext_enhancements.crm_enhancements import party_naming_rules as naming
+
+		rows, _meta = party_naming.read_rows(doctype)
+		return naming.summarise(naming.audit(doctype, rows)).get("compliance_pct")
+	except Exception:
+		# Wrapped because the batch loop catches per DEPARTMENT, not per metric: an
+		# aggregator that raises takes every other number in that department with it, and a
+		# naming figure is worth less than the ones it would sink.
+		frappe.log_error(frappe.get_traceback(), f"{doctype} naming compliance KPI failed")
+		return None
+
+
 def _operations_metrics():
 	today = getdate(nowdate())
 	d30 = add_days(today, -30)
@@ -235,6 +268,15 @@ def _operations_metrics():
 		{"d": d30},
 	)
 	add("visits_completed_30", "Visits Completed (30d)", completed_30, "count", "Sapphire Maintenance Record", metrics.HIGHER)
+	# --- naming compliance, per the party-naming rules (v1.339.0) ---
+	add(
+		"project_naming_compliance_pct",
+		"Project Naming Compliance",
+		_party_naming_pct("Project"),
+		"%",
+		"Project",
+		metrics.HIGHER,
+	)
 	add(
 		"visits_open",
 		"Open Visit Drafts",
@@ -316,6 +358,26 @@ def _sales_metrics():
 	d90 = add_days(today, -90)
 	values, add = _collector()
 	open_filter = "status not in ('Closed Won','Lost','Closed','Converted')"
+
+	# --- naming compliance, per the party-naming rules (v1.339.0) ---
+	add(
+		"opportunity_naming_compliance_pct",
+		"Opportunity Naming Compliance",
+		_party_naming_pct("Opportunity"),
+		"%",
+		"Opportunity",
+		metrics.HIGHER,
+	)
+	# Addresses sit in Sales rather than Operations because they are account data, which is
+	# the same reason `Account Data Quality` is a CRM report.
+	add(
+		"address_naming_compliance_pct",
+		"Address Naming Compliance",
+		_party_naming_pct("Address"),
+		"%",
+		"Address",
+		metrics.HIGHER,
+	)
 
 	add(
 		"open_pipeline_value",

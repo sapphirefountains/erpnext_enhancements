@@ -93,6 +93,10 @@ EXPLICIT_READONLY = {
     # reason the training tools record above -- unclassified, is_mutating() falls to
     # the fail-closed default and the tool answers with a confirmation card.
     "item_naming_check",
+    # v1.339.0 -- the party-naming advisor for Project/Opportunity/Address. Read-only by
+    # construction: frappe.get_list reads plus a pure rules module, and no validate hook
+    # on any of the three for it to trip.
+    "party_naming_check",
 }
 
 # This app's own *write* tools (assistant_tools/<name>.py). They must gate even
