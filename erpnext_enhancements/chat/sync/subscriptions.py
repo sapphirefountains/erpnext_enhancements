@@ -856,6 +856,49 @@ def _record_failure(row: Mapping[str, Any], exc: BaseException, *, action: str, 
 # --------------------------------------------------------------------------------------
 
 
+def _is_already_exists(exc: BaseException) -> bool:
+	"""Is this Google saying we already own a subscription for this resource?
+
+	``409 ALREADY_EXISTS: Subscription associated with the resource already exists.`` The status
+	is checked first and the text only as a fallback, the same way ``sync/membership.py`` reads
+	this code on ``create_membership``.
+	"""
+	status = getattr(exc, "status", None)
+	google_status = str(getattr(exc, "google_status", "") or "")
+	if status == 409 or google_status == "ALREADY_EXISTS":
+		return True
+	return "ALREADY_EXISTS" in str(exc)
+
+
+def _existing_subscription(client: Any, target: str) -> events.Subscription | None:
+	"""Ask Google what we already own for this principal and target. ``None`` if nothing.
+
+	**The 409 carries no resource name**, so a bounced create says a subscription exists and not
+	which one — while the uid is the handle every other call needs. Listing is the only way to
+	recover it. It is per-principal, and the API *requires* a filter, so the event-type clause is
+	mandatory rather than a narrowing.
+
+	This is what makes a lost pointer recoverable at all, and the direction of trust is the point:
+	Google is the source of truth for what exists, the row is a cache of it, and the row is the
+	half that gets damaged.
+	"""
+	expression = 'target_resource="{target}" AND event_types:"{event_type}"'.format(
+		target=target, event_type=events.EVENT_TYPE_MESSAGE_CREATED
+	)
+	page = client.list_subscriptions(filter_expression=expression) or {}
+	for entry in page.get("subscriptions") or []:
+		try:
+			candidate = events.parse_subscription(entry)
+		except Exception:
+			# An entry with no expireTime is not one we can adopt: parse_subscription refuses it
+			# on purpose, and adopting it would restore precisely the unknown-renewal-clock this
+			# table exists to prevent.
+			continue
+		if not candidate.target_resource or candidate.target_resource == target:
+			return candidate
+	return None
+
+
 def ensure_subscription_for_user(
 	user: str,
 	*,
@@ -950,8 +993,17 @@ def ensure_subscription_for_user(
 
 	summary["subscription"] = row_name
 	now_epoch, now_local = now_pair()
+	adopted = False
 	try:
 		client = (client_factory or _events_client_for)(user)
+	except Exception as exc:
+		placeholder = {"name": row_name, "target_user": user, "consecutive_failures": 0}
+		_record_failure(placeholder, exc, action="create", alert=alert)
+		summary["status"] = "failed"
+		summary["reason"] = error_text(exc, "create")
+		return summary
+
+	try:
 		subscription = client.create_subscription(
 			target_resource=target,
 			event_types=event_types,
@@ -960,11 +1012,21 @@ def ensure_subscription_for_user(
 			ttl=None,
 		)
 	except Exception as exc:
-		placeholder = {"name": row_name, "target_user": user, "consecutive_failures": 0}
-		_record_failure(placeholder, exc, action="create", alert=alert)
-		summary["status"] = "failed"
-		summary["reason"] = error_text(exc, "create")
-		return summary
+		# **A 409 is a recovery, not a failure.** Google allows one subscription per
+		# (principal, target resource) and answers a duplicate create with "Subscription
+		# associated with the resource already exists" — carrying no name. So a row that has
+		# lost its uid cannot be repaired by creating: the thing already exists, and only a
+		# list call can say what it is. Adopting it beats reporting a failure nobody can act
+		# on, which is what v1.340.2 did on prod for both coworkers.
+		existing = _existing_subscription(client, target) if _is_already_exists(exc) else None
+		if existing is None:
+			placeholder = {"name": row_name, "target_user": user, "consecutive_failures": 0}
+			_record_failure(placeholder, exc, action="create", alert=alert)
+			summary["status"] = "failed"
+			summary["reason"] = error_text(exc, "create")
+			return summary
+		subscription = existing
+		adopted = True
 
 	if subscription.is_dry_run:
 		# Belt and braces behind _gate(). A dry-run subscription is born expired; writing its
@@ -973,19 +1035,23 @@ def ensure_subscription_for_user(
 		summary["reason"] = "the transport answered in dry-run mode"
 		return summary
 
+	# ``renewed=not adopted``: an adoption renewed nothing, and stamping ``last_renewed`` anyway
+	# is exactly the disguise that hid the broken ttl patch for months — the field read as a
+	# recent date on subscriptions whose renewal had never once succeeded (v1.340.2). A field
+	# that lies about the one event it exists to record is worse than an empty one.
 	_apply_subscription(
 		row_name,
 		subscription,
 		now_epoch=now_epoch,
 		now_local=now_local,
-		renewed=True,
+		renewed=not adopted,
 		alert=alert,
 		configured_lead=_setting_int(
 			settings, "subscription_renew_before_seconds", DEFAULT_RENEW_BEFORE_SECONDS
 		),
 	)
 	seams.bump(seams.COUNTER_SUBSCRIPTION_RENEWALS)
-	summary["status"] = "created"
+	summary["status"] = "adopted" if adopted else "created"
 	return summary
 
 
@@ -1866,7 +1932,9 @@ def recover_subscription_for(
 		# whose expire_time would otherwise become the newest one and collapse the gap to zero.
 		since = _last_known_expiry(target)
 		created = ensure_subscription_for_user(target, client_factory=client_factory, alert=alert)
-		if created.get("status") != "created":
+		# An adoption counts. The subscription Google already had is the one we wanted, and the
+		# gap still needs sweeping — arguably more so, since nobody was reading it either.
+		if created.get("status") not in ("created", "adopted"):
 			summary["failed"].append(
 				{"user": target, "detail": created.get("reason") or created.get("status")}
 			)
