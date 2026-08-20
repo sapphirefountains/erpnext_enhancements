@@ -220,6 +220,16 @@ doctype_js = {
 		"public/js/global_enhancements/unified_tab_controller.js",
 		"public/js/global_enhancements/primary_contact.js",
 		"public/js/contracts.js",
+		# procurement: the "Pick Sheet" toolbar button — every open job's material
+		# still sitting at THIS vendor's counter, so a crew driving there clears it
+		# in one trip instead of one trip per project. The map file must load first:
+		# it owns the dialog, the optimiser and the printed sheet, and exports the
+		# launcher the button calls on `erpnext_enhancements.pick_routing`. Same file
+		# as the Project button — one implementation, two scopes, deliberately not
+		# forked, because two sheets that disagree about whether a PO is outstanding
+		# is the failure docs/pick-routing-map-po-details.md was written to avoid.
+		"public/js/project_enhancements/pick_routing_map.js",
+		"public/js/procurement/supplier_pick_sheet.js",
 	],
 	"Lead": [
 		"public/js/vue.global.js",
@@ -269,7 +279,14 @@ doctype_list_js = {
 		"public/js/crm_enhancements/opportunity_list.js",
 		"public/js/crm_enhancements/opportunity_kanban_totals.js",
 	],
-	"Supplier": "public/js/global_enhancements/supplier_list.js",
+	# supplier_list.js also carries the "Pick Sheet" bulk action (tick several
+	# vendors, get one run across all of them), so the map file it calls into has
+	# to load on the LIST as well as on the form — doctype_js does not reach list
+	# views, and the launcher lives in that file.
+	"Supplier": [
+		"public/js/project_enhancements/pick_routing_map.js",
+		"public/js/global_enhancements/supplier_list.js",
+	],
 	"Task": "public/js/project_enhancements/task_gantt.js",
 	"File": "public/js/global_enhancements/file_list.js",
 	"Item": "public/js/item_list.js",

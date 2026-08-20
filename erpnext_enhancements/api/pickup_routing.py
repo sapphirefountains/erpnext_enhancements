@@ -1,12 +1,25 @@
-"""Supplier pick-up routing for a Project's Purchase Orders.
+"""Supplier pick-up routing for outstanding Purchase Orders.
 
-Whitelisted API behind the **Pick Routing Map** button on the Project form's
-Budget tab (``public/js/project_enhancements/pick_routing_map.js``). A job's
-material is normally spread across several vendors' will-call counters, and the
-question nobody could answer from Desk was "what is still sitting at a supplier,
-and what is the shortest way round to collect it?".
+Whitelisted API behind two buttons, both served by
+``public/js/project_enhancements/pick_routing_map.js``:
 
-:func:`get_pickup_route_data` answers it in one round-trip: the Google Maps
+* **Pick Routing Map** on the Project form's Budget tab ->
+  :func:`get_pickup_route_data`. A job's material is normally spread across
+  several vendors' will-call counters, and the question nobody could answer from
+  Desk was "what is still sitting at a supplier, and what is the shortest way
+  round to collect it?".
+* **Pick Sheet** on the Supplier form and the Supplier list ->
+  :func:`get_supplier_pick_data` (v1.338.0). The same run turned inside out: one
+  counter, every job. A crew already driving to Harrington should come back with
+  everything Harrington is holding, not with one project's worth.
+
+Both return the **same payload shape** and share every rule that decides what is
+on it -- the scope test, the address fallback chain, stop identity, the money
+guard. That is the point: two sheets that disagree about whether a PO is still
+outstanding is the divergence ``docs/pick-routing-map-po-details.md`` rejected
+option (a) to avoid.
+
+:func:`get_pickup_route_data` answers the project half in one round-trip: the Google Maps
 browser key, the depot the run starts from, the candidate finish points, and one
 *stop* per supplier pick-up address carrying the Purchase Orders and lines behind
 it. The client hands those addresses straight to Google's ``DirectionsService``
@@ -48,6 +61,8 @@ authoritative signal -- ``Closed`` is the one status that can hide a PO whose
 goods never arrived, and ``To Bill`` means the goods are already here.
 """
 
+import json
+
 import frappe
 from frappe import _
 from frappe.utils import flt
@@ -70,12 +85,21 @@ SCOPES = (SCOPE_OUTSTANDING, SCOPE_SUBMITTED, SCOPE_ALL)
 #: "stop chasing this"; ``Delivered`` is a drop-ship straight to the customer).
 _SETTLED_PO_STATUSES = ("Closed", "Delivered")
 
+#: "Fully received" is a tolerance test, not an equality one -- float quantities
+#: never land exactly on zero. **Must agree with QTY_TOLERANCE in
+#: pick_routing_map.js**, which decides the same thing for the tick boxes on the
+#: printed sheet; a driver counting "still to collect" off the per-job summary
+#: and off the line ticks must get the same number.
+_QTY_TOLERANCE = 0.005
+
+
 #: Address types preferred when a Supplier has several linked Addresses -- a
 #: counter/warehouse beats the billing address for a pick-up.
 _PICKUP_ADDRESS_TYPES = ("Shipping", "Warehouse", "Shop", "Plant")
 
 _PO_FIELDS = (
 	"name",
+	"project",
 	"supplier",
 	"supplier_name",
 	"status",
@@ -372,20 +396,78 @@ def _select_purchase_orders(project, scope):
 	return rows
 
 
-def _po_items(po_names):
-	"""Line items for the selected POs, grouped by parent."""
-	if not po_names:
+def _project_names(project_names):
+	"""``{name: project_name}`` for the jobs a set of lines belongs to.
+
+	One query for the whole payload rather than one per line. A Project deleted
+	since the PO was raised simply does not come back and the caller falls back to
+	the bare ID -- which is still what is written on the material when it lands in
+	the yard, so it is a usable label rather than a hole.
+	"""
+	names = sorted({n for n in project_names if n})
+	if not names:
+		return {}
+	return {
+		row["name"]: row.get("project_name")
+		for row in frappe.get_all("Project", filters={"name": ["in", names]}, fields=["name", "project_name"])
+	}
+
+
+def _select_supplier_purchase_orders(suppliers, scope):
+	"""Every Purchase Order at these suppliers that belongs on the run, newest first.
+
+	The project-scoped sibling has to take the union of two ``project`` fields
+	because they disagree; this one does not -- ``Purchase Order.supplier`` is
+	mandatory and single-valued, so one filter is the whole answer. The *scope*
+	rules are deliberately the identical ones, though: "still to collect" must mean
+	the same thing whichever door the crew came in through, or the two sheets
+	disagree about the same PO.
+	"""
+	names = sorted({s for s in suppliers if s})
+	if not names:
+		return []
+
+	docstatus_filter = ["<", 2] if scope == SCOPE_ALL else ["=", 1]
+	rows = frappe.get_all(
+		"Purchase Order",
+		filters={"supplier": ["in", names], "docstatus": docstatus_filter},
+		fields=list(_PO_FIELDS),
+		order_by="transaction_date desc, name desc",
+	)
+
+	if scope == SCOPE_OUTSTANDING:
+		rows = [po for po in rows if _is_outstanding(po)]
+	return rows
+
+
+def _po_items(purchase_orders):
+	"""Line items for the selected POs, grouped by parent.
+
+	Each line carries **its own** ``project``, not the order's. A supplier pick-up
+	runs across every job at once and one Purchase Order routinely covers more than
+	one of them -- ``Purchase Order Item.project`` is mandatory (WI-014) for exactly
+	that reason. Stamping the header project onto every line would put the wrong job
+	number on material that is about to be split between three trucks, so the header
+	is only the *fallback* for rows that predate the rule.
+	"""
+	by_name = {po["name"]: po for po in purchase_orders if po.get("name")}
+	if not by_name:
 		return {}
 
 	rows = frappe.get_all(
 		"Purchase Order Item",
-		filters={"parent": ["in", sorted(po_names)]},
-		fields=["parent", "idx", "item_code", "item_name", "qty", "received_qty", "uom"],
+		filters={"parent": ["in", sorted(by_name)]},
+		fields=["parent", "idx", "item_code", "item_name", "qty", "received_qty", "uom", "project"],
 		order_by="parent asc, idx asc",
 	)
 
+	resolved = [
+		(row, row.get("project") or (by_name.get(row["parent"]) or {}).get("project")) for row in rows
+	]
+	labels = _project_names(project for _row, project in resolved)
+
 	grouped = {}
-	for row in rows:
+	for row, project in resolved:
 		grouped.setdefault(row["parent"], []).append(
 			{
 				"item_code": row.get("item_code"),
@@ -393,6 +475,8 @@ def _po_items(po_names):
 				"qty": flt(row.get("qty")),
 				"received_qty": flt(row.get("received_qty")),
 				"uom": row.get("uom"),
+				"project": project,
+				"project_name": labels.get(project),
 			}
 		)
 	return grouped
@@ -411,9 +495,37 @@ def _stop_key(supplier, address_name, address_line):
 	return "{}::{}".format(supplier or "", address_name or address_line or "")
 
 
+def _note_line_project(stop, index, line):
+	"""Fold one line into its stop's per-job rollup.
+
+	The rollup is what makes a *supplier* run workable: the crew is standing at one
+	counter collecting for four jobs at once, and the question at the tailgate is
+	"how much of this pile is PRJ-00566?". Built here rather than in the browser so
+	the dialog and the printed sheet cannot disagree about it.
+
+	Keyed on ``project or ""`` so every line with no job at all collapses into one
+	"unassigned" bucket instead of vanishing -- an unassigned line is still material
+	that has to come off the truck somewhere.
+	"""
+	key = line.get("project") or ""
+	entry = index.get(key)
+	if not entry:
+		entry = index[key] = {
+			"project": line.get("project"),
+			"project_name": line.get("project_name"),
+			"line_count": 0,
+			"open_count": 0,
+		}
+		stop["projects"].append(entry)
+	entry["line_count"] += 1
+	if flt(line.get("qty")) - flt(line.get("received_qty")) > _QTY_TOLERANCE:
+		entry["open_count"] += 1
+
+
 def _build_stops(purchase_orders, items_by_po, cache):
 	"""Collapse Purchase Orders into one stop per supplier pick-up address."""
 	stops = {}
+	project_index = {}
 	order = []
 
 	for po in purchase_orders:
@@ -440,15 +552,22 @@ def _build_stops(purchase_orders, items_by_po, cache):
 				"phone": (addr.get("phone") if addr else None) or po.get("contact_mobile"),
 				"contact": po.get("contact_display") or po.get("contact_person"),
 				"purchase_orders": [],
+				# Which jobs this counter is holding material for, in the order the
+				# lines were met. One entry in project mode; the whole point of the
+				# stop in supplier mode.
+				"projects": [],
 				"po_count": 0,
 				"item_count": 0,
 				"total_qty": 0.0,
 				"amount": 0.0,
 				"currency": po.get("currency"),
 			}
+			project_index[key] = {}
 			order.append(key)
 
 		lines = items_by_po.get(po.get("name")) or []
+		for line in lines:
+			_note_line_project(stop, project_index[key], line)
 		stop["purchase_orders"].append(
 			{
 				"name": po.get("name"),
@@ -529,18 +648,134 @@ def get_pickup_route_data(project, scope=SCOPE_OUTSTANDING):
 
 	cache = {}
 	purchase_orders = _select_purchase_orders(project_doc.name, scope)
-	items_by_po = _po_items([po["name"] for po in purchase_orders])
+	items_by_po = _po_items(purchase_orders)
 	stops = _build_stops(purchase_orders, items_by_po, cache)
 
 	return {
 		"api_key": _maps_api_key(),
 		"use_routes_api": _use_routes_api(),
 		"scope": scope,
+		"mode": "project",
 		"project": {
 			"name": project_doc.name,
 			"project_name": project_doc.get("project_name"),
 			"site_address": _project_site_address(project_doc, cache),
 		},
+		"depot": {"label": _("Shop"), "address": _depot_address()},
+		"stops": stops,
+		"routable_count": len([s for s in stops if s.get("address")]),
+	}
+
+
+# --------------------------------------------------------------- supplier mode
+
+
+#: How many suppliers one sheet may cover. Not a routing limit -- Google's
+#: 23-waypoint ceiling is handled downstream, and a supplier with two branches is
+#: two stops either way -- but a bound on the query a whitelisted endpoint will
+#: run for a caller who passes the entire Supplier list.
+MAX_PICK_SUPPLIERS = 25
+
+
+def _normalise_suppliers(suppliers):
+	"""One Supplier name, a list of them, or the JSON array a browser sends.
+
+	``frappe.call`` posts a JS array as a real list, but the same endpoint reached
+	form-encoded (``?suppliers=["A","B"]``) delivers the string -- and a caller who
+	means one supplier reasonably passes a bare name. Accept all three rather than
+	make the caller guess, and reject anything else loudly: a silently-empty
+	supplier list produces an empty sheet, which reads as "nothing to collect".
+	"""
+	if isinstance(suppliers, str):
+		value = suppliers.strip()
+		if value.startswith("["):
+			try:
+				suppliers = json.loads(value)
+			except ValueError:
+				frappe.throw(_("Could not read the supplier list."))
+		else:
+			suppliers = [value]
+
+	if not isinstance(suppliers, (list, tuple)):
+		frappe.throw(_("Pass a Supplier name, or a list of them."))
+
+	names = []
+	for name in suppliers:
+		if not isinstance(name, str) or not name.strip():
+			continue
+		if name.strip() not in names:
+			names.append(name.strip())
+
+	if not names:
+		frappe.throw(_("Pass at least one Supplier."))
+	if len(names) > MAX_PICK_SUPPLIERS:
+		frappe.throw(_("A pick sheet covers at most {0} suppliers at once.").format(MAX_PICK_SUPPLIERS))
+	return names
+
+
+def _supplier_labels(names):
+	"""``[{name, supplier_name}]`` for the suppliers asked for, in the order asked.
+
+	Read from the Supplier table rather than from the stops, so a vendor with
+	*nothing* outstanding is still named on the sheet. "Harrington: nothing to
+	collect" and "we forgot to include Harrington" look identical otherwise, and
+	only one of them means the crew can skip the stop.
+	"""
+	rows = {
+		row["name"]: row.get("supplier_name")
+		for row in frappe.get_all(
+			"Supplier", filters={"name": ["in", sorted(names)]}, fields=["name", "supplier_name"]
+		)
+	}
+	return [{"name": name, "supplier_name": rows.get(name) or name} for name in names]
+
+
+@frappe.whitelist()
+def get_supplier_pick_data(suppliers, scope=SCOPE_OUTSTANDING):
+	"""The same run, scoped to a supplier instead of a job.
+
+	The project sheet answers "where is this job's material?". This answers the
+	other half of the same question -- "we are going to Harrington anyway, what
+	else is sitting there?" -- so one crew clears a counter for every open job in
+	one trip instead of one trip per project.
+
+	The payload is deliberately the *same shape* as
+	:func:`get_pickup_route_data`: same stops, same scope rules, same address
+	fallback chain, so the dialog, the optimiser and the printed sheet are one
+	implementation rather than two that drift. The differences are exactly two:
+	``project`` is ``None`` (there is no single job site to finish at), and every
+	line carries the job it belongs to, because that is how the pile gets sorted
+	when the truck gets back.
+
+	**Permission: Purchase Order read.** Stricter than the project endpoint, and
+	necessarily so -- that one is anchored to a Project the caller can already open,
+	and shows only that job's spend. This one is anchored to nothing and would
+	otherwise hand any authenticated user every open order, every job and every
+	total for a vendor of their choosing. ``frappe.get_all`` below still bypasses
+	row-level permissions, so this check is the whole gate; do not remove it
+	without replacing it with ``frappe.get_list``.
+	"""
+	scope = scope if scope in SCOPES else SCOPE_OUTSTANDING
+	names = _normalise_suppliers(suppliers)
+
+	if not frappe.has_permission("Purchase Order", "read"):
+		frappe.throw(_("You are not permitted to read Purchase Orders."), frappe.PermissionError)
+
+	cache = {}
+	purchase_orders = _select_supplier_purchase_orders(names, scope)
+	items_by_po = _po_items(purchase_orders)
+	stops = _build_stops(purchase_orders, items_by_po, cache)
+
+	return {
+		"api_key": _maps_api_key(),
+		"use_routes_api": _use_routes_api(),
+		"scope": scope,
+		"mode": "supplier",
+		# No job site to finish at: this run belongs to no single project. The
+		# client greys the "Job site" finish option out on a falsy site_address, so
+		# None here needs no special case there -- only null-safe access.
+		"project": None,
+		"suppliers": _supplier_labels(names),
 		"depot": {"label": _("Shop"), "address": _depot_address()},
 		"stops": stops,
 		"routable_count": len([s for s in stops if s.get("address")]),

@@ -10,6 +10,13 @@
  * rewrites any `supplier_group =` filter into a `LIKE` against the searchable
  * `custom_supplier_groups_search` field so suppliers belonging to a group via the
  * additional-groups list also match.
+ *
+ * Also carries the **Pick Sheet** bulk action (v1.338.0): tick the suppliers a
+ * crew is driving to and get one run covering every open job at those counters.
+ * The action lives here rather than in `procurement/supplier_pick_sheet.js`
+ * because `listview_settings.onload` is a single slot — two files assigning it
+ * would silently clobber each other, and the `get_args` override below is the
+ * one that must not be lost.
  */
 // Extend standard listview settings for Supplier
 frappe.listview_settings['Supplier'] = frappe.listview_settings['Supplier'] || {};
@@ -63,6 +70,20 @@ $.extend(frappe.listview_settings['Supplier'], {
 	},
 	
 	onload: function(listview) {
+		// Appears in the Actions menu once rows are ticked. The dialog, the
+		// optimiser and the printed sheet all come from
+		// `project_enhancements/pick_routing_map.js`, which hooks.py loads ahead
+		// of this file for exactly this reason — see its header.
+		listview.page.add_actions_menu_item(__('Pick Sheet'), () => {
+			const api =
+				(window.erpnext_enhancements && window.erpnext_enhancements.pick_routing) || null;
+			if (!api || !api.openSupplierPickSheet) {
+				frappe.msgprint(__('The pick sheet script did not load. Try a hard refresh.'));
+				return;
+			}
+			api.openSupplierPickSheet(listview.get_checked_items(true));
+		}, false);
+
 		if (!listview._original_get_args_v6) {
 			listview._original_get_args_v6 = listview.get_args;
 			

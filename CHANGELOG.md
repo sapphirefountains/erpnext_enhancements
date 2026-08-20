@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.338.0] - 2026-08-20
+
+### Added
+
+- **Pick sheet for a supplier, not just for a job.** The Pick Routing Map has answered "what is
+  this job waiting on, and how do I drive it?" since v1.190.0. The question crews actually ask
+  standing in the yard is the other one: *we are going to Harrington anyway — what else is
+  sitting there?* Two new doors into the same dialog answer it — a **Pick Sheet** button on the
+  Supplier form, and a **Pick Sheet** bulk action on the Supplier list for a run covering
+  several vendors at once. One trip clears a counter for every open job instead of one trip per
+  project.
+
+  The server side is `api.pickup_routing.get_supplier_pick_data(suppliers, scope)` beside the
+  existing `get_pickup_route_data`, and it returns the **same payload shape** on purpose: same
+  stops, same `scope` rules, same four-step supplier-address chain, same never-sum-across-
+  currencies guard. The client is the same 1,900 lines — the optimiser, the three degradation
+  steps and the printed sheet are not forked. Two sheets that disagree about whether a PO is
+  still outstanding is exactly the failure `docs/pick-routing-map-po-details.md` rejected
+  option (a) to avoid, and shipping a second implementation of the selection rule would have
+  reintroduced it by the back door.
+
+  **The lines regroup by job, and that is the feature rather than a detail.** At the counter the
+  crew quotes purchase-order numbers; at the tailgate the pile has to be split per job before
+  anything is unloaded, and the sheet now prints the second sort. Each stop also carries a
+  rollup — "Sorts into: PRJ-00566 (4 lines) · PRJ-00590 (2 lines)" — computed server-side from
+  the same lines the tables print, so the summary and the tick boxes cannot drift.
+
+  **Each line carries its own job, never its order's.** `Purchase Order Item.project` is
+  mandatory here (WI-014) precisely because one PO routinely spans jobs, so stamping the header
+  project onto every line would print the wrong job number on material about to be split
+  between three trucks — and it would look completely correct on paper. The header is only the
+  fallback for rows that predate the rule, the same union the Supplier Pickup List report and
+  the Procurement Tracker already use.
+
+  **Permission is `Purchase Order` read — stricter than the project endpoint, and structurally
+  so.** `get_pickup_route_data` is anchored to a Project the caller can already open and shows
+  only that job's spend, which is what makes its Project-read gate sufficient. The supplier
+  endpoint is anchored to nothing: without a doctype-level check it would hand any authenticated
+  user every open order, every job and every total for a vendor of their choosing. Every read
+  past that check is `frappe.get_all`, so the check is the whole gate.
+
+  Related but not the same surface: the **Supplier Pickup List** report (v1.323.0) answers the
+  same question as a filterable, exportable grid. This is the map-and-tick-box sheet — drive-time
+  ordering, per-line tick boxes, signature block — the thing you hand a driver.
+
+  No fixtures and no patch. The Project button needed a Custom Field to sit in a specific place
+  on the Budget tab and paid a migration for it; Supplier's layout is stock, so a toolbar button
+  buys the same result for nothing. The list action is registered inside `supplier_list.js`'s
+  existing `onload` rather than a new file, because `listview_settings.onload` is a single slot
+  and a second assignment would silently clobber the `supplier_group` → `LIKE` `get_args`
+  override that lives there.
+
 ## [1.337.1] - 2026-08-19
 
 ### Fixed

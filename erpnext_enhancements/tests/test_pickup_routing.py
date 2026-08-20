@@ -22,6 +22,18 @@ route:
     lat/lng written the wrong way round would route a driver to the wrong
     hemisphere while looking perfectly valid.
 
+And, for the supplier-scoped half (``get_supplier_pick_data``):
+
+  * every line carrying **its own** project rather than its order's, because one
+    PO spans jobs and the wrong job number on a line is material unloaded at the
+    wrong site;
+  * the per-stop job rollup counting the same lines the tables print;
+  * ``suppliers`` being accepted as a name, a list or the JSON a browser posts —
+    and a silently empty list being refused, because an empty sheet reads as
+    "nothing to collect";
+  * the Purchase Order permission gate, which is the whole gate: every read
+    behind it is ``frappe.get_all``.
+
 Run: python -m unittest erpnext_enhancements.tests.test_pickup_routing
 """
 
@@ -56,6 +68,9 @@ def _reset_state():
 			"singles": {},
 			"project": {},
 			"permission_checks": [],
+			# Doctype-level permission, as the supplier endpoint asks for it. Absent
+			# means allowed, so the existing project tests are untouched.
+			"doctype_permissions": {},
 			# Columns the site does not have yet. Lets a test reproduce the
 			# window where a code deploy has landed but `bench migrate` has not
 			# created the v1.205.0 Address point fixtures.
@@ -145,6 +160,11 @@ class _FakeProject:
 			raise StubPermissionError(ptype)
 
 
+def _has_permission(doctype, ptype="read"):
+	STATE["permission_checks"].append((doctype, ptype))
+	return STATE["doctype_permissions"].get(doctype, True)
+
+
 def _get_doc(doctype, name):
 	if doctype != "Project":
 		raise AssertionError(f"unexpected get_doc({doctype})")
@@ -169,6 +189,7 @@ def _install_frappe_stub():
 	frappe.whitelist = lambda *a, **kw: (lambda fn: fn)
 	frappe.get_all = _get_all
 	frappe.get_doc = _get_doc
+	frappe.has_permission = _has_permission
 	frappe.PermissionError = StubPermissionError
 	frappe.db = types.SimpleNamespace(
 		get_value=_db_get_value,
@@ -725,6 +746,292 @@ class TestGetPickupRouteData(PickupRoutingTest):
 		submitted = pickup_routing.get_pickup_route_data("PRJ-00566", scope="submitted")
 		self.assertEqual(sum(s["po_count"] for s in outstanding["stops"]), 2)
 		self.assertEqual(sum(s["po_count"] for s in submitted["stops"]), 3)
+
+
+# ------------------------------------------------------------ supplier scope
+
+
+def make_line(parent, idx=1, **overrides):
+	line = {
+		"parent": parent,
+		"idx": idx,
+		"project": None,
+		"item_code": "PUMP-1",
+		"item_name": "Pump",
+		"qty": 2.0,
+		"received_qty": 0.0,
+		"uom": "Nos",
+	}
+	line.update(overrides)
+	return line
+
+
+class TestLineProject(PickupRoutingTest):
+	"""Which job a line belongs to, and why the order's own field is only a fallback."""
+
+	def setUp(self):
+		super().setUp()
+		STATE["Project"] = [
+			{"name": "PRJ-00566", "project_name": "Riverbend Fountain"},
+			{"name": "PRJ-00590", "project_name": "Alta Plaza"},
+		]
+
+	def test_the_line_wins_over_the_header(self):
+		"""One PO, two jobs.
+
+		Stamping the header project onto both lines would send half the material to
+		the wrong site -- and it would look right on the sheet.
+		"""
+		po = make_po("PO-1", project="PRJ-00566")
+		STATE["Purchase Order Item"] = [
+			make_line("PO-1", 1, project="PRJ-00566"),
+			make_line("PO-1", 2, project="PRJ-00590"),
+		]
+		lines = pickup_routing._po_items([po])["PO-1"]
+		self.assertEqual([line["project"] for line in lines], ["PRJ-00566", "PRJ-00590"])
+		self.assertEqual([line["project_name"] for line in lines], ["Riverbend Fountain", "Alta Plaza"])
+
+	def test_header_fills_a_line_that_predates_the_mandatory_rule(self):
+		po = make_po("PO-1", project="PRJ-00566")
+		STATE["Purchase Order Item"] = [make_line("PO-1", 1, project=None)]
+		line = pickup_routing._po_items([po])["PO-1"][0]
+		self.assertEqual(line["project"], "PRJ-00566")
+		self.assertEqual(line["project_name"], "Riverbend Fountain")
+
+	def test_no_project_anywhere_stays_none(self):
+		po = make_po("PO-1", project=None)
+		STATE["Purchase Order Item"] = [make_line("PO-1", 1, project=None)]
+		line = pickup_routing._po_items([po])["PO-1"][0]
+		self.assertIsNone(line["project"])
+		self.assertIsNone(line["project_name"])
+
+	def test_deleted_project_still_yields_the_bare_id(self):
+		"""The ID is what is written on the material; a missing title is not a hole."""
+		po = make_po("PO-1")
+		STATE["Purchase Order Item"] = [make_line("PO-1", 1, project="PRJ-GONE")]
+		line = pickup_routing._po_items([po])["PO-1"][0]
+		self.assertEqual(line["project"], "PRJ-GONE")
+		self.assertIsNone(line["project_name"])
+
+
+class TestStopJobRollup(PickupRoutingTest):
+	"""The "sorts into" summary -- the question asked at the tailgate."""
+
+	def setUp(self):
+		super().setUp()
+		STATE["Address"] = [make_address("North")]
+
+	def _rollup(self, lines):
+		po = make_po("PO-1", supplier_address="North")
+		return pickup_routing._build_stops([po], {"PO-1": lines}, {})[0]["projects"]
+
+	def test_counts_lines_per_job_in_first_seen_order(self):
+		rollup = self._rollup(
+			[
+				{"project": "PRJ-00590", "project_name": "Alta Plaza", "qty": 1, "received_qty": 0},
+				{"project": "PRJ-00566", "project_name": "Riverbend", "qty": 1, "received_qty": 0},
+				{"project": "PRJ-00590", "project_name": "Alta Plaza", "qty": 1, "received_qty": 0},
+			]
+		)
+		self.assertEqual([job["project"] for job in rollup], ["PRJ-00590", "PRJ-00566"])
+		self.assertEqual([job["line_count"] for job in rollup], [2, 1])
+
+	def test_open_count_uses_the_same_tolerance_as_the_tick_boxes(self):
+		"""Float quantities never land on zero.
+
+		A fully received line must not be counted as still-to-collect because
+		``2.0 - 2.0`` came out at 1e-9 -- the printed ticks use the same tolerance.
+		"""
+		rollup = self._rollup(
+			[
+				{"project": "PRJ-1", "qty": 2.0, "received_qty": 2.0 - 1e-9},
+				{"project": "PRJ-1", "qty": 2.0, "received_qty": 0.0},
+			]
+		)
+		self.assertEqual(rollup[0]["line_count"], 2)
+		self.assertEqual(rollup[0]["open_count"], 1)
+
+	def test_lines_with_no_job_collapse_into_one_bucket(self):
+		rollup = self._rollup(
+			[
+				{"project": None, "qty": 1, "received_qty": 0},
+				{"project": None, "qty": 1, "received_qty": 0},
+			]
+		)
+		self.assertEqual(len(rollup), 1)
+		self.assertIsNone(rollup[0]["project"])
+		self.assertEqual(rollup[0]["line_count"], 2)
+
+
+class TestNormaliseSuppliers(PickupRoutingTest):
+	def test_accepts_a_bare_name(self):
+		self.assertEqual(pickup_routing._normalise_suppliers("Harrington"), ["Harrington"])
+
+	def test_accepts_a_list(self):
+		self.assertEqual(
+			pickup_routing._normalise_suppliers(["Harrington", "Ferguson"]),
+			["Harrington", "Ferguson"],
+		)
+
+	def test_accepts_the_json_a_form_encoded_caller_sends(self):
+		self.assertEqual(
+			pickup_routing._normalise_suppliers('["Harrington", "Ferguson"]'),
+			["Harrington", "Ferguson"],
+		)
+
+	def test_strips_dedupes_and_keeps_the_asked_order(self):
+		self.assertEqual(
+			pickup_routing._normalise_suppliers([" Ferguson ", "Harrington", "Ferguson"]),
+			["Ferguson", "Harrington"],
+		)
+
+	def test_empty_is_refused_rather_than_silently_empty(self):
+		"""An empty sheet reads as "nothing to collect", which is a different fact."""
+		for bad in ([], ["", "  "], [None], "   ", "[]"):
+			with self.assertRaises(StubThrow):
+				pickup_routing._normalise_suppliers(bad)
+
+	def test_non_list_is_refused(self):
+		for bad in ({"supplier_group": "Pumps"}, 7, None):
+			with self.assertRaises(StubThrow):
+				pickup_routing._normalise_suppliers(bad)
+
+	def test_malformed_json_is_refused(self):
+		with self.assertRaises(StubThrow):
+			pickup_routing._normalise_suppliers("[not json")
+
+	def test_over_the_cap_is_refused(self):
+		too_many = [f"SUP-{i}" for i in range(pickup_routing.MAX_PICK_SUPPLIERS + 1)]
+		with self.assertRaises(StubThrow):
+			pickup_routing._normalise_suppliers(too_many)
+
+
+class TestSelectSupplierPurchaseOrders(PickupRoutingTest):
+	"""The scope rules must be the project endpoint's, exactly.
+
+	If "still to collect" means one thing on the job sheet and another on the
+	supplier sheet, the two disagree about the same PO in front of the same driver.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		STATE["Purchase Order"] = [
+			make_po("PO-1"),
+			make_po("PO-2", supplier="Ferguson", supplier_name="Ferguson"),
+			make_po("PO-3", status="Closed"),
+			make_po("PO-4", per_received=100),
+			make_po("PO-5", docstatus=0),
+		]
+
+	def _names(self, scope):
+		return {po["name"] for po in pickup_routing._select_supplier_purchase_orders(["Harrington"], scope)}
+
+	def test_outstanding_drops_closed_and_received(self):
+		self.assertEqual(self._names("outstanding"), {"PO-1"})
+
+	def test_submitted_keeps_them_but_not_drafts(self):
+		self.assertEqual(self._names("submitted"), {"PO-1", "PO-3", "PO-4"})
+
+	def test_all_includes_drafts(self):
+		self.assertEqual(self._names("all"), {"PO-1", "PO-3", "PO-4", "PO-5"})
+
+	def test_other_suppliers_are_not_swept_in(self):
+		self.assertNotIn("PO-2", self._names("all"))
+
+	def test_no_suppliers_is_no_query(self):
+		self.assertEqual(pickup_routing._select_supplier_purchase_orders([], "all"), [])
+
+
+class TestGetSupplierPickData(PickupRoutingTest):
+	def setUp(self):
+		super().setUp()
+		STATE["Address"] = [make_address("North", address_line1="10 North St")]
+		STATE["Supplier"] = [
+			{
+				"name": "Harrington",
+				"supplier_name": "Harrington Industrial Plastics",
+				"supplier_primary_address": None,
+			},
+			{
+				"name": "Ferguson",
+				"supplier_name": "Ferguson Waterworks",
+				"supplier_primary_address": None,
+			},
+		]
+		STATE["Project"] = [
+			{"name": "PRJ-00566", "project_name": "Riverbend Fountain"},
+			{"name": "PRJ-00590", "project_name": "Alta Plaza"},
+		]
+		STATE["Purchase Order"] = [
+			make_po("PO-1", project="PRJ-00566", supplier_address="North"),
+			make_po("PO-2", project="PRJ-00590", supplier_address="North"),
+		]
+		STATE["Purchase Order Item"] = [
+			make_line("PO-1", 1, project="PRJ-00566"),
+			make_line("PO-2", 1, project="PRJ-00590"),
+			make_line("PO-2", 2, project="PRJ-00566", item_code="VALVE-2"),
+		]
+		STATE["singles"][("Travel Settings", "google_maps_api_key")] = "browser-key"
+
+	def test_payload_shape_matches_the_project_endpoint(self):
+		data = pickup_routing.get_supplier_pick_data("Harrington")
+		self.assertEqual(data["mode"], "supplier")
+		self.assertEqual(data["scope"], "outstanding")
+		self.assertEqual(data["api_key"], "browser-key")
+		self.assertEqual(data["depot"]["address"], pickup_routing.DEFAULT_DEPOT_ADDRESS)
+		self.assertEqual(data["routable_count"], 1)
+		# No single job to finish at. The client greys "Job site" out on a falsy
+		# site_address, so None needs no special case there -- but it does mean
+		# every read of `data.project` on the client has to be null-safe.
+		self.assertIsNone(data["project"])
+
+	def test_every_job_at_the_counter_lands_on_one_stop(self):
+		data = pickup_routing.get_supplier_pick_data("Harrington")
+		stop = data["stops"][0]
+		self.assertEqual(stop["po_count"], 2)
+		self.assertEqual(sorted(job["project"] for job in stop["projects"]), ["PRJ-00566", "PRJ-00590"])
+
+	def test_one_po_spanning_two_jobs_is_split_by_line(self):
+		"""PO-2 carries a PRJ-00590 line and a PRJ-00566 line."""
+		data = pickup_routing.get_supplier_pick_data("Harrington")
+		po2 = next(po for po in data["stops"][0]["purchase_orders"] if po["name"] == "PO-2")
+		self.assertEqual([line["project"] for line in po2["items"]], ["PRJ-00590", "PRJ-00566"])
+
+	def test_a_supplier_with_nothing_outstanding_is_still_named(self):
+		"""Otherwise "Ferguson has nothing" and "we forgot Ferguson" look identical,
+		and only one of them means the crew can skip the stop."""
+		data = pickup_routing.get_supplier_pick_data(["Harrington", "Ferguson"])
+		self.assertEqual([s["name"] for s in data["suppliers"]], ["Harrington", "Ferguson"])
+		self.assertEqual(data["suppliers"][1]["supplier_name"], "Ferguson Waterworks")
+		self.assertEqual(len(data["stops"]), 1)
+
+	def test_purchase_order_read_is_required(self):
+		pickup_routing.get_supplier_pick_data("Harrington")
+		self.assertIn(("Purchase Order", "read"), STATE["permission_checks"])
+
+	def test_permission_is_checked_before_any_data_is_read(self):
+		"""The gate is the whole gate -- every read past it is ``frappe.get_all``."""
+		STATE["doctype_permissions"]["Purchase Order"] = False
+		with self.assertRaises(StubThrow):
+			pickup_routing.get_supplier_pick_data("Harrington")
+		self.assertEqual(STATE["permission_checks"], [("Purchase Order", "read")])
+
+	def test_unknown_scope_degrades_to_outstanding(self):
+		data = pickup_routing.get_supplier_pick_data("Harrington", scope="../../etc/passwd")
+		self.assertEqual(data["scope"], "outstanding")
+
+	def test_scope_is_honoured(self):
+		STATE["Purchase Order"].append(make_po("PO-3", supplier_address="North", status="Closed"))
+		outstanding = pickup_routing.get_supplier_pick_data("Harrington", scope="outstanding")
+		submitted = pickup_routing.get_supplier_pick_data("Harrington", scope="submitted")
+		self.assertEqual(sum(s["po_count"] for s in outstanding["stops"]), 2)
+		self.assertEqual(sum(s["po_count"] for s in submitted["stops"]), 3)
+
+	def test_two_branches_of_one_vendor_are_two_stops(self):
+		STATE["Address"].append(make_address("South", address_line1="20 South St"))
+		STATE["Purchase Order"].append(make_po("PO-9", supplier_address="South"))
+		data = pickup_routing.get_supplier_pick_data("Harrington")
+		self.assertEqual(len(data["stops"]), 2)
 
 
 if __name__ == "__main__":  # pragma: no cover
