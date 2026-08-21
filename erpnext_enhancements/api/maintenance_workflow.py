@@ -482,6 +482,7 @@ def create_sales_invoice(doc):
         base_item = frappe.db.sql("""
             SELECT item_code, rate, qty FROM `tabSales Order Item`
             WHERE parent = %s AND item_group = %s
+            ORDER BY idx
             LIMIT 1
         """, (so_name, services_group), as_dict=True)
 

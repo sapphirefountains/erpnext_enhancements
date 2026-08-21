@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.342.6] - 2026-08-21
+
+### Added
+
+- **`test_hooks_integrity` now asserts every `doc_events` name is one Frappe dispatches
+  server-side.** The path checks passed for the dead `after_save` hooks (v1.341.1) because only
+  the event *name* was wrong; this allowlist test converts that invisible failure class into a
+  red build (`after_save` is a client-only form event and is deliberately excluded).
+
+### Fixed
+
+- **Global search under-returned for non-admins and issued a redundant query per row.**
+  `search_global_docs` applied `LIMIT 20` on `__global_search` *before* permission filtering, so
+  a user with access to only a few of the top 20 content matches saw fewer results than exist for
+  them; it also called `frappe.db.exists` per candidate even though the permitted set was already
+  built from `get_all(ignore_permissions=False)` (existing, readable names only). It now fetches a
+  wider candidate window, drops the redundant existence check, and caps the display at 20.
+
+- **`create_sales_invoice` picked the base fee line nondeterministically.** The Sales Order Item
+  lookup used `LIMIT 1` with no `ORDER BY`, so with multiple service lines the invoiced fee
+  item/rate was whichever row MariaDB returned first. Added `ORDER BY idx`.
+
+- **`create_composite_booking` logged errors with message and title swapped**, so the Error Log
+  title was the truncated exception text and the searchable message was the constant. Corrected
+  to `log_error(message, title)` with the full traceback.
+
+- **Stale `accounting_intake/review.py` docstrings** claimed the posting handler "lands in a
+  later PR"; it exists and `approve_document` enqueues it. Updated to say approval has posting
+  side effects (an enqueued draft-creating job).
+
 ## [1.342.5] - 2026-08-21
 
 ### Security

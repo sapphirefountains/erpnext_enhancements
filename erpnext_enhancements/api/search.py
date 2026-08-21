@@ -30,15 +30,17 @@ def search_global_docs(txt):
     # Compile regex for highlighting
     pattern = re.compile(re.escape(txt), re.IGNORECASE)
 
-    # Query the Global Search table
-    # We use 'content' like %txt%
-    # We limit initial fetch to 20 to ensure responsiveness
+    # Query the Global Search table. Fetch a WIDER candidate window than we display, then
+    # permission-filter down: the permission filter runs AFTER this LIMIT, so a small LIMIT
+    # here meant a user with access to only a few of the top-20 content matches saw far fewer
+    # results than exist for them (relevant matches ranked past the cut were never considered).
     results = frappe.db.sql("""
         SELECT doctype, name, title, route
         FROM `__global_search`
         WHERE content LIKE %s
-        LIMIT 20
+        LIMIT 100
     """, (f"%{txt}%",), as_dict=True)
+    display_limit = 20
 
     # Group by doctype to check permissions efficiently
     doctype_names = {}
@@ -71,11 +73,10 @@ def search_global_docs(txt):
     out = []
     for r in results:
         try:
-            # Check if document still exists and the user has permission to read it
+            # Permission (and existence) already resolved: permitted_docs was built from
+            # get_all(ignore_permissions=False), which returns only existing, readable names —
+            # so a per-row frappe.db.exists() here was a redundant query per candidate.
             if r.name not in permitted_docs.get(r.doctype, set()):
-                continue
-
-            if not frappe.db.exists(r.doctype, r.name):
                 continue
 
             # Determine Route
@@ -116,6 +117,8 @@ def search_global_docs(txt):
                 "match": label, # Match against the full label so highlighting works
                 "index": 150 # Higher than standard doctypes (usually ~100?)
             })
+            if len(out) >= display_limit:
+                break
         except Exception:
             continue
 
