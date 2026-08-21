@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.342.2] - 2026-08-21
+
+### Fixed
+
+- **Accounting-intake posting retries always no-oped, stranding Failed documents.** When
+  `post_document` failed it set the Document Intake status to `Failed`, but its own first guard
+  was `if doc.status != "Approved" or doc.created_docname: return` — so every re-enqueue from
+  `retry_failed_intakes` silently returned, and the retry marked the log row `Skipped`, making
+  the permanent failure look handled. The guard now also accepts `Failed` (with no
+  `created_docname`), so a retry after the underlying problem is fixed actually re-runs.
+
+- **The intake retry cap never bound.** `retry_failed_intakes` filtered log rows on
+  `attempts < 3`, but every failure wrote a *fresh* log row with the default `attempts = 1`, so
+  the cap was always satisfied and a permanently-failing extraction/post was re-enqueued every
+  day forever (burning a Document AI call each time). The cap is now read from the Document
+  Intake's own `attempts`, which `run_extraction` and `post_document` both increment.
+
+- **Double-approve could create orphan draft records.** `approve_document` had no status guard
+  and `post_document`'s idempotency was check-then-act with no lock, so a double-click (or a
+  retry racing the original) queued two jobs that both passed the guard — a concurrent worker's
+  uncommitted `Posting` write is invisible under REPEATABLE READ — and posted two draft Purchase
+  Invoices. `post_document` now runs under a `filelock` on the docname with a `for_update`
+  eligibility read and commits the terminal state inside the lock; `approve_document` refuses an
+  already-approved/posted document.
+
 ## [1.342.1] - 2026-08-21
 
 ### Fixed

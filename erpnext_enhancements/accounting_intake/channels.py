@@ -19,6 +19,7 @@ import json
 
 import frappe
 from frappe import _
+from frappe.utils import cint
 
 from erpnext_enhancements.accounting_intake import intake
 from erpnext_enhancements.accounting_intake.audit import log_intake
@@ -164,7 +165,7 @@ def retry_failed_intakes():
 	payload (extraction / posting). Mirrors ``drive_sync.retry_failed_syncs``."""
 	rows = frappe.get_all(
 		"Accounting Intake Log",
-		filters={"status": "Failed", "attempts": ["<", _MAX_RETRY], "payload": ["is", "set"]},
+		filters={"status": "Failed", "payload": ["is", "set"]},
 		fields=["name", "payload"],
 		limit_page_length=200,
 	)
@@ -174,7 +175,17 @@ def retry_failed_intakes():
 			method = payload.get("method", "")
 			if not method.startswith("erpnext_enhancements."):
 				continue
-			frappe.enqueue(method, queue="long", **(payload.get("kwargs") or {}))
+			kwargs = payload.get("kwargs") or {}
+			docname = kwargs.get("docname")
+			# Cap retries on the DOCUMENT, not the log row. Every failure writes a fresh log
+			# row with the default attempts=1, so the old `attempts < _MAX_RETRY` filter on the
+			# log row never bound and a permanently-failing extraction/post was re-enqueued
+			# every day forever (burning a Document AI call each time). run_extraction and
+			# post_document both increment the Document Intake's own `attempts`.
+			if docname and cint(frappe.db.get_value("Document Intake", docname, "attempts")) >= _MAX_RETRY:
+				frappe.db.set_value("Accounting Intake Log", row.name, "status", "Skipped", update_modified=False)
+				continue
+			frappe.enqueue(method, queue="long", **kwargs)
 			frappe.db.set_value("Accounting Intake Log", row.name, "status", "Skipped", update_modified=False)
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), "Accounting Intake Retry")

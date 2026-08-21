@@ -89,6 +89,11 @@ def approve_document(docname):
 	ERPNext record is created by the per-type posting handler (later PR)."""
 	_require(_APPROVE_ROLES)
 	doc = frappe.get_doc("Document Intake", docname)
+	# Refuse a second approval (double-click, or approving an already-posted doc): each call
+	# enqueues post_document, and though the post itself is now filelock-guarded, a wasted
+	# duplicate job is avoidable here.
+	if doc.created_docname or doc.status in ("Approved", "Posting", "Posted"):
+		frappe.throw("This document has already been approved.")
 	issues = _validate_for_approval(doc)
 	if issues:
 		frappe.throw("<br>".join(issues))
