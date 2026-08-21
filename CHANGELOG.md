@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.344.1] - 2026-08-21
+
+### Docs
+
+- **Document Hub SOP (F12 / WI-063).** Added [`docs/document-hub-sop.md`](docs/document-hub-sop.md)
+  — "where the documents for a job live": the one rule (job documents go in the job's Drive
+  folder, not email), how to reach a job's folder from the Project/Customer/Opportunity link,
+  and the folder-template placement guide (Accounting & Legal / Build / Design / Project
+  Management / Pictures). The WI-063 surfacing tasks (list-view Property Setters, PM workspace
+  shortcut, 20-record UAT) remain business-session-gated per the work item and are not built here.
+
 ## [1.344.0] - 2026-08-21
 
 ### Added
