@@ -106,6 +106,10 @@ def install_frappe_stub():
 			in {"All Customer Groups", "All Territories", "All Supplier Groups", "All Item Groups", "Nos"}
 		),
 		get_value=get_value,
+		# safe_upsert brackets each record in a savepoint and rolls back to it on failure so a
+		# partial insert is not committed mapping-less (v1.342.1). No-ops in the bench-free stub.
+		savepoint=lambda save_point: None,
+		rollback=lambda save_point=None: None,
 	)
 	frappe.get_all = get_all
 	frappe.get_meta = lambda doctype: types.SimpleNamespace(has_field=lambda fieldname: False)

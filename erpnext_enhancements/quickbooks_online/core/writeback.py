@@ -95,9 +95,20 @@ def push_to_qbo(doctype: str, name: str):
 	payload = _build_bill(doc) if doctype == "Purchase Invoice" else _build_payment(doc)
 
 	client = QuickBooksClient(settings)
-	response = client.request("POST", f"/v3/company/{settings.realm_id}/{path}", json=payload)
-	created = (response or {}).get(entity_type) or {}
-	qbo_id = str(created.get("Id") or "")
+	# QBO's transaction-create API has no idempotency key, so a POST that succeeds at Intuit
+	# but whose response is lost (timeout, proxy 502) leaves no mapping and no custom_qbo_id —
+	# and a re-click would create a SECOND Bill/Payment (which CDC then re-imports as a third,
+	# ERPNext-side duplicate, since transactions are never fuzzy-matched). Before creating,
+	# adopt a transaction a prior push already created, matched on the PrivateNote that carries
+	# this record's name. Best-effort: a query failure degrades to a normal create.
+	qbo_id = _existing_qbo_id(client, entity_type, payload.get("PrivateNote"), payload.get("TxnDate"))
+	if qbo_id:
+		fetched = client.get_entity(entity_type, qbo_id)
+		created = fetched.get(entity_type) or fetched.get(entity_type.lower()) or fetched or {}
+	else:
+		response = client.request("POST", f"/v3/company/{settings.realm_id}/{path}", json=payload)
+		created = (response or {}).get(entity_type) or {}
+		qbo_id = str(created.get("Id") or "")
 	if not qbo_id:
 		frappe.throw(_("QuickBooks did not return an id for the created {0}.").format(entity_type))
 
@@ -120,6 +131,30 @@ def push_to_qbo(doctype: str, name: str):
 	# here never undoes the (already created + mapped) Bill/Payment.
 	attached = _attach_scan(doctype, name, entity_type, qbo_id, settings)
 	return {"qbo_entity": entity_type, "qbo_id": qbo_id, "attached": attached}
+
+
+def _existing_qbo_id(client, entity_type: str, private_note: str | None, txn_date: str | None) -> str | None:
+	"""Find a QBO Bill/Payment a prior push already created for this record.
+
+	Idempotency backstop for a lost-response retry (QBO has no idempotency key). Matches on
+	``PrivateNote`` — which carries ``ERPNext {name} (Document Intake)`` — scoped to the txn's
+	date, because ``TxnDate`` is a queryable field in QBO's query API and ``PrivateNote`` is
+	not. Returns the QBO id or None; any query error degrades to None so the push still works.
+	"""
+	if not private_note or not txn_date:
+		return None
+	try:
+		date = str(getdate(txn_date))
+		response = client.query(
+			f"SELECT Id, PrivateNote FROM {entity_type} WHERE TxnDate = '{date}' MAXRESULTS 1000"
+		)
+		rows = ((response or {}).get("QueryResponse") or {}).get(entity_type) or []
+		for row in rows:
+			if (row.get("PrivateNote") or "") == private_note and row.get("Id"):
+				return str(row.get("Id"))
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "QBO writeback dedup pre-check")
+	return None
 
 
 def _attach_scan(doctype: str, name: str, entity_type: str, qbo_id: str, settings) -> bool:

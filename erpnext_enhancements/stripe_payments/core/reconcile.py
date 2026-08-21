@@ -272,29 +272,47 @@ def _on_charge_refunded(charge):
 def finalize_payment(sp, source_obj):
 	"""Create and submit the Payment Entry for a successful Stripe Payment.
 
-	Idempotent: returns early if this Stripe Payment is already Paid with a linked
-	entry, or if a Payment Entry already references the same PaymentIntent (defends
-	against event redelivery and the session/PI double-signal).
+	Idempotent, and now race-safe. Stripe delivers TWO signals for one card payment —
+	``checkout.session.completed`` and ``payment_intent.succeeded`` — as separate enqueued
+	jobs, and the hourly ``poll_pending`` is a third caller. The dedup here is check-then-act,
+	and a concurrent worker's uncommitted Payment Entry is invisible under REPEATABLE READ, so
+	without serialization two submitted Receive Payment Entries could allocate against the same
+	Sales Invoice. A ``filelock`` (keyed on the Stripe Payment, mirroring ``process_payout``)
+	serializes the callers; the ``for_update`` reads are current reads that see the prior
+	holder's committed work despite the snapshot; and the commit inside the lock makes that work
+	durable before the lock is released.
 	"""
-	if sp.status == "Paid" and sp.payment_entry:
-		return sp.payment_entry
+	from frappe.utils.synchronization import filelock
 
-	pi_id = sp.stripe_payment_intent or _extract_payment_intent(source_obj)
-	charge_id, method_type, funding = _enrich(source_obj, pi_id)
-
-	if pi_id:
-		existing = frappe.db.get_value(
-			"Payment Entry",
-			{"custom_stripe_payment_intent": pi_id, "docstatus": ["<", 2]},
-			"name",
+	with filelock(f"stripe_finalize_{sp.name}", timeout=30):
+		current = (
+			frappe.db.get_value(
+				"Stripe Payment", sp.name, ["status", "payment_entry"], as_dict=True, for_update=True
+			)
+			or frappe._dict()
 		)
-		if existing:
-			_mark_paid(sp, existing, pi_id, charge_id, method_type, funding)
-			return existing
+		if current.get("status") == "Paid" and current.get("payment_entry"):
+			return current.payment_entry
 
-	pe_name = _create_payment_entry(sp, pi_id, charge_id, method_type, funding)
-	_mark_paid(sp, pe_name, pi_id, charge_id, method_type, funding)
-	return pe_name
+		pi_id = sp.stripe_payment_intent or _extract_payment_intent(source_obj)
+		charge_id, method_type, funding = _enrich(source_obj, pi_id)
+
+		if pi_id:
+			existing = frappe.db.get_value(
+				"Payment Entry",
+				{"custom_stripe_payment_intent": pi_id, "docstatus": ["<", 2]},
+				"name",
+				for_update=True,
+			)
+			if existing:
+				_mark_paid(sp, existing, pi_id, charge_id, method_type, funding)
+				frappe.db.commit()
+				return existing
+
+		pe_name = _create_payment_entry(sp, pi_id, charge_id, method_type, funding)
+		_mark_paid(sp, pe_name, pi_id, charge_id, method_type, funding)
+		frappe.db.commit()
+		return pe_name
 
 
 def _create_payment_entry(sp, pi_id, charge_id, method_type, funding=None) -> str:

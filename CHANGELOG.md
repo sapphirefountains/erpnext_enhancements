@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.342.1] - 2026-08-21
+
+### Fixed
+
+- **QBO error paths committed partial writes, double-creating transactions.** `safe_upsert`
+  caught every exception from `upsert_entity` without rolling back — but `upsert_entity`
+  inserts the doc *then* saves the mapping, so if `save_mapping` raised, the inserted document
+  was left in the open transaction and persisted by the next batch commit **with no Sync
+  Mapping row**. The retry path then re-created it (transactions are never fuzzy-matched), a
+  silent duplicate Invoice/Payment Entry. `safe_upsert` and the webhook `sync_entity` path now
+  bracket each record in a `frappe.db.savepoint` and roll back to it on failure, so a failed
+  record leaves nothing behind while the rest of the committed batch is untouched.
+
+- **CDC skipped records changed during the run.** `run_cdc` called `client.cdc()` at the start
+  but advanced `last_cdc_sync` to `now_datetime()` evaluated at the *end*. A record modified in
+  QBO between the request and completion (a wide catch-up poll can take minutes) fell into
+  neither window and never synced. The cursor is now captured just before the CDC request
+  (minus a two-minute skew margin); the small re-fetch overlap is harmless (upserts are
+  idempotent by mapping name).
+
+- **QBO write-back had no idempotency; a lost response duplicated the Bill.** `push_to_qbo`
+  seeded the loop-guard mapping only *after* a successful POST, and QBO's create API has no
+  idempotency key — so a POST that succeeded at Intuit but whose response was lost (timeout,
+  proxy 502) left nothing recorded, and a re-click created a second Bill/Payment (which CDC
+  then re-imported as a third, ERPNext-side duplicate). It now queries QBO for a transaction
+  this record already created (matched on the `PrivateNote` carrying the docname, scoped to the
+  txn date) and adopts it instead of creating. Best-effort: a query failure degrades to a
+  normal create.
+
+- **`finalize_payment` could post two Payment Entries.** Stripe delivers both
+  `checkout.session.completed` and `payment_intent.succeeded` for one card payment (plus the
+  hourly poll), each a separate job; the check-then-act dedup missed a concurrent worker's
+  uncommitted Payment Entry under REPEATABLE READ, so two submitted Receive Payment Entries
+  could allocate against the same invoice. It now serializes on a `filelock` (like
+  `process_payout`), reads with `for_update`, and commits inside the lock so the entry is
+  visible to the next holder.
+
+- **Vendor-bill posting created duplicate full-quantity draft Purchase Receipts.**
+  `post_vendor_bill` called `_make_purchase_receipt` whenever the matched PO had stock items,
+  with no check for an existing draft PR — and a draft PR does not update the PO's
+  `received_qty`, so a second bill against the same PO (split shipments are routine) mapped the
+  full remaining quantity again; submitting both received the stock twice. It now skips
+  creation when a draft PR already exists for the PO and records the created PR on the intake.
+
 ## [1.342.0] - 2026-08-21
 
 ### Added
