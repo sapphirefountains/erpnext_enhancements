@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.341.0] - 2026-08-21
+
+### Security
+
+- **The two Purchase Order submit gates (WI-013 threshold, WI-066 separation of duties) were
+  bypassable via "Update Items".** Both were wired only on `before_submit`. ERPNext's whitelisted
+  `update_child_qty_rate` — the desk **Update Items** button — edits qty/rate/rows on a *submitted*
+  PO, recalculates `grand_total` and calls `parent.save()`, an update-after-submit that never
+  re-runs `before_submit`. So anyone with write access could submit a PO at $400 (under the $500
+  threshold) and then inflate it to any amount with no approval, and `custom_approved_by` still
+  named the original submitter as having cleared the gate. Both native backstops
+  (`Authorization Rule`, `Budget`) are inert on this site (0 rows each), so nothing caught it.
+
+  Both gates now also run on **`before_update_after_submit`** (`po_approval.enforce_threshold_after_submit`
+  + `po_segregation.enforce_requester_separation`): a non-approver can no longer leave a PO over the
+  threshold via any post-submit edit, and the requester cannot alter the money on an order that
+  fills their own Material Request. New rows added via Update Items cannot carry a
+  `material_request` link, so the SoD re-check bites only edits to existing MR-linked rows — the
+  threshold half is the material control. `po_order_stage` writes with
+  `db.set_value(update_modified=False)`, not a full save, so ordinary stage transitions do not reach
+  the new gate.
+
+- **The procurement feed endpoints returned any job's full supplier/PO/invoice chain to any
+  authenticated user.** `get_procurement_status`, `get_procurement_documents`
+  (`project_enhancements`) and `get_receivable_purchase_orders` (`procurement_project`) were
+  login-only whitelists with no permission check, so any account — Website/portal users included —
+  could read a project's suppliers, quantities, PO totals and invoices by enumerating the sequential
+  `PRJ-xxxxx` names. All three now gate on **Project read** (`require_project_read`), matching the
+  sibling `pickup_routing` endpoints and consistent with the `project_procurement_status` MCP tool's
+  existing `require_doc_read`.
+
+- **`save_item_link` / `get_item_links` (`api/procurement`) let any authenticated user write an
+  arbitrary `purchase_url` onto any Item.** The write used `ignore_permissions=True` with no gate, so
+  a low-privilege user could plant a link that buyers later click from the Purchase Order screen.
+  Both endpoints now require a purchasing/Item-management role (`_require_purchasing_access`), keeping
+  the "a buyer without full Item write can still record a URL" intent while closing the open write.
+
+### Fixed
+
+- **PO approval threshold compared the wrong currency.** `enforce_threshold` compared the PO's
+  transaction-currency `grand_total` against the company-currency threshold, so a foreign-currency
+  PO was gated against the wrong number. It now compares `base_grand_total` (company currency) and
+  names the company currency in the message. Shared by the new after-submit gate.
+
 ## [1.340.3] - 2026-08-20
 
 ### Fixed

@@ -472,6 +472,20 @@ doc_events = {
 			# has no approver field and `modified_by` is whoever touched it last.
 			"erpnext_enhancements.po_approval.stamp_approval",
 		],
+		# The submit gates above are bypassable without this. ERPNext's "Update Items"
+		# button (`update_child_qty_rate`) edits qty/rate/rows on a SUBMITTED PO,
+		# recalculates the total and calls `parent.save()` — an update-after-submit that
+		# never re-runs `before_submit`. So both gates are re-asserted here: a non-approver
+		# cannot inflate a PO past the threshold post-submit (WI-013), and the requester
+		# cannot alter the money on an order that fills their own Material Request (WI-066).
+		# New rows added via Update Items cannot carry a `material_request` link, so the SoD
+		# re-check only bites edits to existing MR-linked rows — the threshold half is the
+		# serious one. `po_order_stage` uses `db.set_value(update_modified=False)`, not a
+		# full save, so ordinary stage transitions never reach this.
+		"before_update_after_submit": [
+			"erpnext_enhancements.po_segregation.enforce_requester_separation",
+			"erpnext_enhancements.po_approval.enforce_threshold_after_submit",
+		],
 	},
 	# The far end of Purchase Order.custom_order_stage (see po_order_stage.py). The stage
 	# is set by hand everywhere else on purpose -- submitting an order in ERPNext is

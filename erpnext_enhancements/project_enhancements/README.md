@@ -187,11 +187,14 @@ The collapsible procurement tree at the bottom of the Budget tab. A self-contain
 Not to be confused with ERPNext's standard **"Procurement Tracker"** Script Report (module
 Buying), which is unrelated and not in this repo.
 
-- **Server:** `get_procurement_documents` (`__init__.py:355-423`) regroups the output of
-  `get_procurement_status` (`:11-219`) from item-centric into document-centric — DocType → document
-  → items, each item still carrying its full MR/RFQ/SQ/PO/PR/PI/Stock-Entry chain. Both are
-  whitelisted with **no permission check**; the MCP tool `project_procurement_status` adds its own
-  `require_doc_read("Project", …)` gate precisely because the browser path has none.
+- **Server:** `get_procurement_documents` regroups the output of `get_procurement_status` from
+  item-centric into document-centric — DocType → document → items, each item still carrying its
+  full MR/RFQ/SQ/PO/PR/PI/Stock-Entry chain. Both are whitelisted and both gate on
+  **Project read** via `require_project_read` (a login-only whitelist otherwise lets any
+  authenticated user read any job's supplier/quotation/PO/invoice chain by enumerating the
+  sequential `PRJ-xxxxx` names). The MCP tool `project_procurement_status` still runs its own
+  `require_doc_read("Project", …)` upstream; the two checks are consistent. `procurement_project.
+  get_receivable_purchase_orders` carries the same gate.
 - **Which documents:** one `UNION ALL` — the Material Request chain (matched on `mr_item.project`,
   `mr.custom_project` or `rfq.custom_project`) plus direct Purchase Orders with no MR link — then a
   per-doctype sweep for documents linked to the project that never appeared in a chain.

@@ -11,6 +11,24 @@ from erpnext_enhancements import email_style
 from erpnext_enhancements import procurement_quantities
 
 
+def require_project_read(project_name):
+	"""Gate the whitelisted procurement feeds on Project read permission.
+
+	These endpoints run raw / ignore-permission queries and return a whole job's
+	supplier, quotation, Purchase Order and invoice chain — including vendors and
+	amounts — keyed only on a caller-supplied project name. Frappe's `is_whitelisted`
+	blocks only Guest, so without this any authenticated account (Website/portal users
+	included) could read any project's procurement by enumerating the sequential
+	`PRJ-xxxxx` names. Mirrors the Project-read gate on the sibling `pickup_routing`
+	endpoints; the `project_procurement_status` MCP tool adds its own `require_doc_read`
+	upstream, so this closes the browser path the module README flagged as ungated.
+
+	`check_permission("read")` also honours user-permission (row-level) restrictions, so
+	a user with the Project read role but no permission on *this* project is still blocked.
+	"""
+	frappe.get_doc("Project", project_name).check_permission("read")
+
+
 @frappe.whitelist()
 def get_procurement_status(project_name):
 	"""
@@ -21,6 +39,8 @@ def get_procurement_status(project_name):
 	"""
 	if not project_name:
 		return {}
+
+	require_project_read(project_name)
 
 	# Combined query for Material Request based flows and Direct Purchase Orders
 	sql = """
@@ -512,6 +532,8 @@ def get_procurement_documents(project_name):
 	"""
 	if not project_name:
 		return []
+
+	require_project_read(project_name)
 
 	# 1. Flatten the chain rows (each already carries every doc name in its chain).
 	status = get_procurement_status(project_name)
