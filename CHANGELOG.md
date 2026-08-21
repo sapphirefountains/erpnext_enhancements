@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.342.3] - 2026-08-21
+
+### Fixed
+
+- **Chat: inbound-message notifications reached nobody.** `notifications/fanout._members` and
+  `api/readstate._room_members` ANDed `membership_filter_sql` into their room-member queries on
+  the assumption that a background job's `Administrator` session makes the fragment `1 = 1` —
+  but since v1.284.0/v1.301.0 it returns `1 = 1` only under `allow_oversight=True`, and for
+  `Administrator` it becomes an EXISTS that matches no room. So when a coworker replied from the
+  native Google Chat client, the inbound-sync worker's fan-out resolved **zero** recipients: no
+  bell rows, no web push, no unread-counter events — the mirror's flagship case, failing
+  silently. Both are system-context roster reads (bounded by the room, `user` only); they no
+  longer apply the fragment and are registered in `test_chat_rawsql_guard.SYSTEM_CONTEXT_READS`.
+
+- **Chat: oversight reads corrupted the auditor's own session.** `retrieval/gate._acting_as`
+  called `frappe.set_user()` unconditionally, but the viewer's search/find/transcript endpoints
+  run it inside a **web request** — where `set_user` overwrites `session.sid` with the username
+  and wipes `session.data` (including `csrf_token`), and the `finally` restore sets the sid to
+  the previous *username* rather than the original hash, so the session is left broken and the
+  auditor's next POST fails as session-expired. It now switches user only in a background job
+  (no live web session) and only when actually changing user.
+
+- **Chat: subscription coverage drifted from access once the whitelist was switched off.**
+  `sync/subscriptions._roster` always returned `Chat Settings.allowed_users`, but
+  `is_user_allowed` returns True for everyone when `restrict_to_whitelist` is 0 (the intended
+  post-pilot state) — so a coworker not on the list would use chat while no Workspace Events
+  subscription was ever created for them and no `subscription-missing` alert fired. Unrestricted,
+  the roster now derives from the actual chat population (active `Chat Room Member` users).
+
+- **Chat: `search_transcripts` accepted an unclamped limit.** Its sibling `retrieve_transcript`
+  clamps to `MAX_TRANSCRIPT_PAGE`, but `search_transcripts` did not, so an oversight holder
+  could pass `limit=1_000_000` and dump an entire room verbatim under a single audit row and a
+  single unit of the hourly rate limit. It is now clamped the same way.
+
+- **Chat: dead push subscriptions accumulated forever.** `Chat Push Subscription.clear_old_logs`
+  deletes long-inactive rows, but nothing invoked it (the doctype was never registered with Log
+  Settings, and `chat/retention.py` manages only the two queue tables); the daily `prune_stale`
+  only *deactivated* rows. `prune_stale` now also calls `clear_old_logs`, keeping the table
+  bounded (each dead row costs one HTTPS request per notification) without adding a Single field.
+
 ## [1.342.2] - 2026-08-21
 
 ### Fixed

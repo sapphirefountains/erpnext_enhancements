@@ -57,7 +57,6 @@ from typing import Any
 import frappe
 from frappe.utils import cint
 
-from erpnext_enhancements.chat import permissions
 from erpnext_enhancements.chat.notifications import bell, policy
 from erpnext_enhancements.chat.notifications import presence as presence_store
 from erpnext_enhancements.chat.notifications import settings as notification_settings
@@ -204,17 +203,23 @@ def _message_row(message: str) -> dict[str, Any] | None:
 def _members(room: str) -> list[dict[str, Any]]:
 	"""Active members of the room, with the two fields the mute rule needs.
 
-	Uses the same membership-filtered statement shape the rest of the package uses. In a
-	background job ``frappe.session.user`` is ``Administrator``, which the filter answers with
-	``1 = 1`` — so the row set is "the members of this room", which is exactly what a fan-out
-	needs and the only thing it gets.
+	A **system-context roster read**, not a user-scoped one. The fan-out runs as a background
+	job with no asking user (it may be the inbound-sync worker relaying a coworker's Google
+	Chat message), and its job is to notify *everyone* in the room. The query is already bounded
+	to one named room's active members — the complete, correct recipient set.
+
+	It deliberately does NOT AND in ``membership_filter_sql``. That fragment answers "which
+	rooms is the SESSION user in", and since v1.284.0/v1.301.0 it returns ``1 = 1`` only when
+	``allow_oversight=True`` — for the job's ``Administrator`` session (a member of nothing) it
+	resolves to an EXISTS that matches no room, so ANDing it silently yielded zero recipients
+	and no ERPNext user was ever notified of a message that arrived from Google Chat. Registered
+	in ``test_chat_rawsql_guard.SYSTEM_CONTEXT_READS``.
 	"""
-	scope = permissions.membership_filter_sql("`m`.`room`")
 	try:
 		return frappe.db.sql(
-			f"""select `m`.`user`, `m`.`notification_mode`, `m`.`muted_until`
+			"""select `m`.`user`, `m`.`notification_mode`, `m`.`muted_until`
 				from `tabChat Room Member` `m`
-				where `m`.`room` = %(room)s and `m`.`is_active` = 1 and {scope}""",
+				where `m`.`room` = %(room)s and `m`.`is_active` = 1""",
 			{"room": room},
 			as_dict=True,
 		)

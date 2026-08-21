@@ -470,6 +470,9 @@ class _Settings:
 		self.subscription_renew_before_seconds = 86400
 		self.reconcile_window_minutes = 60
 		self.project_message_writes_per_minute = 3000
+		# The pilot runs with the whitelist ON, which is what makes allowed_users the roster
+		# (see subscriptions._roster). With it OFF the roster derives from active chat members.
+		self.restrict_to_whitelist = 1
 		self.allowed_users: list[Any] = []
 
 
@@ -1191,6 +1194,26 @@ def test_a_coworker_with_no_subscription_is_alerted_even_though_there_is_no_row(
 
 	missing = alerts.with_prefix("subscription-missing:")
 	assert [alert.user for alert in missing] == [OTHER_USER], alerts.keys()
+
+
+def test_roster_derives_from_active_chat_members_when_whitelist_is_off() -> None:
+	"""With ``restrict_to_whitelist`` OFF, coverage must follow access, not the stale pilot
+	list — everyone may use chat, so the roster is the actual chat population (active
+	``Chat Room Member`` users). Otherwise a coworker not on the list gets no subscription and
+	their Google-Chat-origin messages never reach ERPNext, with no missing-subscription alert."""
+	SETTINGS.restrict_to_whitelist = 0
+	SETTINGS.allowed_users = [types.SimpleNamespace(user=USER)]  # stale pilot list, now ignored
+	members = STORE.table("Chat Room Member")
+	members["m1"] = {"name": "m1", "room": "R1", "user": OTHER_USER, "is_active": 1}
+	members["m2"] = {"name": "m2", "room": "R2", "user": "carol@example.invalid", "is_active": 1}
+	members["m3"] = {"name": "m3", "room": "R3", "user": OTHER_USER, "is_active": 1}  # dup user
+	members["m4"] = {"name": "m4", "room": "R1", "user": "dave@example.invalid", "is_active": 0}
+
+	roster = subscriptions._roster()
+
+	assert sorted(roster) == sorted([OTHER_USER, "carol@example.invalid"])
+	assert USER not in roster  # the whitelist no longer defines coverage
+	assert roster.count(OTHER_USER) == 1  # deduped across rooms
 
 
 def test_health_alerts_on_expiry_inside_the_renewal_window_and_on_a_lapsed_row() -> None:
