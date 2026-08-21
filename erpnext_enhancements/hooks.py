@@ -374,12 +374,17 @@ doc_events = {
 			# anchor consumes the stamped date
 			"erpnext_enhancements.process_steps.sync_process_steps",
 		],
-		"after_save": "erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity",
 		"on_update": [
 			"erpnext_enhancements.sync_contact.sync_from_main_doc",
 			"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
 			"erpnext_enhancements.status_alerts.notify_payment_received",
 			"erpnext_enhancements.process_steps.notify_step_transitions",
+			# Copy Opportunity/Lead attachments onto the Project. This was wired to
+			# `after_save`, which Frappe never dispatches server-side, so it had never run
+			# — Opportunity→Project conversions silently carried no files across. `on_update`
+			# fires on the conversion insert AND on later saves (its idempotent file_name
+			# guard makes the repeat picks-up-late-additions safe).
+			"erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity",
 		],
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
@@ -398,10 +403,14 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Communication": {
-		"after_insert": [
-			"erpnext_enhancements.api.communication.after_insert_communication",
-			"erpnext_enhancements.accounting_intake.channels.email_from_communication",
-		],
+		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication",
+		# email_from_communication runs on on_update, NOT after_insert: Frappe's
+		# inbound-mail pipeline inserts the Communication BEFORE it creates the
+		# attachment File docs (then re-saves), so at after_insert the attachment query
+		# is always empty — the accounting-intake email channel had silently ingested
+		# nothing since it shipped (v1.59.0). It fires on the post-attachment save; the
+		# handler's per-file guard makes the email's later saves a no-op.
+		"on_update": "erpnext_enhancements.accounting_intake.channels.email_from_communication",
 	},
 	"Sapphire Maintenance Record": {
 		"on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_next_visit_dates",
@@ -693,9 +702,6 @@ doc_events = {
 	# autopay-enrolled customer is submitted (covers maintenance-generated invoices).
 	"Sales Invoice": {
 		"on_submit": "erpnext_enhancements.stripe_payments.core.saved_methods.auto_charge_on_invoice_submit",
-	},
-	"*": {
-		"after_save": "erpnext_enhancements.utils.triton_sync.global_triton_sync",
 	},
 }
 

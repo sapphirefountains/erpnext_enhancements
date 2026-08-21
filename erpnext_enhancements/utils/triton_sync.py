@@ -1,90 +1,27 @@
-"""Global document-change notifier for the Triton AI assistant.
+"""Global document-change notifier for the Triton AI assistant — RETIRED.
 
-:func:`global_triton_sync` is wired to ``doc_events["*"]["after_save"]`` in
-hooks.py, so it runs after *every* document save site-wide. It posts a
-lightweight "this doctype/name changed" webhook to Triton (which then re-fetches
-the record itself), letting the assistant keep its index fresh. The actual HTTP
-call is enqueued to a background worker so it never blocks (or fails) the save.
+``global_triton_sync`` was registered on ``doc_events["*"]["after_save"]`` to POST a
+"this doctype/name changed" webhook to Triton on every save site-wide. It never worked
+and could not have, for three independent reasons, so it was removed in v1.341.1:
+
+1. **Wrong event.** Frappe dispatches no server-side ``after_save`` document event
+   (``run_post_save_methods`` runs ``on_update`` / ``on_submit`` / ``on_change`` / …).
+   A ``doc_event`` under a name ``run_method`` never calls is simply never invoked, so
+   the hook was inert from the day it was written — which is why the several patch
+   docstrings that reason about "firing the global Triton after_save 142 times" were
+   costing exactly zero.
+2. **No authentication.** Triton's ``/api/v1/webhooks/frappe-webhook`` requires
+   ``Authorization: Bearer <ERPNEXT_GATEWAY_SECRET>`` (it is a write primitive into a
+   user's private RAG corpus). This sender attached no header, so every call would have
+   401'd even with the event fixed.
+3. **No real user mapping.** The endpoint ingests the named document into the *Triton
+   ``user_id``'s* private corpus; this sender hard-coded ``user_id: 1``, which is
+   meaningless — a global save hook has no per-user corpus to name.
+
+Triton keeps its index fresh through its own sync engine (which re-reads ERPNext), so
+nothing depended on this push. If a real-time push is ever wanted, it needs a genuine
+design: the shared gateway secret on the header, a per-document → owning-user mapping
+(or a system-corpus target), an HTTP timeout, and ``enqueue_after_commit=True`` so the
+webhook never announces a save that later rolls back. Until then there is deliberately
+no code here to switch on by accident.
 """
-import frappe
-import requests
-
-
-def global_triton_sync(doc, method=None):
-    """Enqueue a Triton change-webhook for a saved document.
-
-    Fires on every ``after_save`` via the ``*`` doc_event. Filters out noise so
-    only meaningful business records are reported:
-
-    * child tables and single (settings) doctypes are skipped, and
-    * framework/plumbing modules (Core, System, Setup, Custom, ...) are skipped.
-
-    Any error (meta lookup or enqueue) is swallowed/logged so a sync failure can
-    never break the originating document's save.
-    """
-    # "Telephony" is excluded because Call Logs are themselves ingested from
-    # Triton's webhooks — echoing each ingest back to Triton would enqueue a
-    # pointless POST per call (and risk a feedback loop). "AI Governance" holds
-    # high-volume log doctypes (pending actions / action log / model usage)
-    # that would spam the webhook queue for zero indexing value.
-    #
-    # "Chat" is invariant CHAT-EXCL-1 (ADR 0009 §D.5) and it is excluded for both
-    # reasons at once. Volume: chat is the highest-write module in the app, and a
-    # webhook POST per message — plus one per membership row, relay job and inbound
-    # event — is a self-inflicted DoS on the queue. Privacy: the payload announces
-    # employee-private message rows to an external service that has no mandate to
-    # index them, and ERPNext's chat reaches Triton deliberately through the Phase 5
-    # retrieval gate, which derives the asking user's allowed_rooms server-side.
-    # Both failures are SILENT — the writes succeed either way — so nothing here
-    # would ever tell you it was missing.
-    #
-    # "Product Feedback" is excluded for the loop reason, most directly of all: an
-    # Enhancement Request is saved several times in the course of one breakdown, and the
-    # thing doing the breaking down is Triton. Announcing each of those saves back to
-    # Triton is a POST per step of a conversation Triton is already in. The proposal it
-    # returns also quotes the requester's own words back, so the payload would carry
-    # employee-written complaints to an indexer with no mandate to hold them — the same
-    # pair of reasons as Chat, at smaller volume. ADR 0010.
-    excluded_modules = [
-        "Core", "System", "Setup", "Custom", "Data Migration", "Email",
-        "Integrations", "Telephony", "AI Governance", "Chat", "Product Feedback",
-    ]
-
-    # Module-level exclusion is too coarse for the fountain-move intake: it lives
-    # in CRM Enhancements alongside doctypes that SHOULD sync. These two carry
-    # unauthenticated, guest-submitted PII (name, phone, email, home address,
-    # place id, lat/long) and, before conversion, may be arbitrary bot input.
-    # Nothing is announced to Triton until it has become a real Customer /
-    # Lead / Opportunity, which sync on their own.
-    excluded_doctypes = ["Fountain Move Request", "Fountain Move Invite"]
-
-    try:
-        if doc.doctype in excluded_doctypes:
-            return
-        doctype_meta = frappe.get_meta(doc.doctype)
-        # Only sync real, top-level business documents.
-        if doctype_meta.istable or doctype_meta.issingle or doctype_meta.module in excluded_modules:
-            return
-    except Exception:
-        return
-
-    TRITON_URL = "https://triton.sapphirefountains.com/api/v1/webhooks/frappe-webhook"
-
-    try:
-        payload = {
-            "doctype": doc.doctype,
-            "name": doc.name,
-            "user_id": 1
-        }
-
-        # Offload the HTTP POST to a background job so the save stays fast and is
-        # not coupled to Triton's availability.
-        frappe.enqueue(
-            'requests.post',
-            url=TRITON_URL,
-            json=payload,
-            now=False,
-            queue='default'
-        )
-    except Exception as e:
-        frappe.log_error(f"Triton Sync Error: {e!s}", "Triton Webhook")

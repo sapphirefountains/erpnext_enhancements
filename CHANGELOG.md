@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.341.1] - 2026-08-21
+
+### Fixed
+
+- **Three document hooks were wired to `after_save`, which Frappe never dispatches
+  server-side.** `doc_events` only fire when `run_method(<name>)` is called, and
+  `run_post_save_methods` runs `on_update` / `on_submit` / `on_change` — never `after_save`
+  (that name exists only as a *client-side* form event). So every hook registered under it
+  was silently inert from the day it was written.
+
+  - **Opportunity→Project attachment sync never ran.** `sync_attachments_from_opportunity`
+    (Project `after_save`) is what copies an Opportunity's (and its parent Lead's) files onto
+    the Project on conversion — `crm_enhancements` sets `custom_opportunity` and relies on it.
+    It has been moved to Project `on_update`, which fires on the conversion insert *and* on
+    later saves; its existing `file_name` idempotency guard keeps the repeats safe. Projects
+    converted before this shipped can be re-synced by re-saving them.
+  - **The accounting-intake email channel ingested nothing.** `email_from_communication` was
+    on Communication `after_insert`, but Frappe's inbound-mail pipeline inserts the
+    Communication *before* it creates the attachment File docs (then re-saves), so the
+    attachment query was always empty for a freshly received email — dead since v1.59.0. It
+    now runs on `on_update` with a per-file guard (and `ingest_document`'s content-hash dedup
+    as backstop), so a vendor emailing a bill PDF to the intake account actually creates a
+    Document Intake row.
+
+- **The global Triton change-webhook (`utils/triton_sync.global_triton_sync`, the wildcard
+  `"*"` `after_save` hook) has been removed.** Besides the dead event name, it could never
+  have worked: Triton's `/frappe-webhook` requires a `Bearer` gateway secret (this sender sent
+  no auth header → 401) and ingests the document into a specific Triton `user_id`'s private RAG
+  corpus (this sender hard-coded `user_id: 1`). Triton keeps its index fresh via its own sync
+  engine, so nothing depended on the push. Removing it also closes the latent queue-starvation
+  risk from its no-timeout `enqueue('requests.post', …)`. The module is left as a documented
+  tombstone describing what a real push-sync would need (auth header, per-user corpus mapping,
+  HTTP timeout, `enqueue_after_commit`). The patch docstrings that reasoned about "firing the
+  global Triton after_save 142 times" were costing zero all along.
+
 ## [1.341.0] - 2026-08-21
 
 ### Security

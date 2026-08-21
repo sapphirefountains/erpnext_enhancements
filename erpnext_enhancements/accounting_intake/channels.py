@@ -5,7 +5,8 @@
 funnels into the single ``intake.ingest_document`` door:
 
 - ``email_from_communication`` — inbound-email attachments (Communication
-  ``after_insert``);
+  ``on_update``: the inbound-mail pipeline inserts the Communication before it
+  creates the attachment Files, so ``after_insert`` sees none — see the handler);
 - ``poll_watched_folder`` — a Google Drive watched folder (hourly scheduler);
 - ``ingest_mobile_photo`` — a whitelisted endpoint for mobile capture.
 
@@ -39,8 +40,17 @@ def _is_document(file_name):
 
 
 def email_from_communication(doc, method=None):
-	"""Communication ``after_insert``: ingest PDF/image attachments of inbound
-	emails received at the configured intake Email Account."""
+	"""Communication ``on_update``: ingest PDF/image attachments of inbound
+	emails received at the configured intake Email Account.
+
+	Wired to ``on_update``, not ``after_insert``: Frappe's inbound-mail pipeline
+	(``receive.py::_build_communication_doc``) inserts the Communication first and
+	only creates the attachment File docs afterwards, then re-saves — so at
+	``after_insert`` the attachment query is always empty and this channel ingested
+	nothing from the day it shipped. ``on_update`` fires on that post-attachment
+	save. Because it also fires on every later save of the same email, each
+	attachment is skipped once it is already in the queue (below), so the repeat
+	saves neither re-download bytes nor create duplicates."""
 	if doc.get("communication_medium") != "Email" or doc.get("sent_or_received") != "Received":
 		return
 	settings = _settings()
@@ -58,6 +68,11 @@ def email_from_communication(doc, method=None):
 	ref = f"{doc.get('sender') or ''}: {doc.get('subject') or ''}".strip()[:140]
 	for att in attachments:
 		if not _is_document(att.file_name):
+			continue
+		# on_update fires again on every later save of this email; skip a file already
+		# queued so we neither re-fetch its bytes nor log a dedup row each time.
+		# ingest_document also dedups by content hash as a backstop.
+		if att.file_url and frappe.db.exists("Document Intake", {"source_file": att.file_url}):
 			continue
 		try:
 			intake.ingest_document(file_url=att.file_url, source_channel="Email", source_reference=ref)
