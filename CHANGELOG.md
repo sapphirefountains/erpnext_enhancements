@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.342.5] - 2026-08-21
+
+### Security
+
+- **`link_files_to_comment` let any user re-home any private File (IDOR).** The endpoint took a
+  client-supplied File name, parent doctype and parent name and repointed the File's
+  `attached_to_*` with no permission or ownership check — and Frappe derives a private file's
+  download access from its `attached_to` document, so a low-privilege user could repoint any
+  private File onto a doc they can read and download the bytes via `/private/files`, or detach a
+  File to hide it. It now requires **write** on the target document and only moves a File the
+  caller owns or that already belongs to that document (System Manager may move any).
+
+### Fixed
+
+- **Asset rental status was usually stale.** `custom_rental_status` was recomputed only on a
+  booking's own lifecycle hooks, so a booking made in advance never flipped the asset to Rented
+  when its window began, and the status persisted after it ended. A new hourly
+  `refresh_asset_statuses` recomputes status for assets whose booking window crossed a boundary
+  recently (`update_asset_status` is idempotent).
+
+- **Offline kiosk photos were only retried on an `online` event.** `flushPhotoQueue` was wired
+  solely to `window.'online'` and never called from `init`, so a technician who captured photos
+  in a dead zone, drove off, and reopened the app already online never drained the queue — the
+  captures were never registered and the Job Photo Compliance report under-counted. `init` now
+  flushes the queue when `navigator.onLine`.
+
+- **Barcode scanner reported phantom variances for items spread across bins.** `add_count`
+  compared a single bin's `counted_qty` against the WAREHOUSE on-hand, so an item in bins A(5)
+  and B(10) showed variance −10 after only A was scanned — and with the reason gate on, the clerk
+  was forced to invent a reason for a count that was correct so far; the session summary then
+  reported phantom variance for a perfectly counted warehouse. Variance is now computed at the
+  (item, warehouse) aggregate and stamped per group, the summary counts distinct groups, and the
+  reason requirement is enforced at finalize (where the group's count is complete) rather than
+  per scan.
+
 ## [1.342.4] - 2026-08-21
 
 ### Fixed

@@ -1012,6 +1012,10 @@ scheduler_events = {
 		# the three from racing on the Settings doc (TimestampMismatchError). See the
 		# "cron" section.
 		"erpnext_enhancements.tasks.nudge_unsubmitted_maintenance_forms",
+		# asset_management: recompute denormalised Asset rental status on booking-window
+		# boundary crossings (update_asset_status otherwise only runs on a booking mutation, so
+		# a booking made in advance never flips the asset when its window starts/ends).
+		"erpnext_enhancements.asset_management.doctype.asset_booking.asset_booking.refresh_asset_statuses",
 		# sapphire_maintenance: re-drive submissions whose on_submit background job never
 		# ran (a prod deploy FLUSHDBs the queue redis and destroys queued jobs silently, so
 		# a record submitted just before a deploy gets no Stock Entry/Timesheet/Invoice and

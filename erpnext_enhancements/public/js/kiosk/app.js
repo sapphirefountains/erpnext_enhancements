@@ -1216,6 +1216,13 @@
     // Seed instantly from the server boot payload, then confirm with a fetch.
     applyStatus(BOOT.status);
     fetchStatus();
+
+    // Drain photos queued in a prior offline session. Reopening the app already online fires
+    // no 'online' event, so without this the queue never registers those captures — the Job
+    // Photo Compliance report then under-counts and photo_count stays low.
+    if (navigator.onLine) {
+      flushPhotoQueue();
+    }
   }
 
   if (document.readyState === 'loading') {
