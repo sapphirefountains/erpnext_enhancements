@@ -44,6 +44,9 @@ HANDLED = {
 	"payment_intent.succeeded",
 	"payment_intent.payment_failed",
 	"charge.refunded",
+	"charge.dispute.created",
+	"charge.dispute.updated",
+	"charge.dispute.closed",
 	"payout.paid",
 	"payout.failed",
 }
@@ -104,6 +107,9 @@ def _dispatch_event(event_name: str):
 			"payment_intent.succeeded": _on_payment_intent_succeeded,
 			"payment_intent.payment_failed": _on_payment_intent_failed,
 			"charge.refunded": _on_charge_refunded,
+			"charge.dispute.created": _on_charge_dispute,
+			"charge.dispute.updated": _on_charge_dispute,
+			"charge.dispute.closed": _on_charge_dispute,
 			"payout.paid": _on_payout_paid,
 			"payout.failed": _on_payout_failed,
 		}[event_type]
@@ -246,7 +252,7 @@ def _on_payout_failed(payout):
 
 
 def _on_charge_refunded(charge):
-	"""Record a refund against the Stripe Payment (no Payment Entry reversal yet)."""
+	"""Record a refund against the Stripe Payment and draft a reversing Payment Entry for review."""
 	sp = _find_payment(charge)
 	if not sp:
 		return None
@@ -262,6 +268,126 @@ def _on_charge_refunded(charge):
 	fully_refunded = bool(charge.get("refunded")) and not cint(sp.get("surcharge_voided"))
 	if fully_refunded or refunded >= flt(sp.amount) > 0:
 		sp.db_set("status", "Refunded")
+	_draft_refund_reversal(sp, refunded)
+	frappe.db.commit()
+	return sp
+
+
+def _accounts_notify(subject, content, doctype=None, docname=None):
+	"""Best-effort Notification Log alert to every Accounts Manager."""
+	try:
+		from erpnext_enhancements.stripe_payments.core.payouts import _accounts_managers
+
+		for user in _accounts_managers():
+			log = {
+				"doctype": "Notification Log",
+				"subject": subject[:140],
+				"email_content": content,
+				"for_user": user,
+				"type": "Alert",
+			}
+			if doctype and docname:
+				log["document_type"] = doctype
+				log["document_name"] = docname
+			frappe.get_doc(log).insert(ignore_permissions=True)
+	except Exception:
+		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: accounts alert failed")
+
+
+def _draft_refund_reversal(sp, refunded_total):
+	"""Draft a reversing 'Pay' Payment Entry for a Stripe refund, for an accountant to review and
+	submit.
+
+	A refund previously booked NOTHING (only ``amount_refunded``/status on the row), so the GL
+	overstated cash and revenue until someone hand-built a reversal. This pre-builds it as a
+	**DRAFT** — refund accounting is not auto-posted — using the same clearing/deposit account the
+	original Receive Payment Entry used, party the customer (a 'Pay' re-opens their receivable).
+	Idempotent: at most one draft reversal per Stripe Payment (a second partial refund updates the
+	alert but does not stack drafts; the accountant reconciles). Best-effort — a failure here never
+	blocks recording the refund on the row.
+	"""
+	try:
+		if flt(refunded_total) <= 0:
+			return
+		marker = f"Stripe refund reversal {sp.name}"
+		if frappe.db.exists(
+			"Payment Entry",
+			{"payment_type": "Pay", "remarks": ["like", f"%{marker}%"], "docstatus": ["<", 2]},
+		):
+			return
+		settings = get_settings()
+		if not settings.deposit_account:
+			return
+		company = settings.company or frappe.defaults.get_user_default("Company")
+		receivable = frappe.get_cached_value("Company", company, "default_receivable_account")
+		currency = sp.get("currency") or "USD"
+		pe = frappe.new_doc("Payment Entry")
+		pe.payment_type = "Pay"
+		pe.company = company
+		pe.party_type = "Customer"
+		pe.party = sp.customer
+		pe.paid_from = settings.deposit_account
+		pe.paid_to = receivable
+		pe.paid_amount = flt(refunded_total)
+		pe.received_amount = flt(refunded_total)
+		pe.source_exchange_rate = 1
+		pe.target_exchange_rate = 1
+		pe.reference_no = sp.get("stripe_charge_id") or sp.name
+		pe.reference_date = today()
+		pe.remarks = f"{marker} — refund of {refunded_total} {currency}. Review accounts/allocation and submit."
+		pe.flags.ignore_permissions = True
+		pe.insert()  # DRAFT (docstatus 0)
+		sp.add_comment(
+			"Comment",
+			f"Draft refund reversal {frappe.utils.get_link_to_form('Payment Entry', pe.name)} created for "
+			f"{refunded_total} {currency} — review and submit to post the reversal to the GL.",
+		)
+		_accounts_notify(
+			f"Stripe refund to review: {sp.customer} ({refunded_total} {currency})",
+			f"Stripe Payment {sp.name} was refunded {refunded_total} {currency}. A DRAFT reversing Payment "
+			f"Entry {pe.name} has been created — review the accounts/allocation and submit it to post the "
+			"reversal to the GL.",
+			"Payment Entry",
+			pe.name,
+		)
+	except Exception:
+		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: refund reversal draft failed")
+
+
+def _on_charge_dispute(dispute):
+	"""A card dispute (chargeback) was opened / updated / closed.
+
+	Alert Accounts URGENTLY: a dispute not answered with evidence by Stripe's deadline is lost
+	automatically and the cash is gone. Previously ``charge.dispute.*`` was not in the handler map,
+	so the webhook fell into the Ignored branch and NOBODY was told. No GL entry is posted here
+	(booking the loss is the accountant's decision); this just makes the dispute visible in time.
+	"""
+	sp = _find_payment(dispute)
+	try:
+		amount = f"{from_minor_units(dispute.get('amount'))} {(dispute.get('currency') or 'usd').upper()}"
+		status = dispute.get("status") or "unknown"
+		reason = dispute.get("reason") or "unspecified"
+		deadline = ""
+		due_by = (dispute.get("evidence_details") or {}).get("due_by")
+		if due_by:
+			from datetime import datetime, timezone
+
+			when = datetime.fromtimestamp(int(due_by), tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+			deadline = f" Evidence is due by <b>{when}</b>."
+		who = f" for {sp.customer}" if sp else ""
+		_accounts_notify(
+			f"Stripe DISPUTE ({status}): {amount}{who}",
+			f"A Stripe dispute (chargeback) is <b>{frappe.utils.escape_html(status)}</b>{who}: {amount}, "
+			f"reason <b>{frappe.utils.escape_html(reason)}</b>.{deadline}<br><br>"
+			"A dispute not answered with evidence by the deadline is lost automatically — respond in the "
+			"Stripe dashboard. No GL entry was posted.",
+			"Stripe Payment" if sp else None,
+			sp.name if sp else None,
+		)
+		if sp:
+			sp.add_comment("Comment", f"Stripe dispute {status}: {amount}, reason {reason}.")
+	except Exception:
+		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: dispute alert failed")
 	frappe.db.commit()
 	return sp
 

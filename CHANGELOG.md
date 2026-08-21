@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.344.0] - 2026-08-21
+
+### Added
+
+- **Stripe dispute alerting (F7 / WI-041).** `charge.dispute.created` / `.updated` / `.closed`
+  were not in the webhook handler map, so a dispute (chargeback) fell into the "Ignored" branch
+  and was marked processed silently — and a dispute not answered with evidence by Stripe's
+  deadline is lost automatically, cash gone. These events now alert every Accounts Manager
+  (Notification Log with the amount, reason, status, and the evidence deadline) and leave a
+  comment on the linked Stripe Payment. No GL entry is posted — responding is the accountant's
+  call — but the dispute is now visible in time.
+
+- **Stripe refund GL reversal, drafted for review (F7 / WI-041).** `charge.refunded` recorded
+  `amount_refunded`/status on the row but booked nothing, so the GL overstated cash and revenue
+  until someone hand-built a reversal. It now drafts a reversing "Pay" Payment Entry (customer
+  party, the same deposit/clearing account the original Receive Payment Entry used) and alerts
+  Accounts to review the allocation and submit it. Deliberately a **draft** — refund accounting
+  is not auto-posted — and idempotent (one draft per Stripe Payment; a second partial refund
+  re-alerts rather than stacking drafts).
+
 ## [1.343.0] - 2026-08-21
 
 ### Security
