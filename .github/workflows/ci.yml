@@ -341,6 +341,16 @@ jobs:
       # advisory here, so it does not fail a PR. This does.
       - name: hooks.py integrity (no duplicate keys or handlers)
         run: python -m unittest erpnext_enhancements.tests.test_hooks_integrity -v
+      # A literal '%' in a query string that also binds a named parameter. MySQLdb
+      # mogrifies with Python's own % operator, so the percent is a conversion
+      # specifier: the query either dies with "not enough arguments for format
+      # string" before it reaches MariaDB, or -- worse -- silently interpolates the
+      # argument dict into the SQL. v1.342.4 put "shown 0%." in a /* comment */
+      # inside get_procurement_status's union query and took the whole project
+      # procurement panel down. It is valid SQL and a valid SQL comment; only Python
+      # objects, and only at runtime.
+      - name: SQL percent escaping (parameterised queries)
+        run: python -m unittest erpnext_enhancements.tests.test_sql_percent_escaping -v
       # Guards the silent workspace failure mode: `content` (the layout) and the
       # child tables (the data) are joined by label and nothing keeps them in sync,
       # so a block with no row renders an empty div and a row with no block never
