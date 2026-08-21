@@ -1727,6 +1727,37 @@ def scheduled_kpi_run():
 	)
 
 
+def verify_daily_snapshots():
+	"""Later-morning re-drive if the nightly KPI batch was lost to a deploy FLUSHDB.
+
+	``scheduled_kpi_run`` enqueues the batch once at 05:00; a merge to main between the cron
+	tick and completion FLUSHDBs the queue redis and destroys the job, leaving a *permanent*
+	gap in the trend data (there is no other generation path, and ``enqueue`` already reported
+	success). This runs a few hours later: if any department is missing today's snapshot,
+	re-enqueue the batch. ``build_department_snapshot`` upserts by deterministic name, so a
+	re-run is idempotent — a department that did generate is simply rebuilt in place.
+	"""
+	if not kpi_enabled():
+		return
+	from frappe.utils import getdate, nowdate
+
+	today = getdate(nowdate())
+	have = set(
+		frappe.get_all(
+			"KPI Snapshot",
+			filters={"snapshot_date": today, "period": "Daily"},
+			pluck="department",
+		)
+	)
+	if set(AGGREGATORS) - have:
+		frappe.enqueue(
+			"erpnext_enhancements.kpi_dashboards.snapshots.generate_all_snapshots",
+			queue="long",
+			timeout=1800,
+			period="Daily",
+		)
+
+
 def generate_all_snapshots(period="Daily"):
 	"""Build every department's snapshot; one failure never kills the batch."""
 	settings = _settings()

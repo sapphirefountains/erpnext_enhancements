@@ -714,6 +714,10 @@ scheduler_events = {
 		# KPI dashboard snapshots — nightly 05:00 (site TZ), one precomputed
 		# KPI Snapshot per department. Handler enqueues the batch onto long.
 		"0 5 * * *": ["erpnext_enhancements.kpi_dashboards.snapshots.scheduled_kpi_run"],
+		# Re-drive of the above if a deploy FLUSHDB destroyed the enqueued batch (a merge to
+		# main between the 05:00 tick and completion leaves a permanent hole in the trend
+		# data, silently). generate_all_snapshots upserts, so a re-run is idempotent.
+		"0 9 * * *": ["erpnext_enhancements.kpi_dashboards.snapshots.verify_daily_snapshots"],
 		# Morning technician dispatch digest — 06:00 site TZ (gated in Settings).
 		"0 6 * * *": ["erpnext_enhancements.api.maintenance_dispatch.send_morning_digests"],
 		# QuickBooks Online sync — STAGGERED across the hour, not all fired together.
@@ -969,6 +973,11 @@ scheduler_events = {
 		"erpnext_enhancements.ai_governance.tasks.purge_old_action_logs",
 		# Re-enqueue Failed Drive Sync Log rows (uploads / recording exports)
 		"erpnext_enhancements.google_drive.drive_sync.retry_failed_syncs",
+		# Re-drive folder provisioning lost to a deploy FLUSHDB. retry_failed_syncs only
+		# re-runs Failed log rows, and a job destroyed before it ran wrote no log row — so a
+		# Customer/Opportunity inserted just before a merge to main keeps an empty
+		# custom_drive_folder_id forever. Both provisioners are find-or-create (idempotent).
+		"erpnext_enhancements.google_drive.drive_utils.resweep_missing_drive_folders",
 		# Probe every linked Drive folder and stamp the records whose folder is
 		# gone, so the "Open Drive Folder" button stops opening a Google 404
 		"erpnext_enhancements.google_drive.drive_sync.reconcile_drive_links",
@@ -1027,6 +1036,10 @@ scheduler_events = {
 		"erpnext_enhancements.stripe_payments.core.tasks.poll_pending",
 		"erpnext_enhancements.stripe_payments.core.tasks.poll_payouts",
 		"erpnext_enhancements.stripe_payments.core.tasks.retry_failed",
+		# Re-charge autopay invoices whose enqueued charge job never ran (deploy FLUSHDB
+		# between commit and execution). poll_pending/dunning only touch existing Stripe
+		# Payment rows; this covers invoices that produced none. charge_saved_method is guarded.
+		"erpnext_enhancements.stripe_payments.core.tasks.sweep_missed_autopay",
 		# plaid_banking: refresh cached bank balances (self-throttled to
 		# refresh_poll_minutes; skips while paused, so a dead link can't storm)
 		"erpnext_enhancements.plaid_banking.core.tasks.scheduled_balance_refresh",

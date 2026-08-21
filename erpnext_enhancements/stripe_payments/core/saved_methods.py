@@ -297,6 +297,12 @@ def auto_charge_on_invoice_submit(doc, method=None):
 	frappe.enqueue(
 		"erpnext_enhancements.stripe_payments.core.saved_methods.charge_saved_method",
 		queue="short",
+		# enqueue only once the invoice's own transaction has committed. Without this the
+		# job can be picked up mid-submit — charge_saved_method reads the invoice in a fresh
+		# session, sees docstatus 0 and throws "Only a submitted Sales Invoice can be paid",
+		# dying with no Stripe Payment row and no retry (poll_pending/dunning only touch
+		# existing rows). enqueue_after_commit also means a rolled-back submit never charges.
+		enqueue_after_commit=True,
 		customer=doc.customer,
 		sales_invoice=doc.name,
 		channel="Auto",

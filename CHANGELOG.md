@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.342.0] - 2026-08-21
+
+### Added
+
+- **Deploy-durability sweepers for work that a prod-deploy `FLUSHDB` can destroy.** The prod
+  deploy flushes the queue redis, silently killing any job enqueued but not yet run. Several
+  fire-and-forget paths had no backstop:
+  - `stripe_payments.core.tasks.sweep_missed_autopay` (hourly) re-charges autopay-enrolled
+    customers' submitted, outstanding invoices that produced no Stripe Payment at all —
+    neither `poll_pending` nor the dunning cycle covered that case.
+  - `google_drive.drive_utils.resweep_missing_drive_folders` (daily) re-enqueues folder
+    provisioning for Customers/Opportunities left with an empty `custom_drive_folder_id` — the
+    confirmed cause of the historical "batch of Drive folders never created" incident, which
+    `retry_failed_syncs` (Failed log rows only) never caught.
+  - `kpi_dashboards.snapshots.verify_daily_snapshots` (09:00) re-drives the nightly KPI batch
+    if a department is missing today's snapshot — a batch lost to a deploy left a *permanent*
+    hole in the trend data with no other generation path.
+
+### Fixed
+
+- **Autopay charge could be lost or fail spuriously.** `auto_charge_on_invoice_submit` enqueued
+  `charge_saved_method` without `enqueue_after_commit=True`, so a worker could pick the job
+  mid-submit, read the invoice at docstatus 0 and throw "Only a submitted Sales Invoice can be
+  paid" — dying with no Stripe Payment row and no retry — and a rolled-back submit still
+  charged. It now enqueues after commit; `sweep_missed_autopay` (above) backstops a deploy-lost
+  job.
+
+- **Stuck-`Pending` Stripe Events were never re-driven.** `retry_failed` only re-ran
+  `process_status = "Error"` events, so a `Pending` event whose enqueued `process_event` job was
+  flushed by a deploy was lost — `charge.refunded` never posted, a setup-mode
+  `checkout.session.completed` never stored the card (autopay never activated), `payout.failed`
+  never alerted. It now also picks up `Pending` events older than the grace window
+  (`process_event` is idempotent).
+
 ## [1.341.3] - 2026-08-21
 
 ### Fixed
