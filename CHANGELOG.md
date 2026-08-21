@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.343.0] - 2026-08-21
+
+### Security
+
+- **Interim shared-secret gate on the unauthenticated QuickBooks Time webhook (F8 / WI-046
+  rollback).** `qb_timesheet_webhook` is a guest endpoint that inserts Time Log documents with
+  `ignore_permissions`, so anyone who learns the URL could inject time entries — and WI-046 does
+  not decommission it until the Jan 2027 cutover. It now enforces a shared secret when
+  `qb_time_webhook_secret` is set in `site_config`: the webhook URL must carry a matching `token`
+  (constant-time compared), else it 401s. It stays open until that secret is configured so the
+  upgrade does not break the live feed; to close the hole, set the secret and append
+  `?token=<secret>` to the URL configured in QuickBooks Time. Reversible and independent of the
+  WI-046 decommission plan.
+
 ## [1.342.6] - 2026-08-21
 
 ### Added
