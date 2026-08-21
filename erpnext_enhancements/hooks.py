@@ -489,8 +489,9 @@ doc_events = {
 		# cannot alter the money on an order that fills their own Material Request (WI-066).
 		# New rows added via Update Items cannot carry a `material_request` link, so the SoD
 		# re-check only bites edits to existing MR-linked rows — the threshold half is the
-		# serious one. `po_order_stage` uses `db.set_value(update_modified=False)`, not a
-		# full save, so ordinary stage transitions never reach this.
+		# serious one. The Purchase Receipt order-stage handlers use
+		# `db.set_value(update_modified=False)`, not a full save, so ordinary stage
+		# transitions never reach this gate.
 		"before_update_after_submit": [
 			"erpnext_enhancements.po_segregation.enforce_requester_separation",
 			"erpnext_enhancements.po_approval.enforce_threshold_after_submit",

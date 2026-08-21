@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.344.2] - 2026-08-21
+
+### Fixed
+
+- **CI (`test_nothing_hangs_off_purchase_order_submit`).** The v1.341.0 comment on the new
+  Purchase Order `before_update_after_submit` gate mentioned the `po_order_stage` module by name,
+  and that test string-searches the Purchase Order hooks block to assert the order-stage handlers
+  hang off Purchase *Receipt*, not Purchase Order. Reworded the comment (no behaviour change) so
+  the block no longer contains the literal string.
+
 ## [1.344.1] - 2026-08-21
 
 ### Docs
