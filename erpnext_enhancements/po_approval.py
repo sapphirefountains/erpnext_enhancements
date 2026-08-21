@@ -23,22 +23,79 @@ APPROVING_ROLE = "PO Approver"
 def enforce_threshold(doc, method=None):
 	"""`before_submit` hook on Purchase Order: block submission above the effective
 	threshold unless the submitting user holds the approving role."""
+	_enforce_threshold(doc, after_submit=False)
+
+
+def enforce_threshold_after_submit(doc, method=None):
+	"""`before_update_after_submit` hook on Purchase Order: re-run the WI-013 gate on
+	every post-submit change.
+
+	The submit-time gate alone is bypassable. ERPNext's "Update Items" button calls the
+	whitelisted ``erpnext.controllers.accounts_controller.update_child_qty_rate``, which
+	edits qty/rate/rows on a *submitted* PO, recalculates ``grand_total`` and calls
+	``parent.save()`` — an update-after-submit that fires this event but never re-runs
+	``before_submit``. Without this a PO submitted at $400 (under the $500 threshold) can be
+	edited up to any amount by anyone with write access, and neither WI-013 nor WI-066
+	fires. Its only native backstops (Authorization Rule, Budget) are inert on this site.
+	"""
+	_enforce_threshold(doc, after_submit=True)
+
+
+def _threshold_amount(doc):
+	"""The amount compared against the threshold, in company (base) currency.
+
+	The threshold is a single company-wide figure, but ``grand_total`` is in the PO's
+	transaction currency — so a foreign-currency PO was gated against the wrong number
+	(a EUR total compared to a USD threshold). ``base_grand_total`` is
+	``grand_total * conversion_rate``; fall back to ``grand_total`` only if it is unset
+	(e.g. mid-bootstrap), where conversion_rate is 1 anyway.
+	"""
+	return flt(doc.get("base_grand_total")) or flt(doc.grand_total)
+
+
+def _enforce_threshold(doc, after_submit):
 	threshold = get_effective_threshold(doc)
-	if not threshold or flt(doc.grand_total) <= flt(threshold):
+	if not threshold:
+		return
+	amount = _threshold_amount(doc)
+	if amount <= flt(threshold):
 		return
 	if has_approval_authority():
 		return
-	frappe.throw(
-		_(
+	currency = _company_currency(doc)
+	if after_submit:
+		message = _(
+			"This change would leave the Purchase Order total ({0}) above the approval "
+			"threshold of {1}. Only a {2} (the CEO) can put an order over that amount — "
+			"revert the change, or ask the approver to make it."
+		)
+	else:
+		message = _(
 			"This Purchase Order total ({0}) exceeds the approval threshold of {1}. "
 			"Only a {2} (the CEO) can submit it — save the draft and ask the approver to submit."
-		).format(
-			fmt_money(doc.grand_total, currency=doc.get("currency")),
-			fmt_money(threshold, currency=doc.get("currency")),
+		)
+	frappe.throw(
+		message.format(
+			fmt_money(amount, currency=currency),
+			fmt_money(threshold, currency=currency),
 			APPROVING_ROLE,
 		),
 		title=_("Approval Required"),
 	)
+
+
+def _company_currency(doc):
+	"""The company's base currency — the unit the threshold is expressed in.
+
+	Falls back to the PO's own currency if the company (or its default currency) cannot
+	be resolved, so the error message always names *some* currency rather than none.
+	"""
+	company = doc.get("company")
+	if company:
+		currency = frappe.get_cached_value("Company", company, "default_currency")
+		if currency:
+			return currency
+	return doc.get("currency")
 
 
 def stamp_approval(doc, method=None):

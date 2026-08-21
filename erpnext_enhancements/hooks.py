@@ -374,12 +374,17 @@ doc_events = {
 			# anchor consumes the stamped date
 			"erpnext_enhancements.process_steps.sync_process_steps",
 		],
-		"after_save": "erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity",
 		"on_update": [
 			"erpnext_enhancements.sync_contact.sync_from_main_doc",
 			"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
 			"erpnext_enhancements.status_alerts.notify_payment_received",
 			"erpnext_enhancements.process_steps.notify_step_transitions",
+			# Copy Opportunity/Lead attachments onto the Project. This was wired to
+			# `after_save`, which Frappe never dispatches server-side, so it had never run
+			# — Opportunity→Project conversions silently carried no files across. `on_update`
+			# fires on the conversion insert AND on later saves (its idempotent file_name
+			# guard makes the repeat picks-up-late-additions safe).
+			"erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity",
 		],
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
@@ -398,10 +403,14 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Communication": {
-		"after_insert": [
-			"erpnext_enhancements.api.communication.after_insert_communication",
-			"erpnext_enhancements.accounting_intake.channels.email_from_communication",
-		],
+		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication",
+		# email_from_communication runs on on_update, NOT after_insert: Frappe's
+		# inbound-mail pipeline inserts the Communication BEFORE it creates the
+		# attachment File docs (then re-saves), so at after_insert the attachment query
+		# is always empty — the accounting-intake email channel had silently ingested
+		# nothing since it shipped (v1.59.0). It fires on the post-attachment save; the
+		# handler's per-file guard makes the email's later saves a no-op.
+		"on_update": "erpnext_enhancements.accounting_intake.channels.email_from_communication",
 	},
 	"Sapphire Maintenance Record": {
 		"on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_next_visit_dates",
@@ -471,6 +480,21 @@ doc_events = {
 			# there is nowhere else truthful to read an approver from — Purchase Order
 			# has no approver field and `modified_by` is whoever touched it last.
 			"erpnext_enhancements.po_approval.stamp_approval",
+		],
+		# The submit gates above are bypassable without this. ERPNext's "Update Items"
+		# button (`update_child_qty_rate`) edits qty/rate/rows on a SUBMITTED PO,
+		# recalculates the total and calls `parent.save()` — an update-after-submit that
+		# never re-runs `before_submit`. So both gates are re-asserted here: a non-approver
+		# cannot inflate a PO past the threshold post-submit (WI-013), and the requester
+		# cannot alter the money on an order that fills their own Material Request (WI-066).
+		# New rows added via Update Items cannot carry a `material_request` link, so the SoD
+		# re-check only bites edits to existing MR-linked rows — the threshold half is the
+		# serious one. The Purchase Receipt order-stage handlers use
+		# `db.set_value(update_modified=False)`, not a full save, so ordinary stage
+		# transitions never reach this gate.
+		"before_update_after_submit": [
+			"erpnext_enhancements.po_segregation.enforce_requester_separation",
+			"erpnext_enhancements.po_approval.enforce_threshold_after_submit",
 		],
 	},
 	# The far end of Purchase Order.custom_order_stage (see po_order_stage.py). The stage
@@ -680,9 +704,6 @@ doc_events = {
 	"Sales Invoice": {
 		"on_submit": "erpnext_enhancements.stripe_payments.core.saved_methods.auto_charge_on_invoice_submit",
 	},
-	"*": {
-		"after_save": "erpnext_enhancements.utils.triton_sync.global_triton_sync",
-	},
 }
 
 scheduler_events = {
@@ -694,6 +715,10 @@ scheduler_events = {
 		# KPI dashboard snapshots — nightly 05:00 (site TZ), one precomputed
 		# KPI Snapshot per department. Handler enqueues the batch onto long.
 		"0 5 * * *": ["erpnext_enhancements.kpi_dashboards.snapshots.scheduled_kpi_run"],
+		# Re-drive of the above if a deploy FLUSHDB destroyed the enqueued batch (a merge to
+		# main between the 05:00 tick and completion leaves a permanent hole in the trend
+		# data, silently). generate_all_snapshots upserts, so a re-run is idempotent.
+		"0 9 * * *": ["erpnext_enhancements.kpi_dashboards.snapshots.verify_daily_snapshots"],
 		# Morning technician dispatch digest — 06:00 site TZ (gated in Settings).
 		"0 6 * * *": ["erpnext_enhancements.api.maintenance_dispatch.send_morning_digests"],
 		# QuickBooks Online sync — STAGGERED across the hour, not all fired together.
@@ -949,6 +974,11 @@ scheduler_events = {
 		"erpnext_enhancements.ai_governance.tasks.purge_old_action_logs",
 		# Re-enqueue Failed Drive Sync Log rows (uploads / recording exports)
 		"erpnext_enhancements.google_drive.drive_sync.retry_failed_syncs",
+		# Re-drive folder provisioning lost to a deploy FLUSHDB. retry_failed_syncs only
+		# re-runs Failed log rows, and a job destroyed before it ran wrote no log row — so a
+		# Customer/Opportunity inserted just before a merge to main keeps an empty
+		# custom_drive_folder_id forever. Both provisioners are find-or-create (idempotent).
+		"erpnext_enhancements.google_drive.drive_utils.resweep_missing_drive_folders",
 		# Probe every linked Drive folder and stamp the records whose folder is
 		# gone, so the "Open Drive Folder" button stops opening a Google 404
 		"erpnext_enhancements.google_drive.drive_sync.reconcile_drive_links",
@@ -983,6 +1013,17 @@ scheduler_events = {
 		# the three from racing on the Settings doc (TimestampMismatchError). See the
 		# "cron" section.
 		"erpnext_enhancements.tasks.nudge_unsubmitted_maintenance_forms",
+		# asset_management: recompute denormalised Asset rental status on booking-window
+		# boundary crossings (update_asset_status otherwise only runs on a booking mutation, so
+		# a booking made in advance never flips the asset when its window starts/ends).
+		"erpnext_enhancements.asset_management.doctype.asset_booking.asset_booking.refresh_asset_statuses",
+		# sapphire_maintenance: re-drive submissions whose on_submit background job never
+		# ran (a prod deploy FLUSHDBs the queue redis and destroys queued jobs silently, so
+		# a record submitted just before a deploy gets no Stock Entry/Timesheet/Invoice and
+		# nothing reports it). Keyed on the absence of any processing Comment; the steps are
+		# idempotent, so re-running a partially-run submission is safe. Same durability story
+		# as product_feedback.sweep_stalled_breakdowns below.
+		"erpnext_enhancements.api.maintenance_workflow.resweep_stalled_maintenance_submissions",
 		"erpnext_enhancements.ai_governance.tasks.expire_stale_pending_actions",
 		# fountain_move: delete photos uploaded by someone who never submitted the
 		# form. Without this the guest upload endpoint doubles as free storage.
@@ -1000,6 +1041,10 @@ scheduler_events = {
 		"erpnext_enhancements.stripe_payments.core.tasks.poll_pending",
 		"erpnext_enhancements.stripe_payments.core.tasks.poll_payouts",
 		"erpnext_enhancements.stripe_payments.core.tasks.retry_failed",
+		# Re-charge autopay invoices whose enqueued charge job never ran (deploy FLUSHDB
+		# between commit and execution). poll_pending/dunning only touch existing Stripe
+		# Payment rows; this covers invoices that produced none. charge_saved_method is guarded.
+		"erpnext_enhancements.stripe_payments.core.tasks.sweep_missed_autopay",
 		# plaid_banking: refresh cached bank balances (self-throttled to
 		# refresh_poll_minutes; skips while paused, so a dead link can't storm)
 		"erpnext_enhancements.plaid_banking.core.tasks.scheduled_balance_refresh",

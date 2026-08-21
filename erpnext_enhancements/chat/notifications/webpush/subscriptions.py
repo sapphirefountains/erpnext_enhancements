@@ -202,6 +202,18 @@ def prune_stale() -> int:
 	)
 	for name in rows:
 		frappe.db.set_value(DOCTYPE, name, {"is_active": 0}, update_modified=False)
+
+	# Then DELETE rows that have been inactive beyond the retention window. The doctype's
+	# clear_old_logs does this, but nothing ever ran it: Frappe's log clearing never invoked
+	# it (the doctype was never registered with Log Settings), and chat/retention.py manages
+	# only the two queue tables. Folding it into this daily job keeps the table bounded — each
+	# dead row otherwise costs one HTTPS request per notification forever — without adding a
+	# Chat Settings (Single) field and its backfill.
+	from erpnext_enhancements.chat.doctype.chat_push_subscription.chat_push_subscription import (
+		ChatPushSubscription,
+	)
+
+	ChatPushSubscription.clear_old_logs()
 	return len(rows)
 
 

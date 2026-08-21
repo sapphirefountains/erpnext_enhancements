@@ -214,15 +214,7 @@ def add_count(session, item_code, counted_qty, storage_location=None, warehouse=
 		frappe.throw(_("Scan a location first, or set a default warehouse, before counting items."))
 
 	system_qty = _system_qty(item_code, warehouse)
-	variance = counted_qty - system_qty
-
 	reason = (reason or "").strip()
-	if cint(settings.get("require_variance_reason")) and variance != 0 and not reason:
-		frappe.throw(
-			_("{0}: counted {1} but system shows {2}. A reason is required for the variance.").format(
-				item_code, counted_qty, system_qty
-			)
-		)
 
 	values = {
 		"storage_location": storage_location,
@@ -232,7 +224,8 @@ def add_count(session, item_code, counted_qty, storage_location=None, warehouse=
 		"uom": item.stock_uom,
 		"system_qty": system_qty,
 		"counted_qty": counted_qty,
-		"variance": variance,
+		# Recomputed at the item+warehouse aggregate just below, not per bin.
+		"variance": 0.0,
 		"scanned_barcode": scanned_barcode,
 		"scan_time": now_datetime(),
 		"reason": reason,
@@ -252,6 +245,23 @@ def add_count(session, item_code, counted_qty, storage_location=None, warehouse=
 		existing.update(values)
 	else:
 		doc.append("lines", values)
+
+	# Variance is a fact about (item, warehouse), not a single bin. `system_qty` is the
+	# WAREHOUSE on-hand, but a line's `counted_qty` is one storage location — so an item split
+	# across bins A(5)/B(10) is not "10 short" after only A is scanned. Compute variance against
+	# the TOTAL counted for this item+warehouse across the session and stamp it on every line of
+	# the group, so a partial count never shows a phantom variance and the clerk is never forced
+	# to invent a reason for a count that is correct so far. The reason requirement is enforced
+	# in finalize_session, where the group's count is complete.
+	group_total = sum(
+		flt(row.counted_qty)
+		for row in doc.lines
+		if row.item_code == item_code and row.warehouse == warehouse
+	)
+	group_variance = group_total - system_qty
+	for row in doc.lines:
+		if row.item_code == item_code and row.warehouse == warehouse:
+			row.variance = group_variance
 
 	doc.save(ignore_permissions=True)
 	return _session_payload(doc.name)
@@ -298,6 +308,27 @@ def finalize_session(session):
 		frappe.throw(_("Set a Company on the session before finalizing."))
 
 	aggregated = _aggregate_counts(doc)
+
+	# Enforce the variance-reason requirement HERE, at the item+warehouse aggregate, not per
+	# scan: a per-bin check forced a reason for a partial count that was correct so far (an item
+	# spread over bins reads short until every bin is scanned). A reason on any line of the group
+	# satisfies it.
+	if cint(get_settings().get("require_variance_reason")):
+		reason_groups = {
+			(row.item_code, row.warehouse) for row in doc.lines if (row.reason or "").strip()
+		}
+		needs_reason = [
+			item_code
+			for (item_code, wh), counted in aggregated.items()
+			if flt(counted) - _system_qty(item_code, wh) != 0 and (item_code, wh) not in reason_groups
+		]
+		if needs_reason:
+			frappe.throw(
+				_("A variance reason is required before finalizing for: {0}.").format(
+					", ".join(sorted(set(needs_reason)))
+				)
+			)
+
 	sr = _build_reconciliation(company, aggregated)
 	sr.insert(ignore_permissions=True)  # DRAFT — left for a Stock Manager to submit.
 
@@ -412,7 +443,11 @@ def _session_payload(name):
 		}
 		for row in doc.lines
 	]
-	with_variance = sum(1 for row in doc.lines if flt(row.variance) != 0)
+	# Count distinct (item, warehouse) groups with a variance, not lines: an item spread over
+	# several bins carries the same aggregate variance on each of its lines, so summing lines
+	# would over-report. (See add_count — variance is an item+warehouse fact.)
+	_variance_groups = {(row.item_code, row.warehouse): flt(row.variance) for row in doc.lines}
+	with_variance = sum(1 for v in _variance_groups.values() if v != 0)
 	return {
 		"name": doc.name,
 		"status": doc.status,

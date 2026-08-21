@@ -20,8 +20,9 @@ def post_vendor_bill(doc):
 	po = doc.selected_match_name if doc.selected_match_doctype == "Purchase Order" else None
 
 	if po and frappe.db.exists("Purchase Order", po):
-		if _po_has_stock_items(po):
-			_make_purchase_receipt(po)
+		if _po_has_stock_items(po) and not _has_draft_receipt(po):
+			pr_name = _make_purchase_receipt(po)
+			doc.add_comment("Comment", f"Draft Purchase Receipt {pr_name} created from PO {po} (3-way match).")
 		pi_name = _make_pi_from_po(po, doc)
 	else:
 		pi_name = _standalone_pi(doc, company)
@@ -33,6 +34,14 @@ def _po_has_stock_items(po):
 		if row.item_code and frappe.db.get_value("Item", row.item_code, "is_stock_item"):
 			return True
 	return False
+
+
+def _has_draft_receipt(po):
+	"""A draft Purchase Receipt already exists for this PO. A DRAFT PR does not update the
+	PO's received_qty, so make_purchase_receipt maps the FULL remaining quantity again — a
+	second vendor bill against the same PO (split shipments, partial billing are routine)
+	would create a duplicate full-qty receipt, and submitting both receives the stock twice."""
+	return bool(frappe.db.exists("Purchase Receipt Item", {"purchase_order": po, "docstatus": 0}))
 
 
 def _make_purchase_receipt(po):

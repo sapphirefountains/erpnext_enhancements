@@ -125,6 +125,35 @@ def update_asset_status(asset_name):
         "custom_current_event_location": location
     })
 
+
+def refresh_asset_statuses():
+    """Hourly: recompute rental status/location for assets whose booking window began or
+    ended in the last couple of hours.
+
+    ``update_asset_status`` only runs on a booking's own lifecycle hooks, so the denormalised
+    ``custom_rental_status`` is correct only when a document mutation happens to coincide with
+    the active window: a booking made a week ahead never flips the asset to Rented when its
+    window starts, and the status persists after it ends. Recomputing on each window boundary
+    crossing closes that — the from/to boundary of an advance booking lands in this window during
+    the hour it happens, and ``update_asset_status`` is idempotent so a re-run is free.
+    """
+    now = frappe.utils.now_datetime()
+    window_start = frappe.utils.add_to_date(now, hours=-2)
+    rows = frappe.get_all(
+        "Asset Booking",
+        filters={"docstatus": ["<", 2]},
+        or_filters=[
+            {"from_datetime": ["between", [window_start, now]]},
+            {"to_datetime": ["between", [window_start, now]]},
+        ],
+        pluck="asset",
+    )
+    for asset_name in {a for a in rows if a}:
+        try:
+            update_asset_status(asset_name)
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), "Asset status refresh")
+
 @frappe.whitelist()
 def check_availability(asset, from_datetime, to_datetime, ignore_booking=None):
     """Whitelisted: report whether an Asset is free for a time window.

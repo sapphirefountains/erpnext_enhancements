@@ -106,6 +106,11 @@ def get_receivable_purchase_orders(project):
 	if not project:
 		return []
 
+	# Whitelisted and login-only, so gate on Project read — this returns every PO's
+	# supplier and grand_total for the job, and without the check any authenticated user
+	# could read them by project name. Same gate as the sibling pickup_routing endpoints.
+	frappe.get_doc("Project", project).check_permission("read")
+
 	names = set(
 		frappe.get_all("Purchase Order", filters={"project": project}, pluck="name")
 	)

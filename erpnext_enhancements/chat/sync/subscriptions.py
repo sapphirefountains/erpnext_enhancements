@@ -93,6 +93,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Final
 
 import frappe
+from frappe.utils import cint
 
 from erpnext_enhancements.chat import seams
 from erpnext_enhancements.chat.doctype.chat_event_subscription.chat_event_subscription import (
@@ -1954,18 +1955,34 @@ def recover_subscription_for(
 def _roster() -> list[str]:
 	"""The coworkers who are supposed to have a subscription each.
 
-	``Chat Settings.allowed_users``, which is the same whitelist ``is_user_allowed`` enforces —
-	so "who should be covered" and "who may use chat" cannot drift apart. An empty whitelist
-	yields an empty roster and the missing-subscription check simply does not fire; inventing a
-	roster from every enabled ``User`` would alarm about the entire company on day one.
+	When the pilot whitelist is ON (``restrict_to_whitelist``), this is
+	``Chat Settings.allowed_users`` — the same set ``is_user_allowed`` enforces. But
+	``is_user_allowed`` returns True for EVERY user when the whitelist is OFF (the intended
+	post-pilot / company-wide state), and the roster must follow, or coverage drifts from access:
+	a coworker not on the list would use chat daily while ``ensure`` /
+	``check_subscription_health`` never consider them — no Workspace Events subscription is
+	created, no ``subscription-missing`` alert fires, and every message sent from the native Chat
+	client in a space only they are in silently never reaches ERPNext. That is exactly the
+	silent-total-permanent failure this module exists to prevent, reintroduced by configuration.
+
+	Unrestricted, the roster is the actual chat population — the distinct active
+	``Chat Room Member`` users — not every enabled ``User`` (which would alarm about the whole
+	company on day one, the concern the whitelist path guards against).
 	"""
 	settings = _settings()
-	rows: Sequence[Any] = getattr(settings, "allowed_users", None) or []
-	out: list[str] = []
-	for row in rows:
-		user = (
-			getattr(row, "user", None) or (row.get("user") if isinstance(row, Mapping) else "") or ""
-		).strip()
-		if user and user not in out:
-			out.append(user)
-	return out
+	if cint(getattr(settings, "restrict_to_whitelist", 0)):
+		rows: Sequence[Any] = getattr(settings, "allowed_users", None) or []
+		out: list[str] = []
+		for row in rows:
+			user = (
+				getattr(row, "user", None) or (row.get("user") if isinstance(row, Mapping) else "") or ""
+			).strip()
+			if user and user not in out:
+				out.append(user)
+		return out
+
+	# Unrestricted: cover everyone who actually participates in chat. A system-context roster
+	# read (health-check scheduler, no session user; bounded by is_active; `user` only) —
+	# registered in test_chat_rawsql_guard.SYSTEM_CONTEXT_READS.
+	members = frappe.get_all("Chat Room Member", filters={"is_active": 1}, distinct=True, pluck="user")
+	return [u for u in dict.fromkeys(m for m in members if m)]

@@ -608,6 +608,49 @@ SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
 		"marker advanced by a client is not evidence a human read anything, and a column that "
 		"looks like proof of reading in a legal bundle invites exactly one inference."
 	),
+	# --- chat/notifications/fanout.py + chat/api/readstate.py: the message fan-out ------
+	#
+	# Both read the active members of ONE named room to decide who a new message notifies —
+	# the unread counter (`_room_members`) and the bell/web-push fan-out (`_members`). They do
+	# NOT AND in `membership_filter_sql`, and that is the fix rather than an oversight: the
+	# fan-out runs as a background job with no asking user (often the inbound-sync worker
+	# relaying a coworker's Google Chat message), and its job is to reach EVERY member of the
+	# room. Since v1.284.0/v1.301.0 the fragment resolves to `1 = 1` only under
+	# `allow_oversight=True`; for the job's `Administrator` session it becomes an EXISTS that
+	# matches no room, so ANDing it silently notified nobody of any Google-Chat-origin message.
+	# Eligible on all three counts: NO SESSION USER (a doc_event/after_insert fan-out, reached
+	# from the sync worker), BOUNDED BY THE ROOM the message was posted in rather than by any
+	# reader's identity, and NO BODY COLUMN (`user`, `notification_mode`, `muted_until`).
+	(
+		"notifications/fanout.py",
+		"_members",
+		"Chat Room Member",
+	): (
+		"Active members of the room a new message was posted in, to fan out the bell + web-push "
+		"notifications. The fan-out has no asking user and must reach everyone in the room; "
+		"membership_filter_sql would scope it to the (Administrator) job's own rooms and notify "
+		"nobody. No body column: `user`, `notification_mode`, `muted_until`."
+	),
+	(
+		"api/readstate.py",
+		"_room_members",
+		"Chat Room Member",
+	): (
+		"Active members of the room a new message was posted in, to fan out the unread-counter "
+		"update. Same system-context roster read as notifications/fanout._members and for the "
+		"same reason: no asking user, bounded by the room, no body column (`user` only)."
+	),
+	(
+		"sync/subscriptions.py",
+		"_roster",
+		"Chat Room Member",
+	): (
+		"The set of coworkers who should each hold a Workspace Events subscription, when the "
+		"pilot whitelist is OFF: the distinct active chat participants. A system-context read — "
+		"it runs from the subscription-health scheduler with no asking user, is bounded by "
+		"`is_active` rather than by any reader's membership, and reads `user` only. Scoping it "
+		"to the (Administrator) job's own rooms is exactly the drift this fixes."
+	),
 	# --- chat/governance/viewer.py: the member timeline (Phase 6 §4.B) -------------------
 	(
 		"governance/viewer.py",

@@ -6,8 +6,9 @@
 Two reviewer roles, two gates: the inventory clerk (Stock Manager) approves any
 proposed new Items (``approve_items``), then the accountant (Accounts Manager)
 approves the document (``approve_document``) — which moves it to ``Approved``.
-The per-type posting handler that turns an Approved document into a draft
-ERPNext record lands in a later PR; nothing is submitted here."""
+Approving a document enqueues ``actions.base.post_document``, the per-type posting
+handler that turns it into a **draft** (docstatus 0) ERPNext record — so approval has
+posting side effects (an enqueued background job); nothing is *submitted* here."""
 
 import frappe
 from frappe import _
@@ -85,10 +86,15 @@ def _validate_for_approval(doc):
 
 @frappe.whitelist()
 def approve_document(docname):
-	"""Accountant: approve the proposed action and move to Approved. The draft
-	ERPNext record is created by the per-type posting handler (later PR)."""
+	"""Accountant: approve the proposed action and move to Approved, then enqueue
+	``actions.base.post_document`` to create the draft ERPNext record."""
 	_require(_APPROVE_ROLES)
 	doc = frappe.get_doc("Document Intake", docname)
+	# Refuse a second approval (double-click, or approving an already-posted doc): each call
+	# enqueues post_document, and though the post itself is now filelock-guarded, a wasted
+	# duplicate job is avoidable here.
+	if doc.created_docname or doc.status in ("Approved", "Posting", "Posted"):
+		frappe.throw("This document has already been approved.")
 	issues = _validate_for_approval(doc)
 	if issues:
 		frappe.throw("<br>".join(issues))

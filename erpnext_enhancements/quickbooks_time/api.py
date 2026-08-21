@@ -12,6 +12,7 @@ Webhook URL (guest):
 the endpoint configured in QuickBooks Time after deploying this rename.
 """
 
+import hmac
 import json
 
 import frappe
@@ -55,12 +56,25 @@ def qb_timesheet_webhook(*args, **kwargs):
     error it logs the traceback and returns HTTP 500.
 
     NOTE: this is the QuickBooks *Time* path and is independent of the QBO
-    accounting pipeline. Unlike the QBO webhook it does NOT yet verify an Intuit
-    signature -- see the inline note below.
+    accounting pipeline. Authentication is an interim shared-secret gate (below),
+    pending WI-046 which retires this endpoint at cutover.
     """
-    # SECURITY: no signature verification here yet. A signature/HMAC check should
-    # be added to ensure the request genuinely originates from QuickBooks Time
-    # (the QBO webhook in quickbooks_online/core/webhooks.py does verify its signature).
+    # SECURITY (interim, WI-046 §rollback). This is an unauthenticated guest endpoint that
+    # INSERTS Time Log documents, so anyone who learns the URL can inject time entries. Until
+    # WI-046 decommissions it, gate on a shared secret: when `qb_time_webhook_secret` is set in
+    # site_config, require a matching `token` on the webhook URL and reject anything else. It is
+    # left open until that secret is configured so the upgrade does not break the live feed —
+    # to close the hole, set the secret and append `?token=<secret>` to the URL configured in
+    # QuickBooks Time. (QB Time cannot sign its payloads reliably; this mirrors the shared-secret
+    # option the finding calls for, hmac.compare_digest for constant-time comparison.)
+    expected_secret = (frappe.conf.get("qb_time_webhook_secret") or "").strip()
+    if expected_secret:
+        provided = (kwargs.get("token") or frappe.form_dict.get("token") or "").strip()
+        if not provided or not hmac.compare_digest(
+            provided.encode("utf-8"), expected_secret.encode("utf-8")
+        ):
+            frappe.local.response.http_status_code = 401
+            return {"status": "unauthorized"}
 
     try:
         webhook_data = frappe.request.get_data()

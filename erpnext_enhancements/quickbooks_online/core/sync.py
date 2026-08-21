@@ -235,7 +235,16 @@ def sync_entity(entity_type, qbo_id, source="Manual"):
 		# QBO wraps single-entity GETs under a type-named key (e.g. {"Invoice": {...}}).
 		payload = response.get(entity_type) or response.get(entity_type.lower()) or response
 		store_raw_payload(source, entity_type, payload, sync_log=log.name, realm_id=settings.realm_id)
-		result = upsert_entity(entity_type, payload, settings)
+		# Savepoint the upsert: fail_log below commits (Settings status must survive the
+		# re-raise), so a partial insert left by a failed upsert would otherwise be committed
+		# as a mapping-less document and later re-imported as a duplicate. Roll it back first,
+		# keeping the archived raw payload and the log.
+		frappe.db.savepoint("qbo_entity_upsert")
+		try:
+			result = upsert_entity(entity_type, payload, settings)
+		except Exception:
+			frappe.db.rollback(save_point="qbo_entity_upsert")
+			raise
 		_track_result(log, result)
 		finish_log(log)
 		frappe.db.commit()
@@ -270,6 +279,12 @@ def run_cdc():
 	# degrades to a recent window instead of a hard 400.
 	changed_since = settings.last_cdc_sync or add_to_date(now_datetime(), days=-1, as_datetime=True)
 	changed_since = _clamp_cdc_cursor(get_datetime(changed_since), get_datetime(now_datetime()))
+	# Capture the next window's floor BEFORE the CDC request, not at run end. A wide
+	# catch-up poll (first run after a pause) can take minutes; a record changed in QBO
+	# during those minutes is in neither this window nor a next one cursored at end-of-run,
+	# so it silently never syncs. Back off two minutes for ERPNext↔QBO clock skew; the small
+	# re-fetch overlap next run is harmless (upserts are idempotent by mapping name).
+	next_cursor = add_to_date(now_datetime(), minutes=-2, as_datetime=True)
 	try:
 		response = QuickBooksClient(settings).cdc(CDC_ENTITIES, changed_since)
 		processed = 0
@@ -304,7 +319,7 @@ def run_cdc():
 		_record_settings_status(
 			"Failed" if log.status == "Failed" else "Connected",
 			_status_message(log, "CDC sync completed."),
-			{"last_cdc_sync": now_datetime()} if log.status == "Completed" else None,
+			{"last_cdc_sync": next_cursor} if log.status == "Completed" else None,
 		)
 		return log.name
 	except Exception as exc:
@@ -515,14 +530,25 @@ def safe_upsert(entity_type, payload, settings, **kwargs):
 	mapping and the target doc on entry, so a single retry clears the transient race
 	rather than parking a perfectly good record as Failed.
 	"""
+	# Savepoint per record: upsert_entity's create path is doc.insert() THEN save_mapping().
+	# If save_mapping raises, the inserted doc is left in the open transaction and the next
+	# batch commit persists it WITHOUT a Sync Mapping row — after which the retry path
+	# re-creates it (transactions are never fuzzy-matched), a silent duplicate. Rolling back
+	# to the savepoint on failure undoes only this record's partial writes, leaving the rest
+	# of the committed batch intact.
+	frappe.db.savepoint("qbo_upsert")
 	try:
 		return upsert_entity(entity_type, payload, settings, **kwargs)
 	except frappe.exceptions.TimestampMismatchError:
+		frappe.db.rollback(save_point="qbo_upsert")
+		frappe.db.savepoint("qbo_upsert")
 		try:
 			return upsert_entity(entity_type, payload, settings, **kwargs)
 		except Exception:
+			frappe.db.rollback(save_point="qbo_upsert")
 			return _failed_result(entity_type, payload)
 	except Exception:
+		frappe.db.rollback(save_point="qbo_upsert")
 		return _failed_result(entity_type, payload)
 
 

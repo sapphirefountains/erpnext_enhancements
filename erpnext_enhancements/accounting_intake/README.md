@@ -39,7 +39,7 @@ independent approvals into one and puts AI-extracted figures straight into the l
 | File | Purpose |
 |---|---|
 | `intake.py` | **The single entry point every channel funnels through.** `ingest_document` dedupes by content hash, creates the `Document Intake` row, and (when enabled) enqueues extraction via Triton. The manual-upload channel lives here |
-| `channels.py` | The other adapters, all thin wrappers over that one door: `email_from_communication` (inbound-email attachments, on `Communication.after_insert`), `poll_watched_folder` (a Google Drive folder, hourly), plus mobile and chat-origin |
+| `channels.py` | The other adapters, all thin wrappers over that one door: `email_from_communication` (inbound-email attachments, on `Communication.on_update` — the mail pipeline creates the Files *after* insert, so `after_insert` sees none), `poll_watched_folder` (a Google Drive folder, hourly), plus mobile and chat-origin |
 | `extraction.py` | Maps a Triton Document AI extraction onto the review record — header fields, line items with Item resolution, advisory matches, resulting review status. Items that can't be resolved are **proposed on the line** for the inventory clerk rather than created |
 | `matching.py` | Advisory party (Supplier/Customer) and source-document (PO / Sales Invoice) suggestions, reusing the pure fuzzy scorer in `google_drive/drive_match.py` |
 | `review.py` | The whitelisted review actions and the two-gate approval (below) |

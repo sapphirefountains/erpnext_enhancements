@@ -309,21 +309,42 @@ def advance_on_receipt(doc, method=None):
 	try:
 		if not _stage_field_exists():
 			return
+		# A Purchase Return is a Purchase Receipt with is_return=1 and negative quantities: it
+		# LOWERS per_received, so it must be allowed to walk an order backwards. The forward path
+		# below deliberately never leaves `Received` (a second small receipt does not make a
+		# complete order less complete, and per_received can dip under 100 mid-flight on an
+		# amend) — but that same guard left a fully-received order stuck at `Received` after its
+		# goods were returned. Recompute from per_received like the receipt-cancel path.
+		is_return = bool(doc.get("is_return"))
 		advanced = []
 		for po_name in _linked_purchase_orders(doc):
 			received = _per_received(po_name)
+			current = frappe.db.get_value("Purchase Order", po_name, FIELD)
+
+			if is_return:
+				if current not in (RECEIVED, PARTIALLY_FULFILLED):
+					continue
+				if received >= FULLY_RECEIVED:
+					target = RECEIVED
+				elif received > 0:
+					target = PARTIALLY_FULFILLED
+				else:
+					target = AWAITING_CONFIRMATION
+				if current == target:
+					continue
+				_set_stage(po_name, target)
+				_note_stage_change(po_name, current, target, f"Purchase Return {doc.name} was submitted")
+				continue
+
 			if received >= FULLY_RECEIVED:
 				target = RECEIVED
 			elif received > 0:
 				target = PARTIALLY_FULFILLED
 			else:
 				continue
-			current = frappe.db.get_value("Purchase Order", po_name, FIELD)
 			if current == target:
 				continue
-			# Never walk an order backwards out of `Received`. A second, smaller receipt
-			# against an already-complete order does not make it less complete, and
-			# `per_received` can read under 100 mid-flight on an amended document.
+			# Never walk an order forwards-path backwards out of `Received` (see above).
 			if current == RECEIVED:
 				continue
 			_set_stage(po_name, target)

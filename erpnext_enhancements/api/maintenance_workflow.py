@@ -23,6 +23,8 @@ external services. No item codes are hardcoded — items come from document
 links and Settings only.
 """
 
+from datetime import timedelta
+
 import frappe
 from frappe import _
 from frappe.utils import flt, get_datetime, nowdate
@@ -54,10 +56,17 @@ def process_maintenance_submission(record_name):
 
         failures = []
 
-        for step_name, step_func in steps:
+        for i, (step_name, step_func) in enumerate(steps):
+            savepoint = f"maint_step_{i}"
+            frappe.db.savepoint(savepoint)
             try:
                 step_func(doc)
             except Exception as e:
+                # Roll back only THIS step's partial writes, so a step that dies mid-way
+                # (e.g. Stock Entry inserted, then .submit() raises on insufficient stock)
+                # leaves no orphan draft behind. The other steps are unaffected, and the
+                # failure Comment added below is written after the rollback so it persists.
+                frappe.db.rollback(save_point=savepoint)
                 error_msg = f"{step_name} failed: {e!s}"
                 frappe.log_error(frappe.get_traceback(), _("Maintenance Submission Step Failed"))
                 doc.add_comment("Comment", _(error_msg))
@@ -167,8 +176,17 @@ def create_stock_entry(doc):
     if not rows:
         return
 
+    # Idempotent: a re-run (manual re-enqueue, or the hourly sweep after a deploy flushed
+    # the original job) must not issue stock twice. Stock Entry has no maintenance-record
+    # link field, so the record name is carried in `remarks` and matched here. A cancelled
+    # entry (docstatus 2) does not block a fresh issue.
+    marker = f"Sapphire Maintenance Record {doc.name}"
+    if frappe.db.exists("Stock Entry", {"remarks": ["like", f"%{marker}%"], "docstatus": ["<", 2]}):
+        return
+
     stock_entry = frappe.new_doc("Stock Entry")
     stock_entry.purpose = "Material Issue"
+    stock_entry.remarks = f"Auto-generated from {marker}"
     stock_entry.company = frappe.db.get_value("Project", doc.project, "company") or frappe.defaults.get_global_default("company")
 
     for row in rows:
@@ -199,12 +217,17 @@ def create_timesheet(doc):
     # Calculate Duration manually using datetime objects
     start_time = get_datetime(doc.clock_in_time)
     end_time = get_datetime(doc.clock_out_time)
-    total_seconds = (end_time - start_time).total_seconds()
-    work_seconds = total_seconds - flt(doc.paused_duration)
-    hours = work_seconds / 3600.0
+    # Bill the worked time, not the pause. ERPNext v16 recomputes Timesheet Detail hours
+    # from (to_time - from_time) on save, so subtracting the pause from `hours` alone is
+    # discarded — instead compress the logged window to the billable duration (same fix as
+    # api/time_kiosk.sync_interval_to_timesheet).
+    billable_seconds = max((end_time - start_time).total_seconds() - flt(doc.paused_duration), 0.0)
+    hours = billable_seconds / 3600.0
 
     if hours <= 0:
         return
+
+    billable_end = start_time + timedelta(seconds=billable_seconds)
 
     # Find Employee
     employee = frappe.db.get_value("Employee", {"user_id": doc.technician}, "name")
@@ -216,11 +239,41 @@ def create_timesheet(doc):
             doc.add_comment("Comment", _("Could not find Employee for technician {0}. Timesheet not created.").format(doc.technician))
             return
 
+    # The kiosk already logs this technician's clocked time into a Draft Timesheet on
+    # clock-out (api/time_kiosk.sync_interval_to_timesheet), and clock_in/out here were
+    # autofilled from that same Job Interval. A second Timesheet for the same window would
+    # throw OverlapError on submit (v16 Timesheet.validate_overlap), failing this whole
+    # step and leaving total_labor_cost unwritten — or, with the Projects Settings ignore
+    # flags on, double-count the hours. If an overlapping time log already exists for this
+    # employee, reuse its costing instead of creating a duplicate. Overlap test mirrors
+    # ERPNext's own: from_time < other.to_time AND to_time > other.from_time.
+    overlapping = frappe.db.sql(
+        """
+        select ts.name as timesheet, td.costing_amount as cost
+        from `tabTimesheet Detail` td
+        join `tabTimesheet` ts on ts.name = td.parent
+        where ts.employee = %(emp)s and ts.docstatus < 2
+          and td.from_time < %(end)s and td.to_time > %(start)s
+        order by ts.docstatus desc, td.costing_amount desc
+        limit 1
+        """,
+        {"emp": employee, "start": start_time, "end": billable_end},
+        as_dict=True,
+    )
+    if overlapping:
+        row = overlapping[0]
+        if row.cost:
+            doc.db_set("total_labor_cost", row.cost)
+        doc.add_comment("Comment", _("Labour already captured on Timesheet {0} from the kiosk clock; no duplicate created.").format(
+            frappe.get_link_to_form("Timesheet", row.timesheet)
+        ))
+        return
+
     timesheet = frappe.new_doc("Timesheet")
     timesheet.employee = employee
     timesheet.append("time_logs", {
         "from_time": doc.clock_in_time,
-        "to_time": doc.clock_out_time,
+        "to_time": billable_end,
         "hours": hours,
         "project": doc.project,
         "description": _("Maintenance Visit: {0}").format(doc.name)
@@ -251,6 +304,10 @@ def check_warranty_and_rma(doc):
     standard ERPNext reporting — whose complaint lists the failed checks.
     Adds a linking Comment per claim.
     """
+    # Idempotent: warranty_rma_flag is set once claims are raised, so a re-run/sweep skips.
+    if doc.get("warranty_rma_flag"):
+        return
+
     failed_by_serial = {}
     for row in doc.maintenance_results:
         if row.selection in ["Fail", "Replace"]:
@@ -390,6 +447,11 @@ def create_sales_invoice(doc):
         doc.add_comment("Comment", _("Sales Invoice not drafted: contract bills {0}.").format(invoicing_frequency))
         return
 
+    # Idempotent: skip if a Sales Invoice already links to this record (custom_maintenance_record
+    # is set below). Stops a re-run/sweep from drafting a second invoice for the same visit.
+    if frappe.db.exists("Sales Invoice", {"custom_maintenance_record": doc.name, "docstatus": ["<", 2]}):
+        return
+
     # Load settings
     settings = frappe.get_single("ERPNext Enhancements Settings")
     fee_item = settings.maintenance_fee_item
@@ -420,6 +482,7 @@ def create_sales_invoice(doc):
         base_item = frappe.db.sql("""
             SELECT item_code, rate, qty FROM `tabSales Order Item`
             WHERE parent = %s AND item_group = %s
+            ORDER BY idx
             LIMIT 1
         """, (so_name, services_group), as_dict=True)
 
@@ -519,3 +582,41 @@ def email_customer_service_report(doc):
         ],
     )
     doc.add_comment("Comment", _("Service report emailed to {0}.").format(email))
+
+
+def resweep_stalled_maintenance_submissions():
+    """Hourly: re-drive Sapphire Maintenance Record submissions whose background job
+    never ran.
+
+    ``on_submit`` enqueues ``process_maintenance_submission`` on the default queue, and a
+    prod deploy FLUSHDBs the queue redis and silently destroys queued jobs — so a record
+    submitted just before a deploy gets no Stock Entry / Timesheet / Invoice and nothing
+    reports it. Every run of ``process_maintenance_submission`` leaves at least one timeline
+    Comment (the success line, or a per-step failure), so a submitted record older than the
+    grace window with NO such Comment never processed. Re-enqueue those; the steps are
+    idempotent (guards on remarks / custom_maintenance_record / warranty_rma_flag / an
+    overlapping timesheet), so re-running a partially-run submission is safe.
+
+    Bounded to the last few days so the sweep does not rescan all history every hour.
+    """
+    from frappe.utils import add_days, add_to_date, now_datetime
+
+    now = now_datetime()
+    cutoff = add_to_date(now, minutes=-15)
+    window_start = add_days(now, -4)
+    records = frappe.get_all(
+        "Sapphire Maintenance Record",
+        filters={"docstatus": 1, "modified": ["between", [window_start, cutoff]]},
+        pluck="name",
+        limit_page_length=200,
+    )
+    for name in records:
+        base = {"reference_doctype": "Sapphire Maintenance Record", "reference_name": name}
+        ran = frappe.db.exists("Comment", {**base, "content": ["like", "%Background processing%"]}) or             frappe.db.exists("Comment", {**base, "content": ["like", "%failed:%"]})
+        if ran:
+            continue
+        frappe.enqueue(
+            "erpnext_enhancements.api.maintenance_workflow.process_maintenance_submission",
+            queue="long",
+            record_name=name,
+        )

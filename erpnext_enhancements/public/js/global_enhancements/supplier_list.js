@@ -92,12 +92,34 @@ $.extend(frappe.listview_settings['Supplier'], {
 				
 				if (args && args.filters && Array.isArray(args.filters)) {
 					args.filters.forEach(filter => {
-						if (filter[1] === 'supplier_group' && filter[3]) {
-							const value = filter[3];
+						// filter = [doctype, fieldname, operator, value]. Only rewrite a
+						// supplier_group filter onto the denormalized multi-group field, and only
+						// for the operators that translate — the previous code rewrote EVERY
+						// operator to `LIKE %value%`, which silently inverted `!=`, turned
+						// `in [A,B]` into the useless pattern `%A,B%`, and made `is set` search for
+						// the literal "set". custom_supplier_groups_search stores the groups
+						// comma-PADDED (", A, B, ") for whole-token matching, so `=` is a padded
+						// LIKE, not a bare substring (else "Steel" matches "Stainless Steel").
+						if (filter[1] !== 'supplier_group' || !filter[3]) {
+							return;
+						}
+						const operator = filter[2];
+						const value = filter[3];
+						if (operator === '=') {
 							filter[1] = 'custom_supplier_groups_search';
 							filter[2] = 'like';
+							filter[3] = `%, ${value}, %`;
+						} else if (operator === '!=') {
+							filter[1] = 'custom_supplier_groups_search';
+							filter[2] = 'not like';
+							filter[3] = `%, ${value}, %`;
+						} else if (operator === 'like') {
+							// The user asked for a substring explicitly; keep it bare.
+							filter[1] = 'custom_supplier_groups_search';
 							filter[3] = `%${value}%`;
 						}
+						// in / not in / is (set|not set) stay on the real supplier_group Link
+						// field: their array/keyword semantics do not map to a single LIKE.
 					});
 				}
 				return args;

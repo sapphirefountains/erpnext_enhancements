@@ -322,18 +322,20 @@ def _mention_counts(user: str) -> dict[str, int]:
 def _room_members(room: str) -> list[str]:
 	"""Active members of a room, for the counter fan-out.
 
-	Called from ``after_insert``, where there is no session user to scope against — the
-	writer may be the inbound sync worker relaying a coworker's message from Google. The
-	membership filter is still ANDed in and still resolves correctly: for a background writer
-	``frappe.session.user`` is ``Administrator``, which the filter answers with ``1 = 1``,
-	and for a user-initiated send it is the sender, who is a member of the room they just
-	posted in. Either way the row set is "the members of this room", which is what a fan-out
-	needs and the only thing it gets.
+	A **system-context roster read**, not a user-scoped one. Called from ``after_insert`` with
+	no session user (the writer may be the inbound-sync worker relaying a coworker's Google Chat
+	message), and the unread-counter fan-out must reach every member of the room. The query is
+	already bounded to one named room's active members — the complete recipient set.
+
+	It deliberately does NOT AND in ``membership_filter_sql``. That fragment resolves to
+	``1 = 1`` only under ``allow_oversight=True`` (since v1.284.0/v1.301.0); for the job's
+	``Administrator`` session it becomes an EXISTS that matches no room, so ANDing it produced
+	zero recipients and no ``chat_unread_updated`` event ever fired for a Google-Chat-origin
+	message. Registered in ``test_chat_rawsql_guard.SYSTEM_CONTEXT_READS``.
 	"""
-	scope = permissions.membership_filter_sql("`m`.`room`")
 	rows = frappe.db.sql(
-		f"""select `m`.`user` from `tabChat Room Member` `m`
-			where `m`.`room` = %(room)s and `m`.`is_active` = 1 and {scope}""",
+		"""select `m`.`user` from `tabChat Room Member` `m`
+			where `m`.`room` = %(room)s and `m`.`is_active` = 1""",
 		{"room": room},
 		as_dict=True,
 	)

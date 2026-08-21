@@ -4,12 +4,31 @@ Whitelisted API consumed by ``public/js/procurement_links.js`` to show and edit
 the "purchase URL" stored on Item Supplier child rows (e.g. quick links to a
 vendor's product page from a Purchase Order).
 
-Security: standard authenticated whitelist. ``save_item_link`` writes the Item
-with ``ignore_permissions=True`` so a buyer can record a supplier URL without
-needing full Item write access. No external services.
+Security: ``save_item_link`` writes the Item with ``ignore_permissions=True`` so a
+buyer can record a supplier URL without needing full Item write access — but that
+elevation is gated to purchasing roles (``_require_purchasing_access``). Without a
+gate, any authenticated user could write an arbitrary ``purchase_url`` onto any Item,
+and buyers later click that link straight from the Purchase Order screen. No external
+services.
 """
 
 import frappe
+from frappe import _
+
+#: Roles that may read/write supplier purchase links. Purchasing staff plus the
+#: administrative roles that manage Items. A user outside this set has no business
+#: writing a URL that other buyers will click.
+ALLOWED_ROLES = frozenset(
+    {"Purchase User", "Purchase Manager", "Purchase Master Manager", "Item Manager", "System Manager"}
+)
+
+
+def _require_purchasing_access():
+    if ALLOWED_ROLES.isdisjoint(frappe.get_roles()):
+        frappe.throw(
+            _("You are not permitted to manage supplier purchase links."),
+            frappe.PermissionError,
+        )
 
 
 @frappe.whitelist()
@@ -18,6 +37,8 @@ def get_item_links(item_codes, supplier=None):
     Fetches purchase URLs for a list of items.
     If 'supplier' is provided (e.g. on a PO), filters to that supplier.
     """
+    _require_purchasing_access()
+
     if isinstance(item_codes, str):
         item_codes = frappe.parse_json(item_codes)
 
@@ -56,6 +77,8 @@ def save_item_link(item_code, supplier, url):
     """
     Updates or creates an Item Supplier row with the given URL.
     """
+    _require_purchasing_access()
+
     if not url:
         return
 

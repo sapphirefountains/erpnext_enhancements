@@ -110,7 +110,56 @@ class TestNoDuplicateHandlers(unittest.TestCase):
         self.assertEqual(offenders, [], "entry repeated in a hook list:\n  " + "\n  ".join(offenders))
 
 
+#: Server-side document events Frappe actually dispatches via ``run_method`` (v16). NOTABLY
+#: ABSENT: ``after_save``, which is a CLIENT-side (form) event only — a ``doc_event`` registered
+#: under it resolves to a real function but is silently never invoked. That dead-hook class
+#: shipped more than once (global Triton sync, Opportunity→Project attachment sync) and survived
+#: every CI run, because the *path* checks below pass; only the event *name* was wrong.
+DISPATCHED_DOC_EVENTS = frozenset(
+    {
+        "before_insert",
+        "after_insert",
+        "before_naming",
+        "autoname",
+        "before_validate",
+        "validate",
+        "before_save",
+        "on_update",
+        "before_submit",
+        "on_submit",
+        "before_cancel",
+        "on_cancel",
+        "before_update_after_submit",
+        "on_update_after_submit",
+        "on_change",
+        "before_rename",
+        "after_rename",
+        "before_delete",
+        "on_trash",
+        "after_delete",
+        "before_print",
+    }
+)
+
+
 class TestHandlersLookReal(unittest.TestCase):
+    def test_doc_event_names_are_dispatched_by_frappe(self):
+        """The dead-``after_save`` class: a doc_event under a name Frappe never dispatches
+        server-side resolves fine but never fires. Assert every registered event name is one
+        Frappe actually runs, so a mistyped or client-only name fails the build."""
+        events = ast.literal_eval(top_level_assignments()["doc_events"])
+        for doctype, handlers in events.items():
+            if not isinstance(handlers, dict):
+                continue
+            for event in handlers:
+                with self.subTest(f"{doctype}.{event}"):
+                    self.assertIn(
+                        event,
+                        DISPATCHED_DOC_EVENTS,
+                        f"{doctype!r} registers a handler on {event!r}, which Frappe does not "
+                        f"dispatch server-side — the handler would never fire.",
+                    )
+
     def test_doc_event_handlers_are_app_dotted_paths(self):
         """A typo'd module path fails silently at runtime, the same way."""
         events = ast.literal_eval(top_level_assignments()["doc_events"])

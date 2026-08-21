@@ -7,6 +7,451 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.344.2] - 2026-08-21
+
+### Fixed
+
+- **CI (`test_nothing_hangs_off_purchase_order_submit`).** The v1.341.0 comment on the new
+  Purchase Order `before_update_after_submit` gate mentioned the `po_order_stage` module by name,
+  and that test string-searches the Purchase Order hooks block to assert the order-stage handlers
+  hang off Purchase *Receipt*, not Purchase Order. Reworded the comment (no behaviour change) so
+  the block no longer contains the literal string.
+
+## [1.344.1] - 2026-08-21
+
+### Docs
+
+- **Document Hub SOP (F12 / WI-063).** Added [`docs/document-hub-sop.md`](docs/document-hub-sop.md)
+  — "where the documents for a job live": the one rule (job documents go in the job's Drive
+  folder, not email), how to reach a job's folder from the Project/Customer/Opportunity link,
+  and the folder-template placement guide (Accounting & Legal / Build / Design / Project
+  Management / Pictures). The WI-063 surfacing tasks (list-view Property Setters, PM workspace
+  shortcut, 20-record UAT) remain business-session-gated per the work item and are not built here.
+
+## [1.344.0] - 2026-08-21
+
+### Added
+
+- **Stripe dispute alerting (F7 / WI-041).** `charge.dispute.created` / `.updated` / `.closed`
+  were not in the webhook handler map, so a dispute (chargeback) fell into the "Ignored" branch
+  and was marked processed silently — and a dispute not answered with evidence by Stripe's
+  deadline is lost automatically, cash gone. These events now alert every Accounts Manager
+  (Notification Log with the amount, reason, status, and the evidence deadline) and leave a
+  comment on the linked Stripe Payment. No GL entry is posted — responding is the accountant's
+  call — but the dispute is now visible in time.
+
+- **Stripe refund GL reversal, drafted for review (F7 / WI-041).** `charge.refunded` recorded
+  `amount_refunded`/status on the row but booked nothing, so the GL overstated cash and revenue
+  until someone hand-built a reversal. It now drafts a reversing "Pay" Payment Entry (customer
+  party, the same deposit/clearing account the original Receive Payment Entry used) and alerts
+  Accounts to review the allocation and submit it. Deliberately a **draft** — refund accounting
+  is not auto-posted — and idempotent (one draft per Stripe Payment; a second partial refund
+  re-alerts rather than stacking drafts).
+
+## [1.343.0] - 2026-08-21
+
+### Security
+
+- **Interim shared-secret gate on the unauthenticated QuickBooks Time webhook (F8 / WI-046
+  rollback).** `qb_timesheet_webhook` is a guest endpoint that inserts Time Log documents with
+  `ignore_permissions`, so anyone who learns the URL could inject time entries — and WI-046 does
+  not decommission it until the Jan 2027 cutover. It now enforces a shared secret when
+  `qb_time_webhook_secret` is set in `site_config`: the webhook URL must carry a matching `token`
+  (constant-time compared), else it 401s. It stays open until that secret is configured so the
+  upgrade does not break the live feed; to close the hole, set the secret and append
+  `?token=<secret>` to the URL configured in QuickBooks Time. Reversible and independent of the
+  WI-046 decommission plan.
+
+## [1.342.6] - 2026-08-21
+
+### Added
+
+- **`test_hooks_integrity` now asserts every `doc_events` name is one Frappe dispatches
+  server-side.** The path checks passed for the dead `after_save` hooks (v1.341.1) because only
+  the event *name* was wrong; this allowlist test converts that invisible failure class into a
+  red build (`after_save` is a client-only form event and is deliberately excluded).
+
+### Fixed
+
+- **Global search under-returned for non-admins and issued a redundant query per row.**
+  `search_global_docs` applied `LIMIT 20` on `__global_search` *before* permission filtering, so
+  a user with access to only a few of the top 20 content matches saw fewer results than exist for
+  them; it also called `frappe.db.exists` per candidate even though the permitted set was already
+  built from `get_all(ignore_permissions=False)` (existing, readable names only). It now fetches a
+  wider candidate window, drops the redundant existence check, and caps the display at 20.
+
+- **`create_sales_invoice` picked the base fee line nondeterministically.** The Sales Order Item
+  lookup used `LIMIT 1` with no `ORDER BY`, so with multiple service lines the invoiced fee
+  item/rate was whichever row MariaDB returned first. Added `ORDER BY idx`.
+
+- **`create_composite_booking` logged errors with message and title swapped**, so the Error Log
+  title was the truncated exception text and the searchable message was the constant. Corrected
+  to `log_error(message, title)` with the full traceback.
+
+- **Stale `accounting_intake/review.py` docstrings** claimed the posting handler "lands in a
+  later PR"; it exists and `approve_document` enqueues it. Updated to say approval has posting
+  side effects (an enqueued draft-creating job).
+
+## [1.342.5] - 2026-08-21
+
+### Security
+
+- **`link_files_to_comment` let any user re-home any private File (IDOR).** The endpoint took a
+  client-supplied File name, parent doctype and parent name and repointed the File's
+  `attached_to_*` with no permission or ownership check — and Frappe derives a private file's
+  download access from its `attached_to` document, so a low-privilege user could repoint any
+  private File onto a doc they can read and download the bytes via `/private/files`, or detach a
+  File to hide it. It now requires **write** on the target document and only moves a File the
+  caller owns or that already belongs to that document (System Manager may move any).
+
+### Fixed
+
+- **Asset rental status was usually stale.** `custom_rental_status` was recomputed only on a
+  booking's own lifecycle hooks, so a booking made in advance never flipped the asset to Rented
+  when its window began, and the status persisted after it ended. A new hourly
+  `refresh_asset_statuses` recomputes status for assets whose booking window crossed a boundary
+  recently (`update_asset_status` is idempotent).
+
+- **Offline kiosk photos were only retried on an `online` event.** `flushPhotoQueue` was wired
+  solely to `window.'online'` and never called from `init`, so a technician who captured photos
+  in a dead zone, drove off, and reopened the app already online never drained the queue — the
+  captures were never registered and the Job Photo Compliance report under-counted. `init` now
+  flushes the queue when `navigator.onLine`.
+
+- **Barcode scanner reported phantom variances for items spread across bins.** `add_count`
+  compared a single bin's `counted_qty` against the WAREHOUSE on-hand, so an item in bins A(5)
+  and B(10) showed variance −10 after only A was scanned — and with the reason gate on, the clerk
+  was forced to invent a reason for a count that was correct so far; the session summary then
+  reported phantom variance for a perfectly counted warehouse. Variance is now computed at the
+  (item, warehouse) aggregate and stamped per group, the summary counts distinct groups, and the
+  reason requirement is enforced at finalize (where the group's count is complete) rather than
+  per scan.
+
+## [1.342.4] - 2026-08-21
+
+### Fixed
+
+- **Procurement feed: legacy Purchase Orders showed drafts as ordered and received orders as
+  0%.** Part 2 of the chain query (direct POs) matched `po_item.project` alone, so a PO whose
+  *header* names the project but whose item rows' project is blank — the documented legacy state
+  before `cascade_project_to_items` (which fills blanks on save only) — fell through to the
+  supplementary sweep, where `_minimal_item_row` reports every line as fully ordered / zero
+  received. Part 2's WHERE now uses the header∪item-row union
+  (`ifnull(nullif(po_item.project,''), po.project)`) the module declares mandatory, so these
+  orders get real chain rows through `_line_progress`, which honours docstatus and received qty.
+
+- **Procurement feed: Purchase Order cards double-counted split Material Request lines.** Each
+  chain row is grouped under every document in its chain, and a PO card summed the row's
+  `ordered_qty` / `received_qty` — which for an MR-linked row are the *Material Request line's*
+  totals across every PO it was split over. An MR line for 10 split PO-A=4 / PO-B=6 rolled both
+  cards up to 10, so summing reported 20 ordered against 10 asked. The per-PO figures
+  (`po_line_qty` / `po_line_received_qty`) are now carried on the row and used for the Purchase
+  Order card rollup. (Purchase Receipt / Invoice cards are left at MR grain for now — their
+  correct per-receipt share is not carried on the row, and the PO-line total would be a
+  different over-count there; a separate follow-up.)
+
+- **Purchase return left the order stage stuck at "Received".** `advance_on_receipt` refused to
+  walk a PO backwards out of `Received` (correct for a second forward receipt), but a Purchase
+  Return (`is_return=1`, negative qty) *lowers* `per_received` and should move the stage back.
+  Returns now recompute the stage from `per_received` like the receipt-cancel path.
+
+- **Supplier-group list filter corrupted every non-`=` operator.** The Supplier list rewrote any
+  `supplier_group` filter to `custom_supplier_groups_search LIKE %value%` regardless of operator,
+  so `!=` became a near-inverse `LIKE`, `in [A,B]` became the useless pattern `%A,B%`, and
+  `is set` searched for the literal "set" — and even the default `=` over-matched substring-related
+  groups ("Steel" matching "Stainless Steel") because it ignored the field's comma-padded
+  whole-token storage. It now maps `=`/`!=` to a padded `like`/`not like`, keeps an explicit
+  `like` bare, and leaves `in` / `not in` / `is` on the real `supplier_group` Link field.
+
+### Note
+
+- `tests/test_procurement_status.py` requires a real bench and was not run in this change; the
+  rollup edits reuse the existing `quantity_progress` / `rollup_quantity_progress` helpers.
+
+## [1.342.3] - 2026-08-21
+
+### Fixed
+
+- **Chat: inbound-message notifications reached nobody.** `notifications/fanout._members` and
+  `api/readstate._room_members` ANDed `membership_filter_sql` into their room-member queries on
+  the assumption that a background job's `Administrator` session makes the fragment `1 = 1` —
+  but since v1.284.0/v1.301.0 it returns `1 = 1` only under `allow_oversight=True`, and for
+  `Administrator` it becomes an EXISTS that matches no room. So when a coworker replied from the
+  native Google Chat client, the inbound-sync worker's fan-out resolved **zero** recipients: no
+  bell rows, no web push, no unread-counter events — the mirror's flagship case, failing
+  silently. Both are system-context roster reads (bounded by the room, `user` only); they no
+  longer apply the fragment and are registered in `test_chat_rawsql_guard.SYSTEM_CONTEXT_READS`.
+
+- **Chat: oversight reads corrupted the auditor's own session.** `retrieval/gate._acting_as`
+  called `frappe.set_user()` unconditionally, but the viewer's search/find/transcript endpoints
+  run it inside a **web request** — where `set_user` overwrites `session.sid` with the username
+  and wipes `session.data` (including `csrf_token`), and the `finally` restore sets the sid to
+  the previous *username* rather than the original hash, so the session is left broken and the
+  auditor's next POST fails as session-expired. It now switches user only in a background job
+  (no live web session) and only when actually changing user.
+
+- **Chat: subscription coverage drifted from access once the whitelist was switched off.**
+  `sync/subscriptions._roster` always returned `Chat Settings.allowed_users`, but
+  `is_user_allowed` returns True for everyone when `restrict_to_whitelist` is 0 (the intended
+  post-pilot state) — so a coworker not on the list would use chat while no Workspace Events
+  subscription was ever created for them and no `subscription-missing` alert fired. Unrestricted,
+  the roster now derives from the actual chat population (active `Chat Room Member` users).
+
+- **Chat: `search_transcripts` accepted an unclamped limit.** Its sibling `retrieve_transcript`
+  clamps to `MAX_TRANSCRIPT_PAGE`, but `search_transcripts` did not, so an oversight holder
+  could pass `limit=1_000_000` and dump an entire room verbatim under a single audit row and a
+  single unit of the hourly rate limit. It is now clamped the same way.
+
+- **Chat: dead push subscriptions accumulated forever.** `Chat Push Subscription.clear_old_logs`
+  deletes long-inactive rows, but nothing invoked it (the doctype was never registered with Log
+  Settings, and `chat/retention.py` manages only the two queue tables); the daily `prune_stale`
+  only *deactivated* rows. `prune_stale` now also calls `clear_old_logs`, keeping the table
+  bounded (each dead row costs one HTTPS request per notification) without adding a Single field.
+
+## [1.342.2] - 2026-08-21
+
+### Fixed
+
+- **Accounting-intake posting retries always no-oped, stranding Failed documents.** When
+  `post_document` failed it set the Document Intake status to `Failed`, but its own first guard
+  was `if doc.status != "Approved" or doc.created_docname: return` — so every re-enqueue from
+  `retry_failed_intakes` silently returned, and the retry marked the log row `Skipped`, making
+  the permanent failure look handled. The guard now also accepts `Failed` (with no
+  `created_docname`), so a retry after the underlying problem is fixed actually re-runs.
+
+- **The intake retry cap never bound.** `retry_failed_intakes` filtered log rows on
+  `attempts < 3`, but every failure wrote a *fresh* log row with the default `attempts = 1`, so
+  the cap was always satisfied and a permanently-failing extraction/post was re-enqueued every
+  day forever (burning a Document AI call each time). The cap is now read from the Document
+  Intake's own `attempts`, which `run_extraction` and `post_document` both increment.
+
+- **Double-approve could create orphan draft records.** `approve_document` had no status guard
+  and `post_document`'s idempotency was check-then-act with no lock, so a double-click (or a
+  retry racing the original) queued two jobs that both passed the guard — a concurrent worker's
+  uncommitted `Posting` write is invisible under REPEATABLE READ — and posted two draft Purchase
+  Invoices. `post_document` now runs under a `filelock` on the docname with a `for_update`
+  eligibility read and commits the terminal state inside the lock; `approve_document` refuses an
+  already-approved/posted document.
+
+## [1.342.1] - 2026-08-21
+
+### Fixed
+
+- **QBO error paths committed partial writes, double-creating transactions.** `safe_upsert`
+  caught every exception from `upsert_entity` without rolling back — but `upsert_entity`
+  inserts the doc *then* saves the mapping, so if `save_mapping` raised, the inserted document
+  was left in the open transaction and persisted by the next batch commit **with no Sync
+  Mapping row**. The retry path then re-created it (transactions are never fuzzy-matched), a
+  silent duplicate Invoice/Payment Entry. `safe_upsert` and the webhook `sync_entity` path now
+  bracket each record in a `frappe.db.savepoint` and roll back to it on failure, so a failed
+  record leaves nothing behind while the rest of the committed batch is untouched.
+
+- **CDC skipped records changed during the run.** `run_cdc` called `client.cdc()` at the start
+  but advanced `last_cdc_sync` to `now_datetime()` evaluated at the *end*. A record modified in
+  QBO between the request and completion (a wide catch-up poll can take minutes) fell into
+  neither window and never synced. The cursor is now captured just before the CDC request
+  (minus a two-minute skew margin); the small re-fetch overlap is harmless (upserts are
+  idempotent by mapping name).
+
+- **QBO write-back had no idempotency; a lost response duplicated the Bill.** `push_to_qbo`
+  seeded the loop-guard mapping only *after* a successful POST, and QBO's create API has no
+  idempotency key — so a POST that succeeded at Intuit but whose response was lost (timeout,
+  proxy 502) left nothing recorded, and a re-click created a second Bill/Payment (which CDC
+  then re-imported as a third, ERPNext-side duplicate). It now queries QBO for a transaction
+  this record already created (matched on the `PrivateNote` carrying the docname, scoped to the
+  txn date) and adopts it instead of creating. Best-effort: a query failure degrades to a
+  normal create.
+
+- **`finalize_payment` could post two Payment Entries.** Stripe delivers both
+  `checkout.session.completed` and `payment_intent.succeeded` for one card payment (plus the
+  hourly poll), each a separate job; the check-then-act dedup missed a concurrent worker's
+  uncommitted Payment Entry under REPEATABLE READ, so two submitted Receive Payment Entries
+  could allocate against the same invoice. It now serializes on a `filelock` (like
+  `process_payout`), reads with `for_update`, and commits inside the lock so the entry is
+  visible to the next holder.
+
+- **Vendor-bill posting created duplicate full-quantity draft Purchase Receipts.**
+  `post_vendor_bill` called `_make_purchase_receipt` whenever the matched PO had stock items,
+  with no check for an existing draft PR — and a draft PR does not update the PO's
+  `received_qty`, so a second bill against the same PO (split shipments are routine) mapped the
+  full remaining quantity again; submitting both received the stock twice. It now skips
+  creation when a draft PR already exists for the PO and records the created PR on the intake.
+
+## [1.342.0] - 2026-08-21
+
+### Added
+
+- **Deploy-durability sweepers for work that a prod-deploy `FLUSHDB` can destroy.** The prod
+  deploy flushes the queue redis, silently killing any job enqueued but not yet run. Several
+  fire-and-forget paths had no backstop:
+  - `stripe_payments.core.tasks.sweep_missed_autopay` (hourly) re-charges autopay-enrolled
+    customers' submitted, outstanding invoices that produced no Stripe Payment at all —
+    neither `poll_pending` nor the dunning cycle covered that case.
+  - `google_drive.drive_utils.resweep_missing_drive_folders` (daily) re-enqueues folder
+    provisioning for Customers/Opportunities left with an empty `custom_drive_folder_id` — the
+    confirmed cause of the historical "batch of Drive folders never created" incident, which
+    `retry_failed_syncs` (Failed log rows only) never caught.
+  - `kpi_dashboards.snapshots.verify_daily_snapshots` (09:00) re-drives the nightly KPI batch
+    if a department is missing today's snapshot — a batch lost to a deploy left a *permanent*
+    hole in the trend data with no other generation path.
+
+### Fixed
+
+- **Autopay charge could be lost or fail spuriously.** `auto_charge_on_invoice_submit` enqueued
+  `charge_saved_method` without `enqueue_after_commit=True`, so a worker could pick the job
+  mid-submit, read the invoice at docstatus 0 and throw "Only a submitted Sales Invoice can be
+  paid" — dying with no Stripe Payment row and no retry — and a rolled-back submit still
+  charged. It now enqueues after commit; `sweep_missed_autopay` (above) backstops a deploy-lost
+  job.
+
+- **Stuck-`Pending` Stripe Events were never re-driven.** `retry_failed` only re-ran
+  `process_status = "Error"` events, so a `Pending` event whose enqueued `process_event` job was
+  flushed by a deploy was lost — `charge.refunded` never posted, a setup-mode
+  `checkout.session.completed` never stored the card (autopay never activated), `payout.failed`
+  never alerted. It now also picks up `Pending` events older than the grace window
+  (`process_event` is idempotent).
+
+## [1.341.3] - 2026-08-21
+
+### Fixed
+
+- **Maintenance on-submit automation was neither re-drivable nor idempotent.**
+  `Sapphire Maintenance Record.on_submit` enqueues `process_maintenance_submission`, but a
+  prod deploy FLUSHDBs the queue redis and destroys queued jobs — so a record submitted just
+  before a deploy silently got no Stock Entry / Timesheet / Warranty Claim / Sales Invoice,
+  and the only trace was the *absence* of a success comment. Worse, a manual re-enqueue
+  duplicated everything, because no step checked for prior output. Three changes:
+  - **Idempotency guards.** `create_stock_entry` skips when a non-cancelled Stock Entry
+    already carries this record in its `remarks`; `create_sales_invoice` skips when a Sales
+    Invoice already links via `custom_maintenance_record`; `check_warranty_and_rma` returns
+    early when `warranty_rma_flag` is already set; `create_timesheet` already dedups on an
+    overlapping time log (v1.341.2). So a re-run creates nothing twice.
+  - **Per-step savepoints.** Each step now runs inside a `frappe.db.savepoint`, rolled back on
+    failure — a step that dies mid-way (e.g. Stock Entry inserted, then `submit()` raises on
+    insufficient stock) no longer commits an orphan draft.
+  - **Hourly re-drive sweeper.** `resweep_stalled_maintenance_submissions` finds submitted
+    records from the last few days with no processing comment and re-enqueues them — the same
+    FLUSHDB durability story as `product_feedback.sweep_stalled_breakdowns`.
+
+- **Labelled visit drafts suppressed the regular scheduled visit.** In
+  `generate_predictive_maintenance_records`, the Per-Site-Visit dedupe correctly excluded
+  labelled drafts, but the Per-Feature dedupe and the legacy Sales Order fallback filtered
+  only on project + serial + `docstatus 0`, so an open "Chemistry Follow-Up" or "Do Visit
+  Today" draft blocked the feature's regular cadence visit — contradicting the README's promise
+  that the originally scheduled visit still fires on its own date. Both filters now require
+  `visit_label` "is not set".
+
+## [1.341.2] - 2026-08-21
+
+### Fixed
+
+- **Paused time was billed on every kiosk/maintenance Timesheet.** Both writers
+  (`api/time_kiosk.sync_interval_to_timesheet`, `api/maintenance_workflow.create_timesheet`)
+  computed `hours = span − pause` but passed `from_time`/`to_time` on the time log — and
+  ERPNext v16's `TimesheetDetail.calculate_hours` unconditionally overwrites
+  `hours = time_diff_in_hours(to_time, from_time)` on every save, discarding the pause
+  subtraction. An 8-hour day with a 1-hour lunch was stored (and costed/billed) as 8 hours.
+  Both now compress the logged window to the billable duration (`to_time = from_time +
+  billable_seconds`); the real clock-out remains on the Job Interval / record. This also
+  repairs the kiosk sync's idempotency check, which compared stored hours (full span) against
+  the pause-adjusted value and so never matched, appending a duplicate time log on re-sync.
+
+- **The same labour landed in two Timesheets, so maintenance job-costing failed on every
+  kiosk-clocked visit.** The kiosk logs the technician's time into a Draft Timesheet at
+  clock-out; the Maintenance Record submit then created and *submitted* a second Timesheet from
+  the same clock window (autofilled from that same Job Interval). ERPNext v16
+  `Timesheet.validate_overlap` threw `OverlapError` on the second insert, failing the "Job
+  Costing (Timesheet)" step and leaving `total_labor_cost` unwritten — or, with the Projects
+  Settings ignore flags on, double-counting the hours. `create_timesheet` now detects an
+  overlapping time log for the employee and, if found, reuses its costing instead of creating a
+  duplicate.
+
+- **Double clock-in race.** `api/time_kiosk.log_time` action "Start" did a check-then-insert
+  (`db.exists` → `insert`) with no lock, so two devices (or a retried request racing its
+  original) could both pass the check and open two Job Intervals for one employee, after which
+  Pause/Stop acted on an arbitrary one and the day's hours were corrupted. It now locks the
+  Employee row (`for_update`) and re-reads the interval state as a current read before
+  inserting, serializing concurrent Starts per employee.
+
+## [1.341.1] - 2026-08-21
+
+### Fixed
+
+- **Three document hooks were wired to `after_save`, which Frappe never dispatches
+  server-side.** `doc_events` only fire when `run_method(<name>)` is called, and
+  `run_post_save_methods` runs `on_update` / `on_submit` / `on_change` — never `after_save`
+  (that name exists only as a *client-side* form event). So every hook registered under it
+  was silently inert from the day it was written.
+
+  - **Opportunity→Project attachment sync never ran.** `sync_attachments_from_opportunity`
+    (Project `after_save`) is what copies an Opportunity's (and its parent Lead's) files onto
+    the Project on conversion — `crm_enhancements` sets `custom_opportunity` and relies on it.
+    It has been moved to Project `on_update`, which fires on the conversion insert *and* on
+    later saves; its existing `file_name` idempotency guard keeps the repeats safe. Projects
+    converted before this shipped can be re-synced by re-saving them.
+  - **The accounting-intake email channel ingested nothing.** `email_from_communication` was
+    on Communication `after_insert`, but Frappe's inbound-mail pipeline inserts the
+    Communication *before* it creates the attachment File docs (then re-saves), so the
+    attachment query was always empty for a freshly received email — dead since v1.59.0. It
+    now runs on `on_update` with a per-file guard (and `ingest_document`'s content-hash dedup
+    as backstop), so a vendor emailing a bill PDF to the intake account actually creates a
+    Document Intake row.
+
+- **The global Triton change-webhook (`utils/triton_sync.global_triton_sync`, the wildcard
+  `"*"` `after_save` hook) has been removed.** Besides the dead event name, it could never
+  have worked: Triton's `/frappe-webhook` requires a `Bearer` gateway secret (this sender sent
+  no auth header → 401) and ingests the document into a specific Triton `user_id`'s private RAG
+  corpus (this sender hard-coded `user_id: 1`). Triton keeps its index fresh via its own sync
+  engine, so nothing depended on the push. Removing it also closes the latent queue-starvation
+  risk from its no-timeout `enqueue('requests.post', …)`. The module is left as a documented
+  tombstone describing what a real push-sync would need (auth header, per-user corpus mapping,
+  HTTP timeout, `enqueue_after_commit`). The patch docstrings that reasoned about "firing the
+  global Triton after_save 142 times" were costing zero all along.
+
+## [1.341.0] - 2026-08-21
+
+### Security
+
+- **The two Purchase Order submit gates (WI-013 threshold, WI-066 separation of duties) were
+  bypassable via "Update Items".** Both were wired only on `before_submit`. ERPNext's whitelisted
+  `update_child_qty_rate` — the desk **Update Items** button — edits qty/rate/rows on a *submitted*
+  PO, recalculates `grand_total` and calls `parent.save()`, an update-after-submit that never
+  re-runs `before_submit`. So anyone with write access could submit a PO at $400 (under the $500
+  threshold) and then inflate it to any amount with no approval, and `custom_approved_by` still
+  named the original submitter as having cleared the gate. Both native backstops
+  (`Authorization Rule`, `Budget`) are inert on this site (0 rows each), so nothing caught it.
+
+  Both gates now also run on **`before_update_after_submit`** (`po_approval.enforce_threshold_after_submit`
+  + `po_segregation.enforce_requester_separation`): a non-approver can no longer leave a PO over the
+  threshold via any post-submit edit, and the requester cannot alter the money on an order that
+  fills their own Material Request. New rows added via Update Items cannot carry a
+  `material_request` link, so the SoD re-check bites only edits to existing MR-linked rows — the
+  threshold half is the material control. `po_order_stage` writes with
+  `db.set_value(update_modified=False)`, not a full save, so ordinary stage transitions do not reach
+  the new gate.
+
+- **The procurement feed endpoints returned any job's full supplier/PO/invoice chain to any
+  authenticated user.** `get_procurement_status`, `get_procurement_documents`
+  (`project_enhancements`) and `get_receivable_purchase_orders` (`procurement_project`) were
+  login-only whitelists with no permission check, so any account — Website/portal users included —
+  could read a project's suppliers, quantities, PO totals and invoices by enumerating the sequential
+  `PRJ-xxxxx` names. All three now gate on **Project read** (`require_project_read`), matching the
+  sibling `pickup_routing` endpoints and consistent with the `project_procurement_status` MCP tool's
+  existing `require_doc_read`.
+
+- **`save_item_link` / `get_item_links` (`api/procurement`) let any authenticated user write an
+  arbitrary `purchase_url` onto any Item.** The write used `ignore_permissions=True` with no gate, so
+  a low-privilege user could plant a link that buyers later click from the Purchase Order screen.
+  Both endpoints now require a purchasing/Item-management role (`_require_purchasing_access`), keeping
+  the "a buyer without full Item write can still record a URL" intent while closing the open write.
+
+### Fixed
+
+- **PO approval threshold compared the wrong currency.** `enforce_threshold` compared the PO's
+  transaction-currency `grand_total` against the company-currency threshold, so a foreign-currency
+  PO was gated against the wrong number. It now compares `base_grand_total` (company currency) and
+  names the company currency in the message. Shared by the new after-submit gate.
+
 ## [1.340.3] - 2026-08-20
 
 ### Fixed

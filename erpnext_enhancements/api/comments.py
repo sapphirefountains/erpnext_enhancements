@@ -170,9 +170,28 @@ def link_files_to_comment(file_ids, comment_id, parent_doctype, parent_name):
 	if isinstance(file_ids, str):
 		file_ids = json.loads(file_ids)
 
+	# Authorization. Without it this endpoint is an IDOR: Frappe derives a private file's
+	# download access from its attached_to document, so repointing any File's attached_to at a
+	# doc the caller can read (e.g. their own ToDo) discloses the bytes via /private/files, and
+	# detaching a File hides an attachment from a document the caller cannot write. Require write
+	# on the TARGET document, and only move a File the caller owns or that already belongs to
+	# that document (a System Manager may move any).
+	if not frappe.has_permission(parent_doctype, "write", doc=parent_name):
+		frappe.throw(
+			_("Not permitted to attach files to {0} {1}.").format(parent_doctype, parent_name),
+			frappe.PermissionError,
+		)
+	is_system_manager = "System Manager" in frappe.get_roles()
+
 	for file_id in file_ids:
 		try:
 			file_doc = frappe.get_doc("File", file_id)
+			already_here = (
+				file_doc.attached_to_doctype == parent_doctype and file_doc.attached_to_name == parent_name
+			)
+			if not (already_here or is_system_manager or file_doc.owner == frappe.session.user):
+				# Not the caller's file and not already on this document — refuse to move it.
+				continue
 			file_doc.attached_to_name = parent_name
 			file_doc.attached_to_doctype = parent_doctype
 			# Link the comment

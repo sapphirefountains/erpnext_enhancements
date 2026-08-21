@@ -103,6 +103,9 @@ def create_composite_booking(asset, rental_start, rental_end, location=None):
 
     except Exception as e:
         frappe.db.rollback()
-        frappe.log_error("Composite Booking Failed", str(e))
+        # log_error(message, title): the constant is the title (searchable in the Error Log
+        # list), the traceback is the message. These were inverted, so the log title was the
+        # truncated exception text and the message was the constant.
+        frappe.log_error(frappe.get_traceback(), "Composite Booking Failed")
         # Re-raise to ensure the client gets the error and transaction is aborted
         raise e

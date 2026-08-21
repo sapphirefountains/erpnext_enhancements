@@ -641,3 +641,56 @@ def provision_opportunity_folder(opportunity):
 			f"Opportunity Drive folder failed for {opportunity}\n{frappe.get_traceback()}",
 			"Opportunity Drive Folder",
 		)
+
+
+def resweep_missing_drive_folders():
+	"""Daily: re-enqueue Drive-folder provisioning for Customers/Opportunities that never
+	got a folder.
+
+	``enqueue_customer_folder`` / ``enqueue_opportunity_folder`` fire ``after_commit``, but a
+	prod deploy still FLUSHDBs the queue redis between commit and execution and destroys the
+	queued job — the confirmed cause of the historical "batch of Drive folders never created"
+	incident. A job lost that way writes no Drive Sync Log row, so ``retry_failed_syncs`` never
+	sees it, and ``reconcile_drive_links`` only detects folders that existed and were deleted.
+	Both provisioners are find-or-create, so re-enqueuing is idempotent.
+	"""
+	try:
+		settings = frappe.get_cached_doc("Project Folder Google Drive Settings")
+	except Exception:
+		return
+	if not (settings.get("service_account_json") and settings.get("shared_drive_id")):
+		return
+
+	if cint(settings.get("create_customer_folders")) and frappe.db.has_column(
+		"Customer", "custom_drive_folder_id"
+	):
+		for name in frappe.get_all(
+			"Customer",
+			filters={"custom_drive_folder_id": ["in", ["", None]]},
+			pluck="name",
+			limit_page_length=100,
+		):
+			frappe.enqueue(
+				"erpnext_enhancements.google_drive.drive_utils.provision_customer_folder",
+				queue="long",
+				customer=name,
+			)
+
+	if cint(settings.get("create_opportunity_folders")) and frappe.db.has_column(
+		"Opportunity", "custom_drive_folder_id"
+	):
+		for name in frappe.get_all(
+			"Opportunity",
+			filters={
+				"custom_drive_folder_id": ["in", ["", None]],
+				"opportunity_from": "Customer",
+				"party_name": ["is", "set"],
+			},
+			pluck="name",
+			limit_page_length=100,
+		):
+			frappe.enqueue(
+				"erpnext_enhancements.google_drive.drive_utils.provision_opportunity_folder",
+				queue="long",
+				opportunity=name,
+			)

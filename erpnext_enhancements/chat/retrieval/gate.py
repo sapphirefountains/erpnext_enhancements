@@ -1081,7 +1081,12 @@ def search_transcripts(
 			"refused rather than trimmed."
 		)
 
-	shares = _per_room_limits(named, max(cint(limit) or MAX_TRANSCRIPT_PAGE, 1))
+	# Clamp the per-call limit to MAX_TRANSCRIPT_PAGE, exactly as retrieve_transcript does.
+	# Without a ceiling an oversight holder could pass limit=1_000_000 and dump an entire
+	# room verbatim under a single audit row and a single unit of the hourly rate limit —
+	# defeating the bounded, per-page-audited design on the one endpoint that returns bodies.
+	per_call_limit = min(max(cint(limit) or MAX_TRANSCRIPT_PAGE, 1), MAX_TRANSCRIPT_PAGE)
+	shares = _per_room_limits(named, per_call_limit)
 	expression = lexical.build_boolean_query(query)
 
 	with _acting_as(acting):
@@ -1835,14 +1840,27 @@ class _acting_as:
 	def __init__(self, user: str) -> None:
 		self._user = user
 		self._previous: str | None = None
+		self._switched = False
 
 	def __enter__(self) -> str:
 		self._previous = frappe.session.user
-		frappe.set_user(self._user)
+		# NEVER call frappe.set_user() inside a web request. On a web request it overwrites
+		# session.sid with the username and replaces session.data (wiping csrf_token); the
+		# __exit__ restore sets sid back to the previous *username*, not the original sid hash,
+		# so the real session is left corrupted and the auditor's next POST fails, intermittently
+		# and un-debuggably, as session-expired / CSRF (see MEMORY frappe-reserved-request-params).
+		# It is only needed in a background job, where the session user is Administrator and there
+		# is no live web session to corrupt. In a web request the acting user IS the logged-in
+		# auditor, so the session already scopes correctly and the explicit user args carry the
+		# scope regardless. Guard on both: skip when already the acting user, and never switch
+		# under a request.
+		if self._user != self._previous and not getattr(frappe.local, "request", None):
+			frappe.set_user(self._user)
+			self._switched = True
 		return self._user
 
 	def __exit__(self, *_exc: object) -> None:
-		if self._previous:
+		if self._switched and self._previous:
 			frappe.set_user(self._previous)
 
 
