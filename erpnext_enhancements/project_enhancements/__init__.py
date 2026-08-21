@@ -213,9 +213,16 @@ def get_procurement_status(project_name):
                    before cascade_project_to_items, which fills blanks on save only) otherwise
                    never reached this chain query and fell through to the supplementary sweep,
                    where _minimal_item_row reports its full qty as ordered and 0 received —
-                   drafts counted as ordered, received orders shown 0%. Routing them here gives
+                   drafts counted as ordered, received orders shown 0%%. Routing them here gives
                    them a real chain row through _line_progress, which honours docstatus and
-                   received_qty. */
+                   received_qty.
+
+                   The doubled percent sign above is not a typo. This comment travels inside
+                   a string MySQLdb binds with Python's own percent operator, so a single
+                   percent here is read as a conversion specifier: it raised "not enough
+                   arguments for format string" and took the whole procurement panel down for
+                   v1.342.4. Prose in a parameterised query must double every percent;
+                   tests/test_sql_percent_escaping.py fences it. */
                 ifnull(nullif(po_item.project, ''), po.project) = %(project)s
                 AND (po_item.material_request_item IS NULL OR po_item.material_request_item = '')
                 AND po.docstatus < 2

@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.344.3] - 2026-08-21
+
+### Fixed
+
+- **Project procurement panel: `ProgrammingError: not enough arguments for format string`.**
+  `get_procurement_documents` / `get_procurement_status` raised on **every** project, for every
+  user, from the moment v1.342.4 deployed — the Procurement tab on a Project form was completely
+  dead. The cause was one sentence of *prose*: the v1.342.4 `/* ... */` comment explaining the
+  legacy-PO project union contained the characters `0%.`, and that comment lives inside the query
+  string handed to `frappe.db.sql` **with values**. Values mean MySQLdb mogrifies, and mogrifying
+  is literally `query % args`, so `%.` is not a comment to Python — it is a conversion specifier.
+  The bind failed before MariaDB was ever contacted. Doubled the percent (`0%%`), which mogrifies
+  back to the `0%` the sentence meant.
+
+  Worth writing down, because the shape generalises past this one line: **the query is valid SQL
+  and the comment is a valid SQL comment.** Paste it into a MariaDB client and it runs. The
+  failure lives one layer below where anyone reviewing a query is looking, and the trigger is
+  *writing a comment* — the edit everybody makes freely and nobody tests. And raising is the
+  lucky outcome: which failure you get depends on the character that happens to follow the
+  percent. `/* 0% received */` does **not** raise — `% r` is a valid `repr` conversion, so Python
+  substitutes the repr of the entire argument dict into the middle of the SQL and the query runs.
+  A stray percent is a coin flip between a loud crash and a silently rewritten query.
+
+### Added
+
+- **`tests/test_sql_percent_escaping.py`** (bench-free, new `ci.yml` step). Walks every module in
+  the app with `ast` and fails on any `%` that is not `%(name)s`, `%s`/`%d` or `%%` inside a
+  string literal that carries a named placeholder — the binding style every raw query here uses.
+  Positional-only strings are deliberately skipped (`"%s declares module %r"` in an assertion
+  message is ordinary Python formatting and would drown the signal). The suite also re-binds
+  `get_procurement_status`'s real query, un-escapes one percent to reproduce the exact production
+  `TypeError`, and pins the silent-corruption variant, so a green run means the detector still
+  fires rather than merely that nothing matched.
+
 ## [1.344.2] - 2026-08-21
 
 ### Fixed
