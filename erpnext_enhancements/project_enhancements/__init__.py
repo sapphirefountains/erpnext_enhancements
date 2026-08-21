@@ -207,7 +207,16 @@ def get_procurement_status(project_name):
             LEFT JOIN
                 `tabPurchase Invoice` pi ON pi.name = pi_item.parent
             WHERE
-                po_item.project = %(project)s
+                /* Union of the item-row project and the header project, the rule
+                   procurement_project.py declares mandatory: a PO whose HEADER names the
+                   project but whose item rows' project is blank (the documented legacy state
+                   before cascade_project_to_items, which fills blanks on save only) otherwise
+                   never reached this chain query and fell through to the supplementary sweep,
+                   where _minimal_item_row reports its full qty as ordered and 0 received —
+                   drafts counted as ordered, received orders shown 0%. Routing them here gives
+                   them a real chain row through _line_progress, which honours docstatus and
+                   received_qty. */
+                ifnull(nullif(po_item.project, ''), po.project) = %(project)s
                 AND (po_item.material_request_item IS NULL OR po_item.material_request_item = '')
                 AND po.docstatus < 2
         ) as combined_results
@@ -287,6 +296,13 @@ def get_procurement_status(project_name):
 			"warehouse": row.get("warehouse"),
 			"uom": row.get("line_uom"),
 			"stock_uom": row.get("line_stock_uom"),
+			# This ORDER's own share of the line, kept for the Purchase Order document rollup.
+			# For an MR-linked row the progress fields below are Material Request grain (the
+			# line's totals across every PO it was split over), so summing them per PO double-
+			# counts; _document_rollup swaps in these per-PO figures on a Purchase Order card.
+			"po_line_qty": row.get("po_line_qty"),
+			"po_line_received_qty": row.get("po_line_received_qty"),
+			"po_docstatus": row.get("po_docstatus"),
 		}
 		# requested_qty / ordered_qty / received_qty / order_status / receive_status /
 		# completion_percentage, all computed from THIS line's own quantities. The
@@ -478,7 +494,7 @@ def _supplementary_documents(project_name, doctype, existing_names):
 	return result
 
 
-def _document_rollup(items):
+def _document_rollup(items, doctype=None):
 	"""Requested / ordered / received totalled across one document's item rows.
 
 	**De-duplicates before summing, and that is the whole reason this is a function.**
@@ -488,10 +504,42 @@ def _document_rollup(items):
 	``sum(row["ordered_qty"] for row in items)`` nearly doubles the total. Keying on the
 	child row name collapses the duplicates; rows with no child row of their own (the
 	supplementary sweep builds those) are distinct objects and count once each.
+
+	On a **Purchase Order** card the per-line progress is the wrong grain for MR-linked rows:
+	those ``ordered_qty`` / ``received_qty`` values are the *Material Request line's* totals
+	across every PO it was split over, so an MR line for 10 split PO-A=4 / PO-B=6 rolls each PO
+	card up to 10 and summing the cards reports 20 ordered against 10 asked. For a PO card the
+	row's own ``po_line_qty`` / ``po_line_received_qty`` are this order's real share, so they
+	are recomputed into per-order progress before the sum. (Purchase Receipt / Invoice cards are
+	left at MR grain: their correct per-receipt share is not carried on the row, and the PO-line
+	total would be a *different* over-count there — a separate fix.)
 	"""
-	return procurement_quantities.rollup_quantity_progress(
-		procurement_quantities.dedupe_lines(items)
+	rows = procurement_quantities.dedupe_lines(items)
+	if doctype == "Purchase Order":
+		rows = [_po_grain_row(r) for r in rows]
+	return procurement_quantities.rollup_quantity_progress(rows)
+
+
+def _po_grain_row(row):
+	"""A copy of one feed row whose progress reflects THIS Purchase Order's own share.
+
+	Only MR-linked rows are rewritten (they carry the wrong-grain MR-line totals); a direct-PO
+	row already carries per-order figures from :func:`_line_progress`. Reuses
+	``quantity_progress`` so the derived status/percent fields stay consistent with the rest.
+	"""
+	if not row.get("mr_item") or row.get("po_line_qty") is None:
+		return row
+	submitted = row.get("po_docstatus") == 1
+	po_qty = row.get("po_line_qty")
+	progress = procurement_quantities.quantity_progress(
+		requested=po_qty,
+		ordered=po_qty if submitted else 0,
+		received=row.get("po_line_received_qty"),
+		draft_ordered=0 if submitted else po_qty,
 	)
+	adjusted = dict(row)
+	adjusted.update(progress)
+	return adjusted
 
 
 def _fetch_doc_meta(doctype, names):
@@ -580,7 +628,7 @@ def get_procurement_documents(project_name):
 					# Totals across this document's lines, computed here rather than in
 					# the browser so the MCP tool gets them too and so the de-duplication
 					# happens where the child row names are known.
-					"rollup": _document_rollup(items),
+					"rollup": _document_rollup(items, dt),
 				}
 			)
 		# Newest documents first.

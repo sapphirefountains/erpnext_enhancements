@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.342.4] - 2026-08-21
+
+### Fixed
+
+- **Procurement feed: legacy Purchase Orders showed drafts as ordered and received orders as
+  0%.** Part 2 of the chain query (direct POs) matched `po_item.project` alone, so a PO whose
+  *header* names the project but whose item rows' project is blank — the documented legacy state
+  before `cascade_project_to_items` (which fills blanks on save only) — fell through to the
+  supplementary sweep, where `_minimal_item_row` reports every line as fully ordered / zero
+  received. Part 2's WHERE now uses the header∪item-row union
+  (`ifnull(nullif(po_item.project,''), po.project)`) the module declares mandatory, so these
+  orders get real chain rows through `_line_progress`, which honours docstatus and received qty.
+
+- **Procurement feed: Purchase Order cards double-counted split Material Request lines.** Each
+  chain row is grouped under every document in its chain, and a PO card summed the row's
+  `ordered_qty` / `received_qty` — which for an MR-linked row are the *Material Request line's*
+  totals across every PO it was split over. An MR line for 10 split PO-A=4 / PO-B=6 rolled both
+  cards up to 10, so summing reported 20 ordered against 10 asked. The per-PO figures
+  (`po_line_qty` / `po_line_received_qty`) are now carried on the row and used for the Purchase
+  Order card rollup. (Purchase Receipt / Invoice cards are left at MR grain for now — their
+  correct per-receipt share is not carried on the row, and the PO-line total would be a
+  different over-count there; a separate follow-up.)
+
+- **Purchase return left the order stage stuck at "Received".** `advance_on_receipt` refused to
+  walk a PO backwards out of `Received` (correct for a second forward receipt), but a Purchase
+  Return (`is_return=1`, negative qty) *lowers* `per_received` and should move the stage back.
+  Returns now recompute the stage from `per_received` like the receipt-cancel path.
+
+- **Supplier-group list filter corrupted every non-`=` operator.** The Supplier list rewrote any
+  `supplier_group` filter to `custom_supplier_groups_search LIKE %value%` regardless of operator,
+  so `!=` became a near-inverse `LIKE`, `in [A,B]` became the useless pattern `%A,B%`, and
+  `is set` searched for the literal "set" — and even the default `=` over-matched substring-related
+  groups ("Steel" matching "Stainless Steel") because it ignored the field's comma-padded
+  whole-token storage. It now maps `=`/`!=` to a padded `like`/`not like`, keeps an explicit
+  `like` bare, and leaves `in` / `not in` / `is` on the real `supplier_group` Link field.
+
+### Note
+
+- `tests/test_procurement_status.py` requires a real bench and was not run in this change; the
+  rollup edits reuse the existing `quantity_progress` / `rollup_quantity_progress` helpers.
+
 ## [1.342.3] - 2026-08-21
 
 ### Fixed
