@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.341.2] - 2026-08-21
+
+### Fixed
+
+- **Paused time was billed on every kiosk/maintenance Timesheet.** Both writers
+  (`api/time_kiosk.sync_interval_to_timesheet`, `api/maintenance_workflow.create_timesheet`)
+  computed `hours = span − pause` but passed `from_time`/`to_time` on the time log — and
+  ERPNext v16's `TimesheetDetail.calculate_hours` unconditionally overwrites
+  `hours = time_diff_in_hours(to_time, from_time)` on every save, discarding the pause
+  subtraction. An 8-hour day with a 1-hour lunch was stored (and costed/billed) as 8 hours.
+  Both now compress the logged window to the billable duration (`to_time = from_time +
+  billable_seconds`); the real clock-out remains on the Job Interval / record. This also
+  repairs the kiosk sync's idempotency check, which compared stored hours (full span) against
+  the pause-adjusted value and so never matched, appending a duplicate time log on re-sync.
+
+- **The same labour landed in two Timesheets, so maintenance job-costing failed on every
+  kiosk-clocked visit.** The kiosk logs the technician's time into a Draft Timesheet at
+  clock-out; the Maintenance Record submit then created and *submitted* a second Timesheet from
+  the same clock window (autofilled from that same Job Interval). ERPNext v16
+  `Timesheet.validate_overlap` threw `OverlapError` on the second insert, failing the "Job
+  Costing (Timesheet)" step and leaving `total_labor_cost` unwritten — or, with the Projects
+  Settings ignore flags on, double-counting the hours. `create_timesheet` now detects an
+  overlapping time log for the employee and, if found, reuses its costing instead of creating a
+  duplicate.
+
+- **Double clock-in race.** `api/time_kiosk.log_time` action "Start" did a check-then-insert
+  (`db.exists` → `insert`) with no lock, so two devices (or a retried request racing its
+  original) could both pass the check and open two Job Intervals for one employee, after which
+  Pause/Stop acted on an arbitrary one and the day's hours were corrupted. It now locks the
+  Employee row (`for_update`) and re-reads the interval state as a current read before
+  inserting, serializing concurrent Starts per employee.
+
 ## [1.341.1] - 2026-08-21
 
 ### Fixed

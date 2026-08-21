@@ -23,6 +23,8 @@ external services. No item codes are hardcoded — items come from document
 links and Settings only.
 """
 
+from datetime import timedelta
+
 import frappe
 from frappe import _
 from frappe.utils import flt, get_datetime, nowdate
@@ -199,12 +201,17 @@ def create_timesheet(doc):
     # Calculate Duration manually using datetime objects
     start_time = get_datetime(doc.clock_in_time)
     end_time = get_datetime(doc.clock_out_time)
-    total_seconds = (end_time - start_time).total_seconds()
-    work_seconds = total_seconds - flt(doc.paused_duration)
-    hours = work_seconds / 3600.0
+    # Bill the worked time, not the pause. ERPNext v16 recomputes Timesheet Detail hours
+    # from (to_time - from_time) on save, so subtracting the pause from `hours` alone is
+    # discarded — instead compress the logged window to the billable duration (same fix as
+    # api/time_kiosk.sync_interval_to_timesheet).
+    billable_seconds = max((end_time - start_time).total_seconds() - flt(doc.paused_duration), 0.0)
+    hours = billable_seconds / 3600.0
 
     if hours <= 0:
         return
+
+    billable_end = start_time + timedelta(seconds=billable_seconds)
 
     # Find Employee
     employee = frappe.db.get_value("Employee", {"user_id": doc.technician}, "name")
@@ -216,11 +223,41 @@ def create_timesheet(doc):
             doc.add_comment("Comment", _("Could not find Employee for technician {0}. Timesheet not created.").format(doc.technician))
             return
 
+    # The kiosk already logs this technician's clocked time into a Draft Timesheet on
+    # clock-out (api/time_kiosk.sync_interval_to_timesheet), and clock_in/out here were
+    # autofilled from that same Job Interval. A second Timesheet for the same window would
+    # throw OverlapError on submit (v16 Timesheet.validate_overlap), failing this whole
+    # step and leaving total_labor_cost unwritten — or, with the Projects Settings ignore
+    # flags on, double-count the hours. If an overlapping time log already exists for this
+    # employee, reuse its costing instead of creating a duplicate. Overlap test mirrors
+    # ERPNext's own: from_time < other.to_time AND to_time > other.from_time.
+    overlapping = frappe.db.sql(
+        """
+        select ts.name as timesheet, td.costing_amount as cost
+        from `tabTimesheet Detail` td
+        join `tabTimesheet` ts on ts.name = td.parent
+        where ts.employee = %(emp)s and ts.docstatus < 2
+          and td.from_time < %(end)s and td.to_time > %(start)s
+        order by ts.docstatus desc, td.costing_amount desc
+        limit 1
+        """,
+        {"emp": employee, "start": start_time, "end": billable_end},
+        as_dict=True,
+    )
+    if overlapping:
+        row = overlapping[0]
+        if row.cost:
+            doc.db_set("total_labor_cost", row.cost)
+        doc.add_comment("Comment", _("Labour already captured on Timesheet {0} from the kiosk clock; no duplicate created.").format(
+            frappe.get_link_to_form("Timesheet", row.timesheet)
+        ))
+        return
+
     timesheet = frappe.new_doc("Timesheet")
     timesheet.employee = employee
     timesheet.append("time_logs", {
         "from_time": doc.clock_in_time,
-        "to_time": doc.clock_out_time,
+        "to_time": billable_end,
         "hours": hours,
         "project": doc.project,
         "description": _("Maintenance Visit: {0}").format(doc.name)

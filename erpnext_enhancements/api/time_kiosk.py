@@ -78,10 +78,20 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
         if not project:
             frappe.throw(_("Project is required to start work."))
 
-        existing = frappe.db.exists("Job Interval", {
-            "employee": employee,
-            "status": ["in", ["Open", "Paused"]]
-        })
+        # Serialize concurrent "Start"s for this employee. Lock the Employee row first
+        # (it always exists, so it actually serializes — a FOR UPDATE on the zero-match
+        # Job Interval query would lock nothing and let both racers through), then read
+        # the interval state as a current read so the second request sees the first's
+        # committed insert instead of its own older snapshot. Without this, two devices
+        # (or a retried request racing its original) both pass the check and both open an
+        # interval, and every later Pause/Stop then acts on an arbitrary one.
+        frappe.db.get_value("Employee", employee, "name", for_update=True)
+        existing = frappe.db.get_value(
+            "Job Interval",
+            {"employee": employee, "status": ["in", ["Open", "Paused"]]},
+            "name",
+            for_update=True,
+        )
         if existing:
             frappe.throw(_("You already have an active job interval. Please stop or switch it first."))
 
@@ -204,8 +214,16 @@ def sync_interval_to_timesheet(interval_doc):
         start_time = get_datetime(interval_doc.start_time)
         end_time = get_datetime(interval_doc.end_time)
 
-        duration_seconds = (end_time - start_time).total_seconds() - flt(interval_doc.total_paused_seconds)
-        hours = max(duration_seconds / 3600.0, 0.0)
+        # ERPNext v16 recomputes Timesheet Detail hours from (to_time - from_time) on
+        # every save, so subtracting pause time from `hours` alone is silently discarded
+        # and the paused time gets billed. Compress the LOGGED window to the billable
+        # duration instead — the real clock-out stays on the Job Interval. This also makes
+        # the idempotency check below match on re-sync, since stored hours now equal `hours`.
+        billable_seconds = max(
+            (end_time - start_time).total_seconds() - flt(interval_doc.total_paused_seconds), 0.0
+        )
+        hours = billable_seconds / 3600.0
+        billable_end = start_time + timedelta(seconds=billable_seconds)
 
         date_key = start_time.date()
 
@@ -225,7 +243,7 @@ def sync_interval_to_timesheet(interval_doc):
             "hours": hours,
             "activity_type": interval_doc.time_category or None,
             "from_time": start_time,
-            "to_time": end_time,
+            "to_time": billable_end,
             "description": interval_doc.description or "Synced from Job Interval"
         }
 
