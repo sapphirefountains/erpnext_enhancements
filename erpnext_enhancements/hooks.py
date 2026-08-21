@@ -1003,6 +1003,13 @@ scheduler_events = {
 		# the three from racing on the Settings doc (TimestampMismatchError). See the
 		# "cron" section.
 		"erpnext_enhancements.tasks.nudge_unsubmitted_maintenance_forms",
+		# sapphire_maintenance: re-drive submissions whose on_submit background job never
+		# ran (a prod deploy FLUSHDBs the queue redis and destroys queued jobs silently, so
+		# a record submitted just before a deploy gets no Stock Entry/Timesheet/Invoice and
+		# nothing reports it). Keyed on the absence of any processing Comment; the steps are
+		# idempotent, so re-running a partially-run submission is safe. Same durability story
+		# as product_feedback.sweep_stalled_breakdowns below.
+		"erpnext_enhancements.api.maintenance_workflow.resweep_stalled_maintenance_submissions",
 		"erpnext_enhancements.ai_governance.tasks.expire_stale_pending_actions",
 		# fountain_move: delete photos uploaded by someone who never submitted the
 		# form. Without this the guest upload endpoint doubles as free storage.

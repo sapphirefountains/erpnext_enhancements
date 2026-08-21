@@ -212,9 +212,18 @@ def generate_predictive_maintenance_records():
 				)
 		else:
 			for row in due_features:
+				# visit_label "is not set" so an open LABELLED draft (a Chemistry
+				# Follow-Up, a "Do Visit Today" extra) does not suppress the feature's
+				# regular scheduled visit — the README promises the originally scheduled
+				# visit still fires on its own date. Matches the Per Site Visit filter above.
 				if frappe.db.exists(
 					"Sapphire Maintenance Record",
-					{"project": contract.project, "serial_no": row.serial_no, "docstatus": 0},
+					{
+						"project": contract.project,
+						"serial_no": row.serial_no,
+						"visit_label": ["is", "not set"],
+						"docstatus": 0,
+					},
 				):
 					continue
 				_draft_maintenance_record(contract, serial_no=row.serial_no, scheduled_date=row.next_visit_date)
@@ -263,6 +272,7 @@ def generate_predictive_maintenance_records():
 			if not frappe.db.exists("Sapphire Maintenance Record", {
 				"project": so_project,
 				"serial_no": item.custom_serial_no,
+				"visit_label": ["is", "not set"],
 				"docstatus": 0
 			}):
 				# Create the Maintenance Record (dispatched: scheduled date + site technician)

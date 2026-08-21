@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.341.3] - 2026-08-21
+
+### Fixed
+
+- **Maintenance on-submit automation was neither re-drivable nor idempotent.**
+  `Sapphire Maintenance Record.on_submit` enqueues `process_maintenance_submission`, but a
+  prod deploy FLUSHDBs the queue redis and destroys queued jobs — so a record submitted just
+  before a deploy silently got no Stock Entry / Timesheet / Warranty Claim / Sales Invoice,
+  and the only trace was the *absence* of a success comment. Worse, a manual re-enqueue
+  duplicated everything, because no step checked for prior output. Three changes:
+  - **Idempotency guards.** `create_stock_entry` skips when a non-cancelled Stock Entry
+    already carries this record in its `remarks`; `create_sales_invoice` skips when a Sales
+    Invoice already links via `custom_maintenance_record`; `check_warranty_and_rma` returns
+    early when `warranty_rma_flag` is already set; `create_timesheet` already dedups on an
+    overlapping time log (v1.341.2). So a re-run creates nothing twice.
+  - **Per-step savepoints.** Each step now runs inside a `frappe.db.savepoint`, rolled back on
+    failure — a step that dies mid-way (e.g. Stock Entry inserted, then `submit()` raises on
+    insufficient stock) no longer commits an orphan draft.
+  - **Hourly re-drive sweeper.** `resweep_stalled_maintenance_submissions` finds submitted
+    records from the last few days with no processing comment and re-enqueues them — the same
+    FLUSHDB durability story as `product_feedback.sweep_stalled_breakdowns`.
+
+- **Labelled visit drafts suppressed the regular scheduled visit.** In
+  `generate_predictive_maintenance_records`, the Per-Site-Visit dedupe correctly excluded
+  labelled drafts, but the Per-Feature dedupe and the legacy Sales Order fallback filtered
+  only on project + serial + `docstatus 0`, so an open "Chemistry Follow-Up" or "Do Visit
+  Today" draft blocked the feature's regular cadence visit — contradicting the README's promise
+  that the originally scheduled visit still fires on its own date. Both filters now require
+  `visit_label` "is not set".
+
 ## [1.341.2] - 2026-08-21
 
 ### Fixed
