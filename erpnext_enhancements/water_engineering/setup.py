@@ -171,6 +171,404 @@ def ensure_pump_catalog():
 		frappe.log_error(frappe.get_traceback(), "Water Engineering pump catalog seed")
 
 
+# --------------------------------------------------------------------------
+# Aquatic-equipment catalog (filters, heaters, chem feed, controllers, skimmers,
+# VGB drains, therapy jets, gauges, panel devices). Pumps keep their own fieldset
+# (gated on item_group 'Pumps'); these are the rest of the health-dept equipment
+# schedule, gated on a single ``custom_equipment_class`` driver so the schedule +
+# electrical calcs can resolve each device's specs. Same idempotent + guarded
+# after_migrate pattern as the pump catalog.
+# --------------------------------------------------------------------------
+
+EQUIPMENT_CLASS_OPTIONS = (
+	"\nFilter\nHeater\nChemical Feed Pump\nChemical Controller\nSkimmer\n"
+	"Suction Outlet (VGB)\nTherapy Jet\nReturn Inlet\nGauge / Meter\n"
+	"Panel Electrical Device\nControl Hardware"
+)
+_ELEC_CLASSES = "['Heater','Chemical Feed Pump','Chemical Controller','Panel Electrical Device','Control Hardware']"
+
+
+def create_equipment_item_fields():
+	"""Aquatic-equipment spec fields on Item, gated by custom_equipment_class."""
+	create_custom_fields(
+		{
+			"Item": [
+				{
+					"fieldname": "custom_aquatic_section",
+					"label": "Aquatic Equipment",
+					"fieldtype": "Section Break",
+					"insert_after": "custom_pump_curve_chart",
+					"collapsible": 1,
+				},
+				{
+					"fieldname": "custom_equipment_class",
+					"label": "Equipment Class",
+					"fieldtype": "Select",
+					"options": EQUIPMENT_CLASS_OPTIONS,
+					"insert_after": "custom_aquatic_section",
+					"description": "Drives the equipment schedule + which spec fields apply.",
+				},
+				{
+					"fieldname": "custom_model_no",
+					"label": "Model / Part No.",
+					"fieldtype": "Data",
+					"insert_after": "custom_equipment_class",
+					"depends_on": "eval:doc.custom_equipment_class",
+				},
+				{
+					"fieldname": "custom_nsf_listing",
+					"label": "NSF / VGB Listing",
+					"fieldtype": "Data",
+					"insert_after": "custom_model_no",
+					"depends_on": "eval:doc.custom_equipment_class",
+				},
+				{
+					"fieldname": "custom_iapmo_listing",
+					"label": "IAPMO / UPC Listing",
+					"fieldtype": "Data",
+					"insert_after": "custom_nsf_listing",
+					"depends_on": "eval:doc.custom_equipment_class",
+				},
+				{
+					"fieldname": "custom_spec_cut_sheet",
+					"label": "Cut Sheet",
+					"fieldtype": "Attach",
+					"insert_after": "custom_iapmo_listing",
+					"depends_on": "eval:doc.custom_equipment_class",
+				},
+				{
+					"fieldname": "custom_equipment_elec_cb",
+					"fieldtype": "Column Break",
+					"insert_after": "custom_spec_cut_sheet",
+				},
+				{
+					"fieldname": "custom_elec_voltage",
+					"label": "Voltage",
+					"fieldtype": "Data",
+					"insert_after": "custom_equipment_elec_cb",
+					"depends_on": f"eval:{_ELEC_CLASSES}.includes(doc.custom_equipment_class)",
+				},
+				{
+					"fieldname": "custom_elec_phase",
+					"label": "Phase",
+					"fieldtype": "Select",
+					"options": "\n1\n3",
+					"insert_after": "custom_elec_voltage",
+					"depends_on": f"eval:{_ELEC_CLASSES}.includes(doc.custom_equipment_class)",
+				},
+				{
+					"fieldname": "custom_elec_hz",
+					"label": "Hz",
+					"fieldtype": "Select",
+					"options": "\n60\n50",
+					"insert_after": "custom_elec_phase",
+					"depends_on": f"eval:{_ELEC_CLASSES}.includes(doc.custom_equipment_class)",
+				},
+				{
+					"fieldname": "custom_elec_fla_amps",
+					"label": "FLA (A)",
+					"fieldtype": "Float",
+					"insert_after": "custom_elec_hz",
+					"depends_on": f"eval:{_ELEC_CLASSES}.includes(doc.custom_equipment_class)",
+				},
+				{
+					"fieldname": "custom_elec_watts",
+					"label": "Watts",
+					"fieldtype": "Float",
+					"insert_after": "custom_elec_fla_amps",
+					"depends_on": f"eval:{_ELEC_CLASSES}.includes(doc.custom_equipment_class)",
+				},
+				{
+					"fieldname": "custom_elec_hp",
+					"label": "HP",
+					"fieldtype": "Float",
+					"insert_after": "custom_elec_watts",
+					"depends_on": f"eval:{_ELEC_CLASSES}.includes(doc.custom_equipment_class)",
+				},
+				{
+					"fieldname": "custom_requires_gfci",
+					"label": "Requires GFCI",
+					"fieldtype": "Check",
+					"insert_after": "custom_elec_hp",
+					"depends_on": f"eval:{_ELEC_CLASSES}.includes(doc.custom_equipment_class)",
+				},
+				{
+					"fieldname": "custom_nec680_bond",
+					"label": "Bond/Ground per NEC 680",
+					"fieldtype": "Check",
+					"insert_after": "custom_requires_gfci",
+					"depends_on": f"eval:{_ELEC_CLASSES}.includes(doc.custom_equipment_class)",
+				},
+				{
+					"fieldname": "custom_filter_area_sqft",
+					"label": "Filter Area (sq ft)",
+					"fieldtype": "Float",
+					"insert_after": "custom_nec680_bond",
+					"depends_on": "eval:doc.custom_equipment_class=='Filter'",
+				},
+				{
+					"fieldname": "custom_filter_max_flow_gpm",
+					"label": "Filter Max Flow (GPM)",
+					"fieldtype": "Float",
+					"insert_after": "custom_filter_area_sqft",
+					"depends_on": "eval:doc.custom_equipment_class=='Filter'",
+				},
+				{
+					"fieldname": "custom_filter_media",
+					"label": "Filter Media",
+					"fieldtype": "Select",
+					"options": "\nCartridge\nSand\nHigh-Rate Sand\nDE",
+					"insert_after": "custom_filter_max_flow_gpm",
+					"depends_on": "eval:doc.custom_equipment_class=='Filter'",
+				},
+				{
+					"fieldname": "custom_heater_fuel",
+					"label": "Heater Fuel",
+					"fieldtype": "Select",
+					"options": "\nElectric\nGas",
+					"insert_after": "custom_filter_media",
+					"depends_on": "eval:doc.custom_equipment_class=='Heater'",
+				},
+				{
+					"fieldname": "custom_heater_kw",
+					"label": "Heater kW",
+					"fieldtype": "Float",
+					"insert_after": "custom_heater_fuel",
+					"depends_on": "eval:doc.custom_equipment_class=='Heater'",
+				},
+				{
+					"fieldname": "custom_heater_btu_hr",
+					"label": "Heater BTU/hr",
+					"fieldtype": "Float",
+					"insert_after": "custom_heater_kw",
+					"depends_on": "eval:doc.custom_equipment_class=='Heater'",
+				},
+				{
+					"fieldname": "custom_vgb_open_area_sqin",
+					"label": "VGB Open Area (sq in)",
+					"fieldtype": "Float",
+					"insert_after": "custom_heater_btu_hr",
+					"depends_on": "eval:doc.custom_equipment_class=='Suction Outlet (VGB)'",
+				},
+				{
+					"fieldname": "custom_vgb_max_flow_gpm",
+					"label": "VGB Max Flow (GPM)",
+					"fieldtype": "Float",
+					"insert_after": "custom_vgb_open_area_sqin",
+					"depends_on": "eval:doc.custom_equipment_class=='Suction Outlet (VGB)'",
+				},
+				{
+					"fieldname": "custom_vgb_rated",
+					"label": "VGB Compliant",
+					"fieldtype": "Check",
+					"insert_after": "custom_vgb_max_flow_gpm",
+					"depends_on": "eval:doc.custom_equipment_class=='Suction Outlet (VGB)'",
+				},
+				{
+					"fieldname": "custom_jet_flow_gpm",
+					"label": "Jet Flow (GPM)",
+					"fieldtype": "Float",
+					"insert_after": "custom_vgb_rated",
+					"depends_on": "eval:doc.custom_equipment_class=='Therapy Jet'",
+				},
+				{
+					"fieldname": "custom_jet_pressure_psi",
+					"label": "Jet Pressure (PSI)",
+					"fieldtype": "Float",
+					"insert_after": "custom_jet_flow_gpm",
+					"depends_on": "eval:doc.custom_equipment_class=='Therapy Jet'",
+				},
+				{
+					"fieldname": "custom_skimmer_max_flow_gpm",
+					"label": "Skimmer Max Flow (GPM)",
+					"fieldtype": "Float",
+					"insert_after": "custom_jet_pressure_psi",
+					"depends_on": "eval:doc.custom_equipment_class=='Skimmer'",
+				},
+				{
+					"fieldname": "custom_meter_kind",
+					"label": "Meter Kind",
+					"fieldtype": "Select",
+					"options": "\nThermometer\nFlowmeter\nVacuum\nPressure",
+					"insert_after": "custom_skimmer_max_flow_gpm",
+					"depends_on": "eval:doc.custom_equipment_class=='Gauge / Meter'",
+				},
+				{
+					"fieldname": "custom_meter_range",
+					"label": "Meter Range",
+					"fieldtype": "Data",
+					"insert_after": "custom_meter_kind",
+					"depends_on": "eval:doc.custom_equipment_class=='Gauge / Meter'",
+				},
+				{
+					"fieldname": "custom_feed_rate_gpd",
+					"label": "Feed Rate (GPD)",
+					"fieldtype": "Float",
+					"insert_after": "custom_meter_range",
+					"depends_on": "eval:doc.custom_equipment_class=='Chemical Feed Pump'",
+				},
+				{
+					"fieldname": "custom_controller_channels",
+					"label": "Controller Channels",
+					"fieldtype": "Data",
+					"insert_after": "custom_feed_rate_gpd",
+					"depends_on": "eval:doc.custom_equipment_class=='Chemical Controller'",
+				},
+			]
+		},
+		ignore_validate=True,
+	)
+	frappe.db.commit()
+
+
+AQUATIC_EQUIPMENT_GROUPS = [
+	"Filters", "Heaters", "Chemical Feed Pumps", "Chemical Controllers",
+	"Skimmers", "Suction Outlets", "Therapy Jets", "Return Inlets",
+	"Gauges & Meters", "Panel Electrical Devices", "Control Hardware",
+]
+
+# Fika Reflexology Spa reference equipment (Salt Lake County Health Dept, 2023).
+EQUIPMENT_CATALOG = [
+	{
+		"item_code": "FILTER-PENTAIR-CC150", "item_name": "Cartridge Filter, Pentair CC-150",
+		"item_group": "Filters", "equipment_class": "Filter",
+		"specs": {"custom_model_no": "CC-150", "custom_nsf_listing": "NSF/ANSI 50",
+				  "custom_filter_area_sqft": 150, "custom_filter_max_flow_gpm": 56,
+				  "custom_filter_media": "Cartridge"},
+	},
+	{
+		"item_code": "HEATER-COATES-11KW", "item_name": "Electric Heater, Coates 11kW",
+		"item_group": "Heaters", "equipment_class": "Heater",
+		"specs": {"custom_model_no": "11KW 240V 1PH", "custom_heater_fuel": "Electric",
+				  "custom_heater_kw": 11, "custom_elec_voltage": "240", "custom_elec_phase": "1",
+				  "custom_elec_watts": 11000, "custom_elec_fla_amps": 45.83, "custom_nec680_bond": 1},
+	},
+	{
+		"item_code": "HEATER-TRIANGLE-FM80", "item_name": "Gas Heater, Triangle FM-80",
+		"item_group": "Heaters", "equipment_class": "Heater",
+		"specs": {"custom_model_no": "FM-80", "custom_heater_fuel": "Gas", "custom_heater_btu_hr": 80000},
+	},
+	{
+		"item_code": "CHEMPUMP-STENNER-45M1", "item_name": "Chemical Feed Pump, Stenner 45M1",
+		"item_group": "Chemical Feed Pumps", "equipment_class": "Chemical Feed Pump",
+		"specs": {"custom_model_no": "45M1", "custom_elec_voltage": "120", "custom_elec_phase": "1",
+				  "custom_elec_hz": "60", "custom_elec_fla_amps": 1.7, "custom_elec_hp": 0.0333,
+				  "custom_requires_gfci": 1},
+	},
+	{
+		"item_code": "CHEMCTRL-IPS-M820", "item_name": "Chemical Controller, IPS M820",
+		"item_group": "Chemical Controllers", "equipment_class": "Chemical Controller",
+		"specs": {"custom_model_no": "M820", "custom_elec_voltage": "120", "custom_elec_fla_amps": 5,
+				  "custom_controller_channels": "ORP / pH"},
+	},
+	{
+		"item_code": "SKIMMER-HAYWARD-1084FVE", "item_name": "Skimmer, Hayward 1084FVE",
+		"item_group": "Skimmers", "equipment_class": "Skimmer",
+		"specs": {"custom_model_no": "1084FVE", "custom_skimmer_max_flow_gpm": 75},
+	},
+	{
+		"item_code": "DRAIN-WATERWAY-640358", "item_name": "Main Drain (VGB), Waterway 640-358xV",
+		"item_group": "Suction Outlets", "equipment_class": "Suction Outlet (VGB)",
+		"specs": {"custom_model_no": "640-358xV", "custom_nsf_listing": "VGB / ANSI-APSP-16",
+				  "custom_vgb_open_area_sqin": 9.02, "custom_vgb_rated": 1},
+	},
+	{
+		"item_code": "JET-WATERWAY-210-4120", "item_name": "Therapy Jet, Waterway 210-4120",
+		"item_group": "Therapy Jets", "equipment_class": "Therapy Jet",
+		"specs": {"custom_model_no": "210-4120", "custom_jet_flow_gpm": 8, "custom_jet_pressure_psi": 15},
+	},
+	{
+		"item_code": "METER-BLUEWHITE-F30200PR", "item_name": "Flowmeter, Blue-White F30200PR",
+		"item_group": "Gauges & Meters", "equipment_class": "Gauge / Meter",
+		"specs": {"custom_model_no": "F30200PR", "custom_meter_kind": "Flowmeter", "custom_meter_range": "15-70 GPM"},
+	},
+	{
+		"item_code": "THERMO-PASCO-1450", "item_name": "In-line Thermometer, Pasco 1450",
+		"item_group": "Gauges & Meters", "equipment_class": "Gauge / Meter",
+		"specs": {"custom_model_no": "1450", "custom_meter_kind": "Thermometer", "custom_meter_range": "40-240 F"},
+	},
+	{
+		"item_code": "GAUGE-PASCO-1463A", "item_name": "Vacuum/Pressure Gauge, Pasco 1463A",
+		"item_group": "Gauges & Meters", "equipment_class": "Gauge / Meter",
+		"specs": {"custom_model_no": "1463A", "custom_meter_kind": "Vacuum", "custom_meter_range": "compound"},
+	},
+	{
+		"item_code": "ELEC-GFCI-120", "item_name": "GFCI Receptacle, 120VAC",
+		"item_group": "Panel Electrical Devices", "equipment_class": "Panel Electrical Device",
+		"specs": {"custom_elec_voltage": "120", "custom_requires_gfci": 1, "custom_nec680_bond": 1},
+	},
+]
+
+
+def _seed_equipment_items():
+	"""Create the Aquatic Equipment item-group tree + the Fika reference items.
+	Idempotent (skips existing item codes; never overwrites)."""
+	if not frappe.db.exists("Item Group", "Aquatic Equipment"):
+		frappe.get_doc(
+			{
+				"doctype": "Item Group",
+				"item_group_name": "Aquatic Equipment",
+				"parent_item_group": "All Item Groups",
+				"is_group": 1,
+			}
+		).insert(ignore_permissions=True)
+	for group in AQUATIC_EQUIPMENT_GROUPS:
+		if not frappe.db.exists("Item Group", group):
+			frappe.get_doc(
+				{
+					"doctype": "Item Group",
+					"item_group_name": group,
+					"parent_item_group": "Aquatic Equipment",
+					"is_group": 0,
+				}
+			).insert(ignore_permissions=True)
+
+	created, skipped = [], []
+	for eq in EQUIPMENT_CATALOG:
+		if frappe.db.exists("Item", eq["item_code"]):
+			skipped.append(eq["item_code"])
+			continue
+		doc = frappe.get_doc(
+			{
+				"doctype": "Item",
+				"item_code": eq["item_code"],
+				"item_name": eq["item_name"],
+				"item_group": eq["item_group"],
+				"stock_uom": "Nos",
+				"is_stock_item": 0,
+				"custom_equipment_class": eq["equipment_class"],
+				"description": f"{eq['item_name']} — Fika Reflexology Spa reference equipment.",
+				**eq.get("specs", {}),
+			}
+		)
+		doc.insert(ignore_permissions=True)
+		created.append(doc.name)
+
+	frappe.db.commit()
+	return {"created": created, "skipped": skipped}
+
+
+def seed_equipment_catalog():
+	"""Create the equipment-spec fields + seed the Fika reference catalog.
+	Idempotent; auto-run on migrate via ``ensure_equipment_catalog`` and also
+	callable directly (bench console / FAC)."""
+	create_equipment_item_fields()
+	return _seed_equipment_items()
+
+
+def ensure_equipment_catalog():
+	"""after_migrate entry: ensure the equipment-spec Item fields and seed the
+	Fika reference catalog. Fields (schema) are created unguarded; the seed is
+	guarded so a data hiccup can never break a deploy/migrate."""
+	create_equipment_item_fields()
+	try:
+		result = _seed_equipment_items()
+		if result.get("created"):
+			frappe.logger().info(f"[water_engineering] seeded aquatic equipment: {result['created']}")
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Water Engineering equipment catalog seed")
+
+
 # Generic starter Nozzle Profiles (Cd + orifice area). These are the same generic
 # estimates the legacy assistant used — clearly flagged so engineers replace them
 # with manufacturer cut-sheet data. Orifice nozzle flow needs sourced Cd/orifice,

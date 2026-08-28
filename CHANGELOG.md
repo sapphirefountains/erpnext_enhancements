@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.351.0] - 2026-08-28
+
+### Added
+
+- **Aquatic-equipment Item catalog** (`water_engineering/setup.py`) — the health-department equipment
+  schedule (filters, heaters, chemical feed pumps, controllers, skimmers, VGB main drains, therapy jets,
+  gauges/meters, panel devices) now lives in ERPNext as real Items, so the schedule and the electrical
+  calcs can resolve each device's specs instead of re-typing them per job.
+  - `create_equipment_item_fields()` adds a gated "Aquatic Equipment" fieldset on Item driven by a single
+    `custom_equipment_class` Select: shared spec fields (model / NSF / IAPMO / cut sheet), a shared
+    electrical block (voltage / phase / Hz / FLA / watts / HP / requires-GFCI / NEC-680 bond), and
+    per-class fields (filter area/max-flow/media, heater fuel/kW/BTU, VGB open-area/max-flow/rated, jet
+    flow/PSI, skimmer max-flow, meter kind/range, feed GPD, controller channels). Pumps keep their
+    existing `item_group == "Pumps"` fieldset untouched.
+  - `ensure_equipment_catalog()` (wired into `hooks.py` `after_migrate`, after the pump catalog) creates
+    those fields and seeds an **Aquatic Equipment** Item-Group tree plus the twelve Fika reference items
+    (Pentair CC-150, Coates 11 kW, Triangle FM-80, Stenner 45M1, IPS M820, Hayward 1084FVE, Waterway
+    640-358xV, Waterway 210-4120, Pasco/Blue-White gauges, GFCI receptacle) with their spec values. Same
+    idempotent (skip-existing) + guarded (seed errors only log) pattern as the pump catalog, so Frappe
+    Cloud gets it on deploy with no shell.
+  - `get_equipment_candidates(equipment_class)` — a whitelisted reader (mirroring `get_pump_candidates`,
+    with the same `meta.has_field` guards) that returns the Items of a class with their spec fields, for
+    the equipment schedule and the filter/heater/VGB cross-checks.
+
+  Follow-ups (next increment): an equipment-selection child table on Water Feature Design and the
+  `recompute()` cross-checks (selected filter area ≥ required, heater BTU/kW ≥ heating load, skimmer/drain
+  feed the VGB gate). The catalog seed runs on `bench migrate` and still needs a bench pass to confirm the
+  Item inserts and field layout.
+
 ## [1.350.0] - 2026-08-28
 
 ### Added

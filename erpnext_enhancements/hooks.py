@@ -1276,6 +1276,11 @@ after_migrate = [
 	# Idempotent, fills missing rows only, and must never raise.
 	"erpnext_enhancements.patches.backfill_marketing_settings_defaults.backfill_marketing_settings_defaults",
 	"erpnext_enhancements.water_engineering.setup.ensure_pump_catalog",
+	# water_engineering: the aquatic-equipment catalog (filters, heaters, chem feed,
+	# controllers, skimmers, VGB drains, therapy jets, gauges) — Item custom spec
+	# fields gated on custom_equipment_class + the Fika reference items. Idempotent +
+	# guarded; feeds the equipment schedule and the filter/heater/VGB cross-checks.
+	"erpnext_enhancements.water_engineering.setup.ensure_equipment_catalog",
 	# water_engineering: generic starter Nozzle Profiles so orifice nozzles compute
 	# immediately (idempotent + guarded; flagged generic — replace with cut-sheet data).
 	"erpnext_enhancements.water_engineering.setup.ensure_nozzle_profiles",

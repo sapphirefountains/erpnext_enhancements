@@ -888,6 +888,42 @@ def get_pump_candidates(gpm=0, tdh_ft=0):
 
 
 @frappe.whitelist()
+def get_equipment_candidates(equipment_class=None):
+    """Aquatic-equipment Items of a given class (Filter / Heater / Skimmer /
+    Suction Outlet (VGB) / Therapy Jet / ...) with their spec + electrical custom
+    fields, for the equipment schedule and the filter/heater/VGB cross-checks.
+    Empty if the class is blank or the catalog fields aren't migrated yet."""
+    _require("read")
+    if not equipment_class:
+        return []
+    meta = frappe.get_meta("Item")
+    if not meta.has_field("custom_equipment_class"):
+        return []
+    fields = ["item_code", "item_name", "item_group"]
+    for cf in (
+        "custom_equipment_class", "custom_model_no", "custom_nsf_listing",
+        "custom_iapmo_listing", "custom_elec_voltage", "custom_elec_phase",
+        "custom_elec_hz", "custom_elec_fla_amps", "custom_elec_watts", "custom_elec_hp",
+        "custom_requires_gfci", "custom_nec680_bond", "custom_filter_area_sqft",
+        "custom_filter_max_flow_gpm", "custom_filter_media", "custom_heater_fuel",
+        "custom_heater_kw", "custom_heater_btu_hr", "custom_vgb_open_area_sqin",
+        "custom_vgb_max_flow_gpm", "custom_vgb_rated", "custom_jet_flow_gpm",
+        "custom_jet_pressure_psi", "custom_skimmer_max_flow_gpm", "custom_meter_kind",
+        "custom_meter_range", "custom_feed_rate_gpd", "custom_controller_channels",
+    ):
+        if meta.has_field(cf):
+            fields.append(cf)
+    try:
+        return frappe.get_all(
+            "Item",
+            filters={"custom_equipment_class": equipment_class, "disabled": 0},
+            fields=fields,
+        )
+    except Exception:
+        return []
+
+
+@frappe.whitelist()
 def check_permission():
     """True if the user may use the wizard (read access to designs)."""
     return frappe.has_permission(DESIGN_DOCTYPE, "read")
