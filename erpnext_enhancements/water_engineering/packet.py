@@ -185,6 +185,26 @@ def we_standard_notes(governing_code=None, category=None):
     return notes
 
 
+def we_standard_details(governing_code=None, category=None):
+    """Active Standard Details (inline SVG), filtered to the governing code
+    (blank = any) and optionally a category, for the SP-4 details sheet."""
+    filters = {"active": 1}
+    if category:
+        filters["category"] = category
+    try:
+        details = frappe.get_all(
+            "Standard Detail",
+            filters=filters,
+            fields=["detail_key", "category", "governing_code", "title", "svg", "sort_order"],
+            order_by="category asc, sort_order asc, detail_key asc",
+        )
+    except Exception:
+        return []
+    if governing_code:
+        details = [d for d in details if not d.get("governing_code") or d["governing_code"] == governing_code]
+    return details
+
+
 def build_packet_html(design):
     """Render the assembled submittal packet HTML for a design."""
     doc = _doc(design)

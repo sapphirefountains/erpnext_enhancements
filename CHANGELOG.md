@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.358.0] - 2026-08-28
+
+### Added
+
+- **Standard-details (SP-4) library on the submittal packet.** A new **Standard Detail** doctype holds
+  reusable plan details as inline SVG (`detail_key`, `category`, `governing_code`, `title`, `svg`,
+  `sort_order`, `active`) — the same code-keyed, engineer-editable model as Standard Note. Three schematic
+  placeholder details are seeded (VGB suction outlet, skimmer, underwater-light J-box) for the engineer to
+  replace with manufacturer cut-sheet drawings. `we_standard_details(governing_code, category)` (registered
+  Jinja method) feeds a new **SP-4 details sheet** in the packet, rendered between the schematics and the
+  standard notes. The packet's SVG outputs now use `| safe` so they render regardless of the print
+  environment's autoescape setting. Idempotent + guarded seed via `after_migrate`.
+
 ## [1.357.0] - 2026-08-28
 
 ### Added

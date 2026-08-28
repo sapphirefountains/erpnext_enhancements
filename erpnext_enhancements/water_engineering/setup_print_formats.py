@@ -487,10 +487,24 @@ PACKET_EQUIPMENT_HTML = """
 
 PACKET_SCHEMATICS_HTML = """
 <h3 style="margin:0 0 8px; font-size:14px;">Circulation Equipment Schematic (SP-3)</h3>
-<div style="overflow-x:auto;">{{ we_circulation_schematic(doc.name) }}</div>
+<div style="overflow-x:auto;">{{ we_circulation_schematic(doc.name) | safe }}</div>
 <h3 style="margin:20px 0 8px; font-size:14px;">Electrical One-Line (SP-6)</h3>
-<div style="overflow-x:auto;">{{ we_electrical_oneline(doc.name) }}</div>
+<div style="overflow-x:auto;">{{ we_electrical_oneline(doc.name) | safe }}</div>
 <p style="margin:12px 0 0; color:#999; font-size:10px;">Schematics are generated from the design data; the plan-specific site/piping CAD drawings are attached separately.</p>
+""".strip()
+
+PACKET_DETAILS_HTML = """
+<h3 style="margin:0 0 8px; font-size:14px;">Standard Details (SP-4)</h3>
+{% set details = we_standard_details(doc.governing_code) %}
+{% if not details %}<p style="color:#999; font-size:11px;">No standard details are configured yet (add them under Standard Detail).</p>{% endif %}
+<div style="display:flex; flex-wrap:wrap; gap:16px;">
+{% for d in details %}
+  <div style="width:46%; min-width:270px;">
+    <div style="font-weight:bold; font-size:11px; margin-bottom:4px;">{{ d.title or d.detail_key }}</div>
+    <div style="border:1px solid #e2e8f0; padding:6px; overflow-x:auto;">{{ d.svg | safe }}</div>
+  </div>
+{% endfor %}
+</div>
 """.strip()
 
 PACKET_NOTES_HTML = """
@@ -518,6 +532,7 @@ def _packet_html():
         PACKET_COVER_HTML
         + _packet_sheet(PACKET_SPA_DATA_HTML + PACKET_EQUIPMENT_HTML + SCHEDULES_HTML)
         + _packet_sheet(PACKET_SCHEMATICS_HTML)
+        + _packet_sheet(PACKET_DETAILS_HTML)
         + _packet_sheet(PACKET_NOTES_HTML)
         + _packet_sheet(AUDIT_HTML)
     )

@@ -682,6 +682,82 @@ def ensure_standard_notes():
 		frappe.log_error(frappe.get_traceback(), "Water Engineering standard notes seed")
 
 
+# Starter Standard Details for the packet's SP-4 details sheet. These are simple
+# schematic PLACEHOLDERS (inline SVG, which prints reliably) — the engineer
+# replaces them with manufacturer cut-sheet drawings. Kept intentionally spare.
+_DETAIL_VGB = (
+	'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 170" width="100%" style="max-width:320px">'
+	'<rect x="0" y="0" width="320" height="170" fill="#fff"/>'
+	'<rect x="60" y="45" width="200" height="70" rx="4" fill="#eef2f6" stroke="#4a5568" stroke-width="1.5"/>'
+	'<line x1="70" y1="60" x2="250" y2="60" stroke="#718096" stroke-dasharray="4 3"/>'
+	'<line x1="70" y1="70" x2="250" y2="70" stroke="#718096" stroke-dasharray="4 3"/>'
+	'<text x="160" y="35" text-anchor="middle" font-size="10" font-family="Helvetica" fill="#718096">Listed anti-entrapment cover, 2 outlets min.</text>'
+	'<text x="160" y="95" text-anchor="middle" font-size="9" font-family="Helvetica" fill="#718096">Max approach velocity 1.5 ft/s (one blocked)</text>'
+	'<path d="M160 115 L160 150" stroke="#2b6cb0" stroke-width="2"/>'
+	'<text x="160" y="165" text-anchor="middle" font-size="9" font-family="Helvetica" fill="#222">To recirculation pump (NSF hard PVC)</text>'
+	"</svg>"
+)
+_DETAIL_SKIMMER = (
+	'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 170" width="100%" style="max-width:320px">'
+	'<rect x="0" y="0" width="320" height="170" fill="#fff"/>'
+	'<rect x="40" y="30" width="240" height="40" rx="3" fill="#eef2f6" stroke="#4a5568" stroke-width="1.5"/>'
+	'<text x="160" y="55" text-anchor="middle" font-size="10" font-family="Helvetica" fill="#222">Skimmer with weir + basket</text>'
+	'<rect x="120" y="70" width="80" height="55" fill="#fff" stroke="#4a5568" stroke-width="1.5"/>'
+	'<path d="M160 125 L160 150" stroke="#2b6cb0" stroke-width="2"/>'
+	'<text x="160" y="165" text-anchor="middle" font-size="9" font-family="Helvetica" fill="#718096">Suction to pump (VGB relief)</text>'
+	"</svg>"
+)
+_DETAIL_JBOX = (
+	'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 170" width="100%" style="max-width:320px">'
+	'<rect x="0" y="0" width="320" height="170" fill="#fff"/>'
+	'<rect x="130" y="20" width="60" height="34" rx="3" fill="#eef2f6" stroke="#4a5568" stroke-width="1.5"/>'
+	'<text x="160" y="42" text-anchor="middle" font-size="9" font-family="Helvetica" fill="#222">J-Box</text>'
+	'<text x="160" y="68" text-anchor="middle" font-size="9" font-family="Helvetica" fill="#718096">Min. 4&#39;-0&quot; from water&#39;s edge, 3&quot; above deck</text>'
+	'<path d="M160 54 L160 120" stroke="#2b6cb0" stroke-width="2"/>'
+	'<rect x="120" y="120" width="80" height="30" rx="3" fill="#fff" stroke="#4a5568" stroke-width="1.5"/>'
+	'<text x="160" y="139" text-anchor="middle" font-size="9" font-family="Helvetica" fill="#222">Light niche</text>'
+	'<text x="160" y="165" text-anchor="middle" font-size="8" font-family="Helvetica" fill="#718096">Conduit + grounding by electrical contractor, NEC 680</text>'
+	"</svg>"
+)
+
+STANDARD_DETAILS_SEED = [
+	{"detail_key": "detail-vgb-suction", "category": "Suction", "governing_code": "",
+	 "sort_order": 10, "title": "VGB Suction Outlet Detail", "svg": _DETAIL_VGB},
+	{"detail_key": "detail-skimmer", "category": "Skimmer", "governing_code": "",
+	 "sort_order": 10, "title": "Skimmer Detail", "svg": _DETAIL_SKIMMER},
+	{"detail_key": "detail-light-jbox", "category": "J-Box", "governing_code": "",
+	 "sort_order": 10, "title": "Underwater Light J-Box Detail", "svg": _DETAIL_JBOX},
+]
+
+
+def _seed_standard_details(overwrite=False):
+	"""Seed the starter Standard Details for the packet SP-4 sheet. Idempotent;
+	pass overwrite to refresh the seeded schematic SVGs (never touches non-seed)."""
+	created, skipped = [], []
+	for detail in STANDARD_DETAILS_SEED:
+		if frappe.db.exists("Standard Detail", detail["detail_key"]):
+			if overwrite:
+				doc = frappe.get_doc("Standard Detail", detail["detail_key"])
+				doc.svg = detail["svg"]
+				doc.save(ignore_permissions=True)
+			skipped.append(detail["detail_key"])
+			continue
+		frappe.get_doc({"doctype": "Standard Detail", "active": 1, **detail}).insert(ignore_permissions=True)
+		created.append(detail["detail_key"])
+	frappe.db.commit()
+	return {"created": created, "skipped": skipped}
+
+
+def ensure_standard_details():
+	"""after_migrate entry: seed the starter Standard Details (guarded)."""
+	try:
+		result = _seed_standard_details()
+		if result.get("created"):
+			frappe.logger().info(f"[water_engineering] seeded standard details: {result['created']}")
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Water Engineering standard details seed")
+
+
 # Workspace triage cards over the denormalized issue counters recompute()
 # writes onto every design (see issues.py) — "which designs need attention"
 # without opening a single one.

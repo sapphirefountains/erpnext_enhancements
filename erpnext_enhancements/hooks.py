@@ -1123,6 +1123,7 @@ jinja = {
 		"erpnext_enhancements.water_engineering.packet.we_circulation_schematic",
 		"erpnext_enhancements.water_engineering.packet.we_electrical_oneline",
 		"erpnext_enhancements.water_engineering.packet.we_standard_notes",
+		"erpnext_enhancements.water_engineering.packet.we_standard_details",
 		"erpnext_enhancements.project_enhancements.print_data.project_schedule_rows",
 		"erpnext_enhancements.project_enhancements.print_data.project_task_rows",
 		# The union of Purchase Order.project and Purchase Order Item.project, so the PO
@@ -1298,6 +1299,9 @@ after_migrate = [
 	# notes sheet (health-dept boilerplate keyed to code articles). Idempotent +
 	# guarded; the engineer edits/adds per jurisdiction.
 	"erpnext_enhancements.water_engineering.setup.ensure_standard_notes",
+	# water_engineering: starter Standard Details (schematic SVG placeholders) for
+	# the packet's SP-4 details sheet. Idempotent + guarded; replaced with cut-sheets.
+	"erpnext_enhancements.water_engineering.setup.ensure_standard_details",
 	# water_engineering: the Results + Calculation Audit Print Formats for a design
 	# (idempotent + guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.water_engineering.setup_print_formats.ensure_water_print_formats",
