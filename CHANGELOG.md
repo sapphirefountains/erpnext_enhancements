@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.344.4] - 2026-08-28
+
+Error Log debugging pass over the last seven days of production rows. Three signatures were
+defects in this app; all three are fixed here. The rest of the week's log is operational and
+is dispositioned in the PR description rather than in code — see `docs/error-log-runbook.md`
+for the standing items (GSC grant, Finance calendar share, MDM credentials).
+
+### Fixed
+
+- **Task → shared Google Calendar sync called a Frappe function that does not exist, so no Task
+  has ever synced since the Server Script migration.** `sync_task_to_google_calendar` invoked
+  `frappe.integrations.doctype.google_calendar.google_calendar.insert_event` via `frappe.call` —
+  a name that exists in no Frappe version this app ran on (`insert_event_in_google_calendar` is
+  a doc_event for the **Event** doctype, which a Task is not). Every Task creation raised
+  `AttributeError`, logged a "Google Calendar Sync Failed" row, and left a red "contact your
+  system administrator" comment on the Task. The v1.254.0 pass fixed the `.isoformat()` crash
+  *ahead* of this call and unknowingly promoted this one to the new first failure; the rows never
+  stopped (13 days with failures since 2026-08-05).
+
+  The sync now goes through frappe's Google Calendar integration properly: it looks up the
+  *enabled* **Google Calendar** account whose `google_calendar_id` matches the shared calendar
+  ("ERPNext Tasks" on prod — matched by id so a rename survives), builds the API client with
+  `get_google_calendar_object`, and calls `events().insert` directly, since the framework has no
+  helper for pushing an arbitrary event. The body no longer carries the `doctype` /
+  `google_calendar` keys that were arguments to the imaginary API. **Dormant until the account is
+  re-enabled:** all three Google Calendar accounts on prod sit at `enable = 0`, and a disabled
+  account is an operator's off switch — the sync now skips *silently* in that state (no event, no
+  comment, no Error Log row) and turns itself back on the moment the account is re-enabled and
+  re-authorized in the Desk, with no deploy needed.
+
+- **Hourly Drive shadow sync ran past its own worker timeout every morning and the tail of the
+  list was never synced.** `run_shadow_sync` walks every linked document's whole Drive tree —
+  ~2,200 documents now (1,228 Customers + 761 Opportunities + 240 Projects), at least one Drive
+  round-trip each — and the full pass outgrew the hour in the morning traffic window. RQ then
+  killed the worker mid-walk (`JobTimeoutException: 3600 seconds`), five runs back to back,
+  every morning of 2026-08-25..27 (14 Error Log rows). A killed run restarts from the top of the
+  list next hour, so under sustained overrun the documents at the end were *never* reached — the
+  failure compounds silently as the business grows.
+
+  The walk now time-boxes itself at `SHADOW_SYNC_TIME_BUDGET` (3000s, 600s of headroom under the
+  hard timeout): it stops cleanly, records the last finished document in Redis, and the next
+  hourly run resumes after it, wrapping around so one full circle still visits every document —
+  just not necessarily all in the same hour. The cursor is best-effort by design: the prod deploy
+  `FLUSHDB`s Redis, and a lost cursor merely restarts the rotation from the top (re-drivable
+  after deploy, per the deploy-flush rule in `CLAUDE.md`). The unrecoverable-DB give-up path
+  saves the cursor too — Redis outlives the dead MariaDB socket — so even that run's progress
+  survives.
+
+- **Drive folder lookup breaks permanently on a name containing a backslash.**
+  `drive_utils.find_folder` escaped single quotes but not backslashes, so the customer literally
+  named `A\ Typical Design Studio` produced the Drive query `name='A\ Typical Design Studio'` —
+  a stray escape sequence Google rejects with `HttpError 400 "Invalid Value"`, once per hourly
+  walk, forever (6 "Customer Drive Folder" rows this week). Backslashes are now doubled *before*
+  quotes are escaped (order matters: quote-first would let a trailing backslash disarm the quote
+  escape), matching what `drive_link_manager.search_folders` and `offsite_backup/drive.py`
+  already did. The apostrophe customers ("Alta's Rustler Lodge" et al.) were always fine — the
+  backslash was the only unhandled character, and there is exactly one such name in prod.
+
+### Added
+
+- **`TestRunShadowSyncTimeBox` + `TestFindFolderQueryEscaping`** in
+  `tests/test_drive_sync_recovery.py` (existing bench-free CI step): budget exhaustion stops
+  cleanly and saves the cursor, the next run resumes after it and wraps the full circle, a
+  completed run clears it, a cursor naming a deleted record starts from the top; and the Drive
+  query grammar fed the real production names (backslash, apostrophe, and the
+  backslash-before-quote composite). `TestCalendarAccountGate` in `tests/test_error_log_fixes.py`
+  asserts the disabled-account skip is silent and that a genuine insert failure still logs and
+  comments; the payload tests there now capture the `_insert_calendar_event` seam instead of the
+  removed `frappe.call` one, and additionally pin the body to Google-only fields.
+
 ## [1.344.3] - 2026-08-21
 
 ### Fixed

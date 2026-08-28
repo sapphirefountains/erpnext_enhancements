@@ -259,8 +259,12 @@ def find_folder(service, name, parent_id, shared_drive_id=None):
 		Lists files via the Google Drive API. On a 403/429 it sleeps 2s and
 		retries once.
 	"""
-	# Escape single quotes to prevent Google Drive API query syntax errors
-	escaped_name = name.replace("'", "\\'")
+	# Escape for the Drive query grammar: backslashes first, then single quotes —
+	# same treatment as drive_link_manager.search_folders. Quote-only escaping
+	# left the customer literally named "A\ Typical Design Studio" un-queryable:
+	# Drive rejects the stray backslash with HttpError 400 "Invalid Value", once
+	# per hourly shadow walk, forever.
+	escaped_name = name.replace("\\", "\\\\").replace("'", "\\'")
 	query = f"name='{escaped_name}' and '{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
 
 	kwargs = {"q": query, "spaces": "drive", "fields": "files(id, name)", "pageSize": 1}
