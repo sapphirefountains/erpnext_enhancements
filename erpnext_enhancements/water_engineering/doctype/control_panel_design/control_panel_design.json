@@ -26,6 +26,7 @@
   "main_line_voltage",
   "frequency_hz",
   "phase",
+  "power_autosize",
   "amperage_to_panel",
   "main_breaker_size_a",
   "power_source_confirmation",
@@ -189,14 +190,23 @@
    "options": "\n1\n2\n3"
   },
   {
+   "fieldname": "power_autosize",
+   "fieldtype": "Check",
+   "label": "Auto-size Power (NEC)",
+   "default": "1",
+   "description": "Compute the operating amps, main breaker, and control-transformer VA from the pump loads (NEC 430.24 / 430.62 / Art. 450). Uncheck to enter the nameplate manually."
+  },
+  {
    "fieldname": "amperage_to_panel",
    "fieldtype": "Float",
-   "label": "Operating Full Load Amps"
+   "label": "Operating Full Load Amps",
+   "read_only_depends_on": "eval:doc.power_autosize"
   },
   {
    "fieldname": "main_breaker_size_a",
    "fieldtype": "Float",
-   "label": "Main Breaker Size (A)"
+   "label": "Main Breaker Size (A)",
+   "read_only_depends_on": "eval:doc.power_autosize"
   },
   {
    "fieldname": "power_source_confirmation",
@@ -363,7 +373,8 @@
    "fieldname": "control_transformer_va",
    "fieldtype": "Float",
    "label": "Control Transformer VA",
-   "description": "Business rule (not in source docs) \u2014 enter manually."
+   "read_only_depends_on": "eval:doc.power_autosize",
+   "description": "Auto-sized from the control devices (NEC Art. 450) when Auto-size Power is on; a business rule to confirm with the engineer."
   },
   {
    "fieldname": "cb_sizing",

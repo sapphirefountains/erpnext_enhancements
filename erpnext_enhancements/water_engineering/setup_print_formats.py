@@ -25,6 +25,7 @@ RESULTS_PF = "Water Feature Design - Results"
 AUDIT_PF = "Water Feature Design - Calculation Audit"
 SCHEDULES_PF = "Water Feature Design - Schedules"
 SUBMITTAL_PF = "Control Panel Design - Submittal"
+PANEL_SCHEDULE_PF = "Control Panel Design - Panel Schedule"
 
 # --- simple "end results" view ----------------------------------------------
 RESULTS_HTML = """
@@ -327,6 +328,53 @@ SUBMITTAL_HTML = """
 """.strip()
 
 
+PANEL_SCHEDULE_HTML = """
+<div style="font-family:'Helvetica Neue',Arial,sans-serif; color:#222; font-size:12px;">
+  {% set sched = we_panel_schedule(doc) %}
+  <h2 style="margin:0 0 4px; font-weight:bold;">Panel Schedule &ndash; {{ doc.name }}</h2>
+  <p style="margin:0 0 12px; color:#555;">{{ doc.product_family or '' }}{% if doc.project %} &middot; {{ doc.project }}{% endif %} &middot; NEC 430.24 / 430.62 / Art. 450 (engineering aid &mdash; confirm with the engineer of record).</p>
+
+  <h3 style="margin:10px 0 4px; font-size:13px;">Service</h3>
+  <table style="width:100%; border-collapse:collapse; font-size:11px;">
+    <tr>
+      <td style="padding:3px 6px; border:1px solid #ddd; color:#555;">Main line</td><td style="padding:3px 6px; border:1px solid #ddd;">{{ sched.service.main_line_voltage or '?' }} V &middot; {{ sched.service.phase or '?' }} phase &middot; {{ sched.service.frequency_hz or 60 }} Hz</td>
+      <td style="padding:3px 6px; border:1px solid #ddd; color:#555;">Connected load (430.24)</td><td style="padding:3px 6px; border:1px solid #ddd;">{{ sched.connected_load_a or '&mdash;' }} A</td>
+    </tr>
+    <tr>
+      <td style="padding:3px 6px; border:1px solid #ddd; color:#555;">Main breaker (430.62)</td><td style="padding:3px 6px; border:1px solid #ddd;">{{ sched.main_breaker_a or '&mdash;' }} A</td>
+      <td style="padding:3px 6px; border:1px solid #ddd; color:#555;">Control transformer</td><td style="padding:3px 6px; border:1px solid #ddd;">{{ sched.control_transformer_va or '&mdash;' }} VA</td>
+    </tr>
+  </table>
+
+  <h3 style="margin:14px 0 4px; font-size:13px;">Branch Circuits</h3>
+  <table style="width:100%; border-collapse:collapse; font-size:11px;">
+    <thead><tr style="background:#f4f4f4;">
+      <th style="padding:4px 6px; border:1px solid #ddd; text-align:left;">Tag</th>
+      <th style="padding:4px 6px; border:1px solid #ddd; text-align:left;">Description</th>
+      <th style="padding:4px 6px; border:1px solid #ddd; text-align:right;">FLA (A)</th>
+      <th style="padding:4px 6px; border:1px solid #ddd; text-align:left;">V / phase</th>
+      <th style="padding:4px 6px; border:1px solid #ddd; text-align:left;">Control</th>
+      <th style="padding:4px 6px; border:1px solid #ddd; text-align:right;">Breaker (A)</th>
+    </tr></thead>
+    <tbody>
+      {% for c in sched.circuits %}
+      <tr>
+        <td style="padding:3px 6px; border:1px solid #ddd;">{{ c.tag }}</td>
+        <td style="padding:3px 6px; border:1px solid #ddd;">{{ c.description }}</td>
+        <td style="padding:3px 6px; border:1px solid #ddd; text-align:right;">{{ c.load_a or '&mdash;' }}</td>
+        <td style="padding:3px 6px; border:1px solid #ddd;">{{ c.voltage }} / {{ c.phase }}&phi;</td>
+        <td style="padding:3px 6px; border:1px solid #ddd;">{{ c.control_method }}</td>
+        <td style="padding:3px 6px; border:1px solid #ddd; text-align:right;">{{ c.breaker_a or '&mdash;' }}</td>
+      </tr>
+      {% endfor %}
+      {% if not sched.circuits %}<tr><td colspan="6" style="padding:6px; border:1px solid #ddd; color:#999;">No pump loads entered.</td></tr>{% endif %}
+    </tbody>
+  </table>
+  <p style="margin:10px 0 0; color:#999; font-size:10px;">Branch breakers round UP to the next standard size (NEC 240.6); the feeder/main rounds DOWN (NEC 430.62). Motor FLA uses the NEC 430.248/250 table value unless a nameplate FLA is entered. Code-based design aid for the engineer of record to confirm &mdash; not a stamped calculation.</p>
+</div>
+""".strip()
+
+
 def _upsert_print_format(name, html, doc_type=DOCTYPE):
     """Create or update one custom Jinja Print Format for the given doctype."""
     if frappe.db.exists("Print Format", name):
@@ -355,6 +403,7 @@ def ensure_water_print_formats():
             _upsert_print_format(SCHEDULES_PF, SCHEDULES_HTML)
         if frappe.db.exists("DocType", CONTROL_DOCTYPE):
             _upsert_print_format(SUBMITTAL_PF, SUBMITTAL_HTML, doc_type=CONTROL_DOCTYPE)
+            _upsert_print_format(PANEL_SCHEDULE_PF, PANEL_SCHEDULE_HTML, doc_type=CONTROL_DOCTYPE)
         frappe.db.commit()
         frappe.logger().info("[water_engineering] ensured Water Engineering print formats")
     except Exception:

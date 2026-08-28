@@ -1113,6 +1113,9 @@ jinja = {
 	"methods": [
 		"erpnext_enhancements.water_engineering.issues.we_fitting_schedule",
 		"erpnext_enhancements.water_engineering.issues.we_design_issues",
+		# Control-panel NEC panel schedule (circuits + service totals). The 430.24/
+		# 430.62/Art.450 math can't run in the print sandbox, so it's computed here.
+		"erpnext_enhancements.water_engineering.doctype.control_panel_design.control_panel_design.we_panel_schedule",
 		"erpnext_enhancements.project_enhancements.print_data.project_schedule_rows",
 		"erpnext_enhancements.project_enhancements.print_data.project_task_rows",
 		# The union of Purchase Order.project and Purchase Order Item.project, so the PO

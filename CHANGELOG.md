@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.352.0] - 2026-08-28
+
+### Added
+
+- **Control Panel Design now computes its NEC panel/service sizing** instead of it being three
+  hand-entered numbers. `_recompute_sizing()` builds the motor loads from the Control Pump rows (a new
+  `fla_amps` nameplate field, else the NEC 430.248/250 table value from the HP) and runs the v1.349.0
+  engine — `total_connected_load` (430.24), `service_main_breaker` (430.62), and `control_transformer_va`
+  (Art. 450, from one contactor coil per pump + the lighting/solenoid relays + the HMI) — writing
+  `amperage_to_panel`, `main_breaker_size_a`, and `control_transformer_va`. A `power_autosize` check
+  (default on) gates it: on, the three fields are computed and shown read-only; off, they revert to manual
+  entry (`read_only_depends_on`). Existing panels recompute on their next save.
+- **"Control Panel Design - Panel Schedule" print format** (`setup_print_formats.py`) — a branch-circuit
+  schedule (tag / description / FLA / V·phase / control method / breaker) plus the service block
+  (connected load, main breaker, control-transformer VA), fed by a new `we_panel_schedule(doc)` Jinja
+  method (registered in `hooks.py` alongside `we_fitting_schedule`, because the NEC math can't run in the
+  print sandbox). It states the up-vs-down OCPD round rule and that it is an engineering aid for the
+  engineer of record to confirm, not a stamped calculation.
+
+  The engine math is covered by the v1.349.0 golden tests; the controller recompute + the new field
+  layout + the print format still need a `bench migrate` + desk pass to validate. Follow-ups: linking the
+  controller/enclosure hardware to catalog Items and a spa-specific interlock/IO seed set (application_type).
+
 ## [1.351.0] - 2026-08-28
 
 ### Added
