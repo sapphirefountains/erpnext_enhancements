@@ -50,6 +50,8 @@
   "sb_pumps",
   "pumps",
   "electrical_loads",
+  "sb_equipment",
+  "design_equipment",
   "tab_treatment",
   "sb_chemistry",
   "chem_water_type",
@@ -375,6 +377,18 @@
    "fieldtype": "Table",
    "label": "Electrical Loads",
    "options": "Water Feature Electrical Load"
+  },
+  {
+   "fieldname": "sb_equipment",
+   "fieldtype": "Section Break",
+   "label": "Equipment Schedule",
+   "description": "Catalog equipment (filters, heaters, chem feed, controllers, skimmers, VGB drains, jets, gauges) — drives the equipment schedule and the filter/heater/VGB cross-checks."
+  },
+  {
+   "fieldname": "design_equipment",
+   "fieldtype": "Table",
+   "label": "Equipment",
+   "options": "Water Feature Equipment"
   },
   {
    "fieldname": "tab_treatment",

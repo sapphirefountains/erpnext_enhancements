@@ -97,7 +97,8 @@ EDITABLE_DESIGN_FIELDS = frozenset(
 
 # Child tables a caller may replace wholesale.
 EDITABLE_CHILD_TABLES = (
-    "basins", "features", "pipe_segments", "pumps", "electrical_loads", "tiers", "venue_fixtures",
+    "basins", "features", "pipe_segments", "pumps", "electrical_loads", "tiers",
+    "venue_fixtures", "design_equipment",
 )
 
 # Parent input fields the live form preview may set (the editable design fields

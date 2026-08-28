@@ -455,6 +455,36 @@ PACKET_SPA_DATA_HTML = """
 </table>
 """.strip()
 
+PACKET_EQUIPMENT_HTML = """
+{% if doc.design_equipment %}
+<h3 style="margin:0 0 6px; font-size:14px;">Circulation Equipment Schedule</h3>
+<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:14px;">
+  <thead><tr style="background:#f4f4f4;">
+    <th style="border:1px solid #ddd; padding:4px 6px; text-align:left;">Mark</th>
+    <th style="border:1px solid #ddd; padding:4px 6px; text-align:left;">Class</th>
+    <th style="border:1px solid #ddd; padding:4px 6px; text-align:left;">Equipment / Model</th>
+    <th style="border:1px solid #ddd; padding:4px 6px; text-align:right;">Qty</th>
+    <th style="border:1px solid #ddd; padding:4px 6px; text-align:left;">Rating</th>
+    <th style="border:1px solid #ddd; padding:4px 6px; text-align:left;">Electrical</th>
+    <th style="border:1px solid #ddd; padding:4px 6px; text-align:left;">Check</th>
+  </tr></thead>
+  <tbody>
+    {% for e in doc.design_equipment %}
+    <tr>
+      <td style="border:1px solid #ddd; padding:3px 6px;">{{ loop.index }}</td>
+      <td style="border:1px solid #ddd; padding:3px 6px;">{{ e.equipment_class or '' }}</td>
+      <td style="border:1px solid #ddd; padding:3px 6px;">{{ e.equipment_item }}{% if e.model_no %} &middot; {{ e.model_no }}{% endif %}</td>
+      <td style="border:1px solid #ddd; padding:3px 6px; text-align:right;">{{ e.qty or 1 }}</td>
+      <td style="border:1px solid #ddd; padding:3px 6px;">{{ e.rating or '' }}</td>
+      <td style="border:1px solid #ddd; padding:3px 6px;">{{ e.electrical or '' }}</td>
+      <td style="border:1px solid #ddd; padding:3px 6px;{% if e.note and e.note != 'OK' %} color:#b00;{% endif %}">{{ e.note or '' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+""".strip()
+
 PACKET_SCHEMATICS_HTML = """
 <h3 style="margin:0 0 8px; font-size:14px;">Circulation Equipment Schematic (SP-3)</h3>
 <div style="overflow-x:auto;">{{ we_circulation_schematic(doc.name) }}</div>
@@ -486,7 +516,7 @@ def _packet_html():
     """Compose the master packet from the cover + the existing/new sheet bodies."""
     return (
         PACKET_COVER_HTML
-        + _packet_sheet(PACKET_SPA_DATA_HTML + SCHEDULES_HTML)
+        + _packet_sheet(PACKET_SPA_DATA_HTML + PACKET_EQUIPMENT_HTML + SCHEDULES_HTML)
         + _packet_sheet(PACKET_SCHEMATICS_HTML)
         + _packet_sheet(PACKET_NOTES_HTML)
         + _packet_sheet(AUDIT_HTML)

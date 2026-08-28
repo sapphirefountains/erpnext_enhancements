@@ -29,6 +29,7 @@ from erpnext_enhancements.water_engineering.engine import (
 	chlorinator_feed,
 	component_loss,
 	feature_flow_category,
+	filtration_area,
 	fitting_minor_loss,
 	hazen_williams_loss,
 	main_drain_flow,
@@ -209,6 +210,7 @@ class WaterFeatureDesign(Document):
 		self._compute_drainage()
 		self._fill_basin_rows()
 		self._fill_fixture_rows()
+		self._fill_equipment_rows()
 		self._fill_feature_rows()
 		self._fill_segment_rows()
 		self._fill_segment_pressure()
@@ -336,6 +338,23 @@ class WaterFeatureDesign(Document):
 			else:
 				row.computed_flow_gpm = flt(row.rated_gpm)
 
+	def _fill_equipment_rows(self):
+		"""Resolve each catalog equipment row's specs into the schedule columns
+		(rating + electrical) and run the adequacy cross-checks (filter area/flow
+		vs the design flow). Best-effort — a missing item or unmigrated custom
+		field just leaves the computed columns blank."""
+		design_gpm = flt(self.design_flow_gpm)
+		for row in self.get("design_equipment") or []:
+			if not row.equipment_item:
+				continue
+			specs = _equipment_specs(row.equipment_item)
+			cls = specs.get("custom_equipment_class") or getattr(row, "equipment_class", "") or ""
+			row.equipment_class = cls
+			row.model_no = specs.get("custom_model_no")
+			row.rating = _equipment_rating(cls, specs)
+			row.electrical = _equipment_electrical(specs)
+			row.note = _equipment_note(cls, specs, design_gpm)
+
 	def _fill_feature_rows(self):
 		tier_rows = [{"diameter_in": flt(t.diameter_in)} for t in self.get("tiers") or []]
 		tier_gpm = (flt(self.tiers[0].spill_gpm_per_ft) or 0.5) if self.get("tiers") else 0.5
@@ -404,6 +423,88 @@ def _loads(text):
 		return data if isinstance(data, list) else []
 	except (ValueError, TypeError):
 		return []
+
+
+_EQUIP_SPEC_FIELDS = [
+	"custom_equipment_class", "custom_model_no", "custom_filter_area_sqft",
+	"custom_filter_max_flow_gpm", "custom_filter_media", "custom_heater_fuel",
+	"custom_heater_kw", "custom_heater_btu_hr", "custom_elec_voltage",
+	"custom_elec_phase", "custom_elec_fla_amps", "custom_elec_watts",
+	"custom_vgb_open_area_sqin", "custom_vgb_rated", "custom_skimmer_max_flow_gpm",
+	"custom_jet_flow_gpm", "custom_jet_pressure_psi", "custom_meter_range",
+]
+
+
+def _equipment_specs(item_code):
+	"""Item spec fields for an equipment row; {} if the item or the catalog
+	custom fields aren't there yet (they land with the equipment-catalog migrate)."""
+	try:
+		return frappe.db.get_value("Item", item_code, _EQUIP_SPEC_FIELDS, as_dict=True) or {}
+	except Exception:
+		return {}
+
+
+def _equipment_rating(cls, specs):
+	"""One-line rating summary for the schedule, by equipment class."""
+	if cls == "Filter":
+		bits = []
+		if specs.get("custom_filter_area_sqft"):
+			bits.append(f"{flt(specs['custom_filter_area_sqft']):g} SF")
+		if specs.get("custom_filter_max_flow_gpm"):
+			bits.append(f"{flt(specs['custom_filter_max_flow_gpm']):g} GPM")
+		if specs.get("custom_filter_media"):
+			bits.append(specs["custom_filter_media"])
+		return " · ".join(bits)
+	if cls == "Heater":
+		if specs.get("custom_heater_kw"):
+			return f"{flt(specs['custom_heater_kw']):g} kW"
+		if specs.get("custom_heater_btu_hr"):
+			return f"{flt(specs['custom_heater_btu_hr']):g} BTU/hr"
+	if cls == "Suction Outlet (VGB)":
+		oa = specs.get("custom_vgb_open_area_sqin")
+		if oa:
+			return f"{flt(oa):g} sq in open{' · VGB' if specs.get('custom_vgb_rated') else ''}"
+		return "VGB" if specs.get("custom_vgb_rated") else ""
+	if cls == "Skimmer" and specs.get("custom_skimmer_max_flow_gpm"):
+		return f"{flt(specs['custom_skimmer_max_flow_gpm']):g} GPM max"
+	if cls == "Therapy Jet" and specs.get("custom_jet_flow_gpm"):
+		return f"{flt(specs['custom_jet_flow_gpm']):g} GPM @ {flt(specs.get('custom_jet_pressure_psi') or 0):g} PSI"
+	if cls == "Gauge / Meter" and specs.get("custom_meter_range"):
+		return specs["custom_meter_range"]
+	return ""
+
+
+def _equipment_electrical(specs):
+	"""One-line electrical summary (voltage / phase / FLA or watts)."""
+	v = specs.get("custom_elec_voltage")
+	if not v:
+		return ""
+	bits = [f"{v}V"]
+	if specs.get("custom_elec_phase"):
+		bits.append(f"{specs['custom_elec_phase']}ph")
+	if specs.get("custom_elec_fla_amps"):
+		bits.append(f"{flt(specs['custom_elec_fla_amps']):g}A")
+	elif specs.get("custom_elec_watts"):
+		bits.append(f"{flt(specs['custom_elec_watts']):g}W")
+	return " ".join(bits)
+
+
+def _equipment_note(cls, specs, design_gpm):
+	"""Cross-check note: a filter's max flow + area vs the design flow."""
+	if cls == "Filter" and design_gpm:
+		maxf = flt(specs.get("custom_filter_max_flow_gpm"))
+		if maxf and design_gpm > maxf:
+			return f"design flow {design_gpm:.0f} > filter max {maxf:.0f} GPM"
+		area = flt(specs.get("custom_filter_area_sqft"))
+		media = (specs.get("custom_filter_media") or "cartridge").lower()
+		try:
+			req = filtration_area(design_gpm, media).value
+		except Exception:
+			req = None
+		if req and area and area < req:
+			return f"filter area {area:.0f} < required {req:.0f} SF"
+		return "OK"
+	return ""
 
 
 def _fmt(value):

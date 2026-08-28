@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.356.0] - 2026-08-28
+
+### Added
+
+- **Equipment schedule on Water Feature Design, catalog-driven.** A new **Water Feature Equipment** child
+  table (`design_equipment`) lets a design pick catalog Items (the v1.351.0 aquatic-equipment catalog);
+  the row's class/model auto-fetch from the Item, and on recompute the controller denormalizes each item's
+  **rating** (filter area/flow/media, heater kW/BTU, VGB open area, jet GPM/PSI, skimmer max flow, meter
+  range) and **electrical** (V / phase / FLA or watts) into the schedule columns and runs an adequacy
+  **cross-check** — e.g. a filter is flagged when the design flow exceeds its rated max or its area is
+  below the required `filtration_area`. The equipment schedule then renders on the submittal packet's
+  schedules sheet (the Fika "Circulation Equipment Schedule"), with failed checks shown in red. Best-effort
+  and guarded: a missing item or an unmigrated catalog field just leaves the computed columns blank. The
+  new table is in the desk/AI write + preview allowlist.
+
 ## [1.355.0] - 2026-08-28
 
 ### Added
