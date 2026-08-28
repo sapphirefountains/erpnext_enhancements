@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.349.0] - 2026-08-28
+
+### Added
+
+- **Panel + service electrical sizing engine** (`water_engineering/engine/electrical.py`) — the NEC math
+  a control-panel submittal needs beyond a single branch breaker, all pure/stdlib and reachable from the
+  desk `run_calc` endpoint and the `water_calc` MCP tool:
+  - `motor_flc(hp, phase, voltage)` — full-load current from NEC Table 430.248 (1-phase) / 430.250
+    (3-phase). Sizing uses the **table** value, not the nameplate FLA (NEC 430.6(A)(1)); a fractional-HP
+    motor below the table returns `None` so the caller falls back to the nameplate.
+  - `total_connected_load(loads)` — feeder connected amps, NEC 430.24: `1.25 × largest-motor FLC + Σ other
+    motor FLC + non-motor loads` (continuous non-motor at 125%).
+  - `service_main_breaker(loads)` — feeder/service OCPD, NEC 430.62: largest motor branch OCPD + the other
+    motors' FLC + other loads, then the largest standard size **not exceeding** that ceiling.
+  - `control_transformer_va(control_loads)` — sum the control devices' sealed VA and pick the next standard
+    transformer (NEC Article 450 + manufacturer selection).
+
+  The **round-direction trap is made explicit and pinned by a golden**: a branch breaker rounds *up* to the
+  next standard size (240.6), but a feeder/service OCPD rounds *down* to the largest size not exceeding its
+  ceiling (430.62) — rounding the service up would oversize it illegally. On the Fika-shaped load set
+  (two 8 A pumps, a 45.8 A heater, a 5 A controller, two 1.7 A feed pumps) that is a 83.7 A connected load
+  and a 70 A feeder (ceiling 77.2 A → 70, not 80). Motor full-load-current tables, standard OCPD sizes
+  (240.6), and control-device sealed-VA nominals were added to `engine/constants.py`.
+
+  As with the existing `electrical_load`, every result carries its NEC citation **and** a "confirm with the
+  engineer" warning: these are code-based design aids for a P.E. to review, not stamped calculations. The
+  next step wires them into the Control Panel Design controller so `amperage_to_panel` /
+  `main_breaker_size_a` / `control_transformer_va` become computed (overridable) fields, and adds the
+  panel-schedule print format.
+
+## [1.348.0] - 2026-08-28
+
+### Added
+
+- **Branch-circuit breaker sizing is now reachable from the desk and the AI.**
+  `water_engineering/engine/pump.py::electrical_load` (next standard breaker ≥ 1.25 × full-load amps,
+  NEC 240.6 / 430.52) has existed and been exported since the pump module was written, but it had
+  **zero callers**: it was not in the `run_calc` dispatch, not in the `water_calc` MCP tool, and not
+  invoked by any controller — so `Water Feature Electrical Load.breaker_amps` was never populated and
+  `issues.py` correctly flagged every design's electrical schedule as incomplete. This wires it into
+  both the `run_calc` endpoint and the `water_calc` MCP calc list (`{fla_amps, hp, phase, voltage}`),
+  with golden tests pinning the Fika equipment: a 1 HP pump (8 A) → 15 A, a 1.7 A Stenner chem pump →
+  the 15 A minimum, and the Coates 11 kW / 240 V heater (45.8 A) → 60 A. Populating the field on save,
+  and the feeder/service (NEC 430.24 / 430.62) and control-transformer sizing, are the next steps.
+
+## [1.347.0] - 2026-08-28
+
+### Added
+
+- **Regulated aquatic-venue calculations in the water engine** (`water_engineering/engine/aquatic.py`) —
+  the first step of teaching the fountain hydraulic engine to produce health-department pool/spa
+  submittals like the Fika Reflexology Spa plan set. Five pure functions, each returning the usual
+  `CalcResult` audit envelope, wired into the desk `run_calc` dispatch and the `water_calc` MCP tool so
+  the desk wizard and the AI share byte-identical math:
+  - `turnover_time(volume_gal, flow_gpm)` — turnover in minutes (volume ÷ flow).
+  - `minimum_flow_rate(volume_gal, max_turnover_min, venue)` — the code minimum circulation flow
+    (volume ÷ the maximum turnover *time*; spa/wading/therapy default 30 min). This is a different basis
+    from the fountain spine's turnovers-per-hour, though the two agree arithmetically
+    (`minimum_flow_rate(v, 30) == turnover_gpm(v, 2)`), which a golden test pins.
+  - `bather_load(surface_area_sf, sf_per_person, rounding, venue)` — maximum bathers from water-surface
+    area. The divisor (spa ~10 SF, pool ~15 SF) and the integer-rounding convention **vary by governing
+    code**, so both are parameters; the raw ratio and any floor/nearest/ceil disagreement are surfaced
+    rather than a single number being hard-coded. (The Fika calc sheet itself shows `46/10 ≈ 5` in the
+    arithmetic but `6` in the data block — exactly the ambiguity this refuses to bury.)
+  - `skimmer_sizing(surface_area_sf, sf_each, rated_gpm, venue)` — skimmer count `ceil(SA/SF-each)`
+    (spa 100 SF, pool 400 SF) with each skimmer sized to operate at 80% of its rated GPM.
+  - `main_drain_flow(open_area_in2, velocity_fps, drains)` — the reported "drain capacity at 1.5 ft/s"
+    schedule line; its `warnings` point at the existing `suction_outlet_vgb` gate as the actual
+    anti-entrapment go/no-go, so the report line is never mistaken for the safety check.
+
+  Every value is golden-tested against the Fika submittal (Salt Lake County Health Dept, 2023):
+  425 gal ÷ 35 GPM = 12.14 min turnover, 14.17 GPM minimum flow, 46 SF ÷ 10 = bather load, one 100-SF
+  skimmer at 50.4 GPM, and 42 GPM through a 9.02 in² VGB drain. Therapy-jet flow (`nozzle_array_flow`),
+  filter adequacy (`filtration_area`), VGB entrapment (`suction_outlet_vgb`), heating (`heating_load`)
+  and chemistry are reused unchanged.
+
+  A companion `is_regulated(venue_type)` / `venue_family()` predicate is added for the doctype schema +
+  spine branch that follow. The fountain-era `workbook.program_rules` (fixed 9 SF/user, 400 SF/skimmer)
+  is **left untouched** and its golden stays green: the new module is the code-parameterized regulated
+  path, and the two are deliberately kept side by side rather than one silently changing the other's
+  numbers. Engine-only, no schema or fixture changes; the decorative-fountain path is unaffected.
+
 ## [1.346.0] - 2026-08-28
 
 ### Removed

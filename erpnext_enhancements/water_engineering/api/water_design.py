@@ -19,12 +19,15 @@ from frappe import _
 from erpnext_enhancements.water_engineering import issues as design_issues
 from erpnext_enhancements.water_engineering.engine import (
     basin_volume,
+    bather_load,
     calc_lighting,
     calc_solenoid_relays,
     chemical_dose,
     chemistry_targets,
     chlorinator_feed,
+    control_transformer_va,
     electric_cost,
+    electrical_load,
     evaporation_rate,
     feature_visual_kind,
     filtration_area,
@@ -34,8 +37,10 @@ from erpnext_enhancements.water_engineering.engine import (
     lazy_river_hp,
     lighting_design,
     lsi_index,
+    main_drain_flow,
     make_up_water,
     manning_drain_flow,
+    minimum_flow_rate,
     nozzle_array_flow,
     nozzle_flow,
     npsh_available,
@@ -47,12 +52,16 @@ from erpnext_enhancements.water_engineering.engine import (
     program_rules,
     run_spine,
     select_pump,
+    service_main_breaker,
     size_drain,
     size_pipe,
+    skimmer_sizing,
     suction_outlet_vgb,
     surge_basin_volume,
+    total_connected_load,
     total_dynamic_head,
     turnover_gpm,
+    turnover_time,
     uv_dose,
     vertical_pipe,
     water_hammer,
@@ -423,6 +432,52 @@ def _run_calc(calc, inputs):
         r = uv_dose(i.get("flow_gpm", 0), i.get("target_red_mj", 60))
     elif calc == "filtration_area":
         r = filtration_area(i.get("design_gpm", 0), i.get("media", "sand"), i.get("rate_gpm_sf", 0))
+    elif calc == "turnover_time":
+        r = turnover_time(i.get("volume_gal", 0), i.get("flow_gpm", 0))
+    elif calc == "minimum_flow_rate":
+        r = minimum_flow_rate(
+            i.get("volume_gal", 0),
+            i.get("max_turnover_min", 0),
+            venue=i.get("venue", "spa"),
+            governing_code=i.get("governing_code", ""),
+        )
+    elif calc == "bather_load":
+        r = bather_load(
+            i.get("surface_area_sf", 0),
+            i.get("sf_per_person", 0),
+            rounding=i.get("rounding", "floor"),
+            venue=i.get("venue", "spa"),
+            governing_code=i.get("governing_code", ""),
+        )
+    elif calc == "skimmer_sizing":
+        r = skimmer_sizing(
+            i.get("surface_area_sf", 0),
+            sf_each=i.get("sf_each", 0),
+            rated_gpm=i.get("rated_gpm", 0),
+            derate=i.get("derate", 0.80),
+            venue=i.get("venue", "spa"),
+            governing_code=i.get("governing_code", ""),
+        )
+    elif calc == "main_drain_flow":
+        r = main_drain_flow(
+            i.get("open_area_in2", 0),
+            velocity_fps=i.get("velocity_fps", 1.5),
+            drains=i.get("drains", 2),
+            governing_code=i.get("governing_code", ""),
+        )
+    elif calc == "electrical_load":
+        r = electrical_load(
+            i.get("fla_amps", 0),
+            hp=i.get("hp", 0),
+            phase=i.get("phase", 1),
+            voltage=i.get("voltage", 0),
+        )
+    elif calc == "total_connected_load":
+        r = total_connected_load(i.get("loads", []))
+    elif calc == "service_main_breaker":
+        r = service_main_breaker(i.get("loads", []))
+    elif calc == "control_transformer_va":
+        r = control_transformer_va(i.get("control_loads", []))
     else:
         frappe.throw(_("Unknown calculation: {0}").format(calc), frappe.ValidationError)
     return r.to_dict()
