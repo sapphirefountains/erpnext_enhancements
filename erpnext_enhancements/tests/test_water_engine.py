@@ -764,6 +764,59 @@ class RegulatedAquaticTests(unittest.TestCase):
         self.assertTrue(is_regulated("Commercial Spa"))
         self.assertTrue(is_regulated("Commercial Pool"))
 
+    def test_run_spine_regulated_spa(self):
+        # Fika-shaped: 425 gal octagon spa (published volume), 46 SF surface, 30-min
+        # max turnover, published design flow 35 GPM, two VGB drains, five therapy jets.
+        out = run_spine(
+            {
+                "venue_type": "Commercial Spa",
+                "governing_code": "Utah R392-302",
+                "basins": [{"shape": "other", "volume_gal_override": 425}],
+                "surface_area_sf": 46,
+                "max_turnover_min": 30,
+                "design_flow_published_gpm": 35,
+                "skimmer_rated_gpm": 63,
+                "venue_fixtures": [
+                    {"fixture_type": "Main Drain", "qty": 2, "open_area_in2": 9.02},
+                    {"fixture_type": "Therapy Jet", "qty": 5, "rated_gpm": 8},
+                ],
+            }
+        )
+        self.assertTrue(out["is_regulated"])
+        self.assertAlmostEqual(out["design_flow_gpm"], 35, delta=0.01)  # published > minimum
+        self.assertAlmostEqual(out["minimum_flow_gpm"], 14.17, delta=0.01)
+        self.assertAlmostEqual(out["turnover_time_min"], 425 / 35, delta=0.01)
+        self.assertEqual(out["bather_load"], 4)  # floor(46/10)
+        self.assertEqual(out["skimmer_count"], 1)
+        self.assertAlmostEqual(out["jet_flow_gpm"], 40, delta=0.01)  # 5 * 8
+
+    def test_run_spine_fountain_path_unchanged(self):
+        # No venue_type -> not regulated -> no regulated rollups, design flow as before
+        out = run_spine(
+            {
+                "basins": [{"shape": "rectangular", "length_in": 120, "width_in": 60, "height_in": 18}],
+                "turnovers_per_hr": 2,
+            }
+        )
+        self.assertFalse(out["is_regulated"])
+        self.assertIsNone(out["minimum_flow_gpm"])
+        self.assertIsNone(out["bather_load"])
+        self.assertIsNone(out["skimmer_count"])
+
+    def test_run_spine_below_minimum_flow_warns(self):
+        # published flow below the code minimum -> floored up + a code-violation warning
+        out = run_spine(
+            {
+                "venue_type": "Commercial Spa",
+                "basins": [{"shape": "other", "volume_gal_override": 425}],
+                "surface_area_sf": 46,
+                "max_turnover_min": 30,
+                "design_flow_published_gpm": 10,  # below the 14.17 GPM minimum
+            }
+        )
+        self.assertAlmostEqual(out["design_flow_gpm"], 14.17, delta=0.01)
+        self.assertTrue(any("below the code minimum" in w.lower() for w in out["warnings"]))
+
 
 class CorrectnessGuardTests(unittest.TestCase):
     def test_spine_defaults_blank_segment_flow_to_design(self):

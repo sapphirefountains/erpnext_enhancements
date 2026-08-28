@@ -31,12 +31,14 @@ from erpnext_enhancements.water_engineering.engine import (
 	feature_flow_category,
 	fitting_minor_loss,
 	hazen_williams_loss,
+	main_drain_flow,
 	manning_drain_flow,
 	nozzle_array_flow,
 	nozzle_flow,
 	pipe_pressure_check,
 	pipe_velocity,
 	run_spine,
+	suction_outlet_vgb,
 	surge_basin_volume,
 	tiered_fountain_flow,
 	velocity_status,
@@ -176,6 +178,12 @@ class WaterFeatureDesign(Document):
 		self.required_circulation_gpm = out.get("required_circulation_gpm")
 		self.design_flow_gpm = out.get("design_flow_gpm")
 		self.computed_tdh_ft = out.get("tdh_ft")
+		# Regulated-venue rollups (None for fountains -> the fields stay blank/hidden).
+		self.turnover_time_min = out.get("turnover_time_min")
+		self.minimum_flow_gpm = out.get("minimum_flow_gpm")
+		self.bather_load = out.get("bather_load")
+		self.skimmer_count = out.get("skimmer_count")
+		self.main_drain_status = out.get("main_drain_status") or ""
 		self.next_inputs_needed = "\n".join(out.get("next_inputs_needed") or [])
 
 		extra_issues = []
@@ -200,6 +208,7 @@ class WaterFeatureDesign(Document):
 		self._compute_chemistry()
 		self._compute_drainage()
 		self._fill_basin_rows()
+		self._fill_fixture_rows()
 		self._fill_feature_rows()
 		self._fill_segment_rows()
 		self._fill_segment_pressure()
@@ -285,6 +294,13 @@ class WaterFeatureDesign(Document):
 
 	def _fill_basin_rows(self):
 		for row in self.get("basins") or []:
+			# A regulated shell (e.g. an octagon spa) may carry a published volume
+			# the rect/cyl geometry can't derive — honor the override when given.
+			override = flt(getattr(row, "volume_gal_override", 0))
+			if override > 0:
+				row.volume_gal = override
+				row.weight_lb = gallons_to_pounds(override)
+				continue
 			r = basin_volume(
 				row.shape or "Rectangular",
 				length_in=flt(row.length_in),
@@ -294,6 +310,31 @@ class WaterFeatureDesign(Document):
 			)
 			row.volume_gal = r.value or 0
 			row.weight_lb = gallons_to_pounds(r.value) if r.value else 0
+
+	def _fill_fixture_rows(self):
+		"""Per-fixture computed flow + status for the equipment schedule: skimmer
+		80%-rated flow, main-drain open-area flow + the VGB anti-entrapment status,
+		and therapy-jet total flow. Regulated venues only; empty for fountains."""
+		design = flt(self.design_flow_gpm)
+		for row in self.get("venue_fixtures") or []:
+			ftype = (row.fixture_type or "").strip().lower()
+			row.status = ""
+			if ftype == "skimmer":
+				row.computed_flow_gpm = flt(row.rated_gpm) * 0.80
+				row.status = "operate at 80% rated"
+			elif ftype == "therapy jet":
+				row.computed_flow_gpm = flt(row.rated_gpm) * (cint(row.qty) or 1)
+			elif "drain" in ftype:
+				open_area = flt(getattr(row, "open_area_in2", 0))
+				row.computed_flow_gpm = main_drain_flow(open_area).value if open_area > 0 else 0
+				cl = flt(getattr(row, "cover_length_in", 0))
+				cw = flt(getattr(row, "cover_width_in", 0))
+				oaf = flt(getattr(row, "open_area_fraction", 0))
+				if cl > 0 and cw > 0 and oaf > 0 and design > 0:
+					vgb = suction_outlet_vgb(design, cl, cw, oaf, outlets=cint(row.qty) or 2)
+					row.status = vgb.status or ""
+			else:
+				row.computed_flow_gpm = flt(row.rated_gpm)
 
 	def _fill_feature_rows(self):
 		tier_rows = [{"diameter_in": flt(t.diameter_in)} for t in self.get("tiers") or []]
@@ -438,6 +479,8 @@ def _engine_inputs(doc):
 			"width_in": flt(b.width_in),
 			"height_in": flt(b.height_in),
 			"diameter_in": flt(b.diameter_in),
+			"surface_area_sf": flt(getattr(b, "surface_area_sf", 0)),
+			"volume_gal_override": flt(getattr(b, "volume_gal_override", 0)),
 		}
 		for b in doc.get("basins") or []
 	]
@@ -481,6 +524,21 @@ def _engine_inputs(doc):
 		}
 		for p in doc.get("pumps") or []
 	] or _catalog_pump_candidates()
+	# Regulated aquatic-venue inputs (ignored by the spine for fountains, whose
+	# venue_type is empty / Decorative Fountain -> is_regulated is False).
+	surface_area_sf = sum(flt(getattr(b, "surface_area_sf", 0)) for b in doc.get("basins") or [])
+	venue_fixtures = [
+		{
+			"fixture_type": fx.fixture_type,
+			"qty": cint(fx.qty) or 1,
+			"rated_gpm": flt(fx.rated_gpm),
+			"open_area_in2": flt(getattr(fx, "open_area_in2", 0)),
+			"cover_length_in": flt(getattr(fx, "cover_length_in", 0)),
+			"cover_width_in": flt(getattr(fx, "cover_width_in", 0)),
+			"open_area_fraction": flt(getattr(fx, "open_area_fraction", 0)),
+		}
+		for fx in doc.get("venue_fixtures") or []
+	]
 	return {
 		"basins": basins,
 		"features": features,
@@ -489,6 +547,15 @@ def _engine_inputs(doc):
 		"turnovers_per_hr": flt(doc.turnover_per_hr) or 2,
 		"hazen_williams_c": cint(doc.hazen_williams_c) or 130,
 		"pump_candidates": candidates or None,
+		"venue_type": getattr(doc, "venue_type", "") or "",
+		"governing_code": getattr(doc, "governing_code", "") or "",
+		"surface_area_sf": surface_area_sf,
+		"max_turnover_min": flt(getattr(doc, "max_turnover_min", 0)),
+		"design_flow_published_gpm": flt(getattr(doc, "design_flow_published_gpm", 0)),
+		"bather_sf_per_person": flt(getattr(doc, "bather_sf_per_person", 0)),
+		"skimmer_sf_each": flt(getattr(doc, "skimmer_sf_each", 0)),
+		"skimmer_rated_gpm": flt(getattr(doc, "skimmer_rated_gpm", 0)),
+		"venue_fixtures": venue_fixtures,
 	}
 
 

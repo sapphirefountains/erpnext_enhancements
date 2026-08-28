@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.350.0] - 2026-08-28
+
+### Added
+
+- **Water Feature Design now models regulated aquatic venues (pools/spas), not just fountains.** A
+  `venue_type` discriminator (Decorative Fountain / Interactive Water Feature / Commercial Spa /
+  Commercial Pool / Wading Pool / Therapy Pool, default *Decorative Fountain*) branches the design: the
+  two fountain types keep the existing decorative path untouched, while the regulated venues surface a
+  new "Regulated Venue" section and the health-department calculations from v1.347.0.
+
+  - **Engine spine branch** (`engine/pipeline.py::run_spine`): for a regulated venue the code **minimum
+    circulation flow becomes a floor** on the design flow (`design_flow = max(circulation, feature,
+    minimum, published)`), with a warning when the published/spec flow falls below the code minimum;
+    turnover time, bather load, skimmer count, and the VGB gate on each main-drain fixture are computed
+    from the water-surface area + fixtures. A published **volume override** on a basin lets an
+    octagon/other shell the rect/cyl geometry can't derive carry its listed volume. Guarded by
+    `is_regulated` throughout, so the fountain golden tests stay byte-identical (three new spine goldens
+    reproduce the Fika spa: 35 GPM design flow, 14.17 GPM minimum, 12.14-min turnover, 4-bather load,
+    1 skimmer, 40 GPM jets).
+  - **Schema**: new parent fields — `governing_code`, `max_turnover_min`, `design_flow_published_gpm`,
+    `bather_sf_per_person`, `skimmer_sf_each`, `skimmer_rated_gpm`, and read-only rollups
+    (`turnover_time_min`, `minimum_flow_gpm`, `bather_load`, `skimmer_count`, `main_drain_status`); a new
+    **Water Venue Fixture** child table (skimmers / main drains / return inlets / therapy jets with VGB
+    cover geometry); and `surface_area_sf` + `volume_gal_override` on Water Feature Basin (plus an
+    "Other (area & volume)" shape). All sections `depends_on` the venue being regulated, so a fountain's
+    form is unchanged. `venue_type`'s default reaches every existing design via the column ALTER, so all
+    current designs become *Decorative Fountain* with no backfill patch.
+  - **Wiring**: the controller threads the new inputs into the spine, writes the rollups, honors the
+    volume override, and fills each fixture's computed flow + VGB status; the desk/AI write + preview
+    endpoints accept the new fields and the `venue_fixtures` table; and `issues.py` gains a "Regulated
+    Compliance" readiness section (n/a for fountains) that gates issuing on surface area, a published
+    design flow, and fixtures.
+
+  Schema changes are applied by `bench migrate` and still need a bench run + desk pass to validate the
+  form layout; the pure-engine spine branch is covered by the bench-free golden tests (144 pass).
+
 ## [1.349.0] - 2026-08-28
 
 ### Added

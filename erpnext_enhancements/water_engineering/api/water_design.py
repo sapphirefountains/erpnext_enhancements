@@ -78,17 +78,27 @@ EDITABLE_DESIGN_FIELDS = frozenset(
         "customer",
         "serial_no",
         "design_title",
+        "venue_type",
         "fountain_type",
         "status",
         "turnover_per_hr",
         "hazen_williams_c",
         "pipe_material",
         "static_lift_ft",
+        # regulated aquatic-venue inputs
+        "governing_code",
+        "max_turnover_min",
+        "design_flow_published_gpm",
+        "bather_sf_per_person",
+        "skimmer_sf_each",
+        "skimmer_rated_gpm",
     }
 )
 
 # Child tables a caller may replace wholesale.
-EDITABLE_CHILD_TABLES = ("basins", "features", "pipe_segments", "pumps", "electrical_loads", "tiers")
+EDITABLE_CHILD_TABLES = (
+    "basins", "features", "pipe_segments", "pumps", "electrical_loads", "tiers", "venue_fixtures",
+)
 
 # Parent input fields the live form preview may set (the editable design fields
 # plus the chemistry/drainage inputs) — read-only rollups are never accepted.
