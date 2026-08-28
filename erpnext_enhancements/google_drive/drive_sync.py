@@ -8,7 +8,8 @@ backfill below), this module keeps attachments and Drive files in step:
   attachment on a linked document into its Drive folder (background job).
   The Drive file id is stamped on ``File.custom_drive_file_id``.
 * **Drive → ERPNext** — an hourly job walks every linked folder's whole tree
-  (files **and** subfolders, nested) and creates **link-only shadow
+  (files **and** subfolders, nested; time-boxed, resuming across runs — see
+  :func:`run_shadow_sync`) and creates **link-only shadow
   attachments** for Drive items ERPNext doesn't know yet: a ``File`` row whose
   ``file_url`` is the Drive ``webViewLink`` (no bytes copied — Drive stays the
   source of truth). Subfolders are mirrored as link-only ``File`` rows too, so
@@ -39,6 +40,7 @@ already-existing folders by name — never creates folders).
 import io
 import json
 import mimetypes
+import time
 
 import frappe
 from frappe.utils import cint
@@ -295,6 +297,46 @@ def _recover_after_document_failure(exc):
 	return True
 
 
+# The hourly walk outgrew its own worker: at ~2,200 linked documents (1,228
+# Customers + 761 Opportunities + 240 Projects as of 2026-08-28, one Drive
+# round-trip per folder each) a full pass takes over an hour in the morning
+# traffic window, and RQ killed the worker mid-walk — five JobTimeoutException
+# rows back to back, every morning, 2026-08-25..27. The run now stops itself at
+# this soft budget, records the last document it finished, and the next hourly
+# run resumes from there — every document is still visited, just not
+# necessarily all in the same hour. 600s of headroom under the 3600s hard
+# timeout in sync_shadow_attachments absorbs one slow tree walk straddling the
+# budget line. The cursor is best-effort by design: a prod deploy FLUSHDBs
+# Redis, and a lost cursor merely restarts the rotation from the top.
+SHADOW_SYNC_TIME_BUDGET = 3000
+SHADOW_SYNC_CURSOR_KEY = "drive_shadow_sync_cursor"
+
+
+def _get_cursor():
+	"""Where the previous time-boxed run stopped, or None. Never raises — a cache
+	blip must not take down the sync it exists to pace."""
+	try:
+		return frappe.cache().get_value(SHADOW_SYNC_CURSOR_KEY)
+	except Exception:
+		return None
+
+
+def _set_cursor(value):
+	try:
+		# The TTL is hygiene, not logic: if the scheduler stops for a day the
+		# stale cursor evaporates instead of steering a much later run.
+		frappe.cache().set_value(SHADOW_SYNC_CURSOR_KEY, value, expires_in_sec=86400)
+	except Exception:
+		pass
+
+
+def _clear_cursor():
+	try:
+		frappe.cache().delete_value(SHADOW_SYNC_CURSOR_KEY)
+	except Exception:
+		pass
+
+
 def run_shadow_sync():
 	"""Background worker: for every linked document, walk its Drive folder
 	tree and create link-only shadow attachments for the files *and subfolders*
@@ -302,7 +344,11 @@ def run_shadow_sync():
 	(never deleting anything). One document's failure (e.g. its linked folder was
 	deleted, or the DB connection dropped during its Drive walk) is logged and
 	skipped — it never aborts the whole run, and a commit-per-document keeps
-	finished work durable if a later one fails."""
+	finished work durable if a later one fails.
+
+	Time-boxed against the worker's hard timeout: stops cleanly at
+	``SHADOW_SYNC_TIME_BUDGET`` and resumes after the last finished document on
+	the next hourly run (see the cursor notes above)."""
 	settings = _settings()
 	if not _sync_enabled(settings):
 		return
@@ -312,34 +358,64 @@ def run_shadow_sync():
 		frappe.log_error(frappe.get_traceback(), "Drive Shadow Sync (service)")
 		return
 
-	drive_id_cache = {}
+	worklist = []
 	for doctype, folder_field in SYNCED_DOCTYPES.items():
 		if not frappe.db.has_column(doctype, folder_field):
 			continue
 		for row in frappe.get_all(
-			doctype, filters={folder_field: ["is", "set"]}, fields=["name", folder_field]
+			doctype,
+			filters={folder_field: ["is", "set"]},
+			fields=["name", folder_field],
+			# Deterministic order, so the cursor names the same position in the
+			# next run's list that it did in this one's.
+			order_by="name asc",
 		):
-			try:
-				_sync_folder_shadows(
-					service, doctype, row.name, row.get(folder_field), drive_id_cache
-				)
-				frappe.db.commit()
-			except Exception as exc:
-				traceback = frappe.get_traceback()
-				# Recover *before* logging: frappe.log_error writes to the DB too,
-				# so on a dropped connection it would raise on its way out.
-				if not _recover_after_document_failure(exc):
-					return
-				# Throttled per doctype: this is the inner loop over every record
-				# with a linked folder, so anything systemic (revoked service
-				# account, Drive outage) writes a row per record per hourly run.
-				# Keying on the doctype keeps a Customer-wide failure from
-				# masking an unrelated Project one.
-				log_error_throttled(
-					f"Shadow sync failed for {doctype} {row.name}\n{traceback}",
-					"Drive Shadow Sync",
-					key=doctype,
-				)
+			worklist.append((doctype, row.name, row.get(folder_field)))
+
+	# Resume after where the previous run stopped, wrapping around so one full
+	# circle still visits every document. A cursor naming a since-deleted record
+	# (or none at all) starts from the top.
+	cursor = _get_cursor()
+	positions = [f"{doctype}/{name}" for doctype, name, _folder in worklist]
+	if cursor in positions:
+		start = positions.index(cursor) + 1
+		worklist = worklist[start:] + worklist[:start]
+
+	deadline = time.monotonic() + SHADOW_SYNC_TIME_BUDGET
+	last_done = None
+	drive_id_cache = {}
+	for doctype, docname, folder_id in worklist:
+		if time.monotonic() > deadline:
+			if last_done:
+				_set_cursor(last_done)
+			return
+		try:
+			_sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache)
+			frappe.db.commit()
+		except Exception as exc:
+			traceback = frappe.get_traceback()
+			# Recover *before* logging: frappe.log_error writes to the DB too,
+			# so on a dropped connection it would raise on its way out.
+			if not _recover_after_document_failure(exc):
+				# The DB is gone but Redis isn't: remember the position so the
+				# next run doesn't redo the finished prefix.
+				if last_done:
+					_set_cursor(last_done)
+				return
+			# Throttled per doctype: this is the inner loop over every record
+			# with a linked folder, so anything systemic (revoked service
+			# account, Drive outage) writes a row per record per hourly run.
+			# Keying on the doctype keeps a Customer-wide failure from
+			# masking an unrelated Project one.
+			log_error_throttled(
+				f"Shadow sync failed for {doctype} {docname}\n{traceback}",
+				"Drive Shadow Sync",
+				key=doctype,
+			)
+		# A failed document still advances the cursor — it was logged and is by
+		# contract skipped, not retried until its next turn of the rotation.
+		last_done = f"{doctype}/{docname}"
+	_clear_cursor()
 
 
 # Google Drive's folder mime type, and a hard cap on how deep the shadow walk

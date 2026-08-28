@@ -8,7 +8,8 @@ bench-only suites' ``import frappe`` skip-guards.
 
 What is being guarded: the hourly shadow walk is the one job in this app that
 holds a DB connection open across minutes of uninterrupted Google API traffic
-(~22 minutes per run in production, 737 linked documents), and roughly once a
+(~2,200 linked documents in production as of 2026-08-28, enough that the walk
+now time-boxes itself — see ``TestRunShadowSyncTimeBox``), and roughly once a
 day that connection is gone by the time the walk's first query runs. The
 per-document ``except`` was meant to log it and move on, but its
 ``frappe.db.rollback()`` issues SQL — so on a dead connection it raised the same
@@ -31,6 +32,7 @@ if str(REPO_ROOT) not in sys.path:
 	sys.path.insert(0, str(REPO_ROOT))
 
 drive_sync = None
+drive_utils = None
 
 STATE = {}
 
@@ -68,6 +70,7 @@ def _reset_state():
 			"reconnect_fails": False,
 			"synced": [],  # documents _sync_folder_shadows was reached for
 			"fail_on": {},  # docname -> exception to raise
+			"cache": {},  # what frappe.cache() persists (the resume cursor)
 		}
 	)
 
@@ -85,6 +88,19 @@ def _install_stubs():
 	frappe.get_doc = lambda *a, **k: _Dict()
 	frappe.get_single = lambda *a, **k: _Dict()
 	frappe.get_cached_doc = lambda *a, **k: _Dict(attachment_sync_enabled=1, service_account_json="{}")
+
+	def _cache():
+		# Only the *_value family the resume cursor uses. Deliberately no `incr`:
+		# error_throttle's raw-family calls then raise AttributeError and it falls
+		# back to plain log_error, exactly as it does when Redis is unavailable.
+		store = STATE.setdefault("cache", {})
+		return types.SimpleNamespace(
+			get_value=lambda key: store.get(key),
+			set_value=lambda key, value, expires_in_sec=None: store.__setitem__(key, value),
+			delete_value=lambda key: store.pop(key, None),
+		)
+
+	frappe.cache = _cache
 
 	def _require_connection():
 		"""Every DB call goes through here, so a simulated dead connection fails
@@ -176,12 +192,14 @@ def _install_stubs():
 
 
 def setUpModule():
-	global drive_sync
+	global drive_sync, drive_utils
 	_install_stubs()
 	_reset_state()
 	from erpnext_enhancements.google_drive import drive_sync as module
+	from erpnext_enhancements.google_drive import drive_utils as utils_module
 
 	drive_sync = module
+	drive_utils = utils_module
 
 
 class TestLostConnectionDetection(unittest.TestCase):
@@ -299,6 +317,118 @@ class TestRunShadowSyncSurvival(unittest.TestCase):
 
 		self.assertEqual(STATE["synced"], ["P1"])
 		self.assertEqual(STATE["errors"], [])
+
+	def test_an_unrecoverable_stop_remembers_where_it_was(self):
+		# The DB is gone but Redis isn't: the give-up path still records the last
+		# finished document so the next hourly run does not redo the prefix.
+		STATE["fail_on"] = {"P2": _lost_connection()}
+		STATE["reconnect_fails"] = True
+
+		drive_sync.run_shadow_sync()
+
+		self.assertEqual(STATE["cache"].get(drive_sync.SHADOW_SYNC_CURSOR_KEY), "Project/P1")
+
+
+class TestRunShadowSyncTimeBox(unittest.TestCase):
+	"""The walk stops inside its own worker timeout and resumes next run.
+
+	The production shape being guarded: at ~2,200 linked documents the full pass
+	overran the 3600s RQ hard timeout, which killed the worker mid-walk five runs
+	in a row every morning (JobTimeoutException, 2026-08-25..27) — and a killed
+	run restarts from the top, so the tail documents were never reached at all.
+	"""
+
+	def setUp(self):
+		_reset_state()
+		STATE["rows"] = {"Project": ["P1", "P2", "P3"], "Customer": [], "Opportunity": []}
+		self._real_sync = drive_sync._sync_folder_shadows
+		self._real_service = drive_sync.get_drive_service
+		self._real_time = drive_sync.time
+		self.clock = types.SimpleNamespace(now=0.0)
+		drive_sync.time = types.SimpleNamespace(monotonic=lambda: self.clock.now)
+
+		def _fake_sync(service, doctype, docname, folder_id, cache):
+			STATE["synced"].append(docname)
+			self.clock.now += STATE.get("seconds_per_doc", 0)
+
+		drive_sync._sync_folder_shadows = _fake_sync
+		drive_sync.get_drive_service = lambda: (object(), "shared-drive")
+
+	def tearDown(self):
+		drive_sync._sync_folder_shadows = self._real_sync
+		drive_sync.get_drive_service = self._real_service
+		drive_sync.time = self._real_time
+
+	def test_budget_exhaustion_stops_cleanly_and_saves_a_cursor(self):
+		# Two documents fit in the budget; the third must wait for the next run.
+		STATE["seconds_per_doc"] = drive_sync.SHADOW_SYNC_TIME_BUDGET / 2 + 1
+
+		drive_sync.run_shadow_sync()
+
+		self.assertEqual(STATE["synced"], ["P1", "P2"])
+		self.assertEqual(
+			STATE["cache"].get(drive_sync.SHADOW_SYNC_CURSOR_KEY), "Project/P2"
+		)
+
+	def test_the_next_run_resumes_after_the_cursor(self):
+		STATE["cache"][drive_sync.SHADOW_SYNC_CURSOR_KEY] = "Project/P2"
+
+		drive_sync.run_shadow_sync()
+
+		# Wraps around: one full circle still visits every document.
+		self.assertEqual(STATE["synced"], ["P3", "P1", "P2"])
+
+	def test_a_completed_run_clears_the_cursor(self):
+		STATE["cache"][drive_sync.SHADOW_SYNC_CURSOR_KEY] = "Project/P2"
+
+		drive_sync.run_shadow_sync()
+
+		self.assertNotIn(drive_sync.SHADOW_SYNC_CURSOR_KEY, STATE["cache"])
+
+	def test_a_cursor_for_a_deleted_record_starts_from_the_top(self):
+		STATE["cache"][drive_sync.SHADOW_SYNC_CURSOR_KEY] = "Project/GONE"
+
+		drive_sync.run_shadow_sync()
+
+		self.assertEqual(STATE["synced"], ["P1", "P2", "P3"])
+
+
+class TestFindFolderQueryEscaping(unittest.TestCase):
+	"""The Drive query grammar, fed real production names.
+
+	Quote-only escaping left the customer literally named
+	``A\\ Typical Design Studio`` un-queryable: Drive rejects the stray backslash
+	with ``HttpError 400 "Invalid Value"``, once per hourly shadow walk, forever.
+	Backslashes must be doubled *before* quotes are escaped, or the escape
+	character itself becomes one.
+	"""
+
+	def _query_for(self, name):
+		captured = {}
+
+		def _list(**kwargs):
+			captured.update(kwargs)
+			return types.SimpleNamespace(execute=lambda: {"files": []})
+
+		service = types.SimpleNamespace(
+			files=lambda: types.SimpleNamespace(list=_list)
+		)
+		drive_utils.find_folder(service, name, "parent-1")
+		return captured["q"]
+
+	def test_a_backslash_is_escaped(self):
+		q = self._query_for("A\\ Typical Design Studio")
+		self.assertIn("name='A\\\\ Typical Design Studio'", q)
+
+	def test_a_quote_is_escaped(self):
+		q = self._query_for("Alta's Rustler Lodge")
+		self.assertIn("name='Alta\\'s Rustler Lodge'", q)
+
+	def test_a_backslash_cannot_disarm_a_quote_escape(self):
+		# name ends in \' — if quotes were escaped first, the backslash pass
+		# would turn \' into \\' and the quote would end the string early.
+		q = self._query_for("weird\\'name")
+		self.assertIn("name='weird\\\\\\'name'", q)
 
 
 if __name__ == "__main__":
