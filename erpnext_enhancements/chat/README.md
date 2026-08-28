@@ -334,6 +334,18 @@ over the failure that made it necessary:
 
     bench --site <site> execute         erpnext_enhancements.chat.sync.subscriptions.recover_subscription_for         --kwargs "{'user': 'someone@example.com'}"
 
+**Not every chat member can be covered, and the roster knows it.** `Chat Settings →
+Subscription-exempt Identities` lists addresses that sit in space membership like coworkers but
+are not impersonatable Workspace users — Google **Groups** above all (`triton@sapphirefountains.com`
+is one, seeded by the `seed_subscription_exempt_identities` patch). The DWD token exchange refuses
+a group with `401 unauthorized_client`, so a subscription can never be created for it: before the
+exemption existed, the `subscription-missing` alarm for triton had re-fired x128 and the recovery
+command failed identically every time. Both roster branches subtract the list, the health check
+stops demanding coverage, and `recover_subscription_for` names an exempt target in its summary
+instead of dialing Google. Chat *access* is deliberately untouched — exemption is coverage
+accounting only, never `is_user_allowed`. A group's messages reach ERPNext through the
+subscriptions of the humans in the space.
+
 Pass no user to recover the whole roster. It is idempotent, and it sweeps the gap using the
 superseded row's `expire_time` as the window. This was written after 2026-08-20, when a uid
 collision left prod with four `DELETED` rows, zero coverage, and an hourly job reporting itself

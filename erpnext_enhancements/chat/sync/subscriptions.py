@@ -1914,7 +1914,14 @@ def recover_subscription_for(
 	``reconcile_rooms_for_user`` with ``since=None`` would re-read every room from the start.
 	"""
 	alert = alert or raise_operator_alert
-	summary: dict[str, Any] = {"status": "ok", "reason": "", "recovered": [], "skipped": [], "failed": []}
+	summary: dict[str, Any] = {
+		"status": "ok",
+		"reason": "",
+		"recovered": [],
+		"skipped": [],
+		"failed": [],
+		"exempt": [],
+	}
 
 	ok, reason = _gate()
 	if not ok:
@@ -1922,8 +1929,16 @@ def recover_subscription_for(
 		summary["reason"] = reason
 		return summary
 
+	exempt = _exempt_users()
 	targets = [user] if user else _roster()
 	for target in targets:
+		# Named explicitly, not just skipped: the operator typing this command for a Google
+		# Group would otherwise get the same 401 unauthorized_client forever and go looking
+		# at the DWD grant, which is healthy. The roster path never contains these, so this
+		# only fires on an explicit `user` argument.
+		if target.casefold() in exempt:
+			summary["exempt"].append(target)
+			continue
 		existing = active_subscription_for(target)
 		if existing and existing.get("state") == STATE_ACTIVE:
 			summary["skipped"].append(target)
@@ -1968,8 +1983,12 @@ def _roster() -> list[str]:
 	Unrestricted, the roster is the actual chat population — the distinct active
 	``Chat Room Member`` users — not every enabled ``User`` (which would alarm about the whole
 	company on day one, the concern the whitelist path guards against).
+
+	Either way, :func:`_exempt_users` is subtracted last: an identity that *cannot* hold a
+	subscription must not be demanded of, whichever branch produced it.
 	"""
 	settings = _settings()
+	exempt = _exempt_users(settings)
 	if cint(getattr(settings, "restrict_to_whitelist", 0)):
 		rows: Sequence[Any] = getattr(settings, "allowed_users", None) or []
 		out: list[str] = []
@@ -1977,7 +1996,7 @@ def _roster() -> list[str]:
 			user = (
 				getattr(row, "user", None) or (row.get("user") if isinstance(row, Mapping) else "") or ""
 			).strip()
-			if user and user not in out:
+			if user and user not in out and user.casefold() not in exempt:
 				out.append(user)
 		return out
 
@@ -1985,4 +2004,29 @@ def _roster() -> list[str]:
 	# read (health-check scheduler, no session user; bounded by is_active; `user` only) —
 	# registered in test_chat_rawsql_guard.SYSTEM_CONTEXT_READS.
 	members = frappe.get_all("Chat Room Member", filters={"is_active": 1}, distinct=True, pluck="user")
-	return [u for u in dict.fromkeys(m for m in members if m)]
+	return [u for u in dict.fromkeys(m for m in members if m) if u.casefold() not in exempt]
+
+
+def _exempt_users(settings: Any = None) -> set[str]:
+	"""Identities that can never hold a subscription, casefolded for comparison.
+
+	``Chat Settings.subscription_exempt_users``, one email per line (commas tolerated). The
+	canonical occupant is a **Google Group** used as a chat identity:
+	triton@sapphirefountains.com sits in spaces as a member, so the unrestricted roster
+	derives it like any coworker — but a group is not a Workspace user, so the DWD token
+	exchange refuses it with ``401 unauthorized_client`` before
+	``workspaceevents.subscriptions.create`` is ever reached. Every repair attempt fails
+	identically, and the ``subscription-missing`` alarm re-fires forever (x128 on prod by
+	2026-08-28). Exempting the identity is the honest fix: the alarm exists to catch
+	coworkers whose messages are silently unheard, and a group's messages are heard through
+	the subscriptions of the humans in the space.
+
+	Deliberately gates *coverage accounting only* — never ``is_user_allowed``. Chat access
+	for the identity (the relay, telephony attribution) is a separate concern and untouched.
+	"""
+	raw = str(getattr(settings or _settings(), "subscription_exempt_users", None) or "")
+	return {
+		token.strip().casefold()
+		for token in raw.replace(",", "\n").splitlines()
+		if token.strip()
+	}
