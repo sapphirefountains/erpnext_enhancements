@@ -24,10 +24,12 @@ from erpnext_enhancements.water_engineering.engine import (
     chemical_dose,
     chemistry_targets,
     chlorinator_feed,
+    circulation_schematic_svg,
     component_loss,
     control_transformer_va,
     electric_cost,
     electrical_load,
+    electrical_oneline_svg,
     evaporation_rate,
     filtration_area,
     fitting_minor_loss,
@@ -644,6 +646,38 @@ class TreatmentTests(unittest.TestCase):
         self.assertAlmostEqual(filtration_area(120, "cartridge").value, 320.0, places=1)
         # sand capped at 3 GPM/SF: 90 GPM -> 30 SF
         self.assertAlmostEqual(filtration_area(90, "sand").value, 30.0, places=1)
+
+
+class DrawingsTests(unittest.TestCase):
+    def test_circulation_schematic_renders_nodes(self):
+        svg = circulation_schematic_svg(
+            {"nodes": ["Spa Basin", {"label": "Circ Pump", "sub": "1 HP"}, "Filter CC-150"]}
+        )
+        self.assertTrue(svg.startswith("<svg"))
+        self.assertIn("</svg>", svg)
+        self.assertIn("Circ Pump", svg)
+        self.assertIn("Filter CC-150", svg)
+
+    def test_circulation_schematic_empty(self):
+        self.assertIn("No equipment", circulation_schematic_svg({}))
+
+    def test_electrical_oneline_renders_branches(self):
+        svg = electrical_oneline_svg(
+            {
+                "service": {"label": "240V 1ph", "main_breaker": 60},
+                "branches": [{"label": "Circ Pump", "breaker": 15}, {"label": "Heater", "breaker": 60}],
+                "transformer_va": 75,
+            }
+        )
+        self.assertTrue(svg.startswith("<svg"))
+        self.assertIn("Circ Pump", svg)
+        self.assertIn("Main: 60 A", svg)
+        self.assertIn("Control Transformer 75 VA", svg)
+
+    def test_svg_escapes_labels(self):
+        svg = circulation_schematic_svg({"nodes": ["A & <B>"]})
+        self.assertIn("A &amp; &lt;B&gt;", svg)
+        self.assertNotIn("<B>", svg)
 
 
 class ElectricalTests(unittest.TestCase):

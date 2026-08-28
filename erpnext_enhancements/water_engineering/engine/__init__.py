@@ -22,6 +22,7 @@ from .basin import basin_volume, turnover_gpm
 from .chemistry import chemistry_targets, chlorinator_feed, ozone_sidestream
 from .controls import calc_lighting, calc_solenoid_relays, lighting_sizing
 from .drainage import manning_drain_flow, size_drain, surge_basin_volume
+from .drawings import circulation_schematic_svg, electrical_oneline_svg
 from .electrical import (
     control_transformer_va,
     motor_flc,
@@ -79,10 +80,12 @@ __all__ = [
     "chemical_dose",
     "chemistry_targets",
     "chlorinator_feed",
+    "circulation_schematic_svg",
     "component_loss",
     "control_transformer_va",
     "electric_cost",
     "electrical_load",
+    "electrical_oneline_svg",
     "evaporation_rate",
     "feature_flow_category",
     "feature_visual_kind",

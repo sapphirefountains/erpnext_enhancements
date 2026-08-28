@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.353.0] - 2026-08-28
+
+### Added
+
+- **Server-rendered schematic drawings** (`water_engineering/engine/drawings.py`) — the start of the
+  submittal packet's auto-generated sheets. Two pure, stdlib-only functions build a self-contained inline
+  `<svg>` from a plain state dict (no frappe, unit-tested), which wkhtmltopdf renders reliably: the print
+  sandbox runs no JavaScript, so the client design canvas (`fountain_canvas.js`) can't produce a
+  print/PDF artifact — these can.
+  - `circulation_schematic_svg(state)` — the equipment train (basin → circ pump → filter → heater →
+    chem feed → return) as a left-to-right rail of labeled boxes joined by flow arrows (Fika sheet SP-3).
+  - `electrical_oneline_svg(state)` — the panel one-line: a service bus with the main breaker and a branch
+    tap per load, plus the control transformer (Fika sheet SP-6).
+
+  Literal colors (print has no theme), XML-escaped labels, no external refs or script, so they drop
+  straight into a Jinja print format. Four smoke tests; the packet assembler (next) builds the state from
+  a Water Feature Design + its linked Control Panel Design.
+
 ## [1.352.0] - 2026-08-28
 
 ### Added
