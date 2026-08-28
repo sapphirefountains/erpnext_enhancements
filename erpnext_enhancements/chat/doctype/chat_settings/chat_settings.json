@@ -64,6 +64,7 @@
   "column_break_operational",
   "subscription_ttl_seconds",
   "subscription_renew_before_seconds",
+  "subscription_exempt_users",
   "presence_heartbeat_seconds",
   "presence_ttl_seconds",
   "blur_grace_seconds",
@@ -544,6 +545,12 @@
    "fieldname": "subscription_renew_before_seconds",
    "fieldtype": "Int",
    "label": "Renew Subscription Before (seconds)"
+  },
+  {
+   "description": "Chat member identities that can never hold a Workspace Events subscription: Google Groups and service addresses that sit in space membership like coworkers but are not impersonatable Workspace users (DWD token exchange refuses them with 401 unauthorized_client, so a subscription can never be created). One email per line. The subscription roster, the missing-subscription alarm, and the recovery command skip them; chat access is deliberately unaffected. A group's messages reach ERPNext through the subscriptions of the humans in the space.",
+   "fieldname": "subscription_exempt_users",
+   "fieldtype": "Small Text",
+   "label": "Subscription-exempt Identities"
   },
   {
    "default": "20",

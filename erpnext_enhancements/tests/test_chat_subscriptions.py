@@ -474,6 +474,9 @@ class _Settings:
 		# (see subscriptions._roster). With it OFF the roster derives from active chat members.
 		self.restrict_to_whitelist = 1
 		self.allowed_users: list[Any] = []
+		# Identities that can never hold a subscription (Google Groups, service addresses).
+		# One email per line; both roster branches subtract them.
+		self.subscription_exempt_users = ""
 
 
 SETTINGS = _Settings()
@@ -1214,6 +1217,72 @@ def test_roster_derives_from_active_chat_members_when_whitelist_is_off() -> None
 	assert sorted(roster) == sorted([OTHER_USER, "carol@example.invalid"])
 	assert USER not in roster  # the whitelist no longer defines coverage
 	assert roster.count(OTHER_USER) == 1  # deduped across rooms
+
+
+def test_an_exempt_identity_is_not_in_the_unrestricted_roster() -> None:
+	"""The production shape: triton@sapphirefountains.com is a Google **Group**. It sits in
+	spaces as a member, so the unrestricted roster derived it like a coworker — but a group
+	cannot be impersonated (DWD refuses with 401 unauthorized_client), so demanding coverage
+	for it meant an alarm that re-fires forever and a repair that can only fail. Comparison is
+	casefolded: membership rows and the settings field are typed by different hands."""
+	SETTINGS.restrict_to_whitelist = 0
+	SETTINGS.subscription_exempt_users = "Triton@Example.invalid\n"
+	members = STORE.table("Chat Room Member")
+	members["m1"] = {"name": "m1", "room": "R1", "user": OTHER_USER, "is_active": 1}
+	members["m2"] = {"name": "m2", "room": "R1", "user": "triton@example.invalid", "is_active": 1}
+
+	roster = subscriptions._roster()
+
+	assert roster == [OTHER_USER]
+
+
+def test_an_exempt_identity_on_the_whitelist_is_still_not_in_the_roster() -> None:
+	"""Exemption gates coverage accounting in BOTH roster branches. Being on the access
+	whitelist and being impersonatable are different facts — the group may keep chat access
+	while the events roster skips it."""
+	SETTINGS.allowed_users = [
+		types.SimpleNamespace(user=USER),
+		types.SimpleNamespace(user="triton@example.invalid"),
+	]
+	SETTINGS.subscription_exempt_users = "triton@example.invalid"
+
+	roster = subscriptions._roster()
+
+	assert roster == [USER]
+
+
+def test_no_missing_alert_for_an_exempt_identity() -> None:
+	"""The alarm exists to catch coworkers whose messages are silently unheard. A group's
+	messages are heard through the humans' subscriptions; alarming about it is pure noise —
+	x128 of it on prod before this existed."""
+	SETTINGS.allowed_users = [
+		types.SimpleNamespace(user=USER),
+		types.SimpleNamespace(user="triton@example.invalid"),
+	]
+	SETTINGS.subscription_exempt_users = "triton@example.invalid"
+	seed_subscription()  # alice is covered; the group needs no coverage
+	alerts = AlertRecorder()
+
+	subscriptions.check_subscription_health(alert=alerts)
+
+	assert not alerts.with_prefix("subscription-missing:"), alerts.keys()
+
+
+def test_recover_names_an_exempt_target_instead_of_calling_google() -> None:
+	"""The operator typing the recovery command for a group must get an answer, not the same
+	401 forever: the summary names the target as exempt and no client is ever built."""
+	SETTINGS.subscription_exempt_users = "triton@example.invalid"
+
+	def _no_client(subject: str) -> Any:
+		raise AssertionError("no events client may be built for an exempt identity")
+
+	summary = subscriptions.recover_subscription_for(
+		"Triton@Example.invalid", client_factory=_no_client, alert=AlertRecorder()
+	)
+
+	assert summary["exempt"] == ["Triton@Example.invalid"], summary
+	assert summary["status"] == "ok"
+	assert summary["recovered"] == [] and summary["failed"] == []
 
 
 def test_health_alerts_on_expiry_inside_the_renewal_window_and_on_a_lapsed_row() -> None:

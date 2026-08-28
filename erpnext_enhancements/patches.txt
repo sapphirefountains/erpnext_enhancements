@@ -769,3 +769,8 @@ erpnext_enhancements.patches.seed_party_naming_kpi_targets
 # from superseded rows, deletes the placeholders each failed attempt leaked, and resets the
 # counters that only counted this. Safe twice.
 erpnext_enhancements.patches.release_superseded_subscription_uids
+# v1.345.0: triton@sapphirefountains.com is a Google Group, not a Workspace user -- the
+# subscription roster demanding DWD coverage for it could only ever fail (401
+# unauthorized_client, x128 alarms). Seeds the new Chat Settings exemption list with it;
+# fill-blank-only, so an edited list survives. Safe twice.
+erpnext_enhancements.patches.seed_subscription_exempt_identities

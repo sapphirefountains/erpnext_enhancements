@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.345.0] - 2026-08-28
+
+### Added
+
+- **`Chat Settings → Subscription-exempt Identities`** (`subscription_exempt_users`, Small Text,
+  one email per line) — chat member identities that can never hold a Workspace Events
+  subscription, subtracted from the coverage roster in both of its branches.
+
+  The occupant that forced the field into existence: `triton@sapphirefountains.com` is a Google
+  **Group**, not a Workspace user. It sits in chat spaces as a member, so the unrestricted roster
+  (distinct active `Chat Room Member` users) derived it like any coworker — but a group cannot be
+  impersonated. The DWD token exchange refuses it with `401 unauthorized_client` *before*
+  `workspaceevents.subscriptions.create` is ever reached, which was verified live by an A/B token
+  mint through `gchat.auth.get_delegated_token`: a human subject minted, the group did not,
+  through the same delegation service account and the same three scopes. So the
+  `subscription-missing` alarm raised for triton since the 2026-08-20 uid-collision cleanup
+  (v1.340.x) could never be satisfied — it had re-fired **x128** by 2026-08-28 — and
+  `recover_subscription_for` was structurally unable to succeed: not a missing grant, not a scope
+  typo, not the 24-hour DWD propagation window the 401 hint suggests checking. The alarm exists to
+  catch coworkers whose messages are silently unheard; a group's messages are heard through the
+  subscriptions of the humans in the space, so demanding separate coverage for the group was noise
+  with a permanently-red light attached.
+
+  Exemption is **coverage accounting only**: `is_user_allowed`, the relay, and telephony's
+  triton attribution are untouched, and an exempt identity may stay on the access whitelist.
+  `recover_subscription_for` now names an explicitly-passed exempt target in a new `exempt` list
+  in its summary instead of dialing Google and handing the operator the same 401 forever.
+  Comparison is casefolded; commas and newlines both separate entries.
+
+- **`patches/seed_subscription_exempt_identities`** — seeds the new field with
+  `triton@sapphirefountains.com`. A patch rather than a field `default` for the recorded reason:
+  a `default` on a new field of a Single never reaches the row that already exists (v1.277.3).
+  Fill-blank-only so an operator's later edits survive; safe twice.
+
+- Four tests in `tests/test_chat_subscriptions.py` (existing pytest CI step): the exempt identity
+  is out of both roster branches (casefolded), the health check raises no `subscription-missing`
+  for it, and `recover_subscription_for` reports it as `exempt` without ever building an events
+  client.
+
 ## [1.344.4] - 2026-08-28
 
 Error Log debugging pass over the last seven days of production rows. Three signatures were
