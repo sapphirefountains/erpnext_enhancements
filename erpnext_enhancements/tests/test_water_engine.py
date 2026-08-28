@@ -421,6 +421,16 @@ class ControlsTests(unittest.TestCase):
     def test_solenoid_relays(self):
         self.assertEqual(calc_solenoid_relays(5).value, 5)
 
+    def test_spa_interlock_seed_set(self):
+        from erpnext_enhancements.water_engineering.engine.controls import SPA_INTERLOCKS, SPA_IO_POINTS
+
+        self.assertTrue(SPA_INTERLOCKS and SPA_IO_POINTS)
+        self.assertTrue(all("condition" in r and "action" in r for r in SPA_INTERLOCKS))
+        self.assertTrue(all(r.get("io_type") in ("Input", "Output") for r in SPA_IO_POINTS))
+        # the Fika 15-minute therapy-timer interlock is present, wind ones are not
+        self.assertTrue(any("timer" in r["condition"].lower() for r in SPA_INTERLOCKS))
+        self.assertFalse(any("wind" in r["condition"].lower() for r in SPA_INTERLOCKS))
+
 
 class UnitsTests(unittest.TestCase):
     def test_conversions(self):

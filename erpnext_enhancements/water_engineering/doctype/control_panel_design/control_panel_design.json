@@ -8,9 +8,12 @@
   "project",
   "water_feature_design",
   "product_family",
+  "application_type",
   "nema_rating",
   "controller_hardware",
+  "controller_item",
   "enclosure_part_no",
+  "enclosure_item",
   "cb_head",
   "panel_includes_contactors_overload",
   "safe_state_on_power_up",
@@ -95,6 +98,14 @@
    "options": "\nNEMA 1\nNEMA 3R\nNEMA 4\nNEMA 4X\nNEMA 12"
   },
   {
+   "fieldname": "application_type",
+   "fieldtype": "Select",
+   "label": "Application",
+   "options": "Fountain\nPool-Spa",
+   "default": "Fountain",
+   "description": "Pool-Spa seeds the NEC-680 spa interlock / I/O checklist (circ↔chem-feeder + circ↔heater, 15-min jet timer, emergency shut-off) instead of the fountain (wind) set."
+  },
+  {
    "fieldname": "controller_hardware",
    "fieldtype": "Select",
    "label": "Controller Hardware",
@@ -102,10 +113,23 @@
    "default": "Arduino MEGA 2560 + Nextion HMI + WP-40 + SSR"
   },
   {
+   "fieldname": "controller_item",
+   "fieldtype": "Link",
+   "label": "Controller Item",
+   "options": "Item",
+   "description": "Catalog Item for the controller hardware (Item Group 'Control Hardware')."
+  },
+  {
    "fieldname": "enclosure_part_no",
    "fieldtype": "Data",
    "label": "Enclosure Part No",
    "default": "WP-40"
+  },
+  {
+   "fieldname": "enclosure_item",
+   "fieldtype": "Link",
+   "label": "Enclosure Item",
+   "options": "Item"
   },
   {
    "fieldname": "cb_head",

@@ -24,7 +24,12 @@ from erpnext_enhancements.water_engineering.engine import (
 	service_main_breaker,
 	total_connected_load,
 )
-from erpnext_enhancements.water_engineering.engine.controls import DEFAULT_INTERLOCKS, DEFAULT_IO_POINTS
+from erpnext_enhancements.water_engineering.engine.controls import (
+	DEFAULT_INTERLOCKS,
+	DEFAULT_IO_POINTS,
+	SPA_INTERLOCKS,
+	SPA_IO_POINTS,
+)
 
 
 class ControlPanelDesign(Document):
@@ -33,13 +38,17 @@ class ControlPanelDesign(Document):
 		self._recompute_sizing()
 
 	def _seed_defaults(self):
-		"""Seed the standard interlock checklist + standard input list on a fresh
-		panel (DOC-0126/0127); delete the rows a given job doesn't include."""
+		"""Seed the standard interlock checklist + input list on a fresh panel,
+		choosing the pool/spa set (NEC 680) or the fountain set by
+		``application_type`` (DOC-0126/0127). Delete rows a given job doesn't include."""
+		spa = (self.get("application_type") or "").strip() == "Pool-Spa"
+		interlocks = SPA_INTERLOCKS if spa else DEFAULT_INTERLOCKS
+		io_points = SPA_IO_POINTS if spa else DEFAULT_IO_POINTS
 		if not self.get("interlocks"):
-			for row in DEFAULT_INTERLOCKS:
+			for row in interlocks:
 				self.append("interlocks", dict(row))
 		if not self.get("io_points"):
-			for row in DEFAULT_IO_POINTS:
+			for row in io_points:
 				self.append("io_points", dict(row))
 
 	def _recompute_sizing(self):

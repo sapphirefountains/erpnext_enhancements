@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.357.0] - 2026-08-28
+
+### Added
+
+- **Pool/spa control-panel presets + controller/enclosure Item links.** Control Panel Design gains an
+  `application_type` (Fountain / Pool-Spa): a Pool-Spa panel seeds the **NEC-680 spa interlock + I/O
+  checklist** (`SPA_INTERLOCKS` / `SPA_IO_POINTS` in `engine/controls.py`) instead of the fountain (wind)
+  set — circulation↔chemical-feeder and circulation↔heater (no-flow-switch) interlocks, the 15-minute
+  therapy-jet timer, the emergency shut-off, and the chemical-controller status, straight from the Fika
+  submittal. New `controller_item` / `enclosure_item` Link fields tie the panel's controller + enclosure
+  to catalog Items (Item Group "Control Hardware"), alongside the existing free-text fallbacks — resolving
+  the SOURCE_DATA_AUDIT `controller_hardware` decision without a risky Select→Link conversion. A golden
+  test pins the spa seed set (therapy timer present, wind interlocks absent).
+
 ## [1.356.0] - 2026-08-28
 
 ### Added
