@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.346.0] - 2026-08-28
+
+### Removed
+
+- **The Task → shared Google Calendar sync** (`script_migrations/task.py::sync_task_to_google_calendar`,
+  the `Task` `after_insert` hook, and its tests). A product decision, not a cleanup: the sync
+  pushed **every Task created site-wide into one shared calendar** ("ERPNext Tasks",
+  `c_bbb30ada…@group.calendar.google.com`) with no per-person filtering of any kind — whoever
+  the calendar was shared with in Google saw everyone's tasks, and whoever it wasn't shared
+  with saw none. Asked whether it could be personal-per-user, the answer was no as built, and
+  the owner chose removal over an all-tasks broadcast.
+
+  What made removal cheap is worth recording: **the feature has never delivered a single event
+  since the Server Script migration.** The migrated code called
+  `google_calendar.insert_event`, which exists in no Frappe version this app ran on — every
+  sync died with `AttributeError` (fixed in v1.344.4) — and the "ERPNext Tasks" Google
+  Calendar account has sat at `enable = 0` besides, so the v1.344.4 fix was never switched on.
+  Nobody has been receiving these events, and nobody missed them. The v1.344.4 rewrite is
+  retained in git history should a sync ever return.
+
+  If a *personalised* version is wanted later, it is a real work item, not a re-enable:
+  per-assignee events into each person's own calendar (assignment lives on ToDo, not on a Task
+  field), authenticated by per-user OAuth grants or a **calendar** scope added to domain-wide
+  delegation (the frozen-scope-list Admin-console ritual, as with chat), plus the update/cancel
+  lifecycle the removed hook never had — it fired on *create* only, so a rescheduled task never
+  moved its event and a canceled task never left the calendar.
+
+  `tests/test_hooks_integrity.py` now asserts the hook's **absence**, so a stale branch merge
+  cannot quietly restore the broadcast. The disabled "ERPNext Tasks" / "ERPNext Project" /
+  "ERPNext ToDo" Google Calendar account rows on prod are inert frappe integration records and
+  may be deleted in the Desk or left as they are.
+
 ## [1.345.0] - 2026-08-28
 
 ### Added
