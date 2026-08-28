@@ -3,15 +3,11 @@
 Two things are guarded here, both of them lessons from production rows rather
 than hypotheticals:
 
-1. ``script_migrations/task.py`` built its Google Calendar payload by calling
-   ``.isoformat()`` on ``doc.exp_start_date``. That attribute is a
-   ``datetime.date`` when the Task has been read back from the database and a
-   plain ``str`` on the in-memory doc ``after_insert`` receives — so every Task
-   created through the desk raised ``AttributeError: 'str' object has no
-   attribute 'isoformat'``. 541 rows, 299 of them in the last month, still
-   firing the day this was written. The tests below feed the helper both shapes
-   because *that* is the bug; a test that only passed ``date`` objects would
-   have gone green against the broken code.
+1. ``script_migrations/task.py``'s shared-Google-Calendar sync — the other half
+   of the original pass — was **removed outright in v1.346.0** (it broadcast
+   every Task to one shared calendar with no per-person filtering, and had never
+   delivered an event since the Server Script migration), so its tests went with
+   it. ``test_hooks_integrity`` now asserts the hook's *absence* instead.
 
 2. ``utils/error_throttle.py`` exists because one dead credential wrote 44,069
    Error Log rows in thirty hours. Its whole contract is "a storm becomes a
@@ -26,7 +22,6 @@ it never fools the bench-only suites' ``import frappe`` skip-guards.
 Run: python -m unittest erpnext_enhancements.tests.test_error_log_fixes
 """
 
-import datetime
 import pickle
 import sys
 import types
@@ -37,15 +32,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
 	sys.path.insert(0, str(REPO_ROOT))
 
-task_module = None
 error_throttle = None
 
 LOGGED = []
-
-# What frappe.db.get_value("Google Calendar", ...) answers: the enabled account
-# for the shared Tasks calendar, or None for "disabled / absent" (the state prod
-# sat in for months — the sync must then skip without a comment or an error).
-ACCOUNT = {"name": "ERPNext Tasks"}
 
 
 DB_NAME = "test_site_db"
@@ -122,233 +111,23 @@ class _FakeCache:
 CACHE = _FakeCache()
 
 
-def _getdate(value=None):
-	"""frappe.utils.getdate: a date from a date, datetime, or ``YYYY-MM-DD``."""
-	if value is None:
-		return None
-	if isinstance(value, datetime.datetime):
-		return value.date()
-	if isinstance(value, datetime.date):
-		return value
-	text = str(value).strip()
-	if not text:
-		return None
-	return datetime.datetime.strptime(text[:10], "%Y-%m-%d").date()
-
-
-def _add_days(value, days):
-	return (_getdate(value) + datetime.timedelta(days=days)).isoformat()
-
-
-def _today():
-	return datetime.date.today().isoformat()
-
-
 def setUpModule():
-	global task_module, error_throttle
+	global error_throttle
 
 	frappe = types.ModuleType("frappe")
 	frappe.log_error = lambda message=None, title=None, **kw: LOGGED.append((title, message))
 	frappe.cache = lambda: CACHE
 	frappe.get_traceback = lambda: "traceback"
-	# The sync's account gate: the enabled Google Calendar row for the shared
-	# calendar. Tests flip ACCOUNT["name"] to None to simulate the disabled state.
-	frappe.db = types.SimpleNamespace(
-		get_value=lambda doctype, filters=None, fieldname=None: (
-			ACCOUNT["name"] if doctype == "Google Calendar" else None
-		)
-	)
 	frappe.flags = types.SimpleNamespace(in_test=False)
 	# `error_throttle._site()` reads this to namespace its key, the same source
 	# RedisWrapper.make_key uses.
 	frappe.local = types.SimpleNamespace(conf={"db_name": DB_NAME})
 
-	utils = types.ModuleType("frappe.utils")
-	utils.getdate = _getdate
-	utils.add_days = _add_days
-	utils.today = _today
-	frappe.utils = utils
-
 	sys.modules["frappe"] = frappe
-	sys.modules["frappe.utils"] = utils
 
-	from erpnext_enhancements.script_migrations import task as _task
 	from erpnext_enhancements.utils import error_throttle as _throttle
 
-	task_module = _task
 	error_throttle = _throttle
-
-
-class _Doc:
-	"""A stand-in Task. ``add_comment`` records rather than writes."""
-
-	def __init__(self, **fields):
-		self.subject = "A task"
-		self.description = None
-		self.exp_start_date = None
-		self.exp_end_date = None
-		self.creation = "2026-08-06 16:09:03.516516"
-		self.comments = []
-		self.__dict__.update(fields)
-
-	def add_comment(self, *a, **kw):
-		self.comments.append((a, kw))
-
-	def get_formatted(self, field):  # pragma: no cover - the old broken fallback
-		raise AssertionError("get_formatted must not be used to build a calendar payload")
-
-
-class TestCalendarDateCoercion(unittest.TestCase):
-	"""The AttributeError itself."""
-
-	def test_a_string_date_survives(self):
-		"""The exact production shape: a Date field that is still a str.
-
-		This is the assertion that fails against the pre-fix code.
-		"""
-		self.assertEqual(task_module._calendar_date("2026-08-06"), "2026-08-06")
-
-	def test_a_real_date_object_survives(self):
-		self.assertEqual(task_module._calendar_date(datetime.date(2026, 8, 6)), "2026-08-06")
-
-	def test_a_datetime_is_reduced_to_its_date(self):
-		"""``creation`` is a Datetime, and it is one of the fallbacks."""
-		self.assertEqual(task_module._calendar_date("2026-08-06 16:09:03.516516"), "2026-08-06")
-
-	def test_unset_is_none_not_an_exception(self):
-		for empty in (None, "", 0):
-			self.assertIsNone(task_module._calendar_date(empty))
-
-
-class TestCalendarPayload(unittest.TestCase):
-	"""What actually gets sent to Google.
-
-	``_insert_calendar_event`` is the seam: it is the one function that talks to
-	the Google API (via frappe's Google Calendar integration), so the tests
-	capture what crosses it. The ``frappe.call`` seam these tests used to patch is
-	gone — its target, ``google_calendar.insert_event``, never existed in any
-	Frappe version this app ran on, so every sync died with AttributeError before
-	reaching Google (v1.344.4).
-	"""
-
-	def setUp(self):
-		LOGGED.clear()
-		CACHE.store.clear()
-		ACCOUNT["name"] = "ERPNext Tasks"
-		self.sent = []
-		self._real_insert = task_module._insert_calendar_event
-		task_module._insert_calendar_event = lambda account_name, body: self.sent.append(
-			(account_name, body)
-		)
-
-	def tearDown(self):
-		task_module._insert_calendar_event = self._real_insert
-
-	def _sync(self, **fields):
-		doc = _Doc(**fields)
-		task_module.sync_task_to_google_calendar(doc)
-		return doc
-
-	def _event(self):
-		return self.sent[0][1]
-
-	def test_a_task_with_string_dates_does_not_log_an_error(self):
-		"""The regression, end to end: no Error Log row for an ordinary Task."""
-		self._sync(exp_start_date="2026-08-10", exp_end_date="2026-08-12")
-		self.assertEqual(LOGGED, [], f"sync logged an error it should not have: {LOGGED}")
-		self.assertEqual(len(self.sent), 1, "the calendar insert never happened")
-
-	def test_the_insert_targets_the_enabled_account(self):
-		self._sync(exp_start_date="2026-08-10", exp_end_date="2026-08-12")
-		self.assertEqual(self.sent[0][0], "ERPNext Tasks")
-
-	def test_the_body_is_google_fields_only(self):
-		"""The old payload carried ``doctype`` and ``google_calendar`` keys — they
-		were arguments to the imaginary API, and Google's would reject them."""
-		self._sync(exp_start_date="2026-08-10", exp_end_date="2026-08-12")
-		self.assertEqual(
-			set(self._event().keys()), {"summary", "description", "start", "end"}
-		)
-
-	def test_dates_are_all_day_not_datetime(self):
-		"""Task's expected start/end are Date fields with no time component, and
-		Google rejects a bare ``YYYY-MM-DD`` in a ``dateTime`` slot."""
-		self._sync(exp_start_date="2026-08-10", exp_end_date="2026-08-12")
-		event = self._event()
-		self.assertIn("date", event["start"])
-		self.assertNotIn("dateTime", event["start"])
-		self.assertEqual(event["start"]["date"], "2026-08-10")
-
-	def test_the_end_date_is_exclusive(self):
-		"""Google treats an all-day ``end.date`` as exclusive: a task running
-		through the 12th ends on the 13th, or it renders a day short."""
-		self._sync(exp_start_date="2026-08-10", exp_end_date="2026-08-12")
-		self.assertEqual(self._event()["end"]["date"], "2026-08-13")
-
-	def test_a_single_day_task_is_not_zero_length(self):
-		"""Without the +1 a one-day task collapses and vanishes from the grid."""
-		self._sync(exp_start_date="2026-08-10", exp_end_date="2026-08-10")
-		event = self._event()
-		self.assertEqual(event["start"]["date"], "2026-08-10")
-		self.assertEqual(event["end"]["date"], "2026-08-11")
-
-	def test_no_dates_falls_back_to_creation(self):
-		"""And specifically not to ``get_formatted``, which returns a *display*
-		string in the user's date format that Google would refuse."""
-		self._sync()
-		event = self._event()
-		self.assertEqual(event["start"]["date"], "2026-08-06")
-		self.assertEqual(event["end"]["date"], "2026-08-07")
-
-	def test_a_start_without_an_end_is_a_single_day(self):
-		self._sync(exp_start_date="2026-08-10")
-		event = self._event()
-		self.assertEqual(event["start"]["date"], "2026-08-10")
-		self.assertEqual(event["end"]["date"], "2026-08-11")
-
-
-class TestCalendarAccountGate(unittest.TestCase):
-	"""The off switch: no enabled Google Calendar account, no sync — silently.
-
-	Prod's "ERPNext Tasks" account sat at ``enable = 0`` for months while the
-	hook kept firing; a Task created in that state must collect neither a
-	"contact your system administrator" comment nor an Error Log row, because a
-	deliberately disabled integration is not an error.
-	"""
-
-	def setUp(self):
-		LOGGED.clear()
-		CACHE.store.clear()
-		self.sent = []
-		self._real_insert = task_module._insert_calendar_event
-		task_module._insert_calendar_event = lambda account_name, body: self.sent.append(
-			(account_name, body)
-		)
-
-	def tearDown(self):
-		task_module._insert_calendar_event = self._real_insert
-		ACCOUNT["name"] = "ERPNext Tasks"
-
-	def test_a_disabled_account_skips_without_noise(self):
-		ACCOUNT["name"] = None
-		doc = _Doc(exp_start_date="2026-08-10", exp_end_date="2026-08-12")
-		task_module.sync_task_to_google_calendar(doc)
-		self.assertEqual(self.sent, [], "sync must not insert with the account disabled")
-		self.assertEqual(doc.comments, [], "the skip must not comment on the Task")
-		self.assertEqual(LOGGED, [], "the skip is not an error")
-
-	def test_an_insert_failure_still_logs_and_comments(self):
-		"""A *genuine* failure (account enabled, Google refused) keeps the old
-		behaviour: a throttled Error Log row and a visible comment on the Task."""
-
-		def _boom(account_name, body):
-			raise RuntimeError("google said no")
-
-		task_module._insert_calendar_event = _boom
-		doc = _Doc(exp_start_date="2026-08-10", exp_end_date="2026-08-12")
-		task_module.sync_task_to_google_calendar(doc)
-		self.assertEqual(len(LOGGED), 1)
-		self.assertEqual(len(doc.comments), 1)
 
 
 class TestErrorThrottle(unittest.TestCase):

@@ -341,7 +341,9 @@ doc_events = {
 	},
 	"Task": {
 		"before_save": "erpnext_enhancements.script_migrations.task.calculate_project_elapsed_time",
-		"after_insert": "erpnext_enhancements.script_migrations.task.sync_task_to_google_calendar",
+		# after_insert used to sync every Task into one shared Google Calendar
+		# (all tasks, everyone who could see the calendar) — removed v1.346.0 in
+		# favour of nothing, deliberately: see script_migrations/task.py.
 		"on_update": [
 			"erpnext_enhancements.tasks.generate_next_task",
 			"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",

@@ -185,7 +185,10 @@ class TestHandlersLookReal(unittest.TestCase):
             "erpnext_enhancements.script_migrations.task.calculate_project_elapsed_time",
             flat("Task", "before_save"),
         )
-        self.assertIn(
+        # The shared-calendar sync (Task after_insert) was removed in v1.346.0: it
+        # broadcast every task to one calendar with no per-person filtering. Assert
+        # the absence so a stale merge cannot quietly bring the broadcast back.
+        self.assertNotIn(
             "erpnext_enhancements.script_migrations.task.sync_task_to_google_calendar",
             flat("Task", "after_insert"),
         )

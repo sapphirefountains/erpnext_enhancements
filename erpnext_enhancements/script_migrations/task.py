@@ -2,142 +2,28 @@
 
 Hook wiring (see ``hooks.py``):
   * ``before_save`` -> :func:`calculate_project_elapsed_time`
-  * ``after_insert`` -> :func:`sync_task_to_google_calendar`
   * ``on_update`` (one of several) -> :func:`sync_project_dates_from_tasks`
   * ``on_trash`` -> :func:`sync_project_dates_from_tasks`
 
 These were originally Frappe "Server Script" records stored only in the site DB;
 they now ship with the app for version control.
+
+A fourth migrated script, "Sync All Tasks to Shared Google Calendar"
+(``after_insert`` -> ``sync_task_to_google_calendar``), was **removed in v1.346.0**
+as a product decision, not a cleanup: it pushed *every* Task site-wide into one
+shared calendar with no per-person filtering — whoever the calendar was shared
+with saw everyone's tasks — and it had never actually delivered an event since the
+Server Script migration (it called a Frappe function that does not exist; the call
+was fixed in v1.344.4 and the feature retired before the disabled "ERPNext Tasks"
+Google Calendar account was ever re-enabled). A personalised replacement
+(per-assignee events in each person's own calendar) is a deliberate build — per-user
+OAuth grants or a calendar DWD scope, plus the update/cancel lifecycle the original
+never had — and lives in git history if wanted. See CHANGELOG 1.346.0.
 """
 
 import frappe
-from frappe.utils import add_days, getdate, today
-
-from erpnext_enhancements.utils.error_throttle import log_error_throttled
 
 # Task Server Scripts migrated to native doc_events.
-
-# Configuration for the shared Google Calendar sync (was hard-coded in the
-# original "Sync All Tasks to Shared Google Calendar" Server Script).
-GOOGLE_SHARED_CALENDAR_ID = (
-	"c_bbb30adaf74985f859d192c1a3324a13b16251267c64a3b6917908b586e9cd67@group.calendar.google.com"
-)
-
-
-def _calendar_account():
-	"""The enabled ``Google Calendar`` account for the shared Tasks calendar, or None.
-
-	Looked up by calendar id rather than by doc name ("ERPNext Tasks" on prod) so a
-	rename survives. Filtered on ``enable`` because a disabled account is the
-	operator's off switch: while it is off the sync must skip quietly, not leave a
-	red "contact your system administrator" comment on every Task created —
-	which is what months of prod Tasks collected while the account sat disabled.
-	"""
-	return frappe.db.get_value(
-		"Google Calendar",
-		{"google_calendar_id": GOOGLE_SHARED_CALENDAR_ID, "enable": 1},
-		"name",
-	)
-
-
-def _insert_calendar_event(account_name, body):
-	"""Insert one event body into the account's Google calendar.
-
-	Goes through frappe's Google Calendar integration — the account row carries the
-	OAuth refresh token — but calls the Google API directly, because there is no
-	framework helper for pushing an *arbitrary* event: the function the migrated
-	Server Script named, ``google_calendar.insert_event``, does not exist in Frappe
-	v16 (``insert_event_in_google_calendar`` is a doc_event for the Event doctype,
-	which a Task is not). Every Task sync since the migration died here with
-	AttributeError before this was rewritten.
-
-	Deferred import: the integration module pulls in the Google client stack, and
-	the common case above is skipping before this is ever needed.
-	"""
-	from frappe.integrations.doctype.google_calendar.google_calendar import (
-		get_google_calendar_object,
-	)
-
-	google_calendar, account = get_google_calendar_object(account_name)
-	google_calendar.events().insert(calendarId=account.google_calendar_id, body=body).execute()
-
-
-def _calendar_date(value):
-	"""One Task date field as ``YYYY-MM-DD``, or None if it is not set.
-
-	``getdate`` is the whole point. A Task's ``exp_start_date`` is a
-	``datetime.date`` once the row has been read back from the database, but on
-	the in-memory doc that ``after_insert`` receives — built straight from the
-	request payload — it is still a plain string. The original migrated Server
-	Script called ``.isoformat()`` on it unconditionally, so every Task created
-	through the desk raised ``AttributeError: 'str' object has no attribute
-	'isoformat'`` and logged a "Google Calendar Sync Failed" row: 299 of them in
-	the month before this was fixed, and 541 in total.
-
-	The old ``else`` branch was wrong too, just more quietly:
-	``doc.get_formatted("creation")`` returns a *display* string in the user's
-	date format ("06-08-2026 16:09:03"), which Google would have rejected had
-	the code ever reached it.
-	"""
-	date = getdate(value) if value else None
-	return date.isoformat() if date else None
-
-
-def sync_task_to_google_calendar(doc, method=None):
-	"""Source Server Script: "Sync All Tasks to Shared Google Calendar"
-	(Task, After Save).
-
-	On creation of a Task, push it as an event to a single shared Google Calendar.
-	Wired to after_insert (the original ran in After Save guarded by doc.is_new()).
-
-	Skips silently when no *enabled* Google Calendar account exists for the shared
-	calendar — see :func:`_calendar_account`. Re-enabling the account in the Desk
-	turns the sync back on without a deploy.
-	"""
-	account_name = _calendar_account()
-	if not account_name:
-		return
-
-	try:
-		start_date = _calendar_date(doc.exp_start_date) or _calendar_date(doc.creation) or today()
-		# A Task with no expected end is a single-day event on its start date.
-		end_date = _calendar_date(doc.exp_end_date) or start_date
-
-		event = {
-			"summary": doc.subject,
-			"description": doc.description or "No description provided.",
-			# `date`, not `dateTime`: Task's expected start/end are Date fields with
-			# no time component, and Google rejects a bare `YYYY-MM-DD` in a
-			# `dateTime` slot (it wants a full RFC 3339 timestamp with an offset).
-			# An all-day event is also the honest representation — a task due
-			# Thursday is not a task due 00:00 Thursday.
-			"start": {"date": start_date},
-			# Google treats an all-day `end.date` as *exclusive*, so a task that
-			# runs through the 6th ends on the 7th. Without the +1 every task
-			# rendered a day short, and a single-day task rendered as zero-length
-			# and vanished from the calendar grid entirely.
-			# `add_days` keeps a string a string, so the body stays JSON-safe.
-			"end": {"date": add_days(end_date, 1)},
-		}
-
-		_insert_calendar_event(account_name, event)
-
-		doc.add_comment(
-			"Comment",
-			text=f"This task was successfully synced to the shared Google Calendar: {GOOGLE_SHARED_CALENDAR_ID}",
-			comment_by="Administrator",
-		)
-
-	except Exception as e:
-		# Throttled: this fires from an after_insert hook, so a systemic failure
-		# (a revoked token, a deleted calendar) writes one row per Task created
-		# site-wide until someone notices.
-		log_error_throttled(frappe.get_traceback(), "Google Calendar Sync Failed")
-		doc.add_comment(
-			"Comment",
-			text=f"Failed to sync this task to Google Calendar. Please contact your system administrator. Error: {e}",
-			comment_by="Administrator",
-		)
 
 
 def calculate_project_elapsed_time(doc, method=None):
