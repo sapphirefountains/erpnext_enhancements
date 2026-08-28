@@ -7,6 +7,288 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.358.0] - 2026-08-28
+
+### Added
+
+- **Standard-details (SP-4) library on the submittal packet.** A new **Standard Detail** doctype holds
+  reusable plan details as inline SVG (`detail_key`, `category`, `governing_code`, `title`, `svg`,
+  `sort_order`, `active`) — the same code-keyed, engineer-editable model as Standard Note. Three schematic
+  placeholder details are seeded (VGB suction outlet, skimmer, underwater-light J-box) for the engineer to
+  replace with manufacturer cut-sheet drawings. `we_standard_details(governing_code, category)` (registered
+  Jinja method) feeds a new **SP-4 details sheet** in the packet, rendered between the schematics and the
+  standard notes. The packet's SVG outputs now use `| safe` so they render regardless of the print
+  environment's autoescape setting. Idempotent + guarded seed via `after_migrate`.
+
+## [1.357.0] - 2026-08-28
+
+### Added
+
+- **Pool/spa control-panel presets + controller/enclosure Item links.** Control Panel Design gains an
+  `application_type` (Fountain / Pool-Spa): a Pool-Spa panel seeds the **NEC-680 spa interlock + I/O
+  checklist** (`SPA_INTERLOCKS` / `SPA_IO_POINTS` in `engine/controls.py`) instead of the fountain (wind)
+  set — circulation↔chemical-feeder and circulation↔heater (no-flow-switch) interlocks, the 15-minute
+  therapy-jet timer, the emergency shut-off, and the chemical-controller status, straight from the Fika
+  submittal. New `controller_item` / `enclosure_item` Link fields tie the panel's controller + enclosure
+  to catalog Items (Item Group "Control Hardware"), alongside the existing free-text fallbacks — resolving
+  the SOURCE_DATA_AUDIT `controller_hardware` decision without a risky Select→Link conversion. A golden
+  test pins the spa seed set (therapy timer present, wind interlocks absent).
+
+## [1.356.0] - 2026-08-28
+
+### Added
+
+- **Equipment schedule on Water Feature Design, catalog-driven.** A new **Water Feature Equipment** child
+  table (`design_equipment`) lets a design pick catalog Items (the v1.351.0 aquatic-equipment catalog);
+  the row's class/model auto-fetch from the Item, and on recompute the controller denormalizes each item's
+  **rating** (filter area/flow/media, heater kW/BTU, VGB open area, jet GPM/PSI, skimmer max flow, meter
+  range) and **electrical** (V / phase / FLA or watts) into the schedule columns and runs an adequacy
+  **cross-check** — e.g. a filter is flagged when the design flow exceeds its rated max or its area is
+  below the required `filtration_area`. The equipment schedule then renders on the submittal packet's
+  schedules sheet (the Fika "Circulation Equipment Schedule"), with failed checks shown in red. Best-effort
+  and guarded: a missing item or an unmigrated catalog field just leaves the computed columns blank. The
+  new table is in the desk/AI write + preview allowlist.
+
+## [1.355.0] - 2026-08-28
+
+### Added
+
+- **Submittal-packet PDF generation + Drive delivery** (now that the prod PDF generator is chrome). Two
+  buttons on Water Feature Design (a "Submittal" group): **Preview Packet** opens the assembled HTML
+  (browser print-to-PDF ready), and **Generate Packet PDF** produces the PDF and files it.
+  - `packet.generate_packet(design)` (whitelisted, write-gated): snapshots the packet HTML onto
+    `packet_html` (the record of truth), renders the PDF via the **chrome** generator
+    (`frappe.get_print(..., as_pdf=True, pdf_generator="chrome")`), **merges any CAD drawing PDFs**
+    attached to the design after the app-generated sheets with **pypdf**, and attaches the result as a
+    private File to the **Project** — so `drive_sync` mirrors it to the project's Drive folder — stamping
+    `packet_document`. Every step is best-effort and guarded (a render/merge/attach failure only logs; the
+    HTML snapshot is always the fallback), mirroring the e-sign lifecycle.
+  - The "Water Feature Design - Submittal Packet" print format is pinned to `pdf_generator = "chrome"`
+    (the multi-page packet + inline SVG the wkhtmltopdf build historically choked on), via a new optional
+    arg on the print-format upsert helper.
+  - DWG / non-PDF CAD is left as separate Drive files (only PDF attachments merge); `pypdf` is a pure-
+    Python wheel dependency (added in v1.354.0).
+
+## [1.354.0] - 2026-08-28
+
+### Added
+
+- **Submittal-packet assembler** (`water_engineering/packet.py` + a new "Water Feature Design - Submittal
+  Packet" print format) — assembles the health-department plan set into one browser-printable document:
+  a cover (title block + drawing index + revisions), the spa/pool data + equipment & piping schedules,
+  the auto-generated circulation and electrical-one-line schematics (v1.353.0), the standard notes, and
+  the calculation audit, each on its own page. This is the HTML-first deliverable (usable via browser
+  print-to-PDF today); the server-side combined PDF + Drive upload is deferred until the prod PDF backend
+  is fixed (`docs/pdf-generation.md`).
+  - The packet is a **DRAFT for a licensed P.E. to review and seal**: it carries a
+    "PRELIMINARY — NOT FOR CONSTRUCTION" cover banner + per-sheet banner and a stamp *placeholder*; the
+    P.E. stamp image is placed only once a stamp is configured **and** the design is Issued.
+  - Jinja helpers (registered in `hooks.py`, computed in Python because the print sandbox can't):
+    `we_title_block` (engineer/contractor/project/dates/revisions), `we_circulation_schematic` /
+    `we_electrical_oneline` (the SVGs, the one-line reusing the linked Control Panel Design's
+    `we_panel_schedule`), and `we_standard_notes` (code-keyed). `assemble_packet(design)` is a whitelisted
+    read-gated endpoint returning the packet HTML.
+  - Supporting doctypes: **Water Engineering Settings** (Single — engineer identity + P.E. stamp +
+    contractor), **Standard Note** (SP-5 boilerplate keyed to code articles, with 8 seeded starter notes
+    from the Fika submittal), and a **Submittal Revision** child table; plus `issue_date` / `drawn_by` /
+    `revisions` / `packet_document` / `packet_html` fields on Water Feature Design.
+  - **pypdf** added to `pyproject.toml` (pure-Python wheel, no system libs — installs like twilio/google-*,
+    explicitly not the stripe-SDK case) for the deferred step of appending the plan-specific CAD drawing
+    PDFs after the app-generated sheets.
+
+  The composed packet template (~17k chars) parses as valid Jinja; the new doctypes pass the
+  module-placement test. Rendering, the seeds, and the form layout still need a `bench migrate` + desk
+  pass. Follow-ups: an "Assemble Packet" form button, the standard-details (SP-4) library, and the
+  issue-lifecycle PDF/Drive upload once the backend is fixed.
+
+## [1.353.0] - 2026-08-28
+
+### Added
+
+- **Server-rendered schematic drawings** (`water_engineering/engine/drawings.py`) — the start of the
+  submittal packet's auto-generated sheets. Two pure, stdlib-only functions build a self-contained inline
+  `<svg>` from a plain state dict (no frappe, unit-tested), which wkhtmltopdf renders reliably: the print
+  sandbox runs no JavaScript, so the client design canvas (`fountain_canvas.js`) can't produce a
+  print/PDF artifact — these can.
+  - `circulation_schematic_svg(state)` — the equipment train (basin → circ pump → filter → heater →
+    chem feed → return) as a left-to-right rail of labeled boxes joined by flow arrows (Fika sheet SP-3).
+  - `electrical_oneline_svg(state)` — the panel one-line: a service bus with the main breaker and a branch
+    tap per load, plus the control transformer (Fika sheet SP-6).
+
+  Literal colors (print has no theme), XML-escaped labels, no external refs or script, so they drop
+  straight into a Jinja print format. Four smoke tests; the packet assembler (next) builds the state from
+  a Water Feature Design + its linked Control Panel Design.
+
+## [1.352.0] - 2026-08-28
+
+### Added
+
+- **Control Panel Design now computes its NEC panel/service sizing** instead of it being three
+  hand-entered numbers. `_recompute_sizing()` builds the motor loads from the Control Pump rows (a new
+  `fla_amps` nameplate field, else the NEC 430.248/250 table value from the HP) and runs the v1.349.0
+  engine — `total_connected_load` (430.24), `service_main_breaker` (430.62), and `control_transformer_va`
+  (Art. 450, from one contactor coil per pump + the lighting/solenoid relays + the HMI) — writing
+  `amperage_to_panel`, `main_breaker_size_a`, and `control_transformer_va`. A `power_autosize` check
+  (default on) gates it: on, the three fields are computed and shown read-only; off, they revert to manual
+  entry (`read_only_depends_on`). Existing panels recompute on their next save.
+- **"Control Panel Design - Panel Schedule" print format** (`setup_print_formats.py`) — a branch-circuit
+  schedule (tag / description / FLA / V·phase / control method / breaker) plus the service block
+  (connected load, main breaker, control-transformer VA), fed by a new `we_panel_schedule(doc)` Jinja
+  method (registered in `hooks.py` alongside `we_fitting_schedule`, because the NEC math can't run in the
+  print sandbox). It states the up-vs-down OCPD round rule and that it is an engineering aid for the
+  engineer of record to confirm, not a stamped calculation.
+
+  The engine math is covered by the v1.349.0 golden tests; the controller recompute + the new field
+  layout + the print format still need a `bench migrate` + desk pass to validate. Follow-ups: linking the
+  controller/enclosure hardware to catalog Items and a spa-specific interlock/IO seed set (application_type).
+
+## [1.351.0] - 2026-08-28
+
+### Added
+
+- **Aquatic-equipment Item catalog** (`water_engineering/setup.py`) — the health-department equipment
+  schedule (filters, heaters, chemical feed pumps, controllers, skimmers, VGB main drains, therapy jets,
+  gauges/meters, panel devices) now lives in ERPNext as real Items, so the schedule and the electrical
+  calcs can resolve each device's specs instead of re-typing them per job.
+  - `create_equipment_item_fields()` adds a gated "Aquatic Equipment" fieldset on Item driven by a single
+    `custom_equipment_class` Select: shared spec fields (model / NSF / IAPMO / cut sheet), a shared
+    electrical block (voltage / phase / Hz / FLA / watts / HP / requires-GFCI / NEC-680 bond), and
+    per-class fields (filter area/max-flow/media, heater fuel/kW/BTU, VGB open-area/max-flow/rated, jet
+    flow/PSI, skimmer max-flow, meter kind/range, feed GPD, controller channels). Pumps keep their
+    existing `item_group == "Pumps"` fieldset untouched.
+  - `ensure_equipment_catalog()` (wired into `hooks.py` `after_migrate`, after the pump catalog) creates
+    those fields and seeds an **Aquatic Equipment** Item-Group tree plus the twelve Fika reference items
+    (Pentair CC-150, Coates 11 kW, Triangle FM-80, Stenner 45M1, IPS M820, Hayward 1084FVE, Waterway
+    640-358xV, Waterway 210-4120, Pasco/Blue-White gauges, GFCI receptacle) with their spec values. Same
+    idempotent (skip-existing) + guarded (seed errors only log) pattern as the pump catalog, so Frappe
+    Cloud gets it on deploy with no shell.
+  - `get_equipment_candidates(equipment_class)` — a whitelisted reader (mirroring `get_pump_candidates`,
+    with the same `meta.has_field` guards) that returns the Items of a class with their spec fields, for
+    the equipment schedule and the filter/heater/VGB cross-checks.
+
+  Follow-ups (next increment): an equipment-selection child table on Water Feature Design and the
+  `recompute()` cross-checks (selected filter area ≥ required, heater BTU/kW ≥ heating load, skimmer/drain
+  feed the VGB gate). The catalog seed runs on `bench migrate` and still needs a bench pass to confirm the
+  Item inserts and field layout.
+
+## [1.350.0] - 2026-08-28
+
+### Added
+
+- **Water Feature Design now models regulated aquatic venues (pools/spas), not just fountains.** A
+  `venue_type` discriminator (Decorative Fountain / Interactive Water Feature / Commercial Spa /
+  Commercial Pool / Wading Pool / Therapy Pool, default *Decorative Fountain*) branches the design: the
+  two fountain types keep the existing decorative path untouched, while the regulated venues surface a
+  new "Regulated Venue" section and the health-department calculations from v1.347.0.
+
+  - **Engine spine branch** (`engine/pipeline.py::run_spine`): for a regulated venue the code **minimum
+    circulation flow becomes a floor** on the design flow (`design_flow = max(circulation, feature,
+    minimum, published)`), with a warning when the published/spec flow falls below the code minimum;
+    turnover time, bather load, skimmer count, and the VGB gate on each main-drain fixture are computed
+    from the water-surface area + fixtures. A published **volume override** on a basin lets an
+    octagon/other shell the rect/cyl geometry can't derive carry its listed volume. Guarded by
+    `is_regulated` throughout, so the fountain golden tests stay byte-identical (three new spine goldens
+    reproduce the Fika spa: 35 GPM design flow, 14.17 GPM minimum, 12.14-min turnover, 4-bather load,
+    1 skimmer, 40 GPM jets).
+  - **Schema**: new parent fields — `governing_code`, `max_turnover_min`, `design_flow_published_gpm`,
+    `bather_sf_per_person`, `skimmer_sf_each`, `skimmer_rated_gpm`, and read-only rollups
+    (`turnover_time_min`, `minimum_flow_gpm`, `bather_load`, `skimmer_count`, `main_drain_status`); a new
+    **Water Venue Fixture** child table (skimmers / main drains / return inlets / therapy jets with VGB
+    cover geometry); and `surface_area_sf` + `volume_gal_override` on Water Feature Basin (plus an
+    "Other (area & volume)" shape). All sections `depends_on` the venue being regulated, so a fountain's
+    form is unchanged. `venue_type`'s default reaches every existing design via the column ALTER, so all
+    current designs become *Decorative Fountain* with no backfill patch.
+  - **Wiring**: the controller threads the new inputs into the spine, writes the rollups, honors the
+    volume override, and fills each fixture's computed flow + VGB status; the desk/AI write + preview
+    endpoints accept the new fields and the `venue_fixtures` table; and `issues.py` gains a "Regulated
+    Compliance" readiness section (n/a for fountains) that gates issuing on surface area, a published
+    design flow, and fixtures.
+
+  Schema changes are applied by `bench migrate` and still need a bench run + desk pass to validate the
+  form layout; the pure-engine spine branch is covered by the bench-free golden tests (144 pass).
+
+## [1.349.0] - 2026-08-28
+
+### Added
+
+- **Panel + service electrical sizing engine** (`water_engineering/engine/electrical.py`) — the NEC math
+  a control-panel submittal needs beyond a single branch breaker, all pure/stdlib and reachable from the
+  desk `run_calc` endpoint and the `water_calc` MCP tool:
+  - `motor_flc(hp, phase, voltage)` — full-load current from NEC Table 430.248 (1-phase) / 430.250
+    (3-phase). Sizing uses the **table** value, not the nameplate FLA (NEC 430.6(A)(1)); a fractional-HP
+    motor below the table returns `None` so the caller falls back to the nameplate.
+  - `total_connected_load(loads)` — feeder connected amps, NEC 430.24: `1.25 × largest-motor FLC + Σ other
+    motor FLC + non-motor loads` (continuous non-motor at 125%).
+  - `service_main_breaker(loads)` — feeder/service OCPD, NEC 430.62: largest motor branch OCPD + the other
+    motors' FLC + other loads, then the largest standard size **not exceeding** that ceiling.
+  - `control_transformer_va(control_loads)` — sum the control devices' sealed VA and pick the next standard
+    transformer (NEC Article 450 + manufacturer selection).
+
+  The **round-direction trap is made explicit and pinned by a golden**: a branch breaker rounds *up* to the
+  next standard size (240.6), but a feeder/service OCPD rounds *down* to the largest size not exceeding its
+  ceiling (430.62) — rounding the service up would oversize it illegally. On the Fika-shaped load set
+  (two 8 A pumps, a 45.8 A heater, a 5 A controller, two 1.7 A feed pumps) that is a 83.7 A connected load
+  and a 70 A feeder (ceiling 77.2 A → 70, not 80). Motor full-load-current tables, standard OCPD sizes
+  (240.6), and control-device sealed-VA nominals were added to `engine/constants.py`.
+
+  As with the existing `electrical_load`, every result carries its NEC citation **and** a "confirm with the
+  engineer" warning: these are code-based design aids for a P.E. to review, not stamped calculations. The
+  next step wires them into the Control Panel Design controller so `amperage_to_panel` /
+  `main_breaker_size_a` / `control_transformer_va` become computed (overridable) fields, and adds the
+  panel-schedule print format.
+
+## [1.348.0] - 2026-08-28
+
+### Added
+
+- **Branch-circuit breaker sizing is now reachable from the desk and the AI.**
+  `water_engineering/engine/pump.py::electrical_load` (next standard breaker ≥ 1.25 × full-load amps,
+  NEC 240.6 / 430.52) has existed and been exported since the pump module was written, but it had
+  **zero callers**: it was not in the `run_calc` dispatch, not in the `water_calc` MCP tool, and not
+  invoked by any controller — so `Water Feature Electrical Load.breaker_amps` was never populated and
+  `issues.py` correctly flagged every design's electrical schedule as incomplete. This wires it into
+  both the `run_calc` endpoint and the `water_calc` MCP calc list (`{fla_amps, hp, phase, voltage}`),
+  with golden tests pinning the Fika equipment: a 1 HP pump (8 A) → 15 A, a 1.7 A Stenner chem pump →
+  the 15 A minimum, and the Coates 11 kW / 240 V heater (45.8 A) → 60 A. Populating the field on save,
+  and the feeder/service (NEC 430.24 / 430.62) and control-transformer sizing, are the next steps.
+
+## [1.347.0] - 2026-08-28
+
+### Added
+
+- **Regulated aquatic-venue calculations in the water engine** (`water_engineering/engine/aquatic.py`) —
+  the first step of teaching the fountain hydraulic engine to produce health-department pool/spa
+  submittals like the Fika Reflexology Spa plan set. Five pure functions, each returning the usual
+  `CalcResult` audit envelope, wired into the desk `run_calc` dispatch and the `water_calc` MCP tool so
+  the desk wizard and the AI share byte-identical math:
+  - `turnover_time(volume_gal, flow_gpm)` — turnover in minutes (volume ÷ flow).
+  - `minimum_flow_rate(volume_gal, max_turnover_min, venue)` — the code minimum circulation flow
+    (volume ÷ the maximum turnover *time*; spa/wading/therapy default 30 min). This is a different basis
+    from the fountain spine's turnovers-per-hour, though the two agree arithmetically
+    (`minimum_flow_rate(v, 30) == turnover_gpm(v, 2)`), which a golden test pins.
+  - `bather_load(surface_area_sf, sf_per_person, rounding, venue)` — maximum bathers from water-surface
+    area. The divisor (spa ~10 SF, pool ~15 SF) and the integer-rounding convention **vary by governing
+    code**, so both are parameters; the raw ratio and any floor/nearest/ceil disagreement are surfaced
+    rather than a single number being hard-coded. (The Fika calc sheet itself shows `46/10 ≈ 5` in the
+    arithmetic but `6` in the data block — exactly the ambiguity this refuses to bury.)
+  - `skimmer_sizing(surface_area_sf, sf_each, rated_gpm, venue)` — skimmer count `ceil(SA/SF-each)`
+    (spa 100 SF, pool 400 SF) with each skimmer sized to operate at 80% of its rated GPM.
+  - `main_drain_flow(open_area_in2, velocity_fps, drains)` — the reported "drain capacity at 1.5 ft/s"
+    schedule line; its `warnings` point at the existing `suction_outlet_vgb` gate as the actual
+    anti-entrapment go/no-go, so the report line is never mistaken for the safety check.
+
+  Every value is golden-tested against the Fika submittal (Salt Lake County Health Dept, 2023):
+  425 gal ÷ 35 GPM = 12.14 min turnover, 14.17 GPM minimum flow, 46 SF ÷ 10 = bather load, one 100-SF
+  skimmer at 50.4 GPM, and 42 GPM through a 9.02 in² VGB drain. Therapy-jet flow (`nozzle_array_flow`),
+  filter adequacy (`filtration_area`), VGB entrapment (`suction_outlet_vgb`), heating (`heating_load`)
+  and chemistry are reused unchanged.
+
+  A companion `is_regulated(venue_type)` / `venue_family()` predicate is added for the doctype schema +
+  spine branch that follow. The fountain-era `workbook.program_rules` (fixed 9 SF/user, 400 SF/skimmer)
+  is **left untouched** and its golden stays green: the new module is the code-parameterized regulated
+  path, and the two are deliberately kept side by side rather than one silently changing the other's
+  numbers. Engine-only, no schema or fixture changes; the decorative-fountain path is unaffected.
+
 ## [1.346.0] - 2026-08-28
 
 ### Removed

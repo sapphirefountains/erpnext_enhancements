@@ -45,6 +45,34 @@ DEFAULT_IO_POINTS = [
      "device": "Anemometer", "description": "Wind speed (medium/high setpoints)", "qty": 1},
 ]
 
+# Pool/spa interlock + I/O set (NEC 680 + swimming-pool code, per the Fika spa):
+# circ<->chem-feeder + circ<->heater (no flow switch) interlocks, the 15-minute
+# therapy-timer, the emergency shut-off, and the chemical-controller status. The
+# fountain-oriented wind interlocks do not apply. Picked in _seed_defaults when
+# application_type is Pool-Spa.
+SPA_INTERLOCKS = [
+    {"condition": "Circulation pump off / no flow", "action": "Inhibit chlorine + pH feed pumps", "enabled": 1},
+    {"condition": "No circulation flow (no flow switch on heater)", "action": "Disable heater", "enabled": 1},
+    {"condition": "Therapy-jet timer expired", "action": "Stop therapy (jet) pump", "threshold": "15 min", "enabled": 1},
+    {"condition": "Emergency shut-off pressed", "action": "All stop", "enabled": 1},
+    {"condition": "Chemical controller fault / out of range", "action": "Inhibit chemical feed", "enabled": 1},
+    {"condition": "Thermal overload", "action": "Stop affected pump", "enabled": 1},
+    {"condition": "Power-up", "action": "All components to safe state (off)", "enabled": 1},
+]
+
+SPA_IO_POINTS = [
+    {"point_name": "Emergency shut-off", "io_type": "Input", "signal": "Dry Contact NC",
+     "device": "Emergency shut-off switch", "description": "Spa emergency shut-off (all stop)", "qty": 1},
+    {"point_name": "Circulation flow proof", "io_type": "Input", "signal": "Dry Contact NO",
+     "device": "Flow switch / circ pump aux contact", "description": "Interlocks the feeders + heater", "qty": 1},
+    {"point_name": "Therapy-jet timer", "io_type": "Input", "signal": "Dry Contact NO",
+     "device": "15-minute spring-wound timer", "description": "Jet-pump run timer (bather exits to reset)", "qty": 1},
+    {"point_name": "Chemical controller status", "io_type": "Input", "signal": "Dry Contact NO",
+     "device": "Chemical controller (ORP/pH)", "description": "Controller ok / fault", "qty": 1},
+    {"point_name": "Therapy pump", "io_type": "Output", "signal": "24VAC",
+     "device": "Therapy (jet) pump contactor", "description": "Timed jet-pump output", "qty": 1},
+]
+
 
 def lighting_sizing(lights, lighting_voltage: float = 12.0, per_relay_watts: float = 60.0) -> dict:
     """Plain-dict lighting rollup reused by the controller and calc_lighting."""

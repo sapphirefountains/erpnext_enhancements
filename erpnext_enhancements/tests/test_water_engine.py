@@ -18,26 +18,35 @@ if str(REPO_ROOT) not in sys.path:
 
 from erpnext_enhancements.water_engineering.engine import (
     basin_volume,
+    bather_load,
     calc_lighting,
     calc_solenoid_relays,
     chemical_dose,
     chemistry_targets,
     chlorinator_feed,
+    circulation_schematic_svg,
     component_loss,
+    control_transformer_va,
     electric_cost,
+    electrical_load,
+    electrical_oneline_svg,
     evaporation_rate,
     filtration_area,
     fitting_minor_loss,
     hazen_williams_loss,
     head_at_flow,
     heating_load,
+    is_regulated,
     jet_trajectory,
     lazy_river_hp,
     lighting_design,
     lighting_sizing,
     lsi_index,
+    main_drain_flow,
     make_up_water,
     manning_drain_flow,
+    minimum_flow_rate,
+    motor_flc,
     nozzle_array_flow,
     nozzle_flow,
     npsh_available,
@@ -50,13 +59,17 @@ from erpnext_enhancements.water_engineering.engine import (
     program_rules,
     run_spine,
     select_pump,
+    service_main_breaker,
     size_drain,
     size_pipe,
+    skimmer_sizing,
     suction_outlet_vgb,
     surge_basin_volume,
     tiered_fountain_flow,
+    total_connected_load,
     total_dynamic_head,
     turnover_gpm,
+    turnover_time,
     units,
     uv_dose,
     velocity_status,
@@ -408,6 +421,16 @@ class ControlsTests(unittest.TestCase):
     def test_solenoid_relays(self):
         self.assertEqual(calc_solenoid_relays(5).value, 5)
 
+    def test_spa_interlock_seed_set(self):
+        from erpnext_enhancements.water_engineering.engine.controls import SPA_INTERLOCKS, SPA_IO_POINTS
+
+        self.assertTrue(SPA_INTERLOCKS and SPA_IO_POINTS)
+        self.assertTrue(all("condition" in r and "action" in r for r in SPA_INTERLOCKS))
+        self.assertTrue(all(r.get("io_type") in ("Input", "Output") for r in SPA_IO_POINTS))
+        # the Fika 15-minute therapy-timer interlock is present, wind ones are not
+        self.assertTrue(any("timer" in r["condition"].lower() for r in SPA_INTERLOCKS))
+        self.assertFalse(any("wind" in r["condition"].lower() for r in SPA_INTERLOCKS))
+
 
 class UnitsTests(unittest.TestCase):
     def test_conversions(self):
@@ -633,6 +656,210 @@ class TreatmentTests(unittest.TestCase):
         self.assertAlmostEqual(filtration_area(120, "cartridge").value, 320.0, places=1)
         # sand capped at 3 GPM/SF: 90 GPM -> 30 SF
         self.assertAlmostEqual(filtration_area(90, "sand").value, 30.0, places=1)
+
+
+class DrawingsTests(unittest.TestCase):
+    def test_circulation_schematic_renders_nodes(self):
+        svg = circulation_schematic_svg(
+            {"nodes": ["Spa Basin", {"label": "Circ Pump", "sub": "1 HP"}, "Filter CC-150"]}
+        )
+        self.assertTrue(svg.startswith("<svg"))
+        self.assertIn("</svg>", svg)
+        self.assertIn("Circ Pump", svg)
+        self.assertIn("Filter CC-150", svg)
+
+    def test_circulation_schematic_empty(self):
+        self.assertIn("No equipment", circulation_schematic_svg({}))
+
+    def test_electrical_oneline_renders_branches(self):
+        svg = electrical_oneline_svg(
+            {
+                "service": {"label": "240V 1ph", "main_breaker": 60},
+                "branches": [{"label": "Circ Pump", "breaker": 15}, {"label": "Heater", "breaker": 60}],
+                "transformer_va": 75,
+            }
+        )
+        self.assertTrue(svg.startswith("<svg"))
+        self.assertIn("Circ Pump", svg)
+        self.assertIn("Main: 60 A", svg)
+        self.assertIn("Control Transformer 75 VA", svg)
+
+    def test_svg_escapes_labels(self):
+        svg = circulation_schematic_svg({"nodes": ["A & <B>"]})
+        self.assertIn("A &amp; &lt;B&gt;", svg)
+        self.assertNotIn("<B>", svg)
+
+
+class ElectricalTests(unittest.TestCase):
+    # Branch-circuit breaker sizing (NEC 240.6 / 430.52): next standard size >= 1.25*FLA.
+    def test_branch_breaker_from_fla(self):
+        # 1 HP circ pump ~8 A FLA: 1.25*8 = 10 -> next standard 15 A
+        self.assertEqual(electrical_load(8).value, 15)
+
+    def test_small_feed_pump_min_breaker(self):
+        # Stenner 45M1 chem pump 1.7 A: 1.25*1.7 = 2.125 -> smallest standard 15 A
+        self.assertEqual(electrical_load(1.7).value, 15)
+
+    def test_heater_continuous_breaker(self):
+        # Fika Coates 11 kW / 240 V = 45.83 A; 1.25*45.83 = 57.3 -> 60 A
+        self.assertEqual(electrical_load(11000 / 240).value, 60)
+
+    def test_breaker_only_rounds_up(self):
+        # 30 A load: 1.25*30 = 37.5 -> next standard 40 A (branch never rounds down)
+        self.assertEqual(electrical_load(30).value, 40)
+
+    def test_motor_flc_table(self):
+        self.assertEqual(motor_flc(1, 1, 230), 8.0)   # NEC 430.248, 1ph 1HP @ 230V
+        self.assertEqual(motor_flc(1, 1, 208), 8.0)   # 208V maps to the 230V column
+        self.assertEqual(motor_flc(1, 3, 208), 4.6)   # NEC 430.250, 3ph 1HP @ 208V
+        self.assertIsNone(motor_flc(1 / 30, 1, 120))  # fractional HP -> use nameplate FLA
+
+    # Fika-shaped equipment: circ + jet pumps (8 A motors), Coates 11 kW/240 V
+    # heater (45.83 A, continuous non-motor), IPS controller (5 A), two Stenner
+    # feed pumps (1.7 A motors).
+    _FIKA_LOADS = [
+        {"label": "circ", "is_motor": True, "fla": 8},
+        {"label": "jet", "is_motor": True, "fla": 8},
+        {"label": "heater", "continuous": True, "fla": 11000 / 240},
+        {"label": "controller", "fla": 5},
+        {"label": "cl feed", "is_motor": True, "fla": 1.7},
+        {"label": "ph feed", "is_motor": True, "fla": 1.7},
+    ]
+
+    def test_total_connected_load_430_24(self):
+        # 1.25*8 (largest motor) + (8+1.7+1.7) + 1.25*45.83 + 5 = 83.69 A
+        self.assertAlmostEqual(total_connected_load(self._FIKA_LOADS).value, 83.69, delta=0.05)
+
+    def test_service_main_breaker_rounds_down(self):
+        # ceiling = 15 (largest branch OCPD) + 11.4 (other motors) + 50.83 (non-motor)
+        # = 77.23 A -> feeder OCPD 70 A (largest standard <= ceiling; NOT 80)
+        self.assertEqual(service_main_breaker(self._FIKA_LOADS).value, 70)
+
+    def test_control_transformer_va(self):
+        # 2 contactors (20 VA) + 1 HMI (10 VA) = 50 VA -> 50 VA transformer
+        self.assertEqual(
+            control_transformer_va([{"device": "contactor", "qty": 2}, {"device": "hmi", "qty": 1}]).value,
+            50,
+        )
+        # 3 contactors = 60 VA -> next standard 75 VA
+        self.assertEqual(control_transformer_va([{"device": "contactor", "qty": 3}]).value, 75)
+
+
+class RegulatedAquaticTests(unittest.TestCase):
+    # Golden values from the Fika Reflexology Spa health-department submittal
+    # (Salt Lake County Health Dept, 2023 — Michael Madsen, P.E.):
+    # 425 gal, 35 GPM design flow, 46 SF water surface, octagon spa.
+    def test_turnover_time(self):
+        # 425 gal / 35 GPM = 12.14 min
+        self.assertAlmostEqual(turnover_time(425, 35).value, 12.14, delta=0.01)
+
+    def test_turnover_time_guards_zero_flow(self):
+        r = turnover_time(425, 0)
+        self.assertIsNone(r.value)
+        self.assertTrue(r.warnings)
+
+    def test_minimum_flow_rate(self):
+        # 425 / (0.5 * 60) = 425 / 30 = 14.17 GPM
+        self.assertAlmostEqual(minimum_flow_rate(425, 30).value, 14.17, delta=0.01)
+
+    def test_minimum_flow_rate_equals_turnover_gpm(self):
+        # a 30-min max turnover is arithmetically 2 turnovers/hr — must agree
+        self.assertAlmostEqual(minimum_flow_rate(425, 30).value, turnover_gpm(425, 2).value, places=6)
+
+    def test_minimum_flow_rate_spa_family_default(self):
+        # spa family default max turnover is 30 min when not supplied
+        self.assertAlmostEqual(minimum_flow_rate(425, venue="spa").value, 14.17, delta=0.01)
+
+    def test_bather_load_spa_floor(self):
+        r = bather_load(46, 10)
+        self.assertEqual(r.value, 4)  # floor(4.6)
+        self.assertTrue(any("4.6" in s for s in r.steps))  # raw ratio surfaced
+        self.assertTrue(r.warnings)  # floor/nearest/ceil disagree -> warn
+
+    def test_bather_load_program_rules_divisor(self):
+        # cross-check the fountain-era 9 SF/user divisor -> floor(5.11) = 5
+        self.assertEqual(bather_load(46, 9).value, 5)
+
+    def test_bather_load_rounding_modes(self):
+        self.assertEqual(bather_load(46, 10, rounding="ceil").value, 5)
+        self.assertEqual(bather_load(46, 10, rounding="nearest").value, 5)
+
+    def test_skimmer_sizing(self):
+        r = skimmer_sizing(46, sf_each=100, rated_gpm=63)
+        self.assertEqual(r.value, 1)  # ceil(46/100)
+        self.assertTrue(any("50.4" in s for s in r.steps))  # 63 * 0.80 = 50.4 GPM
+
+    def test_main_drain_flow(self):
+        # 1.5 ft/s through 9.02 in^2 open area -> 42.2 GPM (one drain)
+        self.assertAlmostEqual(main_drain_flow(9.02).value, 42.2, delta=0.5)
+
+    def test_therapy_jets_reuse_nozzle_array(self):
+        # Fika: 5 therapy jets * 8 GPM = 40 GPM (existing engine function, new assertion)
+        self.assertEqual(nozzle_array_flow(5, 8).value, 40)
+
+    def test_filter_adequacy_reuse(self):
+        # Fika filter CC-150, 56 GPM commercial -> ~149.3 SF cartridge (0.375 GPM/SF)
+        self.assertAlmostEqual(filtration_area(56, "cartridge").value, 149.3, delta=0.5)
+
+    def test_is_regulated_predicate(self):
+        self.assertFalse(is_regulated("Decorative Fountain"))
+        self.assertFalse(is_regulated("Interactive Water Feature"))
+        self.assertFalse(is_regulated(""))
+        self.assertTrue(is_regulated("Commercial Spa"))
+        self.assertTrue(is_regulated("Commercial Pool"))
+
+    def test_run_spine_regulated_spa(self):
+        # Fika-shaped: 425 gal octagon spa (published volume), 46 SF surface, 30-min
+        # max turnover, published design flow 35 GPM, two VGB drains, five therapy jets.
+        out = run_spine(
+            {
+                "venue_type": "Commercial Spa",
+                "governing_code": "Utah R392-302",
+                "basins": [{"shape": "other", "volume_gal_override": 425}],
+                "surface_area_sf": 46,
+                "max_turnover_min": 30,
+                "design_flow_published_gpm": 35,
+                "skimmer_rated_gpm": 63,
+                "venue_fixtures": [
+                    {"fixture_type": "Main Drain", "qty": 2, "open_area_in2": 9.02},
+                    {"fixture_type": "Therapy Jet", "qty": 5, "rated_gpm": 8},
+                ],
+            }
+        )
+        self.assertTrue(out["is_regulated"])
+        self.assertAlmostEqual(out["design_flow_gpm"], 35, delta=0.01)  # published > minimum
+        self.assertAlmostEqual(out["minimum_flow_gpm"], 14.17, delta=0.01)
+        self.assertAlmostEqual(out["turnover_time_min"], 425 / 35, delta=0.01)
+        self.assertEqual(out["bather_load"], 4)  # floor(46/10)
+        self.assertEqual(out["skimmer_count"], 1)
+        self.assertAlmostEqual(out["jet_flow_gpm"], 40, delta=0.01)  # 5 * 8
+
+    def test_run_spine_fountain_path_unchanged(self):
+        # No venue_type -> not regulated -> no regulated rollups, design flow as before
+        out = run_spine(
+            {
+                "basins": [{"shape": "rectangular", "length_in": 120, "width_in": 60, "height_in": 18}],
+                "turnovers_per_hr": 2,
+            }
+        )
+        self.assertFalse(out["is_regulated"])
+        self.assertIsNone(out["minimum_flow_gpm"])
+        self.assertIsNone(out["bather_load"])
+        self.assertIsNone(out["skimmer_count"])
+
+    def test_run_spine_below_minimum_flow_warns(self):
+        # published flow below the code minimum -> floored up + a code-violation warning
+        out = run_spine(
+            {
+                "venue_type": "Commercial Spa",
+                "basins": [{"shape": "other", "volume_gal_override": 425}],
+                "surface_area_sf": 46,
+                "max_turnover_min": 30,
+                "design_flow_published_gpm": 10,  # below the 14.17 GPM minimum
+            }
+        )
+        self.assertAlmostEqual(out["design_flow_gpm"], 14.17, delta=0.01)
+        self.assertTrue(any("below the code minimum" in w.lower() for w in out["warnings"]))
 
 
 class CorrectnessGuardTests(unittest.TestCase):

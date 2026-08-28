@@ -9,6 +9,7 @@
   "qty",
   "part_no",
   "hp",
+  "fla_amps",
   "control_method",
   "voltage",
   "voltage_type",
@@ -38,6 +39,12 @@
    "fieldtype": "Float",
    "label": "HP",
    "in_list_view": 1
+  },
+  {
+   "fieldname": "fla_amps",
+   "fieldtype": "Float",
+   "label": "FLA (A)",
+   "description": "Nameplate full-load amps for panel sizing; if blank, the NEC 430.248/250 table value for the HP is used."
   },
   {
    "fieldname": "control_method",

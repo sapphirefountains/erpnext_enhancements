@@ -11,6 +11,8 @@
   "width_in",
   "diameter_in",
   "height_in",
+  "surface_area_sf",
+  "volume_gal_override",
   "volume_gal",
   "weight_lb"
  ],
@@ -25,7 +27,7 @@
    "fieldname": "shape",
    "fieldtype": "Select",
    "label": "Shape",
-   "options": "Rectangular\nCylindrical",
+   "options": "Rectangular\nCylindrical\nOther (area & volume)",
    "default": "Rectangular",
    "in_list_view": 1
   },
@@ -50,7 +52,21 @@
   {
    "fieldname": "height_in",
    "fieldtype": "Float",
-   "label": "Height (in)"
+   "label": "Height (in)",
+   "depends_on": "eval:doc.shape!='Other (area & volume)'"
+  },
+  {
+   "fieldname": "surface_area_sf",
+   "fieldtype": "Float",
+   "label": "Water Surface Area (sq ft)",
+   "description": "Required for regulated venues — bather load and skimmer count size off it. For an Other-shape shell (e.g. an octagon spa), enter the published area."
+  },
+  {
+   "fieldname": "volume_gal_override",
+   "fieldtype": "Float",
+   "label": "Volume Override (gal)",
+   "depends_on": "eval:doc.shape=='Other (area & volume)'",
+   "description": "Published volume for a shape the rect/cyl geometry can't derive (e.g. an octagon spa)."
   },
   {
    "fieldname": "volume_gal",

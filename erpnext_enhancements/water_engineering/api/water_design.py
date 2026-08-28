@@ -19,12 +19,15 @@ from frappe import _
 from erpnext_enhancements.water_engineering import issues as design_issues
 from erpnext_enhancements.water_engineering.engine import (
     basin_volume,
+    bather_load,
     calc_lighting,
     calc_solenoid_relays,
     chemical_dose,
     chemistry_targets,
     chlorinator_feed,
+    control_transformer_va,
     electric_cost,
+    electrical_load,
     evaporation_rate,
     feature_visual_kind,
     filtration_area,
@@ -34,8 +37,10 @@ from erpnext_enhancements.water_engineering.engine import (
     lazy_river_hp,
     lighting_design,
     lsi_index,
+    main_drain_flow,
     make_up_water,
     manning_drain_flow,
+    minimum_flow_rate,
     nozzle_array_flow,
     nozzle_flow,
     npsh_available,
@@ -47,12 +52,16 @@ from erpnext_enhancements.water_engineering.engine import (
     program_rules,
     run_spine,
     select_pump,
+    service_main_breaker,
     size_drain,
     size_pipe,
+    skimmer_sizing,
     suction_outlet_vgb,
     surge_basin_volume,
+    total_connected_load,
     total_dynamic_head,
     turnover_gpm,
+    turnover_time,
     uv_dose,
     vertical_pipe,
     water_hammer,
@@ -69,17 +78,28 @@ EDITABLE_DESIGN_FIELDS = frozenset(
         "customer",
         "serial_no",
         "design_title",
+        "venue_type",
         "fountain_type",
         "status",
         "turnover_per_hr",
         "hazen_williams_c",
         "pipe_material",
         "static_lift_ft",
+        # regulated aquatic-venue inputs
+        "governing_code",
+        "max_turnover_min",
+        "design_flow_published_gpm",
+        "bather_sf_per_person",
+        "skimmer_sf_each",
+        "skimmer_rated_gpm",
     }
 )
 
 # Child tables a caller may replace wholesale.
-EDITABLE_CHILD_TABLES = ("basins", "features", "pipe_segments", "pumps", "electrical_loads", "tiers")
+EDITABLE_CHILD_TABLES = (
+    "basins", "features", "pipe_segments", "pumps", "electrical_loads", "tiers",
+    "venue_fixtures", "design_equipment",
+)
 
 # Parent input fields the live form preview may set (the editable design fields
 # plus the chemistry/drainage inputs) — read-only rollups are never accepted.
@@ -423,6 +443,52 @@ def _run_calc(calc, inputs):
         r = uv_dose(i.get("flow_gpm", 0), i.get("target_red_mj", 60))
     elif calc == "filtration_area":
         r = filtration_area(i.get("design_gpm", 0), i.get("media", "sand"), i.get("rate_gpm_sf", 0))
+    elif calc == "turnover_time":
+        r = turnover_time(i.get("volume_gal", 0), i.get("flow_gpm", 0))
+    elif calc == "minimum_flow_rate":
+        r = minimum_flow_rate(
+            i.get("volume_gal", 0),
+            i.get("max_turnover_min", 0),
+            venue=i.get("venue", "spa"),
+            governing_code=i.get("governing_code", ""),
+        )
+    elif calc == "bather_load":
+        r = bather_load(
+            i.get("surface_area_sf", 0),
+            i.get("sf_per_person", 0),
+            rounding=i.get("rounding", "floor"),
+            venue=i.get("venue", "spa"),
+            governing_code=i.get("governing_code", ""),
+        )
+    elif calc == "skimmer_sizing":
+        r = skimmer_sizing(
+            i.get("surface_area_sf", 0),
+            sf_each=i.get("sf_each", 0),
+            rated_gpm=i.get("rated_gpm", 0),
+            derate=i.get("derate", 0.80),
+            venue=i.get("venue", "spa"),
+            governing_code=i.get("governing_code", ""),
+        )
+    elif calc == "main_drain_flow":
+        r = main_drain_flow(
+            i.get("open_area_in2", 0),
+            velocity_fps=i.get("velocity_fps", 1.5),
+            drains=i.get("drains", 2),
+            governing_code=i.get("governing_code", ""),
+        )
+    elif calc == "electrical_load":
+        r = electrical_load(
+            i.get("fla_amps", 0),
+            hp=i.get("hp", 0),
+            phase=i.get("phase", 1),
+            voltage=i.get("voltage", 0),
+        )
+    elif calc == "total_connected_load":
+        r = total_connected_load(i.get("loads", []))
+    elif calc == "service_main_breaker":
+        r = service_main_breaker(i.get("loads", []))
+    elif calc == "control_transformer_va":
+        r = control_transformer_va(i.get("control_loads", []))
     else:
         frappe.throw(_("Unknown calculation: {0}").format(calc), frappe.ValidationError)
     return r.to_dict()
@@ -820,6 +886,42 @@ def get_pump_candidates(gpm=0, tdh_ft=0):
         if curves.get(c["item_code"]):
             c["curve"] = curves[c["item_code"]]
     return select_pump(float(gpm or 0), float(tdh_ft or 0), candidates).to_dict()
+
+
+@frappe.whitelist()
+def get_equipment_candidates(equipment_class=None):
+    """Aquatic-equipment Items of a given class (Filter / Heater / Skimmer /
+    Suction Outlet (VGB) / Therapy Jet / ...) with their spec + electrical custom
+    fields, for the equipment schedule and the filter/heater/VGB cross-checks.
+    Empty if the class is blank or the catalog fields aren't migrated yet."""
+    _require("read")
+    if not equipment_class:
+        return []
+    meta = frappe.get_meta("Item")
+    if not meta.has_field("custom_equipment_class"):
+        return []
+    fields = ["item_code", "item_name", "item_group"]
+    for cf in (
+        "custom_equipment_class", "custom_model_no", "custom_nsf_listing",
+        "custom_iapmo_listing", "custom_elec_voltage", "custom_elec_phase",
+        "custom_elec_hz", "custom_elec_fla_amps", "custom_elec_watts", "custom_elec_hp",
+        "custom_requires_gfci", "custom_nec680_bond", "custom_filter_area_sqft",
+        "custom_filter_max_flow_gpm", "custom_filter_media", "custom_heater_fuel",
+        "custom_heater_kw", "custom_heater_btu_hr", "custom_vgb_open_area_sqin",
+        "custom_vgb_max_flow_gpm", "custom_vgb_rated", "custom_jet_flow_gpm",
+        "custom_jet_pressure_psi", "custom_skimmer_max_flow_gpm", "custom_meter_kind",
+        "custom_meter_range", "custom_feed_rate_gpd", "custom_controller_channels",
+    ):
+        if meta.has_field(cf):
+            fields.append(cf)
+    try:
+        return frappe.get_all(
+            "Item",
+            filters={"custom_equipment_class": equipment_class, "disabled": 0},
+            fields=fields,
+        )
+    except Exception:
+        return []
 
 
 @frappe.whitelist()

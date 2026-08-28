@@ -45,6 +45,7 @@ from erpnext_enhancements.water_engineering.engine.constants import (
     CIT_PIPE_SPECS,
     WEIR_OPERATE_GPM_PER_FT,
 )
+from erpnext_enhancements.water_engineering.engine.aquatic import is_regulated
 from erpnext_enhancements.water_engineering.engine.feature import feature_flow_category
 
 BLOCKER = "blocker"
@@ -66,6 +67,7 @@ SECTIONS = [
     ("safety", "Safety"),
     ("chemistry", "Chemistry"),
     ("drainage", "Drainage & Surge"),
+    ("regulated", "Regulated Compliance"),
     ("deliverables", "Design Package"),
 ]
 SECTION_LABELS = dict(SECTIONS)
@@ -91,6 +93,11 @@ _CALC_SECTION = {
     "suction_outlet_vgb": "safety",
     "npsh_available": "safety",
     "water_hammer": "safety",
+    "turnover_time": "regulated",
+    "minimum_flow_rate": "regulated",
+    "bather_load": "regulated",
+    "skimmer_sizing": "regulated",
+    "main_drain_flow": "safety",
 }
 
 # ------------------------------------------------------------------ rules
@@ -560,6 +567,28 @@ def build_readiness(doc, issues):
         "A drain size (+ slope)",
         "The package needs a gravity-drain capacity check (Manning's).",
         field="drain_nominal_size")])
+
+    # Regulated aquatic venues (pools/spas) only — n/a for decorative fountains.
+    regulated = is_regulated(doc.get("venue_type") or "")
+    reg_missing = []
+    if regulated:
+        surface_area = sum(_flt(getattr(b, "surface_area_sf", 0)) for b in _rows(doc, "basins"))
+        if surface_area <= 0:
+            reg_missing.append(_missing(
+                "Water-surface area on a basin",
+                "Bather load and skimmer count size off the water-surface area.",
+                field="basins"))
+        if _flt(doc.get("design_flow_published_gpm")) <= 0:
+            reg_missing.append(_missing(
+                "Published design flow (GPM)",
+                "The equipment/spec circulation flow, checked against the code minimum.",
+                field="design_flow_published_gpm"))
+        if not _rows(doc, "venue_fixtures"):
+            reg_missing.append(_missing(
+                "Fixtures (skimmers / main drains)",
+                "The venue needs skimmers and VGB-compliant main drains for the schedule + entrapment check.",
+                field="venue_fixtures"))
+    add("regulated", "issue", reg_missing, n_a=not regulated)
 
     deliverable_missing = []
     segs = _rows(doc, "pipe_segments")

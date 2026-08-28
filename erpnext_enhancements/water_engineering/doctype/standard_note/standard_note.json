@@ -1,0 +1,94 @@
+{
+ "actions": [],
+ "autoname": "field:note_key",
+ "creation": "2026-08-28 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "note_key",
+  "category",
+  "governing_code",
+  "sort_order",
+  "active",
+  "title",
+  "body"
+ ],
+ "fields": [
+  {
+   "fieldname": "note_key",
+   "fieldtype": "Data",
+   "label": "Note Key",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1,
+   "description": "Stable identifier, e.g. elec-680-bonding."
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "label": "Category",
+   "options": "General\nElectrical\nDressing Room\nSafety Signs\nPlumbing / Mechanical",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "governing_code",
+   "fieldtype": "Data",
+   "label": "Governing Code",
+   "in_list_view": 1,
+   "description": "Code/edition this note is keyed to (e.g. 2005 NEC Art. 680). Blank = applies to any code."
+  },
+  {
+   "fieldname": "sort_order",
+   "fieldtype": "Int",
+   "label": "Sort Order",
+   "default": "0"
+  },
+  {
+   "fieldname": "active",
+   "fieldtype": "Check",
+   "label": "Active",
+   "default": "1"
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title"
+  },
+  {
+   "fieldname": "body",
+   "fieldtype": "Text",
+   "label": "Body",
+   "reqd": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-08-28 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Standard Note",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "export": 1
+  },
+  {
+   "role": "Water Engineer",
+   "read": 1,
+   "report": 1,
+   "create": 1,
+   "write": 1,
+   "export": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

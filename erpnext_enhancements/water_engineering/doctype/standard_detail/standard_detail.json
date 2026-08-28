@@ -1,0 +1,96 @@
+{
+ "actions": [],
+ "autoname": "field:detail_key",
+ "creation": "2026-08-28 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "detail_key",
+  "category",
+  "governing_code",
+  "sort_order",
+  "active",
+  "title",
+  "svg"
+ ],
+ "fields": [
+  {
+   "fieldname": "detail_key",
+   "fieldtype": "Data",
+   "label": "Detail Key",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1,
+   "description": "Stable identifier, e.g. detail-vgb-suction."
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "label": "Category",
+   "options": "Suction\nRail\nSkimmer\nDepth Marker\nLight\nJ-Box\nChem Feed\nOther",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "governing_code",
+   "fieldtype": "Data",
+   "label": "Governing Code",
+   "in_list_view": 1,
+   "description": "Code/edition this detail is keyed to. Blank = applies to any code."
+  },
+  {
+   "fieldname": "sort_order",
+   "fieldtype": "Int",
+   "label": "Sort Order",
+   "default": "0"
+  },
+  {
+   "fieldname": "active",
+   "fieldtype": "Check",
+   "label": "Active",
+   "default": "1"
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "svg",
+   "fieldtype": "Code",
+   "options": "HTML",
+   "label": "Detail SVG",
+   "description": "Inline <svg> for the SP-4 details sheet (renders reliably in print). Replace the seeded schematic placeholders with manufacturer cut-sheet drawings."
+  }
+ ],
+ "links": [],
+ "modified": "2026-08-28 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Standard Detail",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "export": 1
+  },
+  {
+   "role": "Water Engineer",
+   "read": 1,
+   "report": 1,
+   "create": 1,
+   "write": 1,
+   "export": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

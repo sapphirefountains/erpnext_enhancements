@@ -12,6 +12,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from .aquatic import (
+    bather_load,
+    is_regulated,
+    main_drain_flow,
+    minimum_flow_rate,
+    skimmer_sizing,
+    turnover_time,
+    venue_family,
+)
 from .basin import basin_volume, turnover_gpm
 from .constants import DEFAULT_TURNOVERS_PER_HR, FT_PER_PSI, HW_C_PVC
 from .feature import (
@@ -23,6 +32,7 @@ from .feature import (
 )
 from .pipe import pipe_pressure_check
 from .pump import select_pump
+from .safety import suction_outlet_vgb
 from .tdh import segment_loss_results, total_dynamic_head
 
 
@@ -59,6 +69,12 @@ def run_spine(inputs: dict[str, Any] | None = None) -> dict[str, Any]:
     basins = inputs.get("basins") or []
     total_gal = 0.0
     for b in basins:
+        # A regulated shell (e.g. an octagon spa) may carry a published volume the
+        # rect/cyl geometry can't derive — honor an explicit override when given.
+        override = float(b.get("volume_gal_override") or 0)
+        if override > 0:
+            total_gal += override
+            continue
         r = basin_volume(
             b.get("shape", "rectangular"),
             length_in=b.get("length_in", 0),
@@ -92,7 +108,103 @@ def run_spine(inputs: dict[str, Any] | None = None) -> dict[str, Any]:
     if not features:
         needed.append("features")
 
-    design_flow = max(circ_gpm or 0.0, feature_flow)
+    # 3b) Regulated aquatic venues (health-dept pools/spas): the code minimum
+    #     circulation flow is a FLOOR on the design flow, and bather-load,
+    #     skimmer, turnover-time and VGB main-drain requirements come from the
+    #     water-surface area + the venue fixtures. Fountains skip all of this
+    #     (is_regulated is False), so their design flow is unchanged.
+    venue_type = inputs.get("venue_type") or ""
+    regulated = is_regulated(venue_type)
+    reg: dict[str, Any] = {
+        "minimum_flow_gpm": None,
+        "turnover_time_min": None,
+        "bather_load": None,
+        "skimmer_count": None,
+        "jet_flow_gpm": None,
+        "main_drain_status": None,
+    }
+    published_flow = float(inputs.get("design_flow_published_gpm") or 0)
+    if regulated:
+        fam = venue_family(venue_type)
+        governing_code = inputs.get("governing_code") or ""
+        surface_area_sf = float(inputs.get("surface_area_sf") or 0)
+        max_turnover_min = float(inputs.get("max_turnover_min") or 0)
+        if total_gal:
+            r = minimum_flow_rate(total_gal, max_turnover_min, venue=fam, governing_code=governing_code)
+            results.append(r.to_dict())
+            warnings += r.warnings
+            reg["minimum_flow_gpm"] = r.value
+        if surface_area_sf > 0:
+            rb = bather_load(
+                surface_area_sf,
+                float(inputs.get("bather_sf_per_person") or 0),
+                rounding=inputs.get("bather_rounding", "floor"),
+                venue=fam,
+                governing_code=governing_code,
+            )
+            results.append(rb.to_dict())
+            warnings += rb.warnings
+            reg["bather_load"] = rb.value
+            rs = skimmer_sizing(
+                surface_area_sf,
+                sf_each=float(inputs.get("skimmer_sf_each") or 0),
+                rated_gpm=float(inputs.get("skimmer_rated_gpm") or 0),
+                venue=fam,
+                governing_code=governing_code,
+            )
+            results.append(rs.to_dict())
+            warnings += rs.warnings
+            reg["skimmer_count"] = rs.value
+        else:
+            needed.append("surface_area_sf")
+        # Therapy jets are a separate jet-pump circuit; total their flow for the
+        # schedule without forcing it into the circulation design flow.
+        jet_flow = sum(
+            float(fx.get("rated_gpm") or 0) * max(int(fx.get("qty") or 1), 1)
+            for fx in (inputs.get("venue_fixtures") or [])
+            if (fx.get("fixture_type") or "").strip().lower().startswith("therapy")
+        )
+        reg["jet_flow_gpm"] = jet_flow or None
+
+    if regulated:
+        design_flow = max(circ_gpm or 0.0, feature_flow, reg["minimum_flow_gpm"] or 0.0, published_flow)
+        if published_flow and reg["minimum_flow_gpm"] and published_flow < reg["minimum_flow_gpm"]:
+            warnings.append(
+                f"Published design flow {published_flow:g} GPM is BELOW the code minimum "
+                f"{reg['minimum_flow_gpm']:.2f} GPM — a code violation; increase the circulation flow."
+            )
+    else:
+        design_flow = max(circ_gpm or 0.0, feature_flow)
+
+    # Regulated rollups that depend on the final design flow: turnover time and
+    # the VGB anti-entrapment gate on each main-drain fixture.
+    if regulated and design_flow:
+        if total_gal:
+            rt = turnover_time(total_gal, design_flow)
+            results.append(rt.to_dict())
+            warnings += rt.warnings
+            reg["turnover_time_min"] = rt.value
+            max_turnover_min = float(inputs.get("max_turnover_min") or 0)
+            if max_turnover_min and rt.value and rt.value > max_turnover_min:
+                warnings.append(
+                    f"Turnover time {rt.value:.1f} min exceeds the {max_turnover_min:g}-min code maximum."
+                )
+        for fx in inputs.get("venue_fixtures") or []:
+            if "drain" not in (fx.get("fixture_type") or "").strip().lower():
+                continue
+            open_area = float(fx.get("open_area_in2") or 0)
+            if open_area > 0:
+                rd = main_drain_flow(open_area, drains=max(int(fx.get("qty") or 2), 1))
+                results.append(rd.to_dict())
+                warnings += rd.warnings
+            cl = float(fx.get("cover_length_in") or 0)
+            cw = float(fx.get("cover_width_in") or 0)
+            oaf = float(fx.get("open_area_fraction") or 0)
+            if cl > 0 and cw > 0 and oaf > 0:
+                rv = suction_outlet_vgb(design_flow, cl, cw, oaf, outlets=max(int(fx.get("qty") or 2), 1))
+                results.append(rv.to_dict())
+                warnings += rv.warnings
+                reg["main_drain_status"] = rv.status
 
     # 4) Total Dynamic Head. A pipe segment with no explicit flow carries the
     #    full system (design) flow — most do. A length-bearing segment left at
@@ -168,6 +280,14 @@ def run_spine(inputs: dict[str, Any] | None = None) -> dict[str, Any]:
         "required_circulation_gpm": circ_gpm,
         "feature_flow_gpm": feature_flow or None,
         "design_flow_gpm": design_flow or None,
+        "venue_type": venue_type or None,
+        "is_regulated": regulated,
+        "minimum_flow_gpm": reg["minimum_flow_gpm"],
+        "turnover_time_min": reg["turnover_time_min"],
+        "bather_load": reg["bather_load"],
+        "skimmer_count": reg["skimmer_count"],
+        "jet_flow_gpm": reg["jet_flow_gpm"],
+        "main_drain_status": reg["main_drain_status"],
         "tdh_ft": tdh_ft,
         "selected_pump": selected_pump,
         "pump_options": pump_options,

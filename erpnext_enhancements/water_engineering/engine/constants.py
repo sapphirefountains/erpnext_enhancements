@@ -74,6 +74,63 @@ FT_PER_PSI = 2.31  # engineering standard (1 / 0.4335) -- not in source docs
 # --- electrical (business rules; NOT formula-driven in the workbooks) -------
 BREAKER_CONTINUOUS_FACTOR = 1.25  # breaker >= 125% FLA (NEC 430.52) -- confirm w/ engineer
 
+# Standard OCPD (breaker/fuse) ampere ratings, NEC 240.6(A). Branch OCPD rounds
+# UP to the next size; a feeder OCPD (430.62) rounds DOWN to the largest size not
+# exceeding its ceiling -- opposite directions, both drawn from this one list.
+STD_OCPD_AMPS = [
+    15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100, 110, 125,
+    150, 175, 200, 225, 250, 300, 350, 400, 450, 500, 600, 700, 800,
+]
+
+# Motor full-load current, NEC Table 430.248 (1-phase) / 430.250 (3-phase), in
+# amps by nameplate HP. Conductor + OCPD sizing uses the TABLE value, not the
+# nameplate FLA (NEC 430.6(A)(1)); fractional-HP motors below the table fall back
+# to nameplate FLA. Verify against the adopted code edition.
+MOTOR_FLC_1PH = {
+    # hp: {volts: amps}  -- 115 V and 230 V columns (200/208 use the 230 column)
+    0.5: {115: 9.8, 230: 4.9},
+    0.75: {115: 13.8, 230: 6.9},
+    1.0: {115: 16.0, 230: 8.0},
+    1.5: {115: 20.0, 230: 10.0},
+    2.0: {115: 24.0, 230: 12.0},
+    3.0: {115: 34.0, 230: 17.0},
+    5.0: {115: 56.0, 230: 28.0},
+    7.5: {115: 80.0, 230: 40.0},
+    10.0: {115: 100.0, 230: 50.0},
+}
+MOTOR_FLC_3PH = {
+    # hp: {volts: amps}  -- 208 / 230 / 460 V columns
+    0.5: {208: 2.4, 230: 2.2, 460: 1.1},
+    0.75: {208: 3.5, 230: 3.2, 460: 1.6},
+    1.0: {208: 4.6, 230: 4.2, 460: 2.1},
+    1.5: {208: 6.6, 230: 6.0, 460: 3.0},
+    2.0: {208: 7.5, 230: 6.8, 460: 3.4},
+    3.0: {208: 10.6, 230: 9.6, 460: 4.8},
+    5.0: {208: 16.7, 230: 15.2, 460: 7.6},
+    7.5: {208: 24.2, 230: 22.0, 460: 11.0},
+    10.0: {208: 30.8, 230: 28.0, 460: 14.0},
+    15.0: {208: 46.2, 230: 42.0, 460: 21.0},
+    20.0: {208: 59.4, 230: 54.0, 460: 27.0},
+    25.0: {208: 74.8, 230: 68.0, 460: 34.0},
+}
+FEEDER_MOTOR_FACTOR = 1.25  # NEC 430.24: 125% of the largest-rating motor FLC
+CIT_MOTOR_FLC = "NEC Table 430.248 (1ph) / 430.250 (3ph) full-load current"
+CIT_FEEDER = "NEC 430.24 (feeder ampacity) / 430.62 (feeder OCPD)"
+
+# Control-transformer sizing (NEC Article 450 + manufacturer selection). Sum the
+# sealed VA of the control-circuit devices, pick the next standard transformer.
+# Per-device sealed VA below are nominal; confirm against the actual device BOM.
+STD_CONTROL_XFMR_VA = [50, 75, 100, 150, 200, 250, 350, 500, 750, 1000, 1500, 2000]
+CONTROL_DEVICE_VA = {
+    "contactor": 20.0,
+    "relay": 3.0,
+    "hmi": 10.0,
+    "plc": 15.0,
+    "pilot_light": 2.0,
+    "solenoid": 10.0,
+}
+CIT_CONTROL_XFMR = "NEC Article 450 / control-transformer sealed-VA selection (business rule)"
+
 # --- water chemistry (DOC-0049 C - Chemicals ; DOC-0119 targets) ------------
 # Liquid-chlorinator minimum capacity: 3 lb Cl2 / 24 hr / 10,000 gal (IBC 3133B.1),
 # basis "1 gal @ 10% = 1 lb Cl2".
@@ -163,6 +220,25 @@ SF_PER_SPA_USER = 9.0
 SF_PER_SKIMMER = 400.0
 PERIMETER_OVERFLOW_SF_THRESHOLD = 5000.0
 SOLAR_PANEL_FRACTION = 0.8
+
+# --- regulated aquatic venues (health-dept pools/spas) ----------------------
+# Public pools and spas are sized by rules the decorative-fountain spine
+# (turnovers/hr) does not use: a MAXIMUM turnover *time* (minutes), a minimum
+# circulation flow derived from it, a bather load from water-surface area, and
+# skimmers keyed to surface area. These are the code-parameterized regulated
+# values; the fountain-era program_rules divisors above (9 SF/user, 400 SF/
+# skimmer) are intentionally left as-is.
+#
+# Verified numerically against the Fika Reflexology Spa health-department
+# submittal (Salt Lake County Health Dept, 2023 — Michael Madsen, P.E.):
+#   425 gal / 35 GPM = 12.14 min turnover ; 425 / (0.5*60) = 14.17 GPM min flow ;
+#   46 SF / 10 SF-per-person bather load ; ceil(46/100)=1 skimmer, 63 GPM*0.80=50.4 ;
+#   1.5 ft/s * 9.02 in^2 = 42 GPM main-drain open-area flow.
+AQUATIC_MAX_TURNOVER_MIN = {"spa": 30.0, "wading": 30.0, "therapy": 30.0, "pool": 360.0}
+AQUATIC_SF_PER_BATHER = {"spa": 10.0, "wading": 10.0, "therapy": 10.0, "pool": 15.0}
+SKIMMER_SF_EACH = {"spa": 100.0, "pool": 400.0}
+SKIMMER_DERATE = 0.80  # size skimmers to operate at 80% of rated GPM
+CIT_AQUATIC = "Model Aquatic Health Code (MAHC) / state pool code (per governing_code)"
 
 # Underwater-lighting design intensity (watts per SF of water surface) by pool
 # class -- (low, high) band (DOC-0049 D - Program B34:I39).

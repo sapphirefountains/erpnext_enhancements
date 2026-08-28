@@ -11,6 +11,7 @@
   "serial_no",
   "cb_ident",
   "design_title",
+  "venue_type",
   "fountain_type",
   "status",
   "sb_state",
@@ -19,6 +20,23 @@
   "sb_basin",
   "turnover_per_hr",
   "basins",
+  "sb_regulated",
+  "governing_code",
+  "max_turnover_min",
+  "design_flow_published_gpm",
+  "cb_regulated",
+  "bather_sf_per_person",
+  "skimmer_sf_each",
+  "skimmer_rated_gpm",
+  "sb_venue_fixtures",
+  "venue_fixtures",
+  "sb_regulated_results",
+  "turnover_time_min",
+  "minimum_flow_gpm",
+  "bather_load",
+  "cb_regulated_results",
+  "skimmer_count",
+  "main_drain_status",
   "sb_features",
   "features",
   "sb_tiers",
@@ -32,6 +50,8 @@
   "sb_pumps",
   "pumps",
   "electrical_loads",
+  "sb_equipment",
+  "design_equipment",
   "tab_treatment",
   "sb_chemistry",
   "chem_water_type",
@@ -58,6 +78,13 @@
   "cb_review",
   "has_warnings",
   "next_inputs_needed",
+  "sb_submittal",
+  "issue_date",
+  "drawn_by",
+  "cb_submittal",
+  "packet_document",
+  "revisions",
+  "packet_html",
   "sb_acks",
   "issue_acks",
   "sb_results",
@@ -107,11 +134,21 @@
    "description": "Titles the design on every package print."
   },
   {
+   "fieldname": "venue_type",
+   "fieldtype": "Select",
+   "label": "Venue Type",
+   "options": "Decorative Fountain\nInteractive Water Feature\nCommercial Spa\nCommercial Pool\nWading Pool\nTherapy Pool",
+   "default": "Decorative Fountain",
+   "in_list_view": 1,
+   "description": "Regulated pool/spa venues add health-department circulation, bather-load, skimmer, and VGB requirements; the two fountain types keep the decorative-fountain path."
+  },
+  {
    "fieldname": "fountain_type",
    "fieldtype": "Select",
    "label": "Fountain Type",
    "options": "\nWeir basin\nSpilling weir (scupper)\nVanishing edge (weir wall)\nWaterwall (sheet)\nNozzle-array pool\nOrifice nozzle jet\nSplash pad\nRain curtain\nTiered fountain (cascade)\nReflecting pool\nBubbler / boil\nGeyser / foam jet\nLaminar clear-stream\nInteractive plaza jets\nWall spout / mask\nPond / naturalistic\nPondless urn\nGrand cascade (multi-tier)",
    "in_list_view": 1,
+   "depends_on": "eval:!doc.venue_type || ['Decorative Fountain','Interactive Water Feature'].includes(doc.venue_type)",
    "description": "Pick a type to load its starter template (replaces the basin / feature / piping / tier rows)."
   },
   {
@@ -158,6 +195,109 @@
    "fieldtype": "Table",
    "label": "Basins",
    "options": "Water Feature Basin"
+  },
+  {
+   "fieldname": "sb_regulated",
+   "fieldtype": "Section Break",
+   "label": "1b · Regulated Venue (Pool / Spa)",
+   "collapsible": 1,
+   "depends_on": "eval:doc.venue_type && !['Decorative Fountain','Interactive Water Feature'].includes(doc.venue_type)",
+   "description": "Health-department circulation and safety rules for a regulated aquatic venue. Enter each basin's water-surface area on its row."
+  },
+  {
+   "fieldname": "governing_code",
+   "fieldtype": "Data",
+   "label": "Governing Code",
+   "description": "e.g. Utah R392-302, MAHC 2023 — recorded on every regulated calculation's citation."
+  },
+  {
+   "fieldname": "max_turnover_min",
+   "fieldtype": "Float",
+   "label": "Max Turnover Time (min)",
+   "default": "30",
+   "description": "Code maximum turnover time. Spas / wading / therapy pools = 30 min; a general pool is longer."
+  },
+  {
+   "fieldname": "design_flow_published_gpm",
+   "fieldtype": "Float",
+   "label": "Published Design Flow (GPM)",
+   "description": "The spec/equipment circulation flow. It overrides the computed minimum and is flagged if it falls below the code minimum."
+  },
+  {
+   "fieldname": "cb_regulated",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "bather_sf_per_person",
+   "fieldtype": "Float",
+   "label": "SF per Bather",
+   "default": "10",
+   "description": "Water-surface area per person (spa ~10, pool ~15). Varies by governing code."
+  },
+  {
+   "fieldname": "skimmer_sf_each",
+   "fieldtype": "Float",
+   "label": "SF per Skimmer",
+   "default": "100",
+   "description": "Water-surface area served per skimmer (spa ~100, pool ~400)."
+  },
+  {
+   "fieldname": "skimmer_rated_gpm",
+   "fieldtype": "Float",
+   "label": "Skimmer Rated GPM",
+   "description": "Rated flow per skimmer; sized to operate at 80% of this."
+  },
+  {
+   "fieldname": "sb_venue_fixtures",
+   "fieldtype": "Section Break",
+   "label": "Fixtures (Skimmers / Drains / Jets)",
+   "depends_on": "eval:doc.venue_type && !['Decorative Fountain','Interactive Water Feature'].includes(doc.venue_type)"
+  },
+  {
+   "fieldname": "venue_fixtures",
+   "fieldtype": "Table",
+   "label": "Venue Fixtures",
+   "options": "Water Venue Fixture"
+  },
+  {
+   "fieldname": "sb_regulated_results",
+   "fieldtype": "Section Break",
+   "label": "Regulated Results",
+   "depends_on": "eval:doc.venue_type && !['Decorative Fountain','Interactive Water Feature'].includes(doc.venue_type)"
+  },
+  {
+   "fieldname": "turnover_time_min",
+   "fieldtype": "Float",
+   "label": "Turnover Time (min)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "minimum_flow_gpm",
+   "fieldtype": "Float",
+   "label": "Minimum Flow (GPM)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bather_load",
+   "fieldtype": "Int",
+   "label": "Bather Load",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_regulated_results",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "skimmer_count",
+   "fieldtype": "Int",
+   "label": "Skimmers Required",
+   "read_only": 1
+  },
+  {
+   "fieldname": "main_drain_status",
+   "fieldtype": "Data",
+   "label": "Main Drain (VGB) Status",
+   "read_only": 1
   },
   {
    "fieldname": "sb_features",
@@ -237,6 +377,18 @@
    "fieldtype": "Table",
    "label": "Electrical Loads",
    "options": "Water Feature Electrical Load"
+  },
+  {
+   "fieldname": "sb_equipment",
+   "fieldtype": "Section Break",
+   "label": "Equipment Schedule",
+   "description": "Catalog equipment (filters, heaters, chem feed, controllers, skimmers, VGB drains, jets, gauges) — drives the equipment schedule and the filter/heater/VGB cross-checks."
+  },
+  {
+   "fieldname": "design_equipment",
+   "fieldtype": "Table",
+   "label": "Equipment",
+   "options": "Water Feature Equipment"
   },
   {
    "fieldname": "tab_treatment",
@@ -391,6 +543,48 @@
    "fieldtype": "Small Text",
    "label": "Next Inputs Needed",
    "read_only": 1
+  },
+  {
+   "fieldname": "sb_submittal",
+   "fieldtype": "Section Break",
+   "label": "Submittal Packet",
+   "collapsible": 1,
+   "description": "Title-block + revisions for the generated submittal packet — a DRAFT for the P.E. to seal, watermarked PRELIMINARY until signed."
+  },
+  {
+   "fieldname": "issue_date",
+   "fieldtype": "Date",
+   "label": "Issue Date"
+  },
+  {
+   "fieldname": "drawn_by",
+   "fieldtype": "Data",
+   "label": "Drawn By"
+  },
+  {
+   "fieldname": "cb_submittal",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "packet_document",
+   "fieldtype": "Data",
+   "label": "Packet Document",
+   "read_only": 1,
+   "description": "The generated packet PDF (File URL), populated once the server PDF backend is available."
+  },
+  {
+   "fieldname": "revisions",
+   "fieldtype": "Table",
+   "label": "Revisions",
+   "options": "Submittal Revision"
+  },
+  {
+   "fieldname": "packet_html",
+   "fieldtype": "Code",
+   "options": "HTML",
+   "label": "Packet HTML (snapshot)",
+   "read_only": 1,
+   "hidden": 1
   },
   {
    "fieldname": "sb_acks",

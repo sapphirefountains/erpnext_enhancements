@@ -56,6 +56,15 @@ _CALCS = (
     "chemical_dose",
     "uv_dose",
     "filtration_area",
+    "turnover_time",
+    "minimum_flow_rate",
+    "bather_load",
+    "skimmer_sizing",
+    "main_drain_flow",
+    "electrical_load",
+    "total_connected_load",
+    "service_main_breaker",
+    "control_transformer_va",
 )
 
 
@@ -125,7 +134,24 @@ class WaterCalc(BaseTool):
             "liquid, wind, gas_rate} (heat-loss $/mo + heater BTU/hr); chemical_dose "
             "{volume_gal, chemical:ph_down|alkalinity_up|cya_up|salt_up, current, target} "
             "(dose to target); uv_dose {flow_gpm, target_red_mj} (UV design dose); "
-            "filtration_area {design_gpm, media:sand|cartridge|de} (filter SF + backwash)."
+            "filtration_area {design_gpm, media:sand|cartridge|de} (filter SF + backwash). "
+            "Regulated pools/spas (health department): turnover_time {volume_gal, flow_gpm} "
+            "(minutes to turn the water over); minimum_flow_rate {volume_gal, max_turnover_min, "
+            "venue:spa|pool|wading|therapy} (code minimum circulation GPM = volume / max "
+            "turnover time; spa/wading/therapy default 30 min); bather_load {surface_area_sf, "
+            "sf_per_person, rounding:floor|nearest|ceil, venue} (max bathers = water-surface "
+            "area / SF-per-person; spa default 10 SF, pool 15 SF; raw ratio + rounding "
+            "disagreements surfaced); skimmer_sizing {surface_area_sf, sf_each, rated_gpm, venue} "
+            "(count = ceil(area / SF-each); spa 100 SF, pool 400 SF; each operates at 80% of "
+            "rated GPM); main_drain_flow {open_area_in2, velocity_fps, drains} (reported drain "
+            "open-area GPM at 1.5 ft/s; run suction_outlet_vgb for the anti-entrapment gate). "
+            "electrical_load {fla_amps, hp, phase, voltage} (branch breaker = next standard "
+            "size >= 1.25 * full-load amps; NEC 240.6 / 430.52 business rule); "
+            "total_connected_load {loads:[{fla|hp, is_motor, continuous, qty, voltage, phase}]} "
+            "(feeder connected amps, NEC 430.24: 125% largest motor + other motors + non-motor); "
+            "service_main_breaker {loads:[...]} (feeder/service OCPD, NEC 430.62 — rounds DOWN, "
+            "unlike a branch breaker); control_transformer_va {control_loads:[{device:contactor|"
+            "relay|hmi|plc|pilot_light|solenoid, qty, va}]} (control-transformer VA, NEC Art. 450)."
         )
         self.category = "Water Engineering"
         self.source_app = "erpnext_enhancements"

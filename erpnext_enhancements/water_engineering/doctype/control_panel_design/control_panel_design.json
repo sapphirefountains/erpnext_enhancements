@@ -8,9 +8,12 @@
   "project",
   "water_feature_design",
   "product_family",
+  "application_type",
   "nema_rating",
   "controller_hardware",
+  "controller_item",
   "enclosure_part_no",
+  "enclosure_item",
   "cb_head",
   "panel_includes_contactors_overload",
   "safe_state_on_power_up",
@@ -26,6 +29,7 @@
   "main_line_voltage",
   "frequency_hz",
   "phase",
+  "power_autosize",
   "amperage_to_panel",
   "main_breaker_size_a",
   "power_source_confirmation",
@@ -94,6 +98,14 @@
    "options": "\nNEMA 1\nNEMA 3R\nNEMA 4\nNEMA 4X\nNEMA 12"
   },
   {
+   "fieldname": "application_type",
+   "fieldtype": "Select",
+   "label": "Application",
+   "options": "Fountain\nPool-Spa",
+   "default": "Fountain",
+   "description": "Pool-Spa seeds the NEC-680 spa interlock / I/O checklist (circ↔chem-feeder + circ↔heater, 15-min jet timer, emergency shut-off) instead of the fountain (wind) set."
+  },
+  {
    "fieldname": "controller_hardware",
    "fieldtype": "Select",
    "label": "Controller Hardware",
@@ -101,10 +113,23 @@
    "default": "Arduino MEGA 2560 + Nextion HMI + WP-40 + SSR"
   },
   {
+   "fieldname": "controller_item",
+   "fieldtype": "Link",
+   "label": "Controller Item",
+   "options": "Item",
+   "description": "Catalog Item for the controller hardware (Item Group 'Control Hardware')."
+  },
+  {
    "fieldname": "enclosure_part_no",
    "fieldtype": "Data",
    "label": "Enclosure Part No",
    "default": "WP-40"
+  },
+  {
+   "fieldname": "enclosure_item",
+   "fieldtype": "Link",
+   "label": "Enclosure Item",
+   "options": "Item"
   },
   {
    "fieldname": "cb_head",
@@ -189,14 +214,23 @@
    "options": "\n1\n2\n3"
   },
   {
+   "fieldname": "power_autosize",
+   "fieldtype": "Check",
+   "label": "Auto-size Power (NEC)",
+   "default": "1",
+   "description": "Compute the operating amps, main breaker, and control-transformer VA from the pump loads (NEC 430.24 / 430.62 / Art. 450). Uncheck to enter the nameplate manually."
+  },
+  {
    "fieldname": "amperage_to_panel",
    "fieldtype": "Float",
-   "label": "Operating Full Load Amps"
+   "label": "Operating Full Load Amps",
+   "read_only_depends_on": "eval:doc.power_autosize"
   },
   {
    "fieldname": "main_breaker_size_a",
    "fieldtype": "Float",
-   "label": "Main Breaker Size (A)"
+   "label": "Main Breaker Size (A)",
+   "read_only_depends_on": "eval:doc.power_autosize"
   },
   {
    "fieldname": "power_source_confirmation",
@@ -363,7 +397,8 @@
    "fieldname": "control_transformer_va",
    "fieldtype": "Float",
    "label": "Control Transformer VA",
-   "description": "Business rule (not in source docs) \u2014 enter manually."
+   "read_only_depends_on": "eval:doc.power_autosize",
+   "description": "Auto-sized from the control devices (NEC Art. 450) when Auto-size Power is on; a business rule to confirm with the engineer."
   },
   {
    "fieldname": "cb_sizing",
