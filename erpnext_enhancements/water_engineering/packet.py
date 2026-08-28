@@ -194,8 +194,132 @@ def build_packet_html(design):
 @frappe.whitelist()
 def assemble_packet(design):
     """Whitelisted: return the assembled packet HTML (for preview / download).
-    Read-gated on the design. Server-side PDF + Drive upload are deferred to the
-    prod PDF-backend fix; today the HTML is browser-print-to-PDF ready."""
+    Read-gated on the design. The HTML is the source of truth and is browser
+    print-to-PDF ready; ``generate_packet`` additionally produces the PDF."""
     if not frappe.has_permission(DESIGN_DOCTYPE, "read"):
         frappe.throw(_("You do not have access to Water Feature Designs."), frappe.PermissionError)
     return build_packet_html(design)
+
+
+# ---------------------------------------------------------------- PDF + Drive
+
+
+def _cad_pdf_files(doc):
+    """PDF File attachments on the design — candidate plan-specific CAD drawings
+    to append after the app-generated sheets — excluding the generated packet."""
+    packet_url = doc.get("packet_document")
+    try:
+        rows = frappe.get_all(
+            "File",
+            filters={"attached_to_doctype": DESIGN_DOCTYPE, "attached_to_name": doc.name},
+            fields=["name", "file_url", "file_name"],
+            order_by="creation asc",
+        )
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        url = (r.get("file_url") or "").lower()
+        if not url.endswith(".pdf"):
+            continue
+        if packet_url and r.get("file_url") == packet_url:
+            continue
+        if "submittal-packet" in (r.get("file_name") or "").lower():
+            continue
+        out.append(r)
+    return out
+
+
+def _file_bytes(file_row):
+    try:
+        return frappe.get_doc("File", file_row["name"]).get_content()
+    except Exception:
+        return None
+
+
+def _merge_cad_pdfs(doc, app_pdf):
+    """Append the design's attached CAD PDFs after the app sheets with pypdf.
+    Best-effort: returns ``app_pdf`` unchanged if pypdf is missing or a CAD file
+    can't be read (DWG/other non-PDF CAD is left as separate Drive files)."""
+    cad = _cad_pdf_files(doc)
+    if not cad:
+        return app_pdf
+    try:
+        import io
+
+        from pypdf import PdfReader, PdfWriter
+
+        writer = PdfWriter()
+        writer.append(PdfReader(io.BytesIO(app_pdf)))
+        for f in cad:
+            content = _file_bytes(f)
+            if content:
+                try:
+                    writer.append(PdfReader(io.BytesIO(content)))
+                except Exception:
+                    continue
+        buf = io.BytesIO()
+        writer.write(buf)
+        return buf.getvalue()
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Water packet CAD merge")
+        return app_pdf
+
+
+def _attach_packet_pdf(doc):
+    """Best-effort: render the packet PDF via the chrome generator, append the
+    CAD drawings, and attach it as a private File to the Project (so drive_sync
+    mirrors it to the project Drive folder) — or to the design if there is no
+    project. Returns the File URL, or None on failure. Never raises."""
+    try:
+        pdf = frappe.get_print(
+            DESIGN_DOCTYPE, doc.name, print_format=PACKET_PF, as_pdf=True, pdf_generator="chrome"
+        )
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Water packet PDF (chrome)")
+        return None
+    if not pdf:
+        return None
+    pdf = _merge_cad_pdfs(doc, pdf)
+    safe = frappe.utils.cstr(doc.name).replace("/", "-")
+    if doc.get("project"):
+        attached_to_doctype, attached_to_name = "Project", doc.project
+    else:
+        attached_to_doctype, attached_to_name = DESIGN_DOCTYPE, doc.name
+    try:
+        file_doc = frappe.get_doc(
+            {
+                "doctype": "File",
+                "file_name": f"{safe}-submittal-packet.pdf",
+                "content": pdf,
+                "is_private": 1,
+                "attached_to_doctype": attached_to_doctype,
+                "attached_to_name": attached_to_name,
+            }
+        ).insert(ignore_permissions=True)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Water packet File attach")
+        return None
+    doc.db_set("packet_document", file_doc.file_url, update_modified=False)
+    return file_doc.file_url
+
+
+@frappe.whitelist()
+def generate_packet(design):
+    """Whitelisted (write-gated): snapshot the packet HTML onto the design and
+    produce the PDF (chrome) with the CAD drawings merged in, attached to the
+    Project so it syncs to Drive. HTML is the record of truth; the PDF is
+    best-effort and never blocks. Returns the stored HTML flag + PDF URL."""
+    if not frappe.has_permission(DESIGN_DOCTYPE, "write"):
+        frappe.throw(_("You do not have write permission for Water Feature Designs."), frappe.PermissionError)
+    doc = _doc(design)
+    html = None
+    try:
+        html = build_packet_html(doc)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Water packet HTML render")
+    if html:
+        doc.db_set("packet_html", html, update_modified=False)
+    url = _attach_packet_pdf(doc)
+    frappe.db.commit()
+    return {"packet_html_stored": bool(html), "packet_document": url}

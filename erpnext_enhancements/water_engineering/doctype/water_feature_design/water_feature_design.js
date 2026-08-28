@@ -203,6 +203,8 @@ frappe.ui.form.on("Water Feature Design", {
 		frm.add_custom_button(__("Open Wizard"), () => frappe.set_route("water-engineering-wizard"));
 		if (!frm.is_new()) {
 			frm.add_custom_button(__("Recalculate"), () => frm.save());
+			frm.add_custom_button(__("Preview Packet"), () => wfd_preview_packet(frm), __("Submittal"));
+			frm.add_custom_button(__("Generate Packet PDF"), () => wfd_generate_packet(frm), __("Submittal"));
 		}
 
 		// Blockers get a headline above the form — visible from every tab.
@@ -760,6 +762,55 @@ function apply_template(frm, name, from_field) {
 	} else {
 		fill();
 	}
+}
+
+// ---------------------------------------------------------- submittal packet
+// Preview opens the assembled HTML (browser print-to-PDF ready); Generate stores
+// the HTML snapshot on the design and produces the PDF (chrome) with the attached
+// CAD drawings merged in, attached to the Project so it syncs to Drive.
+
+function wfd_preview_packet(frm) {
+	frappe.call({
+		method: "erpnext_enhancements.water_engineering.packet.assemble_packet",
+		args: { design: frm.doc.name },
+		freeze: true,
+		freeze_message: __("Assembling submittal packet…"),
+		callback: (r) => {
+			if (!r || !r.message) return;
+			const w = window.open("", "_blank");
+			if (w) {
+				w.document.write(r.message);
+				w.document.close();
+			} else {
+				frappe.msgprint(__("Allow pop-ups to preview the packet."));
+			}
+		},
+	});
+}
+
+function wfd_generate_packet(frm) {
+	if (frm.is_dirty()) {
+		frappe.msgprint(__("Save the design first — the packet is generated from the saved record."));
+		return;
+	}
+	frappe.call({
+		method: "erpnext_enhancements.water_engineering.packet.generate_packet",
+		args: { design: frm.doc.name },
+		freeze: true,
+		freeze_message: __("Generating packet PDF…"),
+		callback: (r) => {
+			const m = r && r.message;
+			if (m && m.packet_document) {
+				frappe.show_alert({ message: __("Submittal packet generated."), indicator: "green" });
+				window.open(m.packet_document, "_blank");
+				frm.reload_doc();
+			} else {
+				frappe.msgprint(
+					__("The packet HTML was stored, but the PDF could not be generated (see Error Log). Use Preview Packet for the browser-printable version.")
+				);
+			}
+		},
+	});
 }
 
 // ---------------------------------------------------------- loss pickers

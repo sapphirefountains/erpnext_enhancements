@@ -493,8 +493,12 @@ def _packet_html():
     )
 
 
-def _upsert_print_format(name, html, doc_type=DOCTYPE):
-    """Create or update one custom Jinja Print Format for the given doctype."""
+def _upsert_print_format(name, html, doc_type=DOCTYPE, pdf_generator=None):
+    """Create or update one custom Jinja Print Format for the given doctype.
+
+    ``pdf_generator`` pins the backend for that format when given (the multi-page
+    packet renders with the chrome generator, which handles the sheet breaks +
+    inline SVG the wkhtmltopdf build historically choked on)."""
     if frappe.db.exists("Print Format", name):
         pf = frappe.get_doc("Print Format", name)
     else:
@@ -507,6 +511,8 @@ def _upsert_print_format(name, html, doc_type=DOCTYPE):
     pf.standard = "No"
     pf.disabled = 0
     pf.html = html
+    if pdf_generator and pf.meta.has_field("pdf_generator"):
+        pf.pdf_generator = pdf_generator
     pf.save(ignore_permissions=True)
 
 
@@ -519,7 +525,7 @@ def ensure_water_print_formats():
             _upsert_print_format(RESULTS_PF, RESULTS_HTML)
             _upsert_print_format(AUDIT_PF, AUDIT_HTML)
             _upsert_print_format(SCHEDULES_PF, SCHEDULES_HTML)
-            _upsert_print_format(PACKET_PF, _packet_html())
+            _upsert_print_format(PACKET_PF, _packet_html(), pdf_generator="chrome")
         if frappe.db.exists("DocType", CONTROL_DOCTYPE):
             _upsert_print_format(SUBMITTAL_PF, SUBMITTAL_HTML, doc_type=CONTROL_DOCTYPE)
             _upsert_print_format(PANEL_SCHEDULE_PF, PANEL_SCHEDULE_HTML, doc_type=CONTROL_DOCTYPE)

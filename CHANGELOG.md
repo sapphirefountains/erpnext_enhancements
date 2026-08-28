@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.355.0] - 2026-08-28
+
+### Added
+
+- **Submittal-packet PDF generation + Drive delivery** (now that the prod PDF generator is chrome). Two
+  buttons on Water Feature Design (a "Submittal" group): **Preview Packet** opens the assembled HTML
+  (browser print-to-PDF ready), and **Generate Packet PDF** produces the PDF and files it.
+  - `packet.generate_packet(design)` (whitelisted, write-gated): snapshots the packet HTML onto
+    `packet_html` (the record of truth), renders the PDF via the **chrome** generator
+    (`frappe.get_print(..., as_pdf=True, pdf_generator="chrome")`), **merges any CAD drawing PDFs**
+    attached to the design after the app-generated sheets with **pypdf**, and attaches the result as a
+    private File to the **Project** — so `drive_sync` mirrors it to the project's Drive folder — stamping
+    `packet_document`. Every step is best-effort and guarded (a render/merge/attach failure only logs; the
+    HTML snapshot is always the fallback), mirroring the e-sign lifecycle.
+  - The "Water Feature Design - Submittal Packet" print format is pinned to `pdf_generator = "chrome"`
+    (the multi-page packet + inline SVG the wkhtmltopdf build historically choked on), via a new optional
+    arg on the print-format upsert helper.
+  - DWG / non-PDF CAD is left as separate Drive files (only PDF attachments merge); `pypdf` is a pure-
+    Python wheel dependency (added in v1.354.0).
+
 ## [1.354.0] - 2026-08-28
 
 ### Added
