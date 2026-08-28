@@ -18,6 +18,13 @@ dependencies = [
     # validation + Voice access-token JWTs). The used APIs are stable across
     # 8.x-9.x; the bound guards against a breaking 10.x.
     "twilio>=8,<10",
+    # water_engineering/packet.py appends the plan-specific CAD drawing PDFs after
+    # the app-generated sheets into one submittal packet — the one step wkhtmltopdf
+    # can't do. pypdf is PURE PYTHON (a wheel, no system libraries), so it installs
+    # the way twilio/google-* do; it is NOT the stripe-SDK case below (that avoids a
+    # heavy SDK, not all packages). Used only in the server-side combined-PDF path,
+    # which is gated behind the prod PDF-backend fix (docs/pdf-generation.md).
+    "pypdf>=4,<6",
     # NOTE: stripe_payments deliberately adds NO Stripe SDK dependency — the host
     # is a managed server where packages can't be pip-installed. It talks to the
     # Stripe REST API with `requests` (a Frappe dependency) and hand-rolls webhook

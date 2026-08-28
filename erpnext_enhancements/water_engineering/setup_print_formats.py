@@ -26,6 +26,7 @@ AUDIT_PF = "Water Feature Design - Calculation Audit"
 SCHEDULES_PF = "Water Feature Design - Schedules"
 SUBMITTAL_PF = "Control Panel Design - Submittal"
 PANEL_SCHEDULE_PF = "Control Panel Design - Panel Schedule"
+PACKET_PF = "Water Feature Design - Submittal Packet"
 
 # --- simple "end results" view ----------------------------------------------
 RESULTS_HTML = """
@@ -375,6 +376,123 @@ PANEL_SCHEDULE_HTML = """
 """.strip()
 
 
+# --------------------------------------------------------------------------
+# Submittal packet — the assembled health-department plan set. Composed from a
+# cover (title block + PRELIMINARY watermark), the spa-data + schedules, the
+# auto-generated circulation/one-line schematics, the standard notes, and the
+# calculation audit, each on its own page. The packet is a DRAFT for a P.E. to
+# seal (see packet.py); the per-sheet banner + cover marking say so.
+# --------------------------------------------------------------------------
+
+_PACKET_BANNER = (
+    "{% if we_title_block(doc.name).preliminary %}"
+    '<div style="text-align:center; color:#b00; font-size:9px; font-weight:bold; '
+    'letter-spacing:1px; border-bottom:1px solid #f0c0c0; margin-bottom:8px;">'
+    "PRELIMINARY &mdash; NOT FOR CONSTRUCTION &mdash; FOR P.E. REVIEW</div>{% endif %}"
+)
+
+PACKET_COVER_HTML = """
+<div style="font-family:'Helvetica Neue',Arial,sans-serif; color:#222; page-break-after:always;">
+  {% set tb = we_title_block(doc.name) %}
+  <div style="text-align:center; border-bottom:3px solid #222; padding-bottom:12px; margin-bottom:16px;">
+    <div style="font-size:22px; font-weight:bold;">{{ tb.project.name }}</div>
+    <div style="font-size:13px; color:#555;">Health Department Submittal{% if tb.governing_code %} &middot; {{ tb.governing_code }}{% endif %}</div>
+    {% if tb.preliminary %}<div style="color:#b00; font-weight:bold; letter-spacing:2px; margin-top:6px;">PRELIMINARY &mdash; NOT FOR CONSTRUCTION</div>{% endif %}
+  </div>
+  <table style="width:100%; font-size:12px; border-collapse:collapse;">
+    <tr>
+      <td style="vertical-align:top; width:33%; padding:6px;">
+        <div style="font-weight:bold; color:#888; font-size:10px;">ENGINEER</div>
+        <div>{{ tb.engineer.name or '(engineer of record)' }}</div>
+        {% if tb.engineer.license %}<div>P.E. {{ tb.engineer.license }}</div>{% endif %}
+        <div style="white-space:pre-wrap;">{{ tb.engineer.address or '' }}</div>
+        <div>{{ tb.engineer.phone or '' }}</div>
+        <div style="margin-top:8px; width:120px; height:120px; border:1px dashed #bbb; text-align:center; line-height:120px; color:#bbb; font-size:10px;">
+          {% if tb.engineer.stamp and not tb.preliminary %}<img src="{{ tb.engineer.stamp }}" style="max-width:118px; max-height:118px; vertical-align:middle;">{% else %}P.E. STAMP{% endif %}
+        </div>
+      </td>
+      <td style="vertical-align:top; width:33%; padding:6px;">
+        <div style="font-weight:bold; color:#888; font-size:10px;">CONTRACTOR</div>
+        <div>{{ tb.contractor.name }}</div>
+        <div style="white-space:pre-wrap;">{{ tb.contractor.address or '' }}</div>
+        <div>{{ tb.contractor.phone or '' }}</div>
+        <div style="font-weight:bold; color:#888; font-size:10px; margin-top:12px;">PROJECT</div>
+        <div>{{ tb.project.name }}</div>
+        {% if tb.project.customer %}<div>{{ tb.project.customer }}</div>{% endif %}
+      </td>
+      <td style="vertical-align:top; width:33%; padding:6px;">
+        <div style="font-weight:bold; color:#888; font-size:10px;">ISSUE</div>
+        <div>Issue Date: {{ tb.issue_date or '________' }}</div>
+        <div>Drawn By: {{ tb.drawn_by or '____' }}</div>
+        {% if tb.venue_type %}<div>Venue: {{ tb.venue_type }}</div>{% endif %}
+        <div style="font-weight:bold; color:#888; font-size:10px; margin-top:12px;">SHEET INDEX</div>
+        <div>Cover &middot; Spa Data &amp; Schedules &middot; Schematics &middot; Standard Notes &middot; Design Calculations</div>
+      </td>
+    </tr>
+  </table>
+  <div style="margin-top:16px;">
+    <div style="font-weight:bold; color:#888; font-size:10px;">REVISIONS</div>
+    <table style="width:100%; border-collapse:collapse; font-size:11px;">
+      <tr style="background:#f4f4f4;"><th style="border:1px solid #ddd; padding:3px 6px; text-align:left;">Mark</th><th style="border:1px solid #ddd; padding:3px 6px; text-align:left;">Date</th><th style="border:1px solid #ddd; padding:3px 6px; text-align:left;">Description</th></tr>
+      {% for r in tb.revisions %}<tr><td style="border:1px solid #ddd; padding:3px 6px;">{{ r.mark }}</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ r.date }}</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ r.description }}</td></tr>{% endfor %}
+      {% if not tb.revisions %}<tr><td colspan="3" style="border:1px solid #ddd; padding:3px 6px; color:#999;">No revisions.</td></tr>{% endif %}
+    </table>
+  </div>
+</div>
+""".strip()
+
+PACKET_SPA_DATA_HTML = """
+<h3 style="margin:0 0 6px; font-size:14px;">Spa / Pool Data</h3>
+<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:14px;">
+  <tr><td style="border:1px solid #ddd; padding:3px 6px; color:#555; width:20%;">Volume</td><td style="border:1px solid #ddd; padding:3px 6px; width:30%;">{{ doc.total_basin_gallons or '&mdash;' }} gal</td>
+      <td style="border:1px solid #ddd; padding:3px 6px; color:#555; width:20%;">Design Flow</td><td style="border:1px solid #ddd; padding:3px 6px; width:30%;">{{ doc.design_flow_gpm or '&mdash;' }} GPM</td></tr>
+  <tr><td style="border:1px solid #ddd; padding:3px 6px; color:#555;">Turnover</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ doc.turnover_time_min or '&mdash;' }} min</td>
+      <td style="border:1px solid #ddd; padding:3px 6px; color:#555;">Minimum Flow</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ doc.minimum_flow_gpm or '&mdash;' }} GPM</td></tr>
+  <tr><td style="border:1px solid #ddd; padding:3px 6px; color:#555;">Bather Load</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ doc.bather_load or '&mdash;' }}</td>
+      <td style="border:1px solid #ddd; padding:3px 6px; color:#555;">Skimmers</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ doc.skimmer_count or '&mdash;' }}</td></tr>
+  <tr><td style="border:1px solid #ddd; padding:3px 6px; color:#555;">TDH</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ doc.computed_tdh_ft or '&mdash;' }} ft</td>
+      <td style="border:1px solid #ddd; padding:3px 6px; color:#555;">Main Drain (VGB)</td><td style="border:1px solid #ddd; padding:3px 6px;">{{ doc.main_drain_status or '&mdash;' }}</td></tr>
+</table>
+""".strip()
+
+PACKET_SCHEMATICS_HTML = """
+<h3 style="margin:0 0 8px; font-size:14px;">Circulation Equipment Schematic (SP-3)</h3>
+<div style="overflow-x:auto;">{{ we_circulation_schematic(doc.name) }}</div>
+<h3 style="margin:20px 0 8px; font-size:14px;">Electrical One-Line (SP-6)</h3>
+<div style="overflow-x:auto;">{{ we_electrical_oneline(doc.name) }}</div>
+<p style="margin:12px 0 0; color:#999; font-size:10px;">Schematics are generated from the design data; the plan-specific site/piping CAD drawings are attached separately.</p>
+""".strip()
+
+PACKET_NOTES_HTML = """
+<h3 style="margin:0 0 8px; font-size:14px;">Standard Notes</h3>
+{% set notes = we_standard_notes(doc.governing_code) %}
+{% if not notes %}<p style="color:#999; font-size:11px;">No standard notes are configured yet (add them under Standard Note, keyed to the governing code).</p>{% endif %}
+{% set ns = namespace(cat='') %}
+{% for n in notes %}
+  {% if n.category != ns.cat %}<div style="font-weight:bold; color:#888; font-size:10px; margin:10px 0 4px; text-transform:uppercase;">{{ n.category }}</div>{% set ns.cat = n.category %}{% endif %}
+  <p style="margin:0 0 6px; font-size:11px;">{% if n.title %}<b>{{ n.title }}.</b> {% endif %}{{ n.body }}</p>
+{% endfor %}
+""".strip()
+
+
+def _packet_sheet(html):
+    return (
+        '<div style="page-break-after:always; font-family:Helvetica,Arial,sans-serif; color:#222;">'
+        + _PACKET_BANNER + html + "</div>"
+    )
+
+
+def _packet_html():
+    """Compose the master packet from the cover + the existing/new sheet bodies."""
+    return (
+        PACKET_COVER_HTML
+        + _packet_sheet(PACKET_SPA_DATA_HTML + SCHEDULES_HTML)
+        + _packet_sheet(PACKET_SCHEMATICS_HTML)
+        + _packet_sheet(PACKET_NOTES_HTML)
+        + _packet_sheet(AUDIT_HTML)
+    )
+
+
 def _upsert_print_format(name, html, doc_type=DOCTYPE):
     """Create or update one custom Jinja Print Format for the given doctype."""
     if frappe.db.exists("Print Format", name):
@@ -401,6 +519,7 @@ def ensure_water_print_formats():
             _upsert_print_format(RESULTS_PF, RESULTS_HTML)
             _upsert_print_format(AUDIT_PF, AUDIT_HTML)
             _upsert_print_format(SCHEDULES_PF, SCHEDULES_HTML)
+            _upsert_print_format(PACKET_PF, _packet_html())
         if frappe.db.exists("DocType", CONTROL_DOCTYPE):
             _upsert_print_format(SUBMITTAL_PF, SUBMITTAL_HTML, doc_type=CONTROL_DOCTYPE)
             _upsert_print_format(PANEL_SCHEDULE_PF, PANEL_SCHEDULE_HTML, doc_type=CONTROL_DOCTYPE)

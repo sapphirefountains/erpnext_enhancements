@@ -615,6 +615,73 @@ def ensure_nozzle_profiles():
 		frappe.log_error(frappe.get_traceback(), "Water Engineering nozzle profile seed")
 
 
+# Starter Standard Notes for the submittal packet's SP-5 notes sheet — the
+# health-department boilerplate keyed to code articles (the engineer edits/adds
+# per jurisdiction). Drawn from the Fika submittal; degree signs written as text
+# to avoid encoding surprises across platforms.
+STANDARD_NOTES_SEED = [
+	{"note_key": "elec-680-bonding", "category": "Electrical", "governing_code": "2005 NEC Art. 680",
+	 "sort_order": 10, "title": "Bonding & Grounding",
+	 "body": "Provide bonding and grounding of the pool/spa to an equipotential bonding grid in the deck, "
+			 "motors, and equipment-room equipment (including GFCI protection) per the 2005 NEC Article 680 "
+			 "or current adopted electrical code."},
+	{"note_key": "elec-680-gfci", "category": "Electrical", "governing_code": "2005 NEC Art. 680",
+	 "sort_order": 20, "title": "GFCI & Outlets",
+	 "body": "No outlets within 10 ft of the pool; all outlets 10 ft to 20 ft from the pool shall be GFCI "
+			 "protected per the 2005 NEC Article 680 or current adopted electrical code."},
+	{"note_key": "elec-interlock", "category": "Electrical", "governing_code": "",
+	 "sort_order": 30, "title": "Equipment Interlocking",
+	 "body": "Interlock the circulation pump with the chemical feeders. Interlock the circulation pump with "
+			 "the heater if a flow switch is not installed on the heater."},
+	{"note_key": "elec-eshutoff", "category": "Electrical", "governing_code": "",
+	 "sort_order": 40, "title": "Emergency Shut-off & Timer",
+	 "body": "Provide an emergency shut-off switch for the spa and a 15-minute (maximum) timer for each jet "
+			 "pump, at a location requiring the bather to exit the spa before it can be reset, per N.E.C. "
+			 "Article 680."},
+	{"note_key": "gen-temps", "category": "General", "governing_code": "",
+	 "sort_order": 10, "title": "Water Temperature",
+	 "body": "Pool water temperatures for general use must be within the range of 82 to 86 deg F. The maximum "
+			 "spa water temperature is 104 deg F."},
+	{"note_key": "gen-listing", "category": "General", "governing_code": "",
+	 "sort_order": 20, "title": "Shell Listing",
+	 "body": "Acrylic/fiberglass spas must be listed by IAPMO and bear the IAPMO logo, or meet equivalent "
+			 "construction and material standards."},
+	{"note_key": "sign-caution", "category": "Safety Signs", "governing_code": "",
+	 "sort_order": 10, "title": "Spa Caution Sign",
+	 "body": "A spa pool must have an easily readable caution sign mounted adjacent to the entrance, with "
+			 "'CAUTION' in bold letters at least two inches high, listing the standard bather advisories "
+			 "(heart disease / high blood pressure / pregnancy / alcohol / 15-minute limit / children under 5 "
+			 "prohibited)."},
+	{"note_key": "dress-fixtures", "category": "Dressing Room", "governing_code": "",
+	 "sort_order": 10, "title": "Dressing Rooms",
+	 "body": "Provide separate dressing rooms for each sex with smooth, non-slip, impervious surfaces, coved "
+			 "wall/floor junctions, floors sloped to a drain, and no carpeting."},
+]
+
+
+def _seed_standard_notes():
+	"""Seed the starter Standard Notes for the packet SP-5 sheet. Idempotent."""
+	created, skipped = [], []
+	for note in STANDARD_NOTES_SEED:
+		if frappe.db.exists("Standard Note", note["note_key"]):
+			skipped.append(note["note_key"])
+			continue
+		frappe.get_doc({"doctype": "Standard Note", "active": 1, **note}).insert(ignore_permissions=True)
+		created.append(note["note_key"])
+	frappe.db.commit()
+	return {"created": created, "skipped": skipped}
+
+
+def ensure_standard_notes():
+	"""after_migrate entry: seed the starter Standard Notes (guarded)."""
+	try:
+		result = _seed_standard_notes()
+		if result.get("created"):
+			frappe.logger().info(f"[water_engineering] seeded standard notes: {result['created']}")
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Water Engineering standard notes seed")
+
+
 # Workspace triage cards over the denormalized issue counters recompute()
 # writes onto every design (see issues.py) — "which designs need attention"
 # without opening a single one.

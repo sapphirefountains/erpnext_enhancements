@@ -1116,6 +1116,13 @@ jinja = {
 		# Control-panel NEC panel schedule (circuits + service totals). The 430.24/
 		# 430.62/Art.450 math can't run in the print sandbox, so it's computed here.
 		"erpnext_enhancements.water_engineering.doctype.control_panel_design.control_panel_design.we_panel_schedule",
+		# Submittal-packet helpers: the resolved title block, the two server-rendered
+		# schematics (SVG), and the code-keyed standard-note list — all computed in
+		# Python because the print sandbox can't build them.
+		"erpnext_enhancements.water_engineering.packet.we_title_block",
+		"erpnext_enhancements.water_engineering.packet.we_circulation_schematic",
+		"erpnext_enhancements.water_engineering.packet.we_electrical_oneline",
+		"erpnext_enhancements.water_engineering.packet.we_standard_notes",
 		"erpnext_enhancements.project_enhancements.print_data.project_schedule_rows",
 		"erpnext_enhancements.project_enhancements.print_data.project_task_rows",
 		# The union of Purchase Order.project and Purchase Order Item.project, so the PO
@@ -1287,6 +1294,10 @@ after_migrate = [
 	# water_engineering: generic starter Nozzle Profiles so orifice nozzles compute
 	# immediately (idempotent + guarded; flagged generic — replace with cut-sheet data).
 	"erpnext_enhancements.water_engineering.setup.ensure_nozzle_profiles",
+	# water_engineering: starter Standard Notes for the submittal packet's SP-5
+	# notes sheet (health-dept boilerplate keyed to code articles). Idempotent +
+	# guarded; the engineer edits/adds per jurisdiction.
+	"erpnext_enhancements.water_engineering.setup.ensure_standard_notes",
 	# water_engineering: the Results + Calculation Audit Print Formats for a design
 	# (idempotent + guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.water_engineering.setup_print_formats.ensure_water_print_formats",

@@ -1,0 +1,103 @@
+{
+ "actions": [],
+ "creation": "2026-08-28 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "sb_engineer",
+  "engineer_name",
+  "engineer_license",
+  "engineer_phone",
+  "engineer_address",
+  "engineer_stamp",
+  "cb_settings",
+  "sb_contractor",
+  "contractor_name",
+  "contractor_phone",
+  "contractor_address"
+ ],
+ "fields": [
+  {
+   "fieldname": "sb_engineer",
+   "fieldtype": "Section Break",
+   "label": "Engineer of Record"
+  },
+  {
+   "fieldname": "engineer_name",
+   "fieldtype": "Data",
+   "label": "Engineer Name"
+  },
+  {
+   "fieldname": "engineer_license",
+   "fieldtype": "Data",
+   "label": "P.E. License No."
+  },
+  {
+   "fieldname": "engineer_phone",
+   "fieldtype": "Data",
+   "label": "Engineer Phone"
+  },
+  {
+   "fieldname": "engineer_address",
+   "fieldtype": "Small Text",
+   "label": "Engineer Address"
+  },
+  {
+   "fieldname": "engineer_stamp",
+   "fieldtype": "Attach Image",
+   "label": "P.E. Stamp Image",
+   "description": "Only placed on a packet after the engineer of record signs; the packet is otherwise watermarked PRELIMINARY."
+  },
+  {
+   "fieldname": "cb_settings",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sb_contractor",
+   "fieldtype": "Section Break",
+   "label": "Contractor"
+  },
+  {
+   "fieldname": "contractor_name",
+   "fieldtype": "Data",
+   "label": "Contractor Name",
+   "default": "Sapphire Fountains"
+  },
+  {
+   "fieldname": "contractor_phone",
+   "fieldtype": "Data",
+   "label": "Contractor Phone"
+  },
+  {
+   "fieldname": "contractor_address",
+   "fieldtype": "Small Text",
+   "label": "Contractor Address"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-08-28 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Water Engineering Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "print": 1,
+   "share": 1
+  },
+  {
+   "role": "Water Engineer",
+   "read": 1,
+   "write": 1,
+   "print": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

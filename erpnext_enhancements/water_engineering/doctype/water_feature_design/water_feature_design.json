@@ -76,6 +76,13 @@
   "cb_review",
   "has_warnings",
   "next_inputs_needed",
+  "sb_submittal",
+  "issue_date",
+  "drawn_by",
+  "cb_submittal",
+  "packet_document",
+  "revisions",
+  "packet_html",
   "sb_acks",
   "issue_acks",
   "sb_results",
@@ -522,6 +529,48 @@
    "fieldtype": "Small Text",
    "label": "Next Inputs Needed",
    "read_only": 1
+  },
+  {
+   "fieldname": "sb_submittal",
+   "fieldtype": "Section Break",
+   "label": "Submittal Packet",
+   "collapsible": 1,
+   "description": "Title-block + revisions for the generated submittal packet — a DRAFT for the P.E. to seal, watermarked PRELIMINARY until signed."
+  },
+  {
+   "fieldname": "issue_date",
+   "fieldtype": "Date",
+   "label": "Issue Date"
+  },
+  {
+   "fieldname": "drawn_by",
+   "fieldtype": "Data",
+   "label": "Drawn By"
+  },
+  {
+   "fieldname": "cb_submittal",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "packet_document",
+   "fieldtype": "Data",
+   "label": "Packet Document",
+   "read_only": 1,
+   "description": "The generated packet PDF (File URL), populated once the server PDF backend is available."
+  },
+  {
+   "fieldname": "revisions",
+   "fieldtype": "Table",
+   "label": "Revisions",
+   "options": "Submittal Revision"
+  },
+  {
+   "fieldname": "packet_html",
+   "fieldtype": "Code",
+   "options": "HTML",
+   "label": "Packet HTML (snapshot)",
+   "read_only": 1,
+   "hidden": 1
   },
   {
    "fieldname": "sb_acks",

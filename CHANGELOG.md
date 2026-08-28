@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.354.0] - 2026-08-28
+
+### Added
+
+- **Submittal-packet assembler** (`water_engineering/packet.py` + a new "Water Feature Design - Submittal
+  Packet" print format) — assembles the health-department plan set into one browser-printable document:
+  a cover (title block + drawing index + revisions), the spa/pool data + equipment & piping schedules,
+  the auto-generated circulation and electrical-one-line schematics (v1.353.0), the standard notes, and
+  the calculation audit, each on its own page. This is the HTML-first deliverable (usable via browser
+  print-to-PDF today); the server-side combined PDF + Drive upload is deferred until the prod PDF backend
+  is fixed (`docs/pdf-generation.md`).
+  - The packet is a **DRAFT for a licensed P.E. to review and seal**: it carries a
+    "PRELIMINARY — NOT FOR CONSTRUCTION" cover banner + per-sheet banner and a stamp *placeholder*; the
+    P.E. stamp image is placed only once a stamp is configured **and** the design is Issued.
+  - Jinja helpers (registered in `hooks.py`, computed in Python because the print sandbox can't):
+    `we_title_block` (engineer/contractor/project/dates/revisions), `we_circulation_schematic` /
+    `we_electrical_oneline` (the SVGs, the one-line reusing the linked Control Panel Design's
+    `we_panel_schedule`), and `we_standard_notes` (code-keyed). `assemble_packet(design)` is a whitelisted
+    read-gated endpoint returning the packet HTML.
+  - Supporting doctypes: **Water Engineering Settings** (Single — engineer identity + P.E. stamp +
+    contractor), **Standard Note** (SP-5 boilerplate keyed to code articles, with 8 seeded starter notes
+    from the Fika submittal), and a **Submittal Revision** child table; plus `issue_date` / `drawn_by` /
+    `revisions` / `packet_document` / `packet_html` fields on Water Feature Design.
+  - **pypdf** added to `pyproject.toml` (pure-Python wheel, no system libs — installs like twilio/google-*,
+    explicitly not the stripe-SDK case) for the deferred step of appending the plan-specific CAD drawing
+    PDFs after the app-generated sheets.
+
+  The composed packet template (~17k chars) parses as valid Jinja; the new doctypes pass the
+  module-placement test. Rendering, the seeds, and the form layout still need a `bench migrate` + desk
+  pass. Follow-ups: an "Assemble Packet" form button, the standard-details (SP-4) library, and the
+  issue-lifecycle PDF/Drive upload once the backend is fixed.
+
 ## [1.353.0] - 2026-08-28
 
 ### Added
