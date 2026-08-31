@@ -1,10 +1,10 @@
 """Scheduler entry points for the QuickBooks Online integration.
 
-These three functions are wired to the hourly scheduler via ``hooks.py``:
+Three are wired to the hourly scheduler via ``hooks.py``:
 ``refresh_token_if_needed`` (keep OAuth alive), ``cdc_poll`` (pull QBO changes)
-and ``retry_failed_syncs`` (re-run failed sync logs). They are intentionally
-thin -- guard clauses and cursor checks here, real work in ``client.py`` and
-``sync.py``.
+and ``retry_failed_syncs`` (re-run failed sync logs); ``sync_attachments_scheduled``
+runs daily (mirror new QBO attachments). They are intentionally thin -- guard clauses
+and cursor checks here, real work in ``client.py``, ``sync.py`` and ``attachments.py``.
 """
 
 from __future__ import annotations
@@ -75,3 +75,21 @@ def retry_failed_syncs():
 	Delegates to ``sync.retry_failed`` (which respects Settings.retry_limit).
 	"""
 	retry_failed()
+
+
+def sync_attachments_scheduled():
+	"""Daily scheduler hook: mirror new QBO attachments onto their ERPNext docs.
+
+	Bounded via ``max_new`` so one run never runs away downloading the whole historical
+	backlog -- that one-time backfill is run manually with
+	``attachments.sync_attachments()``; this keeps steady state current. No-op unless the
+	integration is connected and ``sync_enabled`` is on (imported lazily so the module
+	loads without a bench). Delegates the work to ``core.attachments``.
+	"""
+	settings = get_settings()
+	if not settings.realm_id or not settings.sync_enabled:
+		return
+	from erpnext_enhancements.quickbooks_online.core.attachments import sync_attachments
+
+	summary = sync_attachments(max_new=500, settings=settings)
+	frappe.logger("quickbooks_online").info(f"QBO attachment sync: {summary}")
