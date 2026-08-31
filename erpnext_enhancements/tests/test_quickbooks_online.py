@@ -948,6 +948,66 @@ def test_update_branch_skips_save_when_nothing_changed(monkeypatch):
 	assert len(saved_mappings) == 2
 
 
+def test_upsert_never_saves_a_submitted_document(monkeypatch):
+	"""A submitted (docstatus=1) record is never doc.save()d by a re-sync (Final Review B6).
+
+	ERPNext refuses to save a docstatus=1 doc (mapped fields are allow_on_submit=0), and
+	the generic save path would swallow the UpdateAfterSubmitError into a manual-review
+	mapping that overwrites owned_fields -- so once the historical backlog is posted, an
+	unfiltered re-sync would churn ~15,700 docs and destroy every conflict baseline. The
+	guard: QBO unadvanced -> "unchanged" with no write at all; QBO advanced -> park via
+	frappe.db.set_value (never save_mapping, so owned_fields survives), never doc.save().
+	"""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	values = {"customer_name": "Acme Supply", "customer_type": "Commercial"}
+	monkeypatch.setattr(mapping, "map_qbo_to_erpnext", lambda *args: ("Customer", dict(values)))
+	monkeypatch.setattr(mapping, "validate_mapped_values", lambda *args, **kwargs: [])
+	monkeypatch.setattr(mapping, "_ensure_group_parent", lambda *args: None)
+	monkeypatch.setattr(
+		mapping,
+		"get_mapping",
+		lambda *args: types.SimpleNamespace(
+			name="QBO-MAP-Customer-1",
+			erpnext_doctype="Customer",
+			erpnext_name="Acme Supply",
+			owned_fields=json.dumps(values),
+			match_status="Auto Matched",
+			conflict_status="Clean",
+		),
+	)
+	doc = _stub_doc(doctype="Customer", name="Acme Supply", docstatus=1, **values)
+	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name: True, raising=False)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name: doc, raising=False)
+	saved_mappings = []
+	monkeypatch.setattr(mapping, "save_mapping", lambda *args, **kwargs: saved_mappings.append(kwargs))
+	set_values = []
+	monkeypatch.setattr(frappe.db, "set_value", lambda *args, **kwargs: set_values.append(args), raising=False)
+	settings = types.SimpleNamespace(company="Sapphire Fountains")
+
+	# QBO has NOT advanced since we synced this posted doc -> nothing to do, and (the point)
+	# no write of ANY kind: not the doc, not the mapping (owned_fields stays intact).
+	monkeypatch.setattr(mapping, "_qbo_record_advanced", lambda *args: False)
+	result = mapping.upsert_entity("Customer", {"Id": "1", "DisplayName": "Acme Supply"}, settings)
+	assert result == {"action": "unchanged", "doctype": "Customer", "name": "Acme Supply"}
+	assert doc.saves == []
+	assert saved_mappings == []
+	assert set_values == []
+
+	# QBO genuinely advanced -> we cannot save a posted doc; park via set_value on the
+	# mapping (never save_mapping), so owned_fields is preserved and nothing is doc.save()d.
+	monkeypatch.setattr(mapping, "_qbo_record_advanced", lambda *args: True)
+	result = mapping.upsert_entity("Customer", {"Id": "1", "DisplayName": "Acme Supply"}, settings)
+	assert result["action"] == "manual_review"
+	assert result["name"] == "Acme Supply"
+	assert doc.saves == []
+	assert saved_mappings == []
+	assert len(set_values) == 1
+	assert set_values[0][0] == "QuickBooks Sync Mapping"
+	assert set_values[0][1] == "QBO-MAP-Customer-1"
+
+
 def test_credit_card_account_is_untyped_liability():
 	"""QBO Credit Card accounts map to an untyped Liability ledger, not a Payable.
 

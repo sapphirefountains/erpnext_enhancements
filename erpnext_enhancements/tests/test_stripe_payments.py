@@ -39,6 +39,20 @@ def install_frappe_stub():
 	frappe_utils.add_to_date = lambda value=None, **kwargs: value
 	frappe_utils.get_url = lambda path=None, *args, **kwargs: f"https://erp.example.com{path or ''}"
 	frappe_utils.fmt_money = lambda value=0, currency=None, *a, **k: f"{currency or 'USD'} {_flt(value):,.2f}"
+
+	import datetime as _dt
+
+	def _getdate(value=None):
+		if value is None:
+			value = frappe_utils.today()
+		if isinstance(value, _dt.datetime):
+			return value.date()
+		if isinstance(value, _dt.date):
+			return value
+		return _dt.date.fromisoformat(str(value)[:10])
+
+	frappe_utils.getdate = _getdate
+	frappe_utils.add_days = lambda value, days: _getdate(value) + _dt.timedelta(days=int(days))
 	frappe.utils = frappe_utils
 
 	frappe.throw = _stub_throw
@@ -664,6 +678,52 @@ def test_redelivered_event_never_refunds_the_surcharge_twice():
 
 
 # --- payout reconciliation (WI-040) -----------------------------------------
+
+
+def test_auto_charge_skips_historical_invoices(monkeypatch):
+	"""Auto-charge never fires on a back-dated (historical import) Sales Invoice (Final Review B4).
+
+	auto_charge_on_invoice_submit prices from outstanding_amount at charge time, so
+	submitting the 2009-2025 QBO backlog with Stripe live would silently charge customers
+	for decade-old invoices. The global is_enabled()==0 switch is the belt; the posting-date
+	guard is the suspenders. This proves the guard blocks the historical case and -- equally
+	important -- leaves current billing untouched.
+	"""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core import saved_methods
+
+	# Get past the global switch so the age guard is what we are actually testing.
+	monkeypatch.setattr(saved_methods, "is_enabled", lambda *args, **kwargs: True)
+	enqueued = []
+	monkeypatch.setattr(frappe, "enqueue", lambda *a, **k: enqueued.append((a, k)), raising=False)
+	# An enrolled customer, positive balance, no existing charge -- everything a *current*
+	# invoice needs, so only the posting_date decides whether it charges.
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		lambda *a, **k: types.SimpleNamespace(
+			custom_stripe_autopay_enabled=1, custom_stripe_default_payment_method="pm_1"
+		),
+		raising=False,
+	)
+	monkeypatch.setattr(frappe.db, "exists", lambda *a, **k: False, raising=False)
+
+	def _inv(**fields):
+		inv = types.SimpleNamespace(**fields)
+		inv.get = lambda name: getattr(inv, name, None)
+		return inv
+
+	# A decade-old invoice (far past AUTO_CHARGE_MAX_AGE_DAYS; today stub = 2026-06-18) never charges.
+	saved_methods.auto_charge_on_invoice_submit(
+		_inv(name="SINV-X", customer="CUST-1", outstanding_amount=100.0, posting_date="2015-04-20")
+	)
+	assert enqueued == []
+
+	# A current invoice still charges -- the guard does not break live billing.
+	saved_methods.auto_charge_on_invoice_submit(
+		_inv(name="SINV-Y", customer="CUST-1", outstanding_amount=100.0, posting_date="2026-06-18")
+	)
+	assert len(enqueued) == 1
 
 
 def _charge_bt(amount_cents, fee_cents, txn="txn"):

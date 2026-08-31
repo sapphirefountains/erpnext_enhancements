@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.358.3] - 2026-08-31
+
+### Fixed
+
+- **QBO sync no longer churns submitted documents (the `upsert_entity` docstatus guard).**
+  The already-linked update path in `quickbooks_online/core/mapping.py::upsert_entity` called
+  `doc.save()` regardless of docstatus; on a `docstatus=1` record ERPNext raises
+  `UpdateAfterSubmitError` (every QBO-mapped field is `allow_on_submit=0`), which the generic
+  save path swallowed into a manual-review mapping that **overwrites `owned_fields`** — silently
+  destroying the conflict-detection baseline. Harmless while nothing is submitted, but under the
+  full-history decision ([OD-6 reversal](decisions/OPEN-DECISIONS.md)) an unfiltered re-sync of
+  the ~15,700 posted documents would have parked and corrupted every one. The guard now never
+  saves a submitted doc: **QBO unadvanced → `unchanged`** (no write at all); **QBO advanced →**
+  flag the mapping for a human via `frappe.db.set_value` (not `save_mapping`, so `owned_fields`
+  survives) and return `manual_review`. This is the precondition that lets `sync_enabled` be
+  turned back on after the backlog is posted (see `docs/migration/backlog-gl-posting-runbook.md`
+  §2). Covered by a bench-free test in `tests/test_quickbooks_online.py`.
+- **Stripe auto-charge can no longer bill a historical invoice (posting-date guard).**
+  `stripe_payments/core/saved_methods.py::auto_charge_on_invoice_submit` priced from
+  `outstanding_amount` at charge time with no age check, so submitting the 2009-2025 QBO backlog
+  with Stripe live (the latent `auto_charge`/Live-account hazard, Final Review B4) would have
+  charged customers for decade-old invoices. Added an age guard: an invoice whose `posting_date`
+  is older than `AUTO_CHARGE_MAX_AGE_DAYS` (365) is never off-session charged. The global
+  `enabled=0` switch remains the belt; this makes a future historical import **structurally**
+  safe rather than safe by coincidence. Covered by a bench-free test in
+  `tests/test_stripe_payments.py` (blocks the historical case, leaves current billing untouched).
+
+## [1.358.2] - 2026-08-31
+
+### Changed
+
+- **OD-6 reversed — the QBO migration now carries full history (decision + execution plan).**
+  The business decided (2026-08-31) to carry QuickBooks' complete history into ERPNext by
+  fixing and **posting** the ~16,100 imported draft documents to the GL — as a separate event
+  *before* the Jan-1-2027 cutover — rather than the 14-Jul (a) "bulk-delete the draft mirror."
+  Recorded in [`decisions/OPEN-DECISIONS.md`](decisions/OPEN-DECISIONS.md) as OD-6 branch (d)
+  with the full cascade. Consequences: **WI-028 (draft-mirror delete) is cancelled**;
+  WI-067/068/069 + `TASK-2026-01236` become the posting mechanism (critical path); the
+  opening-balance work (WI-032/033) is subsumed because the posted history through 2026-12-31
+  *is* the opening position. Docs/decision only — no executable behavior change.
+- **Amended the WI-051 cutover runbook** for the two-event model: under the reversal its S4
+  (draft-mirror delete) is removed and S7–S8 (opening-balance JEs) are subsumed; a banner now
+  points to the backlog-posting runbook and the surviving cutover steps.
+
+### Added
+
+- **Backlog GL-posting runbook** —
+  [`docs/migration/backlog-gl-posting-runbook.md`](docs/migration/backlog-gl-posting-runbook.md),
+  the executable counterpart to the `TASK-2026-01236` "Final Review Before Cutover" analysis:
+  an ordered, gated, machine-checked procedure for submitting the ~16,100 drafts (Sales
+  Invoices → Payment-only resync → Payment Entries → Journal Entries), with the hard backup
+  gate (B3), the data preconditions, and the load-bearing submit order. **Live figures
+  re-verified 2026-08-31** against the Aug-5 analysis: `Payment Entry Reference` still 0 rows
+  (B1); 2026-window group-account lines now 148/120 JEs/15 accounts (was 315/193, B2); Stripe
+  `enabled=0` now (was 1 in Live on Aug 5, B4), 0 autopay customers, 1 consent row lingering;
+  1 future-dated JE stopper (B5); 58 zero-total SI drafts (B7).
+- **Verified the three deferred safety guards** the full-history path depends on, and recorded
+  their state so they are not assumed: `enqueue_after_commit=True` on the Stripe auto-charge
+  enqueue **is shipped** (`stripe_payments/core/saved_methods.py:305`); a **posting-date guard**
+  on `auto_charge_on_invoice_submit` is **not** shipped (only the global `enabled=0` protects
+  against charging a historical invoice); and the **docstatus guard in `upsert_entity`** is
+  **not** shipped (post-posting sync would `doc.save()` submitted docs → `UpdateAfterSubmitError`
+  churned into manual-review that overwrites `owned_fields`), so `sync_enabled` must stay 0
+  after posting until that guard ships. Both are now written up as preconditions in the runbook.
+
+## [1.358.1] - 2026-08-31
+
+### Added
+
+- **Cutover runbook for the QBO→ERPNext migration (WI-051).** Added
+  [`docs/migration/wi051-cutover-runbook.md`](docs/migration/wi051-cutover-runbook.md) — the
+  terminal integrator for the January-1-2027 cutover that several other items said would
+  "finalize when WI-051 exists" (e.g. WI-007's per-stream O2C SOPs). It encodes the binding
+  C5 cutover sequence as strictly sequential gated steps (S1 final QBO sync → S2 partial kill
+  → S3 backup → S4 draft-mirror delete → S5 CoA rebuild → S6 FY/naming/modes → **go-live** →
+  S7 opening TB → S8 opening AR/AP + open POs → S9 tie-out + sign-off → S10 full Disconnect),
+  every checklist line mapped to a verbatim machine check (SQL / settings value / native
+  report) and an owner, plus the go/no-go gate, day-1 existence checks, week-1 support, abort
+  path, the C12 interim-AR procedure, and a bulk-operation hygiene appendix. Docs only — no
+  executable behavior changes.
+- **The runbook makes the two-window timing explicit** where PLAN.md idealizes "one freeze
+  window": the destructive rebuild (S1–S6) runs in the December freeze week, but the
+  opening-balance tail (S7–S10) cannot run until the December books close (~Jan 10–15), so
+  the company goes live Jan 1 on an empty rebuilt chart and the C12 interim-AR procedure
+  bridges the gap. QBO OAuth tokens are kept alive from S2 through S9 (the opening tools call
+  the live QBO API) and revoked only at S10 — which is why the Intuit webhook subscription is
+  deleted early (S2) but Disconnect is last.
+- **Corrected a phantom hazard the runbook would otherwise have propagated.** PLAN.md, WI-050,
+  and WI-023/028/033 all warn that a wildcard `'*'` `after_save` → `global_triton_sync` hook
+  fires one queued Triton POST per ORM save, making bulk cutover scripts dangerous. Verified
+  against `main`: that hook was **retired in v1.341.1**, and its tombstone
+  (`erpnext_enhancements/utils/triton_sync.py`) records it was **inert from the day it was
+  written** (Frappe dispatches no server-side `after_save` document event). The appendix now
+  documents this so the warning is not carried into execution, while keeping the two hazards
+  that *are* still live: `Customer.after_insert` Drive-folder provisioning (gated by
+  `create_customer_folders`) and the `Opportunity.on_update` closed-won prompt.
+
 ## [1.358.0] - 2026-08-28
 
 ### Added
