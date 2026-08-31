@@ -76,6 +76,8 @@ def _wire(monkeypatch, pages, mapping, existing=None, downloads=None):
 	# The mirror commits per file and rolls back a failed one; stub both.
 	monkeypatch.setattr(frappe.db, "commit", lambda: None, raising=False)
 	monkeypatch.setattr(frappe.db, "rollback", lambda *a, **k: None, raising=False)
+	# sync_attachments toggles these around the run (notification mute); give them a home.
+	monkeypatch.setattr(frappe, "flags", types.SimpleNamespace(in_import=False, mute_emails=False), raising=False)
 
 	saved = []
 	monkeypatch.setattr(frappe, "get_doc", lambda d: types.SimpleNamespace(insert=lambda **k: saved.append(d)), raising=False)
