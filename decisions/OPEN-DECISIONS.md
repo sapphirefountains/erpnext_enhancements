@@ -11,7 +11,7 @@ These are **business decisions, not engineering ones**. No work item resolves th
 | OD-3 | **Yes, same stream — rename 'Rent' → 'Events'** (branch b) | New WI-065 (atomic rename: master + ~60 verified code/fixture/data touch points); WI-027 now blocked by WI-065 |
 | OD-4 | **(a)** — segment is a project attribute with customer-level fallback for Products | WI-026 executes branch (a); WI-054 Accounting-Dimension approach confirmed; Project segment field ships as FIXTURE inside WI-054 |
 | OD-5 | **Jan 1 2027 committed; finish sooner if possible** | Plan stays anchored to Jan 1. Pulling forward is structurally possible at any month-end (the opening TB just cuts from that month's close), bounded by: close discipline in place, the kiosk-adoption month, and the parallel-run month. Decision point: if all Phase-0 items are green by late October, a Dec-1 cutover (Nov-30 close) can be evaluated at that go/no-go |
-| OD-6 | **(a)** — bulk-delete the draft mirror after the final sync | WI-028 precondition "OD-6 ratified" is satisfied; archival protections (QBO read-only + Raw Payload + CSV export) stand |
+| OD-6 | **REVERSED 2026-08-31 → carry full QBO history** (fix + post the backlog to the GL as a separate event *before* cutover). Original 14-Jul resolution was **(a) bulk-delete**. | WI-028 delete **cancelled**; WI-067/068/069 + `TASK-2026-01236` become the posting mechanism; opening balances (WI-032/033) largely subsumed; see the OD-6 section for the full cascade + the hard backup gate |
 | OD-7 | **Default accepted** — launch WITHOUT surcharge; enable later only via the 8-item compliance checklist | WI-055 stays Phase 2; `surcharge_enabled` stays 0 at go-live |
 
 **Note on OD-2:** "follow the law" sets the engineering direction (Utah differentiates real-property improvement from TPP repair/rental/product sales, so the config is built stream-differentiated), but the specific taxability matrix applied to Sapphire's actual offerings must still be confirmed in writing by the CPA before the tax configuration goes live — neither this plan nor its executing agents can serve as the tax authority. The request to the CPA should go out now.
@@ -93,6 +93,22 @@ Treated as **fixed: 2027-01-01**. Scope flexes into Phase 2; the date does not. 
 - **(a) Bulk delete after the final pre-cutover sync — RECOMMENDED.** Reference value survives three ways: QBO itself stays accessible read-only, every imported record's JSON is archived in `QuickBooks Raw Payload`, and a pre-delete CSV export is taken. Live quotations are protected: WI-023 triages and submits keepers first.
 - **(b) Keep + flag/filter** — retains in-ERP reference but leaves the accidental-submit risk, still blocks Account deletion (forcing the messier rename/merge CoA path), and pollutes lists.
 - **(c) Selective** — delete PEs/JEs, keep SIs as reference; partial versions of both cost profiles.
+
+### Re-resolution — 2026-08-31 (OD-6 REVERSED → carry full history)
+
+**New resolution — branch (d), which post-dates the 14-Jul options: carry QuickBooks' full history into ERPNext by fixing and _posting_ the imported backlog to the GL, as a separate event _before_ the Jan-1-2027 cutover — not a delete.** Decided by the business 2026-08-31, overriding the 14-Jul (a) "bulk delete."
+
+**Why the reversal:** the (a)–(c) branches on 14 Jul did not include "fix the mapper and post the drafts as a full historical ledger." That option only became real after WI-067 (sell-side mapper fidelity, v1.244–v1.248) and WI-068 (group-account remap) were built, and after the `TASK-2026-01236` "Final Review Before Cutover" analysis (2026-08-05) established what posting the backlog actually requires. The business wants ERPNext to hold the same full history QuickBooks does.
+
+**Cascade (what this changes):**
+- **WI-028 (draft-mirror delete) is CANCELLED** — the ~16,100 drafts are kept and submitted, not deleted.
+- **WI-067 / WI-068 / WI-069 move onto the critical path** as the posting mechanism; `TASK-2026-01236` is the execution anchor.
+- **Opening balances (WI-032/033) are largely subsumed** — the posted history through 2026-12-31 _is_ the opening position; WI-035's tie-out becomes "posted-history balances == QBO close." The Jan-1 cutover (WI-051) shrinks to go-live config flips + QBO disconnect on top of an already-posted ledger.
+- **Two events, explicitly** (Final Review Q#10): (1) the **backlog GL-posting** window (now → before cutover); (2) the **Jan-1 go-live**, unchanged in date.
+
+**Hard gate before any submit — blocker B3, non-negotiable:** there is no working rollback today (backups AES-encrypted, on-box only, 23-hour retention, key only on the VM, no pre-migrate backup in the deploy pipeline; cancellation is not rollback — immutable-ledger is off, so cancel inserts reversing rows and the GL never returns clean). **Posting is blocked until an off-box, _test-restored_ backup exists and the encryption key is escrowed off-box.** The remaining Final Review blockers (B1 payment-allocation ordering, B2 the 2026 group-account lines, B4 Stripe auto-charge disarm) are execution preconditions carried in the backlog-posting runbook.
+
+**Archival note:** the (a) archival protections (QBO stays read-only, Raw Payload retained, pre-run CSV export) are kept as a safety net regardless.
 
 ---
 

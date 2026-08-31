@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 
 import frappe
-from frappe.utils import cint, flt, get_url, now_datetime
+from frappe.utils import add_days, cint, flt, get_url, getdate, now_datetime
 
 from erpnext_enhancements.stripe_payments.core.checkout import (
 	_compute_surcharge,
@@ -269,6 +269,13 @@ def _alert_failed_autocharge(sp, reason):
 		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: auto-charge failure alert failed")
 
 
+# Auto-charge fires on Sales Invoice on_submit. A currently-billed invoice is submitted
+# at (or near) its posting_date; anything older than this is a historical import and is
+# never off-session charged. One year is comfortably past any legitimate current-billing
+# lag while blocking the 2009-2025 QBO backlog outright.
+AUTO_CHARGE_MAX_AGE_DAYS = 365
+
+
 def auto_charge_on_invoice_submit(doc, method=None):
 	"""Sales Invoice ``on_submit``: off-session charge the customer's saved method.
 
@@ -278,6 +285,14 @@ def auto_charge_on_invoice_submit(doc, method=None):
 	autopay-enrolled and the invoice is outstanding and not already being charged.
 	"""
 	if not is_enabled():
+		return
+	# Historical-invoice guard (Final Review B4). Charging prices from outstanding_amount
+	# at face value with no age check of its own, so submitting the 2009-2025 QBO backlog
+	# with Stripe live would silently bill customers for decade-old invoices. The global
+	# is_enabled() switch is the belt; this posting-date guard is the suspenders, so a
+	# future historical import is structurally safe rather than safe by coincidence.
+	posting_date = doc.get("posting_date")
+	if posting_date and getdate(posting_date) < add_days(getdate(), -AUTO_CHARGE_MAX_AGE_DAYS):
 		return
 	enrolled = frappe.db.get_value(
 		"Customer",

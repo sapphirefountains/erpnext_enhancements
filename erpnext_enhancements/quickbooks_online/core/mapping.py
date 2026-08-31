@@ -160,6 +160,38 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 	# (``mapping`` was read above for the Ignored check; nothing since then writes to it.)
 	if mapping and mapping.erpnext_name and frappe.db.exists(erpnext_doctype, mapping.erpnext_name):
 		doc = frappe.get_doc(erpnext_doctype, mapping.erpnext_name)
+		# Submitted-document guard (Final Review B6). ERPNext refuses doc.save() on a
+		# docstatus=1 record -- every QBO-mapped field is allow_on_submit=0 -- and the
+		# generic save path swallows the resulting UpdateAfterSubmitError into a
+		# manual-review mapping that OVERWRITES owned_fields, permanently destroying the
+		# conflict-detection baseline. Once the historical backlog is submitted, an
+		# unfiltered re-sync would churn ~15,700 posted docs and lose every snapshot. So
+		# never save a submitted doc: if QBO has not advanced since we synced it there is
+		# nothing to do (-> unchanged); if it genuinely advanced we cannot apply the change
+		# in place, so flag the mapping for a human via frappe.db.set_value (NOT
+		# save_mapping, which would rewrite owned_fields) and park it for manual review.
+		# (doc.get(): a submitted-doc double in the bench-free suite has no docstatus attr.)
+		if doc.get("docstatus") == 1:
+			if not _qbo_record_advanced(mapping, payload):
+				return {"action": "unchanged", "doctype": erpnext_doctype, "name": doc.name}
+			if not preview:
+				frappe.db.set_value(
+					"QuickBooks Sync Mapping",
+					mapping.name,
+					{"conflict_status": "Pending Review", "match_status": "Pending Review"},
+					update_modified=False,
+				)
+			return {
+				"action": "manual_review",
+				"doctype": erpnext_doctype,
+				"name": doc.name,
+				"qbo_id": qbo_id,
+				"reason": (
+					f"{erpnext_doctype} '{doc.name}' is submitted (docstatus=1) and QuickBooks "
+					f"changed it since it was synced; a posted document cannot be updated in "
+					f"place -- resolve manually (amend/cancel or reconcile)."
+				),
+			}
 		# A QBO job must never re-clobber an existing Project's title with its prefixed
 		# DisplayName; drop it here so it's excluded from conflicts, the write and the snapshot.
 		_protect_existing_project_title(erpnext_doctype, values, doc)
