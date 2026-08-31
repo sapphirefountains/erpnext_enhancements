@@ -335,6 +335,21 @@ class QuickBooksClient:
 			raise QuickBooksAPIError(f"QuickBooks upload failed: {response.status_code} {response.text}")
 		return response.json() if response.text else {}
 
+	def download_attachable(self, temp_download_uri: str) -> bytes:
+		"""Download an Attachable's bytes from its pre-signed ``TempDownloadUri``.
+
+		The URI a QBO Attachable query returns is a short-lived pre-signed URL to
+		Intuit's file service -- it carries its own auth in the query string, so this
+		is a plain GET with NO bearer token (unlike ``request`` / ``upload_attachable``).
+		Used by ``core.attachments`` to mirror QBO files onto ERPNext documents.
+		"""
+		response = requests.get(temp_download_uri, timeout=120)
+		if response.status_code >= 400:
+			raise QuickBooksAPIError(
+				f"QuickBooks attachment download failed: {response.status_code} {_error_snippet(response.text)}"
+			)
+		return response.content
+
 	def query(self, query: str):
 		"""Run a QBO SQL-like query (the ``/query`` endpoint, text/plain body).
 

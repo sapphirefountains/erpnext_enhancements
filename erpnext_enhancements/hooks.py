@@ -964,6 +964,10 @@ scheduler_events = {
 		"erpnext_enhancements.script_migrations.project.update_elapsed_time_daily",
 		"erpnext_enhancements.api.user_drafts.cleanup_stale_drafts",
 		"erpnext_enhancements.api.time_kiosk.purge_old_location_logs",
+		# QuickBooks: mirror new QBO attachments (Attachable files) onto their ERPNext
+		# docs (WI-071). Daily and bounded (max_new) so it cannot run away; the one-time
+		# historical backfill is a manual bench execute of attachments.sync_attachments.
+		"erpnext_enhancements.quickbooks_online.core.tasks.sync_attachments_scheduled",
 		"erpnext_enhancements.status_alerts.nag_unconverted_opportunities",
 		"erpnext_enhancements.process_steps.escalate_overdue_steps",
 		# travel_management — auto-advance must run before the reminders so

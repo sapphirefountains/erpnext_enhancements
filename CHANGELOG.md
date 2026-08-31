@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.359.0] - 2026-08-31
+
+### Added
+
+- **Mirror QuickBooks Online attachments into ERPNext (WI-071, PRJ-00739 TASK-2026-01652).**
+  QBO stores files as `Attachable` entities linked to transactions; the new
+  `quickbooks_online/core/attachments.py::sync_attachments` queries them, resolves each to
+  the ERPNext document the QBO transaction was imported as (via the QuickBooks Sync
+  Mapping), downloads the file from its pre-signed `TempDownloadUri`
+  (`QuickBooksClient.download_attachable`), and saves it as a **private File attached to
+  that document** — so scanned receipts/bills live on the ERPNext doc and are visible to
+  anything that reads ERPNext (notably Triton, which indexes ERPNext, not Google Drive).
+  Idempotent via a new indexed `File.custom_qbo_attachable_id` marker keyed with the target
+  document, so re-runs and the daily scheduled pass download only what is not already
+  mirrored; an Attachable linked to several transactions mirrors onto each.
+  `tasks.sync_attachments_scheduled` runs daily, bounded by `max_new` so one run cannot run
+  away; the one-time historical backfill is a manual `bench execute` of
+  `attachments.sync_attachments()` (safe to re-run if interrupted, since it is idempotent).
+  Bench-free tests in `tests/test_quickbooks_attachments.py`, wired into CI as their own
+  pytest step. v1 mirrors into ERPNext only — a Google-Drive backup copy is a deferred
+  follow-on. QBO remains the read-only source of the originals; nothing here writes to QBO.
+  **Deploy note:** the `custom_qbo_attachable_id` field is created by `bench migrate`
+  (fixture sync) on deploy — run the historical backfill only after the deploy lands.
+
 ## [1.358.3] - 2026-08-31
 
 ### Fixed
