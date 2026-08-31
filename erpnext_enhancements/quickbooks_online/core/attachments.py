@@ -98,8 +98,14 @@ def sync_attachments(entity_types=None, max_new=None, settings=None):
 				try:
 					content = client.download_attachable(temp_uri)
 					_save_attachment(content, file_name, att_id, doctype, name)
+					# Commit each mirror on its own so a long backfill makes durable,
+					# resumable progress and never holds one giant transaction over
+					# thousands of File inserts (which would also block progress-monitoring
+					# and roll everything back on a single late failure).
+					frappe.db.commit()
 					summary["mirrored"] += 1
 				except Exception:
+					frappe.db.rollback()
 					summary["errors"] += 1
 					frappe.log_error(
 						frappe.get_traceback(),

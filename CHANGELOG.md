@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.359.1] - 2026-08-31
+
+### Fixed
+
+- **QBO attachment backfill now commits per file (WI-071).** `attachments.sync_attachments`
+  committed only when the whole run finished, so a full historical backfill (~10k+ files) was
+  one enormous all-or-nothing transaction with no durable or observable progress — a single
+  late failure would have rolled the lot back, and a monitor saw a flat mirrored-count until
+  the very end. It now commits each mirrored File individually (rolling back only a failed
+  one), so a long backfill accrues durable, resumable progress; the daily scheduled pass
+  benefits too. Found during the first backfill run. (Also confirmed the pypdf log noise on
+  File insert is a benign core side-effect — the Drive `on_file_attached` hook bails for
+  Journal Entry / Sales Invoice, which aren't in `SYNCED_DOCTYPES`, so mirrored files are not
+  pushed to Drive.)
+
 ## [1.359.0] - 2026-08-31
 
 ### Added
