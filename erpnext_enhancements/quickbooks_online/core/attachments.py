@@ -62,6 +62,29 @@ def sync_attachments(entity_types=None, max_new=None, settings=None):
 		"no_file": 0,
 		"errors": 0,
 	}
+	# Mute notifications/emails for the run. Bulk File inserts (and any Error Log we write
+	# on a mirror hiccup) otherwise fire per-doc Notifications; in a bench/background
+	# context a Notification whose send fails logs an Error Log, whose own insert re-fires
+	# notifications and recurses until the DB connection wedges ("Commands out of sync",
+	# MySQL 2014 -- observed on the first backfill). This is data mirroring, not a
+	# user-facing event. Restored in the finally so a long-lived worker is unaffected.
+	prev_import, prev_mute = frappe.flags.in_import, frappe.flags.mute_emails
+	frappe.flags.in_import = True
+	frappe.flags.mute_emails = True
+	try:
+		_mirror_all(client, summary, entity_types, max_new)
+	finally:
+		frappe.flags.in_import = prev_import
+		frappe.flags.mute_emails = prev_mute
+	return summary
+
+
+def _mirror_all(client, summary, entity_types, max_new):
+	"""Page through QBO Attachables and mirror each (see :func:`sync_attachments`).
+
+	Split out so ``sync_attachments`` can mute notifications around the whole run in a
+	try/finally without re-indenting the loop. Mutates ``summary`` in place; returns None.
+	"""
 	start = 1
 	while True:
 		resp = client.query(
@@ -112,12 +135,11 @@ def sync_attachments(entity_types=None, max_new=None, settings=None):
 						f"QBO attachment mirror {att_id} -> {doctype} {name}",
 					)
 				if max_new and summary["mirrored"] >= max_new:
-					return summary
+					return
 		# A short page is the last page.
 		if len(rows) < QBO_ATTACHABLE_PAGE:
 			break
 		start += QBO_ATTACHABLE_PAGE
-	return summary
 
 
 def _mapped_document(qbo_entity_type, qbo_id):

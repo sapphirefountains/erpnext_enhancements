@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.359.2] - 2026-08-31
+
+### Fixed
+
+- **QBO attachment backfill: mute notifications during the run (WI-071).** The first full
+  backfill wedged the DB connection after ~138 files with `MySQLdb (2014) "Commands out of
+  sync"`. Root cause: inserting a mirrored File (and any Error Log written on a mirror
+  hiccup) fires a Notification whose send fails in a bench/background context; that failure
+  logs an Error Log, whose insert re-fires notifications and recurses until the connection
+  wedges. `sync_attachments` now sets `frappe.flags.in_import` / `mute_emails` for the run
+  (restored in a `finally`) — the standard bulk-data-op guard — so File inserts don't fire
+  user-facing notifications and the recursion can't start; the paging loop was extracted to
+  a `_mirror_all` helper so the mute wraps it cleanly. The daily scheduled pass benefits too.
+  (Separately worth investigating: the Notification-on-Error-Log that recurses on a failed
+  send is a latent landmine for any background batch that logs errors.)
+
 ## [1.359.1] - 2026-08-31
 
 ### Fixed
