@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.359.3] - 2026-08-31
+
+### Fixed
+
+- **QBO attachment backfill: a single malformed PDF can no longer hang the whole run
+  (WI-071).** After the notification mute (v1.359.2) the backfill still wedged — this time
+  with **no error at all**, the process alive but idle for six hours after ~195 files. Root
+  cause: Frappe core runs a synchronous JavaScript-in-PDF security scan on every PDF
+  attachment whose bytes are passed in memory (`core/doctype/file/file.py` →
+  `frappe.utils.pdf.pdf_contains_js` → pypdf `PdfReader`), and one malformed QBO scan (`invalid
+  pdf header`, broken xref / object streams) sends pypdf's parser into a pathological,
+  effectively non-terminating loop inside `File.insert()`. It is CPU-bound, so the mute and
+  every request timeout are irrelevant to it. This **corrects the v1.359.1 note that called
+  the pypdf log noise "benign"** — that noise *was* the hang. Fixes:
+  - `_mirror_all` now wraps each per-file op — **the download and the `File.insert()`** — in
+    a hard `SAVE_TIMEOUT_SECONDS` (45s) `SIGALRM` guard (`_save_time_limit`); a pathological
+    parse (or a stalled download) trips it and the file is rolled back, logged, counted in
+    `errors`, and skipped — the run continues. A signal reliably interrupts a blocked socket
+    read *and* a pure-Python parse; the guard is armed only on the main thread of a non-RQ
+    process (the `bench execute` backfill), never inside an RQ worker, because RQ implements
+    its own job timeout with the same `setitimer(ITIMER_REAL)`/SIGALRM and we must not clobber
+    it (`_in_background_job`).
+  - The per-file `except` now **re-raises RQ's own job-timeout** (`rq.timeouts`
+    `JobTimeoutException` / `BaseTimeoutException`) instead of swallowing it. It subclasses
+    `Exception`, and on the scheduled (RQ worker) path — where the SIGALRM guard is a
+    deliberate no-op and RQ's *one-shot* death penalty is the only timeout — catching it
+    would spend that alarm and let the rest of the run go untimed, re-creating the hang. So
+    it propagates and lets RQ fail the job as designed (surfaced by adversarial review).
+  - `QuickBooksClient.download_attachable` now streams with a `(connect, read)` timeout and a
+    size cap (`max_bytes`), and — critically — **catches only `requests` errors**, wrapping
+    them as `QuickBooksAPIError`, so a control-flow timeout raised into the read (RQ's
+    `JobTimeoutException` or the guard's own exception) propagates untouched rather than being
+    re-labelled and swallowed by the caller. A `max_seconds` between-chunks check remains as a
+    lightweight secondary bound; the *reliable* trickle defence is the caller's SIGALRM guard
+    (a socket close from a timer thread does not dependably interrupt a blocked `recv` on
+    Linux — the first design that review rejected). Two review rounds converged here: the
+    first flagged the missing total bound, the second that an over-broad `except` swallowing
+    RQ's timeout would silently re-open the hang.
+  - `sync_attachments` / `_mirror_all` gained `start_position` / `max_scan` and return
+    `next_start` / `exhausted`, so the backfill runs as a **resumable, bounded chunk loop**
+    (each chunk a fresh `bench execute` under an OS-level `timeout`) — the ultimate backstop:
+    a killed chunk's committed files persist and the cursor marches past a bad window instead
+    of a single long-lived process being the whole job. Found and fixed during the live
+    backfill. (Steady-state follow-up: the daily scheduled pass runs in an RQ worker without
+    the SIGALRM guard; RQ's job timeout now propagates cleanly, but a malformed PDF arriving
+    in future would still fail that day's pass and re-stall on the next — tracked for a
+    persistent skip-list / off-thread parse.)
+
 ## [1.359.2] - 2026-08-31
 
 ### Fixed

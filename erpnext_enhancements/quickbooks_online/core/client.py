@@ -14,6 +14,7 @@ on a 401 and retries the request once.
 from __future__ import annotations
 
 import base64
+import time
 from urllib.parse import urlencode
 
 import frappe
@@ -335,20 +336,70 @@ class QuickBooksClient:
 			raise QuickBooksAPIError(f"QuickBooks upload failed: {response.status_code} {response.text}")
 		return response.json() if response.text else {}
 
-	def download_attachable(self, temp_download_uri: str) -> bytes:
+	def download_attachable(
+		self,
+		temp_download_uri: str,
+		*,
+		connect_timeout: int = 15,
+		read_timeout: int = 45,
+		max_seconds: int = 120,
+		max_bytes: int = 200 * 1024 * 1024,
+	) -> bytes:
 		"""Download an Attachable's bytes from its pre-signed ``TempDownloadUri``.
 
 		The URI a QBO Attachable query returns is a short-lived pre-signed URL to
 		Intuit's file service -- it carries its own auth in the query string, so this
 		is a plain GET with NO bearer token (unlike ``request`` / ``upload_attachable``).
 		Used by ``core.attachments`` to mirror QBO files onto ERPNext documents.
+
+		Streamed, size-capped (``max_bytes``), and with a per-socket ``(connect, read)``
+		timeout so a *fully stalled* transfer (no bytes for ``read_timeout``) raises.
+
+		The reliable defence against a *trickle* (bytes arriving just inside the read
+		timeout, which never trips it, and which can keep ``BufferedReader.read`` filling
+		a single 64KB chunk for a very long time so a between-chunks deadline check never
+		runs) is the CALLER's per-operation ``SIGALRM`` guard on the backfill path, and
+		RQ's own job-timeout on the scheduled worker path -- a signal reliably interrupts a
+		blocked socket read, which closing the socket from a timer thread does not
+		guarantee on Linux. So this method must NOT swallow those control-flow timeouts:
+		it catches only ``requests`` errors (network failures + the read-timeout stall)
+		and wraps them as ``QuickBooksAPIError``; a ``JobTimeoutException`` /
+		``_AttachmentTimeout`` raised into the read propagates untouched, so the caller can
+		re-raise RQ's timeout and skip-log ours. ``max_seconds`` remains as a lightweight
+		secondary bound for a trickle that still yields chunks and for any caller without a
+		signal guard.
 		"""
-		response = requests.get(temp_download_uri, timeout=120)
-		if response.status_code >= 400:
-			raise QuickBooksAPIError(
-				f"QuickBooks attachment download failed: {response.status_code} {_error_snippet(response.text)}"
-			)
-		return response.content
+		deadline = time.monotonic() + max_seconds
+		try:
+			with requests.get(
+				temp_download_uri, timeout=(connect_timeout, read_timeout), stream=True
+			) as response:
+				if response.status_code >= 400:
+					raise QuickBooksAPIError(
+						f"QuickBooks attachment download failed: {response.status_code} {_error_snippet(response.text)}"
+					)
+				chunks = []
+				total = 0
+				for chunk in response.iter_content(chunk_size=1 << 16):
+					if time.monotonic() > deadline:
+						raise QuickBooksAPIError(
+							f"QuickBooks attachment download exceeded the {max_seconds}s budget"
+						)
+					if chunk:
+						chunks.append(chunk)
+						total += len(chunk)
+						if total > max_bytes:
+							raise QuickBooksAPIError(f"QuickBooks attachment exceeds the {max_bytes}-byte cap")
+				if time.monotonic() > deadline:
+					raise QuickBooksAPIError(
+						f"QuickBooks attachment download exceeded the {max_seconds}s budget"
+					)
+				return b"".join(chunks)
+		except requests.exceptions.RequestException as exc:
+			# Network failure or the per-read stall timeout -- a real download error, not a
+			# control-flow timeout. (JobTimeoutException / _AttachmentTimeout are NOT
+			# RequestExceptions, so they propagate past this and reach the caller intact.)
+			raise QuickBooksAPIError(f"QuickBooks attachment download failed: {exc}") from exc
 
 	def query(self, query: str):
 		"""Run a QBO SQL-like query (the ``/query`` endpoint, text/plain body).
