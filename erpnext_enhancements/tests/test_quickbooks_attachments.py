@@ -297,6 +297,33 @@ def test_rq_job_timeout_is_reraised_not_swallowed(monkeypatch):
 	assert saved == []
 
 
+# --------------------------------------------------------------- over-long filenames
+
+
+def test_bounded_file_name_fits_limit_and_keeps_extension(monkeypatch):
+	attachments, _client, _saved = _wire(monkeypatch, [], mapping={})
+	long_name = "A" * 200 + ".pdf"
+	out = attachments._bounded_file_name(long_name)
+	assert len(out) <= 140 and out.endswith(".pdf") and out.startswith("...")
+	# Short names and None pass through untouched.
+	assert attachments._bounded_file_name("receipt.pdf") == "receipt.pdf"
+	assert attachments._bounded_file_name(None) is None
+
+
+def test_over_long_filename_is_truncated_not_errored(monkeypatch):
+	# QBO's long base64 filenames exceed File.file_name's Data(140) and used to raise
+	# CharacterLengthExceededError on insert (~19 skips in the first backfill).
+	long_name = "Z" * 180 + ".pdf"
+	attachables = [_attach("A1", [("Bill", "1")], file_name=long_name)]
+	mapping = {("Bill", "1"): ("Purchase Invoice", "P1")}
+	attachments, client, saved = _wire(monkeypatch, attachables, mapping)
+
+	summary = attachments.sync_attachments()
+
+	assert summary["mirrored"] == 1 and summary["errors"] == 0
+	assert len(saved[0]["file_name"]) <= 140 and saved[0]["file_name"].endswith(".pdf")
+
+
 # --------------------------------------------------------------- save-timeout guard gating
 
 
