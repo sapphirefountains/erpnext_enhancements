@@ -47,6 +47,10 @@ from erpnext_enhancements.quickbooks_online.core.utils import get_settings
 # QBO caps a query page at 1000 rows; page through with STARTPOSITION.
 QBO_ATTACHABLE_PAGE = 1000
 
+# File.file_name is a Data(140) column; QBO filenames can exceed it (see
+# _bounded_file_name).
+MAX_FILE_NAME_LENGTH = 140
+
 # Hard wall-clock cap on one attachment's download + File.insert(). Frappe runs a
 # synchronous JavaScript-in-PDF security scan on every PDF attachment whose bytes are
 # passed in memory (core file.py -> pdf_contains_js -> pypdf PdfReader); a malformed
@@ -310,17 +314,37 @@ def _already_mirrored(att_id, doctype, name):
 	)
 
 
+def _bounded_file_name(file_name):
+	"""Fit a QBO filename into ``File.file_name``'s 140-char ``Data`` limit.
+
+	QBO hands back filenames that are a long base64 token plus an extension, often well
+	over 140 chars; Frappe raises ``CharacterLengthExceededError`` on insert if the name
+	exceeds the field length (observed as ~19 skipped attachments in the first full
+	backfill). Keep the extension and the distinctive tail, marking the cut with a
+	leading "..."; idempotency and the QBO link ride on ``custom_qbo_attachable_id``, not
+	the name, so trimming it is cosmetic. Same approach as the Drive shadow sync's
+	``MAX_FILE_NAME_LENGTH`` handling."""
+	if not file_name or len(file_name) <= MAX_FILE_NAME_LENGTH:
+		return file_name
+	root, dot, ext = file_name.rpartition(".")
+	suffix = f".{ext}" if dot and 1 <= len(ext) <= 10 else ""
+	head = "..."
+	base = root if suffix else file_name
+	keep = MAX_FILE_NAME_LENGTH - len(suffix) - len(head)
+	return f"{head}{base[-keep:]}{suffix}"
+
+
 def _save_attachment(content, file_name, att_id, doctype, name):
 	"""Save downloaded bytes as a private File attached to the ERPNext document.
 
 	Mirrors the ``accounting_intake.channels`` pattern (create a File with ``content``);
 	Frappe writes the bytes to storage on insert. ``custom_qbo_attachable_id`` stamps the
-	source so re-runs skip it.
+	source so re-runs skip it; the filename is bounded to the field limit first.
 	"""
 	frappe.get_doc(
 		{
 			"doctype": "File",
-			"file_name": file_name,
+			"file_name": _bounded_file_name(file_name),
 			"attached_to_doctype": doctype,
 			"attached_to_name": name,
 			"is_private": 1,

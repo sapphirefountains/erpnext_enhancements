@@ -297,6 +297,33 @@ def test_rq_job_timeout_is_reraised_not_swallowed(monkeypatch):
 	assert saved == []
 
 
+# --------------------------------------------------------------- over-long filenames
+
+
+def test_bounded_file_name_fits_limit_and_keeps_extension(monkeypatch):
+	attachments, _client, _saved = _wire(monkeypatch, [], mapping={})
+	long_name = "A" * 200 + ".pdf"
+	out = attachments._bounded_file_name(long_name)
+	assert len(out) <= 140 and out.endswith(".pdf") and out.startswith("...")
+	# Short names and None pass through untouched.
+	assert attachments._bounded_file_name("receipt.pdf") == "receipt.pdf"
+	assert attachments._bounded_file_name(None) is None
+
+
+def test_over_long_filename_is_truncated_not_errored(monkeypatch):
+	# QBO's long base64 filenames exceed File.file_name's Data(140) and used to raise
+	# CharacterLengthExceededError on insert (~19 skips in the first backfill).
+	long_name = "Z" * 180 + ".pdf"
+	attachables = [_attach("A1", [("Bill", "1")], file_name=long_name)]
+	mapping = {("Bill", "1"): ("Purchase Invoice", "P1")}
+	attachments, client, saved = _wire(monkeypatch, attachables, mapping)
+
+	summary = attachments.sync_attachments()
+
+	assert summary["mirrored"] == 1 and summary["errors"] == 0
+	assert len(saved[0]["file_name"]) <= 140 and saved[0]["file_name"].endswith(".pdf")
+
+
 # --------------------------------------------------------------- save-timeout guard gating
 
 
@@ -355,6 +382,34 @@ class _FakeResp:
 		yield from self._chunks
 
 
+class _FakeRequestException(Exception):
+	"""Stand-in for requests.exceptions.RequestException."""
+
+
+class _FakeConnectionError(_FakeRequestException):
+	"""Stand-in for requests.exceptions.ConnectionError (a RequestException subclass)."""
+
+
+def _install_fake_requests(monkeypatch, client_module, get_fn):
+	"""Give client.py a controllable fake ``requests`` with ``get`` and the
+	``exceptions.RequestException`` hierarchy ``download_attachable`` catches.
+
+	The bench-free suites install a BARE ``requests`` stub (``types.ModuleType`` with no
+	``.get`` and no ``.exceptions`` -- see ``test_quickbooks_online.install_frappe_stub``),
+	so patching an attribute onto it fails and the ``except requests.exceptions.*`` clause
+	can't even be evaluated. Replacing the whole module reference makes these tests work
+	regardless of whether real ``requests`` is installed on the runner."""
+	fake = types.SimpleNamespace(
+		get=get_fn,
+		exceptions=types.SimpleNamespace(
+			RequestException=_FakeRequestException,
+			ConnectionError=_FakeConnectionError,
+		),
+	)
+	monkeypatch.setattr(client_module, "requests", fake, raising=False)
+	return fake
+
+
 def _client_module():
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_online.core import client as client_module
@@ -364,7 +419,7 @@ def _client_module():
 
 def test_download_streams_and_joins_chunks(monkeypatch):
 	client_module = _client_module()
-	monkeypatch.setattr(client_module.requests, "get", lambda *a, **k: _FakeResp([b"AB", b"", b"CD"]))
+	_install_fake_requests(monkeypatch, client_module, lambda *a, **k: _FakeResp([b"AB", b"", b"CD"]))
 	client = client_module.QuickBooksClient(settings=object())
 
 	assert client.download_attachable("https://x/dl") == b"ABCD"
@@ -372,7 +427,7 @@ def test_download_streams_and_joins_chunks(monkeypatch):
 
 def test_download_raises_on_http_error(monkeypatch):
 	client_module = _client_module()
-	monkeypatch.setattr(client_module.requests, "get", lambda *a, **k: _FakeResp([], status=404, text="gone"))
+	_install_fake_requests(monkeypatch, client_module, lambda *a, **k: _FakeResp([], status=404, text="gone"))
 	client = client_module.QuickBooksClient(settings=object())
 
 	with pytest.raises(client_module.QuickBooksAPIError):
@@ -381,7 +436,7 @@ def test_download_raises_on_http_error(monkeypatch):
 
 def test_download_enforces_the_size_cap(monkeypatch):
 	client_module = _client_module()
-	monkeypatch.setattr(client_module.requests, "get", lambda *a, **k: _FakeResp([b"x" * 10]))
+	_install_fake_requests(monkeypatch, client_module, lambda *a, **k: _FakeResp([b"x" * 10]))
 	client = client_module.QuickBooksClient(settings=object())
 
 	with pytest.raises(client_module.QuickBooksAPIError):
@@ -395,7 +450,7 @@ def test_download_enforces_the_total_time_budget(monkeypatch):
 		while True:
 			yield b"x"
 
-	monkeypatch.setattr(client_module.requests, "get", lambda *a, **k: _FakeResp(_endless()))
+	_install_fake_requests(monkeypatch, client_module, lambda *a, **k: _FakeResp(_endless()))
 	# deadline = 1000 + 10 = 1010; stays under once, then jumps past it.
 	ticks = iter([1000.0, 1005.0] + [2000.0] * 100)
 	monkeypatch.setattr(client_module.time, "monotonic", lambda: next(ticks))
@@ -411,9 +466,9 @@ def test_download_wraps_request_exceptions(monkeypatch):
 	client_module = _client_module()
 
 	def _boom(*a, **k):
-		raise client_module.requests.exceptions.ConnectionError("reset")
+		raise _FakeConnectionError("reset")
 
-	monkeypatch.setattr(client_module.requests, "get", _boom)
+	_install_fake_requests(monkeypatch, client_module, _boom)
 	client = client_module.QuickBooksClient(settings=object())
 
 	with pytest.raises(client_module.QuickBooksAPIError):
@@ -438,7 +493,7 @@ def test_download_propagates_non_request_exceptions(monkeypatch):
 		yield  # pragma: no cover  (makes this a generator)
 
 	resp.iter_content = _raising_iter
-	monkeypatch.setattr(client_module.requests, "get", lambda *a, **k: resp)
+	_install_fake_requests(monkeypatch, client_module, lambda *a, **k: resp)
 	client = client_module.QuickBooksClient(settings=object())
 
 	with pytest.raises(_JobTimeoutLike):

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.359.4] - 2026-09-01
+
+### Fixed
+
+- **QBO attachment mirror: truncate over-long filenames (WI-071).** The first full backfill
+  skipped ~19 attachments with `CharacterLengthExceededError`: QBO returns filenames that are
+  a long base64 token plus an extension, frequently over Frappe's `File.file_name` `Data(140)`
+  limit, so the insert raised and the file was logged + skipped. `_save_attachment` now bounds
+  the name through `_bounded_file_name` — keep the extension and the distinctive tail, mark the
+  cut with a leading `...` — mirroring the Drive shadow sync's existing 140-char handling;
+  idempotency and the QBO link ride on `custom_qbo_attachable_id`, not the name, so trimming it
+  is cosmetic. Found running the live backfill: of 5,007 Attachables, 4,857 files mirrored on
+  the first pass and the only failures were these filename skips plus ~139 HTTP 401s on stale
+  pre-signed `TempDownloadUri`s (a ticket expires when a large chunk is queried up front and
+  its tail is downloaded minutes later — recovered by re-running in smaller chunks so URLs are
+  used while fresh; the download succeeds for 4,857, so this is expiry, not an auth fault).
+
 ## [1.359.3] - 2026-08-31
 
 ### Fixed
