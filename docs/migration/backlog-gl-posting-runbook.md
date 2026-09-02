@@ -64,7 +64,7 @@ This is the executable counterpart to the analysis in `TASK-2026-01236`: an orde
 | **B5b** | Disabled-party stoppers | 2 | re-check | `ACC-SINV-2026-01210` + `ACC-PAY-2026-01410` (customer *Action Consulting Engineers llc*, disabled) raise at `validate()`. Re-enable for the window or exclude; re-check after the resync. |
 | **B7** | Data that submits cleanly but is wrong | 60 zero-total SI; 18 dup groups | **58 zero-total SI**; dup groups re-check | Triage the 58 zero-total invoices and the duplicate groups against `QuickBooks Raw Payload` **before** submit; **double-imports must be deleted, not cancelled**. Accept or fix per-invoice. |
 
-**Also (not blockers, re-verify at run time):** 0 Webhooks; the finance-doctype Notifications/Server Scripts/Assignment Rules are inert; the wildcard `after_save`→`global_triton_sync` hook is retired (v1.341.1) and was dead anyway — **do not "fix" it**, rewiring to `on_update` would arm ~34,000 outbound jobs on the submit run.
+**Also (not blockers, re-verify at run time):** 0 Webhooks; the finance-doctype Notifications/Server Scripts/Assignment Rules are inert; the wildcard `after_save`→`global_triton_sync` hook is retired (v1.341.1) and was dead anyway — **do not "fix" it**, rewiring to `on_update` would arm ~34,000 outbound jobs on the submit run. **Bulk-write rule (WI-050, verified 2026-09-01):** follow [WI-051 Appendix A](wi051-cutover-runbook.md) — the submit loop is an ORM `submit()` per document (unavoidable), so run it off-hours in committed batches and watch the default RQ queue; any party created during triage uses a `frappe.db`-level insert or runs with `create_customer_folders=0`, because Customer **and Supplier** `after_insert` each enqueue a Drive folder per row.
 
 ---
 

@@ -57,6 +57,7 @@ Non-blocking-but-parallel: CPA Utah tax matrix (WI-036/037 — templates work ma
 | 1.2 | Confirm the go/no-go GO is recorded (§5B) before any destructive step. | CEO | §5B minutes archived with explicit GO. |
 | 1.3 | Take a **verified, download-tested** full Frappe Cloud backup immediately before S1; note the backup id. | Impl. lead | Backup file downloaded and its restore verified on a scratch site (this is the S4/S5 rollback path — see §7). |
 | 1.4 | Freeze unrelated merges to `main` for the window. **A merge to `main` FLUSHDBs both redis instances and restarts the bench**, destroying queued jobs mid-run. | Impl. lead | No `main` deploys between S1 and S6 except the planned cutover release (§3). |
+| 1.5 | **WI-050** — set `ERPNext Enhancements Settings.ai_write_gating_enabled = 1` for the whole window (W1 through S10), then confirm one AI write yields an `AI Pending Action` instead of a mutation. Not earlier: the gate wraps the MCP tools themselves, so every AI-initiated write — including routine task bookkeeping — waits for desk confirmation while it is on (Appendix A). Revert to 0 after the two-week review (§6.5) if wanted. | Impl. lead | `tabSingles` `ai_write_gating_enabled=1`; one `AI Pending Action` row from the test write; the Appendix A bulk-write rule is present in every DATA runbook (backlog GL posting, WI-068, this one). |
 
 ---
 
@@ -242,10 +243,24 @@ The two named per-doctype hazards **are still live** and must be respected durin
 |---|---|---|
 | Customer Drive-folder provisioning | `Customer.after_insert → google_drive.drive_utils.enqueue_customer_folder` (hooks.py:701), gated by `Project Folder Google Drive Settings.create_customer_folders` | Keep **`create_customer_folders=0`** while inserting Customers (e.g. S8 party creation). Same for `create_opportunity_folders` + `Opportunity.after_insert` (hooks.py:580). |
 | Closed-Won prompt | `Opportunity.on_update → crm_enhancements.project_prompt.prompt_create_project_on_won` (hooks.py:567) | Avoid status-touching bulk `doc.save()` on Opportunity; use `frappe.db.set_value`/SQL. |
+| Supplier Drive-folder provisioning | `Supplier.after_insert → accounting_intake.filing.enqueue_supplier_folder` (hooks.py:663) | Same rule as Customer — the enqueue is per inserted row. Bulk-create Suppliers (e.g. AP party creation during triage) with `frappe.db`-level inserts, or off-hours in committed batches. *Missing from the original WI-050 hazard list; added by the 2026-09-01 inventory.* |
+| Other per-row `after_insert` hooks | `Project` (process-step seeding + announce, hooks.py:369–371), `Employee` (training assignment, hooks.py:616), `File` (Drive upload half of attachment sync, hooks.py:586 — bails out cheaply unless the file is attached to a Drive-linked Project/Customer/Opportunity), `Communication`, `Chat Message`, `Activity Log` | Not cutover-DATA doctypes; listed so a bulk import of any of them is planned under the same rule. Complete inventory verified 2026-09-01. |
 
 General rules:
 - Prefer `frappe.db.set_value` / direct SQL to **bypass `doc_events`** wherever the logic permits (e.g. WI-023 back-dates `valid_till` this way). Where an ORM `save()`/`submit()` is genuinely required (e.g. submitting opening Sales Invoices in S8), run **off-hours**, in **batches of 100 with commits**, and monitor the default RQ queue.
 - **Deploy hazard:** a merge to `main` FLUSHDBs both redis instances and restarts the bench, silently killing every queued job. Any cutover script that enqueues work must be **re-drivable** after a deploy — never assume an enqueued job survived. Do not deploy mid-DATA-window (§1.4).
+
+### WI-050 verification record — 2026-09-01
+
+Run against `main` v1.359.4 and prod, as the advisory gate before any bulk DATA window. This appendix is the canonical statement of the bulk-write rule; the backlog GL-posting runbook and the WI-068 runbook point here.
+
+| Check | Result |
+|---|---|
+| Wildcard `'*'` doc_events in `hooks.py` | **None.** `global_triton_sync` retired v1.341.1 (tombstone in `utils/triton_sync.py`); WI-050's optional flag-guard branch is moot. |
+| Per-doctype insert/update hazards | Inventory in the table above; Customer (701), Opportunity (580 / 567) and Supplier (663) confirmed live in `hooks.py`. |
+| Accounting Intake posting posture | Safe: every handler in `accounting_intake/actions/base.py` creates a **docstatus-0 draft** and never submits. No change needed. |
+| `ERPNext Enhancements Settings.ai_write_gating_enabled` | **0 on prod today.** The gate (`assistant_tools/_gate.py`) wraps FAC's `BaseTool._safe_execute` — the MCP tools themselves (`create/update/delete/submit_document`, `run_python_code`, `run_workflow`, dashboards, this app's write tools). With it on, *every* AI-initiated write, including routine PRJ-00739 task bookkeeping, records an `AI Pending Action` and waits for desk confirmation. Flip it at **§1.5**, the start of W1, not months early; one Single field, reverts the same way. |
+| Acceptance "a test AI write creates an `AI Pending Action`" | Deferred to the §1.5 flip — a live write test before then would itself be an unconfirmed AI write on prod. |
 
 ---
 

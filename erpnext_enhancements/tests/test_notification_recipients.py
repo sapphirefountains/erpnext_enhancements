@@ -208,6 +208,64 @@ class TestTheClosedWonAlertIsGatedByTheFramework(unittest.TestCase):
             self.assertIn(f'"{doc["name"]}"', hooks, f"{doc['name']} is not in the hooks allowlist")
 
 
+class TestTheErrorLogAlertCannotRecurse(unittest.TestCase):
+    """TASK-2026-01653. The `Error Log` alert fires on every Error Log insert. When
+    its own send fails, frappe's `Notification.send_notification_by_channel` logs
+    the failure with `self.log_error(...)` — which inserts an Error Log whose
+    `reference_doctype`/`reference_name` is this very Notification — and that
+    insert fires the alert again. Nothing in the framework breaks the cycle
+    (`flags.notifications_executed` is reset per document), so it runs until
+    `RecursionError`; when that lands inside mysqlclient's `_query` the connection
+    is left mid-result and every later query fails with `(2014) Commands out of
+    sync`. Fired twice on prod (2026-08-11: 213 rows; 2026-08-31: 107 rows, which
+    is what wedged the WI-071 attachment backfill).
+
+    The gate is the alert's own `condition`: it declines the one self-referential
+    row, so a failed send costs two Error Log rows and stops. `doc.get` never
+    raises, which matters — an exception inside the condition would loop through
+    `evaluate_alert`'s own `except` instead.
+    """
+
+    def alert(self):
+        return next(d for d in fixture_docs() if d["name"] == "Error Log")
+
+    @staticmethod
+    def evaluate(condition, doc):
+        # A dict mirrors `BaseDocument.get(key)` for the two keys the condition reads.
+        return eval(condition, {"__builtins__": {}}, {"doc": doc})
+
+    def test_it_is_a_python_condition(self):
+        self.assertEqual(self.alert().get("condition_type"), "Python")
+        self.assertTrue(self.alert().get("condition"))
+
+    def test_it_declines_its_own_send_failure_row(self):
+        cond = self.alert()["condition"]
+        self.assertFalse(
+            self.evaluate(cond, {"reference_doctype": "Notification", "reference_name": "Error Log"})
+        )
+
+    def test_it_still_fires_for_everything_else(self):
+        cond = self.alert()["condition"]
+        for doc in (
+            {"reference_doctype": "Notification", "reference_name": "New Lead Created"},
+            {"reference_doctype": None, "reference_name": None},
+            {"reference_doctype": "Journal Entry", "reference_name": "ACC-JV-2026-00001"},
+            {},
+        ):
+            self.assertTrue(self.evaluate(cond, doc), doc)
+
+    def test_every_error_log_alert_carries_the_gate(self):
+        """A second alert on Error Log would need the same clause, or it re-opens the loop."""
+        for doc in fixture_docs():
+            if doc.get("document_type") != "Error Log":
+                continue
+            self.assertIn(
+                "reference_doctype",
+                doc.get("condition") or "",
+                f"{doc['name']} watches Error Log without a self-reference gate",
+            )
+
+
 class TestThePatchedSix(unittest.TestCase):
     def test_every_target_is_a_known_group(self):
         for name, addresses in patch_literal("REPOINT").items():

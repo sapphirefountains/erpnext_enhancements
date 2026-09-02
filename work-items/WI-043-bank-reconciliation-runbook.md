@@ -1,6 +1,7 @@
 # WI-043: Day-one bank reconciliation — manual statement import runbook + Stripe payout matching
 **Phase:** 1   **Type:** CONFIG   **Size:** M
 **Blocked by:** WI-042; WI-040 (for automated payout-JE matching; degraded manual mode works without it)   **Blocks:** WI-056
+**Runbook:** [`docs/bank-reconciliation-runbook.md`](../docs/bank-reconciliation-runbook.md) — authored 2026-09-01; the eight-account list, the payout JE shape and the Month-End Close task names were read from prod/code, and the acceptance criteria below are restated there for a live first month since no TEST site exists.
 
 ## Why
 The Plaid module is balances-only — it calls only /accounts/balance/get and creates zero Bank Transaction rows (repo_payments, verified), so it cannot feed reconciliation. Day one must run on the native import path or the first month-end close has no bank tie-out. Honest posture: manual CSV import is fine at this company's volume; Plaid transactions are a convenience, not a dependency.

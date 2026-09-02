@@ -255,6 +255,7 @@
   "notification_type": "Alert",
   "message_type": "HTML",
   "condition_type": "Python",
+  "condition": "not (doc.get(\"reference_doctype\") == \"Notification\" and doc.get(\"reference_name\") == \"Error Log\")",
   "enabled": 1,
   "message": "{% set body %}\n{{ ee_callout(\"An unhandled error was logged on the site.\", \"danger\") }}\n{{ ee_kv([(\"Method\", doc.get(\"method\")), (\"Logged\", doc.get_formatted(\"creation\") if doc.get(\"creation\") else None)]) }}\n{{ ee_code((doc.get(\"error\") or \"\")[:4000]) }}\n{{ ee_doc_button(doc, \"Open the error log\") }}\n{% endset %}\n{{ ee_email(body, title=\"[Error] \" ~ (doc.get(\"method\") or doc.name), eyebrow=\"Platform\") }}"
  },

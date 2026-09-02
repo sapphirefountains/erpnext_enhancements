@@ -90,13 +90,14 @@ SHAPE_PARTY_QUALIFIER: Final[str] = "party_qualifier"
 SHAPE_PARTY_ONLY: Final[str] = "party_only"
 
 #: Project types that are customer-facing. Anything else is an internal project with no
-#: customer — Overhead, Internal, Other, Group Projects, and the 72 with no type at all —
+#: customer — Overhead, Internal, Other, Group Projects, and any with no type at all —
 #: and is skipped entirely rather than flagged.
 #:
 #: This is a **field that already exists** rather than a list this module maintains, which
 #: is the whole reason it is trustworthy: leftover stage templates (`Stage 1 - Predesign`)
 #: and the software backlog that lives in Project (`Better filtering - 1.5`) both carry no
-#: project_type and fall out on their own, with nobody having to enumerate them.
+#: project_type (WI-027 types them Internal, which is skipped just the same) and fall out on
+#: their own, with nobody having to enumerate them.
 #:
 #: ``Rent`` is listed although WI-065 has already renamed it to ``Events`` and no live row
 #: uses it. Accepting a value that cannot appear costs nothing; a half-applied rename that

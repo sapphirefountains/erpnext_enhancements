@@ -26,6 +26,7 @@ anything.
 | [website-capture/](website-capture/) | The WordPress half: the first-touch UTM mu-plugin, the Fluent Forms hidden fields and webhook mapping, and why a JS-injected field never reaches ERPNext |
 | [error-log-runbook.md](error-log-runbook.md) | Every Error Log signature that no code change can fix — dead MDM credentials, missing Google grants, the SMTP relay IP, log retention — with the commands in Bash and PowerShell |
 | [field-photos-and-payroll-runbook.md](field-photos-and-payroll-runbook.md) | The job-photo capture gate, where photos are routed, and the Shaw & Nielsen payroll workbook |
+| [bank-reconciliation-runbook.md](bank-reconciliation-runbook.md) | WI-043: the weekly statement CSV import and Bank Reconciliation Tool cycle for the eight company bank accounts, matching Stripe payouts to the `po_`-stamped Journal Entry, the month-end Bank Reconciliation Statement on the close, and bad-import recovery |
 | [marketing-spend-runbook.md](marketing-spend-runbook.md) | Loading marketing spend, the value-stream dashboard, and the four KPIs that were measuring a dead column |
 | [marketing-platform-plan.md](marketing-platform-plan.md) | The `marketing/` module build plan: why WP-1 and WP-4 are starved of input, the platform approvals that are the real critical path, and the four phases |
 | [marketing-platform-approvals.md](marketing-platform-approvals.md) | Phase 0: the six external approval packets, the pre-flight checklist, the quota sheet, and the LinkedIn filing order that a rejection makes expensive |

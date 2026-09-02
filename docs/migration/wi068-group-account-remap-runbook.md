@@ -30,6 +30,9 @@ until the staging rehearsal has passed step 6.**
       onto group parents and the whole run is undone — silently, because the entries are
       drafts and re-syncing them is normal behaviour, not an error.
 - [ ] Nobody is mid-import: QuickBooks Online Settings → confirm no run in progress.
+- [ ] Bulk-write rule read (WI-050): [WI-051 Appendix A](wi051-cutover-runbook.md). Bypass
+      `doc_events` with `frappe.db`-level writes where the logic permits; where an ORM save is
+      unavoidable, run off-hours in committed batches and watch the default RQ queue.
 
 Verify the forward fix is actually live:
 
