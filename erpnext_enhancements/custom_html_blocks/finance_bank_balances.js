@@ -2,9 +2,11 @@
 //
 // Reads the cached snapshot from
 // erpnext_enhancements.plaid_banking.core.api.get_bank_balances (the widget never
-// calls Plaid directly). "Refresh" spends a live Plaid call via refresh_now.
-// On a reconnect-required state it shows an amber banner routing to Plaid
-// Settings instead of stale numbers. Shadow-DOM block model (state on window).
+// calls Plaid directly). "Refresh" spends one live Plaid call per linked bank via
+// refresh_now. Balances are grouped by Bank, each with its own status: a bank in
+// "Reconnect Required" shows an amber banner routing to that Bank's form, where the
+// native "Refresh Plaid Link" button lives — re-linking is ERPNext's flow, not ours.
+// Shadow-DOM block model (state on window).
 
 (function () {
     const MAX_ATTEMPTS = 50;
@@ -30,6 +32,56 @@
         return frappe.format(value, { fieldtype: "Currency", options: currency || "USD" });
     }
 
+    function bankFormUrl(bank) {
+        return `/app/bank/${encodeURIComponent(bank)}`;
+    }
+
+    function renderAccount(a) {
+        const esc = frappe.utils.escape_html;
+        const mask = a.mask ? `••${esc(a.mask)}` : "";
+        const sub = [esc(a.subtype || a.type || ""), mask].filter(Boolean).join(" ");
+        const available =
+            a.available !== null && a.available !== undefined
+                ? `<span class="fbb-avail">${__("avail")} ${esc(money(a.available, a.currency))}</span>`
+                : "";
+        return `
+            <div class="fbb-acct">
+                <div class="fbb-acct-top">
+                    <span class="fbb-acct-name">${esc(a.name || __("Account"))}</span>
+                    <span class="fbb-acct-bal">${esc(money(a.current, a.currency))}</span>
+                </div>
+                <div class="fbb-acct-foot">
+                    <span class="fbb-acct-sub">${sub}</span>
+                    ${available}
+                </div>
+            </div>`;
+    }
+
+    function renderBank(b) {
+        const esc = frappe.utils.escape_html;
+        const status = b.status || "Connected";
+        let body;
+        if (status === "Reconnect Required") {
+            body = `<div class="fbb-reconnect">${__("Bank connection needs re-authentication.")}
+                <a href="${bankFormUrl(b.bank)}">${__("Open {0} → Refresh Plaid Link", [esc(b.bank)])}</a></div>`;
+        } else if (status === "Error") {
+            body = `<div class="fbb-bank-msg">${esc(b.message || __("Could not fetch balances."))}</div>`;
+        } else if (!(b.accounts || []).length) {
+            body = `<div class="fbb-bank-msg">${__("No accounts returned yet — press Refresh.")}</div>`;
+        } else {
+            body = b.accounts.map(renderAccount).join("");
+        }
+        const pill = status === "Connected" ? "" : `<span class="fbb-bank-status fbb-status-${status === "Error" ? "error" : "warn"}">${esc(status)}</span>`;
+        return `
+            <div class="fbb-bank">
+                <div class="fbb-bank-head">
+                    <span class="fbb-bank-name">${esc(b.bank)}</span>
+                    ${pill}
+                </div>
+                ${body}
+            </div>`;
+    }
+
     function render(container, message) {
         const esc = frappe.utils.escape_html;
         const body = container.querySelector("#fbb-body");
@@ -37,47 +89,27 @@
         meta.textContent = "";
 
         if (!message || message.enabled === false) {
-            body.innerHTML = `<div class="fbb-muted">${__("Bank Balances are turned off. Enable Plaid in Plaid Settings.")}</div>`;
+            body.innerHTML = `<div class="fbb-muted">${__("Bank Balances are turned off. Switch the widget on in Plaid Banking Settings.")}</div>`;
             return;
         }
-        if (message.reconnect_required) {
-            body.innerHTML = `<div class="fbb-reconnect">${__("Bank connection needs re-authentication.")}
-                <a href="/app/plaid-settings">${__("Open Plaid Settings → Reconnect Bank")}</a></div>`;
+        if (message.paused) {
+            body.innerHTML = `<div class="fbb-reconnect">${esc(message.status_message || __("Plaid is paused after a configuration error."))}
+                <a href="/app/plaid-settings">${__("Check the native Plaid Settings")}</a>
+                <a href="/app/plaid-banking-settings">${__("Plaid Banking Settings → Test Connection")}</a></div>`;
             return;
         }
-        const accounts = message.accounts || [];
-        if (!accounts.length) {
+        const banks = message.banks || [];
+        if (!banks.length) {
             const reason =
                 message.status === "Connected"
-                    ? __("No accounts returned yet — press Refresh.")
-                    : __("Not connected. Open Plaid Settings to connect a bank.");
-            body.innerHTML = `<div class="fbb-muted">${reason}</div>`;
+                    ? __("No balances cached yet — press Refresh.")
+                    : __("No bank is linked. Link one in the native Plaid Settings (ERPNext Integrations).");
+            body.innerHTML = `<div class="fbb-muted">${reason} <a href="/app/plaid-settings">${__("Open Plaid Settings")}</a></div>`;
             return;
         }
 
-        if (message.institution_name) meta.textContent = message.institution_name;
-
-        body.innerHTML = accounts
-            .map((a) => {
-                const mask = a.mask ? `••${esc(a.mask)}` : "";
-                const sub = [esc(a.subtype || a.type || ""), mask].filter(Boolean).join(" ");
-                const available =
-                    a.available !== null && a.available !== undefined
-                        ? `<span class="fbb-avail">${__("avail")} ${esc(money(a.available, a.currency))}</span>`
-                        : "";
-                return `
-                    <div class="fbb-acct">
-                        <div class="fbb-acct-top">
-                            <span class="fbb-acct-name">${esc(a.name || __("Account"))}</span>
-                            <span class="fbb-acct-bal">${esc(money(a.current, a.currency))}</span>
-                        </div>
-                        <div class="fbb-acct-foot">
-                            <span class="fbb-acct-sub">${sub}</span>
-                            ${available}
-                        </div>
-                    </div>`;
-            })
-            .join("");
+        meta.textContent = __("{0} bank(s)", [banks.length]);
+        body.innerHTML = banks.map(renderBank).join("");
 
         if (message.last_sync) {
             const stamp = document.createElement("div");
@@ -107,7 +139,7 @@
 
         function refreshNow() {
             refresh.disabled = true;
-            body.innerHTML = `<div class="fbb-muted">${__("Refreshing from your bank…")}</div>`;
+            body.innerHTML = `<div class="fbb-muted">${__("Refreshing from your banks…")}</div>`;
             frappe
                 .call({ method: REFRESH })
                 .then((r) => {

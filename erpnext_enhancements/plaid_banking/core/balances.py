@@ -1,14 +1,23 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Balance fetch + durable cache for the Plaid integration.
+"""Balance fetch + durable cache for the Bank Balances widget.
 
-``refresh_balances`` is the ONLY function that calls ``/accounts/balance/get`` —
-both the scheduler and the manual "Refresh now" route through it. Results are
-normalized and written to the durable ``Bank Balance Snapshot`` single doctype;
-the dashboard widget reads that cache and never calls Plaid on render. A
-non-retryable Plaid error pauses the integration (``plaid_auth_blocked``) instead
-of retrying, mirroring the MDM auth-block pattern.
+``refresh_balances`` is the ONLY function that calls ``/accounts/balance/get`` --
+both the scheduler and the manual "Refresh now" route through it. It walks every
+Bank the native Plaid Link flow has linked, one call per bank, and writes one
+normalised snapshot to the durable ``Bank Balance Snapshot`` single; the widget
+reads that cache and never calls Plaid on render.
+
+Error policy, per bank, because the keys are shared but the Items are not:
+
+* an Item-level non-retryable code (login required, revoked token ...) marks THAT
+  bank "Reconnect Required" and the loop carries on -- one dead link must not hide
+  the other two banks' numbers;
+* a config-level code (bad keys) pauses the whole widget (``plaid_auth_blocked``)
+  and stops, since every remaining call would fail the same way;
+* anything else (5xx, rate limit, network) marks that bank "Error", stays
+  retryable, and the loop carries on.
 """
 
 from __future__ import annotations
@@ -26,49 +35,126 @@ from erpnext_enhancements.plaid_banking.core.constants import (
 )
 from erpnext_enhancements.plaid_banking.core.utils import (
 	error_snippet,
-	get_secret,
+	get_credentials,
 	get_settings,
+	linked_banks,
 	update_settings_status,
 )
 
+MISSING_KEYS_CODE = "MISSING_API_KEYS"
+
+NO_LINK_MESSAGE = (
+	"No bank is linked to Plaid. Link one in the native Plaid Settings "
+	"(ERPNext Integrations) with 'Link a new bank account'."
+)
+
+
+def reconnect_message(bank: str) -> str:
+	return f"{bank} needs re-authentication. Open the Bank record '{bank}' and press 'Refresh Plaid Link'."
+
 
 def refresh_balances(settings=None) -> dict:
-	"""Pull balances, normalize, write the durable cache, stamp status.
+	"""Pull balances for every linked bank, write the cache, stamp status.
 
-	Raises if there is no connection. On a Plaid error, records the condition on
-	Settings (status + auth_blocked when non-retryable) and re-raises.
+	Returns the snapshot ``{"banks": [...], "fetched_at": ...}``. Raises
+	:class:`PlaidError` only for a config-level failure (bad keys), after recording
+	the pause on Settings; per-bank failures are recorded in the snapshot and do
+	not raise.
 	"""
 	settings = settings or get_settings()
-	access_token = get_secret(settings, "plaid_access_token")
-	if not access_token:
-		frappe.throw("No Plaid connection. Connect a bank first.")
+	banks = linked_banks()
+	if not banks:
+		snapshot = {"banks": [], "fetched_at": str(now_datetime())}
+		_write_cache(snapshot)
+		update_settings_status("Not Connected", message=NO_LINK_MESSAGE)
+		return snapshot
 
+	client = PlaidClient()
+	# Blank native keys with a linked Bank are a config failure exactly like bad keys,
+	# and must be reported as one: ``get_credentials`` throws a plain ValidationError
+	# from inside the first request, which no ``except PlaidError`` below catches --
+	# the status would never be stamped, the throttle anchor would never move, and the
+	# hourly job would write an Error Log every tick. Check once, pause, raise PlaidError.
 	try:
-		data = PlaidClient(settings).get_balances(access_token)
-	except PlaidError as exc:
-		_handle_plaid_error(settings, exc)
-		raise
+		get_credentials(client.native)
+	except Exception as exc:
+		message = error_snippet(str(exc), 300)
+		update_settings_status("Error", message=message, plaid_auth_blocked=1)
+		raise PlaidError(message, error_code=MISSING_KEYS_CODE) from None
 
-	accounts = [_normalize_account(a) for a in (data.get("accounts") or [])]
-	snapshot = {
-		"accounts": accounts,
-		"institution_name": settings.plaid_institution_name or "",
-		"fetched_at": str(now_datetime()),
-	}
+	results = []
+	succeeded = 0
+	for row in banks:
+		bank = row["bank"]
+		try:
+			data = client.get_balances(row["access_token"])
+		except PlaidError as exc:
+			code = exc.error_code
+			if code in NONRETRYABLE_CONFIG_ERRORS:
+				update_settings_status(
+					"Error",
+					message=f"Plaid configuration error ({code}). Check the client id / secret / "
+					"environment on the native Plaid Settings.",
+					plaid_auth_blocked=1,
+				)
+				raise
+			if code in NONRETRYABLE_ITEM_ERRORS:
+				results.append(_bank_entry(bank, "Reconnect Required", reconnect_message(bank)))
+			else:
+				results.append(_bank_entry(bank, "Error", error_snippet(str(exc), 300)))
+			continue
+		succeeded += 1
+		accounts = [_normalize_account(a) for a in (data.get("accounts") or [])]
+		results.append(_bank_entry(bank, "Connected", None, accounts))
+
+	snapshot = {"banks": results, "fetched_at": str(now_datetime())}
 	_write_cache(snapshot)
-	update_settings_status(
-		"Connected",
-		message="Balances refreshed.",
-		plaid_last_sync=now_datetime(),
-		plaid_auth_blocked=0,
-	)
+	_stamp_status(results, succeeded)
 	return snapshot
+
+
+def _bank_entry(bank: str, status: str, message: str | None, accounts: list | None = None) -> dict:
+	return {"bank": bank, "status": status, "message": message, "accounts": accounts or []}
+
+
+def _stamp_status(results: list[dict], succeeded: int) -> None:
+	"""Settings status after a multi-bank pass.
+
+	Connected when at least one bank answered (that is a usable widget); the
+	message names the banks that did not. With no success at all the status is
+	the worst thing seen. ``plaid_last_sync`` (the throttle anchor) only moves on
+	a success, and the pause is lifted by one -- an Item error never pauses.
+	"""
+	failed = [r for r in results if r["status"] != "Connected"]
+	if succeeded:
+		if failed:
+			names = ", ".join(f"{r['bank']} ({r['status']})" for r in failed)
+			message = f"Balances refreshed for {succeeded} of {len(results)} banks. Attention: {names}."
+		else:
+			message = f"Balances refreshed for {succeeded} bank(s)."
+		update_settings_status(
+			"Connected",
+			message=message,
+			plaid_last_sync=now_datetime(),
+			plaid_auth_blocked=0,
+		)
+		return
+	if any(r["status"] == "Reconnect Required" for r in results):
+		names = ", ".join(r["bank"] for r in results if r["status"] == "Reconnect Required")
+		update_settings_status(
+			"Reconnect Required",
+			message=f"Every linked bank needs re-authentication: {names}. Re-link each on its Bank record.",
+		)
+		return
+	update_settings_status(
+		"Error", message=(results[0].get("message") if results else None) or "Refresh failed."
+	)
 
 
 def _normalize_account(account: dict) -> dict:
 	"""Reduce a Plaid account object to the display fields the widget renders.
 
-	``mask`` is the last 4 digits — display only, not a secret.
+	``mask`` is the last 4 digits -- display only, not a secret.
 	"""
 	balances = account.get("balances") or {}
 	return {
@@ -83,52 +169,30 @@ def _normalize_account(account: dict) -> dict:
 	}
 
 
-def _handle_plaid_error(settings, exc: PlaidError) -> None:
-	"""Translate a Plaid error into Settings status + the pause flag.
-
-	Non-retryable Item errors → "Reconnect Required" + pause. Bad keys → "Error" +
-	pause. Anything else (transient 5xx / rate limit) → "Error" but stay retryable.
-	Never logs the access token; only ``error_snippet`` of the message.
-	"""
-	code = exc.error_code
-	if code in NONRETRYABLE_ITEM_ERRORS:
-		update_settings_status(
-			"Reconnect Required",
-			message="Bank connection needs re-authentication — open Plaid Settings and Reconnect Bank.",
-			plaid_auth_blocked=1,
-		)
-	elif code in NONRETRYABLE_CONFIG_ERRORS:
-		update_settings_status(
-			"Error",
-			message=f"Plaid configuration error ({code}). Check the client id / secret / environment.",
-			plaid_auth_blocked=1,
-		)
-	else:
-		update_settings_status(
-			"Error",
-			message=error_snippet(str(exc), 300),
-		)
-
-
 def _write_cache(snapshot: dict) -> None:
 	"""Upsert the single ``Bank Balance Snapshot`` row (durable cache)."""
 	doc = frappe.get_single(SNAPSHOT_DOCTYPE)
-	doc.snapshot_json = json.dumps(snapshot.get("accounts") or [])
-	doc.institution_name = snapshot.get("institution_name") or ""
+	doc.snapshot_json = json.dumps(snapshot.get("banks") or [])
 	doc.fetched_at = snapshot.get("fetched_at")
 	doc.save(ignore_permissions=True)
 	frappe.db.commit()
 
 
 def read_cache() -> dict:
-	"""Return the cached snapshot ``{accounts, institution_name, fetched_at}``."""
+	"""Return the cached snapshot ``{banks, fetched_at}``.
+
+	``snapshot_json`` written before the multi-bank shape held a bare list of
+	accounts; those rows carry no ``bank`` key and are treated as empty rather
+	than rendered under a made-up institution. The next refresh rewrites them.
+	"""
 	doc = frappe.get_single(SNAPSHOT_DOCTYPE)
 	try:
-		accounts = json.loads(doc.snapshot_json or "[]")
+		banks = json.loads(doc.snapshot_json or "[]")
 	except (ValueError, TypeError):
-		accounts = []
+		banks = []
+	if not isinstance(banks, list) or any(not isinstance(b, dict) or "bank" not in b for b in banks):
+		banks = []
 	return {
-		"accounts": accounts,
-		"institution_name": doc.institution_name or "",
+		"banks": banks,
 		"fetched_at": str(doc.fetched_at) if doc.fetched_at else None,
 	}

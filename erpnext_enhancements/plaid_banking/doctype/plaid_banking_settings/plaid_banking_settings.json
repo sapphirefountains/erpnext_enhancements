@@ -1,0 +1,109 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-06-30 00:00:00.000000",
+ "description": "Switches and status for the Bank Balances dashboard widget. Credentials, environment and bank links are NOT here: they live in the native ERPNext Plaid Settings and on each Bank record, and this widget reads those.",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "widget_section",
+  "plaid_enabled",
+  "company",
+  "refresh_poll_minutes",
+  "column_break_status",
+  "plaid_status",
+  "plaid_status_message",
+  "plaid_last_sync",
+  "plaid_auth_blocked"
+ ],
+ "fields": [
+  {
+   "fieldname": "widget_section",
+   "fieldtype": "Section Break",
+   "label": "Bank Balances Widget"
+  },
+  {
+   "default": "0",
+   "description": "Master switch for the Bank Balances widget on the Finance dashboard. Credentials (client id / secret), the environment, and the bank links themselves live in the native <b>Plaid Settings</b> (ERPNext Integrations) and on each <b>Bank</b> record; this widget only reads the balances of banks linked there.",
+   "fieldname": "plaid_enabled",
+   "fieldtype": "Check",
+   "label": "Show the Bank Balances widget"
+  },
+  {
+   "description": "Optional. Company these accounts belong to (for labelling).",
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "default": "240",
+   "description": "How often (minutes) the scheduled job may refresh balances. Balances change slowly, so ~240 (4h) keeps Plaid calls low.",
+   "fieldname": "refresh_poll_minutes",
+   "fieldtype": "Int",
+   "label": "Refresh Throttle (Minutes)"
+  },
+  {
+   "fieldname": "column_break_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Not Connected",
+   "fieldname": "plaid_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Not Connected\nConnected\nError\nReconnect Required",
+   "read_only": 1
+  },
+  {
+   "fieldname": "plaid_status_message",
+   "fieldtype": "Small Text",
+   "label": "Status Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "plaid_last_sync",
+   "fieldtype": "Datetime",
+   "label": "Last Successful Sync",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set when Plaid reports a non-retryable error (e.g. login required, bad keys). While set, the scheduler stops refreshing so a dead connection can't storm the API. Cleared automatically when you edit credentials or reconnect successfully.",
+   "fieldname": "plaid_auth_blocked",
+   "fieldtype": "Check",
+   "label": "Auth Blocked (Paused)",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-09-03 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Plaid Banking",
+ "name": "Plaid Banking Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Accounts Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -1,21 +1,30 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Plaid REST client built on ``requests`` — no third-party SDK.
+"""Plaid REST client built on ``requests`` -- no third-party SDK.
 
-The host is a managed server where PyPI packages can't be installed, so (like the
-Stripe and QuickBooks Online modules) everything Plaid-facing is hand-rolled on
-top of ``requests`` (a Frappe dependency). Plaid authenticates by placing
-``client_id`` + ``secret`` in the JSON body of every POST (not a header); all
-endpoints are POST ``application/json``.
+ERPNext's own connector (``erpnext_integrations/doctype/plaid_settings/
+plaid_connector.py``) uses ``plaid-python``, and because it is an erpnext
+dependency the package is present on any host that runs erpnext. This module
+still does not import it, deliberately:
 
-Unlike QuickBooks there is no OAuth refresh loop — the Plaid access_token is
-long-lived — so a non-retryable error is surfaced via :class:`PlaidError`
-(carrying ``error_code``) and the caller *pauses* the integration rather than
-retrying, mirroring the MDM auth-block pattern that ended the QBO 401 storm.
+* the widget needs exactly three POSTs (``/accounts/balance/get``,
+  ``/accounts/get``, ``/item/get``), each a JSON body with the keys in it -- an SDK
+  adds nothing to that but a model layer to keep in step;
+* the SDK's presence is erpnext's business: its pinned major has changed before
+  (``plaid-python~=7.2.1`` today) and an erpnext upgrade that moves it must not be
+  able to break a dashboard tile;
+* the sibling Stripe and QuickBooks modules are hand-rolled on ``requests`` for the
+  same host-can't-pip-install reason (ADR 0004), and one client shape across the
+  three is worth more than a saved hundred lines.
+
+Plaid authenticates by placing ``client_id`` + ``secret`` in the JSON body of every
+POST (not a header); all endpoints are POST ``application/json``. Keys and the
+environment are read from the NATIVE ``Plaid Settings``; access tokens are passed
+in per call because they are per Bank.
 
 **Logging discipline:** ``secret`` and ``access_token`` live only inside the
-request body — never in a raised message, never passed to ``frappe.log_error``.
+request body -- never in a raised message, never passed to ``frappe.log_error``.
 The only text logged on failure is ``error_snippet(error_message)``.
 """
 
@@ -26,21 +35,16 @@ import requests
 
 from erpnext_enhancements.plaid_banking.core.constants import (
 	ACCOUNTS_BALANCE_GET,
-	CLIENT_NAME,
-	COUNTRY_CODES,
+	ACCOUNTS_GET,
 	ENVIRONMENT_BASE_URLS,
 	ITEM_GET,
-	ITEM_REMOVE,
-	LANGUAGE,
-	LINK_TOKEN_CREATE,
-	PLAID_PRODUCTS,
-	PUBLIC_TOKEN_EXCHANGE,
 	TIMEOUT,
 )
 from erpnext_enhancements.plaid_banking.core.utils import (
 	error_snippet,
 	get_credentials,
-	get_settings,
+	get_environment,
+	get_native_settings,
 )
 
 
@@ -54,17 +58,20 @@ class PlaidError(frappe.ValidationError):
 
 
 class PlaidClient:
-	"""Thin wrapper over the Plaid REST endpoints used by this integration."""
+	"""Thin wrapper over the Plaid REST endpoints the widget uses.
 
-	def __init__(self, settings=None):
-		self.settings = settings or get_settings()
+	Takes the NATIVE Plaid Settings document (loaded once per client so a
+	multi-bank refresh reads the keys once).
+	"""
+
+	def __init__(self, native_settings=None):
+		self.native = native_settings or get_native_settings()
 
 	def get_base_url(self) -> str:
-		env = self.settings.plaid_environment or "Sandbox"
-		return ENVIRONMENT_BASE_URLS.get(env, ENVIRONMENT_BASE_URLS["Sandbox"])
+		return ENVIRONMENT_BASE_URLS[get_environment(self.native)]
 
 	def _auth_body(self) -> dict:
-		client_id, secret = get_credentials(self.settings)  # throws if missing
+		client_id, secret = get_credentials(self.native)  # throws if missing
 		return {"client_id": client_id, "secret": secret}
 
 	def _request(self, path: str, body: dict) -> dict:
@@ -85,7 +92,7 @@ class PlaidClient:
 				timeout=TIMEOUT,
 			)
 		except requests.RequestException as exc:
-			raise PlaidError(f"Plaid request failed: {error_snippet(str(exc), 200)}")
+			raise PlaidError(f"Plaid request failed: {error_snippet(str(exc), 200)}") from None
 		if response.status_code >= 400:
 			data = {}
 			try:
@@ -102,35 +109,14 @@ class PlaidClient:
 
 	# ---- endpoint wrappers -------------------------------------------------
 
-	def create_link_token(self, *, user_client_id: str, access_token: str | None = None) -> dict:
-		"""POST /link/token/create. With ``access_token`` set → Link update mode
-		(reconnect an existing Item; products are omitted in update mode)."""
-		body = {
-			"client_name": CLIENT_NAME,
-			"language": LANGUAGE,
-			"country_codes": COUNTRY_CODES,
-			"user": {"client_user_id": user_client_id},
-			"products": PLAID_PRODUCTS,
-			# "redirect_uri": <registered OAuth redirect — required only if KeyBank
-			# uses Plaid's OAuth flow; register it in the Plaid dashboard first>.
-		}
-		if access_token:
-			body["access_token"] = access_token
-			body.pop("products", None)
-		return self._request(LINK_TOKEN_CREATE, body)
-
-	def exchange_public_token(self, public_token: str) -> dict:
-		"""POST /item/public_token/exchange → ``{access_token, item_id}``."""
-		return self._request(PUBLIC_TOKEN_EXCHANGE, {"public_token": public_token})
-
 	def get_balances(self, access_token: str) -> dict:
-		"""POST /accounts/balance/get → live account balances."""
+		"""POST /accounts/balance/get -> live balances for one Bank's Item."""
 		return self._request(ACCOUNTS_BALANCE_GET, {"access_token": access_token})
 
-	def item_get(self, access_token: str) -> dict:
-		"""POST /item/get → Item metadata (used by Test Connection)."""
-		return self._request(ITEM_GET, {"access_token": access_token})
+	def get_accounts(self, access_token: str) -> dict:
+		"""POST /accounts/get -> the Item's accounts (ids, names, masks; no live balances)."""
+		return self._request(ACCOUNTS_GET, {"access_token": access_token})
 
-	def item_remove(self, access_token: str) -> dict:
-		"""POST /item/remove → invalidate the access_token at Plaid (disconnect)."""
-		return self._request(ITEM_REMOVE, {"access_token": access_token})
+	def item_get(self, access_token: str) -> dict:
+		"""POST /item/get -> Item metadata (used by Test Connection)."""
+		return self._request(ITEM_GET, {"access_token": access_token})

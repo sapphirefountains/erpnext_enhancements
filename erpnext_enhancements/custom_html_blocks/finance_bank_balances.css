@@ -48,6 +48,54 @@
     cursor: default;
 }
 
+.fbb-bank {
+    padding: 6px 0 4px;
+}
+
+.fbb-bank + .fbb-bank {
+    border-top: 2px solid var(--border-color);
+    margin-top: 6px;
+}
+
+.fbb-bank-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 2px;
+}
+
+.fbb-bank-name {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+}
+
+.fbb-bank-status {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    white-space: nowrap;
+}
+
+.fbb-status-warn {
+    background: rgba(240, 173, 78, 0.18);
+    color: #8a5a00;
+}
+
+.fbb-status-error {
+    background: rgba(217, 83, 79, 0.15);
+    color: #a32d2a;
+}
+
+.fbb-bank-msg {
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 6px 0;
+}
+
 .fbb-acct {
     padding: 8px 0;
     border-bottom: 1px solid var(--border-color);

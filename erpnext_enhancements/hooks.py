@@ -261,10 +261,16 @@ doctype_js = {
 		# would fire constantly on records that predate the rule.
 		"public/js/party_naming_advisor.js",
 	],
-	# device_management (MDM/EMM)
-	"Managed Device": "device_management/doctype/managed_device/managed_device.js",
-	# quickbooks_online
-	"QuickBooks Online Settings": "quickbooks_online/doctype/quickbooks_online_settings/quickbooks_online_settings.js",
+	# NOT listed here, on purpose: this app's OWN DocTypes' form scripts. Frappe loads
+	# `<module>/doctype/<name>/<name>.js` on its own (FormMeta.add_code, v16) and then
+	# appends every doctype_js entry to the SAME string with no dedupe, so listing that
+	# file here evaluates it twice inside one Function body. Duplicate `function`
+	# declarations survive that; a top-level `const` is a SyntaxError and the form loses
+	# every button (Plaid Banking Settings shipped that way; so did its predecessor).
+	# tests/test_hooks_integrity.py fails the build on such an entry. This hook is for
+	# scripts under public/ and for scripts bound to erpnext's / frappe's DocTypes
+	# (Managed Device, QuickBooks Online Settings and Plaid Banking Settings are
+	# therefore absent -- their scripts sit in their doctype folders and load anyway).
 	# accounting_intake
 	"Document Intake": "public/js/accounting_intake/document_intake.js",
 	# quickbooks_online write-back button (intake-created PI / Payment Entry)
@@ -274,8 +280,13 @@ doctype_js = {
 	"Stripe Payments Settings": "public/js/stripe_payments/stripe_payments_settings.js",
 	"Sales Invoice": "public/js/stripe_payments/sales_invoice_pay_button.js",
 	"Stripe Payment": "public/js/stripe_payments/stripe_payment.js",
-	# plaid_banking — Plaid Link connect flow on the Settings form
-	"Plaid Settings": "plaid_banking/doctype/plaid_settings/plaid_settings.js",
+	# plaid_banking: no entry. The Test / Refresh / "Map Plaid accounts" buttons live in
+	# plaid_banking/doctype/plaid_banking_settings/plaid_banking_settings.js, which Frappe
+	# auto-loads (see above). Linking a bank is the native ERPNext flow (Plaid Settings ->
+	# "Link a new bank account"; Bank -> "Refresh Plaid Link"); nothing of ours touches
+	# Plaid Link, and nothing of ours may be keyed "Plaid Settings": that name is
+	# erpnext's, and this app shipping a DocType under it overwrote the native record
+	# (patches/rename_plaid_settings_doctype).
 	# fountain_move — triage actions (retry / spam) and jump-to-created-record
 	"Fountain Move Request": "public/js/crm_enhancements/fountain_move_request.js",
 	"Fountain Move Invite": "public/js/crm_enhancements/fountain_move_invite.js",

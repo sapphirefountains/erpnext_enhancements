@@ -14,6 +14,21 @@ erpnext_enhancements.patches.drop_legacy_travel_trips
 # thing on EVERY migrate (setup/module_map.py) -- this is the belt-and-braces one-shot
 # that runs inside the same @atomic phase as sync_all(). No-op when the map is correct.
 erpnext_enhancements.patches.refresh_module_map
+# Un-collides this app's "Plaid Settings" Single from ERPNext's own DocType of that
+# name. sync_all imports a DocType JSON whenever its migration_hash differs from the
+# stored one (modified is only consulted for non-DocType records), so both apps
+# re-imported every migrate and the later-installed app -- ours -- overwrote the native
+# record on prod: erpnext's Link/sync code then read fields its schema no longer had,
+# and our widget read a switch that never existed. Renames ours to "Plaid Banking
+# Settings", points erpnext's Invoicing-workspace card and Banking-sidebar item back at
+# the native name (rename_dynamic_links had moved them, and sync_all never re-imports
+# a workspace whose DB stamp is not older than its JSON), moves every non-ours
+# tabSingles row back under the native name (DocType.after_rename moves every row, not
+# just ours), purges any __Auth row for our retired access token, and reload_doc()s
+# erpnext's JSON so the native record exists again before sync_all.
+# pre_model_sync is the only section that can do this: after model sync there would be
+# a third DocType and the collision would still stand. Idempotent from the DB state.
+erpnext_enhancements.patches.rename_plaid_settings_doctype
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
@@ -774,3 +789,9 @@ erpnext_enhancements.patches.release_superseded_subscription_uids
 # unauthorized_client, x128 alarms). Seeds the new Chat Settings exemption list with it;
 # fill-blank-only, so an edited list survives. Safe twice.
 erpnext_enhancements.patches.seed_subscription_exempt_identities
+# Fills the declared defaults into the renamed Plaid Banking Settings row. It inherited
+# the NATIVE Single's rows through the rename above and the rename patch moved those
+# back out, so on the day this ships the row holds none of our fields -- and a
+# `default` on a Single field never reaches an existing row (v1.277.3). Fill-blank-only,
+# never over a stored 0. Safe twice.
+erpnext_enhancements.patches.backfill_plaid_banking_settings_defaults

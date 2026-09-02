@@ -701,6 +701,15 @@ jobs:
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_attachments.py -q
       - name: Stripe Payments (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_stripe_payments.py -q
+      # Plaid bank balances over the NATIVE ERPNext link. Own step, own frappe stub.
+      # Guards the per-bank error policy (one dead link must not hide the other banks;
+      # bad keys pause everything), the credential read off erpnext's own Plaid
+      # Settings rather than ours, the mapping-helper refusals that keep native Link
+      # from stranding the eight Bank Account masters, and the exact SQL of the
+      # DocType un-collision patch -- a rename that moved the wrong tabSingles rows
+      # would break the native Link silently and the migrate would still exit 0.
+      - name: Plaid bank balances (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_plaid_banking.py -q
       # The server-side URL boundary (v1.317.0). Its own step and pytest-style, matching the
       # rule above: it installs no frappe stub because the modules under test import no
       # frappe, and that importability IS the design requirement — the predicate runs inside
