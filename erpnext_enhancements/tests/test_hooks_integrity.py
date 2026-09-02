@@ -216,6 +216,39 @@ class TestHandlersLookReal(unittest.TestCase):
         )
 
 
+class TestDoctypeJsDoesNotDoubleLoad(unittest.TestCase):
+    """A `doctype_js` entry pointing at one of this app's OWN doctype-folder scripts loads it twice.
+
+    `FormMeta.add_code` (frappe/desk/form/meta.py, v16) always reads
+    `<module>/doctype/<name>/<name>.js` for a DocType this app owns, then appends every
+    `doctype_js` entry to the SAME `__js` string with no dedupe, and the client evaluates the
+    whole thing as one `new Function(...)` body. Duplicate `function` declarations survive that;
+    a duplicate top-level `const` / `let` / `class` is a SyntaxError, and the form then loads
+    with no custom buttons at all -- which is how the Plaid settings form shipped, twice.
+    The hook is for scripts under `public/` and for scripts bound to erpnext's / frappe's
+    DocTypes (those folders hold no DocType JSON of ours, so Frappe does not auto-load them).
+    """
+
+    def test_no_entry_points_at_an_app_owned_doctypes_own_script(self):
+        doctype_js = ast.literal_eval(top_level_assignments()["doctype_js"])
+        offenders = []
+        for doctype, files in doctype_js.items():
+            for rel in files if isinstance(files, list) else [files]:
+                parts = rel.strip("/").split("/")
+                if len(parts) != 4 or parts[1] != "doctype" or parts[3] != f"{parts[2]}.js":
+                    continue
+                if (APP_ROOT / parts[0] / "doctype" / parts[2] / f"{parts[2]}.json").exists():
+                    offenders.append(f"{doctype}: {rel}")
+        self.assertEqual(
+            offenders,
+            [],
+            "doctype_js lists a script Frappe already auto-loads for an app-owned DocType; it "
+            "would be evaluated twice in one Function body and any top-level const/let/class "
+            "declaration in it becomes a SyntaxError that disables the whole form:\n  "
+            + "\n  ".join(offenders),
+        )
+
+
 class TestLogRetention(unittest.TestCase):
     """`default_log_clearing_doctypes` is one line whose absence is invisible.
 

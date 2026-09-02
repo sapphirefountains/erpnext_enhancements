@@ -2,13 +2,12 @@
  "actions": [],
  "allow_rename": 0,
  "creation": "2026-06-30 00:00:00.000000",
- "description": "Durable cache of the latest Plaid bank balances (one current snapshot). Single so it survives a Redis flush on migrate, like KPI Snapshot. The Bank Balances widget reads this; it never calls Plaid on render.",
+ "description": "Durable cache of the latest Plaid bank balances (one current snapshot, grouped by Bank). Single so it survives a Redis flush on migrate, like KPI Snapshot. The Bank Balances widget reads this; it never calls Plaid on render.",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
   "fetched_at",
-  "institution_name",
   "snapshot_json"
  ],
  "fields": [
@@ -19,13 +18,7 @@
    "read_only": 1
   },
   {
-   "fieldname": "institution_name",
-   "fieldtype": "Data",
-   "label": "Institution",
-   "read_only": 1
-  },
-  {
-   "description": "Normalized accounts array as JSON (name, mask, subtype, available, current, currency).",
+   "description": "JSON array, one entry per linked Bank: {bank, status, message, accounts: [{name, mask, subtype, available, current, currency}]}.",
    "fieldname": "snapshot_json",
    "fieldtype": "Long Text",
    "label": "Snapshot (JSON)",
@@ -35,7 +28,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-30 00:00:00.000000",
+ "modified": "2026-09-03 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Plaid Banking",
  "name": "Bank Balance Snapshot",

@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.361.0] - 2026-09-02
+
+### Fixed
+
+- **Our `Plaid Settings` DocType had overwritten ERPNext's own, silently breaking both
+  (WI-056, TASK-2026-01895).** ERPNext v16 ships a native Plaid integration — the Single
+  `Plaid Settings` (module ERPNext Integrations), Plaid Link on its form and on `Bank`, a
+  per-institution token on `Bank.plaid_access_token`, and an hourly sync into submitted
+  `Bank Transaction` rows deduped on `transaction_id`. The `plaid_banking` module (v1.148.0,
+  the Bank Balances widget) shipped a second DocType under the same name. Two DocTypes cannot
+  share a name: `sync_all` imports a DocType JSON whenever its `migration_hash` differs (the
+  `modified` stamp only gates non-DocType records), so both were re-imported on every migrate
+  in app-install order and the later-installed app — this one — won. On prod the native
+  record carried our field list while `tabSingles` kept the native rows; erpnext's Link code
+  would have crashed on `plaid_env` the moment `enabled` was ticked, and our widget read a
+  switch that had no row, so it said "disabled" whatever anyone did. Nobody noticed because
+  nothing was configured. Fix: ours is renamed **`Plaid Banking Settings`** by a
+  pre-model-sync patch (`rename_plaid_settings_doctype`: rename; point erpnext's Invoicing
+  card and Banking sidebar item back at the native name, which `rename_dynamic_links` had
+  moved and `sync_all` never repairs; move every non-ours `tabSingles` row — the six native
+  values *and* the Single's meta rows — back under the native name; purge any `__Auth` row
+  for our retired access token; `reload_doc` erpnext's JSON so the native record exists again
+  before model sync). A post-model-sync backfill fills our renamed Single's defaults
+  (fill-blanks-only). A `modified` bump can never fix a name clash; only distinct names do.
+- **Form scripts of this app's own DocTypes were loaded twice.** Frappe already loads
+  `<module>/doctype/<name>/<name>.js` for an app's own DocType (`FormMeta.add_code`) and then
+  appends every `doctype_js` entry to the same string with no dedupe, so listing that file in
+  `doctype_js` evaluated it twice inside one function body. Duplicate `function` declarations
+  survive that; a top-level `const` is a SyntaxError and the form loses every button — which
+  is how the new Plaid Banking Settings form shipped in review, and how its predecessor had
+  shipped. `Managed Device` and `QuickBooks Online Settings` were double-loaded the same way
+  and survived only by having no top-level `const`/`let`. All three entries are removed and
+  `tests/test_hooks_integrity.py` fails the build on any `doctype_js` entry that points at
+  an app-owned doctype folder.
+
+### Changed
+
+- **The Bank Balances widget now rides on ERPNext's native Plaid link instead of its own
+  (WI-056, rewritten native-first).** Credentials and environment are read from the native
+  `Plaid Settings`; access tokens from every `Bank` the native Link has stored one on; so
+  each institution is linked **once**, one Plaid Item shared by balances (ours) and
+  transactions (erpnext's) — one consent, one bill. The widget renders grouped by bank with a
+  per-bank status: an Item-level failure (re-login required) marks *that* bank Reconnect
+  Required and the loop continues, bad or blank keys pause the job, anything else marks the
+  bank Error and stays retryable. Our own Link/exchange/disconnect flow, credential fields
+  and single-Item token are gone (`core/connect.py` deleted). WI-056's plan to hand-roll
+  `/transactions/sync` is dropped: it would have reimplemented the native feature.
+- **Mapping helper so native Link never strands the eight Bank Account masters.** Native
+  `add_bank_accounts` names accounts `<Plaid account name> - <Bank>` and creates a new GL
+  Account for any name it does not find, and `add_institution` names the `Bank` after Plaid's
+  institution string ("KeyBank", not "Key Bank"). `core/link_accounts.py` adds
+  `map_plaid_account` (stamp `integration_id`/`mask`/`last_integration_date` onto an existing
+  master, re-pointing it under the token-holding Bank when Plaid named it differently — refused
+  when the master's own Bank holds a token, since that is a second Item), `absorb_native_duplicate`
+  (fold a Link-created row into our master; the auto-created GL Account is deleted only when
+  it is provably the link's own, unused, and nothing links to it — inside a savepoint, with
+  `frappe.throw`'s queued message cleared so a refused delete does not pop a red dialog over
+  a successful absorb), and `prune_link_created_gl_accounts` (a native **Refresh Plaid Link**
+  re-runs `add_bank_accounts` and leaves one stray GL Account per shared account once the
+  masters hold the ids). `last_integration_date` is always set, because NULL means "twelve
+  months, submitted" to the native first pull. A **Map Plaid accounts** dialog on Plaid
+  Banking Settings drives it. The module README carries the end-to-end procedure, including
+  the "rename each Bank to Plaid's exact institution name before linking" step.
+- Property Setters pin `Bank.plaid_access_token` hidden + read-only (erpnext's JSON already
+  sets both). The value is plaintext at rest in erpnext core — accepted knowingly and
+  documented: only System Manager reads `Bank` out of the box, and widening Bank permissions
+  widens token exposure.
+- Bench-free suite `tests/test_plaid_banking.py` (own frappe stub, own CI step) pins the
+  native credential read, the per-bank error policy, the mapping-helper refusals and the
+  rename patch's exact SQL. Shaped by an adversarial review (three lenses, two skeptics per
+  finding; twelve confirmed findings, all fixed). The WI-043 bank-reconciliation runbook
+  notes what changes for a Plaid-fed account.
+
 ## [1.360.0] - 2026-09-02
 
 ### Fixed

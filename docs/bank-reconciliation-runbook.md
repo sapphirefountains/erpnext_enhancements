@@ -132,6 +132,16 @@ the Bank Reconciliation Tool, which opens the same form.
    file. Duplicates from an overlapping export show up here as pairs — fix per §8 before
    matching anything.
 
+**Plaid-fed accounts (WI-056).** Once a bank is linked through ERPNext's own Plaid
+integration and its accounts are mapped to these masters, §3–§4 fall away for that bank:
+posted transactions arrive hourly as *submitted* Bank Transactions (pending ones are
+skipped; expect ~T+1), deduped on the Plaid `transaction_id`, and §5 onwards is unchanged.
+Do **not** also import a CSV for a linked account — the importer has no duplicate check.
+A widget banner or an Error Log titled *Plaid transactions sync error* means that bank
+needs re-authenticating: open the `Bank` record → **Refresh Plaid Link**; until then, fall
+back to §3–§4 for that bank only. Setup, mapping and the re-link side effects are in
+[`plaid_banking/README.md`](../erpnext_enhancements/plaid_banking/README.md).
+
 ---
 
 ## 5. Weekly — match (Bank Reconciliation Tool)
