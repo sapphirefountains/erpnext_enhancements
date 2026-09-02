@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.361.1] - 2026-09-02
+
+### Changed
+
+- **Privacy Policy (`/privacy-policy`) updated for the Plaid bank feeds and to describe the
+  security posture concretely (WI-056).** Plaid's production-access application requires the
+  privacy policy shown in the application to disclose the use of Plaid. The Web Page fixture
+  now: dates the policy September 2, 2026; states in §2.7 that we connect (or will connect —
+  the tense is deliberate, production access is pending) the **company's own** business bank
+  accounts through Plaid and what we receive (institution, account name/type and last four
+  digits, balances, posted transactions) and that bank login credentials are entered only in
+  Plaid Link and never reach our systems, and that card and bank details for payments are
+  entered only on Stripe-hosted forms; adds §2.9 "Bank account connections (Plaid)" with the
+  disclosure Plaid asks for and a link to Plaid's End User Privacy Policy; adds the
+  reconciliation/cash-monitoring purpose to §3 and Plaid Inc. and Stripe to the processor list
+  in §7; references the new written Data Retention and Disposal Policy in §11 (bank connections
+  revoked by unlinking, cached balances replaced on refresh); and replaces the two-sentence §12
+  with the security controls that actually exist — Google single sign-on with the ERP's own
+  password login disabled, role-based least-privilege access with separation of duties in
+  purchasing, TLS in transit and encryption at rest with the Stripe and QuickBooks Online
+  tokens in encrypted fields (the bank-connection token is a plain field in erpnext core,
+  protected by disk encryption and restricted to system administrators — stated, not glossed),
+  private hosting with administrative access only through Identity-Aware Proxy, alerting on
+  privileged logins and errors, encrypted backups every six hours with off-site copies,
+  automatic security patching, a reviewed automated deployment pipeline, an incident-response
+  procedure, and an annually reviewed Information Security Policy. Every statement was checked
+  against production settings and the infrastructure code before it was written, then
+  adversarially reviewed (36 findings applied across the three documents); nothing is claimed
+  that is not in place. The companion Information Security Policy and Data Retention and
+  Disposal Policy are internal documents (uploaded to Plaid), not part of this repository.
+
 ## [1.361.0] - 2026-09-02
 
 ### Fixed
