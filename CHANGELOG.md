@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.360.0] - 2026-09-02
+
+### Fixed
+
+- **The `Error Log` Notification can no longer recurse into itself and wedge the database
+  connection (TASK-2026-01653).** This is the real cause of the "MySQLdb (2014) Commands out
+  of sync" wedge that v1.359.2 worked around by muting notifications during the WI-071
+  backfill. The alert fires on every Error Log insert; when its own send fails, frappe's
+  `Notification.send_notification_by_channel` catches that with
+  `self.log_error("Failed to send Notification")` — which inserts *another* Error Log
+  (`reference_doctype='Notification'`, `reference_name='Error Log'`), whose `after_insert`
+  fires the same alert again. `flags.notifications_executed` is reset per document, so
+  nothing in the framework breaks the cycle; it runs until `RecursionError`, and when that
+  lands inside mysqlclient's `_query` between `db.query()` and reading the result, the
+  result set is never consumed and every later query hits `next_result()` → "Commands out of
+  sync". By construction the wedge can never log itself, which is why no Error Log ever said
+  so. It has fired twice on prod — 2026-08-11 (a Triton chat 403 → 213 rows; the send failed
+  because the chat service account is not a `User`) and 2026-08-31 (a `TypeError` in the
+  attachment mirror → 107 rows in five seconds; the send failed on a cached `None` from
+  `client_cache.get_value("webhooks")` in a long-lived bench console). The fixture now
+  carries a `condition` that declines the one self-referential row —
+  `not (doc.get("reference_doctype") == "Notification" and doc.get("reference_name") == "Error Log")`
+  — so a failed send costs two rows and stops. `evaluate_alert` reads the condition before
+  sending; `doc.get` never raises, which matters because an exception inside the condition
+  would loop through `evaluate_alert`'s own `except` instead. Narrow on purpose: other
+  alerts' send failures still email System Managers. Pinned by
+  `tests/test_notification_recipients.py`, which also asserts that any *future* Notification
+  on Error Log carries the same gate. The two underlying send failures are separate defects
+  and remain (each background error still costs two rows, not one).
+
+### Added
+
+- **QBO attachment mirror: the daily pass is now self-protecting against a hung file, and
+  download tickets are fetched fresh (TASK-2026-01894, WI-071 follow-up).** Two steady-state
+  problems left over from the backfill. (1) The 90 s SIGALRM per-file guard (v1.359.3) is a
+  deliberate no-op inside an RQ worker, so a malformed PDF arriving after the backfill would
+  hang `File.insert()` until RQ's death penalty killed the whole daily job — and, with
+  nothing recording which file did it, kill it again every day. Every download+insert is now
+  bracketed by a **write-ahead attempt marker**: a `QuickBooks Sync Mapping` row with
+  `qbo_entity_type='Attachable'`, `qbo_id=<Id>` (no new DocType or Custom Field — every other
+  reader of the ledger filters on its own entity types or on the ERPNext side, and these rows
+  leave `erpnext_doctype`/`erpnext_name` empty), written and *committed before* the attempt
+  and deleted in the same transaction as the File on success. A marker still saying
+  `attempting` two hours later belonged to a run that never finished the file: it is settled
+  as `hung` (one Error Log titled `QBO attachment <Id> skipped: hung`, `match_status =
+  Pending Review`) and never downloaded again. The SIGALRM guard's own timeout settles it
+  hung at once; ordinary exceptions count attempts and the file is given up on after three.
+  RQ's *job* timeout (300 s — the daily job runs on the `default` queue, since v16's
+  `ScheduledJobType.get_queue_name` sends only `*Long`/`Maintenance` frequencies to `long`)
+  is told apart from a hang by the file's own elapsed time: under 90 s it was a healthy file
+  caught by the run's clock and the marker is released for tomorrow; at or over it, the file
+  hung. It is always re-raised, per v1.359.3. A DB row rather than redis so the record
+  survives the deploy `FLUSHDB`; `reset_attachable(att_id)` (or deleting the row) puts a file
+  back in play. Known trade-off: a deploy mid-run leaves one healthy file under a young
+  marker, skipped that day and settled hung after two hours — the documented reset recovers
+  it. (2) `TempDownloadUri` is a pre-signed ticket that expires within minutes, so a
+  1000-row page queried up front had its tail rejected by the time the downloads reached it
+  (~139 HTTP 401s in the backfill, worked around by running it in 50-row chunks). Each page
+  is now reduced to the (Attachable, target) pairs that need a download, then worked in
+  batches of 50 whose URIs are re-queried (`SELECT * FROM Attachable WHERE Id IN (...)`,
+  with a per-id `get_entity` fallback should QBO ever refuse the `IN` form) immediately
+  before the downloads; a 401/403 raises the new `QuickBooksDownloadTicketError` and is
+  re-queried exactly once before counting as a failure (`url_refreshes` in the run summary).
+  An adversarial review (four lenses, two skeptics per finding) then shaped the edges, all
+  of which are pinned by tests: the marker records whether the SIGALRM guard was armed, so
+  a marker the *guarded* backfill leaves behind — its OS `timeout` or a deploy restart
+  killed the process mid-file — is retried as one ordinary failure rather than settled hung
+  (the guard settles real hangs itself; only an unguarded RQ marker can mean a hang); the
+  hung Error Log is written *before* the marker's commit, because on the RQ-timeout path
+  frappe's job wrapper rolls back everything after it and the alert was being lost while
+  the Pending Review row survived; the timeout release deletes by natural key, since the
+  alarm can land after the insert's commit and before its return; the marker handlers
+  re-raise RQ's timeout instead of swallowing it; the loser of a marker-insert race between
+  two runs is counted `skipped_in_flight` with no log, not an error; a dead grant
+  (`QuickBooksDisconnectedError`) releases the marker and aborts the run with the reconnect
+  message instead of charging every remaining file an attempt; `FAILURE_STREAK_LIMIT` (10)
+  failures back to back stop the run as an environment fault and *rewind* those markers, so
+  three bad days can no longer park every pending file; a refused `IN` query is reported
+  once per run rather than degrading silently to 51 calls a batch; and the *QuickBooks
+  Records Mapped* number card excludes marker rows. Twenty-two new bench-free tests; the
+  module README carries the state table.
+- **Bank reconciliation runbook (WI-043).** `docs/bank-reconciliation-runbook.md`: the
+  weekly statement-CSV import and Bank Reconciliation Tool cycle for the eight company bank
+  accounts, matching Stripe payouts to the `po_`-stamped Journal Entry exactly as
+  `payouts.py` builds it, the month-end Bank Reconciliation Statement on the Month-End Close,
+  and bad-import recovery. Native behaviour was read from `erpnext origin/version-16`. Two
+  facts an accountant needs and would not guess: `Bank Transaction.transaction_id` is not
+  unique in v16 and the importer has no duplicate check, so overlapping exports silently
+  double rows; and the column mapping persists per *Bank*, not per account. There is no TEST
+  site, so the first live month is the rehearsal and §9 is that month's checklist.
+- **Cutover integration-hazard verification and the bulk-write rule (WI-050).** Verified
+  2026-09-01 and recorded in the WI-051 cutover runbook (Appendix A, new step §1.5), with
+  pointers from the backlog GL-posting and WI-068 runbooks: the wildcard `'*'`
+  `global_triton_sync` hook is retired (v1.341.1) so that hazard and the optional flag-guard
+  branch are moot; Accounting Intake posts drafts only; the per-row `after_insert` hazards
+  for bulk DATA runs are Customer (Drive folder), Opportunity (Drive folder; closed-won
+  prompt on `on_update`) **and Supplier (Drive folder, `accounting_intake.filing`) — missing
+  from the original hazard list**. `ai_write_gating_enabled` stays 0 until the freeze window:
+  the gate wraps the MCP tools themselves, so with it on every AI-initiated write, including
+  routine project bookkeeping, waits for desk confirmation; it is one Single field and is
+  scheduled as the first W1 step rather than flipped months early.
+
+### Changed
+
+- `party_naming_rules.py`'s comment no longer counts "the 72 with no type": WI-027 types
+  those projects `Internal`, which the customer-facing check skips just the same.
+
 ## [1.359.4] - 2026-09-01
 
 ### Fixed

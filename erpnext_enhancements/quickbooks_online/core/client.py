@@ -60,6 +60,20 @@ class QuickBooksDisconnectedError(QuickBooksAPIError):
 	pass
 
 
+class QuickBooksDownloadTicketError(QuickBooksAPIError):
+	"""Raised when a pre-signed ``TempDownloadUri`` is rejected (HTTP 401/403).
+
+	The URI carries its own short-lived ticket in the query string; a rejection means
+	the ticket expired between the Attachable query and the download (minutes suffice
+	-- ~139 of the backfill's tail downloads hit it), not that the OAuth grant is broken.
+	Its own class so ``core.attachments`` can re-query a fresh URI exactly once before
+	counting the download as failed. Subclasses ``QuickBooksAPIError`` so existing
+	handlers still catch it.
+	"""
+
+	pass
+
+
 def _error_snippet(text, limit=500):
 	"""Bound a QBO error body so large payloads never spill into logs.
 
@@ -368,12 +382,21 @@ class QuickBooksClient:
 		re-raise RQ's timeout and skip-log ours. ``max_seconds`` remains as a lightweight
 		secondary bound for a trickle that still yields chunks and for any caller without a
 		signal guard.
+
+		A 401/403 raises ``QuickBooksDownloadTicketError``: the pre-signed ticket has
+		expired (they live minutes), so the caller re-queries a fresh URI once rather
+		than counting it as a download failure. Any other >=400 raises the base error.
 		"""
 		deadline = time.monotonic() + max_seconds
 		try:
 			with requests.get(
 				temp_download_uri, timeout=(connect_timeout, read_timeout), stream=True
 			) as response:
+				if response.status_code in (401, 403):
+					raise QuickBooksDownloadTicketError(
+						"QuickBooks attachment download ticket rejected: "
+						f"{response.status_code} {_error_snippet(response.text)}"
+					)
 				if response.status_code >= 400:
 					raise QuickBooksAPIError(
 						f"QuickBooks attachment download failed: {response.status_code} {_error_snippet(response.text)}"
