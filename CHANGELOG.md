@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.362.0] - 2026-09-03
+
+### Added
+
+- **Water Feature Design — a "Design Calculations" print format for regulated venues (spa / pool),
+  plus the capture fields to back it.** Sapphire's traditional spa/pool design sheet is a single page
+  grouped by *hydraulic system* — vessel, design basis, circulation loop, therapy-jet loop,
+  heating/treatment, instrumentation, code compliance — with equipment written as narrative lines the
+  way a health-department plan-checker reads them. The `Water Feature Design` model already captured
+  most of it (turnover, minimum flow, bather load, skimmers, VGB drains, therapy jets, chemistry), so
+  this fills the gaps rather than adding a parallel model:
+  - New print format **`Water Feature Design - Design Calculations`** (`setup_print_formats.py`),
+    shipped on `after_migrate` alongside the existing Results / Calculation Audit / Schedules /
+    Submittal Packet formats. It renders off the persisted rollups, per-row computed columns, and the
+    `calc_results` audit trail — every figure is the engine's, none retyped — and shows the
+    design-basis math inline (e.g. `425 ÷ 30 min = 14.17 GPM`). Section titles are passed to the
+    layout macro as plain text with a bare `&`, not `&amp;`, because Frappe print-format Jinja
+    autoescapes `{{ }}` output (the reason the existing formats need `| safe` for their SVG) and an
+    entity in a macro argument would double-escape to a literal `&amp;`.
+  - A **`system` loop tag** (Circulation / Therapy-Jet / Shared) on `Water Venue Fixture`,
+    `Water Feature Pump`, and `Water Feature Pipe Segment`, so a spa's two independent loops —
+    circulation and therapy-jet, each with its own drains, pump, and pipe sizing — group under the
+    right heading in capture and on the print instead of being interleaved the way the source sheet
+    is. It defaults to Circulation; on a normal child table a column default back-fills every existing
+    row as part of the migrate `ALTER`, so legacy designs need no data patch.
+  - **`perimeter_ft`** on `Water Feature Basin`, and **`vessel_model` / `vessel_listing` /
+    `vessel_construction`** on the regulated-venue section of `Water Feature Design` (e.g. Westland
+    WB-8300-C, IAPMO SP-4338, "prefabricated acrylic shell, three layers fiberglass-reinforced
+    resin"). The three parent fields are added to `EDITABLE_DESIGN_FIELDS` so every write surface
+    (desk form, wizard `save_inputs`, and the `save_water_design` MCP tool) may set them; the child
+    `system` tag rides the existing wholesale child-row copy and needs no allowlist change.
+  Instrumentation (thermometers, vacuum/pressure gauges) and chemical feeders already capture through
+  the equipment catalog's existing `Gauge / Meter` and `Chemical Feed Pump` classes (with the seeded
+  Pasco and Stenner 45M1 Items), so the print groups those by `equipment_class` — no new equipment
+  vocabulary was needed. Flow meters, being `Gauge / Meter`, group under Instrumentation with the
+  other meters rather than under Circulation.
+
 ## [1.361.1] - 2026-09-02
 
 ### Changed

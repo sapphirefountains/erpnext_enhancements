@@ -92,6 +92,10 @@ EDITABLE_DESIGN_FIELDS = frozenset(
         "bather_sf_per_person",
         "skimmer_sf_each",
         "skimmer_rated_gpm",
+        # vessel / shell identity (regulated venues)
+        "vessel_model",
+        "vessel_listing",
+        "vessel_construction",
     }
 )
 

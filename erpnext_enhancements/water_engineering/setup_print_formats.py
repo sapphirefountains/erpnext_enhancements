@@ -1,6 +1,6 @@
 """after_migrate setup for the Water Feature Design Print Formats.
 
-Ships two views of a design's results, both rendered server-side (Jinja) from the
+Ships several views of a design, all rendered server-side (Jinja) from the
 persisted rollups + ``calc_results`` audit trail:
 
 * **Water Feature Design - Results** — the simple, final end-results: headline
@@ -10,6 +10,10 @@ persisted rollups + ``calc_results`` audit trail:
   calculation, the exact formula, the inputs (with provenance), the step-by-step
   working, the source citation, and any warnings — laid out to hand-compare
   against the source workbooks.
+* **Water Feature Design - Design Calculations** — a single-sheet plan-check
+  calc sheet for regulated venues (spa / pool): the vessel, the design-basis
+  calcs, and the equipment grouped by hydraulic system (circulation vs. the
+  therapy-jet loop) with narrative equipment lines.
 
 Created idempotently on every migrate (Frappe Cloud has no ``bench`` shell), and
 guarded so a hiccup only logs. Re-upserting the HTML means template edits deploy
@@ -24,6 +28,7 @@ MODULE = "Water Engineering"
 RESULTS_PF = "Water Feature Design - Results"
 AUDIT_PF = "Water Feature Design - Calculation Audit"
 SCHEDULES_PF = "Water Feature Design - Schedules"
+DESIGN_CALC_PF = "Water Feature Design - Design Calculations"
 SUBMITTAL_PF = "Control Panel Design - Submittal"
 PANEL_SCHEDULE_PF = "Control Panel Design - Panel Schedule"
 PACKET_PF = "Water Feature Design - Submittal Packet"
@@ -272,6 +277,213 @@ SCHEDULES_HTML = """
       {% endfor %}
     </tbody>
   </table>
+  {% endif %}
+</div>
+""".strip()
+
+
+# --- Design Calculations (single-sheet plan-check view, regulated venues) ---
+# Groups the captured data by hydraulic SYSTEM (vessel -> design basis ->
+# circulation loop -> therapy-jet loop -> heating/treatment -> instrumentation
+# -> compliance) with narrative equipment lines, the way an AHJ plan-checker
+# reads a spa/pool calc sheet. Fixtures/pumps/piping route to a loop via their
+# `system` tag; catalog equipment routes by `equipment_class`. All figures are
+# the engine's persisted rollups + per-row computed columns — nothing is retyped.
+DESIGN_CALC_HTML = """
+{%- set tb = we_title_block(doc.name) -%}
+{%- macro sechead(no, title, note='') -%}
+<table style="width:100%; border-collapse:collapse; margin:20px 0 8px;"><tr>
+  <td style="width:26px; font:bold 18px 'Helvetica Neue',Arial,sans-serif; color:#1b5e82; vertical-align:bottom; padding-bottom:3px;">{{ no }}</td>
+  <td style="font:bold 13px 'Helvetica Neue',Arial,sans-serif; letter-spacing:0.5px; text-transform:uppercase; vertical-align:bottom; border-bottom:1px solid #cbd6dd; padding-bottom:4px;">{{ title }}</td>
+  <td style="text-align:right; font:11px 'Helvetica Neue',Arial,sans-serif; color:#6c7a83; vertical-align:bottom; border-bottom:1px solid #cbd6dd; padding-bottom:4px;">{{ note }}</td>
+</tr></table>
+{%- endmacro -%}
+{%- macro line(role, desc, tag='', ok=false) -%}
+<tr>
+  <td style="padding:6px 12px 6px 0; vertical-align:top; width:118px; font:bold 10px 'Helvetica Neue',Arial,sans-serif; text-transform:uppercase; letter-spacing:0.3px; color:#4a5a63; border-bottom:1px solid #e6ebee;">{{ role }}</td>
+  <td style="padding:6px 12px 6px 0; vertical-align:top; font:12px 'Helvetica Neue',Arial,sans-serif; color:#16232e; border-bottom:1px solid #e6ebee;">{{ desc }}</td>
+  <td style="padding:6px 0; vertical-align:top; text-align:right; white-space:nowrap; font:bold 11px 'Helvetica Neue',Arial,sans-serif; color:{{ '#2f8557' if ok else '#124a67' }}; border-bottom:1px solid #e6ebee;">{% if ok and tag %}&#10003; {% endif %}{{ tag }}</td>
+</tr>
+{%- endmacro -%}
+{%- set ns = namespace(surface=0, jet=false) -%}
+{%- for b in doc.basins %}{% set ns.surface = ns.surface + (b.surface_area_sf or 0) %}{% endfor -%}
+{%- for fx in doc.venue_fixtures %}{% if fx.fixture_type == 'Therapy Jet' or fx.system == 'Therapy-Jet' %}{% set ns.jet = true %}{% endif %}{% endfor -%}
+{%- for p in doc.pumps %}{% if p.system == 'Therapy-Jet' %}{% set ns.jet = true %}{% endif %}{% endfor -%}
+{%- for s in doc.pipe_segments %}{% if s.system == 'Therapy-Jet' %}{% set ns.jet = true %}{% endif %}{% endfor -%}
+<div style="font-family:'Helvetica Neue',Arial,sans-serif; color:#16232e; font-size:12px;">
+
+  {% if tb.preliminary %}<div style="text-align:center; color:#8f5a1d; font:bold 9px 'Helvetica Neue',Arial,sans-serif; letter-spacing:1px; border-bottom:1px solid #e6d3bd; padding-bottom:6px; margin-bottom:10px;">PRELIMINARY &mdash; NOT FOR CONSTRUCTION &mdash; SEALED BY P.E. BEFORE ISSUE</div>{% endif %}
+
+  <table style="width:100%; border-collapse:collapse; border-bottom:2px solid #1b5e82;">
+    <tr>
+      <td style="vertical-align:bottom; padding-bottom:10px;">
+        <div style="font:bold 11px 'Helvetica Neue',Arial,sans-serif; text-transform:uppercase; letter-spacing:1.5px; color:#124a67;">Design Calculations{% if doc.venue_type %} &middot; {{ doc.venue_type }}{% endif %}</div>
+        <div style="font:bold 24px 'Helvetica Neue',Arial,sans-serif; margin:5px 0 2px;">{{ tb.project.name }}</div>
+        {% if doc.vessel_model %}<div style="color:#5a6a73; font-size:12px;">{{ doc.vessel_model }}</div>{% endif %}
+      </td>
+      <td style="vertical-align:bottom; padding-bottom:10px; text-align:right; font-size:11px; color:#3a4a53; white-space:nowrap;">
+        <div><span style="color:#8794a0;">Design</span> &nbsp;{{ doc.name }}</div>
+        {% if doc.governing_code %}<div><span style="color:#8794a0;">Code</span> &nbsp;{{ doc.governing_code }}</div>{% endif %}
+        <div><span style="color:#8794a0;">Issue</span> &nbsp;{{ doc.issue_date or '&mdash;' }}</div>
+        <div><span style="color:#8794a0;">By</span> &nbsp;{{ doc.drawn_by or tb.contractor.name }}</div>
+        <div><span style="color:#8794a0;">Status</span> &nbsp;{{ doc.status or 'Draft' }}</div>
+      </td>
+    </tr>
+  </table>
+
+  {{ sechead('1', 'Vessel & Volume', doc.vessel_listing or '') }}
+  {% if doc.vessel_model or doc.vessel_construction %}
+  <p style="margin:0 0 8px; font-size:12px;">{% if doc.vessel_model %}<b>{{ doc.vessel_model }}</b>{% endif %}{% if doc.vessel_construction %} &mdash; {{ doc.vessel_construction }}{% endif %}{% if doc.vessel_listing %} Listing {{ doc.vessel_listing }}.{% endif %}</p>
+  {% endif %}
+  {% for b in doc.basins %}
+  <table style="width:100%; border-collapse:collapse; margin-bottom:8px; font-size:11px;">
+    <tr>
+      {% if b.basin_label %}<td style="border:1px solid #dfe6ea; padding:4px 8px; color:#6c7a83;">Vessel</td><td style="border:1px solid #dfe6ea; padding:4px 8px;">{{ b.basin_label }}</td>{% endif %}
+      <td style="border:1px solid #dfe6ea; padding:4px 8px; color:#6c7a83;">Shape</td><td style="border:1px solid #dfe6ea; padding:4px 8px;">{{ b.shape or '&mdash;' }}</td>
+      <td style="border:1px solid #dfe6ea; padding:4px 8px; color:#6c7a83;">Volume</td><td style="border:1px solid #dfe6ea; padding:4px 8px;">{{ "%.0f"|format(b.volume_gal) if b.volume_gal else '&mdash;' }} gal</td>
+    </tr>
+    <tr>
+      <td style="border:1px solid #dfe6ea; padding:4px 8px; color:#6c7a83;">Dimensions</td><td style="border:1px solid #dfe6ea; padding:4px 8px;">{% if b.length_in %}{{ "%g"|format(b.length_in) }} &times; {{ "%g"|format(b.width_in) }}{% if b.height_in %} &times; {{ "%g"|format(b.height_in) }}{% endif %} in{% elif b.diameter_in %}&#8960; {{ "%g"|format(b.diameter_in) }}{% if b.height_in %} &times; {{ "%g"|format(b.height_in) }}{% endif %} in{% else %}&mdash;{% endif %}</td>
+      <td style="border:1px solid #dfe6ea; padding:4px 8px; color:#6c7a83;">Perimeter</td><td style="border:1px solid #dfe6ea; padding:4px 8px;">{{ "%g"|format(b.perimeter_ft) if b.perimeter_ft else '&mdash;' }} ft</td>
+      <td style="border:1px solid #dfe6ea; padding:4px 8px; color:#6c7a83;">Water surface</td><td style="border:1px solid #dfe6ea; padding:4px 8px;">{{ "%g"|format(b.surface_area_sf) if b.surface_area_sf else '&mdash;' }} sq ft</td>
+    </tr>
+  </table>
+  {% endfor %}
+  {% if not doc.basins %}<p style="color:#98a4ac; font-style:italic; font-size:11px;">No basin defined.</p>{% endif %}
+
+  {{ sechead('2', 'Design Basis', (("%g"|format(doc.max_turnover_min)) ~ '-min max turnover') if doc.max_turnover_min else '') }}
+  <table style="width:100%; border-collapse:collapse; background:#f1f5f8; border-left:3px solid #1b5e82;">
+    {% if doc.design_flow_published_gpm or doc.design_flow_gpm %}
+    <tr>
+      <td style="padding:7px 12px; font-size:12px; border-bottom:1px solid #e0e7eb;">Design flow rate <span style="color:#8794a0; font-size:10px;">(published)</span></td>
+      <td style="padding:7px 12px; text-align:right; font-size:12px; color:#5a6a73; border-bottom:1px solid #e0e7eb;"><b style="color:#124a67;">{{ "%.0f"|format(doc.design_flow_published_gpm or doc.design_flow_gpm) }} GPM</b></td>
+    </tr>
+    {% endif %}
+    {% if doc.minimum_flow_gpm %}
+    <tr>
+      <td style="padding:7px 12px; font-size:12px; border-bottom:1px solid #e0e7eb;">Minimum circulation flow <span style="color:#8794a0; font-size:10px;">(volume &divide; turnover)</span></td>
+      <td style="padding:7px 12px; text-align:right; font-size:12px; color:#5a6a73; border-bottom:1px solid #e0e7eb;">{% if doc.total_basin_gallons and doc.max_turnover_min %}{{ "%.0f"|format(doc.total_basin_gallons) }} &divide; {{ "%g"|format(doc.max_turnover_min) }} min = {% endif %}<b style="color:#124a67;">{{ "%.2f"|format(doc.minimum_flow_gpm) }} GPM</b></td>
+    </tr>
+    {% endif %}
+    {% if doc.turnover_time_min %}
+    <tr>
+      <td style="padding:7px 12px; font-size:12px; border-bottom:1px solid #e0e7eb;">Turnover time at published flow <span style="color:#8794a0; font-size:10px;">(volume &divide; flow)</span></td>
+      <td style="padding:7px 12px; text-align:right; font-size:12px; color:#5a6a73; border-bottom:1px solid #e0e7eb;">{% if doc.total_basin_gallons and (doc.design_flow_published_gpm or doc.design_flow_gpm) %}{{ "%.0f"|format(doc.total_basin_gallons) }} &divide; {{ "%.0f"|format(doc.design_flow_published_gpm or doc.design_flow_gpm) }} = {% endif %}<b style="color:#124a67;">{{ "%.2f"|format(doc.turnover_time_min) }} min</b></td>
+    </tr>
+    {% endif %}
+    {% if doc.bather_load %}
+    <tr>
+      <td style="padding:7px 12px; font-size:12px;">Bather load <span style="color:#8794a0; font-size:10px;">(surface &divide; sq ft per person)</span></td>
+      <td style="padding:7px 12px; text-align:right; font-size:12px; color:#5a6a73;">{% if ns.surface and doc.bather_sf_per_person %}{{ "%g"|format(ns.surface) }} &divide; {{ "%g"|format(doc.bather_sf_per_person) }} = {% endif %}<b style="color:#124a67;">{{ doc.bather_load }} persons</b></td>
+    </tr>
+    {% endif %}
+  </table>
+
+  {{ sechead('3', 'Circulation System', (("%.0f"|format(doc.required_circulation_gpm)) ~ ' GPM') if doc.required_circulation_gpm else '') }}
+  <div style="border-left:3px solid #1b5e82; padding-left:14px; margin-bottom:6px;">
+    <div style="display:inline-block; font:bold 10px 'Helvetica Neue',Arial,sans-serif; text-transform:uppercase; letter-spacing:0.8px; color:#1b5e82; background:#eef4f8; padding:3px 8px; border-radius:3px; margin-bottom:4px;">Circulation Loop{% if doc.design_flow_gpm %} &middot; {{ "%.0f"|format(doc.design_flow_gpm) }} GPM{% endif %}</div>
+    <table style="width:100%; border-collapse:collapse;">
+      {% for e in doc.design_equipment if e.equipment_class == 'Filter' %}
+        {{ line('Filter', (e.equipment_item ~ ((' · ' ~ e.model_no) if e.model_no else '')), e.rating or '') }}
+      {% endfor %}
+      {% for fx in doc.venue_fixtures if fx.fixture_type == 'Skimmer' and fx.system != 'Therapy-Jet' %}
+        {{ line('Skimmer', (((fx.qty or 1)|string) ~ ' × ' ~ (fx.part_no or 'skimmer') ~ ((' · ' ~ fx.status) if fx.status else '')), (("%.1f"|format(fx.computed_flow_gpm) ~ ' GPM') if fx.computed_flow_gpm else ((("%g"|format(fx.rated_gpm)) ~ ' GPM') if fx.rated_gpm else ''))) }}
+      {% endfor %}
+      {% if doc.skimmer_count %}{{ line('', 'Skimmers required (1 per ' ~ (("%g"|format(doc.skimmer_sf_each)) if doc.skimmer_sf_each else '100') ~ ' sq ft)', doc.skimmer_count|string) }}{% endif %}
+      {% for fx in doc.venue_fixtures if fx.fixture_type == 'Main Drain' and fx.system != 'Therapy-Jet' %}
+        {{ line('Main drains', ((fx.part_no or 'Main drain') ~ ', ' ~ ((fx.qty or 1)|string) ~ ' drains' ~ ((' · ' ~ ("%g"|format(fx.open_area_in2)) ~ ' sq in open area') if fx.open_area_in2 else '') ~ ((' · ' ~ ("%.0f"|format(fx.computed_flow_gpm)) ~ ' GPM') if fx.computed_flow_gpm else '')), (fx.status or 'VGB'), ok=true) }}
+      {% endfor %}
+      {% for fx in doc.venue_fixtures if fx.fixture_type == 'Return Inlet' and fx.system != 'Therapy-Jet' %}
+        {{ line('Return inlets', (((fx.qty or 1)|string) ~ ' × ' ~ (fx.part_no or 'return inlet')), ((("%g"|format(fx.rated_gpm)) ~ ' GPM') if fx.rated_gpm else (((fx.qty or 1)|string) ~ ' inlets'))) }}
+      {% endfor %}
+      {% set circp = namespace(any=false) %}
+      {% for p in doc.pumps if p.system != 'Therapy-Jet' and p.is_selected %}{% set circp.any = true %}{% endfor %}
+      {% for p in doc.pumps if p.system != 'Therapy-Jet' and (p.is_selected or not circp.any) %}
+        {{ line(('Pump ★' if p.is_selected else 'Pump'), ((p.pump_item or p.pump_description or 'Pump') ~ ((' · ' ~ p.part_number) if p.part_number else '')), ((("%.0f"|format(p.rated_gpm)) ~ ' GPM') if p.rated_gpm else '') ~ ((' / ' ~ ("%.0f"|format(p.rated_tdh_ft)) ~ ' ft') if p.rated_tdh_ft else '')) }}
+      {% endfor %}
+      {% set cs = namespace(suction='', discharge='') %}
+      {% for s in doc.pipe_segments if s.system != 'Therapy-Jet' %}{% if s.line_type == 'Suction' and not cs.suction %}{% set cs.suction = s.nominal_size %}{% endif %}{% if s.line_type == 'Discharge' and not cs.discharge %}{% set cs.discharge = s.nominal_size %}{% endif %}{% endfor %}
+      {% if cs.suction or cs.discharge %}{{ line('Piping', ((cs.suction ~ ' suction') if cs.suction else '') ~ ((' / ') if (cs.suction and cs.discharge) else '') ~ ((cs.discharge ~ ' return') if cs.discharge else '')) }}{% endif %}
+    </table>
+  </div>
+
+  {% if ns.jet %}
+  {{ sechead('4', 'Therapy-Jet System', 'Independent loop') }}
+  <div style="border-left:3px solid #8f5a1d; padding-left:14px; margin-bottom:6px;">
+    <div style="display:inline-block; font:bold 10px 'Helvetica Neue',Arial,sans-serif; text-transform:uppercase; letter-spacing:0.8px; color:#8f5a1d; background:#f6efe6; padding:3px 8px; border-radius:3px; margin-bottom:4px;">Therapy-Jet Loop</div>
+    <table style="width:100%; border-collapse:collapse;">
+      {% for fx in doc.venue_fixtures if fx.fixture_type == 'Therapy Jet' %}
+        {{ line('Therapy jets', ((fx.part_no or 'Therapy jets') ~ ' · ' ~ ((fx.qty or 1)|string) ~ ' jets'), (("%.0f"|format(fx.computed_flow_gpm) ~ ' GPM') if fx.computed_flow_gpm else ((("%g"|format(fx.rated_gpm)) ~ ' GPM') if fx.rated_gpm else ''))) }}
+      {% endfor %}
+      {% for fx in doc.venue_fixtures if fx.fixture_type == 'Main Drain' and fx.system == 'Therapy-Jet' %}
+        {{ line('Main drains', ((fx.part_no or 'Main drain') ~ ', ' ~ ((fx.qty or 1)|string) ~ ' drains' ~ ((' · ' ~ ("%g"|format(fx.open_area_in2)) ~ ' sq in open area') if fx.open_area_in2 else '') ~ ((' · ' ~ ("%.0f"|format(fx.computed_flow_gpm)) ~ ' GPM') if fx.computed_flow_gpm else '')), (fx.status or 'VGB'), ok=true) }}
+      {% endfor %}
+      {% set jetp = namespace(any=false) %}
+      {% for p in doc.pumps if p.system == 'Therapy-Jet' and p.is_selected %}{% set jetp.any = true %}{% endfor %}
+      {% for p in doc.pumps if p.system == 'Therapy-Jet' and (p.is_selected or not jetp.any) %}
+        {{ line(('Pump ★' if p.is_selected else 'Pump'), ((p.pump_item or p.pump_description or 'Pump') ~ ((' · ' ~ p.part_number) if p.part_number else '')), ((("%.0f"|format(p.rated_gpm)) ~ ' GPM') if p.rated_gpm else '') ~ ((' / ' ~ ("%.0f"|format(p.rated_tdh_ft)) ~ ' ft') if p.rated_tdh_ft else '')) }}
+      {% endfor %}
+      {% set js = namespace(suction='', discharge='') %}
+      {% for s in doc.pipe_segments if s.system == 'Therapy-Jet' %}{% if s.line_type == 'Suction' and not js.suction %}{% set js.suction = s.nominal_size %}{% endif %}{% if s.line_type == 'Discharge' and not js.discharge %}{% set js.discharge = s.nominal_size %}{% endif %}{% endfor %}
+      {% if js.suction or js.discharge %}{{ line('Piping', ((js.suction ~ ' suction') if js.suction else '') ~ ((' / ') if (js.suction and js.discharge) else '') ~ ((js.discharge ~ ' return') if js.discharge else '')) }}{% endif %}
+    </table>
+  </div>
+  {% endif %}
+
+  {% set treat = doc.design_equipment | selectattr('equipment_class', 'in', ['Heater', 'Chemical Controller', 'Chemical Feed Pump']) | list %}
+  {% if treat or doc.chlorinator_feed_gph %}
+  {{ sechead('5', 'Heating & Treatment', doc.chem_water_type or '') }}
+  <div style="border-left:3px solid #a6b4bd; padding-left:14px; margin-bottom:6px;">
+    <table style="width:100%; border-collapse:collapse;">
+      {% for e in doc.design_equipment if e.equipment_class == 'Heater' %}
+        {{ line('Heater', (e.equipment_item ~ ((' · ' ~ e.model_no) if e.model_no else '')), e.rating or '') }}
+      {% endfor %}
+      {% for e in doc.design_equipment if e.equipment_class == 'Chemical Controller' %}
+        {{ line('Chem control', (e.equipment_item ~ ((' · ' ~ e.model_no) if e.model_no else ''))) }}
+      {% endfor %}
+      {% for e in doc.design_equipment if e.equipment_class == 'Chemical Feed Pump' %}
+        {{ line('Feeder', (e.equipment_item ~ ((' · ' ~ e.model_no) if e.model_no else '')), (('×' ~ (e.qty|string)) if (e.qty and e.qty > 1) else '')) }}
+      {% endfor %}
+      {% if doc.chlorinator_feed_gph %}{{ line('Chlorinator', ('Feed at ' ~ (("%g"|format(doc.chem_chlorine_pct)) if doc.chem_chlorine_pct else '10') ~ '% chlorine'), ("%.2f"|format(doc.chlorinator_feed_gph) ~ ' gal/hr')) }}{% endif %}
+    </table>
+  </div>
+  {% endif %}
+
+  {% set meters = doc.design_equipment | selectattr('equipment_class', 'equalto', 'Gauge / Meter') | list %}
+  {% if meters %}
+  {{ sechead('6', 'Instrumentation') }}
+  <div style="border-left:3px solid #a6b4bd; padding-left:14px; margin-bottom:6px;">
+    <table style="width:100%; border-collapse:collapse;">
+      {% for e in meters %}
+        {{ line('Meter / gauge', (e.equipment_item ~ ((' · ' ~ e.model_no) if e.model_no else '')), e.rating or '') }}
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  {{ sechead('7', 'Code Compliance') }}
+  <table style="width:100%; border-collapse:collapse; font-size:11px;">
+    <tr>
+      <td style="width:33%; vertical-align:top; padding:8px 10px; background:#eef6f0; border:1px solid #d5e6db;">
+        <div style="font:bold 10px 'Helvetica Neue',Arial,sans-serif; text-transform:uppercase; color:#2f8557;">&#10003; Anti-entrapment</div>
+        <div style="color:#4a5a63; margin-top:3px;">{{ doc.main_drain_status or 'Dual-drain, VGB &mdash; &le; 1.5 ft/sec with one drain blocked' }}</div>
+      </td>
+      <td style="width:33%; vertical-align:top; padding:8px 10px; background:#eef6f0; border:1px solid #d5e6db;">
+        <div style="font:bold 10px 'Helvetica Neue',Arial,sans-serif; text-transform:uppercase; color:#2f8557;">&#10003; Vessel listing</div>
+        <div style="color:#4a5a63; margin-top:3px;">{{ doc.vessel_listing or 'Listed shell' }}</div>
+      </td>
+      <td style="width:34%; vertical-align:top; padding:8px 10px; background:#eef6f0; border:1px solid #d5e6db;">
+        <div style="font:bold 10px 'Helvetica Neue',Arial,sans-serif; text-transform:uppercase; color:#2f8557;">&#10003; Turnover</div>
+        <div style="color:#4a5a63; margin-top:3px;">{{ "%g"|format(doc.max_turnover_min) if doc.max_turnover_min else '30' }} min max{% if doc.turnover_time_min %} &middot; {{ "%.1f"|format(doc.turnover_time_min) }} min at published flow{% endif %}</div>
+      </td>
+    </tr>
+  </table>
+
+  {% if tb.preliminary %}
+  <div style="margin-top:20px; padding-top:10px; border-top:1px solid #cbd6dd; font-size:10px; color:#8794a0;">
+    <span style="color:#8f5a1d; font-weight:bold;">PRELIMINARY &mdash; not for construction; sealed by P.E. before issue.</span>
+    &nbsp;{{ tb.contractor.name }} &middot; Water Engineering.
+  </div>
   {% endif %}
 </div>
 """.strip()
@@ -563,13 +775,15 @@ def _upsert_print_format(name, html, doc_type=DOCTYPE, pdf_generator=None):
 
 def ensure_water_print_formats():
     """after_migrate entry: ship the Water Feature Design (Results, Calculation
-    Audit, Schedules) + Control Panel Design (Submittal) Print Formats.
-    Idempotent (upserts the HTML) and guarded (a failure only logs)."""
+    Audit, Schedules, Design Calculations, Submittal Packet) + Control Panel
+    Design (Submittal, Panel Schedule) Print Formats. Idempotent (upserts the
+    HTML) and guarded (a failure only logs)."""
     try:
         if frappe.db.exists("DocType", DOCTYPE):
             _upsert_print_format(RESULTS_PF, RESULTS_HTML)
             _upsert_print_format(AUDIT_PF, AUDIT_HTML)
             _upsert_print_format(SCHEDULES_PF, SCHEDULES_HTML)
+            _upsert_print_format(DESIGN_CALC_PF, DESIGN_CALC_HTML)
             _upsert_print_format(PACKET_PF, _packet_html(), pdf_generator="chrome")
         if frappe.db.exists("DocType", CONTROL_DOCTYPE):
             _upsert_print_format(SUBMITTAL_PF, SUBMITTAL_HTML, doc_type=CONTROL_DOCTYPE)

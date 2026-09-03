@@ -80,7 +80,7 @@ a listed cover's stamped flow rating. That sentence lives in `warnings` on every
 | `issues.py` | The single producer of typed `DesignIssue` records and per-section readiness. The engine speaks in free-form status strings and warning sentences — good for the audit trail, useless to a designer who needs to know *what is wrong and where*. The form, wizard, list view, print formats and Triton all consume this one derived structure |
 | `api/water_design.py` | Whitelisted desk endpoints for the wizard and form JS — thin adapters over `engine/`. `save_inputs` and `get_design_state` expose the `_save_design` / `design_state` helpers the MCP tools reuse, so both surfaces share one implementation. Every endpoint gates on the `Water Feature Design` doctype, and `doc.save()` enforces document-level permission for the mutation itself |
 | `setup.py` | `after_migrate` — adds the pump-spec fields on Item that the pump selector reads |
-| `setup_print_formats.py` | `after_migrate` — ships two server-rendered (Jinja) print formats over the persisted rollups and `calc_results` audit trail |
+| `setup_print_formats.py` | `after_migrate` — ships the server-rendered (Jinja) print formats over the persisted rollups and `calc_results` audit trail: Results, Calculation Audit, Schedules, the multi-sheet Submittal Packet, and **Design Calculations** — a single-sheet plan-check calc sheet for regulated venues, grouped by hydraulic system (circulation vs. therapy-jet loop, keyed off each fixture / pump / pipe segment's `system` tag) |
 | `page/water_engineering_wizard/` | The desk wizard UI |
 | `workspace/water_engineering/` | Desk workspace |
 
