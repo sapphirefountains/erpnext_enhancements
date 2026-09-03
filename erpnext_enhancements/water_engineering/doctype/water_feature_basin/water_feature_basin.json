@@ -12,6 +12,7 @@
   "diameter_in",
   "height_in",
   "surface_area_sf",
+  "perimeter_ft",
   "volume_gal_override",
   "volume_gal",
   "weight_lb"
@@ -60,6 +61,12 @@
    "fieldtype": "Float",
    "label": "Water Surface Area (sq ft)",
    "description": "Required for regulated venues — bather load and skimmer count size off it. For an Other-shape shell (e.g. an octagon spa), enter the published area."
+  },
+  {
+   "fieldname": "perimeter_ft",
+   "fieldtype": "Float",
+   "label": "Perimeter (ft)",
+   "description": "Waterline perimeter — perimeter-overflow / gutter and skimmer-placement checks. Enter the published value for an Other-shape shell (e.g. an octagon spa)."
   },
   {
    "fieldname": "volume_gal_override",

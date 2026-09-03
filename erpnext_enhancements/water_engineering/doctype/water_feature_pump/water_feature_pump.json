@@ -6,6 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "pump_item",
+  "system",
   "part_number",
   "pump_description",
   "rated_gpm",
@@ -20,6 +21,16 @@
    "label": "Pump Item",
    "options": "Item",
    "in_list_view": 1
+  },
+  {
+   "fieldname": "system",
+   "fieldtype": "Select",
+   "label": "Loop",
+   "options": "Circulation\nTherapy-Jet\nShared",
+   "default": "Circulation",
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Which hydraulic loop this pump drives — circulation or the spa therapy-jet loop."
   },
   {
    "fieldname": "part_number",

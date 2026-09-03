@@ -7,6 +7,7 @@
  "field_order": [
   "segment_label",
   "line_type",
+  "system",
   "flow_gpm",
   "material",
   "nominal_size",
@@ -43,6 +44,14 @@
    "default": "Discharge",
    "in_list_view": 1,
    "columns": 1
+  },
+  {
+   "fieldname": "system",
+   "fieldtype": "Select",
+   "label": "Loop",
+   "options": "Circulation\nTherapy-Jet\nShared",
+   "default": "Circulation",
+   "description": "Which hydraulic loop this run belongs to — groups suction/return sizing under the right loop on the Design Calculations print."
   },
   {
    "fieldname": "flow_gpm",

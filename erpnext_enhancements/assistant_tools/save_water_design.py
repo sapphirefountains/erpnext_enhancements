@@ -73,7 +73,11 @@ class SaveWaterDesign(BaseTool):
                 },
                 "global_inputs": {
                     "type": "object",
-                    "description": "Parent fields: design_title, status, turnover_per_hr, hazen_williams_c, pipe_material, static_lift_ft.",
+                    "description": (
+                        "Parent fields: design_title, status, turnover_per_hr, hazen_williams_c, "
+                        "pipe_material, static_lift_ft; regulated venues also governing_code, "
+                        "design_flow_published_gpm, vessel_model, vessel_listing, vessel_construction."
+                    ),
                 },
                 "basins": {
                     "type": "array",
@@ -89,7 +93,8 @@ class SaveWaterDesign(BaseTool):
                     "type": "array",
                     "items": {"type": "object"},
                     "description": (
-                        "Segment rows {segment_label, line_type: Discharge|Suction, flow_gpm, "
+                        "Segment rows {segment_label, line_type: Discharge|Suction, "
+                        "system: Circulation|Therapy-Jet, flow_gpm, "
                         "material: SCH40 PVC|SCH80 PVC|Type K Copper, nominal_size, pipe_length_ft, "
                         "fittings_json, components_json} (replaces the table). Leave flow_gpm blank/0 "
                         "to carry the full design flow. fittings_json and components_json are "
@@ -102,7 +107,7 @@ class SaveWaterDesign(BaseTool):
                 "pumps": {
                     "type": "array",
                     "items": {"type": "object"},
-                    "description": "Pump candidate rows {pump_item, part_number, rated_gpm, rated_tdh_ft} (replaces the table).",
+                    "description": "Pump candidate rows {pump_item, part_number, rated_gpm, rated_tdh_ft, system: Circulation|Therapy-Jet} (replaces the table).",
                 },
                 "electrical_loads": {
                     "type": "array",

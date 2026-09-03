@@ -21,6 +21,9 @@
   "turnover_per_hr",
   "basins",
   "sb_regulated",
+  "vessel_model",
+  "vessel_listing",
+  "vessel_construction",
   "governing_code",
   "max_turnover_min",
   "design_flow_published_gpm",
@@ -203,6 +206,24 @@
    "collapsible": 1,
    "depends_on": "eval:doc.venue_type && !['Decorative Fountain','Interactive Water Feature'].includes(doc.venue_type)",
    "description": "Health-department circulation and safety rules for a regulated aquatic venue. Enter each basin's water-surface area on its row."
+  },
+  {
+   "fieldname": "vessel_model",
+   "fieldtype": "Data",
+   "label": "Vessel / Shell Model",
+   "description": "Prefabricated shell make & model (e.g. Westland WB-8300-C). Titles the vessel on the Design Calculations print."
+  },
+  {
+   "fieldname": "vessel_listing",
+   "fieldtype": "Data",
+   "label": "Shell Listing",
+   "description": "Third-party listing for the shell itself (e.g. IAPMO SP-4338)."
+  },
+  {
+   "fieldname": "vessel_construction",
+   "fieldtype": "Small Text",
+   "label": "Shell Construction",
+   "description": "Construction note (e.g. prefabricated acrylic shell, three layers fiberglass-reinforced resin)."
   },
   {
    "fieldname": "governing_code",
