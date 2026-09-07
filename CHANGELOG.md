@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.364.0] - 2026-09-07
+
+### Added
+
+- **Training Builder: a visual per-item editor for the four interactive block types (follow-up to the
+  v1.363.0 redesign).** The interactive types (Checklist, Flashcards, Image Hotspots, Accordion)
+  shipped in v1.363.0 authored as raw JSON in a textarea; they now have a proper editor in the builder
+  card (`render_interactive_editor` in `training_builder.js`): add / remove / reorder rows for checklist
+  steps, flashcard front-and-back, and accordion title-and-body, and **click the image to drop hotspot
+  pins** with x/y fine-tuning and a live pin overlay. It reads and writes the same block `data` JSON the
+  doctype form and the publish serializer already speak, so autosave and the live preview are
+  unaffected; disabled cleanly when the version is not editable.
+
+### Fixed
+
+- **`render is not defined` on every Leaderboard and "Ask the author" tap (reported from prod; present
+  in v1.363.0 and earlier).** The two lazy learner-page panels each rebuild themselves by calling a
+  bare `render()` on every state change, and that function was never defined — so from the day each was
+  wired, every toggle threw `ReferenceError: render is not defined` in the console and the panel never
+  updated. `player.js` now defines `render()` — it re-renders whichever panel is currently mounted **in
+  place** (via `replaceChild`), never the whole view, so asking a question mid-lesson no longer tears
+  down and re-mounts the video. `test_training_runtime_regressions` gains a class that fails the build
+  if `render()` is called but left undefined again.
+
 ## [1.363.0] - 2026-09-07
 
 ### Added

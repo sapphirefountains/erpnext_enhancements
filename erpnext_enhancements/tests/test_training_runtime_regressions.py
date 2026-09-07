@@ -617,3 +617,47 @@ class TestOneHungRequestCannotStopDelivery(unittest.TestCase):
         flush = _fn_body(_video_js(), "function flush(reason)")
         guard = flush[flush.index("FLUSH_STUCK_MS") : flush.index("flushing = true")]
         self.assertIn("st.selfHealed++", guard, "a stranded latch heals silently")
+
+
+PLAYER_JS = APP / "public/js/training/player.js"
+
+
+def _player_js():
+    return PLAYER_JS.read_text(encoding="utf-8")
+
+
+class TestLazyPanelsCanReRender(unittest.TestCase):
+    """``render is not defined``, thrown from prod on every Leaderboard / Ask tap.
+
+    The leaderboard and the "Ask the author" Q&A are lazy panels: each rebuilds
+    itself on a bare ``render()`` call every time its state changes (open, loading,
+    loaded, error). That function was never defined, so from the day each panel was
+    wired every toggle threw ``ReferenceError: render is not defined`` and the panel
+    never updated — the plainest version of the present-plausible-wrong shape this
+    module keeps finding, and one a bench-free static check catches outright.
+    """
+
+    def test_the_panels_still_call_render(self):
+        """Guards the assertions below from passing if the panels are rewritten."""
+        self.assertRegex(
+            _player_js(), r"(?<![\w.])render\(\)", "the lazy panels no longer call render()"
+        )
+
+    def test_render_is_actually_defined(self):
+        self.assertIn(
+            "function render(", _player_js(), "render() is called by the panels but never defined"
+        )
+
+    def test_it_re_renders_in_place_not_the_whole_view(self):
+        """A whole-view re-render would tear down and re-mount the lesson video the
+        instant a learner asks a question; the panels swap only their own node."""
+        body = _fn_body(_player_js(), "function render()")
+        self.assertIn("replaceChild", body, "render() no longer swaps the panel node in place")
+        self.assertNotIn(
+            "go(", body, "render() reaches for go(), which clears the whole view and the video with it"
+        )
+
+    def test_both_panels_capture_their_node_for_render(self):
+        src = _player_js()
+        self.assertIn("boardWrap = wrap", src, "the leaderboard panel is not captured for render()")
+        self.assertIn("qaWrap = wrap", src, "the Q&A panel is not captured for render()")

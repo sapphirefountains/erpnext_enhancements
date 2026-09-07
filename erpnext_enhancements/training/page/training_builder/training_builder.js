@@ -1428,21 +1428,213 @@ class TrainingBuilder {
 		}
 
 		if (["Checklist", "Flashcards", "Image Hotspots", "Accordion"].indexOf(type) !== -1) {
-			// The block's list content as JSON, edited in the card. The Type field's
-			// help text carries the shape, and a new block starts pre-filled with it.
-			// A visual per-item editor is a follow-up; this is the authoring seam.
-			$('<div class="tb-hint"></div>')
-				.text(__("List content for this block, as JSON. Sanitised at publish; use the Preview to check it."))
-				.appendTo($body);
-			const $json = $('<textarea class="tb-json-editor" rows="8" spellcheck="false"></textarea>')
-				.val(block.data || "")
-				.appendTo($body)
-				.on("input", () => this.set_block_field(lesson, block, "data", $json.val()));
-			$json.prop("disabled", !this.editable());
+			this.render_interactive_editor(lesson, block, $body);
 			return;
 		}
 
 		$('<div class="tb-muted"></div>').text(__("Nothing to preview for this block type.")).appendTo($body);
+	}
+
+	// Visual per-item editor for the interactive block types. It reads and writes the
+	// block's JSON `data` field — the same field the doctype form and the publish
+	// serializer speak — but the author edits a repeating list of rows (and, for
+	// hotspots, clicks the image to drop pins) rather than raw JSON. Every change
+	// rewrites data through set_block_field, so autosave and the preview see it like
+	// any other block edit. Add/remove/reorder re-render this card body in place;
+	// text edits do not, so a field keeps focus while you type.
+	render_interactive_editor(lesson, block, $body) {
+		const type = block.block_type;
+		const KEY = {
+			Checklist: "items",
+			Flashcards: "cards",
+			"Image Hotspots": "hotspots",
+			Accordion: "panels",
+		}[type];
+		const editable = this.editable();
+
+		let data;
+		try {
+			data = JSON.parse(block.data || "{}");
+		} catch (e) {
+			data = {};
+		}
+		if (!data || typeof data !== "object" || Array.isArray(data)) data = {};
+		if (!Array.isArray(data[KEY])) data[KEY] = [];
+		const list = data[KEY];
+
+		const save = () => this.set_block_field(lesson, block, "data", JSON.stringify(data));
+		const rerender = () => {
+			$body.empty();
+			build();
+		};
+
+		const newItem = () => {
+			if (type === "Checklist") return "";
+			if (type === "Flashcards") return { front: "", back: "" };
+			if (type === "Image Hotspots") return { x: 50, y: 50, label: "" };
+			return { title: "", body: "" };
+		};
+
+		const input = (value, placeholder, onChange, multiline) => {
+			const $el = multiline
+				? $('<textarea class="tb-int-input" rows="2"></textarea>')
+				: $('<input type="text" class="tb-int-input">');
+			$el.val(value == null ? "" : value).attr("placeholder", placeholder || "");
+			$el.prop("disabled", !editable);
+			$el.on("input", () => onChange($el.val()));
+			return $el;
+		};
+
+		let paintPins = () => {};
+
+		const swap = (a, b) => {
+			const tmp = list[a];
+			list[a] = list[b];
+			list[b] = tmp;
+			save();
+			rerender();
+		};
+
+		const rowControls = (index) => {
+			const $ctrls = $('<div class="tb-int-ctrls"></div>');
+			$('<button type="button" class="tb-int-move" title="Move up">↑</button>')
+				.prop("disabled", !editable || index === 0)
+				.on("click", () => swap(index, index - 1))
+				.appendTo($ctrls);
+			$('<button type="button" class="tb-int-move" title="Move down">↓</button>')
+				.prop("disabled", !editable || index === list.length - 1)
+				.on("click", () => swap(index, index + 1))
+				.appendTo($ctrls);
+			$('<button type="button" class="tb-int-remove" title="Remove">✕</button>')
+				.prop("disabled", !editable)
+				.on("click", () => {
+					list.splice(index, 1);
+					save();
+					rerender();
+				})
+				.appendTo($ctrls);
+			return $ctrls;
+		};
+
+		const buildRow = (item, index) => {
+			const $row = $('<div class="tb-int-row"></div>');
+			$row.append($('<span class="tb-int-num"></span>').text(index + 1));
+			const $fields = $('<div class="tb-int-fields"></div>');
+
+			if (type === "Checklist") {
+				$fields.append(input(item, __("Step text"), (v) => {
+					list[index] = v;
+					save();
+				}));
+			} else if (type === "Flashcards") {
+				$fields.append(input(item.front, __("Front (term)"), (v) => {
+					list[index].front = v;
+					save();
+				}));
+				$fields.append(input(item.back, __("Back (answer)"), (v) => {
+					list[index].back = v;
+					save();
+				}, true));
+			} else if (type === "Accordion") {
+				$fields.append(input(item.title, __("Section title"), (v) => {
+					list[index].title = v;
+					save();
+				}));
+				$fields.append(input(item.body, __("Section body (basic HTML allowed)"), (v) => {
+					list[index].body = v;
+					save();
+				}, true));
+			} else if (type === "Image Hotspots") {
+				$fields.append(input(item.label, __("Pin label"), (v) => {
+					list[index].label = v;
+					save();
+				}));
+				const $xy = $('<div class="tb-int-xy"></div>');
+				const num = (val, axis) => {
+					const $n = $('<input type="number" min="0" max="100" class="tb-int-num-input">')
+						.val(Math.round(Number(val) || 0))
+						.prop("disabled", !editable)
+						.on("input", () => {
+							list[index][axis] = Math.max(0, Math.min(100, Number($n.val()) || 0));
+							save();
+							paintPins();
+						});
+					return $n;
+				};
+				$xy.append($("<label></label>").text("x%"), num(item.x, "x"));
+				$xy.append($("<label></label>").text("y%"), num(item.y, "y"));
+				$fields.append($xy);
+			}
+
+			$row.append($fields, rowControls(index));
+			return $row;
+		};
+
+		const buildHotspotStage = () => {
+			const url = this.media_for(block, block.image);
+			if (!url) {
+				$('<div class="tb-hint"></div>')
+					.text(__("Upload an image in the inspector, then click it to drop pins."))
+					.appendTo($body);
+				return;
+			}
+			const $stage = $('<div class="tb-hotspot-stage"></div>');
+			const $img = $('<img class="tb-hotspot-img" alt="">').attr("src", url);
+			$stage.append($img);
+			if (editable) {
+				$stage.on("click", (ev) => {
+					if ($(ev.target).hasClass("tb-hotspot-pin")) return;
+					const rect = $img[0].getBoundingClientRect();
+					if (!rect.width || !rect.height) return;
+					const x = Math.max(0, Math.min(100, Math.round(((ev.clientX - rect.left) / rect.width) * 100)));
+					const y = Math.max(0, Math.min(100, Math.round(((ev.clientY - rect.top) / rect.height) * 100)));
+					list.push({ x, y, label: "" });
+					save();
+					rerender();
+				});
+			}
+			$body.append($stage);
+			$('<div class="tb-hint"></div>')
+				.text(__("Click the image to add a pin; drag the coordinates below to fine-tune."))
+				.appendTo($body);
+			paintPins = () => {
+				$stage.find(".tb-hotspot-pin").remove();
+				list.forEach((spot, i) => {
+					$('<span class="tb-hotspot-pin"></span>')
+						.text(i + 1)
+						.css({ left: (Number(spot.x) || 0) + "%", top: (Number(spot.y) || 0) + "%" })
+						.appendTo($stage);
+				});
+			};
+			paintPins();
+		};
+
+		const build = () => {
+			if (type === "Image Hotspots") buildHotspotStage();
+			const $list = $('<div class="tb-int-list"></div>').appendTo($body);
+			if (!list.length) {
+				$('<div class="tb-muted"></div>').text(__("Nothing here yet.")).appendTo($list);
+			}
+			list.forEach((item, i) => $list.append(buildRow(item, i)));
+			if (editable) {
+				const labels = {
+					Checklist: __("Add step"),
+					Flashcards: __("Add card"),
+					"Image Hotspots": __("Add pin"),
+					Accordion: __("Add section"),
+				};
+				$('<button type="button" class="tb-int-add"></button>')
+					.text("+ " + labels[type])
+					.appendTo($body)
+					.on("click", () => {
+						list.push(newItem());
+						save();
+						rerender();
+					});
+			}
+		};
+
+		build();
 	}
 
 	add_block(lesson, type) {
