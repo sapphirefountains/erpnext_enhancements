@@ -1042,6 +1042,10 @@ class TestFinishAttemptHasOneSerializer(unittest.TestCase):
                 "score",
                 "outstanding",
                 "completion",
+                # Additive reward + certificate block for the completion screen. The
+                # exits pass it only where there is a completion to reward; the key
+                # is always present in the shape, defaulting to empty sub-values.
+                "reward",
             },
         )
 

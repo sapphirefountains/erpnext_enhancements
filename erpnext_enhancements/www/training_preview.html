@@ -1,0 +1,429 @@
+{#
+  Dev-only preview harness for the learner training player (served at
+  /training_preview; controller: training_preview.py).
+
+  Loads the SAME player styles and scripts the live /training page loads, then
+  constructs TR.Player with a CANNED in-memory transport defined at the bottom of
+  this file — the same seam the Phase-3 authoring preview uses. No frappe.call and
+  no server round trips: every reply is a literal here, shaped to match
+  api/training.py so the player cannot tell the difference. Its whole job is to put
+  the states that only appear after a server reply — the completion celebration,
+  the quiz review, the empty and dormant catalogs, every block type in one lesson —
+  on screen on demand, so a redesign step can be seen before and after.
+
+  Cache busting mirrors training.html: every mutable asset URL carries
+  ?v={{ deploy_version }}.
+#}
+{% extends "templates/web.html" %}
+
+{% block title %}Training preview{% endblock %}
+
+{% block head_include %}
+<meta name="theme-color" content="#00a0dd">
+<link rel="stylesheet" href="/assets/erpnext_enhancements/css/training/player.css?v={{ deploy_version }}">
+{% endblock %}
+
+{% block banner %}{% endblock %}
+{% block navbar %}{% endblock %}
+{% block header %}{% endblock %}
+{% block page_header %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block footer_extension %}{% endblock %}
+{% block page_breadcrumbs %}{% endblock %}
+
+{% block style %}
+<style>
+  /* Same chrome removal as training.html — footer is qualified so the player's own
+     sticky action bar (footer.tr-bottom) survives; main is qualified for main.tr-view. */
+  .navbar, nav.navbar, .web-footer, footer:not(.tr-bottom), .footer,
+  .page-breadcrumbs, .breadcrumb-container,
+  .page-header, .page-content-wrapper > .page-header { display: none !important; }
+  body { background: var(--tr-bg, #eef2f6); margin: 0; }
+  main:not(.tr-view), .main-section, #body, .page_content,
+  .page-content-wrapper, .container { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+
+  /* The harness chrome — deliberately plain and outside the .tr-* namespace so it
+     cannot be mistaken for, or collide with, the player it is framing. */
+  .hp-bar {
+    position: sticky; top: 0; z-index: 200;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+    padding: 10px 14px; background: #0f1720; color: #e8eef2;
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    border-bottom: 1px solid #24303b;
+  }
+  .hp-bar strong { font-weight: 700; letter-spacing: -0.01em; }
+  .hp-tag { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #7fb2cc; }
+  .hp-group { display: flex; align-items: center; gap: 6px; }
+  .hp-group > span { color: #8a99a6; }
+  .hp-bar button {
+    font: inherit; cursor: pointer; color: #e8eef2; background: #1b2732;
+    border: 1px solid #2c3a46; border-radius: 8px; padding: 6px 11px;
+  }
+  .hp-bar button:hover { border-color: #3d7fa0; }
+  .hp-bar button[aria-pressed="true"] { background: #00a0dd; border-color: #00a0dd; color: #04222f; font-weight: 600; }
+  .hp-note { flex: 1 1 100%; color: #8a99a6; font-size: 12px; }
+  .hp-note code { color: #b9c6d1; }
+</style>
+{% endblock %}
+
+{% block page_content %}
+<div class="hp-bar" role="toolbar" aria-label="Preview controls">
+  <span class="hp-tag">Player preview</span>
+  <div class="hp-group">
+    <span>Boot:</span>
+    <button type="button" data-scenario="populated" aria-pressed="true">Populated</button>
+    <button type="button" data-scenario="empty">Empty</button>
+    <button type="button" data-scenario="dormant">Dormant</button>
+  </div>
+  <div class="hp-group">
+    <span>Jump:</span>
+    <button type="button" data-jump="catalog">Catalog</button>
+    <button type="button" data-jump="course">Open course</button>
+    <button type="button" data-jump="record">My record</button>
+  </div>
+  <span class="hp-note">
+    Real player, canned data. Walk it: <code>Open course → a lesson → the quiz → finish</code> to reach the
+    completion screen. Light/dark and motion follow your OS setting. Video shows its unavailable state (no
+    signed asset in preview).
+  </span>
+</div>
+<div id="training-root" class="tr-shell" aria-busy="true">
+  <div class="tr-boot">Loading preview…</div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script src="/assets/erpnext_enhancements/js/training/blocks.js?v={{ deploy_version }}"></script>
+<script src="/assets/erpnext_enhancements/js/training/video.js?v={{ deploy_version }}"></script>
+<script src="/assets/erpnext_enhancements/js/training/quiz.js?v={{ deploy_version }}"></script>
+<script src="/assets/erpnext_enhancements/js/training/player.js?v={{ deploy_version }}"></script>
+<script>
+(function () {
+	"use strict";
+
+	// A flat blue SVG stands in for a lesson image; a data URI keeps the harness
+	// self-contained (no real File to attach for a preview).
+	var IMAGE = "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='640'%20height='320'%3E" +
+		"%3Crect%20width='640'%20height='320'%20fill='%230077b6'/%3E%3Crect%20y='250'%20width='640'%20height='70'%20" +
+		"fill='%2300a0dd'/%3E%3C/svg%3E";
+
+	var COURSE = "TRN-CRS-PREVIEW";
+
+	// ---- canned content, shaped to match api/training.py's replies ----
+
+	var LESSONS = {
+		l1: {
+			lesson_key: "l1",
+			title: "Draining a Basin Safely",
+			summary: "Isolate energy, prove the air is safe, and take a basin out of service.",
+			quiz: { enabled: true, pass_score: 80 },
+			blocks: [
+				{
+					type: "Rich Text", block_key: "b-txt", heading: "Why isolation comes first",
+					html: "<p>A basin that <strong>looks</strong> empty is not a basin that is " +
+						"<strong>safe</strong>. Standing water hides in sumps, and a pump on a float switch can " +
+						"restart the instant a level rises.</p><ul><li>Energy locked out</li>" +
+						"<li>Pressure bled</li><li>Atmosphere tested</li></ul>"
+				},
+				{
+					type: "Callout", block_key: "b-call", heading: "Safety · Confined space",
+					html: "<p>Oxygen can sit below 19.5% at the floor of a drained basin. " +
+						"<strong>Never</strong> enter on a visual check alone.</p>",
+					tone: "danger"
+				},
+				{
+					type: "Image", block_key: "b-img", heading: "Basin sump layout",
+					caption: "Figure 1 — the low-point sump and float switch.", image: IMAGE
+				},
+				{ type: "Video", block_key: "b-vid", heading: "Sump-out walkthrough", duration_s: 260, required: true },
+				{ type: "PDF", block_key: "b-pdf", heading: "Confined-space entry permit", file: "#permit", required: true },
+				{ type: "External Embed", block_key: "b-emb", heading: "Manufacturer overview", embed_url: "about:blank" },
+				{ type: "Downloadable File", block_key: "b-file", heading: "Basin checklist (PDF)", file: "#checklist" },
+				{
+					type: "Checklist", block_key: "b-chk", heading: "Entry procedure",
+					items: [
+						"Open the disconnect and apply your personal lock + tag",
+						"Bleed residual pressure at the lowest drain valve",
+						"Test atmosphere: O₂, then LEL, then H₂S",
+						"Post a standby attendant at the rim"
+					]
+				},
+				{
+					type: "Flashcards", block_key: "b-fc", heading: "Key terms",
+					cards: [
+						{ front: "NPSH", back: "Net Positive Suction Head — the pressure margin that keeps a pump from cavitating." },
+						{ front: "Weir", back: "The leveled edge water spills over; its flatness sets an even sheet flow." },
+						{ front: "LOTO", back: "Lockout/Tagout — isolating energy so a machine cannot start during service." }
+					]
+				},
+				{
+					type: "Image Hotspots", block_key: "b-hot", heading: "Basin parts", image: IMAGE,
+					hotspots: [
+						{ x: 22, y: 42, label: "Sump — the low point where water collects" },
+						{ x: 68, y: 28, label: "Overflow weir" },
+						{ x: 48, y: 78, label: "Main drain (VGB-compliant)" }
+					]
+				},
+				{
+					type: "Accordion", block_key: "b-acc", heading: "Reference",
+					panels: [
+						{ title: "Free chlorine range", body: "<p>1&ndash;3&nbsp;ppm for a public display fountain.</p>" },
+						{ title: "pH range", body: "<p>7.2&ndash;7.8, corrected with acid or soda ash.</p>" }
+					]
+				},
+				{ type: "Divider", block_key: "b-div" }
+			]
+		},
+		l2: {
+			lesson_key: "l2",
+			title: "Cleaning & Chemistry Reset",
+			summary: "Bring the water back inside spec before the fountain returns to service.",
+			quiz: { enabled: false },
+			blocks: [
+				{
+					type: "Rich Text", block_key: "b2-txt", heading: "Rebalancing",
+					html: "<p>Target free chlorine 1&ndash;3&nbsp;ppm and pH 7.2&ndash;7.8 before the display runs.</p>"
+				}
+			]
+		}
+	};
+
+	var TOC = [
+		{ lesson_key: "l1", chapter_title: "Entry", title: "Draining a Basin Safely", minutes: 8, has_quiz: true },
+		{ lesson_key: "l2", chapter_title: "Recovery", title: "Cleaning & Chemistry Reset", minutes: 5, has_quiz: false }
+	];
+
+	var QUIZ = {
+		run: 1, pass_score: 80, attempts_left: 3,
+		questions: [
+			{
+				question: "q1", type: "Single Choice", points: 1,
+				text: "Before entering a drained basin, what must be verified first?",
+				options: [
+					{ option_key: "a", text: "Lockout/tagout is applied and the atmosphere is tested" },
+					{ option_key: "b", text: "The pump is switched off at the panel" },
+					{ option_key: "c", text: "The water has fully evaporated" }
+				]
+			},
+			{
+				question: "q2", type: "Multiple Choice", points: 2,
+				text: "Which are confined-space hazards inside a basin? Choose all that apply.",
+				options: [
+					{ option_key: "a", text: "Oxygen deficiency" },
+					{ option_key: "b", text: "Engulfment by residual water" },
+					{ option_key: "c", text: "Wi-Fi interference" },
+					{ option_key: "d", text: "Toxic gas accumulation" }
+				]
+			},
+			{ question: "q3", type: "Short Answer", points: 1, text: "Name the unit free chlorine is dosed in (three letters)." }
+		]
+	};
+
+	// The answer key lives here, never in the questions above — the same boundary the
+	// real runtime keeps, so this harness exercises the grading path honestly.
+	var KEY = {
+		q1: { keys: ["a"], explain: "Off at the panel is not isolation; LOTO plus a gas test is." },
+		q2: { keys: ["a", "b", "d"], explain: "Oxygen, engulfment and gas are the triad; signal strength is not a hazard." },
+		q3: { text: ["ppm"], explain: "Parts per million — 1–3 ppm for a public display fountain." }
+	};
+
+	function gradeQuiz(answers) {
+		answers = answers || {};
+		var awardedTotal = 0, possible = 0, correctCount = 0, per = [];
+		QUIZ.questions.forEach(function (q) {
+			var points = q.points || 1;
+			possible += points;
+			var mine = answers[q.question] || [];
+			var correct;
+			if (q.type === "Short Answer") {
+				var typed = String(mine[0] || "").trim().toLowerCase();
+				correct = KEY[q.question].text.some(function (t) { return typed.indexOf(t) !== -1; });
+			} else {
+				var want = KEY[q.question].keys.slice().sort().join(",");
+				var got = mine.slice().sort().join(",");
+				correct = want === got && want.length > 0;
+			}
+			if (correct) correctCount++;
+			var awarded = correct ? points : 0;
+			awardedTotal += awarded;
+			var row = {
+				question: q.question, correct: correct, awarded: awarded, points: points,
+				text: q.text, explanation: KEY[q.question].explain
+			};
+			// The server reveals the key on a graded MC question; mirror that.
+			if (KEY[q.question].keys) row.correct_option_keys = KEY[q.question].keys;
+			per.push(row);
+		});
+		var score = possible ? Math.round((awardedTotal / possible) * 1000) / 10 : 0;
+		return {
+			score: score, passed: score >= QUIZ.pass_score, pass_score: QUIZ.pass_score,
+			correct_count: correctCount, question_count: QUIZ.questions.length,
+			attempts_left: 2, can_retry: score < QUIZ.pass_score, per_question: per
+		};
+	}
+
+	var ATTEMPT = { attempt: "ATT-PREVIEW", status: "In Progress", lessons: {}, next_lesson_key: "l1" };
+
+	var MEDIA = {
+		"b-img": { url: IMAGE },
+		"b-pdf": { url: "#preview-permit.pdf" },
+		"b-file": { url: "#preview-checklist.pdf" },
+		"b-vid": { url: "", reason: "Preview has no signed video asset." },
+		"b-hot": { url: IMAGE }
+	};
+
+	var COMPLETIONS = [
+		{
+			name: "TRN-COMP-1", course: COURSE, course_title: "Basin Draining & Confined-Space Safety",
+			completed_on: "2026-09-05 10:04:00", score: 92, status: "Completed", expires_on: "2027-09-05",
+			certificate: "TRN-CERT-PREVIEW", certificate_url: "/training_certificate?certificate=TRN-CERT-PREVIEW"
+		},
+		{
+			name: "TRN-COMP-2", course: "TRN-CRS-CHEM", course_title: "Water Chemistry Fundamentals",
+			completed_on: "2026-08-01 09:00:00", score: 88, status: "Completed"
+		}
+	];
+
+	var LEADERBOARD = {
+		enabled: true, scope: "Employee",
+		rows: [
+			{ rank: 1, full_name: "Priya S.", points: 1240, courses_completed: 4, badges_earned: 5, current_streak_days: 9, is_me: false },
+			{ rank: 2, full_name: "Preview User", points: 1270, courses_completed: 4, badges_earned: 4, current_streak_days: 7, is_me: true },
+			{ rank: 3, full_name: "Marcus T.", points: 1180, courses_completed: 3, badges_earned: 4, current_streak_days: 4, is_me: false }
+		]
+	};
+
+	function card(extra) {
+		var base = {
+			course: COURSE, title: "Basin Draining & Confined-Space Safety",
+			summary: "Isolate, test, and safely enter a drained basin.",
+			cover_image: "", weight: "Required", minutes: 24, percent_complete: 60,
+			assignment_status: "In Progress", due_date: "2026-09-10"
+		};
+		for (var k in extra) if (Object.prototype.hasOwnProperty.call(extra, k)) base[k] = extra[k];
+		return base;
+	}
+
+	// ---- the transport: one method per api.training reply the player dials ----
+
+	var transport = {
+		getCourse: function () {
+			return {
+				course: { course: COURSE, name: COURSE, title: "Basin Draining & Confined-Space Safety",
+					summary: "Isolate, test, and safely enter a drained basin." },
+				gates: { min_video_coverage: 80, passing_score: 80 },
+				version: { version_number: 1 },
+				chapters: [{ chapter_key: "c1", chapter_title: "Entry" }, { chapter_key: "c2", chapter_title: "Recovery" }],
+				toc: TOC,
+				assignment: { assignment_status: "In Progress", due_date: "2026-09-10" },
+				attempt: ATTEMPT
+			};
+		},
+		startAttempt: function () { return ATTEMPT; },
+		getLesson: function (args) {
+			var key = (args && args.lesson_key) || "l1";
+			return {
+				attempt: ATTEMPT, lesson: LESSONS[key] || LESSONS.l1,
+				progress: { status: "in_progress", blocks: {}, quiz: {} },
+				status: "In Progress", next_checkpoints: {}
+			};
+		},
+		heartbeat: function () { return { coverage: 0, credited: 0, ack: 1, flags: {} }; },
+		heartbeatBeacon: function () { return true; },
+		openCheckpoint: function () { return {}; },
+		answerCheckpoint: function () { return { correct: true, explanation: "" }; },
+		startQuiz: function () { return QUIZ; },
+		submitQuiz: function (args) { return gradeQuiz(args && args.answers); },
+		completeLesson: function (args) {
+			var key = (args && args.lesson_key) || "l1";
+			return { ok: true, coverage: 100, next_lesson_key: key === "l1" ? "l2" : null };
+		},
+		finishAttempt: function () {
+			return {
+				passed: true, score: 92, status: "Passed", assignment_status: "Completed", signoff_with: null,
+				outstanding: [], completion: "TRN-COMP-PREVIEW",
+				reward: {
+					points: 1270, streak_days: 7, badges_earned: 4,
+					new_badges: [{ name: "Safety Certified", description: "Finished the confined-space course.", image: null }],
+					certificate_url: "/training_certificate?certificate=TRN-CERT-PREVIEW"
+				}
+			};
+		},
+		mediaUrl: function (args) { return MEDIA[(args && args.block_key)] || { url: "" }; },
+		getTranscript: function () { return { enabled: true, completions: COMPLETIONS }; },
+		askQuestion: function () { return {}; },
+		lessonQuestions: function () { return { enabled: true, mine: [], public: [] }; },
+		leaderboard: function () { return LEADERBOARD; }
+	};
+
+	// ---- boot scenarios ----
+
+	function boot(scenario) {
+		var base = { history: false, route_base: "/training_preview" };
+		if (scenario === "dormant") {
+			base.enabled = false;
+			base.message = "Training is switched off for maintenance in this preview.";
+			return base;
+		}
+		base.enabled = true;
+		base.learner = { user: "preview@example.com", full_name: "Preview User", learner_type: "Employee" };
+		base.today = "2026-09-07";
+		base.settings = {
+			heartbeat_interval_seconds: 15, progress_flush_seconds: 60,
+			attempt_idle_timeout_minutes: 120, max_playback_rate: 1.25, doc_min_dwell_seconds: 20
+		};
+		base.stats = { points: 1270, streak_days: 7, badges_earned: 4, courses_completed: 4 };
+		if (scenario === "empty") {
+			base.assigned = [];
+			base.library = [];
+			base.resume = null;
+			return base;
+		}
+		base.assigned = [card({})];
+		base.library = [card({
+			course: "TRN-CRS-CHEM", title: "Water Chemistry Fundamentals", summary: "pH, chlorine and clarity.",
+			weight: "Optional", minutes: 32, percent_complete: 20, assignment_status: "In Progress", due_date: null
+		})];
+		base.resume = { attempt: "ATT-PREVIEW", course: COURSE, course_title: "Basin Draining & Confined-Space Safety", lesson_key: "l1" };
+		return base;
+	}
+
+	// ---- mount / controls ----
+
+	var root = document.getElementById("training-root");
+	var current = null;
+
+	function mount(scenario) {
+		if (!window.TR || typeof window.TR.Player !== "function") {
+			root.setAttribute("aria-busy", "false");
+			root.innerHTML = '<div class="tr-error">Player scripts failed to load.</div>';
+			return;
+		}
+		if (current && typeof current.destroy === "function") {
+			try { current.destroy(); } catch (e) { /* a fresh mount follows regardless */ }
+		}
+		current = new window.TR.Player(root, boot(scenario), transport);
+	}
+
+	var bar = document.querySelector(".hp-bar");
+	bar.addEventListener("click", function (event) {
+		var target = event.target.closest("button");
+		if (!target) return;
+		if (target.hasAttribute("data-scenario")) {
+			bar.querySelectorAll("[data-scenario]").forEach(function (b) {
+				b.setAttribute("aria-pressed", b === target ? "true" : "false");
+			});
+			mount(target.getAttribute("data-scenario"));
+			return;
+		}
+		if (target.hasAttribute("data-jump") && current) {
+			var where = target.getAttribute("data-jump");
+			if (where === "course" && typeof current.openCourse === "function") current.openCourse(COURSE);
+			else if (typeof current.go === "function") current.go(where);
+		}
+	});
+
+	mount("populated");
+})();
+</script>
+{% endblock %}

@@ -111,6 +111,10 @@ const TB_BLOCK_FIELDS = [
 	"required_for_completion",
 	"min_coverage_percent",
 	"checkpoints_enabled",
+	// Phase 4 interactive types: `data` is the JSON list payload (items / cards /
+	// hotspots / panels); `callout_tone` tints a Callout.
+	"data",
+	"callout_tone",
 ];
 
 const TB_BLOCK_TYPES = [
@@ -122,7 +126,28 @@ const TB_BLOCK_TYPES = [
 	"Callout",
 	"Downloadable File",
 	"Divider",
+	"Checklist",
+	"Flashcards",
+	"Image Hotspots",
+	"Accordion",
 ];
+
+// Starter JSON for a new interactive block, so an author sees the shape rather
+// than a blank field. Publish and preview both tolerate malformed or empty data.
+function default_block_data(type) {
+	switch (type) {
+		case "Checklist":
+			return '{\n  "items": ["", ""]\n}';
+		case "Flashcards":
+			return '{\n  "cards": [{ "front": "", "back": "" }]\n}';
+		case "Image Hotspots":
+			return '{\n  "hotspots": [{ "x": 50, "y": 50, "label": "" }]\n}';
+		case "Accordion":
+			return '{\n  "panels": [{ "title": "", "body": "" }]\n}';
+		default:
+			return "";
+	}
+}
 
 // The Training Course Version Select options, in full. These MUST match
 // `training_course_version.py`'s MINOR_EDIT / MATERIAL_CHANGE exactly: the parenthetical
@@ -1402,6 +1427,21 @@ class TrainingBuilder {
 			return;
 		}
 
+		if (["Checklist", "Flashcards", "Image Hotspots", "Accordion"].indexOf(type) !== -1) {
+			// The block's list content as JSON, edited in the card. The Type field's
+			// help text carries the shape, and a new block starts pre-filled with it.
+			// A visual per-item editor is a follow-up; this is the authoring seam.
+			$('<div class="tb-hint"></div>')
+				.text(__("List content for this block, as JSON. Sanitised at publish; use the Preview to check it."))
+				.appendTo($body);
+			const $json = $('<textarea class="tb-json-editor" rows="8" spellcheck="false"></textarea>')
+				.val(block.data || "")
+				.appendTo($body)
+				.on("input", () => this.set_block_field(lesson, block, "data", $json.val()));
+			$json.prop("disabled", !this.editable());
+			return;
+		}
+
 		$('<div class="tb-muted"></div>').text(__("Nothing to preview for this block type.")).appendTo($body);
 	}
 
@@ -1419,6 +1459,9 @@ class TrainingBuilder {
 			required_for_completion: type === "Divider" ? 0 : 1,
 			min_coverage_percent: type === "Video" ? 80 : 0,
 			checkpoints_enabled: 0,
+			// Interactive types start with the shape filled in; everything else "".
+			data: default_block_data(type),
+			callout_tone: "",
 			__existing: false,
 		};
 		lesson.blocks.push(block);
@@ -1887,6 +1930,24 @@ class TrainingBuilder {
 			this.field($section, __("Embed URL"), "text", block.embed_url, (v) =>
 				this.set_block_field(lesson, block, "embed_url", v)
 			);
+		}
+
+		if (block.block_type === "Callout") {
+			const $tone = $('<select class="tb-json-editor"></select>');
+			[
+				["", __("Default")],
+				["Tip", __("Tip")],
+				["Warning", __("Warning")],
+				["Danger", __("Danger")],
+			].forEach((opt) => {
+				$("<option></option>").attr("value", opt[0]).text(opt[1]).appendTo($tone);
+			});
+			$tone.val(block.callout_tone || "");
+			$tone.on("change", () => this.set_block_field(lesson, block, "callout_tone", $tone.val()));
+			$tone.prop("disabled", !this.editable());
+			const $row = $("<div></div>").appendTo($section);
+			$("<label></label>").text(__("Tone")).appendTo($row);
+			$row.append($tone);
 		}
 
 		if (block.block_type === "Video") {
@@ -2767,6 +2828,53 @@ class TrainingBuilder {
 		};
 	}
 
+	// Expand an interactive block's `data` JSON (and a Callout's tone) into the flat
+	// learner keys blocks.js reads, mirroring training_author._augment_interactive_block
+	// so the preview matches what publish will produce.
+	interactive_block_keys(block) {
+		const type = block.block_type;
+		if (type === "Callout") {
+			const tone = (block.callout_tone || "").trim().toLowerCase();
+			return ["tip", "warning", "danger", "info"].indexOf(tone) !== -1 ? { tone } : {};
+		}
+		let data = {};
+		try {
+			data = JSON.parse(block.data || "{}") || {};
+		} catch (e) {
+			data = {};
+		}
+		if (type === "Checklist") {
+			return { items: (data.items || []).map((x) => String(x)).filter((x) => x.trim()) };
+		}
+		if (type === "Flashcards") {
+			return {
+				cards: (data.cards || [])
+					.filter((c) => c && typeof c === "object")
+					.map((c) => ({ front: String(c.front || ""), back: String(c.back || "") })),
+			};
+		}
+		if (type === "Image Hotspots") {
+			return {
+				hotspots: (data.hotspots || [])
+					.filter((h) => h && typeof h === "object")
+					.map((h) => ({ x: this.clamp_pct(h.x), y: this.clamp_pct(h.y), label: String(h.label || "") })),
+			};
+		}
+		if (type === "Accordion") {
+			return {
+				panels: (data.panels || [])
+					.filter((p) => p && typeof p === "object")
+					.map((p) => ({ title: String(p.title || ""), body: frappe.utils.xss_sanitise(String(p.body || "")) })),
+			};
+		}
+		return {};
+	}
+
+	clamp_pct(value) {
+		const n = Number(value);
+		return isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
+	}
+
 	// The player's payload, assembled from the draft. This mirrors
 	// `training_author._split_lesson` and is the ONLY place in the builder that
 	// builds a learner payload — that function's own docstring explains why the
@@ -2794,6 +2902,7 @@ class TrainingBuilder {
 				required: Number(block.required_for_completion) || 0,
 				min_coverage: Number(block.min_coverage_percent) || 0,
 				checkpoints_enabled: Number(block.checkpoints_enabled) || 0,
+				...this.interactive_block_keys(block),
 			}));
 
 		const counts = {};

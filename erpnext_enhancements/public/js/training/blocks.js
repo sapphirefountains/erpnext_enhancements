@@ -174,6 +174,191 @@
 		// An aside rather than a div so a screen reader announces it as the set
 		// apart thing the author meant it to be.
 		section.setAttribute("role", "note");
+		// Tone rides on a data attribute rather than a class so a new tone needs no
+		// new class in the CSS contract; player.css keys the rail and tint off it.
+		// info | tip | warning | danger — validated at publish, default plain.
+		if (block.tone) section.setAttribute("data-tone", String(block.tone));
+		return finish(section, block);
+	};
+
+	// -------------------------------------------------------------- checklist
+
+	// A tap-through procedure (LOTO, an entry sequence). Client-only state on
+	// purpose for now: ticking is a reading aid, not a gated completion record —
+	// a real gate would need server progress, which is a separate change. The
+	// items are author free text, so they go in through textContent.
+	blocks.Checklist = function (block, ctx) {
+		var section = card(block, "checklist");
+		var items = block.items || [];
+		if (!items.length) {
+			section.__body.appendChild(note(label(ctx, "This checklist has no steps yet."), "warn"));
+			return finish(section, block);
+		}
+		var list = el("div", "tr-checklist");
+		items.forEach(function (text, i) {
+			var item = el("button", "tr-checklist-item");
+			item.type = "button";
+			item.setAttribute("aria-pressed", "false");
+			item.appendChild(el("span", "tr-checklist-num", String(i + 1)));
+			var box = el("span", "tr-checklist-box");
+			box.setAttribute("aria-hidden", "true");
+			item.appendChild(box);
+			item.appendChild(el("span", "tr-checklist-text", String(text == null ? "" : text)));
+			item.addEventListener("click", function () {
+				var on = item.classList.toggle("is-on");
+				item.setAttribute("aria-pressed", on ? "true" : "false");
+			});
+			list.appendChild(item);
+		});
+		section.__body.appendChild(list);
+		return finish(section, block);
+	};
+
+	// -------------------------------------------------------------- flashcards
+
+	// A flip-deck for terms/definitions. A self-check format, which is exactly why
+	// it is safe to hold the answer client-side: the learner is quizzing themselves,
+	// there is no score and nothing to leak. Card text is author free text.
+	blocks.Flashcards = function (block, ctx) {
+		var section = card(block, "flashcards");
+		var cards = block.cards || [];
+		if (!cards.length) {
+			section.__body.appendChild(note(label(ctx, "This deck has no cards yet."), "warn"));
+			return finish(section, block);
+		}
+		var index = 0;
+		var deck = el("div", "tr-deck");
+		var flip = el("button", "tr-flashcard");
+		flip.type = "button";
+		flip.setAttribute("aria-label", label(ctx, "Flip the card, then tap again for the next one"));
+		var inner = el("div", "tr-flashcard-inner");
+		var front = el("div", "tr-flashcard-face tr-flashcard-front");
+		var back = el("div", "tr-flashcard-face tr-flashcard-back");
+		inner.appendChild(front);
+		inner.appendChild(back);
+		flip.appendChild(inner);
+		var dots = el("div", "tr-deck-dots");
+		cards.forEach(function () {
+			dots.appendChild(el("span", "tr-deck-dot"));
+		});
+
+		function face(node, kind, text) {
+			node.textContent = "";
+			node.appendChild(el("span", "tr-flashcard-label", label(ctx, kind)));
+			node.appendChild(el("div", "tr-flashcard-text", text == null ? "" : String(text)));
+		}
+		function paint() {
+			var c = cards[index] || {};
+			face(front, "Term", c.front);
+			face(back, "Answer", c.back);
+			var marks = dots.querySelectorAll(".tr-deck-dot");
+			for (var k = 0; k < marks.length; k++) marks[k].classList.toggle("is-on", k === index);
+		}
+		flip.addEventListener("click", function () {
+			if (flip.classList.contains("is-flipped")) {
+				flip.classList.remove("is-flipped");
+				// Advance after the flip-back so the next term is not glimpsed mid-turn.
+				window.setTimeout(function () {
+					index = (index + 1) % cards.length;
+					paint();
+				}, 220);
+			} else {
+				flip.classList.add("is-flipped");
+			}
+		});
+		deck.appendChild(flip);
+		deck.appendChild(dots);
+		section.__body.appendChild(deck);
+		paint();
+		return finish(section, block);
+	};
+
+	// ---------------------------------------------------------- image hotspots
+
+	// A diagram with tappable pins (basin parts, pump layout). The base image is
+	// resolved like an Image block; the pins are placed as percentages so they hold
+	// their position at any width. Labels are author free text.
+	blocks["Image Hotspots"] = function (block, ctx) {
+		var section = card(block, "hotspots");
+		var spots = block.hotspots || [];
+		var wrap = el("div", "tr-hotspots");
+		var img = el("img", "tr-hotspots-image");
+		img.loading = "lazy";
+		img.decoding = "async";
+		img.alt = block.caption || block.heading || "";
+		wrap.appendChild(img);
+		section.__body.appendChild(wrap);
+
+		mediaUrl(ctx, block, block.image).then(function (url) {
+			if (!url) {
+				section.__body.appendChild(note(label(ctx, "This diagram is unavailable."), "warn"));
+				return;
+			}
+			img.src = url;
+			spots.forEach(function (spot, i) {
+				spot = spot || {};
+				var pin = el("button", "tr-hotspot");
+				pin.type = "button";
+				pin.style.left = clampPct(spot.x) + "%";
+				pin.style.top = clampPct(spot.y) + "%";
+				pin.setAttribute("aria-label", spot.label || label(ctx, "Point") + " " + (i + 1));
+				pin.appendChild(el("span", "tr-hotspot-dot", String(i + 1)));
+				pin.appendChild(el("span", "tr-hotspot-tip", spot.label == null ? "" : String(spot.label)));
+				pin.addEventListener("click", function () {
+					var open = pin.classList.contains("is-open");
+					var pins = wrap.querySelectorAll(".tr-hotspot");
+					for (var k = 0; k < pins.length; k++) pins[k].classList.remove("is-open");
+					if (!open) pin.classList.add("is-open");
+				});
+				wrap.appendChild(pin);
+			});
+		});
+		return finish(section, block);
+	};
+
+	function clampPct(value) {
+		var n = Number(value);
+		if (!isFinite(n)) return 0;
+		return Math.max(0, Math.min(100, n));
+	}
+
+	// ----------------------------------------------------------------- accordion
+
+	// Collapsible sections — an FAQ, a set of specs, the exceptions to a procedure.
+	// Panel bodies are author HTML, server-sanitised at publish exactly like Rich
+	// Text and Callout (see the file header before changing this).
+	blocks.Accordion = function (block, ctx) {
+		var section = card(block, "accordion");
+		var panels = block.panels || [];
+		if (!panels.length) {
+			section.__body.appendChild(note(label(ctx, "This accordion has no sections yet."), "warn"));
+			return finish(section, block);
+		}
+		var acc = el("div", "tr-accordion");
+		panels.forEach(function (panel, i) {
+			panel = panel || {};
+			var item = el("div", "tr-accordion-item");
+			var head = el("button", "tr-accordion-head");
+			head.type = "button";
+			head.setAttribute("aria-expanded", "false");
+			head.appendChild(
+				el("span", "tr-accordion-title", panel.title || label(ctx, "Section") + " " + (i + 1))
+			);
+			head.appendChild(el("span", "tr-accordion-chevron"));
+			var body = el("div", "tr-accordion-body");
+			body.innerHTML = panel.body || "";
+			body.hidden = true;
+			head.addEventListener("click", function () {
+				var open = head.getAttribute("aria-expanded") === "true";
+				head.setAttribute("aria-expanded", open ? "false" : "true");
+				item.classList.toggle("is-open", !open);
+				body.hidden = open;
+			});
+			item.appendChild(head);
+			item.appendChild(body);
+			acc.appendChild(item);
+		});
+		section.__body.appendChild(acc);
 		return finish(section, block);
 	};
 

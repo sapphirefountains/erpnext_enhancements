@@ -53,6 +53,8 @@ DYNAMIC_PREFIXES = {
     "tr-block-": (
         "text", "image", "pdf", "video", "embed", "callout", "file", "divider",
         "unknown", "heading", "body", "caption", "note",
+        # Phase 4 interactive block types (blocks.js card() modifiers).
+        "checklist", "flashcards", "hotspots", "accordion",
     ),
 }
 
@@ -440,3 +442,83 @@ class TestTheChromeRemovalSparesThePlayer(unittest.TestCase):
         player = (JS_DIR / "player.js").read_text(encoding="utf-8")
         self.assertIn('el("footer", "tr-bottom")', player)
         self.assertIn('el("main", "tr-view")', player)
+
+
+class TestInjectedStylesheetsStayOnPalette(unittest.TestCase):
+    """quiz.js and video.js each inject a self-contained fallback stylesheet at
+    mount (quiz.js's ``ensureStyles``, video.js's ``#tr-video-structural-css``), for
+    the contexts where ``player.css`` is not loaded — the Phase-3 authoring preview
+    and any standalone mount. Each is a second, hand-maintained copy of the palette,
+    and they drifted: quiz.js hardcoded frappe-blue (``#2c7be5``) as its accent
+    fallback and frappe's green/red as its semantic tints, so a quiz rendered the
+    wrong brand colours wherever ``player.css`` was absent (repointed v1.363.0).
+
+    Nothing at runtime catches an off-brand fallback: it only shows in a context no
+    other test exercises, and the learner page overpaints it, so it is invisible
+    until somebody opens the preview. So the two copies are pinned to the house
+    palette here — the CSS class contract's counterpart for colour.
+    """
+
+    QUIZ = JS_DIR / "quiz.js"
+    VIDEO = JS_DIR / "video.js"
+    # frappe's own blue, in both notations the fallback was ever written in.
+    FRAPPE_BLUE = ("#2c7be5", "44,123,229", "44, 123, 229")
+    # frappe's semantic green/red, which the injected tints used to carry instead of
+    # the house #2e9e4f / #e03636 (hex and rgb forms).
+    FRAPPE_SEMANTIC = ("1f9d55", "31,157,85", "d64545", "214,69,69", "2b8a3e")
+
+    def _root_tokens(self):
+        """The light ``:root`` ``--tr-*`` values from player.css, comments stripped
+        so the ``:root .tr-quiz`` mention in the header prose cannot be matched."""
+        block = re.search(r":root\s*\{([^}]*)\}", _css_without_comments()).group(1)
+        return {
+            name: value.strip().lower()
+            for name, value in re.findall(r"(--tr-[a-z-]+)\s*:\s*([^;]+);", block)
+        }
+
+    def test_no_frappe_blue_in_the_injected_stylesheets(self):
+        for path in (self.QUIZ, self.VIDEO):
+            text = path.read_text(encoding="utf-8")
+            for needle in self.FRAPPE_BLUE:
+                self.assertNotIn(
+                    needle,
+                    text,
+                    f"{path.name} contains frappe-blue {needle!r} — the injected fallback "
+                    "stylesheet must use the house Sapphire palette, not the desk default",
+                )
+
+    def test_no_frappe_semantic_colours_in_the_injected_stylesheets(self):
+        blob = self.QUIZ.read_text(encoding="utf-8") + self.VIDEO.read_text(encoding="utf-8")
+        for stray in self.FRAPPE_SEMANTIC:
+            self.assertNotIn(
+                stray,
+                blob,
+                f"{stray!r} is frappe's semantic colour; the injected fallbacks use the "
+                "house #2e9e4f / #e03636",
+            )
+
+    def test_the_injected_var_fallbacks_match_the_house_tokens(self):
+        """Each ``var(--desk-name, #fallback)`` quiz.js reads must fall back to the
+        value player.css puts on the matching ``--tr-*`` token, so the two copies of
+        the palette cannot silently disagree."""
+        tokens = self._root_tokens()
+        quiz = self.QUIZ.read_text(encoding="utf-8")
+        # desk var name -> the --tr-* token whose value the fallback must equal.
+        mapping = {
+            "--primary": "--tr-accent",
+            "--text-color": "--tr-text",
+            "--border-color": "--tr-border",
+        }
+        for desk_name, token in mapping.items():
+            match = re.search(
+                rf"var\({re.escape(desk_name)},\s*(#[0-9a-fA-F]{{3,6}})\)", quiz
+            )
+            self.assertIsNotNone(
+                match, f"quiz.js no longer reads {desk_name} with a hardcoded fallback"
+            )
+            self.assertEqual(
+                match.group(1).lower(),
+                tokens.get(token, ""),
+                f"quiz.js's {desk_name} fallback {match.group(1)} disagrees with "
+                f"player.css {token} = {tokens.get(token)}",
+            )

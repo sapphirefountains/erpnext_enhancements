@@ -9,12 +9,14 @@
   "block_type",
   "heading",
   "content",
+  "callout_tone",
   "image",
   "file",
   "video_asset",
   "video_duration_seconds",
   "embed_url",
   "poster_image",
+  "data",
   "caption",
   "gating_section",
   "required_for_completion",
@@ -39,7 +41,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Type",
-   "options": "Rich Text\nImage\nPDF\nVideo\nExternal Embed\nCallout\nDownloadable File\nDivider",
+   "options": "Rich Text\nImage\nPDF\nVideo\nExternal Embed\nCallout\nDownloadable File\nDivider\nChecklist\nFlashcards\nImage Hotspots\nAccordion",
    "reqd": 1
   },
   {
@@ -58,7 +60,7 @@
    "label": "Content"
   },
   {
-   "depends_on": "eval:doc.block_type==\"Image\"",
+   "depends_on": "eval:[\"Image\",\"Image Hotspots\"].includes(doc.block_type)",
    "fieldname": "image",
    "fieldtype": "Attach Image",
    "label": "Image"
@@ -108,6 +110,22 @@
    "fieldname": "caption",
    "fieldtype": "Small Text",
    "label": "Caption"
+  },
+  {
+   "depends_on": "eval:doc.block_type==\"Callout\"",
+   "description": "Optional tone for a Callout — leave blank for the default accent. Tip is green, Warning amber, Danger red.",
+   "fieldname": "callout_tone",
+   "fieldtype": "Select",
+   "label": "Tone",
+   "options": "\nTip\nWarning\nDanger"
+  },
+  {
+   "depends_on": "eval:[\"Checklist\",\"Flashcards\",\"Image Hotspots\",\"Accordion\"].includes(doc.block_type)",
+   "description": "The block's list content, as JSON. Checklist: {\"items\":[\"step\", …]}. Flashcards: {\"cards\":[{\"front\":\"\",\"back\":\"\"}]}. Image Hotspots: {\"hotspots\":[{\"x\":0,\"y\":0,\"label\":\"\"}]} (x/y are % of the image; the picture goes in the Image field). Accordion: {\"panels\":[{\"title\":\"\",\"body\":\"<p>…</p>\"}]}. Edited visually in the Training Builder and sanitised at publish.",
+   "fieldname": "data",
+   "fieldtype": "Code",
+   "label": "Block Data (JSON)",
+   "options": "JSON"
   },
   {
    "fieldname": "gating_section",
