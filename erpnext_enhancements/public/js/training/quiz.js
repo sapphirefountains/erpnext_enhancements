@@ -673,11 +673,35 @@
 		return "";
 	}
 
+	function prefersReducedMotion() {
+		return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+	}
+
+	// rAF count-up for the score number, easing to the final value. Paired with the
+	// ring sweep; reduced motion writes the final number and never starts the loop.
+	function countUp(node, to, duration) {
+		var start = null;
+		function step(ts) {
+			if (start == null) start = ts;
+			var progress = Math.min(1, (ts - start) / duration);
+			var eased = 1 - Math.pow(1 - progress, 3);
+			node.textContent = pct(Math.round(to * eased * 10) / 10);
+			if (progress < 1) requestAnimationFrame(step);
+			else node.textContent = pct(to);
+		}
+		requestAnimationFrame(step);
+	}
+
 	function ring(score, passed) {
 		var value = Math.max(0, Math.min(100, Number(score) || 0));
 		var radius = 42;
 		var circumference = 2 * Math.PI * radius;
+		var reduce = prefersReducedMotion();
+		var target = circumference * (1 - value / 100);
 		var box = el("div", "tr-ring" + (passed ? " is-pass" : " is-fail"));
+		// Draws empty (offset = full circumference) and sweeps to the grade; the
+		// stroke-dashoffset transition lives in player.css. Reduced motion paints
+		// the final arc and number outright.
 		box.innerHTML =
 			'<svg viewBox="0 0 100 100" role="img" aria-label="' +
 			(Math.round(value * 10) / 10) +
@@ -688,9 +712,21 @@
 			'" stroke-dasharray="' +
 			circumference.toFixed(2) +
 			'" stroke-dashoffset="' +
-			(circumference * (1 - value / 100)).toFixed(2) +
+			(reduce ? target : circumference).toFixed(2) +
 			'"></circle></svg>';
-		box.appendChild(el("div", "tr-ring-label", pct(score)));
+		var label = el("div", "tr-ring-label", reduce ? pct(score) : pct(0));
+		box.appendChild(label);
+		if (!reduce) {
+			var fg = box.querySelector(".tr-ring-fg");
+			// Two frames: the first commits the empty state, the second changes the
+			// offset so the transition has a start and an end to interpolate.
+			requestAnimationFrame(function () {
+				requestAnimationFrame(function () {
+					if (fg) fg.setAttribute("stroke-dashoffset", target.toFixed(2));
+					countUp(label, value, 900);
+				});
+			});
+		}
 		return box;
 	}
 
@@ -767,10 +803,10 @@
 	// ------------------------------------------------------------------ styles
 
 	var CSS = [
-		".tr-quiz{--tr-fg:var(--text-color,#1f272e);--tr-muted-c:var(--text-muted,#6b757f);",
-		"--tr-bg:var(--card-bg,#fff);--tr-line:var(--border-color,#d8dee4);",
-		"--tr-accent:var(--primary,#2c7be5);--tr-ok:var(--green-500,#1f9d55);",
-		"--tr-bad:var(--red-500,#d64545);color:var(--tr-fg);font-size:16px;line-height:1.5;",
+		".tr-quiz{--tr-fg:var(--text-color,#16202a);--tr-muted-c:var(--text-muted,#55636f);",
+		"--tr-bg:var(--card-bg,#fff);--tr-line:var(--border-color,#dde4ea);",
+		"--tr-accent:var(--primary,#00a0dd);--tr-ok:var(--green-500,#2e9e4f);",
+		"--tr-bad:var(--red-500,#e03636);color:var(--tr-fg);font-size:16px;line-height:1.5;",
 		"max-width:52rem;margin:0 auto;position:relative}",
 		".tr-quiz *{box-sizing:border-box}",
 		".tr-quiz-head{position:sticky;top:0;z-index:2;background:var(--tr-bg);padding:.5rem 0 .75rem}",
@@ -779,7 +815,7 @@
 		".tr-dot{width:.75rem;height:.75rem;padding:0;border-radius:50%;cursor:pointer;",
 		"border:1px solid var(--tr-line);background:transparent}",
 		".tr-dot.is-done{background:var(--tr-accent);border-color:var(--tr-accent)}",
-		".tr-dot.is-current{box-shadow:0 0 0 3px rgba(44,123,229,.25)}",
+		".tr-dot.is-current{box-shadow:0 0 0 3px rgba(0,160,221,.25)}",
 		".tr-q{padding:1rem 0;border-top:1px solid var(--tr-line)}",
 		".tr-q:first-child{border-top:0}",
 		".tr-quiz.is-paged .tr-q{border-top:0}",
@@ -793,7 +829,7 @@
 		".tr-opt{display:flex;gap:.75rem;align-items:flex-start;min-height:44px;padding:.625rem .75rem;",
 		"border:1px solid var(--tr-line);border-radius:.5rem;cursor:pointer;background:var(--tr-bg)}",
 		".tr-opt:focus-visible{outline:2px solid var(--tr-accent);outline-offset:2px}",
-		".tr-opt.is-on{border-color:var(--tr-accent);background:rgba(44,123,229,.08)}",
+		".tr-opt.is-on{border-color:var(--tr-accent);background:rgba(0,160,221,.08)}",
 		".tr-opt-mark{flex:0 0 auto;width:1.25rem;height:1.25rem;margin-top:.125rem;border-radius:50%;",
 		"border:2px solid var(--tr-line)}",
 		'.tr-opt[role="checkbox"] .tr-opt-mark{border-radius:.25rem}',
@@ -812,7 +848,7 @@
 		"color:#fff}",
 		".tr-btn-ghost{background:transparent}",
 		".tr-quiz-error{margin:.5rem 0;padding:.625rem .75rem;border-radius:.5rem;",
-		"background:rgba(214,69,69,.1);color:var(--tr-bad);font-size:.9375rem}",
+		"background:rgba(224,54,54,.1);color:var(--tr-bad);font-size:.9375rem}",
 		".tr-quiz-empty{color:var(--tr-muted-c)}",
 		".tr-modal{position:fixed;inset:0;z-index:20;display:flex;align-items:center;",
 		"justify-content:center;padding:1rem;background:rgba(0,0,0,.45)}",
@@ -834,8 +870,8 @@
 		"justify-content:center;font-size:1.25rem;font-weight:600}",
 		".tr-chip{display:inline-block;padding:.125rem .625rem;border-radius:999px;",
 		"font-size:.8125rem;font-weight:600}",
-		".tr-chip.is-pass{background:rgba(31,157,85,.12);color:var(--tr-ok)}",
-		".tr-chip.is-fail{background:rgba(214,69,69,.12);color:var(--tr-bad)}",
+		".tr-chip.is-pass{background:rgba(46,158,79,.12);color:var(--tr-ok)}",
+		".tr-chip.is-fail{background:rgba(224,54,54,.12);color:var(--tr-bad)}",
 		".tr-chip-sm{margin-left:.5rem;text-transform:none;letter-spacing:0}",
 		".tr-muted{color:var(--tr-muted-c);font-size:.875rem}",
 		".tr-result-h{margin:1rem 0 .5rem;font-size:1rem}",

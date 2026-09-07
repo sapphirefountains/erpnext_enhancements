@@ -131,6 +131,85 @@
 		return el("span", "tr-chip" + (tone ? " tr-chip-" + tone : ""), text);
 	}
 
+	// ------------------------------------------------------------------ motion
+
+	function prefersReduced() {
+		return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+	}
+
+	// rAF count-up for a number node (the completion score and reward tiles).
+	// Reduced motion writes the final value and never starts the loop.
+	function countUp(node, to, duration, suffix) {
+		suffix = suffix || "";
+		to = Number(to) || 0;
+		if (prefersReduced()) {
+			node.textContent = String(Math.round(to)) + suffix;
+			return;
+		}
+		var start = null;
+		function step(ts) {
+			if (start == null) start = ts;
+			var progress = Math.min(1, (ts - start) / duration);
+			var eased = 1 - Math.pow(1 - progress, 3);
+			node.textContent = String(Math.round(to * eased)) + suffix;
+			if (progress < 1) requestAnimationFrame(step);
+			else node.textContent = String(Math.round(to)) + suffix;
+		}
+		requestAnimationFrame(step);
+	}
+
+	// A short confetti burst behind the completion card. A hand-rolled canvas, not
+	// a library: the learner portal is a no-CDN page (customer Website Users have
+	// no desk bundle), so a dependency here would either be inlined or blocked. The
+	// caller skips this entirely under reduced motion; it clears itself after ~1.6s.
+	function confetti(canvas) {
+		var host = canvas.parentNode;
+		if (!host || !canvas.getContext) return;
+		var width = (canvas.width = host.clientWidth || 320);
+		var height = (canvas.height = host.clientHeight || 480);
+		var ctx = canvas.getContext("2d");
+		var colors = ["#00a0dd", "#0077b6", "#d99b1f", "#2e9e4f", "#7fe0ff"];
+		var pieces = [];
+		for (var i = 0; i < 80; i++) {
+			pieces.push({
+				x: width / 2 + (Math.random() - 0.5) * 80,
+				y: height * 0.3,
+				vx: (Math.random() - 0.5) * 7,
+				vy: -(Math.random() * 8 + 4),
+				g: 0.22 + Math.random() * 0.12,
+				size: 4 + Math.random() * 5,
+				color: colors[i % colors.length],
+				rot: Math.random() * 6.28,
+				vr: (Math.random() - 0.5) * 0.3,
+			});
+		}
+		var startTs = null;
+		var duration = 1600;
+		function frame(ts) {
+			if (startTs == null) startTs = ts;
+			var elapsed = ts - startTs;
+			ctx.clearRect(0, 0, width, height);
+			for (var j = 0; j < pieces.length; j++) {
+				var p = pieces[j];
+				p.vy += p.g;
+				p.x += p.vx;
+				p.y += p.vy;
+				p.rot += p.vr;
+				p.vx *= 0.99;
+				ctx.save();
+				ctx.translate(p.x, p.y);
+				ctx.rotate(p.rot);
+				ctx.globalAlpha = Math.max(0, 1 - elapsed / duration);
+				ctx.fillStyle = p.color;
+				ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+				ctx.restore();
+			}
+			if (elapsed < duration) requestAnimationFrame(frame);
+			else ctx.clearRect(0, 0, width, height);
+		}
+		requestAnimationFrame(frame);
+	}
+
 	// ------------------------------------------------------------------- player
 
 	function Player(rootEl, boot, transport) {
@@ -452,6 +531,16 @@
 			else if (view === "quiz") renderQuiz();
 			else if (view === "results") renderResults();
 			else if (view === "signoff") renderSignoff();
+			else if (view === "complete") renderComplete();
+			else if (view === "record") renderRecord();
+			// A light entrance so a view change reads as a transition, not a cut.
+			// .is-entering is a state class (exempt from the CSS class contract) and
+			// player.css disables it under prefers-reduced-motion. The forced reflow
+			// between remove and add restarts the animation on every view, not just
+			// the first paint.
+			main.classList.remove("is-entering");
+			void main.offsetWidth;
+			main.classList.add("is-entering");
 			// Moving to a new view is a navigation; a screen reader should be told
 			// where it landed rather than left on the button that was pressed.
 			main.setAttribute("tabindex", "-1");
@@ -469,9 +558,25 @@
 			clear(main);
 			clear(foot);
 			head.classList.remove("is-sticky");
-			var box = el("div", "tr-loading", message || t("Loading…"));
-			box.setAttribute("role", "status");
-			main.appendChild(box);
+			// A shape-matched skeleton rather than a blank spinner: a title bar and a
+			// few card placeholders that shimmer, so a hop between views reads as the
+			// next screen loading rather than the current one emptying. The status
+			// text stays for screen readers, which get nothing from the shimmer.
+			var wrap = el("div", "tr-skeleton");
+			wrap.setAttribute("role", "status");
+			wrap.setAttribute("aria-live", "polite");
+			wrap.appendChild(el("span", "tr-sr-only", message || t("Loading…")));
+			wrap.appendChild(skel("42%", "28px"));
+			for (var i = 0; i < 3; i++) wrap.appendChild(skel("100%", "72px"));
+			main.appendChild(wrap);
+		}
+
+		function skel(width, height) {
+			var node = el("div", "tr-skel");
+			node.style.width = width;
+			node.style.height = height;
+			node.setAttribute("aria-hidden", "true");
+			return node;
 		}
 
 		// --------------------------------------------------------------- catalog
@@ -499,6 +604,12 @@
 		function renderCatalog() {
 			head.appendChild(el("h1", "tr-title", t("Your training")));
 
+			// The learner's own points / streak / badges, when they have earned any.
+			// Server-fed on the boot payload; hidden for a clean slate rather than
+			// shown as a row of zeros (see youStrip).
+			var strip = youStrip();
+			if (strip) main.appendChild(strip);
+
 			// `assigned` and `library`, which is what get_learner_bootstrap actually
 			// returns. This read `b.courses` and `b.catalog.courses` -- neither of
 			// which the server has ever sent -- so the page reported "nothing is
@@ -513,6 +624,8 @@
 				main.appendChild(
 					el("p", "tr-empty", t("Nothing is assigned to you right now, and nothing is overdue."))
 				);
+				main.appendChild(recordOpen());
+				main.appendChild(renderLeaderboard());
 				return;
 			}
 
@@ -535,6 +648,7 @@
 				main.appendChild(shelf);
 			}
 
+			main.appendChild(recordOpen());
 			main.appendChild(renderLeaderboard());
 		}
 
@@ -1244,10 +1358,15 @@
 						score: result.score,
 						completion: result.completion,
 					};
+					// Additive reward block (points, streak, new badges, certificate),
+					// best-effort from the server; renderComplete shows only what came.
+					state.reward = result.reward || {};
 					// A course that wants hands-on verification is passed but not
 					// finished — the sign-off view says who has to watch them. Reads
 					// the assignment status for the reason given at the course view.
-					go(state.assignmentStatus === "Awaiting Sign-off" ? "signoff" : "results");
+					// Otherwise the course is genuinely done: a real completion screen,
+					// not the self-looping quiz-results view it used to land on.
+					go(state.assignmentStatus === "Awaiting Sign-off" ? "signoff" : "complete");
 				})
 				.catch(function (err) {
 					setBusy(false);
@@ -1467,6 +1586,230 @@
 					})
 				);
 			}
+		}
+
+		// ------------------------------------------------------- learner stats + record
+		//
+		// The reward backend — Training Learner Stat, Training Badge Award, and the
+		// get_my_transcript endpoint — shipped complete and unseen: points, streaks
+		// and badges were computed on every completion and shown to the learner
+		// nowhere, and the transcript method was mapped in the transport with no
+		// caller. These surfaces show them. All server-fed and best-effort.
+
+		// The home strip. null for a learner who has earned nothing, so the catalog
+		// leads with courses rather than a row of zeros. statTile is shared with the
+		// completion screen, so the two can never drift.
+		function youStrip() {
+			var stats = b.stats;
+			if (!stats) return null;
+			var points = intOf(stats.points);
+			var streak = intOf(stats.streak_days);
+			var badges = intOf(stats.badges_earned);
+			if (!points && !streak && !badges) return null;
+			var row = el("div", "tr-stat-row");
+			row.appendChild(statTile(points, t("Points")));
+			row.appendChild(statTile(streak, streak === 1 ? t("Day") : t("Days")));
+			row.appendChild(statTile(badges, badges === 1 ? t("Badge") : t("Badges")));
+			return row;
+		}
+
+		function intOf(value) {
+			var n = Math.round(Number(value));
+			return isFinite(n) && n > 0 ? n : 0;
+		}
+
+		function statTile(value, label) {
+			var tile = el("div", "tr-stat");
+			tile.appendChild(el("div", "tr-stat-num", String(value)));
+			tile.appendChild(el("div", "tr-stat-label", label));
+			return tile;
+		}
+
+		// The catalog's link into the transcript, shown in both the empty and the
+		// populated catalog — a learner between assignments still has a record.
+		function recordOpen() {
+			var wrap = el("div", "tr-record-open");
+			wrap.appendChild(
+				button(t("My record & certificates"), "tr-button tr-button-quiet", openRecord)
+			);
+			return wrap;
+		}
+
+		function openRecord() {
+			go("record");
+		}
+
+		function renderRecord() {
+			var bar = el("div", "tr-subhead-row");
+			bar.appendChild(button("← " + t("All courses"), "tr-button tr-button-quiet", function () {
+				go("catalog");
+			}));
+			bar.appendChild(el("h1", "tr-title", t("My record")));
+			head.appendChild(bar);
+
+			var pending = el("div", "tr-loading", t("Loading your record…"));
+			pending.setAttribute("role", "status");
+			main.appendChild(pending);
+
+			call("getTranscript", {})
+				.then(function (data) {
+					clear(main);
+					data = data || {};
+					var rows = data.completions || [];
+					if (!rows.length) {
+						main.appendChild(
+							el("p", "tr-empty", t("You have not finished a course yet. Your certificates will appear here."))
+						);
+						return;
+					}
+					var list = el("div", "tr-record");
+					rows.forEach(function (row) {
+						list.appendChild(recordRow(row));
+					});
+					main.appendChild(list);
+				})
+				.catch(function (err) {
+					clear(main);
+					fail(main, err);
+					main.appendChild(button(t("Back"), "tr-button", function () {
+						go("catalog");
+					}));
+				});
+		}
+
+		function recordRow(row) {
+			var item = el("div", "tr-record-row");
+			var body = el("div", "tr-record-main");
+			body.appendChild(el("div", "tr-record-title", row.course_title || row.course || t("Course")));
+			var meta = el("div", "tr-record-meta");
+			// score arrives only since v1.363.0 fixed the dropped score_percent field.
+			if (row.score != null) meta.appendChild(chip(fmt(t("Score {0}%"), [pct(row.score)])));
+			if (row.completed_on) meta.appendChild(chip(fmt(t("Passed {0}"), [String(row.completed_on).slice(0, 10)])));
+			if (row.status) meta.appendChild(chip(row.status));
+			if (row.expires_on) meta.appendChild(chip(fmt(t("Expires {0}"), [String(row.expires_on).slice(0, 10)])));
+			body.appendChild(meta);
+			item.appendChild(body);
+			// Opens the existing /training_certificate page in a new tab so the
+			// learner keeps their place in the record.
+			if (row.certificate_url) {
+				var link = el("a", "tr-button tr-button-quiet tr-record-cert", t("Certificate"));
+				link.href = row.certificate_url;
+				link.target = "_blank";
+				link.rel = "noopener";
+				item.appendChild(link);
+			}
+			return item;
+		}
+
+		// ----------------------------------------------------------- completion
+
+		// The end of a course. Replaces the self-looping quiz-results screen —
+		// renderResults' "Continue" ran finishLesson on the already-finished last
+		// lesson and looped back with no exit but the browser's Back button. This is
+		// a real completion view that surfaces the reward finish_attempt now returns
+		// (points, streak, freshly earned badges) and links the certificate. Every
+		// piece is optional: a course with gamification off shows the verdict and an
+		// exit, and nothing untrue.
+		function renderComplete() {
+			var result = state.result || {};
+			var reward = state.reward || {};
+
+			head.appendChild(el("h1", "tr-title", t("Course complete")));
+
+			var wrap = el("div", "tr-complete");
+
+			// Behind the card, inert, cleared after ~1.6s (and skipped when the OS
+			// asks for reduced motion). Appended first so it sits under everything.
+			var canvas = el("canvas", "tr-confetti");
+			canvas.setAttribute("aria-hidden", "true");
+			wrap.appendChild(canvas);
+
+			var mark = el("div", "tr-complete-mark", "✓");
+			mark.setAttribute("aria-hidden", "true");
+			wrap.appendChild(mark);
+
+			wrap.appendChild(el("p", "tr-complete-line", t("You finished this course.")));
+			var scoreNode = null;
+			if (result.score != null) {
+				// Starts at 0% and counts up once on the page; countUp writes the
+				// final value outright under reduced motion.
+				scoreNode = el("div", "tr-complete-score", pct(0) + "%");
+				wrap.appendChild(scoreNode);
+			}
+
+			var tiles = el("div", "tr-stat-row");
+			var counters = [];
+			var shown = 0;
+			function addCounter(value, label) {
+				var tile = statTile(0, label);
+				tiles.appendChild(tile);
+				counters.push({ node: tile.querySelector(".tr-stat-num"), value: value });
+				shown++;
+			}
+			if (reward.points != null) addCounter(intOf(reward.points), t("Points"));
+			if (intOf(reward.streak_days)) {
+				addCounter(intOf(reward.streak_days), reward.streak_days === 1 ? t("Day") : t("Days"));
+			}
+			if (reward.badges_earned != null) addCounter(intOf(reward.badges_earned), t("Badges"));
+			if (shown) wrap.appendChild(tiles);
+
+			var newBadges = reward.new_badges || [];
+			if (newBadges.length) {
+				wrap.appendChild(
+					el("h2", "tr-section-title", newBadges.length === 1 ? t("Badge unlocked") : t("Badges unlocked"))
+				);
+				var badges = el("div", "tr-new-badges");
+				newBadges.forEach(function (badge) {
+					badges.appendChild(newBadgeCard(badge));
+				});
+				wrap.appendChild(badges);
+			}
+
+			main.appendChild(wrap);
+
+			// Now that the card is on the page: sweep the numbers up and — unless the
+			// OS asks for stillness — a short confetti burst behind it.
+			if (scoreNode) countUp(scoreNode, pct(result.score), 900, "%");
+			counters.forEach(function (counter) {
+				countUp(counter.node, counter.value, 900);
+			});
+			if (!prefersReduced()) confetti(canvas);
+
+			if (reward.certificate_url) {
+				var cert = el("a", "tr-button tr-button-primary", t("View your certificate"));
+				cert.href = reward.certificate_url;
+				cert.target = "_blank";
+				cert.rel = "noopener";
+				foot.appendChild(cert);
+			}
+			foot.appendChild(
+				button(t("Back to your courses"), "tr-button", function () {
+					state.result = null;
+					state.reward = null;
+					go("catalog");
+				})
+			);
+		}
+
+		function newBadgeCard(badge) {
+			var card = el("div", "tr-new-badge");
+			var medal = el("div", "tr-new-badge-medal");
+			medal.setAttribute("aria-hidden", "true");
+			if (badge.image) {
+				var img = el("img", "tr-new-badge-img");
+				img.src = badge.image;
+				img.alt = "";
+				img.loading = "lazy";
+				medal.appendChild(img);
+			} else {
+				medal.textContent = "★";
+			}
+			card.appendChild(medal);
+			var text = el("div", "tr-new-badge-text");
+			text.appendChild(el("div", "tr-new-badge-name", badge.name || t("Badge")));
+			if (badge.description) text.appendChild(el("div", "tr-new-badge-desc", badge.description));
+			card.appendChild(text);
+			return card;
 		}
 
 		// --------------------------------------------------------------- signoff

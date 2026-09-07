@@ -469,6 +469,9 @@ def get_learner_bootstrap():
         "library": library,
         "resume": _resume(user),
         "today": today(),
+        # Additive: the learner's own points / streak / badges for the home strip.
+        # None or all-zero simply means the strip is not drawn (see _learner_stats).
+        "stats": _learner_stats(user),
         # Every key here is read by the player, and every setting the player reads
         # is here. Both halves of that sentence were false: `max_playback_rate` and
         # `doc_min_dwell_seconds` were read by video.js and blocks.js and sent by
@@ -1244,12 +1247,14 @@ def finish_attempt(attempt):
         # Re-opening something already finished. The score comes off the record
         # rather than being recomputed: it is what the learner was graded on, and
         # recomputing could quietly disagree with the completion certificate.
+        completion = _completion_for(doc)
         return _finished_attempt_payload(
             doc,
             passed=doc.status != "Failed",
             score=_recorded_score(doc),
             outstanding=[],
-            completion=_completion_for(doc),
+            completion=completion,
+            reward=_completion_reward(doc, completion),
         )
 
     outstanding, scores, coverages = [], [], []
@@ -1350,6 +1355,7 @@ def finish_attempt(attempt):
         score=score,
         outstanding=[],
         completion=completion,
+        reward=_completion_reward(doc, completion),
     )
 
 
@@ -1367,7 +1373,7 @@ def _recorded_score(doc):
     return flt(score) if score is not None else None
 
 
-def _finished_attempt_payload(doc, passed, score, outstanding, completion):
+def _finished_attempt_payload(doc, passed, score, outstanding, completion, reward=None):
     """The one shape :func:`finish_attempt` returns, from all three of its exits.
 
     It had three shapes, and the differences between them were invisible until
@@ -1385,6 +1391,7 @@ def _finished_attempt_payload(doc, passed, score, outstanding, completion):
     key nobody notices, so there is one assembler now and the exits differ only in
     what they pass to it.
     """
+    reward = reward or {}
     return {
         "passed": bool(passed),
         "attempt": doc.name,
@@ -1400,8 +1407,112 @@ def _finished_attempt_payload(doc, passed, score, outstanding, completion):
         "score": score,
         "outstanding": outstanding or [],
         "completion": completion,
+        # Additive reward + certificate detail for the completion screen. Every
+        # sub-key is optional and best-effort (see _completion_reward), so a payload
+        # from before this existed, a dormant gamification switch, or an un-migrated
+        # reward doctype degrades to the plain pass screen instead of erroring.
+        "reward": {
+            "points": reward.get("points"),
+            "streak_days": reward.get("streak_days"),
+            "badges_earned": reward.get("badges_earned"),
+            "new_badges": reward.get("new_badges") or [],
+            # Only the ready-to-open URL crosses the wire; the bare docname stays
+            # server-side (the player links, it does not name the certificate).
+            "certificate_url": reward.get("certificate_url"),
+        },
     }
 
+
+def _completion_reward(doc, completion):
+    """Best-effort reward + certificate detail for the completion screen.
+
+    Everything here is a side effect that already happened when the completion was
+    submitted a moment ago: ``certificates.after_completion`` filed the certificate
+    back onto the completion, and ``gamification.award_for_completion`` wrote the
+    running totals to ``Training Learner Stat`` and stamped each fresh
+    ``Training Badge Award`` with this completion as its ``source_completion``. It
+    is read back rather than recomputed, so the celebration cannot disagree with
+    what was actually recorded. Guarded at every step: a completion still counts on
+    a site whose gamification switch is off or whose reward doctypes have not
+    migrated, and the player renders only the keys that arrive.
+    """
+    reward = {
+        "points": None,
+        "streak_days": None,
+        "badges_earned": None,
+        "new_badges": [],
+        "certificate": None,
+        "certificate_url": None,
+    }
+    if not completion:
+        return reward
+
+    certificate = frappe.db.get_value("Training Completion", completion, "certificate")
+    if certificate:
+        reward["certificate"] = certificate
+        # A docname (TRN-CERT-…), not user input, so a plain query string is safe.
+        # The holder view of a certificate is the ?certificate= param.
+        reward["certificate_url"] = "/training_certificate?certificate=" + str(certificate)
+
+    if frappe.db.exists("DocType", "Training Learner Stat"):
+        stat = frappe.db.get_value(
+            "Training Learner Stat",
+            {"user": doc.user},
+            ["total_points", "badges_earned", "current_streak_days"],
+            as_dict=True,
+        )
+        if stat:
+            reward["points"] = cint(stat.total_points)
+            reward["badges_earned"] = cint(stat.badges_earned)
+            reward["streak_days"] = cint(stat.current_streak_days)
+
+    if frappe.db.exists("DocType", "Training Badge Award"):
+        earned = frappe.get_all(
+            "Training Badge Award",
+            filters={"source_completion": completion, "user": doc.user},
+            pluck="badge",
+        )
+        if earned:
+            badges = frappe.get_all(
+                "Training Badge",
+                filters={"name": ["in", earned]},
+                fields=["name", "description", "image"],
+            )
+            reward["new_badges"] = [
+                {"name": b.name, "description": b.get("description") or "", "image": b.get("image")}
+                for b in badges
+            ]
+
+    return reward
+
+
+def _learner_stats(user):
+    """The learner's own points / streak / badge count for the home strip.
+
+    Read straight off the denormalised ``Training Learner Stat`` row the completion
+    sweep maintains, so the strip and the leaderboard cannot disagree — never
+    recomputed here. ``None`` when the reward doctype has not migrated (the strip is
+    then simply not drawn); zeros for a learner who has finished nothing yet. The
+    streak is the stored value: the authoritative read-time-decayed number is the
+    leaderboard's, and a day's staleness on a home-screen glance is not worth a
+    second query here.
+    """
+    if not frappe.db.exists("DocType", "Training Learner Stat"):
+        return None
+    row = frappe.db.get_value(
+        "Training Learner Stat",
+        {"user": user},
+        ["total_points", "current_streak_days", "badges_earned", "courses_completed"],
+        as_dict=True,
+    )
+    if not row:
+        return {"points": 0, "streak_days": 0, "badges_earned": 0, "courses_completed": 0}
+    return {
+        "points": cint(row.total_points),
+        "streak_days": cint(row.current_streak_days),
+        "badges_earned": cint(row.badges_earned),
+        "courses_completed": cint(row.courses_completed),
+    }
 
 
 def _signoff_outstanding(doc):
@@ -1661,7 +1772,10 @@ def get_my_transcript():
             "course_version",
             "version_number",
             "completed_on",
-            "score",
+            # The field is score_percent; the client reads `score`. Until v1.363.0
+            # this asked for a non-existent `score`, _fields_present dropped it, and
+            # every transcript row silently carried no score at all.
+            "score_percent",
             "status",
             "expires_on",
             "certificate",
@@ -1676,6 +1790,12 @@ def get_my_transcript():
     for row in rows:
         if not row.get("course_title"):
             row["course_title"] = frappe.db.get_value("Training Course", row.get("course"), "course_title")
+        if "score_percent" in row:
+            row["score"] = row.pop("score_percent")
+        certificate = row.get("certificate")
+        if certificate:
+            # Holder view of their own certificate; the record screen links to it.
+            row["certificate_url"] = "/training_certificate?certificate=" + str(certificate)
     return {"enabled": True, "completions": rows}
 
 

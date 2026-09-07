@@ -59,32 +59,50 @@
  * the column, or the bar covers the last block of every lesson.
  */
 
+/*
+ * Design tokens. One source of truth for the learner page; the `:root .tr-quiz`
+ * block far below re-declares --tr-bg (and --tr-accent) to keep the quiz's own
+ * injected fallback stylesheet in step — a var cannot reference the name it
+ * shadows, so those two literals must be edited here AND there together.
+ *
+ * Elevation is a two-step ladder, not one stamp on everything: --tr-shadow lifts
+ * an ordinary card off the page; --tr-shadow-lg is for the surfaces that float
+ * ABOVE the page (the checkpoint panel, the unfinished-submit modal), so depth
+ * reads as hierarchy rather than as one uniform drop shadow. Semantic answer
+ * colours stay literal elsewhere and never enter this block.
+ */
 :root {
-	--tr-bg: #f6f7f9;
+	--tr-bg: #eef2f6;
 	--tr-surface: #ffffff;
-	--tr-surface-alt: #f0f2f5;
-	--tr-text: #1f272e;
-	--tr-muted: #6c7680;
-	--tr-border: #e2e6ea;
+	--tr-surface-alt: #e7edf3;
+	--tr-text: #16202a;
+	/* #55636f clears WCAG AA (4.5:1) on both --tr-bg and --tr-surface; the old
+	   #6c7680 sat at ~4.4:1 and carried every eyebrow, chip and meta line under
+	   it — thin in daylight on a phone, and a contrast failure on a product that
+	   issues compliance certificates. */
+	--tr-muted: #55636f;
+	--tr-border: #dde4ea;
 	--tr-accent: #00a0dd;
-	--tr-accent-soft: #e6f6fd;
+	--tr-accent-soft: #e2f4fc;
 	--tr-accent-text: #ffffff;
-	--tr-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+	--tr-shadow: 0 1px 2px rgba(16, 38, 54, 0.04), 0 6px 16px rgba(16, 38, 54, 0.06);
+	--tr-shadow-lg: 0 12px 32px rgba(12, 34, 54, 0.16);
 	--tr-radius: 14px;
 }
 
 @media (prefers-color-scheme: dark) {
 	:root {
-		--tr-bg: #161a1f;
-		--tr-surface: #1f262e;
-		--tr-surface-alt: #262f38;
-		--tr-text: #e8ecef;
-		--tr-muted: #97a1ab;
-		--tr-border: #313a44;
+		--tr-bg: #12171d;
+		--tr-surface: #1b232c;
+		--tr-surface-alt: #232d37;
+		--tr-text: #e9eef2;
+		--tr-muted: #98a4af;
+		--tr-border: #2c3742;
 		--tr-accent: #29b6f6;
 		--tr-accent-soft: #103244;
 		--tr-accent-text: #06222f;
-		--tr-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+		--tr-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.42);
+		--tr-shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.55);
 	}
 }
 
@@ -340,9 +358,16 @@
    this class, three of them as a direct child of the header column. */
 .tr-title {
 	margin: 0;
-	font-size: 1.3rem;
+	/* The view's anchor. Opened up from 1.3rem and tightened so the page has a
+	   clear top of the type scale — the old scale topped out here at barely above
+	   a card title, and the only large element in the whole app was the post-quiz
+	   score. balance keeps a two-line lesson title from breaking one word onto
+	   its own line. */
+	font-size: 1.5rem;
 	font-weight: 700;
-	line-height: 1.25;
+	line-height: 1.2;
+	letter-spacing: -0.01em;
+	text-wrap: balance;
 	overflow-wrap: break-word;
 }
 
@@ -754,9 +779,10 @@
 
 .tr-card-title {
 	margin: 0;
-	font-size: 1.15rem;
+	font-size: 1.2rem;
 	font-weight: 700;
 	line-height: 1.25;
+	letter-spacing: -0.01em;
 	overflow-wrap: break-word;
 }
 
@@ -878,7 +904,8 @@
    touches. These are the only three places player.js calls chip(). */
 .tr-card-chips .tr-chip,
 .tr-card-actions .tr-chip,
-.tr-outline-meta .tr-chip {
+.tr-outline-meta .tr-chip,
+.tr-record-meta .tr-chip {
 	display: inline-flex;
 	align-items: center;
 	padding: 4px 10px;
@@ -1645,7 +1672,9 @@
 	color: var(--tr-text);
 	border: 1px solid var(--tr-border);
 	border-radius: var(--tr-radius);
-	box-shadow: var(--tr-shadow);
+	/* Floats over the video on the checkpoint scrim, so it takes the deeper step
+	   of the ladder to read as above the picture rather than on it. */
+	box-shadow: var(--tr-shadow-lg);
 	padding: 16px;
 	text-align: left;
 }
@@ -1800,6 +1829,26 @@
 	filter: brightness(0.94);
 }
 
+/* Spinner while a checkpoint answer is in flight (video.js sets aria-busy on the
+   submit button). currentColor so the ring reads on the accent-filled primary; the
+   tr-spin keyframes are shared with the loading indicator. */
+.tr-video-btn[aria-busy="true"]::before {
+	content: "";
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	margin-right: 8px;
+	vertical-align: -2px;
+	border: 2px solid currentColor;
+	border-top-color: transparent;
+	border-radius: 50%;
+	animation: tr-spin 700ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tr-video-btn[aria-busy="true"]::before { animation: none; }
+}
+
 /* All three outcomes — "Correct", "Not quite", "Here is the answer" — are
    rendered with this one class and no state class of any kind, so the wording is
    the only signal available and colouring the element would be a lie on two of
@@ -1849,7 +1898,7 @@
         .tr-rev-head) the real parent is named too. */
 :root .tr-quiz {
 	/* Keep in step with :root — a var cannot reference the name it shadows. */
-	--tr-bg: #f6f7f9;
+	--tr-bg: #eef2f6;
 	--tr-accent: #00a0dd;
 	/* The fallback's private names; safe to alias, nothing else reads them. */
 	--tr-fg: var(--tr-text);
@@ -1868,7 +1917,7 @@
 
 @media (prefers-color-scheme: dark) {
 	:root .tr-quiz {
-		--tr-bg: #161a1f;
+		--tr-bg: #12171d;
 		--tr-accent: #29b6f6;
 	}
 }
@@ -2209,7 +2258,8 @@
 	border: 1px solid var(--tr-border);
 	border-radius: var(--tr-radius);
 	background: var(--tr-surface);
-	box-shadow: var(--tr-shadow);
+	/* A modal over the scrim — the deeper step, same as the checkpoint panel. */
+	box-shadow: var(--tr-shadow-lg);
 }
 
 .tr-quiz .tr-modal-title {
@@ -2604,4 +2654,673 @@
 
 .tr-board-table tr.is-me td:first-child {
 	padding-left: 0.35rem;
+}
+
+/* --------------------------------------------------- learner stats + reward
+ *
+ * The reward backend — Training Learner Stat and Training Badge Award — shipped
+ * complete and unseen: points, streaks and badges were computed on every
+ * completion and shown to the learner nowhere. These are the surfaces that show
+ * them — the catalog home strip (youStrip), the course-completion screen
+ * (renderComplete), and the transcript (renderRecord, over get_my_transcript,
+ * mapped in the transport and never called). All server-fed and best-effort: the
+ * strip is not drawn for a learner who has earned nothing, and the completion
+ * screen renders only the reward keys that arrived. Semantic/recognition colours
+ * (the pass mark, the badge medal) stay literal, like every other meaning cue in
+ * this file — they must not move with the palette.
+ */
+
+/* Shared by the home strip and the completion screen so the two cannot drift. */
+.tr-stat-row {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 10px;
+	margin: 4px 0 18px;
+}
+
+.tr-stat {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 2px;
+	padding: 14px 10px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	box-shadow: var(--tr-shadow);
+	text-align: center;
+}
+
+.tr-stat-num {
+	font-size: 1.5rem;
+	font-weight: 700;
+	line-height: 1;
+	letter-spacing: -0.02em;
+	/* Tabular figures keep the three tiles optically aligned across widths. */
+	font-variant-numeric: tabular-nums;
+}
+
+.tr-stat-label {
+	font-size: 0.75rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--tr-muted);
+}
+
+/* ------------------------------------------------------------- completion */
+
+.tr-complete {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 0 4px;
+	text-align: center;
+}
+
+/* The finished mark. Literal green, like the quiz verdict and the gate line. */
+.tr-complete-mark {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 76px;
+	height: 76px;
+	margin-bottom: 6px;
+	border-radius: 50%;
+	background: rgba(46, 158, 79, 0.14);
+	color: #2e9e4f;
+	font-size: 2.2rem;
+	font-weight: 700;
+	line-height: 1;
+}
+
+.tr-complete-line {
+	margin: 0;
+	color: var(--tr-muted);
+}
+
+.tr-complete-score {
+	font-size: 2.4rem;
+	font-weight: 700;
+	line-height: 1.1;
+	letter-spacing: -0.02em;
+}
+
+/* Completion reuses the shared stat tiles; give them room under the score. */
+.tr-complete .tr-stat-row {
+	width: 100%;
+	margin-top: 16px;
+}
+
+.tr-new-badges {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	width: 100%;
+	margin-bottom: 8px;
+}
+
+.tr-new-badge {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px 14px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	box-shadow: var(--tr-shadow);
+	text-align: left;
+}
+
+/* Recognition gold, warm against the cool page and literal for the same reason
+   as the pass mark. A badge with no artwork still reads as an award — a ★ glyph
+   sits here, never a broken image. */
+.tr-new-badge-medal {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 44px;
+	height: 44px;
+	border-radius: 50%;
+	background: radial-gradient(circle at 35% 30%, #ffe6a3, #d99b1f);
+	color: #7a5410;
+	font-size: 1.25rem;
+	overflow: hidden;
+}
+
+.tr-new-badge-img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.tr-new-badge-text {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.tr-new-badge-name {
+	font-weight: 700;
+	overflow-wrap: break-word;
+}
+
+.tr-new-badge-desc {
+	margin-top: 2px;
+	color: var(--tr-muted);
+	font-size: 0.88rem;
+	overflow-wrap: break-word;
+}
+
+/* --------------------------------------------------------------- my record */
+
+.tr-record-open {
+	margin-top: 20px;
+}
+
+.tr-record {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.tr-record-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 14px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	box-shadow: var(--tr-shadow);
+}
+
+.tr-record-main {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.tr-record-title {
+	font-weight: 700;
+	overflow-wrap: break-word;
+}
+
+.tr-record-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin-top: 8px;
+}
+
+.tr-record-cert {
+	flex: 0 0 auto;
+}
+
+/* ------------------------------------------------------------------ motion
+ *
+ * Phase 3 of the training SPA redesign: a small, reduced-motion-safe animation
+ * vocabulary layered onto the existing render model — no framework, no new
+ * dependency. Every animation here is gated behind prefers-reduced-motion at the
+ * foot of the section, and the scripts write the final state directly when motion
+ * is off (quiz.js ring(), player.js countUp/confetti), so nothing depends on an
+ * animation actually running. New non-state classes stay in the class contract:
+ * .tr-confetti is emitted by renderComplete; .is-entering is a state class and is
+ * exempt.
+ */
+
+/* View entrance. player.js toggles .is-entering on <main.tr-view> after each
+   go(), reflowing between remove and add so it restarts on every view. */
+@keyframes tr-view-in {
+	from { opacity: 0; transform: translateY(6px); }
+	to { opacity: 1; transform: none; }
+}
+
+.tr-view.is-entering {
+	animation: tr-view-in 260ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* The score ring sweeps from empty to the grade; quiz.js sets the start and end
+   offsets a frame apart so this transition has something to interpolate. */
+.tr-quiz .tr-ring .tr-ring-fg {
+	transition: stroke-dashoffset 900ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* Tactile answering: the option mark fills with a small spring and a completed
+   progress dot eases rather than snaps. Selection state only — no correctness is
+   expressed here, matching the no-answer-key-in-the-browser rule. */
+.tr-quiz .tr-q-options .tr-opt-mark {
+	transition: background-color 160ms ease, border-color 160ms ease,
+		box-shadow 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.tr-quiz .tr-quiz-dots .tr-dot::after {
+	transition: background-color 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
+}
+
+/* The in-video checkpoint panel rises onto the scrim rather than appearing under
+   the learner's thumb. Covers the takeover panel too — both share the class. */
+@keyframes tr-video-panel-in {
+	from { opacity: 0; transform: translateY(12px) scale(0.985); }
+	to { opacity: 1; transform: none; }
+}
+
+.tr-video .tr-video-panel {
+	animation: tr-video-panel-in 260ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* Completion celebration. renderComplete drops a full-bleed <canvas.tr-confetti>
+   behind the card and counts the score and reward tiles up; the canvas is inert
+   and never captures a tap. Content is lifted above it. */
+.tr-confetti {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+	z-index: 0;
+}
+
+.tr-complete {
+	position: relative;
+}
+
+.tr-complete > * {
+	position: relative;
+	z-index: 1;
+}
+
+/* Shape-matched loading skeleton (player.js loading() → skel()), replacing the
+   blank spinner so a hop between views reads as the next screen loading. Each
+   placeholder's width and height are set inline. */
+.tr-skeleton {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding: 8px 0;
+}
+
+.tr-skel {
+	border-radius: 8px;
+	background: linear-gradient(90deg, var(--tr-surface-alt) 25%, var(--tr-border) 37%, var(--tr-surface-alt) 63%);
+	background-size: 400% 100%;
+	animation: tr-shimmer 1.3s ease infinite;
+}
+
+@keyframes tr-shimmer {
+	from { background-position: 100% 0; }
+	to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tr-view.is-entering,
+	.tr-video .tr-video-panel,
+	.tr-skel {
+		animation: none;
+	}
+
+	.tr-quiz .tr-ring .tr-ring-fg,
+	.tr-quiz .tr-q-options .tr-opt-mark,
+	.tr-quiz .tr-quiz-dots .tr-dot::after {
+		transition: none;
+	}
+}
+
+/* ------------------------------------------------------ interactive blocks
+ *
+ * Phase 4 of the training SPA redesign: authorable interactive content beyond
+ * text and media — a tap-through checklist, a flip-deck of flashcards, a diagram
+ * with hotspots, and collapsible accordion sections — plus a tone on the existing
+ * Callout. Rendered by blocks.js from JSON the author edits in the builder and the
+ * server sanitises at publish. An accent left-rail marks a block the learner acts
+ * on rather than only reads. All selection/flip/open state lives in .is-* classes.
+ */
+
+.tr-block-checklist,
+.tr-block-flashcards,
+.tr-block-hotspots,
+.tr-block-accordion {
+	border-left: 4px solid var(--tr-accent);
+}
+
+/* ---- Callout tones (data attribute, so a new tone needs no new class) ---- */
+
+/* Semantic, so literal — a warning must not turn into an accent when the palette
+   is edited. The base .tr-block-callout keeps the accent look for info/none. */
+.tr-block-callout[data-tone="tip"] {
+	border-left-color: #2e9e4f;
+	background: rgba(46, 158, 79, 0.08);
+}
+
+.tr-block-callout[data-tone="warning"] {
+	border-left-color: #d98523;
+	background: rgba(217, 133, 35, 0.1);
+}
+
+.tr-block-callout[data-tone="danger"] {
+	border-left-color: #e03636;
+	background: rgba(224, 54, 54, 0.09);
+}
+
+/* ---- checklist ---- */
+
+.tr-checklist {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.tr-checklist-item {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	width: 100%;
+	min-height: 44px;
+	padding: 11px 14px;
+	border: 1px solid var(--tr-border);
+	border-radius: 10px;
+	background: var(--tr-surface-alt);
+	color: var(--tr-text);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	touch-action: manipulation;
+	-webkit-appearance: none;
+	appearance: none;
+	transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.tr-checklist-item:active { filter: brightness(0.98); }
+.tr-checklist-item.is-on { border-color: #2e9e4f; background: rgba(46, 158, 79, 0.08); }
+
+.tr-checklist-num {
+	flex: 0 0 auto;
+	font-variant-numeric: tabular-nums;
+	font-weight: 700;
+	color: var(--tr-muted);
+	min-width: 1.1em;
+}
+
+.tr-checklist-item.is-on .tr-checklist-num { color: #2e9e4f; }
+
+/* The tick box; the mark is drawn with a border trick so there is no glyph font
+   dependency. Empty until checked. */
+.tr-checklist-box {
+	flex: 0 0 auto;
+	width: 22px;
+	height: 22px;
+	margin-top: 1px;
+	border: 2px solid var(--tr-border);
+	border-radius: 6px;
+	position: relative;
+	transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.tr-checklist-item.is-on .tr-checklist-box {
+	border-color: #2e9e4f;
+	background: #2e9e4f;
+}
+
+.tr-checklist-item.is-on .tr-checklist-box::after {
+	content: "";
+	position: absolute;
+	left: 6px;
+	top: 2px;
+	width: 6px;
+	height: 11px;
+	border: solid #fff;
+	border-width: 0 2px 2px 0;
+	transform: rotate(45deg);
+}
+
+.tr-checklist-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow-wrap: break-word;
+	line-height: 1.4;
+}
+
+.tr-checklist-item.is-on .tr-checklist-text {
+	color: var(--tr-muted);
+	text-decoration: line-through;
+	text-decoration-color: rgba(46, 158, 79, 0.5);
+}
+
+/* ---- flashcards ---- */
+
+.tr-deck {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	align-items: center;
+}
+
+.tr-flashcard {
+	width: 100%;
+	min-height: 150px;
+	padding: 0;
+	border: 0;
+	background: none;
+	cursor: pointer;
+	perspective: 1000px;
+	touch-action: manipulation;
+	-webkit-appearance: none;
+	appearance: none;
+}
+
+.tr-flashcard-inner {
+	position: relative;
+	width: 100%;
+	min-height: 150px;
+	transform-style: preserve-3d;
+	transition: transform 500ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.tr-flashcard.is-flipped .tr-flashcard-inner { transform: rotateY(180deg); }
+
+.tr-flashcard-face {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 8px;
+	padding: 18px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface-alt);
+	-webkit-backface-visibility: hidden;
+	backface-visibility: hidden;
+	text-align: left;
+}
+
+.tr-flashcard-front {
+	background: var(--tr-surface);
+}
+
+.tr-flashcard-back {
+	transform: rotateY(180deg);
+	background: var(--tr-accent-soft);
+}
+
+.tr-flashcard-label {
+	font-size: 0.72rem;
+	font-weight: 700;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--tr-muted);
+}
+
+.tr-flashcard-text {
+	font-size: 1.1rem;
+	font-weight: 600;
+	line-height: 1.35;
+	overflow-wrap: break-word;
+}
+
+.tr-deck-dots {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+}
+
+.tr-deck-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 999px;
+	background: var(--tr-border);
+	transition: width 200ms ease, background-color 200ms ease;
+}
+
+.tr-deck-dot.is-on {
+	width: 18px;
+	background: var(--tr-accent);
+}
+
+/* ---- image hotspots ---- */
+
+.tr-hotspots {
+	position: relative;
+	display: block;
+	line-height: 0;
+}
+
+.tr-hotspots-image {
+	display: block;
+	width: 100%;
+	max-width: 100%;
+	height: auto;
+	border-radius: 8px;
+}
+
+.tr-hotspot {
+	position: absolute;
+	transform: translate(-50%, -50%);
+	padding: 0;
+	border: 0;
+	background: none;
+	cursor: pointer;
+	z-index: 1;
+	touch-action: manipulation;
+	-webkit-appearance: none;
+	appearance: none;
+}
+
+.tr-hotspot-dot {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	border-radius: 50%;
+	background: var(--tr-accent);
+	color: var(--tr-accent-text);
+	font-size: 0.8rem;
+	font-weight: 700;
+	line-height: 1;
+	box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.65), 0 2px 6px rgba(0, 0, 0, 0.3);
+	transition: transform 140ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.tr-hotspot.is-open { z-index: 3; }
+.tr-hotspot.is-open .tr-hotspot-dot { transform: scale(1.15); }
+
+/* The label pops above the pin. Hidden (not display:none) until open so it can
+   carry a transition; a pin with no label is simply an empty bubble that never
+   opens usefully, which the author sees in preview. */
+.tr-hotspot-tip {
+	position: absolute;
+	left: 50%;
+	bottom: calc(100% + 8px);
+	transform: translateX(-50%);
+	min-width: 90px;
+	max-width: 200px;
+	padding: 8px 10px;
+	border-radius: 8px;
+	background: var(--tr-text);
+	color: var(--tr-bg);
+	font-size: 0.82rem;
+	line-height: 1.35;
+	text-align: center;
+	box-shadow: var(--tr-shadow-lg);
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 140ms ease;
+}
+
+.tr-hotspot.is-open .tr-hotspot-tip { opacity: 1; }
+
+/* ---- accordion ---- */
+
+.tr-accordion {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.tr-accordion-item {
+	border: 1px solid var(--tr-border);
+	border-radius: 10px;
+	overflow: hidden;
+	background: var(--tr-surface);
+}
+
+.tr-accordion-head {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	width: 100%;
+	min-height: 48px;
+	padding: 12px 14px;
+	border: 0;
+	background: var(--tr-surface-alt);
+	color: var(--tr-text);
+	font: inherit;
+	font-weight: 600;
+	text-align: left;
+	cursor: pointer;
+	touch-action: manipulation;
+	-webkit-appearance: none;
+	appearance: none;
+}
+
+.tr-accordion-title {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow-wrap: break-word;
+}
+
+/* A chevron drawn from a border, rotated when the panel opens. */
+.tr-accordion-chevron {
+	flex: 0 0 auto;
+	width: 9px;
+	height: 9px;
+	border: solid var(--tr-muted);
+	border-width: 0 2px 2px 0;
+	transform: rotate(45deg);
+	transition: transform 200ms ease;
+}
+
+.tr-accordion-item.is-open .tr-accordion-chevron { transform: rotate(-135deg); }
+
+.tr-accordion-body {
+	padding: 12px 14px;
+	line-height: 1.55;
+	overflow-wrap: break-word;
+}
+
+.tr-accordion-body > *:first-child { margin-top: 0; }
+.tr-accordion-body > *:last-child { margin-bottom: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+	.tr-flashcard-inner,
+	.tr-deck-dot,
+	.tr-hotspot-dot,
+	.tr-hotspot-tip,
+	.tr-accordion-chevron,
+	.tr-checklist-item,
+	.tr-checklist-box {
+		transition: none;
+	}
 }

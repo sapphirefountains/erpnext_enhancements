@@ -117,6 +117,12 @@ RESPONSE_BINDERS = (
     "media",
     "verdict",
     "opt",
+    # The finish_attempt reply's reward block and the boot payload's learner-stats
+    # block. Both hold server-sent values the player reads one level down
+    # (reward.points, stats.streak_days), added with the completion screen and the
+    # home strip that first surfaced the gamification backend (v1.363.0).
+    "reward",
+    "stats",
 )
 
 # ---------------------------------------------------------------------------

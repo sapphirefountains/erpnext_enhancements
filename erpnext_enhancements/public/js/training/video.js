@@ -150,7 +150,7 @@
     ".tr-video-meter{display:flex;align-items:center;gap:8px;padding:6px 8px;",
     "  background:rgba(0,0,0,.06);font-size:12px;}",
     ".tr-video-meter-track{flex:1;height:6px;border-radius:3px;background:rgba(0,0,0,.15);}",
-    ".tr-video-meter-fill{height:100%;width:0;border-radius:3px;background:#2b8a3e;transition:width .3s;}",
+    ".tr-video-meter-fill{height:100%;width:0;border-radius:3px;background:#2e9e4f;transition:width .3s;}",
     ".tr-video-notice{position:absolute;left:50%;bottom:12%;transform:translateX(-50%);z-index:30;",
     "  max-width:80%;padding:8px 12px;border-radius:6px;background:rgba(0,0,0,.82);color:#fff;",
     "  font-size:13px;text-align:center;}",
@@ -1019,6 +1019,21 @@
 
         if (multi) panel.appendChild(el("p", "tr-video-hint", "Select every answer that applies."));
 
+        // Orientation the payload actually carries — the cap, not a live remaining
+        // count (there is no "question N of M" here: checkpoints are fetched one at
+        // a time on purpose, so there is no total to show).
+        if (cint(cp.max_attempts) > 0) {
+          panel.appendChild(
+            el(
+              "p",
+              "tr-video-hint",
+              cint(cp.max_attempts) === 1
+                ? "You have one attempt on this question."
+                : "You have " + cint(cp.max_attempts) + " attempts on this question."
+            )
+          );
+        }
+
         var actions = el("div", "tr-video-actions");
         var submit = el("button", "tr-video-btn tr-video-btn-primary", "Answer");
         submit.type = "button";
@@ -1035,6 +1050,11 @@
             return;
           }
           submit.disabled = true;
+          // A spinner while the answer is in flight: this is a network round trip
+          // that spends an attempt, and a button that still looks pressable gets
+          // pressed again. aria-busy drives the spinner in player.css.
+          submit.setAttribute("aria-busy", "true");
+          submit.textContent = "Checking…";
           answerCheckpoint(cp, picked, submit);
         });
         actions.appendChild(submit);
@@ -1132,7 +1152,11 @@
           flush("checkpoint");
         })
         .catch(function (err) {
-          if (submitBtn) submitBtn.disabled = false;
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.removeAttribute("aria-busy");
+            submitBtn.textContent = "Answer";
+          }
           showNotice("That did not save. Check your connection and try again.");
           if (window.console) console.warn("[TR.Video] answer failed", err);
         });

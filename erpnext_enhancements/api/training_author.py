@@ -412,6 +412,70 @@ def _materialize_lessons(course_version):
     }
 
 
+INTERACTIVE_BLOCK_TYPES = ("Checklist", "Flashcards", "Image Hotspots", "Accordion")
+CALLOUT_TONES = ("tip", "warning", "danger", "info")
+
+
+def _parse_block_data(raw):
+    """The block's JSON `data` field as a dict. Best-effort: a malformed value
+    degrades to an empty block (blocks.js renders a 'nothing here yet' note) rather
+    than failing the whole publish."""
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _clamp_pct(value):
+    """A hotspot coordinate as a 0-100 percentage of the image."""
+    try:
+        return max(0, min(100, round(float(value), 2)))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _augment_interactive_block(payload, block):
+    """Expand an interactive block's structured `data` (and a Callout's tone) into
+    the flat learner keys blocks.js dispatches on. Left untouched for every other
+    type. Kept beside :func:`_split_lesson` because a learner payload is only ever
+    built there."""
+    block_type = block.block_type
+    if block_type == "Callout":
+        tone = (getattr(block, "callout_tone", None) or "").strip().lower()
+        if tone in CALLOUT_TONES:
+            payload["tone"] = tone
+        return
+    if block_type not in INTERACTIVE_BLOCK_TYPES:
+        return
+
+    data = _parse_block_data(getattr(block, "data", None))
+    if block_type == "Checklist":
+        payload["items"] = [str(item) for item in (data.get("items") or []) if str(item).strip()]
+    elif block_type == "Flashcards":
+        payload["cards"] = [
+            {"front": str(card.get("front") or ""), "back": str(card.get("back") or "")}
+            for card in (data.get("cards") or [])
+            if isinstance(card, dict)
+        ]
+    elif block_type == "Image Hotspots":
+        payload["hotspots"] = [
+            {"x": _clamp_pct(spot.get("x")), "y": _clamp_pct(spot.get("y")), "label": str(spot.get("label") or "")}
+            for spot in (data.get("hotspots") or [])
+            if isinstance(spot, dict)
+        ]
+    elif block_type == "Accordion":
+        payload["panels"] = [
+            {"title": str(panel.get("title") or ""), "body": frappe.utils.sanitize_html(str(panel.get("body") or ""))}
+            for panel in (data.get("panels") or [])
+            if isinstance(panel, dict)
+        ]
+
+
 def _split_lesson(lesson):
     """Return ``(public_payload, answer_key)`` for one lesson.
 
@@ -440,24 +504,30 @@ def _split_lesson(lesson):
     key = {"lesson_key": lesson.lesson_key, "quiz": {}, "checkpoints": {}}
 
     for block in lesson.blocks or []:
-        public["blocks"].append(
-            {
-                "block_key": block.block_key,
-                "type": block.block_type,
-                "heading": block.heading or "",
-                "html": frappe.utils.sanitize_html(block.content or ""),
-                "image": block.image or "",
-                "file": block.file or "",
-                "video_asset": block.video_asset or "",
-                "duration_s": cint(block.video_duration_seconds),
-                "embed_url": block.embed_url or "",
-                "poster": block.poster_image or "",
-                "caption": block.caption or "",
-                "required": cint(block.required_for_completion),
-                "min_coverage": cint(block.min_coverage_percent),
-                "checkpoints_enabled": cint(block.checkpoints_enabled),
-            }
-        )
+        payload = {
+            "block_key": block.block_key,
+            "type": block.block_type,
+            "heading": block.heading or "",
+            "html": frappe.utils.sanitize_html(block.content or ""),
+            "image": block.image or "",
+            "file": block.file or "",
+            "video_asset": block.video_asset or "",
+            "duration_s": cint(block.video_duration_seconds),
+            "embed_url": block.embed_url or "",
+            "poster": block.poster_image or "",
+            "caption": block.caption or "",
+            "required": cint(block.required_for_completion),
+            "min_coverage": cint(block.min_coverage_percent),
+            "checkpoints_enabled": cint(block.checkpoints_enabled),
+        }
+        # The interactive block types (Checklist / Flashcards / Image Hotspots /
+        # Accordion) carry their list data in the block's JSON `data` field, and a
+        # Callout carries a tone. Expanded here into the flat keys blocks.js reads —
+        # the only place a learner payload is built, so the expansion lives with the
+        # rest of it. None of this data is answer-like, so unlike a checkpoint it is
+        # all `public`; author HTML in an accordion panel is sanitised like any other.
+        _augment_interactive_block(payload, block)
+        public["blocks"].append(payload)
 
     for cp in frappe.get_all(
         "Training Checkpoint",
@@ -912,6 +982,10 @@ BLOCK_ALLOWED_FIELDS = frozenset(
         "required_for_completion",
         "min_coverage_percent",
         "checkpoints_enabled",
+        # Phase 4 interactive block types: `data` is their JSON list payload
+        # (items / cards / hotspots / panels); `callout_tone` tints a Callout.
+        "data",
+        "callout_tone",
     }
 )
 QUIZ_ROW_ALLOWED_FIELDS = frozenset({"question", "points", "is_required"})

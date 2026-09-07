@@ -7,6 +7,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.363.0] - 2026-09-07
+
+### Added
+
+- **Training learner player — a course-completion screen, a "My record" view, and a home stats
+  strip, all surfacing the reward backend that shipped complete and unseen (Phase 2 of the
+  training SPA redesign).** Points, badges, streaks and certificates were computed on every
+  completion and shown to the learner *nowhere*, and finishing a course landed on the quiz-results
+  screen whose "Continue" re-ran the already-finished last lesson and looped — no exit but the
+  browser's Back button.
+  - **Completion screen** (`player.js` `renderComplete`): the pass path now goes to a real "course
+    complete" view instead of the self-looping results screen. `finish_attempt` gained an
+    **additive `reward` block** — total points, current streak, freshly earned badges and a
+    ready-to-open certificate URL — assembled in the one payload serializer from what the
+    completion submit just wrote (`Training Learner Stat`, and `Training Badge Award.source_completion`
+    to name the badges *this* completion earned). Every sub-key is optional; a course with the
+    gamification switch off shows the verdict and an exit and nothing untrue.
+  - **My record** (`renderRecord`): the `get_my_transcript` endpoint shipped mapped in the
+    transport with **no caller** since v1.215.0. It is now reachable from the catalog and lists each
+    completion with its score, dates, status and a link to the existing `/training_certificate` page
+    (opened in a new tab so the learner keeps their place).
+  - **Home stats strip** (`youStrip`): `get_learner_bootstrap` gained a `stats` block (points /
+    streak / badges, read from `Training Learner Stat`), shown atop the catalog — and hidden
+    entirely for a learner who has earned nothing, rather than shown as a row of zeros.
+  - The client↔API boundary tests were updated *with reasons*: `reward` joins the pinned
+    `_finished_attempt_payload` shape in `test_training_boot_wire`, and `reward`/`stats` join the
+    curated reply binders in `test_training_boundary_contract`. Every new player class has a
+    matching rule, so `test_training_player_css_contract` stays green.
+- **Training learner player — a reduced-motion-safe animation vocabulary (Phase 3 of the training
+  SPA redesign).** The player had almost no motion — a spinner, two width transitions, one fade —
+  so every view change was a hard cut and the quiz score appeared fully formed. Layered onto the
+  existing render model with no framework and no new dependency, and every animation gated behind
+  `prefers-reduced-motion` (the scripts write the final state directly when motion is off, so
+  nothing depends on an animation actually running):
+  - **Animated score reveal** — the quiz results ring sweeps from empty to the grade (a
+    `stroke-dashoffset` transition) while the number counts up (`quiz.js` `ring()` + `countUp`).
+  - **View transitions** — a light fade/rise on every `go()` (`.is-entering`, a state class, on
+    `<main.tr-view>`), replacing the whole-page snap.
+  - **Tactile answering** — the option mark springs as it fills and a completed progress dot eases
+    rather than snaps (selection state only; no correctness is ever expressed client-side).
+  - **In-video checkpoint entrance** — the checkpoint panel rises onto the scrim instead of
+    appearing under the learner's thumb.
+  - **Completion celebration** — a dependency-free `<canvas class="tr-confetti">` burst behind the
+    completion card and count-ups on the score and reward tiles (`player.js` `confetti`/`countUp`).
+  - **Loading skeletons** — the blank spinner between views is now a shape-matched shimmer (a title
+    bar and card placeholders), so a hop reads as the next screen loading rather than the current one
+    emptying (`player.js` `loading()`/`skel`, `.tr-skeleton`/`.tr-skel`).
+  - **Checkpoint answer feedback** — a submit spinner while an in-video answer is in flight (it spends
+    an attempt, so a still-pressable button invites a double submit), plus the attempt cap shown for
+    orientation (`video.js`). Deliberately **not** added: a reward pulse on the verdict — the code
+    keeps the verdict neutral on purpose, because colour would mislead on the wrong/exhausted
+    outcomes — and "question N of M", because checkpoints are fetched one at a time by design (a list
+    would publish where to skip to), so there is no total to show.
+- **Dev-only player preview harness at `/training_preview` (Phase 5 architecture, part 2).** Boots
+  the real `TR.Player` — the same four scripts and `player.css` the live page loads — against a
+  canned in-memory transport (the seam the authoring builder already uses), so every state that
+  only appears after a server reply can be rendered on demand: the completion celebration, the quiz
+  review, all block types in one lesson, and the empty and dormant catalogs. Restricted to the
+  authoring/admin roles or a developer-mode site; a plain learner gets a 404. It is the workbench
+  and screenshot-diff target for seeing a redesign step before and after — `www/training_preview.py`
+  + `training_preview.html`, additive and outside every production code path.
+- **Four authorable interactive block types — Checklist, Flashcards, Image Hotspots, Accordion — plus
+  a tone on Callout (Phase 4 of the training SPA redesign).** Lessons could hold text, media, a quiz
+  and in-video checkpoints; they now hold content the learner *does*: a tap-through checklist, a
+  flip-deck of flashcards, a diagram with tappable pins, and collapsible sections. The whole vertical
+  is wired:
+  - **Data model** — `Training Content Block` gains a JSON `data` field (the block is itself a child
+    row and Frappe has no grandchild tables, so a JSON payload is the right home for list data) and a
+    `callout_tone` Select, alongside the four new `block_type` options.
+  - **Publish** — `training_author._split_lesson` expands `data` into the flat learner keys blocks.js
+    reads (`items` / `cards` / `hotspots` / `panels`), clamps hotspot coordinates, and sanitises
+    accordion HTML with `sanitize_html` exactly like Rich Text and Callout; malformed JSON degrades to
+    an empty block rather than failing the publish. `BLOCK_ALLOWED_FIELDS` accepts the two new fields.
+  - **Authoring** — the Training Builder offers the new types, edits their JSON with a starter template
+    per type, adds a Callout tone control, and its preview transform mirrors the publish expansion so an
+    author sees what learners get.
+  - **Render** — new `blocks.js` renderers and `player.css` styling; the Callout tone rides on a
+    `data-tone` attribute so a new tone needs no new class. The class-contract test learns the four new
+    block modifiers, and the preview harness demonstrates all four with canned data.
+  A visual per-item editor (repeating-list forms, click-to-place hotspots) is a follow-up; today the
+  list data is authored as JSON in the builder.
+
+### Changed
+
+- **Training learner player: a design-token refresh, a WCAG-AA contrast fix, and a palette
+  repoint of the quiz's fallback stylesheet (Phase 1 of the training SPA redesign).** The
+  learner page at `/training` read as flat — one uniform drop shadow on every surface, a page
+  background barely distinguishable from the white cards sitting on it, and a compressed type
+  scale whose single largest element was the post-quiz score. This reworks only the design
+  tokens in `public/css/training/player.css`, so it touches no class the scripts render and
+  the `tests/test_training_player_css_contract.py` parity check is unaffected:
+  - `--tr-muted` moves from `#6c7680` (~4.4:1 on both grounds — a WCAG AA failure) to `#55636f`
+    (~5:1). It carries every eyebrow, chip, meta line and helper caption on the page, and this
+    is a product that issues compliance certificates; the muted text is not decorative.
+  - The single `--tr-shadow` becomes a two-step ladder. `--tr-shadow` lifts an ordinary card
+    off the page; a new `--tr-shadow-lg` is applied to the two surfaces that float *above* the
+    page — the in-video checkpoint panel and the unfinished-submit modal — so depth reads as
+    hierarchy rather than as one drop shadow stamped on everything. The page background darkens
+    slightly and cools toward the accent so white cards actually separate from it.
+  - `.tr-title` opens up from 1.3rem with tightened tracking and `text-wrap: balance`, giving
+    the type scale a real top; `.tr-card-title` gains matching tracking. Dark-mode tokens are
+    retuned to match.
+  - The `:root .tr-quiz` block's hardcoded `--tr-bg` duplicates — which must track `:root` by
+    hand, because a custom property cannot reference the name it shadows — are updated in
+    lockstep, or the quiz's sticky header/footer would drift from the rest of the page.
+  - `public/js/training/quiz.js`'s self-contained fallback stylesheet hardcoded frappe-blue
+    (`#2c7be5`), and frappe's grey/green/red, as its `var()` fallbacks. On the learner page
+    `player.css` re-points these, but in the authoring builder's preview and any standalone
+    mount the quiz rendered in the wrong brand blue. Its fallback literals now match the house
+    palette (`#00a0dd` and the app's own semantic colours). `video.js`'s injected stylesheet is
+    purely structural and needed no change.
+- **Injected fallback stylesheets fully aligned to the house palette, and pinned by a test
+  (Phase 5 architecture, part 1).** Phase 1 repointed quiz.js's frappe-blue *accent*; this finishes
+  the job — quiz.js's pass/fail tints and video.js's watch-meter fill now use the house green/red
+  (`#2e9e4f` / `#e03636`) rather than frappe's `#1f9d55` / `#d64545` / `#2b8a3e`. A new
+  `TestInjectedStylesheetsStayOnPalette` in `test_training_player_css_contract` fails the build if
+  either injected stylesheet reintroduces an off-brand colour, or if a `var()` fallback drifts from
+  the `:root` token it mirrors — the colour counterpart of the existing class-parity check.
+
+### Fixed
+
+- **`get_my_transcript` silently returned no score for any completion.** It requested a `score`
+  field that does not exist — the column is `score_percent` — so `_fields_present` dropped it and
+  every transcript row carried no score at all (the same present-plausible-wrong shape as the
+  finish-attempt bug it sits beside). It now requests `score_percent` and exposes it to the client
+  as `score`, and adds a per-row `certificate_url`.
+
 ## [1.362.0] - 2026-09-03
 
 ### Added
