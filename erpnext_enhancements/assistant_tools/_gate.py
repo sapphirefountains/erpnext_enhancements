@@ -97,6 +97,12 @@ EXPLICIT_READONLY = {
     # construction: frappe.get_list reads plus a pure rules module, and no validate hook
     # on any of the three for it to trip.
     "party_naming_check",
+    # AI-authored trainings: draft a whole Course Spec from a brief. Read-only in the
+    # sense the gate cares about -- it creates no Training records (its companion
+    # author_training_course, below in APP_MUTATING, is the write). It does make one
+    # Vertex call (logged to AI Model Usage) and caches the proposal; a confirmation
+    # card in front of "draft me a proposal" would be friction with nothing to undo.
+    "draft_course_spec",
 }
 
 # This app's own *write* tools (assistant_tools/<name>.py). They must gate even
@@ -114,6 +120,10 @@ APP_MUTATING = {
     "deploy_device_patch",
     # water_engineering: create/update a Water Feature Design (plain doc write)
     "save_water_design",
+    # AI-authored trainings: build a Training Course + unpublished draft from a
+    # Course Spec. A create that yields a Draft (never published) whose quiz
+    # questions are all flagged unreviewed, so publication is still gated on a human.
+    "author_training_course",
 }
 
 HIGH_RISK = {
@@ -134,6 +144,7 @@ LOW_RISK = {
     "create_dashboard_chart",
     "create_followup_task",
     "save_water_design",
+    "author_training_course",
 }
 
 # Only plain-document create/update may use the settings exempt-doctype
@@ -407,6 +418,9 @@ def summarize_tool_call(tool_name, arguments):
         return f"Deploy patch {args.get('patch') or ''} to device {args.get('device') or ''}".strip()
     if tool_name == "save_water_design":
         return f"Save Water Feature Design {args.get('design') or '(new)'}".strip()
+    if tool_name == "author_training_course":
+        # The spec/token is opaque here; the card says what will happen, not its title.
+        return "Author a training course from an AI draft (creates an unpublished Draft)"
     return tool_name.replace("_", " ").capitalize()
 
 

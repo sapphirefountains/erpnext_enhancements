@@ -1948,6 +1948,14 @@ assistant_tools = [
 	# rate over three people is a statement about one identifiable person's answer
 	# wearing a percentage as a disguise.
 	"erpnext_enhancements.assistant_tools.training_course_catalog.TrainingCourseCatalog",
+	# AI-authored trainings (draft -> confirm -> build). draft_course_spec is a
+	# read tool: it turns a brief into a validated Course Spec via ERPNext's own
+	# Vertex client and writes nothing. author_training_course is the write half
+	# (APP_MUTATING): it builds a Training Course + unpublished draft from that
+	# spec, deterministically, via the same engine the manual builder uses -- every
+	# quiz question flagged unreviewed so publication stays gated on a human.
+	"erpnext_enhancements.assistant_tools.draft_course_spec.DraftCourseSpec",
+	"erpnext_enhancements.assistant_tools.author_training_course.AuthorTrainingCourse",
 	"erpnext_enhancements.assistant_tools.maintenance_day_board.MaintenanceDayBoard",
 	"erpnext_enhancements.assistant_tools.maintenance_contract_status.MaintenanceContractStatus",
 	"erpnext_enhancements.assistant_tools.maintenance_visit_history.MaintenanceVisitHistory",
