@@ -1,0 +1,50 @@
+{
+ "actions": [],
+ "creation": "2026-09-07 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "learner",
+  "employee",
+  "enrolled_on"
+ ],
+ "fields": [
+  {
+   "description": "The learner in this cohort. A User (employees and customer Website Users alike hold Training Learner).",
+   "fieldname": "learner",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Learner",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "description": "Set for staff so cohort reporting can group by Employee; blank for a customer contact.",
+   "fetch_from": "learner.name",
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Employee",
+   "options": "Employee"
+  },
+  {
+   "description": "Stamped when the member is added to an active batch; the assignment engine uses it, not the row's creation.",
+   "fieldname": "enrolled_on",
+   "fieldtype": "Datetime",
+   "label": "Enrolled On",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-07 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Batch Member",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
