@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.366.0] - 2026-09-07
+
+### Added
+
+- **AI-authored training courses — a whole course from a plain-language brief, built deterministically
+  and gated on human review.** Anyone who can create courses can now draft one by talking to Triton, and
+  ERPNext builds it. The design is the safety story, and it is a hard split between *proposing* and
+  *building*:
+  - **The model proposes a Course Spec; it never writes records.** A new read tool, `draft_course_spec`
+    (`assistant_tools/`), turns a brief into a validated *Course Spec* — a course with lessons, content
+    blocks and quizzes — using ERPNext's own Vertex client, and returns a preview plus a token. It
+    persists nothing. The spec is a strict, versioned shape (`training/course_spec.py`): its option
+    bounds are *imported* from the Training Question controller so a spec that validates also survives
+    `insert()`, and it only permits the block types a model can honestly author (rich text, callouts,
+    dividers, checklists, flashcards, accordions — nothing that needs an uploaded image, a PDF or a
+    registered video).
+  - **ERPNext builds it deterministically, the same way the manual Training Builder does.** The write
+    tool `author_training_course` (gated through the AI write-confirmation flow like every other
+    mutation) hands the spec to `api/training_course_authoring.author_course_from_spec`, which maps it
+    onto the *existing* engine — `create_draft_version` then `save_draft_version` — and nothing else. It
+    never assembles a lesson by hand and never touches the published payloads, so every AI-seeded course
+    comes out in the identical shape and flow, and the answer-key-stays-server-side guarantee
+    (`_split_lesson`) is inherited for free.
+  - **A model's guessed answer key never grades anyone unreviewed.** Every question the builder creates
+    is stamped `ai_generated` with **no** reviewer, which is exactly the pair
+    `_unreviewed_ai_questions` blocks publication on — so the course lands as an unpublished **Draft**
+    and cannot go live until a person opens the Training Builder and accepts each question. Seeding is
+    not shipping.
+
+  The feature lives entirely in `erpnext_enhancements` (per Triton's `convergence.md`: one owner for a
+  cross-repo overlap); Triton is a pure MCP client that discovers and calls the two tools. A Training
+  Course form button ("Draft a course with Triton AI") opens the conversation. 35 bench-free tests cover
+  the strict validator and the exact spec→builder-payload mapping. Note: ERPNext's Vertex client was
+  verified working on prod (the `feedback_work_breakdown` feature has logged calls as recently as
+  2026-09-03), so the generation path is live, not dormant.
+
 ## [1.365.1] - 2026-09-07
 
 ### Fixed

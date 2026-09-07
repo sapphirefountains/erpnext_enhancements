@@ -45,7 +45,13 @@ frappe.ui.form.on("Training Assignment Rule", {
 frappe.ui.form.on("Training Course", {
 	refresh(frm) {
 		backfill_rule_doctypes(frm);
-		if (frm.is_new()) return;
+		if (frm.is_new()) {
+			// The AI-authoring door works from a blank form too — it creates a NEW
+			// course rather than editing this one. render_actions (below) is skipped
+			// for new docs, so the button is added here for that case.
+			add_triton_authoring_button(frm);
+			return;
+		}
 
 		const is_manager = frappe.user.has_role(["Training Manager", "System Manager"]);
 		frm.__training_is_manager = is_manager;
@@ -111,6 +117,29 @@ function render_actions(frm, draft, is_manager) {
 	// Publish highlighted, and two primary buttons side by side just make the
 	// author guess which one is the safe click.
 	if (draft && !is_manager) $builder.addClass("btn-primary");
+
+	// Added after clear_custom_buttons() (which would otherwise wipe it) so it
+	// survives on an existing course too.
+	add_triton_authoring_button(frm);
+}
+
+// A door into AI authoring: open the Triton assistant primed to draft a NEW
+// course. The write still happens in ERPNext behind the review gate — Triton
+// proposes a Course Spec and calls `author_training_course`, which creates an
+// unpublished draft with every quiz question flagged for review — so this is only
+// the way in, never a second authoring path. Shown to authors only, and only where
+// the Triton widget is present (the global is defined by the app_include_js
+// widget bundle whenever it loaded).
+function add_triton_authoring_button(frm) {
+	if (!frappe.user.has_role(["Training Author", "Training Manager", "System Manager"])) return;
+	if (!(window.SapphireTriton && window.SapphireTriton.ask)) return;
+	frm.add_custom_button(__("Draft a course with Triton AI"), () => {
+		window.SapphireTriton.ask(
+			__(
+				"I'd like to author a new training course. Ask me what it should cover and any specifics, then draft it with draft_course_spec; once I'm happy, create it with author_training_course. It will be created as an unpublished draft for me to review before publishing."
+			)
+		);
+	});
 }
 
 function open_builder(frm) {
