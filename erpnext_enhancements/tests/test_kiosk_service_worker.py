@@ -34,25 +34,31 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP = REPO_ROOT / "erpnext_enhancements"
-WORKER = APP / "www/kiosk-sw.js"
+KIOSK_WORKER = APP / "www/kiosk-sw.js"
+WALL_WORKER = APP / "www/wall-sw.js"
+
+# Back-compat alias: the kiosk classes below were written against a single WORKER.
+# wall-sw.js is a trimmed clone of the kiosk worker, registered at the SAME root
+# scope, so the same containment rule binds it (see TestWallWorkerHasTheSameContainment).
+WORKER = KIOSK_WORKER
 
 
-def _code():
+def _code(worker=KIOSK_WORKER):
     """The worker with comments stripped.
 
     The prose in this file explains the very bug being asserted against and
     quotes the old code, so a substring search over the raw text would match the
     explanation and pass while the code did the wrong thing.
     """
-    src = WORKER.read_text(encoding="utf-8")
+    src = worker.read_text(encoding="utf-8")
     src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
     return "\n".join(
         line for line in src.splitlines() if not line.strip().startswith("//")
     )
 
 
-def _fetch_handler():
-    code = _code()
+def _fetch_handler(worker=KIOSK_WORKER):
+    code = _code(worker)
     start = code.index("addEventListener('fetch'")
     depth, opened = 0, False
     for end in range(start, len(code)):
@@ -143,6 +149,99 @@ class TestIgnoreSearchIsContained(unittest.TestCase):
             handler.index("ignoreSearch"),
             "ignoreSearch is reached before the precache guard",
         )
+
+
+class TestWallWorkerHasTheSameContainment(unittest.TestCase):
+    """`wall-sw.js` is a trimmed clone of the kiosk worker and is ALSO registered at
+    root scope, so the same rule binds it: answer only its own shell, never the app's
+    asset root. It kept the pre-v1.229.0 hole — a `startsWith('/assets/erpnext_
+    enhancements/')` branch, cache-first with `ignoreSearch` — long after the kiosk
+    worker was cut back, until v1.364.1.
+    """
+
+    def test_the_worker_exists_and_has_a_fetch_handler(self):
+        self.assertTrue(WALL_WORKER.exists())
+        handler = _fetch_handler(WALL_WORKER)
+        self.assertIn("respondWith", handler)
+        self.assertGreater(len(handler), 500)
+
+    def test_it_does_not_claim_the_apps_asset_root(self):
+        handler = _fetch_handler(WALL_WORKER)
+        self.assertNotIn(
+            "startsWith('/assets/erpnext_enhancements/')",
+            handler,
+            "the wall worker answers for every asset in the app, including other "
+            "pages' JavaScript — it may only answer for its own precached shell",
+        )
+
+    def test_it_matches_an_explicit_list(self):
+        self.assertIn("PRECACHE_PATHS", _fetch_handler(WALL_WORKER))
+
+    def test_the_list_is_derived_from_the_precache(self):
+        self.assertIn("const PRECACHE_PATHS = new Set(PRECACHE)", _code(WALL_WORKER))
+
+    def test_the_precache_is_only_wall_assets(self):
+        """If a non-wall asset is ever added to PRECACHE it becomes a cache-first,
+        ignoreSearch entry for the whole origin again."""
+        code = _code(WALL_WORKER)
+        start = code.index("const PRECACHE = [")
+        block = code[start : code.index("];", start)]
+        entries = re.findall(r"'([^']+)'", block)
+        self.assertTrue(entries, "could not read the precache list")
+        for entry in entries:
+            self.assertIn(
+                "/wall",
+                entry,
+                f"{entry} is not a wall asset and must not be precached by a "
+                f"root-scope worker",
+            )
+
+    def test_ignore_search_is_used_at_most_once(self):
+        self.assertLessEqual(
+            _fetch_handler(WALL_WORKER).count("ignoreSearch"),
+            1,
+            "ignoreSearch outside the shell branch defeats every ?v= cache-bust",
+        )
+
+    def test_the_only_ignore_search_is_inside_the_shell_branch(self):
+        handler = _fetch_handler(WALL_WORKER)
+        if "ignoreSearch" not in handler:
+            return
+        self.assertLess(
+            handler.index("PRECACHE_PATHS"),
+            handler.index("ignoreSearch"),
+            "ignoreSearch is reached before the precache guard",
+        )
+
+
+class TestBothWorkersCloneBeforeConsuming(unittest.TestCase):
+    """`Response.clone()` must be called BEFORE the response is returned to
+    `respondWith`. Deferring it inside `caches.open(...).then((c) => c.put(req,
+    res.clone()))` clones after the page has already consumed the body — `Failed to
+    execute 'clone' on 'Response': Response body is already used`, thrown on every
+    page a root-scope worker controls. wall-sw.js spammed it on /training and /desk
+    until v1.364.1; kiosk-sw.js was already correct.
+    """
+
+    WORKERS = (KIOSK_WORKER, WALL_WORKER)
+
+    def test_no_worker_clones_inside_the_deferred_cache_put(self):
+        for worker in self.WORKERS:
+            self.assertNotIn(
+                "put(req, res.clone())",
+                _fetch_handler(worker),
+                f"{worker.name} clones the response after returning it; clone "
+                f"synchronously into a variable and cache that instead",
+            )
+
+    def test_both_shells_clone_synchronously(self):
+        for worker in self.WORKERS:
+            self.assertIn(
+                "const copy = res.clone()",
+                _fetch_handler(worker),
+                f"{worker.name} should clone synchronously into `copy` before the "
+                f"response is returned to respondWith",
+            )
 
 
 if __name__ == "__main__":

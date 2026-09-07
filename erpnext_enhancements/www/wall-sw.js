@@ -24,6 +24,16 @@ const PRECACHE = [
   '/assets/erpnext_enhancements/js/wall/app.js',
 ];
 
+// Exactly the paths above, for the fetch handler to test membership against.
+// This worker is registered at ROOT SCOPE — it sees every request on the origin,
+// including every other page's JavaScript — so what it answers has to be an
+// EXPLICIT list, never a prefix. kiosk-sw.js learned this the expensive way in
+// v1.229.0: a root-scope worker that answered the whole app asset root cache-first
+// with `ignoreSearch` froze the training player four releases stale in any browser
+// that had opened the app once, and no `?v=` could reach it. This file is that
+// worker's trimmed twin and had kept the same hole — see the fetch handler.
+const PRECACHE_PATHS = new Set(PRECACHE);
+
 function versioned(url) {
   return url + (url.indexOf('?') === -1 ? '?' : '&') + 'v=' + encodeURIComponent(VERSION);
 }
@@ -90,12 +100,30 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Our static assets: cache-first with background refresh.
-  if (url.pathname.startsWith('/assets/erpnext_enhancements/')) {
+  // THE WALL'S OWN SHELL ONLY — never "everything under /assets/erpnext_enhancements/".
+  //
+  // A root-scope worker is only replaced when its own script URL changes, i.e. when
+  // somebody opens /wall. Answering for the whole asset root cache-first would serve
+  // THIS deploy's bytes to the desk, the portal and the training player until the
+  // next /wall visit, with `ignoreSearch` reducing every `?v=` deploy token to
+  // decoration. kiosk-sw.js shipped exactly that (v1.229.0) and was cut back to its
+  // precache list under test; this trimmed twin kept the hole. Answer only the shell
+  // and let everything else reach the network like a normal request.
+  if (PRECACHE_PATHS.has(url.pathname)) {
     event.respondWith((async () => {
+      // `ignoreSearch` is right for THESE files and only these: page and worker can
+      // disagree by one `?v=` token mid-update, and the shell must still resolve.
+      // `activate` drops every other cache, so these entries are this deploy's.
       const cached = await caches.match(req, { ignoreSearch: true });
       const network = fetch(req).then((res) => {
-        if (res && res.ok) caches.open(CACHE).then((c) => c.put(req, res.clone()));
+        if (res && res.ok) {
+          // Clone SYNCHRONOUSLY, before `res` is returned — by the time the async
+          // caches.open() resolves the page has often already consumed the body,
+          // throwing "Response body is already used" on every page this root-scope
+          // worker controls (it was spamming the console on /training and /desk).
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        }
         return res;
       }).catch(() => null);
       return cached || (await network) || new Response('', { status: 504 });

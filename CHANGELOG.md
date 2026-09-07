@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.365.1] - 2026-09-07
+
+### Fixed
+
+- **The Wall display service worker was a stale-asset hazard for the whole app, and it spammed the
+  console on every page (reported from prod on `/training` and `/desk`).** `wall-sw.js` describes itself
+  as "a trimmed clone of `kiosk-sw.js`" — and it was, including the two bugs the kiosk worker was cut
+  back to fix in v1.229.0 but the wall twin never was:
+  - **Scope.** It answered *any* request under `/assets/erpnext_enhancements/` cache-first with
+    `ignoreSearch: true`. But it registers at **root scope**, and a root-scope worker is only replaced
+    when its own script URL changes — i.e. when somebody opens `/wall`. So any browser that had ever
+    opened the Wall was serving *that* deploy's JavaScript to the desk, the portal and the training
+    player, with `ignoreSearch` reducing every `?v=` deploy token to decoration — the exact "I deployed
+    the fix and it's still broken / the training page updates didn't take" failure mode. It now answers
+    only its own precached shell (a `PRECACHE_PATHS` membership check, derived from `PRECACHE`), letting
+    every other request reach the network like a normal request. Everything else is unchanged: the
+    `/wall` navigation and the task-dashboard data endpoint keep their network-first last-good behaviour.
+  - **Clone-after-consume.** The asset branch deferred `res.clone()` into a `caches.open(...).then((c)
+    => c.put(req, res.clone()))`, which runs *after* `res` has been returned to `respondWith` and its
+    body consumed — throwing `Failed to execute 'clone' on 'Response': Response body is already used` on
+    every page the worker controlled. It now clones synchronously into a variable before returning, then
+    caches that copy (identical to the kiosk worker's fixed form).
+  `test_kiosk_service_worker` — which already guarded the kiosk worker against exactly this — now runs
+  the same containment and clone-safety contract over **both** workers, so the wall twin can't drift
+  back. (No version bump was needed to reach prod: the SW script URL carries the deploy token, so the
+  new worker installs and `activate` drops every stale cache on the next `/wall` visit.)
+
 ## [1.365.0] - 2026-09-07
 
 ### Added
