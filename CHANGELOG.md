@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.364.0] - 2026-09-07
+
+### Added
+
+- **Training Builder: a visual per-item editor for the four interactive block types (follow-up to the
+  v1.363.0 redesign).** The interactive types (Checklist, Flashcards, Image Hotspots, Accordion)
+  shipped in v1.363.0 authored as raw JSON in a textarea; they now have a proper editor in the builder
+  card (`render_interactive_editor` in `training_builder.js`): add / remove / reorder rows for checklist
+  steps, flashcard front-and-back, and accordion title-and-body, and **click the image to drop hotspot
+  pins** with x/y fine-tuning and a live pin overlay. It reads and writes the same block `data` JSON the
+  doctype form and the publish serializer already speak, so autosave and the live preview are
+  unaffected; disabled cleanly when the version is not editable.
+
+### Fixed
+
+- **`render is not defined` on every Leaderboard and "Ask the author" tap (reported from prod; present
+  in v1.363.0 and earlier).** The two lazy learner-page panels each rebuild themselves by calling a
+  bare `render()` on every state change, and that function was never defined — so from the day each was
+  wired, every toggle threw `ReferenceError: render is not defined` in the console and the panel never
+  updated. `player.js` now defines `render()` — it re-renders whichever panel is currently mounted **in
+  place** (via `replaceChild`), never the whole view, so asking a question mid-lesson no longer tears
+  down and re-mounts the video. `test_training_runtime_regressions` gains a class that fails the build
+  if `render()` is called but left undefined again.
+
 ## [1.363.0] - 2026-09-07
 
 ### Added
@@ -80,16 +104,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     reads (`items` / `cards` / `hotspots` / `panels`), clamps hotspot coordinates, and sanitises
     accordion HTML with `sanitize_html` exactly like Rich Text and Callout; malformed JSON degrades to
     an empty block rather than failing the publish. `BLOCK_ALLOWED_FIELDS` accepts the two new fields.
-  - **Authoring** — the Training Builder offers the new types and edits them with a **visual per-item
-    editor**: add / remove / reorder rows for checklist steps, flashcard front-and-back, and accordion
-    title-and-body, and **click the image to drop hotspot pins** (with x/y fine-tuning and a live pin
-    overlay). It reads and writes the same JSON `data` field the doctype and the publish serializer
-    speak, so autosave and the live preview see it like any other block edit; a Callout tone control
-    sits in the inspector, and the preview transform mirrors the publish expansion so an author sees
-    what learners get.
+  - **Authoring** — the Training Builder offers the new types, edits their JSON with a starter template
+    per type, adds a Callout tone control, and its preview transform mirrors the publish expansion so an
+    author sees what learners get.
   - **Render** — new `blocks.js` renderers and `player.css` styling; the Callout tone rides on a
     `data-tone` attribute so a new tone needs no new class. The class-contract test learns the four new
     block modifiers, and the preview harness demonstrates all four with canned data.
+  A visual per-item editor (repeating-list forms, click-to-place hotspots) is a follow-up; today the
+  list data is authored as JSON in the builder.
 
 ### Changed
 
@@ -135,14 +157,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every transcript row carried no score at all (the same present-plausible-wrong shape as the
   finish-attempt bug it sits beside). It now requests `score_percent` and exposes it to the client
   as `score`, and adds a per-row `certificate_url`.
-- **`render is not defined` on every Leaderboard and "Ask the author" tap (reported from prod).** The
-  two lazy learner-page panels — the leaderboard and the lesson Q&A — each rebuild themselves by
-  calling a bare `render()` on every state change, and that function was never defined: from the day
-  each was wired, every toggle threw `ReferenceError: render is not defined` in the console and the
-  panel never updated. `player.js` now defines `render()` — it re-renders whichever panel is currently
-  mounted **in place** (via `replaceChild`), never the whole view, so asking a question mid-lesson no
-  longer tears down and re-mounts the video. `test_training_runtime_regressions` gains a class that
-  fails the build if `render()` is called but undefined again.
 
 ## [1.362.0] - 2026-09-03
 
