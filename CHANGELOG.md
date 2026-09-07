@@ -133,6 +133,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every transcript row carried no score at all (the same present-plausible-wrong shape as the
   finish-attempt bug it sits beside). It now requests `score_percent` and exposes it to the client
   as `score`, and adds a per-row `certificate_url`.
+- **`render is not defined` on every Leaderboard and "Ask the author" tap (reported from prod).** The
+  two lazy learner-page panels — the leaderboard and the lesson Q&A — each rebuild themselves by
+  calling a bare `render()` on every state change, and that function was never defined: from the day
+  each was wired, every toggle threw `ReferenceError: render is not defined` in the console and the
+  panel never updated. `player.js` now defines `render()` — it re-renders whichever panel is currently
+  mounted **in place** (via `replaceChild`), never the whole view, so asking a question mid-lesson no
+  longer tears down and re-mounts the video. `test_training_runtime_regressions` gains a class that
+  fails the build if `render()` is called but undefined again.
 
 ## [1.362.0] - 2026-09-03
 

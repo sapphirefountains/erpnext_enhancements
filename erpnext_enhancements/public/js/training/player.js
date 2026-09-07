@@ -660,9 +660,34 @@
 		// shown to the person who earned it.
 
 		var boardState = { open: false, busy: false, data: null, error: null };
+		var boardWrap = null;
+		var qaWrap = null;
+
+		// The two lazy panels — the leaderboard and the "Ask the author" Q&A — were
+		// each written to call a bare `render()` on every state change, and it was
+		// never defined: from the day each was wired, every Leaderboard / Ask tap threw
+		// `render is not defined` in the console and the panel never updated (reported
+		// from prod against the live player). This is that function. It re-renders
+		// whichever panel is currently mounted, IN PLACE — never the whole view, so a
+		// question asked mid-lesson does not tear down and re-mount the video. Only one
+		// panel is ever mounted at a time (the board lives on the catalog, the Q&A on
+		// the lesson); the other's node has been cleared by go() and its parentNode is
+		// null, so it is skipped.
+		function render() {
+			if (boardWrap && boardWrap.parentNode) {
+				var oldBoard = boardWrap;
+				oldBoard.parentNode.replaceChild(renderLeaderboard(), oldBoard);
+			}
+			if (qaWrap && qaWrap.parentNode) {
+				var oldQa = qaWrap;
+				oldQa.parentNode.replaceChild(renderQuestions(state.lesson || {}), oldQa);
+			}
+		}
 
 		function renderLeaderboard() {
 			var wrap = el("div", "tr-board");
+			// Captured so render() can swap this exact node in place (see render()).
+			boardWrap = wrap;
 
 			// `enabled: false` renders NOTHING, not an empty panel. The feature ships
 			// off (`gamification_enabled`), and a permanently empty "Leaderboard"
@@ -1134,6 +1159,8 @@
 			}
 
 			var wrap = el("div", "tr-qa");
+			// Captured so render() can swap just this panel, leaving the video alone.
+			qaWrap = wrap;
 			var slug = String(key || "lesson").replace(/[^A-Za-z0-9_-]/g, "-");
 			var regionId = "qa-region-" + slug;
 
