@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.365.0] - 2026-09-07
+
+### Added
+
+- **Training LMS expansion — plan-of-record (WI-071) and Phase A batch data model.** Nik reviewed
+  Frappe LMS and asked for its feature set in ours. Our training module already exceeds Frappe LMS on
+  the things that matter to a compliance programme (content versioning, in-video checkpoints,
+  watch-coverage telemetry, gamification, the auto-assignment/escalation engine, supervisor sign-off);
+  `work-items/WI-071` scopes the eight genuine gaps — batches, live classes, scheduled evaluations,
+  announcements, peer discussions, learner work submissions, course reviews, and a manager analytics
+  dashboard — filtered for internal training (payments, job board, code exercises, SCORM and a native
+  app are explicitly out of scope), with a native-first analysis and dependency ordering. **Phase A
+  (foundation)** lands the cohort data model: `Training Batch` plus its `Training Batch Member` and
+  `Training Batch Course` child tables. A batch is a thin record that names the cohort, its course set
+  and its members, and (in the following Phase-A commits) fans out through the **existing** Training
+  Assignment engine rather than a second assignment path. Data model only here; the assignment
+  fan-out, the learner "my cohort" surface, and the manager UI follow. Tracked on prod under the
+  Training Module task (Phase 5, TASK-2026-01900).
+
 ## [1.364.0] - 2026-09-07
 
 ### Added
