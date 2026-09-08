@@ -118,6 +118,10 @@
 		// below) and then this hands its URL in. Grading is not here: it is a Desk
 		// action for a Training Manager, not part of the learner runtime.
 		submitWork: "submit_lesson_work",
+		// Create a whole course from a brief (Triton). Only reachable for a user whose
+		// bootstrap can_author is true -- the floating trident is hidden otherwise --
+		// and the endpoint re-checks the create permission and the AI switch.
+		draftCourse: "draft_course",
 		// The board. gamification.py has computed points, badges and streaks since
 		// v1.215.0 and its one endpoint had no caller, so every number existed and
 		// none was ever shown to the person who earned it.
