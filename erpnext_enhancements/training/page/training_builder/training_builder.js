@@ -181,73 +181,34 @@ class TrainingBuilder {
 		this.$body = $(page.body);
 		this.reset();
 		this.build_chrome();
-		this.build_triton_fab();
 		this.bind_unload_guard();
 	}
 
-	// ----- Triton: create a whole course from a brief -----------------------
+	// ----- Triton authoring -------------------------------------------------
 	//
-	// A floating trident, bottom-left so it never collides with the global Triton
-	// chat bubble (bottom-right on every desk page). It opens the one focused
-	// thing an author wants from here that the chat bubble does not offer as a
-	// button: "describe a course and have Triton draft it." The draft lands as an
-	// unpublished, review-gated version (api.training_ai.draft_course_with_triton
-	// -> author_course_from_spec, which never publishes), so a bad draft is a
-	// throwaway, never something a learner can reach.
-	build_triton_fab() {
-		this.$triton_fab = $(
-			`<button type="button" class="tb-triton-fab" title="${__("Create a course with Triton")}" aria-label="${__(
-				"Create a course with Triton"
-			)}">\u{1F531}</button>`
-		)
-			.appendTo(this.$body)
-			.on("click", () => this.create_course_with_triton());
-	}
-
-	create_course_with_triton() {
-		const dialog = new frappe.ui.Dialog({
-			title: __("Create a course with Triton"),
-			fields: [
-				{
-					fieldname: "brief",
-					fieldtype: "Small Text",
-					label: __("What should the course teach?"),
-					reqd: 1,
-					description: __(
-						"Describe the audience and what they should be able to do afterwards. Triton drafts a course — lessons, content and a quiz — as an unpublished draft you review before anyone sees it."
-					),
-				},
-			],
-			primary_action_label: __("Draft with Triton"),
-			primary_action: (values) => {
-				dialog.disable_primary_action();
-				dialog.set_message(__("Triton is drafting the course… this can take a moment."));
-				frappe.call({
-					method: "erpnext_enhancements.api.training_ai.draft_course_with_triton",
-					args: { brief: values.brief },
-					// Whole-course drafting is a long call; the builder should not time it out.
-					freeze: false,
-				})
-					.then((r) => {
-						const out = (r && r.message) || {};
-						dialog.hide();
-						frappe.show_alert({
-							message: __("Triton drafted “{0}” as a draft. Review it, then publish.", [
-								out.course_title || out.course,
-							]),
-							indicator: "green",
-						});
-						if (out.course) this.load(out.course);
-					})
-					.catch(() => {
-						// frappe.call already surfaced the server message; just let the
-						// author edit the brief and try again.
-						dialog.enable_primary_action();
-						dialog.clear_message();
-					});
-			},
-		});
-		dialog.show();
+	// Reuse the REAL Triton assistant -- the global desk bubble, bottom-right on
+	// every desk page -- rather than a second widget of our own. window.SapphireTriton.ask
+	// opens it with a prompt prefilled (never sent -- the author edits first) and,
+	// when a course is loaded, that course pinned as context. The write still
+	// happens in ERPNext behind the review gate: Triton proposes a Course Spec and
+	// calls author_training_course, which creates an unpublished draft. So this is
+	// only the door in, never a second authoring path -- the same pattern as the
+	// Training Course form's "Draft a course with Triton AI" button.
+	open_triton_authoring() {
+		if (!(window.SapphireTriton && window.SapphireTriton.ask)) {
+			frappe.msgprint(__("The Triton assistant is not enabled on this site."));
+			return;
+		}
+		const context = this.course ? { doctype: "Training Course", name: this.course } : null;
+		window.SapphireTriton.ask(
+			__(
+				"I'm in the training course builder. Do you need help WITH a training or with BUILDING one? " +
+					"If building, ask me what it should cover and any specifics, then draft it with " +
+					"draft_course_spec and create it with author_training_course — it will be an unpublished " +
+					"draft for me to review before publishing."
+			),
+			context
+		);
 	}
 
 	reset() {
@@ -292,6 +253,7 @@ class TrainingBuilder {
 				<div class="tb-topbar-title"></div>
 				<span class="tb-badge"></span>
 				<span class="tb-save-state"></span>
+				<button type="button" class="tb-triton-btn" title="${__("Build or plan a course with Triton")}">\u{1F531} ${__("Triton")}</button>
 				<button type="button" class="tb-inspector-toggle">${__("Inspector")}</button>
 			</div>
 		`).appendTo(this.$body);
@@ -333,6 +295,7 @@ class TrainingBuilder {
 
 		this.$topbar.find(".tb-outline-toggle").on("click", () => this.$outline.toggleClass("is-open"));
 		this.$topbar.find(".tb-inspector-toggle").on("click", () => this.toggle_inspector(true));
+		this.$topbar.find(".tb-triton-btn").on("click", () => this.open_triton_authoring());
 		this.$inspector.find('[data-act="close-inspector"]').on("click", () => this.toggle_inspector(false));
 		this.$scrim.on("click", () => this.toggle_inspector(false));
 		this.$outline.find('[data-act="add-lesson"]').on("click", () => this.add_lesson());

@@ -291,22 +291,23 @@ filter silently sweeps in NULLs), a Cancelled assignment is out of the completio
 denominator, and average score comes from real completions. Bench-free coverage:
 [`../tests/test_training_analytics.py`](../tests/test_training_analytics.py).
 
-### Create a course with Triton (the floating trident)
+### Building a course with Triton (reuse the real assistant)
 
-A floating **🔱 trident** on both training SPAs — the course **builder**
-(bottom-left, clear of the global Triton chat bubble) and the learner **`/training`**
-player (shown only when the bootstrap's `can_author` is true) — opens a "describe a
-course" box. The endpoint [`api/training_ai.py`](../../api/training_ai.py)
-`draft_course_with_triton` (author- and AI-switch-gated) asks the model for a
-**Course Spec**, validates it against `course_spec.COURSE_SPEC_SCHEMA`, and hands it
-to [`api/training_course_authoring.py`](../../api/training_course_authoring.py)
-`author_course_from_spec`, which builds an **unpublished, review-gated** draft and
-**never publishes**. So the model proposes and the deterministic materialiser
-builds; the worst a bad draft can do is leave a course for the author to delete.
-The learner player dials it through a thin `api.training.draft_course` re-export
-(its single transport prefix), and its dialog is built with `el()`/`textContent`
-only. Bench-free coverage:
-[`../tests/test_training_course_authoring_fab.py`](../tests/test_training_course_authoring_fab.py).
+Course authoring goes through the **real** Triton assistant — the global desk chat
+bubble — not a second widget. The **Training Course** form and the **builder**
+(a "🔱 Triton" button in its top bar) both open it via the widget's sanctioned
+public opener `window.SapphireTriton.ask(prompt, context)`, which pops the bubble
+with a training prompt **prefilled** (never sent — the author edits first) and the
+current course **pinned as context**. Triton then proposes a Course Spec and calls
+the `author_training_course` FAC tool, which materialises an **unpublished,
+review-gated** draft via `author_course_from_spec` and **never publishes** — the
+one authoring path, behind the review gate.
+
+An earlier iteration (v1.373.0) shipped a self-contained "Create a course with
+Triton" trident on both the builder and the learner `/training` player, with its own
+`draft_course_with_triton` endpoint. That duplicated the real bubble and was removed
+in v1.374.0 (the learner player carries no Triton at all; `/training` is a learner
+surface). Guard: [`../tests/test_training_triton_authoring.py`](../tests/test_training_triton_authoring.py).
 
 ## Video
 
