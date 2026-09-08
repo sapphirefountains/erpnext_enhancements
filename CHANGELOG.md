@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.372.2] - 2026-09-08
+
+### Fixed
+
+- **Quiz answers were always marked incorrect, even when correct — every quiz came back 0%.** The learner
+  player's `submitQuiz` wrapper in `player.js` named its parameter `answers` but received quiz.js's whole
+  `payload()` — `{attempt, lesson_key, run, answers}` — and forwarded that entire object as the server's
+  `answers` field, **double-nesting** the answer map. `submit_quiz` then looked up question docnames on
+  `{attempt, lesson_key, run, answers}`, found none, and graded every question `answered=false`. The
+  results screen still showed the learner's *right* answers (it reads the flat map separately), which is
+  exactly why it looked like correct answers being marked wrong. The server grading was never at fault —
+  proven by driving the real `grade_quiz` with a correct submission (100%). Nothing caught it: the
+  boundary contract checks the call's key *names* (`answers` was present) and cannot see the value's shape,
+  and there is no integration test. Reproduced before/after in the player harness (0% → 100%) and fixed by
+  unwrapping `.answers` in the wrapper; a regression test (`TestQuizAnswersAreNotDoubleNested`) pins both
+  sides of the quiz.js↔player.js contract.
+
 ## [1.372.1] - 2026-09-08
 
 ### Fixed
