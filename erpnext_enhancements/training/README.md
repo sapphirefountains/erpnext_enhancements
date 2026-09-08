@@ -121,8 +121,10 @@ wired via `doctype_js`.
 
 Endpoints live in [`../api/training_author.py`](../api/README.md) (authoring,
 publishing, assignment), [`../api/training.py`](../api/README.md) (the learner
-runtime) and [`../api/training_ai.py`](../api/README.md) (quiz and checkpoint
-drafting). All four phases are built and merged.
+runtime), [`../api/training_ai.py`](../api/README.md) (quiz and checkpoint
+drafting) and [`../api/training_course_authoring.py`](../api/README.md) (building a
+whole course from an AI-drafted Course Spec — see **Drafting a whole course with
+AI** below). All four phases are built and merged.
 
 **"Built and merged" was doing a lot of work in that sentence until v1.334.0.**
 Six whitelisted functions across [`signoff.py`](signoff.py) and
@@ -152,6 +154,38 @@ Two consequences worth knowing before they surprise you:
 - `change_type` is the full string — `Minor Edit (keep completions)` or
   `Material Change (require retake)`. The parenthetical is part of the stored
   value, not a label; `publish_version` rejects anything else.
+
+### Drafting a whole course with AI
+
+On a Training Course form, authors get a **Draft a course with Triton AI** button
+(the Triton assistant, opened via the global widget's `window.SapphireTriton.ask`).
+Describe the course; Triton drafts it and ERPNext builds it. The split is the safety
+story, and it is deliberate:
+
+- **The model proposes a *Course Spec*, it never writes records.** `draft_course_spec`
+  (an `assistant_tools/` read tool) turns a brief into a validated
+  [`course_spec.py`](course_spec.py) — a course, lessons, blocks and quizzes — using
+  ERPNext's own Vertex client, and returns a preview + a one-hour token. The spec's
+  option bounds are imported from the Training Question controller (a spec that
+  validates also survives `insert()`), and it only permits block types a model can
+  honestly author — rich text, callouts, dividers, checklists, flashcards, accordions;
+  nothing that needs an uploaded image, PDF or registered video.
+- **ERPNext builds it deterministically.** `author_training_course` (a gated write
+  tool) hands the spec to [`../api/training_course_authoring.py`](../api/README.md)
+  `author_course_from_spec`, which maps it onto the **existing** engine
+  (`create_draft_version` + `save_draft_version`) and nothing else — so an AI-seeded
+  course comes out in the identical shape and flow, and never touches the published
+  payloads (the answer-key-stays-server-side guarantee is inherited).
+- **A guessed answer key never grades anyone unreviewed.** Every question the builder
+  creates is stamped `ai_generated` with **no** reviewer — the pair
+  `_unreviewed_ai_questions` blocks publication on — so the course lands as an
+  unpublished **Draft** and cannot go live until a person opens the builder and accepts
+  each question. Seeding is not shipping.
+
+The whole feature lives in `erpnext_enhancements`; Triton is a pure MCP client that
+discovers and calls the two tools (per its `docs/convergence.md`, one owner per
+cross-repo overlap). Bench-free coverage is in
+[`../tests/test_training_course_authoring.py`](../tests/test_training_course_authoring.py).
 
 ## Video
 

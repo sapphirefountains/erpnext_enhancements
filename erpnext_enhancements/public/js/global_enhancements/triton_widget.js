@@ -1904,6 +1904,44 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		}
 	}
 
+	// ---- public opener ---------------------------------------------------
+	// A tiny programmatic entry point so a desk button elsewhere — e.g. the
+	// Training Course form's "Draft a course with Triton AI" — can open the
+	// assistant with a prompt prefilled and, optionally, the current record pinned
+	// as context. Purely additive: it opens and prefills, and NEVER sends or clears
+	// the transcript, so it is outside the streaming re-entrancy rule entirely (it
+	// performs neither of the destructive statements `test_triton_widget_guards.js`
+	// tracks). Prefill-not-send is deliberate: the author reviews or edits the brief
+	// before the first turn.
+	window.SapphireTriton = window.SapphireTriton || {};
+	window.SapphireTriton.ask = async function (prompt, context) {
+		try {
+			await init();
+		} catch (e) {
+			/* fall through to the disabled message below */
+		}
+		if (!state.config || !state.els || !state.els.panel) {
+			if (window.frappe && frappe.msgprint) {
+				frappe.msgprint(__("The Triton assistant is not enabled on this site."));
+			}
+			return false;
+		}
+		toggle(true);
+		if (context && typeof context === "object") {
+			const key = refKey(context);
+			if (!state.contextRefs.some((r) => refKey(r) === key)) {
+				state.contextRefs.push(context);
+				renderChips();
+			}
+		}
+		if (prompt && state.els.text) {
+			state.els.text.value = String(prompt);
+			autoGrow();
+			state.els.text.focus();
+		}
+		return true;
+	};
+
 	$(document).on("app_ready", init);
 	// Fallbacks: app_ready may have already fired before this script ran.
 	$(() => setTimeout(init, 1500));
