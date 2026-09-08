@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.372.0] - 2026-09-08
+
+### Added
+
+- **Manager training analytics dashboard (WI-071 Phase H).** A read-only page at `/training_analytics`,
+  for training managers, that rolls the training records up into the numbers someone opens a dashboard
+  to see: across the org — learners with training, active assignments, **overdue**, awaiting sign-off,
+  completed, valid certificates; the **grading backlog** (Phase F work waiting on a grader); a **by
+  course** table with completion bars, overdue counts and average score; **active cohorts** with progress
+  bars; and recent completions. One whitelisted read — `training.analytics.get_training_analytics` —
+  is the single source of the numbers, and the page (rendered server-side with autoescaped Jinja, on
+  the page at first paint) and any programmatic caller share it.
+
+  It is **manager-only** — the same {System Manager, Training Manager, HR Manager} set that is unscoped
+  in `training/permissions.py`, because it reports across every learner, which is exactly what row
+  scoping withholds from everyone else; the endpoint re-checks the role and the page 404s a non-manager
+  (missing, not forbidden — a 403 confirms the route). The rollup is done in Python over a handful of
+  guarded `get_all` reads rather than in SQL, deliberately: the **overdue** rule is a predicate (closed
+  statuses excluded, an explicit *Overdue* status honoured, and only then a past due date) that a
+  `<`-on-a-nullable-date filter would get wrong by silently sweeping in NULLs (see the coalesce note in
+  CLAUDE.md), a **Cancelled** assignment is dropped from the completion-rate denominator so it does not
+  drag every rate down forever, and average score is measured on real completions, never on assignments.
+  Every doctype read is existence-guarded, so a site part-way through the WI-071 rollout returns partial
+  numbers rather than a crash. Bench-free tests (`test_training_analytics`) cover the gate, the overdue
+  predicate, the cancelled-exclusion, cohort progress and the backlog; registered in `ci.yml`.
+
 ## [1.371.0] - 2026-09-08
 
 ### Added

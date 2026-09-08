@@ -1,0 +1,233 @@
+{#
+  Manager training analytics dashboard (served at /training_analytics;
+  controller: training_analytics.py). Read-only, rendered entirely server-side
+  from `analytics` (the get_training_analytics() dict) — Jinja autoescapes, so a
+  course title or a learner email carries no markup risk, and the numbers are on
+  the page at first paint with no fetch. Restricted to training managers; a plain
+  learner gets a 404.
+#}
+{% extends "templates/web.html" %}
+
+{% block title %}Training analytics{% endblock %}
+
+{% block head_include %}
+<meta name="theme-color" content="#00a0dd">
+{% endblock %}
+
+{% block banner %}{% endblock %}
+{% block navbar %}{% endblock %}
+{% block page_breadcrumbs %}{% endblock %}
+
+{% block style %}
+<style>
+  :root {
+    --ta-bg: #eef2f6;
+    --ta-surface: #ffffff;
+    --ta-surface-alt: #e7edf3;
+    --ta-text: #16202a;
+    --ta-muted: #55636f;
+    --ta-border: #dde4ea;
+    --ta-accent: #00a0dd;
+    --ta-accent-soft: #e2f4fc;
+    --ta-ok: #1a7f4b;
+    --ta-ok-soft: #e4f4ea;
+    --ta-warn: #b25a00;
+    --ta-warn-soft: #fbeed9;
+    --ta-shadow: 0 1px 2px rgba(16, 38, 54, 0.04), 0 6px 16px rgba(16, 38, 54, 0.06);
+    --ta-radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ta-bg: #12171d;
+      --ta-surface: #1b232c;
+      --ta-surface-alt: #232d37;
+      --ta-text: #e9eef2;
+      --ta-muted: #98a4af;
+      --ta-border: #2c3742;
+      --ta-accent: #29b6f6;
+      --ta-accent-soft: #103244;
+      --ta-ok: #4cc98a;
+      --ta-ok-soft: #12301f;
+      --ta-warn: #e0a458;
+      --ta-warn-soft: #33260f;
+      --ta-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.42);
+    }
+  }
+
+  .navbar, nav.navbar, .web-footer, footer, .footer,
+  .page-breadcrumbs, .breadcrumb-container,
+  .page-header, .page-content-wrapper > .page-header { display: none !important; }
+  body { background: var(--ta-bg); color: var(--ta-text); margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main:not(.ta-page), .main-section, #body, .page_content,
+  .page-content-wrapper, .container { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+
+  .ta-page { max-width: 1040px; margin: 0 auto; padding: 24px 18px 64px; color: var(--ta-text); }
+  .ta-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .ta-title { margin: 0; font-size: 1.5rem; letter-spacing: -0.01em; }
+  .ta-meta { font-size: 0.8rem; color: var(--ta-muted); }
+  .ta-meta a { color: var(--ta-accent); text-decoration: none; }
+
+  .ta-section-title { margin: 28px 0 10px; font-size: 0.78rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--ta-muted); }
+
+  .ta-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 14px; }
+  .ta-card { padding: 14px 16px; border: 1px solid var(--ta-border); border-radius: var(--ta-radius);
+    background: var(--ta-surface); box-shadow: var(--ta-shadow); }
+  .ta-card-num { font-size: 1.9rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .ta-card-label { margin-top: 2px; font-size: 0.8rem; color: var(--ta-muted); }
+  .ta-card.is-alert { border-left: 3px solid var(--ta-warn); }
+  .ta-card.is-alert .ta-card-num { color: var(--ta-warn); }
+
+  .ta-panel { margin-top: 12px; border: 1px solid var(--ta-border); border-radius: var(--ta-radius);
+    background: var(--ta-surface); box-shadow: var(--ta-shadow); overflow: hidden; }
+  .ta-scroll { overflow-x: auto; }
+  table.ta-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  .ta-table th, .ta-table td { padding: 10px 14px; text-align: left; white-space: nowrap; }
+  .ta-table th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--ta-muted); background: var(--ta-surface-alt); }
+  .ta-table tbody tr { border-top: 1px solid var(--ta-border); }
+  .ta-table td.num, .ta-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .ta-table td.course-name { white-space: normal; font-weight: 600; min-width: 180px; }
+
+  .ta-bar { position: relative; height: 8px; width: 120px; border-radius: 999px;
+    background: var(--ta-surface-alt); overflow: hidden; display: inline-block; vertical-align: middle; }
+  .ta-bar > span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: var(--ta-accent); }
+  .ta-bar.is-good > span { background: var(--ta-ok); }
+  .ta-ratecell { display: flex; align-items: center; gap: 8px; }
+  .ta-ratecell .pct { font-variant-numeric: tabular-nums; color: var(--ta-muted); min-width: 34px; text-align: right; }
+
+  .ta-pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 0.75rem; font-weight: 600;
+    font-variant-numeric: tabular-nums; background: var(--ta-surface-alt); color: var(--ta-muted); }
+  .ta-pill.is-warn { background: var(--ta-warn-soft); color: var(--ta-warn); }
+  .ta-pill.is-zero { color: var(--ta-muted); }
+
+  .ta-empty { padding: 22px; color: var(--ta-muted); text-align: center; }
+  .ta-muted { color: var(--ta-muted); }
+</style>
+{% endblock %}
+
+{% block page_content %}
+<main class="ta-page">
+  {% if not analytics.get("enabled") %}
+    <div class="ta-head"><h1 class="ta-title">Training analytics</h1></div>
+    <div class="ta-panel"><div class="ta-empty">Training is switched off, so there is nothing to report yet.</div></div>
+  {% else %}
+    {% set t = analytics.totals %}
+    <div class="ta-head">
+      <h1 class="ta-title">Training analytics</h1>
+      <div class="ta-meta">As of {{ analytics.generated_on }} · <a href="/training_analytics">Refresh</a></div>
+    </div>
+
+    <div class="ta-section-title">Across the organisation</div>
+    <div class="ta-cards">
+      <div class="ta-card"><div class="ta-card-num">{{ t.learners }}</div><div class="ta-card-label">Learners with training</div></div>
+      <div class="ta-card"><div class="ta-card-num">{{ t.active }}</div><div class="ta-card-label">Active assignments</div></div>
+      <div class="ta-card {% if t.overdue %}is-alert{% endif %}"><div class="ta-card-num">{{ t.overdue }}</div><div class="ta-card-label">Overdue</div></div>
+      <div class="ta-card"><div class="ta-card-num">{{ t.awaiting_signoff }}</div><div class="ta-card-label">Awaiting sign-off</div></div>
+      <div class="ta-card"><div class="ta-card-num">{{ t.completed }}</div><div class="ta-card-label">Completed</div></div>
+      <div class="ta-card"><div class="ta-card-num">{{ t.certificates }}</div><div class="ta-card-label">Valid certificates</div></div>
+    </div>
+
+    {% if analytics.submissions %}
+    {% set s = analytics.submissions %}
+    <div class="ta-section-title">Work to grade</div>
+    <div class="ta-cards">
+      <div class="ta-card {% if s.pending %}is-alert{% endif %}"><div class="ta-card-num">{{ s.pending }}</div><div class="ta-card-label">Waiting to be graded</div></div>
+      <div class="ta-card"><div class="ta-card-num">{{ s.needs_rework }}</div><div class="ta-card-label">Sent back for rework</div></div>
+      <div class="ta-card"><div class="ta-card-num">{{ s.passed }}</div><div class="ta-card-label">Passed</div></div>
+    </div>
+    {% endif %}
+
+    <div class="ta-section-title">By course</div>
+    <div class="ta-panel ta-scroll">
+      {% if analytics.by_course %}
+      <table class="ta-table">
+        <thead><tr>
+          <th class="course-name">Course</th>
+          <th class="num">Assigned</th>
+          <th class="num">Completed</th>
+          <th>Completion</th>
+          <th class="num">Overdue</th>
+          <th class="num">Avg score</th>
+        </tr></thead>
+        <tbody>
+        {% for row in analytics.by_course %}
+          <tr>
+            <td class="course-name">{{ row.title }}</td>
+            <td class="num">{{ row.assigned }}</td>
+            <td class="num">{{ row.completed }}</td>
+            <td>
+              <div class="ta-ratecell">
+                <span class="ta-bar {% if row.completion_rate >= 80 %}is-good{% endif %}"><span style="width: {{ row.completion_rate }}%"></span></span>
+                <span class="pct">{{ row.completion_rate }}%</span>
+              </div>
+            </td>
+            <td class="num"><span class="ta-pill {% if row.overdue %}is-warn{% else %}is-zero{% endif %}">{{ row.overdue }}</span></td>
+            <td class="num">{% if row.avg_score is none %}<span class="ta-muted">—</span>{% else %}{{ row.avg_score }}%{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="ta-empty">No courses have been assigned yet.</div>
+      {% endif %}
+    </div>
+
+    {% if analytics.by_batch %}
+    <div class="ta-section-title">Active cohorts</div>
+    <div class="ta-panel ta-scroll">
+      <table class="ta-table">
+        <thead><tr>
+          <th class="course-name">Cohort</th>
+          <th class="num">Members</th>
+          <th class="num">Courses</th>
+          <th>Progress</th>
+          <th>Ends</th>
+        </tr></thead>
+        <tbody>
+        {% for bt in analytics.by_batch %}
+          <tr>
+            <td class="course-name">{{ bt.title }}</td>
+            <td class="num">{{ bt.members }}</td>
+            <td class="num">{{ bt.courses }}</td>
+            <td>
+              <div class="ta-ratecell">
+                <span class="ta-bar {% if bt.progress >= 80 %}is-good{% endif %}"><span style="width: {{ bt.progress }}%"></span></span>
+                <span class="pct">{{ bt.progress }}%</span>
+              </div>
+            </td>
+            <td>{% if bt.end_date %}{{ bt.end_date }}{% else %}<span class="ta-muted">—</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if analytics.recent_completions %}
+    <div class="ta-section-title">Recent completions</div>
+    <div class="ta-panel ta-scroll">
+      <table class="ta-table">
+        <thead><tr>
+          <th class="course-name">Course</th>
+          <th>Learner</th>
+          <th class="num">Score</th>
+          <th>When</th>
+        </tr></thead>
+        <tbody>
+        {% for c in analytics.recent_completions %}
+          <tr>
+            <td class="course-name">{{ c.course_title }}</td>
+            <td>{{ c.user }}</td>
+            <td class="num">{{ c.score_percent }}%</td>
+            <td class="ta-muted">{{ c.completed_on }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  {% endif %}
+</main>
+{% endblock %}

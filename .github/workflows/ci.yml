@@ -691,6 +691,10 @@ jobs:
       # grading with the Needs-Rework feedback rule, and the row scoping.
       - name: Training work submissions (submit gate + grading + scoping)
         run: python -m unittest erpnext_enhancements.tests.test_training_submissions -v
+      # Manager analytics rollup -- manager-only, the overdue predicate (no SQL NULL
+      # sweep), cancelled excluded from completion rate, cohort progress, backlog.
+      - name: Training analytics (manager rollup)
+        run: python -m unittest erpnext_enhancements.tests.test_training_analytics -v
       # The kiosk service worker is registered at ROOT scope, so what it answers
       # for is every page's problem. It used to serve the whole app's assets
       # cache-first with ignoreSearch, which froze JavaScript across the site for
