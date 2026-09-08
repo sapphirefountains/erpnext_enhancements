@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prefers the cohort's end date, then its start date, then the course default. `enrolled_on` is stamped
   once per member. Bench-free coverage in `tests/test_training_batch.py`.
 
+- **Learners see their cohort(s) on the training home.** `/training` now shows a "Your cohorts" strip
+  above the course list — each active batch the learner belongs to, with its course count and due date —
+  server-fed on the boot payload (`get_learner_bootstrap` gains a `batches` key from a new, defensively
+  guarded `_learner_batches`, exactly like the stats strip: `None`/`[]` simply draws nothing). It names
+  the group and how much it owes; the courses themselves stay the assigned cards below, so nothing is
+  duplicated. The boot-wire, boundary and CSS-contract tests stay green with no allowlist edits — the
+  key is read at top level and the rows are content.
+
 ### Fixed
 
 - **Training Batch Member copied the login id into the Employee field.** The doctype shipped (v1.365.0)

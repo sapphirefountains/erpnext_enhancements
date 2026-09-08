@@ -2708,6 +2708,31 @@
 	color: var(--tr-muted);
 }
 
+/* ---------------------------------------------------------------- cohorts */
+
+.tr-cohorts {
+	margin: 4px 0 20px;
+}
+
+.tr-cohort {
+	padding: 12px 14px;
+	margin-bottom: 8px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	box-shadow: var(--tr-shadow);
+}
+
+.tr-cohort-name {
+	font-weight: 600;
+}
+
+.tr-cohort-meta {
+	margin-top: 3px;
+	font-size: 0.8rem;
+	color: var(--tr-muted);
+}
+
 /* ------------------------------------------------------------- completion */
 
 .tr-complete {

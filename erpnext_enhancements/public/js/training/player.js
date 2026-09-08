@@ -610,6 +610,13 @@
 			var strip = youStrip();
 			if (strip) main.appendChild(strip);
 
+			// The cohort(s) this learner is part of, when they are in any. Shown above
+			// the courses because it is context for them — the assigned cards below are
+			// the work; this says which group owes it. Rendered before the empty-catalog
+			// early return so a learner in a cohort always sees it.
+			var cohorts = cohortBlock();
+			if (cohorts) main.appendChild(cohorts);
+
 			// `assigned` and `library`, which is what get_learner_bootstrap actually
 			// returns. This read `b.courses` and `b.catalog.courses` -- neither of
 			// which the server has ever sent -- so the page reported "nothing is
@@ -1650,6 +1657,28 @@
 			tile.appendChild(el("div", "tr-stat-num", String(value)));
 			tile.appendChild(el("div", "tr-stat-label", label));
 			return tile;
+		}
+
+		// The learner's active cohorts, server-fed on the boot payload (b.batches).
+		// null/empty draws nothing — a learner in no batch sees exactly today's page.
+		// The courses themselves are the assigned cards below; this only names the
+		// group and how much it owes, so it never duplicates them.
+		function cohortBlock() {
+			var batches = b.batches;
+			if (!batches || !batches.length) return null;
+			var section = el("section", "tr-cohorts");
+			section.appendChild(el("h2", "tr-section-title", t("Your cohorts")));
+			batches.forEach(function (batch) {
+				var row = el("div", "tr-cohort");
+				row.appendChild(el("div", "tr-cohort-name", batch.title || batch.batch));
+				var bits = [];
+				var n = intOf(batch.course_count);
+				bits.push(n === 1 ? t("1 course") : fmt(t("{0} courses"), [n]));
+				if (batch.end_date) bits.push(fmt(t("due {0}"), [batch.end_date]));
+				row.appendChild(el("div", "tr-cohort-meta", bits.join(" · ")));
+				section.appendChild(row);
+			});
+			return section;
 		}
 
 		// The catalog's link into the transcript, shown in both the empty and the

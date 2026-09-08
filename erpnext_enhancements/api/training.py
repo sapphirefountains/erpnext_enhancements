@@ -472,6 +472,9 @@ def get_learner_bootstrap():
         # Additive: the learner's own points / streak / badges for the home strip.
         # None or all-zero simply means the strip is not drawn (see _learner_stats).
         "stats": _learner_stats(user),
+        # Additive: the active cohorts this learner is in, for the "your cohorts"
+        # strip. None (doctype not migrated) or [] (in no cohort) draws nothing.
+        "batches": _learner_batches(user),
         # Every key here is read by the player, and every setting the player reads
         # is here. Both halves of that sentence were false: `max_playback_rate` and
         # `doc_min_dwell_seconds` were read by video.js and blocks.js and sent by
@@ -1513,6 +1516,46 @@ def _learner_stats(user):
         "badges_earned": cint(row.badges_earned),
         "courses_completed": cint(row.courses_completed),
     }
+
+
+def _learner_batches(user):
+    """The active cohorts this learner belongs to, for the "your cohorts" strip.
+
+    ``None`` when the Training Batch doctype has not migrated (the strip is then not
+    drawn); ``[]`` for a learner in no active batch. Uses ``get_all`` (which ignores
+    DocPerm) filtered strictly to the learner's *own* membership — a learner holds no
+    read permission on Training Batch, and this only ever exposes the cohorts they are
+    in and how many courses each has, never who else is in them.
+    """
+    if not frappe.db.exists("DocType", "Training Batch"):
+        return None
+    names = frappe.get_all("Training Batch Member", filters={"learner": user}, pluck="parent")
+    if not names:
+        return []
+    batches = frappe.get_all(
+        "Training Batch",
+        filters={"name": ["in", list(set(names))], "status": "Active"},
+        fields=["name", "title", "end_date"],
+        order_by="end_date asc, modified desc",
+    )
+    if not batches:
+        return []
+    counts = {}
+    for row in frappe.get_all(
+        "Training Batch Course",
+        filters={"parent": ["in", [b.name for b in batches]], "parenttype": "Training Batch"},
+        fields=["parent"],
+    ):
+        counts[row.parent] = counts.get(row.parent, 0) + 1
+    return [
+        {
+            "batch": b.name,
+            "title": b.title,
+            "end_date": str(b.end_date or ""),
+            "course_count": counts.get(b.name, 0),
+        }
+        for b in batches
+    ]
 
 
 def _signoff_outstanding(doc):
