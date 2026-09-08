@@ -25,10 +25,12 @@ What is asserted, and why each one is here rather than left to review:
   trap, and its failure direction is silent refusal on production only.
 * **``get_config`` hands the picker credentials only to a user the whitelist allows.** The
   credentials are browser-safe, not audience-free.
-* **The Google link probe has three states and only 400 means "not connected".** Its failure
-  direction is the expensive one: a two-state reading would show "Connect Google" to everyone
-  during a Triton outage. So the status-code mapping is pinned here, code by code, along with
-  the rule that ``unknown`` is never cached.
+* **The Google link probe has three states, and only a proven answer is a verdict.** Its
+  failure direction is the expensive one: a two-state reading would show "Connect Google" to
+  everyone during a Triton outage. The mapping is pinned here answer by answer -- Triton's
+  ``/integrations/google/status`` payload first, the legacy Drive read's status codes on the
+  404 fallback path -- along with the rule that ``unknown`` is never cached, and that a
+  credential which can never be renewed reads as ``disconnected`` rather than ``unknown``.
 """
 import datetime
 import sys
@@ -432,8 +434,39 @@ def test_get_config_makes_no_network_call_for_the_google_link():
 # ---------------------------------------------------------------------------
 # The Google link probe
 # ---------------------------------------------------------------------------
-def _probe(statuses, *, raises=False, gateway_url="https://triton.example.com"):
-	"""Load the module with a fake Triton that answers `statuses` in order.
+#: What Triton v0.75.0's /integrations/google/status answers. Spelled out rather than
+#: built inline so a change to the contract is one edit and shows up as one diff.
+STATUS_CONNECTED = {
+	"connected": True, "has_refresh_token": True,
+	"scopes": ["https://www.googleapis.com/auth/drive"], "expired": False,
+}
+STATUS_DISCONNECTED = {
+	"connected": False, "has_refresh_token": False, "scopes": [], "expired": None,
+}
+#: Connected, but the grant cannot be renewed and has already lapsed. Triton refreshes only
+#: `if creds and creds.expired and creds.refresh_token`, so this credential fails every
+#: future read — reconnecting is the fix, and saying so is the thing the old Drive probe
+#: could not do (it answers 500 for this user, which reads as `unknown`).
+STATUS_DEAD = {
+	"connected": True, "has_refresh_token": False, "scopes": [], "expired": True,
+}
+#: Connected, no refresh token, and Triton could not tell whether it has lapsed. `None` is
+#: not `True`: an unknowable expiry must not be reported as a dead credential.
+STATUS_UNKNOWABLE_EXPIRY = {
+	"connected": True, "has_refresh_token": False, "scopes": [], "expired": None,
+}
+
+
+def _probe(status=None, *, drive=None, raises=False, gateway_url="https://triton.example.com"):
+	"""Load the module with a fake Triton, routing by path.
+
+	`status` answers `/integrations/google/status`; `drive` answers the legacy
+	`/google/drive` fallback that a pre-0.75.0 Triton falls back to. Each entry is a bare
+	status code, or a `(code, payload)` pair when the body matters.
+
+	Routing by path rather than answering a flat queue is deliberate: the probe now makes two
+	*different* calls on the fallback path, and a positional queue would let a test pass while
+	the requests went to the wrong endpoints in the wrong order.
 
 	Returns (module, cache, calls). `calls` records every outbound request, which is how the
 	retry and the cache-hit tests tell "asked again" from "answered from memory".
@@ -443,7 +476,7 @@ def _probe(statuses, *, raises=False, gateway_url="https://triton.example.com"):
 	cache = _RecordingCache()
 	frappe.cache = lambda: cache
 
-	remaining = list(statuses)
+	queues = {"status": list(status or []), "drive": list(drive or [])}
 	calls = []
 
 	def fake_request(method, url, headers=None, timeout=None, **kwargs):
@@ -452,8 +485,18 @@ def _probe(statuses, *, raises=False, gateway_url="https://triton.example.com"):
 		})
 		if raises:
 			raise Exception("connection reset")
-		status = remaining.pop(0) if remaining else 500
-		return types.SimpleNamespace(status_code=status, text="", content=b"")
+		queue = queues["status"] if "/google/status" in url else queues["drive"]
+		entry = queue.pop(0) if queue else 500
+		code, payload = entry if isinstance(entry, tuple) else (entry, None)
+
+		def _json():
+			if payload is None:
+				raise ValueError("no JSON body")
+			return payload
+
+		return types.SimpleNamespace(
+			status_code=code, text="", content=b"", json=_json
+		)
 
 	# `install_stubs` re-creates these on every `_load`, so assigning them here does not leak
 	# into the next test.
@@ -464,14 +507,18 @@ def _probe(statuses, *, raises=False, gateway_url="https://triton.example.com"):
 	return triton_attachments, cache, calls
 
 
-def test_a_200_from_the_drive_probe_means_connected():
-	mod, _, calls = _probe([200])
+def test_a_connected_status_payload_means_connected():
+	mod, _, calls = _probe([(200, STATUS_CONNECTED)])
 
 	result = mod.google_link_status()
 
 	assert result["state"] == "connected"
 	assert calls[0]["method"] == "GET"
-	assert calls[0]["url"] == "https://triton.example.com/api/v1/integrations/google/drive?limit=1"
+	assert calls[0]["url"] == "https://triton.example.com/api/v1/integrations/google/status", (
+		"the probe must ask the purpose-built endpoint first; the Drive read is the fallback, "
+		"and unlike this one it writes"
+	)
+	assert len(calls) == 1, "a 200 from status must not also spend the Drive read"
 	assert calls[0]["headers"]["Authorization"] == "Bearer tok-1"
 	# Panel-open latency, not the 120s chat timeout.
 	assert calls[0]["timeout"] == mod._LINK_PROBE_TIMEOUT
@@ -480,8 +527,27 @@ def test_a_200_from_the_drive_probe_means_connected():
 	)
 
 
-def test_a_400_is_the_only_status_that_means_disconnected():
-	assert _probe([400])[0].google_link_status()["state"] == "disconnected"
+def test_connected_false_means_disconnected():
+	assert _probe([(200, STATUS_DISCONNECTED)])[0].google_link_status()["state"] == "disconnected"
+
+
+def test_a_credential_that_can_never_be_renewed_is_disconnected():
+	"""The signal the Drive probe could not give. No refresh token and already expired means
+	every future read fails, and reconnecting is exactly the fix — but the Drive read answers
+	500 for that user, which is `unknown`, which shows them nothing."""
+	assert _probe([(200, STATUS_DEAD)])[0].google_link_status()["state"] == "disconnected"
+
+
+def test_an_unknowable_expiry_is_not_treated_as_dead():
+	"""`expired: null` means Triton could not tell without a network call. Reading `None` as
+	`True` would tell a working user to reconnect."""
+	assert _probe([(200, STATUS_UNKNOWABLE_EXPIRY)])[0].google_link_status()["state"] == "connected"
+
+
+def test_an_unreadable_status_body_is_unknown():
+	for body in (None, [1, 2], "nope"):
+		entry = (200, body) if body is not None else 200
+		assert _probe([entry])[0].google_link_status()["state"] == "unknown", body
 
 
 def test_a_500_is_unknown_and_not_disconnected():
@@ -491,9 +557,36 @@ def test_a_500_is_unknown_and_not_disconnected():
 	assert _probe([500])[0].google_link_status()["state"] == "unknown"
 
 
-def test_a_429_or_404_is_unknown():
-	for status in (404, 429, 502, 0):
-		assert _probe([status])[0].google_link_status()["state"] == "unknown", status
+def test_a_429_or_502_is_unknown():
+	for code in (429, 502, 0):
+		assert _probe([code])[0].google_link_status()["state"] == "unknown", code
+
+
+def test_a_404_falls_back_to_the_drive_read_rather_than_giving_up():
+	"""A Triton older than v0.75.0 has no status endpoint.
+
+	Reporting `unknown` there would fail open and the empty state would simply never appear —
+	a silent regression of the feature this probe exists to drive, lasting until Triton
+	deploys. Falling back removes the ordering dependency between the two repos entirely.
+	"""
+	mod, _, calls = _probe([404], drive=[400])
+
+	assert mod.google_link_status()["state"] == "disconnected"
+	assert len(calls) == 2
+	assert calls[0]["url"].endswith("/api/v1/integrations/google/status")
+	assert calls[1]["url"].endswith("/api/v1/integrations/google/drive?limit=1")
+
+
+def test_the_fallback_reads_a_200_from_drive_as_connected():
+	mod, _, calls = _probe([404], drive=[200])
+
+	assert mod.google_link_status()["state"] == "connected"
+	assert len(calls) == 2
+
+
+def test_the_fallback_still_treats_a_500_as_unknown():
+	"""Same rule on both paths: only a proven answer is a verdict."""
+	assert _probe([404], drive=[500])[0].google_link_status()["state"] == "unknown"
 
 
 def test_an_unreachable_triton_is_unknown_and_does_not_raise():
@@ -510,7 +603,7 @@ def test_an_unreachable_triton_is_unknown_and_does_not_raise():
 
 
 def test_a_gateway_that_cannot_mint_a_token_is_unknown():
-	mod, _, calls = _probe([200])
+	mod, _, calls = _probe([(200, STATUS_CONNECTED)])
 	frappe = sys.modules["frappe"]
 
 	def boom(force_refresh=False):
@@ -533,7 +626,7 @@ def test_a_gateway_that_cannot_mint_a_token_is_unknown():
 def test_the_probe_re_mints_on_403_not_only_401():
 	"""Triton's get_current_user answers 403 for a stale JWT — only a wholly absent
 	Authorization header gives 401. A retry-on-401 helper never refreshes a stale token."""
-	mod, _, calls = _probe([403, 200])
+	mod, _, calls = _probe([403, (200, STATUS_CONNECTED)])
 
 	assert mod.google_link_status()["state"] == "connected"
 	assert len(calls) == 2
@@ -552,7 +645,7 @@ def test_a_persistent_403_gives_up_after_one_retry():
 # Caching
 # ---------------------------------------------------------------------------
 def test_connected_is_cached_and_the_second_call_asks_nobody():
-	mod, cache, calls = _probe([200])
+	mod, cache, calls = _probe([(200, STATUS_CONNECTED)])
 
 	first = mod.google_link_status()
 	second = mod.google_link_status()
@@ -570,11 +663,11 @@ def test_disconnected_expires_far_sooner_than_connected():
 	locks a user out of the feature they just fixed."""
 	# One at a time, and each one used before the next is loaded: `_probe` reinstalls the
 	# frappe stub, so a second load rebinds `frappe.cache` out from under the first module.
-	mod, connected_cache, _ = _probe([200])
+	mod, connected_cache, _ = _probe([(200, STATUS_CONNECTED)])
 	mod.google_link_status()
 	connected_ttl = connected_cache.sets[0][2]
 
-	mod, disconnected_cache, _ = _probe([400])
+	mod, disconnected_cache, _ = _probe([(200, STATUS_DISCONNECTED)])
 	mod.google_link_status()
 	disconnected_ttl = disconnected_cache.sets[0][2]
 
@@ -585,7 +678,7 @@ def test_disconnected_expires_far_sooner_than_connected():
 def test_unknown_is_never_cached():
 	"""Caching "we could not tell" turns a thirty-second blip into thirty minutes of a wrong
 	hint — and the second call must re-probe rather than serve the shrug."""
-	mod, cache, calls = _probe([500, 200])
+	mod, cache, calls = _probe([500, (200, STATUS_CONNECTED)])
 
 	assert mod.google_link_status()["state"] == "unknown"
 	assert cache.sets == [], "an unknown finding was written to the cache"
@@ -595,7 +688,7 @@ def test_unknown_is_never_cached():
 
 
 def test_refresh_bypasses_the_cache():
-	mod, _, calls = _probe([400, 200])
+	mod, _, calls = _probe([(200, STATUS_DISCONNECTED), (200, STATUS_CONNECTED)])
 
 	assert mod.google_link_status()["state"] == "disconnected"
 	assert mod.google_link_status()["state"] == "disconnected"  # served from cache
@@ -607,7 +700,7 @@ def test_refresh_bypasses_the_cache():
 
 
 def test_the_cache_key_is_per_user():
-	mod, cache, calls = _probe([200, 400])
+	mod, cache, calls = _probe([(200, STATUS_CONNECTED), (200, STATUS_DISCONNECTED)])
 	frappe = sys.modules["frappe"]
 
 	frappe.session.user = "a@sapphirefountains.com"
@@ -622,7 +715,7 @@ def test_the_cache_key_is_per_user():
 
 
 def test_a_corrupt_cache_entry_is_ignored_rather_than_returned():
-	mod, cache, calls = _probe([200])
+	mod, cache, calls = _probe([(200, STATUS_CONNECTED)])
 	cache.store[mod._link_cache_key("a@sapphirefountains.com")] = "connected"  # old shape
 
 	assert mod.google_link_status()["state"] == "connected"
@@ -632,12 +725,51 @@ def test_a_corrupt_cache_entry_is_ignored_rather_than_returned():
 # ---------------------------------------------------------------------------
 # connect_url
 # ---------------------------------------------------------------------------
-def test_connect_url_is_derived_from_the_gateway_url():
-	mod, _, _ = _probe([400], gateway_url="https://triton.example.com/")
+def test_connect_url_is_derived_from_the_gateway_url_and_carries_the_caller():
+	"""On a Triton that has the connect route, the link names the account it is for.
+
+	That hint is the only defence against the real failure: Triton's consent flow has no way
+	to know which ERPNext session sent the person, so whichever Google account the browser is
+	signed into is the one that gets linked. Triton compares the hint against the verified ID
+	token and refuses on a mismatch.
+	"""
+	mod, _, _ = _probe([(200, STATUS_DISCONNECTED)], gateway_url="https://triton.example.com/")
 
 	result = mod.google_link_status()
 
+	assert result["connect_url"] == (
+		"https://triton.example.com/api/v1/auth/google/connect"
+		"?hint=a%40sapphirefountains.com"
+	)
+
+
+def test_connect_url_falls_back_to_plain_login_on_an_older_triton():
+	"""No status endpoint means no connect endpoint — they ship in the same Triton release.
+
+	Linking to /connect there would hand the person a 404 rendered as a JSON blob. The plain
+	login still attaches the credential to the right row (both sides key on the lowercased
+	email); it just cannot catch the wrong-account case.
+	"""
+	mod, _, _ = _probe([404], drive=[400])
+
+	result = mod.google_link_status()
+
+	assert result["state"] == "disconnected"
 	assert result["connect_url"] == "https://triton.example.com/api/v1/auth/google/login"
+
+
+def test_the_connect_route_survives_a_cache_hit():
+	"""Which route to use is a fact about the Triton on the other end, so unlike base_url it
+	has to ride in the cache — recomputing it from settings would silently downgrade every
+	cached answer to the plain login."""
+	mod, _, calls = _probe([(200, STATUS_CONNECTED)])
+
+	first = mod.google_link_status()
+	second = mod.google_link_status()
+
+	assert len(calls) == 1, "the second call should have been answered from cache"
+	assert second["connect_url"] == first["connect_url"]
+	assert "/auth/google/connect?hint=" in second["connect_url"]
 
 
 def test_connect_url_is_empty_when_the_gateway_is_unconfigured():

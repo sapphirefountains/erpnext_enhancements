@@ -551,29 +551,36 @@ are given above precisely because these URLs will not last:
 
 ---
 
-## Follow-ups (Triton side, not built here)
+## The Triton side (shipped in Triton v0.75.0)
 
-These are changes to the **Triton** repo. Each is a deploy there, so none is in v1.375.0; the ERPNext
-side ships the best defence available without them.
+These were filed here as follow-ups and are now built, in
+[sapphirefountains/triton#352](https://github.com/sapphirefountains/triton/pull/352). They are a
+**separate deploy**, so ERPNext degrades gracefully until it lands: the probe falls back to the Drive
+read on a 404, and the connect link falls back to the plain login. Nothing here is an ordering
+dependency.
 
-1. **`GET /api/v1/auth/google/connect` with a `login_hint`.** The single real gap. Today's
+1. **`GET /api/v1/auth/google/connect` with a `login_hint`** — *done*. The single real gap. Today's
    `/auth/google/login` takes no arguments and passes no hint, so the credential lands on whichever
    Google account the browser is signed into, and `google_callback` resolves by email without ever
    comparing against the ERPNext identity that sent the person there. The route should accept the
    caller's bridge JWT (or a signed hint), pass `login_hint` to Google, and **refuse** in the callback
    when the returned email does not match — instead of silently writing the credential onto another row.
-2. **Preserve the stored refresh token when the exchange returns none.** `google_callback` writes
+2. **Preserve the stored refresh token when the exchange returns none** — *done*. `google_callback` writes
    `"refresh_token": refresh_token` unconditionally and replaces `encrypted_key` wholesale.
    `Credentials.from_authorized_user_info` checks key *presence*, not value, so a null refresh token
    constructs fine; and because no `expiry` is stored, the credential is already expired on load and the
    refresh branch is skipped for want of a refresh token. Net: a previously-working user who clicks
    "Connect Google" a second time can end up with a permanently dead credential, silently.
    `prompt=consent` makes that unlikely, not impossible, and nothing guards it.
-3. **Land somewhere sensible.** The callback redirects to the SPA root with the Triton JWT **in a query
+3. **Land somewhere sensible** — *done*, on a self-contained "you can close this tab" page with no JWT. The callback redirects to the SPA root with the Triton JWT **in a query
    string**, which then routes to `/chat`. Somebody who clicked a button in ERPNext ends up logged into a
    different product with no route back. A minimal "Google connected — you can close this tab" page, or
    an allow-listed `return_to`, would close the loop.
-4. **A real `GET /integrations/google/status`.** Would remove the probe's one side effect — reading Drive
+4. **A real `GET /integrations/google/status`** — *done*, and ERPNext's probe now prefers it. Would remove the probe's one side effect — reading Drive
    can make Triton refresh and re-save the user's OAuth token — at the cost of answering a weaker
    question (a row can exist with a revoked refresh token). Worth it only alongside (2).
-5. **`docs/api-reference.md:19` documents `/auth/google/login` as `POST`.** The route is `@router.get`.
+5. **`docs/api-reference.md` documented `/auth/google/login` as `POST`** — *fixed*. The route is `@router.get`.
+
+Two findings came out of adversarially reviewing that Triton change before it shipped, both fixed
+there: a refused connect was leaving a live full-scope grant on the wrong Google account (it is now
+revoked before the 403), and a connect could report success over a credential write that failed.

@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.376.0] - 2026-09-08
+
+### Changed
+
+- **The Google-link pre-flight now asks Triton's purpose-built status endpoint instead of reading
+  Drive.** v1.375.0 answered "is this user connected?" with a
+  `GET /api/v1/integrations/google/drive?limit=1`, which is cheap but **not free of side effects** —
+  and that was the objection. Constructing Triton's `GoogleWorkspaceClient` runs `_load_credentials`,
+  which for a credential it considers expired does a blocking token refresh **and re-encrypts the
+  result onto the `APIKey` row and commits it**, as a side effect of being constructed. Triton's own
+  source documents that write racing the dashboard's calendar fan-out into a burst of 401s, and a probe
+  is *polled* — the worst possible caller for it. Triton v0.75.0 adds
+  `GET /api/v1/integrations/google/status`, which reads the row, decrypts it and reports what the JSON
+  says: no Google call, no write.
+
+  **No ordering dependency between the two repos.** A Triton without that route 404s, and the probe
+  falls back to the Drive read. Reporting `unknown` on the 404 instead would have failed open and the
+  empty state would simply never appear — a silent regression of the feature the probe exists to drive,
+  lasting until Triton deployed.
+
+  **It is also a better signal, not merely a cheaper one.** The payload distinguishes a credential with
+  **no refresh token that has already expired**: one that can never be renewed, because Triton refreshes
+  only `if creds and creds.expired and creds.refresh_token`. That now reads as `disconnected` and the
+  person is told to reconnect, which is exactly the fix. The Drive read answers 500 for that user, which
+  maps to `unknown`, which shows them nothing at all. `expired: null` is deliberately **not** `true` —
+  an unknowable expiry must not be reported as a dead credential.
+
+- **The connect link now points at `/api/v1/auth/google/connect?hint=<the caller's own address>`.**
+  Triton v0.75.0 passes that hint to Google as `login_hint` and, the part that matters, **refuses** when
+  the account that consented is not the one named — rather than writing the credential onto whichever
+  row matched. Before it, consenting as the wrong Google account on a shared browser linked a different
+  Triton user, the widget kept running as the bridge-provisioned one, and attachments kept returning
+  nothing with nothing anywhere saying why.
+
+  Which of the two routes to use comes from the **probe**, not from configuration: Triton ships
+  `/auth/google/connect` and `/integrations/google/status` in the same release, so a status endpoint
+  that answered at all is proof the connect route is there too. That fact rides in the cache alongside
+  the finding, because it describes the Triton on the other end rather than our own settings —
+  recomputing it from settings would silently downgrade every cached answer to the plain login. An
+  older Triton still gets `/auth/google/login`, which attaches the credential to the right row (both
+  sides key on the lowercased email) but cannot catch the wrong-account case.
+
+  The hint rides in a query string precisely because it is a **constraint, not a credential**: setting
+  your own constrains only your own flow, and mailing someone a link carrying your hint makes *their*
+  sign-in fail the match. Forging it only ever denies the forger, so there is nothing to sign — which
+  is what keeps a bearer token out of that URL.
+
+  The two Triton endpoints are sapphirefountains/triton#352; see
+  [`docs/triton-drive-picker-setup.md`](docs/triton-drive-picker-setup.md) for what shipped there.
+
+  The bench-free suite's fake Triton now routes by path rather than answering a flat queue of status
+  codes: the fallback makes two *different* calls, and a positional queue would let a test pass while
+  the requests went to the wrong endpoints in the wrong order. 40 tests, up from 32.
+
 ## [1.375.0] - 2026-09-08
 
 ### Added
