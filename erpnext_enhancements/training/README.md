@@ -155,17 +155,25 @@ Two consequences worth knowing before they surprise you:
   `Material Change (require retake)`. The parenthetical is part of the stored
   value, not a label; `publish_version` rejects anything else.
 
-### Editing on the canvas (WYSIWYG spike)
+### Editing on the canvas (WYSIWYG)
 
 `/app/training-canvas?course=…` ([`page/training_canvas/`](page/training_canvas/)) is a
-**full-bleed WYSIWYG spike** alongside the classic builder. It renders every block with
-the learner's own renderer (`public/js/training/blocks.js` → `TR.renderBlock`) and lets
-the author edit the text **on that render** — the thing you edit is the thing a learner
-sees, in the learner stylesheet (`player.css`, Aurora). It reuses the exact data path:
-`get_builder_bootstrap` to load, `save_draft_version` to autosave, the version's
-`modified` as the optimistic lock. A spike, so it edits the text types (Rich Text,
-Callout) and headings in place; media and in-video blocks render as a placeholder that
-hands off to the classic builder, which remains the complete authoring surface.
+**full-bleed WYSIWYG builder** alongside the classic one. It renders every block with the
+learner's own renderer (`public/js/training/blocks.js` → `TR.renderBlock`) and edits it
+**on that render** — the thing you edit is the thing a learner sees, in the learner
+stylesheet (`player.css`, Aurora). It reuses the exact data path: `get_builder_bootstrap`
+to load, `save_draft_version` to autosave, the version's `modified` as the optimistic
+lock, whole block table sent with every `block_key` carried.
+
+It authors CONTENT completely: **Rich Text** and **Callout** are edited in place with a
+formatting toolbar (bold, italic, headings, lists, link); **Checklist / Flashcards /
+Accordion** have inline structured editors beside their live preview; **External Embed**
+takes a URL. Blocks can be **added** (a `+` between blocks opens a type menu), **reordered**
+and **removed** on the canvas, and each has a **settings** row (caption, "required to
+finish", and Callout tone; headings are edited on the render itself). Media that needs a
+signed draft asset URL (**Image, PDF, Downloadable File, Video, Image Hotspots**) and the
+in-video **checkpoint** scrubber stay in the classic builder — a media block renders as a
+hand-off card — so the classic builder is complemented, never replaced.
 
 **It forced a real round-trip fix that also helped the classic builder.**
 `get_builder_bootstrap` returned each block's edit shape but *omitted* `data` (the

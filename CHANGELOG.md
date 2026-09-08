@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.379.0] - 2026-09-08
+
+### Added
+
+- **Training Canvas is now a working WYSIWYG content editor, not just a preview.** Building on the
+  v1.378.0 spike, the canvas now authors content in place: **Rich Text** and **Callout** bodies edit
+  directly on the learner render with a formatting toolbar (bold, italic, H2/H3, bulleted/numbered lists,
+  link, clear) that appears while a body has focus; **Checklist / Flashcards / Accordion** get inline
+  structured editors (add / edit / remove rows) beside their live learner preview, writing the list back
+  into the block's `data` JSON; **External Embed** takes a URL with a live iframe preview. Blocks can be
+  **added** (a `+` between blocks opens a type menu; a new block mints a stable client `blk-…` key the
+  server keeps), **reordered** (per-block ↑/↓) and **removed** on the canvas, and each block has a
+  **settings** row — caption, "required to finish the lesson", and, for a Callout, its tone
+  (info/tip/warning/danger); headings are edited on the render itself. Media that needs a signed draft
+  asset URL (Image, PDF, Downloadable File, Video, Image Hotspots) and the in-video checkpoint scrubber
+  still hand off to the classic builder, which is complemented, never replaced. All of it rides the same
+  `save_draft_version` autosave, optimistic lock and `rejected`-surfacing as before. Guarded by
+  `test_training_canvas` (formatting toolbar, add/move/remove, client-key minting, interactive `data`
+  writes, Callout tone).
+
 ## [1.378.0] - 2026-09-08
 
 ### Added

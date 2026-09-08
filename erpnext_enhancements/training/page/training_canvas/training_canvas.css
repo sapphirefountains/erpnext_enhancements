@@ -166,60 +166,393 @@
 	font-size: 16px;
 }
 
-/* --------------------------------------------------------- edit affordances */
+/* ------------------------------------------------------- rich-text toolbar */
 
-/* Layered onto the real .tr-block render. Editable blocks (Rich Text / Callout)
-   get a hover ring and an editing ring; every card gets a type tag on hover. */
-.tc-sheet .tr-block {
+/* Pinned under the top bar, shown only while a Rich Text / Callout body has focus.
+   Acts on the active editable via execCommand. */
+.tc-rt-toolbar {
+	flex: 0 0 auto;
+	display: flex;
+	gap: 4px;
+	padding: 6px 14px;
+	background: var(--card-bg, #fff);
+	border-bottom: 1px solid var(--border-color, #e2e2e2);
+	overflow-x: auto;
+}
+
+.tc-rt-btn {
+	border: 1px solid var(--tr-border, #e2e0f0);
+	background: var(--tr-surface, #fff);
+	color: var(--tr-text, #1a1830);
+	border-radius: 7px;
+	min-width: 30px;
+	padding: 4px 9px;
+	font: inherit;
+	font-size: 0.82rem;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.tc-rt-btn:hover {
+	border-color: var(--tr-accent, #7c3aed);
+	color: var(--tr-accent, #7c3aed);
+}
+
+/* An explicit `display` on a class beats the `[hidden]` attribute's UA
+   `display:none`, so these two — shown only on demand — need `[hidden]` restated
+   at higher specificity or they render at all times. */
+.tc-rt-toolbar[hidden],
+.tc-blocksettings[hidden] {
+	display: none;
+}
+
+/* -------------------------------------------------------- the block wrapper */
+
+.tc-blockwrap {
 	position: relative;
+}
+
+.tc-blockwrap.is-removed {
+	opacity: 0.5;
+}
+
+/* The per-block tool cluster, revealed on hover/focus of the wrap. */
+.tc-blocktools {
+	position: absolute;
+	top: -12px;
+	right: 8px;
+	z-index: 3;
+	display: flex;
+	gap: 3px;
+	padding: 2px;
+	border-radius: 9px;
+	background: var(--tr-surface, #fff);
+	border: 1px solid var(--tr-border, #e2e0f0);
+	box-shadow: var(--tr-shadow);
+	opacity: 0;
+	transition: opacity 0.14s ease;
+}
+
+.tc-blockwrap:hover .tc-blocktools,
+.tc-blockwrap:focus-within .tc-blocktools {
+	opacity: 1;
+}
+
+.tc-tool {
+	border: none;
+	background: transparent;
+	color: var(--tr-muted, #5f6488);
+	border-radius: 6px;
+	width: 26px;
+	height: 24px;
+	font-size: 0.8rem;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.tc-tool:hover {
+	background: var(--tr-accent-soft, #ede9fe);
+	color: var(--tr-accent, #7c3aed);
+}
+
+.tc-tool-danger:hover {
+	background: rgba(224, 54, 54, 0.12);
+	color: #e03636;
+}
+
+/* The editable render sits here; a subtle hover ring signals "you can edit this". */
+.tc-blockmount .tc-live {
 	transition: box-shadow 0.15s ease;
 }
 
-.tc-editable {
-	cursor: text;
-}
-
-.tc-editable:hover {
+.tc-blockmount .tc-live:hover {
 	box-shadow: 0 0 0 1px var(--tr-accent-soft, #ede9fe), var(--tr-shadow);
-}
-
-.tc-editable.is-editing {
-	box-shadow: 0 0 0 2px var(--tr-accent, #7c3aed);
 }
 
 .tc-sheet [contenteditable="true"]:focus {
 	outline: none;
 }
 
-.tc-tag {
-	position: absolute;
-	top: -9px;
-	left: 12px;
-	font-size: 0.62rem;
-	font-weight: 700;
-	letter-spacing: 0.05em;
-	text-transform: uppercase;
-	padding: 1px 7px;
-	border-radius: 999px;
-	background: var(--tr-accent, #7c3aed);
-	color: var(--tr-accent-text, #fff);
-	opacity: 0;
-	transition: opacity 0.15s ease;
-	pointer-events: none;
+.tc-sheet .tr-block-body.tc-rich:focus {
+	box-shadow: inset 0 0 0 2px var(--tr-accent, #7c3aed);
+	border-radius: 8px;
 }
 
-.tc-sheet .tr-block:hover .tc-tag,
-.tc-editable.is-editing .tc-tag {
-	opacity: 1;
-}
-
-.tc-tag.is-ro {
-	background: var(--tr-surface-alt, #eceaf6);
+.tc-removed-note {
+	display: none;
+	margin: 6px 0 14px;
+	font-size: 0.85rem;
 	color: var(--tr-muted, #5f6488);
 }
 
-/* Media / hotspot blocks need a signed draft asset URL the canvas spike does not
-   mint — render a placeholder that hands the author to the classic builder. */
+.tc-blockwrap.is-removed .tc-removed-note {
+	display: block;
+}
+
+.tc-undo {
+	border: none;
+	background: none;
+	color: var(--tr-accent, #7c3aed);
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+/* ----------------------------------------------------------- block settings */
+
+.tc-blocksettings {
+	margin: 4px 0 14px;
+	padding: 12px 14px;
+	border: 1px solid var(--tr-border, #e2e0f0);
+	border-radius: 12px;
+	background: var(--tr-surface-alt, #eceaf6);
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.tc-set {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	font-size: 0.85rem;
+}
+
+.tc-set > span {
+	flex: 0 0 auto;
+	min-width: 90px;
+	color: var(--tr-muted, #5f6488);
+	font-weight: 600;
+}
+
+.tc-set > .form-control {
+	flex: 1;
+}
+
+.tc-seg {
+	display: inline-flex;
+	border: 1px solid var(--tr-border, #e2e0f0);
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.tc-seg button {
+	border: none;
+	background: var(--tr-surface, #fff);
+	color: var(--tr-muted, #5f6488);
+	padding: 5px 11px;
+	font: inherit;
+	font-size: 0.82rem;
+	cursor: pointer;
+	border-left: 1px solid var(--tr-border, #e2e0f0);
+}
+
+.tc-seg button:first-child {
+	border-left: none;
+}
+
+.tc-seg button.is-on {
+	background: var(--tr-accent, #7c3aed);
+	color: var(--tr-accent-text, #fff);
+}
+
+/* ------------------------------------------------------ interactive editors */
+
+.tc-ied {
+	margin: 8px 0 4px;
+	padding: 12px;
+	border: 1px dashed var(--tr-border, #e2e0f0);
+	border-radius: 12px;
+	background: var(--tr-surface-alt, #eceaf6);
+}
+
+.tc-ied-rows {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.tc-ied-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+
+.tc-ied-row > .form-control,
+.tc-ied-row > .tc-card-row,
+.tc-ied-row > .tc-panel-row {
+	flex: 1;
+	min-width: 0;
+}
+
+.tc-card-row,
+.tc-panel-row {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.tc-panel-body {
+	resize: vertical;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.85rem;
+}
+
+.tc-ied-del {
+	flex: 0 0 auto;
+	border: 1px solid var(--tr-border, #e2e0f0);
+	background: var(--tr-surface, #fff);
+	color: var(--tr-muted, #5f6488);
+	border-radius: 7px;
+	width: 30px;
+	height: 30px;
+	cursor: pointer;
+}
+
+.tc-ied-del:hover {
+	border-color: #e03636;
+	color: #e03636;
+}
+
+.tc-ied-add {
+	margin-top: 10px;
+	border: 1px solid var(--tr-border, #e2e0f0);
+	background: var(--tr-surface, #fff);
+	color: var(--tr-muted, #5f6488);
+	border-radius: 8px;
+	padding: 6px 12px;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.tc-ied-add:hover {
+	border-color: var(--tr-accent, #7c3aed);
+	color: var(--tr-accent, #7c3aed);
+}
+
+/* ---------------------------------------------------------- external embed */
+
+.tc-embed {
+	margin-bottom: 4px;
+}
+
+.tc-embed-label {
+	font-size: 0.72rem;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--tr-muted, #5f6488);
+	margin-bottom: 6px;
+}
+
+.tc-embed-url {
+	width: 100%;
+	margin-bottom: 10px;
+}
+
+.tc-embed-frame {
+	width: 100%;
+	aspect-ratio: 16 / 9;
+	border: 0;
+	border-radius: 10px;
+	background: #000;
+}
+
+.tc-muted {
+	color: var(--tr-muted, #5f6488);
+	padding: 10px 0;
+}
+
+.tc-hint {
+	margin-top: 8px;
+	font-size: 0.82rem;
+	color: var(--tr-muted, #5f6488);
+}
+
+/* ----------------------------------------------------- add-block affordance */
+
+/* A thin hover line between blocks with a centred + that opens the type menu. */
+.tc-addline {
+	position: relative;
+	height: 16px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.tc-addline::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 1px;
+	background: var(--tr-border, #e2e0f0);
+	opacity: 0;
+	transition: opacity 0.14s ease;
+}
+
+.tc-addline:hover::before {
+	opacity: 1;
+}
+
+.tc-addbtn {
+	position: relative;
+	z-index: 1;
+	width: 24px;
+	height: 24px;
+	border-radius: 50%;
+	border: 1px solid var(--tr-border, #e2e0f0);
+	background: var(--tr-surface, #fff);
+	color: var(--tr-muted, #5f6488);
+	font-size: 1rem;
+	line-height: 1;
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.tc-addline:hover .tc-addbtn {
+	opacity: 1;
+}
+
+.tc-addbtn:hover {
+	border-color: var(--tr-accent, #7c3aed);
+	color: var(--tr-accent, #7c3aed);
+	transform: scale(1.1);
+}
+
+.tc-menu {
+	position: fixed;
+	z-index: 1100;
+	min-width: 180px;
+	padding: 6px;
+	border: 1px solid var(--tr-border, #e2e0f0);
+	border-radius: 12px;
+	background: var(--tr-surface, #fff);
+	box-shadow: var(--tr-shadow-lg);
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.tc-menu button {
+	text-align: left;
+	border: none;
+	background: transparent;
+	color: var(--tr-text, #1a1830);
+	border-radius: 8px;
+	padding: 8px 12px;
+	font: inherit;
+	cursor: pointer;
+}
+
+.tc-menu button:hover {
+	background: var(--tr-accent-soft, #ede9fe);
+	color: var(--tr-accent, #7c3aed);
+}
+
+/* Media / in-video blocks hand off to the classic builder. */
 .tc-placeholder {
 	display: flex;
 	align-items: center;
@@ -229,7 +562,6 @@
 	border-radius: var(--tr-radius, 16px);
 	background: var(--tr-surface-alt, #eceaf6);
 	color: var(--tr-muted, #5f6488);
-	margin-bottom: 14px;
 }
 
 .tc-placeholder .tc-ph-icon {
@@ -244,31 +576,6 @@
 
 .tc-placeholder b {
 	color: var(--tr-text, #1a1830);
-}
-
-/* ---------------------------------------------------------------- add row */
-
-.tc-add {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 7px;
-	margin-top: 18px;
-}
-
-.tc-add button {
-	border: 1px solid var(--tr-border, #e2e0f0);
-	background: var(--tr-surface, #fff);
-	color: var(--tr-muted, #5f6488);
-	border-radius: 9px;
-	padding: 7px 12px;
-	font: inherit;
-	font-weight: 600;
-	cursor: pointer;
-}
-
-.tc-add button:hover {
-	border-color: var(--tr-accent, #7c3aed);
-	color: var(--tr-accent, #7c3aed);
 }
 
 /* ------------------------------------------------------------- empty states */

@@ -130,6 +130,32 @@ class TestCanvasUsesTheRealDataPath(unittest.TestCase):
         self.assertIn("report_rejected", _canvas())
 
 
+class TestCanvasEditsContentInPlace(unittest.TestCase):
+    """The WYSIWYG editing capabilities — guarded so a refactor cannot silently
+    drop them back to a read-only preview."""
+
+    def test_rich_text_has_a_formatting_toolbar(self):
+        self.assertIn("execCommand", _canvas(), "no rich-text formatting toolbar")
+
+    def test_blocks_can_be_added_moved_and_removed(self):
+        code = _canvas()
+        for method in ("add_block(", "move_block(", "remove_block("):
+            self.assertIn(method, code, f"canvas cannot {method}")
+
+    def test_a_new_block_mints_a_client_key_it_does_not_regenerate(self):
+        """A new block needs a stable id before the first save; existing keys are
+        never regenerated (that strands learner progress)."""
+        self.assertIn('"blk-" + Math.random', _canvas())
+
+    def test_the_interactive_types_are_edited_through_data(self):
+        """Checklist / Flashcards / Accordion write their list back into block.data
+        as JSON — the shape the server and the renderer both speak."""
+        self.assertIn("block.data = JSON.stringify", _canvas())
+
+    def test_callout_tone_is_editable(self):
+        self.assertIn("block.callout_tone = val", _canvas())
+
+
 class TestCanvasPageIsRegistered(unittest.TestCase):
     def test_the_page_is_gated_to_authors(self):
         import json
