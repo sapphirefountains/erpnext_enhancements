@@ -1386,6 +1386,22 @@ jobs:
       # (the picker just opens on Flash), so it needs a test rather than review.
       - name: Triton widget default model (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_triton_widget_defaults.py -q
+      # Triton chat attachments (v1.373.0). Its own step for the reason the two above have
+      # one: each bench-free suite installs its own frappe stub at module scope, and this one
+      # extends `frappe.utils` with three date helpers the other two were never written
+      # against. Sharing a process would let one suite's stub decide another's outcome.
+      #
+      # Three of its assertions are security properties rather than tidiness. The prompt
+      # preamble must stay byte-identical on turns with no attachment (every context turn the
+      # assistant has ever sent uses that string). An attachment ref the caller does not own
+      # must produce no line -- getting that wrong is not an error, it is one user's file
+      # described into another user's prompt. And a `file_url` sent on the ref must be
+      # ignored, because honouring it would turn any session into arbitrary file read under
+      # the caller's identity. The fourth is the v1.277.3 Single-default trap: an
+      # un-backfilled Int reads None, cint(None) is 0, and a 0 MB cap rejects every upload
+      # silently on production only.
+      - name: Triton chat attachments (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_triton_attachments.py -q
       # The repo's first JavaScript test, and it needs no runner beyond the node
       # already on the GitHub image — deliberately not a new framework.
       #

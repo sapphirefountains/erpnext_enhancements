@@ -7,6 +7,220 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.373.0] - 2026-09-08
+
+### Added
+
+- **File attachments in the Triton chat widget.** New `triton_attachments.py`
+  (`register_upload`, `attach_drive_file`, `list_pending`, `remove`, `download`), a
+  `Triton Chat Attachment` DocType under AI Governance, five new Triton Assistant Settings fields, and a
+  nightly retention sweep.
+
+  **The file is a reference, not a payload, and that is forced rather than chosen.** The endpoint the
+  widget already talks to cannot carry a file. `POST /api/v1/assistant/sessions/{id}/query/stream` binds
+  Triton's `ChatQuery`, and while that schema *declares* `parts` and `google_drive_file_ids`, the handler
+  reads neither — pydantic accepts them, FastAPI discards them, and there is no 400 to tell you. Triton's
+  real file surface is a different route (`…/query/stream_multimodal`, multipart) that
+  `triton_chat._request` structurally cannot produce (`json=payload`, hardcoded JSON content type). Sending
+  an `attachments` key would have looked correct end to end while the model never saw the file: Frappe
+  filters unknown POST keys against the Python signature and drops them silently, and Triton would have
+  discarded what survived.
+
+  So the file is *named* to the model and the model fetches it, with two tools already in Triton's CORE
+  pack on every session — `fac_extract_file_content` (takes a Frappe `file_url`, 50 MB, 50 pages) and
+  `gws_get_file_content` (Drive, under the user's own OAuth). Beyond needing no Triton deploy, this is the
+  cheap option by a wide margin: Triton's `build_history` applies no truncation and no window to user
+  messages, so text injected into one prompt is re-billed verbatim on *every later turn of that session,
+  forever* — a 40-page contract injected on turn 2 of a ten-turn chat is roughly 270k additional prompt
+  tokens. A reference costs about twenty, and the extracted body enters context once, on demand, as a tool
+  result.
+
+  **Why a DocType, when the obvious answer is "don't".** The widget uploads through core's
+  `/api/method/upload_file` with `is_private=1` and no `doctype`/`docname` — permitted for any signed-in
+  user, since `check_write_permission` returns immediately on a blank doctype — exactly as
+  `feedback/transport.js` already does. Leaving that `File` orphaned *works*: the uploader can read it,
+  because `File.has_permission` short-circuits on `doc.owner == user`. It is still wrong twice over. That
+  shortcut is a per-uploader accident with no hook, no audit and no way to widen or narrow it later; and
+  core garbage-collects attachments only through `delete_doc`'s `remove_all(parent)`, so an orphan lives
+  forever. `feedback.py` survives its orphan window only because a real row appears seconds later — a
+  Triton turn never produces one. Anchoring the file to a `Triton Chat Attachment` row fixes both at once.
+
+  The row's DocPerm (`All`, `read`+`delete`, `if_owner`) is load-bearing and is **not** modelled on the
+  Chat doctypes' zero-DocPerm doctrine: `fac_extract_file_content` calls
+  `frappe.has_permission(attached_to_doctype, "read", attached_to_name)` before reading a byte, and on v16
+  an empty `permissions` array refuses everyone but Administrator *before any controller hook is
+  consulted*. Ship it the Chat way and the feature silently does nothing for every ordinary user. The gate
+  is doubled deliberately — the `if_owner` DocPerm plus a `has_permission` hook returning a hard boolean on
+  every path, since a hook returning `None` denies on v16 and denying by accident is not the same as
+  denying on purpose. "Can Triton read this file" is therefore the same boolean as "can this person open
+  it", by construction.
+
+  Filed under **AI Governance**, not Chat. Either passes `test_doctype_modules`, and Chat is the wrong one:
+  that module is a membership-scoped world (zero DocPerm by doctrine, every read through
+  `chat/permissions.py`'s room rules, `validate_share` refusing DocShare outright), and filing an
+  owner-scoped Triton row there would make the membership doctrine *appear* to cover a doctype it does not.
+
+  Attachments ride in on the **existing** `context` JSON string as `{"type":"file"}` refs, so
+  `stream_query`'s signature and the widget's six-field POST body are unchanged. The ref carries a name and
+  nothing else — every field the model is told is re-resolved server-side under an explicit `owner` filter,
+  and a client-supplied `file_url` on the ref is ignored, because honouring one would turn any session into
+  arbitrary file read under the caller's identity. A ref the caller does not own produces no line and no
+  error: throwing would confirm the file exists. The `[ERPNEXT PAGE CONTEXT]` preamble is byte-identical on
+  every turn without an attachment, and pinned there by a test.
+
+  **Google Drive: ids only, and no server-side fetch.** `attach_drive_file` records the picked file id and
+  metadata and nothing else. The app's only Drive client is a service account with no domain-wide
+  delegation anywhere in the repo, so it can read the two Shared Drives it was added to and returns
+  `404 File not found` on a file out of somebody's personal Drive — i.e. it fails as *missing* rather than
+  as *not permitted*, on exactly the case this feature exists to serve (see the training-video Drive
+  runbook, where the same 404 is documented against a real file). Triton reads the file with the picking
+  user's own stored OAuth credential, so revoked sharing means the next read fails, which is the property
+  the chat module's link-don't-copy rule was protecting. There is deliberately **no** `access_token`
+  parameter: ERPNext has nothing to spend one on, and a token parameter would create a place for a live
+  credential to reach an Error Log's frame locals. The pre-flight this needs is below — a
+  bridge-provisioned Triton account has no Google credential stored, so the model's Drive read comes back
+  empty until they sign in to the Triton web app once.
+
+  Attachments are addressed by their `Triton Chat Attachment` name and served by a whitelisted `download`,
+  never as a `/private/files/…` URL. Two reasons: `triton_chat`'s `scrub_urls` blanks any URL containing a
+  space and Frappe v16 stores filenames with their spaces intact (`File.before_insert` runs
+  `unquote(self.file_url)`), so `/private/files/Purchase Order 123.pdf` renders as an empty `href` and the
+  chip looks broken — and, the older reason borrowed from the chat module, there is no point publishing the
+  key to a door and then relying on the lock. Every refusal on that endpoint is the same 403 whether the
+  row is missing, somebody else's, or a Drive Link with no local bytes.
+
+  Every whitelisted method opens with `require_widget_access()`, which copies `mint_user_token`'s two
+  throws **verbatim** plus `_request`'s master-switch throw. This is the reason the module is separate from
+  `triton_chat.py` rather than appended to it: every method there reaches Triton and therefore passes
+  through `mint_user_token`, which is where that file's only authorization gate lives — nothing is gated by
+  being `@frappe.whitelist()`, which requires a session and nothing more. These methods call Triton not at
+  all, so they would have inherited no gate while sitting next to neighbours that appear to have one.
+
+  Refusing an upload deletes the `File` **and commits before throwing**. The file was written by a previous
+  request and is already committed; `frappe.throw` rolls back *this* request, so a delete without the commit
+  is rolled back with it and leaves the rejected bytes on disk with nothing pointing at them — the exact
+  orphan the design avoids, created by the code path that refused it.
+
+  A `default` on a new field of a Single never reaches the row that already exists (v1.277.3), so
+  `backfill_triton_assistant_settings_defaults` ships with the fields. Unlike Chat Settings this cannot
+  brick the page — the controller is `pass` with no `validate` — and the damage is quieter: `cint(None)` is
+  0, so a declared 25 MB cap reads as a 0 MB cap that rejects every upload with no error, on production
+  only. `triton_attachments` reads both Int dials as "0 means unset" as the first defence; the patch is the
+  second, and is what `enable_attachments` genuinely needs, since a `Check` read as `bool()` leaves the
+  feature off on every live site until the patch runs in the same migrate. Fail-closed, then on.
+
+  The picker credentials are `Data`, not `Password`. A `Password` on a Single is stored in `tabSingles` as
+  `"*" * len(value)` — `_save_passwords` runs before `update_single`, which deletes and re-inserts every
+  field row from the same dict — so `get_single_value` would hand the browser a string of asterisks and the
+  picker would fail with no error. Restriction by HTTP referrer in the Google console is the control, and
+  it is written into the field description because it lives outside any deploy. `get_config` now computes
+  the whitelist gate once and returns the credentials and limits only inside it: every other key in that
+  dict was returned unconditionally to any logged-in user, which was harmless while they were booleans and
+  a model list.
+
+- **The widget half: an attach button, a chip tray, drag/drop, image paste, and a Google Drive picker.**
+  `triton_widget.js` grows an attachments section (`+820` lines) and `triton_widget.css` the styling for
+  it. Bytes go to core's `upload_file`; `register_upload` adopts the orphan; the ref rides the **existing**
+  `context` array, so `runStream`'s six-field POST body gains no seventh key — one `.concat(attachmentRefs())`
+  is the entire wire change.
+
+  **Both kinds of attachment send `{"type": "file", "name": <docname>}`, and `name` is the docname rather
+  than the filename.** The server re-reads everything else from the row under an owner filter, so a
+  client-supplied `file_url` is ignored — honouring one would turn any session into arbitrary file read
+  under the caller's identity. A Drive pick is a `Triton Chat Attachment` row too (`source = "Drive Link"`),
+  so it takes the same shape: `type: "drive_file"` would be skipped by the resolver *and* fall through
+  `_build_prompt`'s page-context `else` branch, rendering a bogus `- report.pdf ()` line on every turn.
+
+  **The Google loaders are not a copy of `ensureMermaid`, and that is deliberate.** `ensureMermaid` resolves
+  on `script.onload`, which is a one-hop contract; `apis.google.com/js/api.js` is two-hop — `onload`, then
+  `gapi.load("picker", cb)`, and only then does `google.picker` exist. Resolving on `onload` reproduces
+  v1.160.2 verbatim, the bug `address_autocomplete.js:78-88` records having diagnosed against production
+  over several days. So: two separately memoized promises, each nulling itself on rejection so a transient
+  failure is retryable (mermaid's permanent memo is wrong for a button, right for a fenced code block),
+  both warmed at panel open and again on every open. `requestAccessToken()` is then the first statement of
+  the click handler with no `await` in front of it — anything awaited there spends the click's transient
+  activation and the popup is blocked.
+
+  The picker mounts on `document.body` and is raised above the panel explicitly. It cannot go inside
+  `.triton-panel` (a non-`none` `transform` in both states re-parents `position: fixed` descendants, and
+  `overflow: hidden` then clips them) and cannot go in a `frappe.ui.Dialog` (`.modal` is z-index 1040,
+  below the panel's 1041), and Google's own z-index is injected at runtime, so it is overridden rather than
+  assumed.
+
+  `triton_drive_picker_app_id` joins the two credential fields. The Picker needs the GCP **project number**
+  via `setAppId` for a `drive.file` grant to attach to the picked file; without it the pick appears to
+  succeed and Triton's later read 404s — a failure that surfaces in a different system from the one that
+  caused it. `get_config` emits the `drive_picker` block only when all three are set, so there is no
+  separate enable flag to disagree with them.
+
+  Placement inside `build()` is load-bearing twice over. The `paste` listener is registered **after** the
+  `input` listener because `scripts/test_triton_widget_guards.js` slices the source between the `keydown`
+  and `input` registrations on `.triton-text` and calls `process.exit(2)` — a hard failure, not a red test
+  — if either marker moves. And every new declaration is a top-level `function`, because the guard's
+  `bodyOf()` slices from one `
+	function` to the next and would absorb a `const fn = () => {}` into the
+  preceding function's body.
+
+  Staged files are cleared wherever the conversation changes under the composer — `newChat()`,
+  `selectSession()` and after a sent turn — through one `clearAttachments()` that also aborts anything in
+  flight. `selectSession()` matters as much as `newChat()`: it already clears context refs for the same
+  reason, and chips surviving a session switch look correct and then attach to the next turn of a
+  *different* conversation.
+
+  Known-inert until Triton changes, and named so nobody re-debugs it: chips on a **sent** turn cannot
+  survive a reload. Triton writes only `{"system_note": true}` to a user turn's `ui_metadata` and ERPNext
+  stores no row per turn, so `renderHistoryMessage` reads a `meta.attachments` that is currently always
+  undefined. `list_pending` restores *un-sent* chips, which is the half that works today.
+
+- **The "connect Google in Triton" pre-flight, so the Drive path stops failing silently.** New
+  `triton_attachments.google_link_status()` plus an inline empty state in the widget's attachment tray.
+
+  **Three states, and the third one is the point.** The probe is one
+  `GET /api/v1/integrations/google/drive?limit=1` as the user: 200 means connected, 400 means no usable
+  credential, and **everything else is `unknown`, on which the UI fails open and lets the picker run.**
+  A two-state helper reading "not 200" as "not connected" would tell the entire company to reconnect
+  during a Triton outage — and a revoked-but-unexpired credential really does answer 500, because Drive's
+  401 is not in Triton's retry set. 400 is trustworthy for the opposite reason: Triton's `_gws` guard and
+  the model's own `gws_get_file_content` gate on the *identical* predicate (`GoogleWorkspaceClient.creds`),
+  so this is not an approximation of what the user will experience, it is the same boolean.
+
+  Its own request helper, because `triton_chat._request` collapses every status >= 400 into one generic
+  throw and discards the body — it structurally cannot tell those two answers apart. The helper re-mints on
+  **401 or 403**: Triton's `get_current_user` answers 403 for a stale JWT and only a wholly absent
+  `Authorization` header yields 401, so `_request`'s retry-on-401 would never refresh an aged-out token.
+  The status code decides and the body never does; Triton renders errors as `{"message": ...}` (not
+  `detail`), and matching on prose would let an upstream copy edit downgrade a provable 400 to `unknown`.
+
+  **A swallowed `frappe.throw` is not a silent one, and that nearly shipped.** `msgprint` appends to
+  `frappe.message_log` *before* raising, so catching the exception leaves the message behind and the
+  method returns 200 carrying `_server_messages` with no `exc_type` — which the Desk renders as a red
+  modal because no handler claims it. During a Triton outage that is a modal quoting a connection
+  traceback, for every user, on every page load, repeating forever because `unknown` is deliberately never
+  cached. The probe now runs its mint inside `frappe.flags.mute_messages`, and the browser call passes
+  `silent: true` as well, which additionally covers the gate refusing outright when an admin turns
+  attachments off while widgets are open. The suite could not see any of this: its stub `frappe.throw`
+  raised a plain `Exception`, the one kind of failure with no message to leak. The stub now queues like
+  the real one, and the assertion fails if the mute is removed.
+
+  **The empty state names the account, and that is a security control rather than politeness.** Triton's
+  consent flow takes no `login_hint` and `google_login()` accepts no arguments, so whichever Google
+  account the browser is signed into is the one that gets linked; `google_callback` resolves purely by
+  email and never compares against any ERPNext identity. Consenting as the wrong account writes the
+  credential onto a *different* Triton row while this widget keeps running as the bridge-provisioned one —
+  attachments still return nothing, the person has granted full Drive/Gmail/Calendar scopes to an account
+  that is not theirs, and nothing anywhere says so. Naming the expected address is the only defence
+  available from this side. The card also says where the tab lands (the callback redirects into the Triton
+  SPA with a JWT in the query string) and offers "I have connected", which re-probes with `refresh=1`.
+
+  Cached per user — 30 min connected, 60 s disconnected, `unknown` never — under a per-user key, because
+  whether *you* connected Google is not a site-wide fact. Probed at panel open, and on page load only for
+  someone who already has a stored session id: the probe is not free, and Triton's own source documents
+  the OAuth-token refresh it can trigger as racing the dashboard's calendar fan-out into a burst of 401s.
+
+  Deliberately not folded into `get_config`, which runs on every page load for every user and must make no
+  network call — now pinned by a test that installs a raising `requests.request` rather than asserting a
+  key name.
+
 ## [1.372.2] - 2026-09-08
 
 ### Fixed

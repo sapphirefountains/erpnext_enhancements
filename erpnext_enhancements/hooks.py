@@ -999,6 +999,12 @@ scheduler_events = {
 		"erpnext_enhancements.api.briefing.purge_old_briefings",
 		"erpnext_enhancements.kpi_dashboards.snapshots.purge_old_snapshots",
 		"erpnext_enhancements.ai_governance.tasks.purge_old_action_logs",
+		# Triton chat attachments: retire used ones past their retention date, and un-sent
+		# chips after 24h. Time-based because Triton owns the conversation -- ERPNext never
+		# observes a chat being deleted, so there is no other GC signal. Deleting the row
+		# deletes its private File through core's remove_all, which is the whole reason the
+		# file is anchored to a row instead of left orphaned.
+		"erpnext_enhancements.triton_attachments.purge_expired",
 		# Re-enqueue Failed Drive Sync Log rows (uploads / recording exports)
 		"erpnext_enhancements.google_drive.drive_sync.retry_failed_syncs",
 		# Re-drive folder provisioning lost to a deploy FLUSHDB. retry_failed_syncs only
@@ -1817,6 +1823,11 @@ permission_query_conditions = {
 	# exactly the non-participant reads it exists to surface.
 	"Chat Audit Log": "erpnext_enhancements.chat.permissions.chat_audit_log_query",
 	"Chat Retrieval Audit": "erpnext_enhancements.chat.permissions.chat_retrieval_audit_query",
+	# Triton chat attachments are one person's private chat context. Owner-scoped, with the
+	# single-document twin below -- a query condition filters lists and says nothing about
+	# frappe.get_doc(), so shipping one without the other leaves the hole in whichever half
+	# you skipped.
+	"Triton Chat Attachment": "erpnext_enhancements.ai_governance.permissions.triton_chat_attachment_query",
 }
 
 has_permission = {
@@ -1850,6 +1861,16 @@ has_permission = {
 	"Chat Attachment": "erpnext_enhancements.chat.permissions.chat_attachment_has_permission",
 	"Chat Audit Log": "erpnext_enhancements.chat.permissions.chat_audit_log_has_permission",
 	"Chat Retrieval Audit": "erpnext_enhancements.chat.permissions.chat_retrieval_audit_has_permission",
+	# This one is doing more work than it looks like. Beyond refusing a direct read, it is
+	# what decides whether the MODEL may read an attached file at all:
+	# `fac_extract_file_content` resolves a Frappe file_url and then calls
+	# frappe.has_permission(file.attached_to_doctype, "read", file.attached_to_name), which
+	# lands here under the ERPNext identity the user linked to Triton. "Can Triton read this"
+	# and "can this person open it" are therefore the same boolean by construction, rather
+	# than two rules that have to be kept in step.
+	# Same v16 rule as the Chat block above: a hook returning None DENIES, so every path in
+	# it returns an explicit bool, exception paths included.
+	"Triton Chat Attachment": "erpnext_enhancements.ai_governance.permissions.triton_chat_attachment_has_permission",
 }
 
 # Chat notifications (ADR 0009 Phase 4) may NEVER be emailed, and this hook is what makes

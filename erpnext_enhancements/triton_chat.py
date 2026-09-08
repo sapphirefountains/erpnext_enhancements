@@ -111,6 +111,35 @@ def get_settings() -> dict:
         "enable_write_actions": bool(behavior.enable_write_actions),
         "debug": bool(behavior.debug_logging),
         "restrict_to_whitelist": bool(behavior.restrict_to_whitelist),
+        # Attachments (v1.373.0). Read RAW here and defaulted at the point of use, not with
+        # an `or` chain: `enable_attachments` is a Check whose declared default is 1, and a
+        # deliberate 0 must survive -- `cint(x or 1)` is the exact bug
+        # test_triton_widget_defaults.py exists to catch on `default_model`. The two Int
+        # dials get their "0 means unset" treatment in `triton_attachments`, which is the
+        # module that has to answer with a real ceiling.
+        #
+        # NOTE ON THE FIRST DEPLOY: a `default` on a NEW field of a Single never reaches the
+        # row that already exists, so on every live site these read None until
+        # `backfill_triton_assistant_settings_defaults` runs. `bool(None)` is False, so
+        # attachments ship OFF and come on when the patch lands in the same migrate. That
+        # direction is deliberate -- fail closed, then switch on.
+        "attachments_enabled": bool(behavior.get("enable_attachments")),
+        "max_upload_mb": cint(behavior.get("triton_max_upload_mb")),
+        "attachment_retention_days": cint(behavior.get("triton_attachment_retention_days")),
+        # Browser-visible by design, and both are Data rather than Password: a Password field
+        # on a Single is stored in `tabSingles` as `"*" * len(value)` (`_save_passwords` runs
+        # before `update_single`), so `get_single_value` would hand the widget a string of
+        # asterisks and the picker would fail with no error. Restrict the API key by HTTP
+        # referrer in the Google console -- that is the control, and it lives outside any
+        # deploy.
+        "drive_picker_api_key": (behavior.get("triton_drive_picker_api_key") or "").strip(),
+        "drive_picker_client_id": (behavior.get("triton_drive_picker_client_id") or "").strip(),
+        # The GCP project NUMBER, passed to the Picker as setAppId. Not cosmetic: a
+        # `drive.file` grant only attaches to the picked file when the picker names the same
+        # project the OAuth client lives in, so a missing app id makes the pick *appear* to
+        # succeed and Triton's later download 404. Kept as Data, not Int -- it is an
+        # identifier that happens to be digits, and Int would drop a leading zero.
+        "drive_picker_app_id": (behavior.get("triton_drive_picker_app_id") or "").strip(),
         # Set of User names (emails) explicitly allowed when the whitelist is on.
         "allowed_users": {
             (row.user or "").strip()
@@ -237,11 +266,19 @@ def _request(method: str, path: str, payload: dict | None = None):
 # ---------------------------------------------------------------------------
 # Context preamble
 # ---------------------------------------------------------------------------
-def _build_prompt(prompt: str | None, context: str | None) -> str:
+def _build_prompt(prompt: str | None, context: str | None, session_id=None) -> str:
     """Prepend a compact ERPNext-context preamble describing what the user has
     pinned. We send *references* only — Triton fetches live data itself via its
     ERPNext tools — except for unsaved edits, which we pass inline so Triton
-    sees what the user is changing right now."""
+    sees what the user is changing right now.
+
+    Attachments ride in on this same `context` string as `{"type": "file"}` refs, which is
+    why nothing changed in `stream_query`'s signature or in the widget's six-field POST
+    body: Frappe filters unknown POST keys against the Python signature and drops them
+    silently, so a new `attachments` field would have looked correct on the client and
+    arrived nowhere. `session_id` is new and optional — it is only used to stamp which
+    Triton conversation consumed an attachment.
+    """
     prompt = prompt or ""
     if not context:
         return prompt
@@ -253,9 +290,26 @@ def _build_prompt(prompt: str | None, context: str | None) -> str:
     if not refs:
         return prompt
 
+    # Attachments get their own block, resolved against the database rather than read off
+    # the wire — a `file` ref carries a name and nothing else, and everything the model is
+    # told about it is looked up here under the caller's own ownership filter. Deferred
+    # import because `triton_attachments` imports this module at its top.
+    from erpnext_enhancements import triton_attachments
+
+    attachments = triton_attachments.describe_attachments_for_prompt(refs, session_id)
+
     lines = []
     for ref in refs:
+        # A non-dict entry used to reach `.get` and raise AttributeError out of a whitelisted
+        # method. Skipped now: the widget cannot produce one, but this string is client-
+        # supplied and a 500 is a poor answer to malformed JSON.
+        if not isinstance(ref, dict):
+            continue
         rtype = ref.get("type")
+        if rtype == "file":
+            # Handled above. Without this the `else` branch below would render an attachment
+            # as a nonsense page line — "- quote.pdf ()" — on every turn.
+            continue
         if rtype == "document":
             line = f"- Document: {ref.get('doctype')} / {ref.get('name')}"
             dirty = ref.get("dirty_fields")
@@ -273,13 +327,22 @@ def _build_prompt(prompt: str | None, context: str | None) -> str:
         else:
             lines.append(f"- {ref.get('title') or ref.get('name') or 'page'} ({ref.get('route') or ''})")
 
+    if not lines:
+        # Attachments only, no pinned page. The page-context preamble must not appear with
+        # an empty list under it.
+        return attachments + prompt
+
+    # UNCHANGED, byte for byte. Every turn without an attachment produces exactly the string
+    # it produced before this feature existed, because `attachments` is "" in that case.
     preamble = (
         "[ERPNEXT PAGE CONTEXT] The user is currently viewing the following in "
         "ERPNext. Use your ERPNext tools to fetch live details as needed when "
         "they are relevant to the question; do not assume values you have not "
         "fetched:\n" + "\n".join(lines) + "\n\n"
     )
-    return preamble + prompt
+    # Attachments last, closest to the question: it is the block the model most needs to act
+    # on before answering, and recency is the cheapest way to say so.
+    return preamble + attachments + prompt
 
 
 # ---------------------------------------------------------------------------
@@ -295,8 +358,15 @@ def get_config() -> dict:
     # The widget only builds when `enabled` is truthy, so fold the per-user
     # whitelist gate into it: a non-whitelisted user gets enabled=False and
     # never sees the floating button.
-    return {
-        "enabled": s["enabled"] and user_has_widget_access(s),
+    #
+    # The gate is computed ONCE into a local from here on, because it now decides more than
+    # one key. Every other key in this dict is returned unconditionally to any logged-in
+    # non-Guest user, whitelisted or not -- which was harmless while they were all booleans
+    # and a model list, and stops being harmless the moment a browser credential is in the
+    # dict. Anything that costs something to hand out goes inside the `if allowed` below.
+    allowed = s["enabled"] and user_has_widget_access(s)
+    cfg = {
+        "enabled": allowed,
         "enable_page_context": s["enable_page_context"],
         "enable_write_actions": s["enable_write_actions"],
         "default_model": s["default_model"],
@@ -306,6 +376,36 @@ def get_config() -> dict:
         "user": frappe.session.user,
         "full_name": frappe.utils.get_fullname(frappe.session.user),
     }
+
+    if allowed and s.get("attachments_enabled"):
+        # Deferred import: triton_attachments imports this module at its top.
+        from erpnext_enhancements import triton_attachments
+
+        # The EFFECTIVE ceiling, not the raw setting. The widget uses it to refuse an
+        # oversized file before spending the upload, and a raw 0 (which is what an
+        # un-backfilled Single field reads) would refuse everything.
+        cfg["attachments"] = {
+            "enabled": True,
+            "max_upload_bytes": triton_attachments.effective_max_upload_bytes(s),
+            "max_pending": triton_attachments.MAX_PENDING_PER_USER,
+            "max_per_turn": triton_attachments.MAX_ATTACHMENTS_PER_TURN,
+            "allowed_extensions": sorted(triton_attachments.ALLOWED_EXTENSIONS),
+        }
+        # Only when BOTH are configured: a picker with one half of its credentials opens and
+        # then fails inside Google's iframe, which is indistinguishable from a broken
+        # feature. Absent means the widget shows no Drive button at all.
+        if (
+            s.get("drive_picker_api_key")
+            and s.get("drive_picker_client_id")
+            and s.get("drive_picker_app_id")
+        ):
+            cfg["attachments"]["drive_picker"] = {
+                "api_key": s["drive_picker_api_key"],
+                "client_id": s["drive_picker_client_id"],
+                "app_id": s["drive_picker_app_id"],
+            }
+
+    return cfg
 
 
 @frappe.whitelist()
@@ -607,7 +707,13 @@ def stream_query(session_id: str, prompt: str | None = None, context: str | None
     timeout = settings["timeout"]
     debug = settings["debug"]
 
-    payload: dict = {"prompt": _build_prompt(prompt, context), "hidden": cint(hidden) == 1}
+    # `_build_prompt` also resolves and STAMPS any attachments this turn carries, so it must
+    # run here, in the request half — before the `Response` below. The generator underneath
+    # runs after Frappe's request teardown and has no site context to read or write with.
+    payload: dict = {
+        "prompt": _build_prompt(prompt, context, cint(session_id)),
+        "hidden": cint(hidden) == 1,
+    }
     if model:
         payload["model_name"] = model
     # Sent even when empty: "" explicitly means the plain Triton voice for this

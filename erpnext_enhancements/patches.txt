@@ -795,3 +795,14 @@ erpnext_enhancements.patches.seed_subscription_exempt_identities
 # `default` on a Single field never reaches an existing row (v1.277.3). Fill-blank-only,
 # never over a stored 0. Safe twice.
 erpnext_enhancements.patches.backfill_plaid_banking_settings_defaults
+# v1.373.0 -- fills the declared defaults into the EXISTING Triton Assistant Settings row for
+# the new attachment fields. A `default` on a new field of a Single never reaches a row that
+# already exists (v1.277.3): tabSingles gets no row on migrate, load_from_db applies no
+# defaults, and _fix_numeric_types leaves an Int at None -- so the declared 25 becomes 0 at
+# the first cint() and a 0 MB cap would reject every upload silently. Unlike Chat Settings
+# this cannot brick the page (the controller has no validate); triton_attachments also reads
+# 0 as unset, so this is the second of two defences and exists so the numbers are visible in
+# the Desk form. `enable_attachments` is the one that genuinely needs it -- a Check read as
+# bool() leaves attachments switched off until this runs, in the same migrate.
+# Fill-blank-only, never over a stored 0. Safe twice.
+erpnext_enhancements.patches.backfill_triton_assistant_settings_defaults
