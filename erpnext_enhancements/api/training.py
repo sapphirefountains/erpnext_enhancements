@@ -475,6 +475,9 @@ def get_learner_bootstrap():
         # Additive: the active cohorts this learner is in, for the "your cohorts"
         # strip. None (doctype not migrated) or [] (in no cohort) draws nothing.
         "batches": _learner_batches(user),
+        # Additive: upcoming / in-progress live sessions for those cohorts, with the
+        # join link. None (doctype not migrated) or [] (nothing coming up) draws nothing.
+        "live_classes": _learner_live_classes(user),
         # Every key here is read by the player, and every setting the player reads
         # is here. Both halves of that sentence were false: `max_playback_rate` and
         # `doc_min_dwell_seconds` were read by video.js and blocks.js and sent by
@@ -1555,6 +1558,61 @@ def _learner_batches(user):
             "course_count": counts.get(b.name, 0),
         }
         for b in batches
+    ]
+
+
+def _learner_live_classes(user):
+    """Upcoming and in-progress live sessions for this learner's cohorts.
+
+    ``None`` when the Training Live Class doctype has not migrated; ``[]`` when the
+    learner has nothing coming up. Like the cohort strip, this uses ``get_all`` (which
+    ignores DocPerm) scoped strictly to the learner's own batch membership, and hands
+    back only what a member needs to join — never the whole class list.
+    """
+    if not frappe.db.exists("DocType", "Training Live Class"):
+        return None
+    batch_names = frappe.get_all("Training Batch Member", filters={"learner": user}, pluck="parent")
+    if not batch_names:
+        return []
+
+    from frappe.utils import add_to_date, now_datetime
+
+    # From a little before "now" onward, so a session already running still shows a
+    # Join button while a clearly-finished one drops off. Only Scheduled/Live are
+    # shown — Completed and Canceled are not a learner's concern.
+    cutoff = add_to_date(now_datetime(), hours=-3)
+    rows = frappe.get_all(
+        "Training Live Class",
+        filters={
+            "batch": ["in", list(set(batch_names))],
+            "status": ["in", ["Scheduled", "Live"]],
+            "starts_on": [">=", cutoff],
+        },
+        fields=["name", "title", "batch", "starts_on", "duration_minutes", "join_url", "status"],
+        order_by="starts_on asc",
+        limit=10,
+    )
+    if not rows:
+        return []
+    titles = {
+        row.name: row.title
+        for row in frappe.get_all(
+            "Training Batch",
+            filters={"name": ["in", list({r.batch for r in rows})]},
+            fields=["name", "title"],
+        )
+    }
+    return [
+        {
+            "name": r.name,
+            "title": r.title,
+            "batch_title": titles.get(r.batch, ""),
+            "starts_on": str(r.starts_on or ""),
+            "duration_minutes": cint(r.duration_minutes),
+            "join_url": r.join_url or "",
+            "status": r.status,
+        }
+        for r in rows
     ]
 
 

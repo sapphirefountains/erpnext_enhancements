@@ -617,6 +617,11 @@
 			var cohorts = cohortBlock();
 			if (cohorts) main.appendChild(cohorts);
 
+			// Upcoming / live sessions for those cohorts, with the join link. Above the
+			// cards too: a session starting soon is the most time-sensitive thing here.
+			var sessions = liveClassBlock();
+			if (sessions) main.appendChild(sessions);
+
 			// `assigned` and `library`, which is what get_learner_bootstrap actually
 			// returns. This read `b.courses` and `b.catalog.courses` -- neither of
 			// which the server has ever sent -- so the page reported "nothing is
@@ -1676,6 +1681,39 @@
 				bits.push(n === 1 ? t("1 course") : fmt(t("{0} courses"), [n]));
 				if (batch.end_date) bits.push(fmt(t("due {0}"), [batch.end_date]));
 				row.appendChild(el("div", "tr-cohort-meta", bits.join(" · ")));
+				section.appendChild(row);
+			});
+			return section;
+		}
+
+		// Upcoming / live sessions for the learner's cohorts (b.live_classes). The
+		// join link opens the meeting the manager set; the player never hosts video.
+		// null/empty draws nothing.
+		function liveClassBlock() {
+			var sessions = b.live_classes;
+			if (!sessions || !sessions.length) return null;
+			var section = el("section", "tr-sessions");
+			section.appendChild(el("h2", "tr-section-title", t("Upcoming live sessions")));
+			sessions.forEach(function (session) {
+				var row = el("div", "tr-session");
+				var info = el("div", "tr-session-info");
+				info.appendChild(el("div", "tr-session-title", session.title));
+				var bits = [];
+				if (session.batch_title) bits.push(session.batch_title);
+				if (session.starts_on) bits.push(fmt(t("starts {0}"), [session.starts_on]));
+				info.appendChild(el("div", "tr-session-meta", bits.join(" · ")));
+				row.appendChild(info);
+				// http(s) only — the URL is manager-set, but a `javascript:` link would
+				// run on click, so the anchor is rendered only for a safe scheme (the
+				// doctype refuses others on save; this is the second lock).
+				var url = session.join_url || "";
+				if (/^https?:\/\//i.test(url)) {
+					var join = el("a", "tr-session-join", t("Join"));
+					join.href = url;
+					join.target = "_blank";
+					join.rel = "noopener noreferrer";
+					row.appendChild(join);
+				}
 				section.appendChild(row);
 			});
 			return section;

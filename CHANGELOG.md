@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.368.0] - 2026-09-07
+
+### Added
+
+- **Live classes for cohorts (WI-071 Phase B).** A `Training Live Class` is one scheduled synchronous
+  session for a batch — a title, when it starts, how long it runs, a host, and the **join link** members
+  click. It is deliberately thin: the player never hosts video itself, it hands the learner the link. A
+  manager schedules a session against a batch; its members see it on their **training home** — a new
+  "Upcoming live sessions" strip (`get_learner_bootstrap` gains a `live_classes` key from a defensively
+  guarded `_learner_live_classes`) showing the session, when it starts, and a **Join** button. Only
+  `Scheduled`/`Live` sessions from a little before now onward are shown; a member sees only their own
+  cohorts' sessions (the query ignores DocPerm but is scoped strictly to their batch membership, like
+  the cohort strip). The join URL is http(s)-only, enforced on save **and** at render — a `javascript:`
+  link is refused both places, since it is served to a learner as an anchor and clicked. The
+  calendar-invite side (an ICS / Google Calendar event to members) is the *native* half and is
+  deliberately deferred: the Google Calendar accounts are disabled on prod (see WI-071). Bench-free
+  coverage in `tests/test_training_live_classes.py`; boot-wire, boundary and CSS-contract stay green with
+  no allowlist edits.
+
 ## [1.367.0] - 2026-09-07
 
 ### Added

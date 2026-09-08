@@ -1,0 +1,137 @@
+{
+ "actions": [],
+ "autoname": "TRN-CLASS-.#####",
+ "creation": "2026-09-07 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "batch",
+  "status",
+  "column_break_head",
+  "starts_on",
+  "duration_minutes",
+  "host",
+  "join_section",
+  "join_url",
+  "description"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1,
+   "description": "What the session is called — e.g. 'Week 1: Pump room walkthrough'."
+  },
+  {
+   "description": "The cohort this session is for. Its members see it on their training home.",
+   "fieldname": "batch",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Batch",
+   "options": "Training Batch",
+   "reqd": 1
+  },
+  {
+   "default": "Scheduled",
+   "description": "Scheduled while it is upcoming; set Live while it runs, Completed after, Canceled if it is called off. Members only see Scheduled and Live sessions.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Scheduled\nLive\nCompleted\nCanceled",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "When the session starts (local time).",
+   "fieldname": "starts_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Starts On",
+   "reqd": 1
+  },
+  {
+   "default": "60",
+   "description": "Roughly how long it runs. Shown to members so they can plan.",
+   "fieldname": "duration_minutes",
+   "fieldtype": "Int",
+   "label": "Duration (Minutes)"
+  },
+  {
+   "description": "Who runs the session.",
+   "fieldname": "host",
+   "fieldtype": "Link",
+   "label": "Host",
+   "options": "User"
+  },
+  {
+   "fieldname": "join_section",
+   "fieldtype": "Section Break",
+   "label": "Joining"
+  },
+  {
+   "description": "The meeting link members click to join (Google Meet, Zoom, Teams, …). The player never hosts video itself; it hands the learner this link. Must be an http(s) URL.",
+   "fieldname": "join_url",
+   "fieldtype": "Data",
+   "label": "Join URL",
+   "options": "URL"
+  },
+  {
+   "description": "Optional agenda or joining notes shown with the session.",
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-07 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Live Class",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Training Author"
+  }
+ ],
+ "search_fields": "title,batch,status",
+ "sort_field": "starts_on",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}
