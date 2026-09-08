@@ -1689,11 +1689,22 @@
 							// exactly one place and a client-supplied score has
 							// nowhere to enter. No `run`: submit_quiz takes
 							// (attempt, lesson_key, answers) and derives it.
-							submitQuiz: function (answers) {
+							//
+							// quiz.js send() calls this with its whole payload() --
+							// {attempt, lesson_key, run, answers} -- so the answers MAP
+							// is one level in. Passing that whole object through as
+							// `answers` double-nested it: submit_quiz then looked up
+							// question docnames on {attempt, lesson_key, run, answers}
+							// instead of on the map, found none, and graded EVERY answer
+							// wrong -- a correct submission came back 0%. Take the map
+							// out (falling back to the argument itself, so a caller that
+							// passes the bare map still works).
+							submitQuiz: function (submission) {
+								submission = submission || {};
 								return call("submitQuiz", {
 									attempt: state.attempt,
 									lesson_key: state.lessonKey,
-									answers: answers,
+									answers: submission.answers || submission,
 								});
 							},
 							startQuiz: function () {

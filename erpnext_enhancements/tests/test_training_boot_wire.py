@@ -320,6 +320,41 @@ class TestResumeDoesNotReadAFreeVariable(unittest.TestCase):
         self.assertIn("state.assignmentStatus = state.assignment.status", body)
 
 
+class TestQuizAnswersAreNotDoubleNested(unittest.TestCase):
+    """quiz.js ``send()`` hands its whole ``payload()`` — ``{attempt, lesson_key,
+    run, answers}`` — to ``transport.submitQuiz``. player.js's ``submitQuiz``
+    wrapper must forward the **answers map** to the server, not that whole object.
+
+    It forwarded the whole object as ``answers``, so ``submit_quiz`` looked up
+    question docnames on a dict whose keys were ``attempt``/``lesson_key``/``run``/
+    ``answers`` — found none — and graded EVERY answer wrong: a 100% submission came
+    back 0%, on every quiz. Nothing caught it because the boundary contract checks
+    the call's key *names* (``answers`` was present) and cannot see that the value
+    was the wrong shape, and there is no integration test. Reproduced in the player
+    harness and fixed by unwrapping ``.answers`` in the wrapper.
+    """
+
+    def test_quiz_send_hands_over_its_whole_payload(self):
+        quizcode = "\n".join(
+            line
+            for line in (JS_DIR / "quiz.js").read_text(encoding="utf-8").splitlines()
+            if not line.strip().startswith("//")
+        )
+        self.assertIn("transport.submitQuiz(payload())", quizcode)
+
+    def test_the_player_wrapper_unwraps_the_answers_map(self):
+        body = _js_body(_player_code(), "submitQuiz: function")
+        # Must reach INTO the payload for `.answers`; forwarding the bare argument
+        # as `answers:` is the double-nesting that graded every answer wrong.
+        self.assertIn(".answers", body)
+        self.assertNotRegex(
+            body,
+            r"answers:\s*(?:submission|answers|payload)\s*[,}]",
+            "player.js submitQuiz forwards its whole argument as `answers`, "
+            "double-nesting the map — grading will mark every answer wrong",
+        )
+
+
 class TestTransportNamesExist(unittest.TestCase):
     """The other half of the same contract, kept here so both are checked together.
 
