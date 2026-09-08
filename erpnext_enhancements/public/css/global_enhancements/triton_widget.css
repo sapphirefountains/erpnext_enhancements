@@ -94,6 +94,11 @@
 	.triton-messages.triton-fresh > * {
 		animation-duration: 0.01ms;
 	}
+	/* The upload hairline still moves — it is information, not decoration — but it
+	   snaps to each reported position instead of easing between them. */
+	.triton-attach-chip .triton-attach-progress {
+		transition-duration: 0.01ms;
+	}
 }
 
 .triton-header {
@@ -469,6 +474,277 @@
 	opacity: 0.5;
 	cursor: default;
 }
+/* ---- attachments --------------------------------------------------------
+ * The tray sits between the transcript and the composer — not up in the
+ * context bar, which lives above the message list and would put the file you
+ * just picked at the opposite end of a 640px panel from the box you are typing
+ * in. It collapses entirely when empty rather than reserving a strip of
+ * padding, because most turns have no attachment. */
+.triton-attach-bar {
+	flex: 0 0 auto;
+	padding: 8px 10px 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	align-items: center;
+	background: var(--card-bg, #fff);
+}
+.triton-attach-bar.is-empty {
+	display: none;
+}
+.triton-attach-chip {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	background: var(--subtle-fg, #f7f9fa);
+	border: 1px solid var(--border-color, #e2e6e9);
+	color: var(--text-color, #1f272e);
+	border-radius: 8px;
+	padding: 4px 8px;
+	max-width: 100%;
+	/* The progress bar is an absolutely positioned child clipped by this. */
+	overflow: hidden;
+}
+.triton-attach-chip .triton-attach-icon {
+	flex: 0 0 auto;
+	font-size: 13px;
+	line-height: 1;
+}
+/* The name is the part that gives, not the size or the ✕: a filename is
+   arbitrarily long and the two things beside it are fixed and small. */
+.triton-attach-chip .triton-attach-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 190px;
+}
+.triton-attach-chip .triton-attach-meta {
+	flex: 0 0 auto;
+	color: var(--text-muted, #8d99a6);
+	font-variant-numeric: tabular-nums;
+}
+.triton-attach-chip .triton-attach-x {
+	flex: 0 0 auto;
+	background: transparent;
+	border: none;
+	padding: 0 0 0 2px;
+	color: inherit;
+	cursor: pointer;
+	font-weight: 700;
+	opacity: 0.6;
+	line-height: 1;
+}
+.triton-attach-chip .triton-attach-x:hover {
+	opacity: 1;
+}
+/* A failed upload keeps its chip and states the reason in the meta slot, so it
+   reads as "this did not go" rather than disappearing — which is
+   indistinguishable from success. */
+.triton-attach-chip.is-failed {
+	border-color: #d9534f;
+	background: rgba(217, 83, 79, 0.08);
+}
+.triton-attach-chip.is-failed .triton-attach-meta {
+	color: #d9534f;
+	white-space: normal;
+}
+/* Progress as a hairline along the bottom of the chip rather than a separate
+   bar: it cannot reflow the tray as it grows, and the chip is already the thing
+   the eye is on. Width is written by paintProgress(). */
+.triton-attach-chip .triton-attach-progress {
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	height: 2px;
+	width: 0;
+	background: var(--primary, #1f6feb);
+	transition: width 0.15s linear;
+}
+
+/* ---- the "Triton is not linked to your Google account" card --------------
+ * A full-width occupant of the same tray as the chips, not a dialog. A dialog is
+ * not available to this panel at all: `.modal` is z-index 1040 and `.triton-panel`
+ * is 1041 (see the panel rule above), so anything opened as one renders BEHIND the
+ * thing that opened it — the same constraint raiseDriveDialog() works around for
+ * Google's own picker. The tray already knows how to collapse when it is empty, so
+ * the card gets counted there rather than given a layout of its own. */
+.triton-attach-empty {
+	flex: 1 1 100%;
+	box-sizing: border-box;
+	border: 1px solid var(--border-color, #e2e6e9);
+	/* A left rule rather than a tinted panel: this is guidance, not a failure, and the
+	   failed-chip red six rules up is the colour that means something went wrong. */
+	border-left: 3px solid var(--primary, #1f6feb);
+	border-radius: 8px;
+	background: var(--subtle-fg, #f7f9fa);
+	color: var(--text-color, #1f272e);
+	padding: 8px 10px;
+	font-size: 12px;
+	line-height: 1.45;
+}
+.triton-attach-empty-head {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+}
+.triton-attach-empty-title {
+	flex: 1 1 auto;
+	font-weight: 600;
+}
+.triton-attach-empty-x {
+	flex: 0 0 auto;
+	background: transparent;
+	border: none;
+	padding: 0 0 0 2px;
+	color: inherit;
+	cursor: pointer;
+	font-weight: 700;
+	opacity: 0.6;
+	line-height: 1;
+}
+.triton-attach-empty-x:hover {
+	opacity: 1;
+}
+/* `white-space: normal` is stated rather than inherited. The tray's own occupants are
+   single-line chips and the failed-chip rule has to state the same thing next door;
+   this is prose and must wrap. */
+.triton-attach-empty-body,
+.triton-attach-empty-note {
+	margin: 6px 0 0;
+	white-space: normal;
+}
+.triton-attach-empty-note {
+	color: var(--text-muted, #8d99a6);
+	font-size: 11px;
+}
+.triton-attach-empty-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin-top: 8px;
+}
+/* One shape for the anchor and the button, so "Connect Google" and "I have connected"
+   read as siblings; the anchor carries the extra resets because it is a link. */
+.triton-attach-empty-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	font: inherit;
+	font-size: 12px;
+	line-height: 1;
+	padding: 6px 10px;
+	border-radius: 6px;
+	border: 1px solid var(--border-color, #d1d8dd);
+	background: var(--card-bg, #fff);
+	color: var(--text-color, #1f272e);
+	cursor: pointer;
+	text-decoration: none;
+	transition: background 0.15s ease, color 0.15s ease;
+}
+.triton-attach-empty-btn:hover {
+	background: rgba(31, 111, 235, 0.08);
+	color: var(--primary, #1f6feb);
+	text-decoration: none;
+}
+.triton-attach-empty-btn.is-primary {
+	background: var(--primary, #1f6feb);
+	border-color: var(--primary, #1f6feb);
+	color: #fff;
+}
+.triton-attach-empty-btn.is-primary:hover {
+	background: var(--primary, #1f6feb);
+	color: #fff;
+	opacity: 0.9;
+}
+.triton-attach-empty-btn:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+/* The re-check verdict sits on its own line BESIDE the button rather than replacing
+   it, so "still not linked" cannot be read as "nothing happened". */
+.triton-attach-empty-status {
+	flex: 1 1 100%;
+	color: var(--text-muted, #8d99a6);
+	font-size: 11px;
+	white-space: normal;
+}
+
+/* The two composer buttons. 34px against the send button's 38px so the primary
+   action stays the largest target, and `align-items: flex-end` on the bar keeps
+   all three pinned to the bottom as autoGrow expands the textarea to its 120px
+   cap. Ghost styling for the same reason: these are not the send button. */
+.triton-input-bar .triton-attach,
+.triton-input-bar .triton-attach-drive {
+	flex: 0 0 auto;
+	background: transparent;
+	border: 1px solid var(--border-color, #d1d8dd);
+	color: var(--text-muted, #8d99a6);
+	border-radius: 8px;
+	width: 34px;
+	height: 38px;
+	cursor: pointer;
+	font-size: 15px;
+	line-height: 1;
+	transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+.triton-input-bar .triton-attach:hover,
+.triton-input-bar .triton-attach-drive:hover {
+	background: rgba(31, 111, 235, 0.08);
+	color: var(--primary, #1f6feb);
+}
+.triton-input-bar .triton-attach:active,
+.triton-input-bar .triton-attach-drive:active {
+	transform: scale(0.9);
+}
+.triton-input-bar .triton-attach.is-hidden,
+.triton-input-bar .triton-attach-drive.is-hidden {
+	display: none;
+}
+/* The file input is real markup so it resolves into state.els with everything
+   else; `hidden` already hides it, and this stops a stylesheet from ever
+   un-hiding it into the middle of the composer. */
+.triton-file-input {
+	display: none !important;
+}
+
+/* Drop target. An overlay on the panel rather than on the message list, because
+   a file dropped on the composer or the header is the same intent. It is a
+   ::after on the panel itself — safe here, unlike a position:fixed child, which
+   the panel's own transform would capture and its overflow:hidden would clip. */
+.triton-panel.is-dropping::after {
+	content: "";
+	position: absolute;
+	inset: 6px;
+	border: 2px dashed var(--primary, #1f6feb);
+	border-radius: 10px;
+	background: rgba(31, 111, 235, 0.06);
+	pointer-events: none;
+	z-index: 3;
+}
+
+/* Pills under a sent user bubble. Not links, deliberately: nothing here carries
+   a URL, so there is nothing to make clickable and no file path handed to the
+   browser. The bubble is solid --primary with white text, so these invert. */
+.triton-msg-attachments {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 6px;
+}
+.triton-msg-attachment {
+	font-size: 11px;
+	background: rgba(255, 255, 255, 0.2);
+	border-radius: 10px;
+	padding: 1px 8px;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 
 .triton-empty {
 	margin: auto;
@@ -849,6 +1125,7 @@
 .triton-chat-surface.is-hidden,
 .triton-messages.is-hidden,
 .triton-context-bar.is-hidden,
+.triton-attach-bar.is-hidden,
 .triton-input-bar.is-hidden,
 .triton-model-select.is-hidden,
 .triton-persona-select.is-hidden,

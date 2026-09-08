@@ -1,0 +1,174 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-09-08 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "source",
+  "file_name",
+  "column_break_identity",
+  "content_type",
+  "file_size",
+  "local_section",
+  "file",
+  "column_break_local",
+  "drive_section",
+  "drive_file_id",
+  "column_break_drive",
+  "drive_url",
+  "lifecycle_section",
+  "triton_session",
+  "used_at",
+  "column_break_lifecycle",
+  "expires_on"
+ ],
+ "fields": [
+  {
+   "description": "ERPNext Upload = the bytes are in the private File below, under this app's permission model. Drive Link = a Google Drive file the picker returned; the bytes stay in Drive under Drive's own ACL and Triton reads them with the user's OWN Google credential. Copying Drive bytes into ERPNext would re-home somebody else's sharing decision inside ours and there is no way to un-make that later.",
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Source",
+   "options": "ERPNext Upload\nDrive Link",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "The original filename as the user saw it, never a path.",
+   "fieldname": "file_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "File Name",
+   "length": 255,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_identity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Guessed from the stored filename SERVER-SIDE. A client-declared content type is not evidence, so it is never stored.",
+   "fieldname": "content_type",
+   "fieldtype": "Data",
+   "label": "Content Type",
+   "length": 140,
+   "read_only": 1
+  },
+  {
+   "description": "Size in bytes, read off the File row rather than off the request. File.file_size is set from a client-supplied form field on upload, so this is a record, not an enforcement point -- the ceiling is enforced against the bytes on disk in register_upload().",
+   "fieldname": "file_size",
+   "fieldtype": "Int",
+   "label": "File Size",
+   "read_only": 1
+  },
+  {
+   "fieldname": "local_section",
+   "fieldtype": "Section Break",
+   "label": "Stored Bytes"
+  },
+  {
+   "description": "The private File row holding the bytes. This row is its attached_to_name, which is what makes the file readable at all: an ORPHAN private File is readable only through File.has_permission's `doc.owner == user` shortcut, which is a per-uploader accident rather than a policy, and nothing in core ever garbage-collects one. Attached here, it inherits this row's has_permission hook and is deleted with it by delete_doc's remove_all(). Empty for a Drive Link.",
+   "fieldname": "file",
+   "fieldtype": "Link",
+   "label": "File",
+   "options": "File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_local",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "drive_section",
+   "fieldtype": "Section Break",
+   "label": "Google Drive"
+  },
+  {
+   "description": "The Drive file id the browser picker returned. ERPNext never fetches it: the app's only Drive client is a SERVICE ACCOUNT with no domain-wide delegation, which 404s on a file nobody explicitly shared with it -- i.e. on exactly the personal document this feature exists to serve. Triton reads it with the picking user's own stored OAuth credential (gws_get_file_content).",
+   "fieldname": "drive_file_id",
+   "fieldtype": "Data",
+   "label": "Drive File ID",
+   "length": 140,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_drive",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The picker's webViewLink. Validated on write to be https on a Google host -- it is rendered as an href in the widget's chip.",
+   "fieldname": "drive_url",
+   "fieldtype": "Data",
+   "label": "Drive URL",
+   "length": 500,
+   "read_only": 1
+  },
+  {
+   "fieldname": "lifecycle_section",
+   "fieldtype": "Section Break",
+   "label": "Lifecycle"
+  },
+  {
+   "description": "Triton's own chat session id -- an integer in Triton's database, not a Frappe Link, because the conversation does not exist in ERPNext at all. Blank until the turn carrying this attachment is actually sent.",
+   "fieldname": "triton_session",
+   "fieldtype": "Int",
+   "label": "Triton Session",
+   "read_only": 1
+  },
+  {
+   "description": "When this attachment was first handed to the model. Blank means it is still a pending chip in somebody's composer, and the daily sweep deletes those after 24 hours -- a chip attached and never sent is abandoned, not archived.",
+   "fieldname": "used_at",
+   "fieldtype": "Datetime",
+   "label": "Used At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_lifecycle",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Retention cut-off, stamped at creation. Time-based expiry is not laziness: Triton owns the conversation, so ERPNext can never observe a chat being deleted and has no other GC signal.",
+   "fieldname": "expires_on",
+   "fieldtype": "Date",
+   "label": "Expires On",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-08 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "AI Governance",
+ "name": "Triton Chat Attachment",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "delete": 1,
+   "if_owner": 1,
+   "read": 1,
+   "role": "All"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "file_name",
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

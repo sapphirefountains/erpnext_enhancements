@@ -57,6 +57,39 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		persona: "",
 		personas: [],
 		contextRefs: [],
+		// Files staged for the NEXT turn, and only the next one. Each row is:
+		//   { key, name, size, status, progress, error, attachment, drive_id, abort }
+		// `key` is a client-side id so a chip survives the wholesale re-render;
+		// `attachment` is the server's `Triton Chat Attachment` docname and is absent
+		// until the upload lands; `drive_id` is set instead for a Drive pick, which is
+		// never uploaded anywhere. `status` is one of:
+		//   "uploading" -> bytes in flight, chip shows a progress bar
+		//   "ready"     -> adopted server-side, will ride the next turn
+		//   "failed"    -> chip shows why and stays until the user removes it
+		// Deliberately NOT persisted: a half-uploaded file has no meaning after a
+		// reload, and the four localStorage key names are pinned by ADR 0009 row G-10.
+		attachments: [],
+		// The GIS access token for Drive, and when it expires (epoch ms). Held in
+		// memory only, for the page's lifetime. Never written anywhere: it is a
+		// bearer credential for the user's own Drive.
+		driveToken: null,
+		driveTokenExpires: 0,
+		// Whether TRITON — not this browser — holds a usable Google credential for this
+		// user. A different question from `driveToken` above, and the two are independent:
+		// the Picker runs in the browser on a `drive.file` token the user grants here,
+		// while the file's CONTENT is read later, server-side, by Triton, using the Google
+		// credential stored against the Triton user the ERPNext identity bridge
+		// provisioned. That bridge sends an email and a full name and nothing else, so a
+		// user who has only ever used this widget has no such credential and every Drive
+		// attachment resolves to nothing — silently, which is the whole defect.
+		//
+		// THREE states, never two. "disconnected" is the only one the server proved
+		// (Triton answered the documented "Google Workspace is not connected" 400).
+		// "unknown" covers a timeout, a 5xx, an unreachable Triton, a revoked-but-unexpired
+		// credential — everything else — and it must fail OPEN. Rendering "connect Google"
+		// on a non-answer would push every already-connected user through a pointless OAuth
+		// round trip at exactly the moment the widget is already degraded.
+		googleLink: { state: "unknown", connect_url: "" },
 		open: false,
 		streaming: false,
 		els: {},
@@ -286,10 +319,14 @@ import { BubbleChatSurface } from "./chat_surface.js";
 				<button class="triton-context-add" title="Attach the page you're viewing">＋ Add this page</button>
 			</div>
 			<div class="triton-messages"></div>
+			<div class="triton-attach-bar is-empty" role="list" aria-live="polite"></div>
 			<div class="triton-input-bar">
+				<button class="triton-attach" title="Attach a file" aria-label="Attach a file">📎</button>
+				<button class="triton-attach-drive is-hidden" title="Attach from Google Drive" aria-label="Attach from Google Drive">▲</button>
 				<textarea class="triton-text" rows="1" placeholder="Ask about your data…"></textarea>
 				<button class="triton-send" title="Send">➤</button>
 			</div>
+			<input class="triton-file-input" type="file" multiple hidden>
 			<div class="triton-history-panel">
 				<div class="triton-history-head">
 					<button class="triton-icon-btn triton-history-back" title="Back">←</button>
@@ -320,6 +357,10 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			contextAdd: panel.querySelector(".triton-context-add"),
 			text: panel.querySelector(".triton-text"),
 			send: panel.querySelector(".triton-send"),
+			attachBar: panel.querySelector(".triton-attach-bar"),
+			attach: panel.querySelector(".triton-attach"),
+			attachDrive: panel.querySelector(".triton-attach-drive"),
+			fileInput: panel.querySelector(".triton-file-input"),
 			modelSelect: panel.querySelector(".triton-model-select"),
 			personaSelect: panel.querySelector(".triton-persona-select"),
 			personasPanel: panel.querySelector(".triton-personas-panel"),
@@ -345,6 +386,12 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		state.els.personasBack.addEventListener("click", closePersonas);
 		state.els.personaNew.addEventListener("click", () => showPersonaForm(null));
 		state.els.contextAdd.addEventListener("click", addCurrentPage);
+		// The button never opens a file dialog itself — it clicks the hidden input, which
+		// is the only way to open one that a browser will honour without a gesture chain.
+		state.els.attach.addEventListener("click", () => state.els.fileInput.click());
+		state.els.fileInput.addEventListener("change", onFilesChosen);
+		state.els.attachDrive.addEventListener("click", onAttachDrive);
+		bindDropTarget();
 		state.els.send.addEventListener("click", onSend);
 		state.els.text.addEventListener("keydown", (e) => {
 			// --- phase 3 fix --- `isComposing` (and the legacy 229 keycode that older WebKit
@@ -360,6 +407,12 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			}
 		});
 		state.els.text.addEventListener("input", autoGrow);
+		// Registered AFTER the `input` listener, deliberately.
+		// scripts/test_triton_widget_guards.js:192-204 slices the source between the
+		// `keydown` and `input` registrations to assert the IME rule, and calls
+		// process.exit(2) — a hard failure, not a soft red — if either marker moves. A
+		// third composer listener is only safe outside that pair.
+		state.els.text.addEventListener("paste", onComposerPaste);
 
 		document.addEventListener("keydown", (e) => {
 			// --- phase 3 fix --- exclude ctrl/meta. AltGr is reported as ctrlKey+altKey on
@@ -376,6 +429,42 @@ import { BubbleChatSurface } from "./chat_surface.js";
 
 		if (!state.config.enable_page_context) {
 			state.els.contextAdd.style.display = "none";
+		}
+
+		if (!attachmentLimits().enabled) {
+			state.els.attach.style.display = "none";
+		}
+		if (drivePickerConfig()) {
+			state.els.attachDrive.classList.remove("is-hidden");
+			// Warm both Google loaders NOW, not on the click.
+			//
+			// The click handler has to call requestAccessToken() with no `await` in
+			// front of it or the popup is blocked: transient activation is a ~5s budget
+			// in Chrome and stricter elsewhere, and a cold gapi load spends a Google
+			// round trip. Warming here means the token client already exists by the
+			// time anybody presses the button. Failures are swallowed — the button then
+			// says so on click and retries, because unlike mermaid these loaders do not
+			// cache their rejection.
+			warmDrivePicker();
+			// Probed on an idle callback rather than in the page-load path. The server-side
+			// probe reads Drive once as this user, and Triton's own client refreshes and
+			// re-saves an expired OAuth token as a side effect of doing so — a write its
+			// source already documents as racing the dashboard's calendar fan-out into a
+			// burst of 401s. Idle is still minutes ahead of anyone reaching the ▲.
+			// ...and only for somebody who actually uses the panel. The probe costs a
+			// bridge mint plus a Triton round trip, and for a disconnected user the 60s
+			// negative TTL means most page loads are a real one rather than a cache hit —
+			// so probing every Desk page load bills every employee for a feature most of
+			// them never open. A stored session id is the cheapest available evidence that
+			// this person uses the assistant; everyone else gets probed on first open,
+			// which is still minutes before they could reach the ▲.
+			//
+			// .bind(window), not a bare reference: requestIdleCallback called with an
+			// undefined receiver throws "Illegal invocation" in Chrome.
+			const idle = window.requestIdleCallback
+				? window.requestIdleCallback.bind(window)
+				: (fn) => setTimeout(fn, 1200);
+			if (localStorage.getItem(LS_SESSION)) idle(() => refreshGoogleLink());
 		}
 
 		// --- phase 3 --- surface tabs and the expand control.
@@ -431,6 +520,7 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		state.els.chatSurface.classList.toggle("is-hidden", !showChat);
 		state.els.messages.classList.toggle("is-hidden", showChat);
 		state.els.contextBar.classList.toggle("is-hidden", showChat);
+		state.els.attachBar.classList.toggle("is-hidden", showChat);
 		state.els.panel.querySelector(".triton-input-bar").classList.toggle("is-hidden", showChat);
 		state.els.modelSelect.classList.toggle("is-hidden", showChat);
 		state.els.personaSelect.classList.toggle("is-hidden", showChat);
@@ -935,6 +1025,11 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		localStorage.setItem(LS_SESSION, String(id));
 		state.contextRefs = [];
 		renderChips();
+		// Same rule as newChat(): the conversation under the composer just changed, so a
+		// file staged against the previous one has nowhere to go. Not clearing here is
+		// the quieter half of the same bug — the chips stay on screen and look correct,
+		// then attach to the next turn of a DIFFERENT session.
+		clearAttachments();
 		closeHistory();
 		state.els.messages.innerHTML = `<div class="triton-empty">${__("Loading chat…")}</div>`;
 		try {
@@ -1016,6 +1111,18 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		state.els.fab.classList.toggle("triton-fab-open", state.open);
 		if (state.open) {
 			suggestCurrentPage();
+			// Re-warm on every open, not just at boot: a loader that failed once is
+			// retryable here (unlike _mermaidPromise, these memos do not cache their
+			// rejection), and warming outside the click is what keeps the consent popup
+			// inside its transient-activation budget.
+			if (drivePickerConfig()) {
+				warmDrivePicker();
+				// Deliberately not awaited, and nothing downstream waits on it: the panel
+				// opens at the speed of the click. By the time anyone reaches the ▲ this has
+				// landed; if it has not, onAttachDrive() reads "unknown" and proceeds exactly
+				// as it did before any of this existed.
+				refreshGoogleLink();
+			}
 			state.els.text.focus();
 			if (!briefingShownToday()) {
 				// New day → fresh chat opening with the morning briefing.
@@ -1108,6 +1215,934 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		});
 	}
 
+	// ---- attachments -----------------------------------------------------
+	//
+	// Bytes go to Frappe core's own `/api/method/upload_file`, private, with NO
+	// doctype/docname — the same route `public/js/feedback/transport.js` takes, for
+	// the same reason: `check_write_permission` returns immediately when `doctype`
+	// is empty, so a signed-in user may create an unattached private File. Here the
+	// omission is forced rather than chosen: a Triton turn has no ERPNext row to
+	// attach to at upload time, because the conversation lives in Triton's database
+	// and this app stores nothing per turn.
+	//
+	// The File is NOT left orphaned. `attach_file` adopts it onto a
+	// `Triton Chat Attachment` row a moment later, which is what gives it a
+	// permission rule and a parent to be deleted with; an orphan is readable only
+	// by the accident of `doc.owner == user` and is collected by nothing, ever.
+	//
+	// Nothing in here builds a URL. The five key names `scrub_urls` walks are
+	// url/href/link/source_url/uri, and a Frappe file path containing a space —
+	// which is exactly what v16 stores, because `File.before_insert` runs
+	// `unquote(file_url)` — is blanked to "" on the way through. An attachment is
+	// addressed by its docname and served by a whitelisted endpoint.
+
+	function attachmentLimits() {
+		// Server-driven, with the numbers restated as fallbacks rather than as truth.
+		// A missing block means the server half has not shipped: the attach button is
+		// hidden and none of this runs.
+		const a = (state.config && state.config.attachments) || {};
+		return {
+			enabled: !!a.enabled,
+			// The server sends the EFFECTIVE ceiling in bytes, already reconciled against
+			// the site's own max_file_size and already defaulted past the un-backfilled
+			// Single field that reads 0. The fallback below is for a config block that is
+			// absent altogether, not a second opinion about the cap.
+			maxBytes: Number(a.max_upload_bytes) || 25 * 1024 * 1024,
+			maxFiles: Number(a.max_per_turn) || 4,
+			extensions: (a.allowed_extensions || []).map((x) =>
+				String(x).toLowerCase().replace(/^\./, "")
+			),
+			mimes: a.allowed_mime_types || [],
+		};
+	}
+
+	function humanSize(bytes) {
+		const n = Number(bytes) || 0;
+		if (n < 1024) return n + " B";
+		if (n < 1024 * 1024) return Math.round(n / 1024) + " KB";
+		return (n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0) + " MB";
+	}
+
+	function attachKey() {
+		return "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+	}
+
+	// Why a file is refused, or "" if it is fine. Client-side only and advisory:
+	// core re-checks the size against System Settings and the extension allowlist,
+	// and `attach_file` re-checks ownership and privacy. This exists so a 40 MB
+	// video fails in a tenth of a second instead of after a four-minute upload.
+	function rejectReason(file, limits) {
+		if (limits.maxFiles && state.attachments.length >= limits.maxFiles) {
+			return __("You can attach up to {0} files per message.", [limits.maxFiles]);
+		}
+		if (file.size > limits.maxBytes) {
+			return __("{0} is {1} — the limit is {2}.", [
+				file.name,
+				humanSize(file.size),
+				humanSize(limits.maxBytes),
+			]);
+		}
+		if (!file.size) {
+			// A directory dragged onto the panel arrives as a zero-byte File with no
+			// type, and uploads as an empty file rather than failing.
+			return __("{0} is empty, or is a folder.", [file.name]);
+		}
+		const ext = (file.name.split(".").pop() || "").toLowerCase();
+		if (limits.extensions.length && limits.extensions.indexOf(ext) === -1) {
+			return __("{0} files are not accepted here.", [ext ? "." + ext : __("Those")]);
+		}
+		if (limits.mimes.length && file.type && limits.mimes.indexOf(file.type) === -1) {
+			return __("{0} is not an accepted file type.", [file.type]);
+		}
+		return "";
+	}
+
+	function onFilesChosen(e) {
+		acceptFiles(e.target.files);
+		// Reset, or picking the same file twice in a row fires no change event.
+		e.target.value = "";
+	}
+
+	function acceptFiles(list) {
+		const limits = attachmentLimits();
+		if (!limits.enabled) return;
+		Array.prototype.slice.call(list || []).forEach((file) => {
+			const why = rejectReason(file, limits);
+			if (why) {
+				frappe.show_alert({ message: why, indicator: "orange" });
+				return;
+			}
+			stageFile(file);
+		});
+	}
+
+	function stageFile(file) {
+		const row = {
+			key: attachKey(),
+			name: file.name,
+			size: file.size,
+			status: "uploading",
+			progress: 0,
+			error: "",
+			attachment: null,
+			drive_id: null,
+			abort: null,
+		};
+		state.attachments.push(row);
+		renderAttachments();
+		uploadOne(row, file);
+	}
+
+	async function uploadOne(row, file) {
+		const up = uploadToFrappe(file, (fraction) => {
+			row.progress = fraction;
+			paintProgress(row);
+		});
+		row.abort = up.abort;
+		try {
+			const uploaded = await up.promise;
+			// The File exists but is an orphan for exactly as long as this call takes.
+			// `register_upload` is the gate AND the adoption: it re-checks that the
+			// caller owns the File and that it is private, creates the Triton Chat
+			// Attachment row, and re-points File.attached_to_* at it.
+			//
+			// NOT `xcall(...)`. That helper is bound to METHOD = "...triton_chat", and
+			// these methods deliberately live in a sibling module: everything in
+			// triton_chat reaches Triton and is therefore gated by mint_user_token(), so
+			// a method that never calls Triton would sit beside that gate without
+			// inheriting it. triton_attachments carries its own require_widget_access().
+			const adopted = await frappe.xcall(
+				"erpnext_enhancements.triton_attachments.register_upload",
+				{ file: uploaded.name }
+			);
+			if (!state.attachments.some((r) => r.key === row.key)) return; // removed mid-flight
+			row.attachment = adopted.name;
+			// The chip payload calls it `title`; `name` is the docname.
+			row.name = adopted.title || row.name;
+			row.size = adopted.file_size || row.size;
+			row.status = "ready";
+			row.abort = null;
+		} catch (e) {
+			if (!state.attachments.some((r) => r.key === row.key)) return;
+			row.status = "failed";
+			row.abort = null;
+			// The chip carries the reason and stays until the user dismisses it. A
+			// failed upload that vanishes on its own is indistinguishable from one that
+			// worked, which is the whole complaint about silent failure.
+			row.error = String((e && e.message) || e || __("Upload failed"));
+		}
+		renderAttachments();
+	}
+
+	// Upload one file through Frappe core's endpoint.
+	//
+	// XMLHttpRequest rather than fetch, for one reason: fetch still has no
+	// upload-progress event, and a 20 MB site photo on a phone tether needs one.
+	// `feedback/transport.js` reached the same conclusion for the same reason.
+	function uploadToFrappe(file, onProgress) {
+		const xhr = new XMLHttpRequest();
+		const promise = new Promise((resolve, reject) => {
+			const form = new FormData();
+			// The three fields v16's `upload_file` actually reads for this shape:
+			// `frappe.request.files["file"]`, and `is_private` / `file_name` off
+			// form_dict. `doctype` and `docname` are omitted on purpose (see the
+			// section comment); `folder` defaults to "Home" server-side.
+			form.append("file", file, file.name);
+			form.append("is_private", "1");
+			form.append("file_name", file.name);
+			xhr.open("POST", "/api/method/upload_file", true);
+			xhr.withCredentials = true;
+			xhr.setRequestHeader("X-Frappe-CSRF-Token", frappe.csrf_token);
+			xhr.upload.onprogress = (ev) => {
+				if (onProgress && ev.lengthComputable) onProgress(ev.loaded / ev.total);
+			};
+			xhr.onload = () => {
+				let payload = null;
+				try {
+					payload = JSON.parse(xhr.responseText);
+				} catch (e) {
+					payload = null;
+				}
+				if (xhr.status >= 200 && xhr.status < 300 && payload && payload.message) {
+					resolve(payload.message);
+				} else {
+					reject(new Error(uploadErrorMessage(payload, xhr.status)));
+				}
+			};
+			xhr.onerror = () => reject(new Error(__("Upload failed.")));
+			xhr.onabort = () => reject(new Error(__("Upload cancelled.")));
+			xhr.send(form);
+		});
+		return { promise, abort: () => xhr.abort() };
+	}
+
+	// The sentence to show a human. Frappe puts the useful text in three different
+	// places depending on how it threw, and `_server_messages` is a JSON string
+	// inside a JSON string.
+	function uploadErrorMessage(payload, status) {
+		const raw = payload && (payload._server_messages || payload.exception || payload.message);
+		if (typeof raw === "string" && raw.trim()) {
+			try {
+				const parsed = JSON.parse(raw);
+				const first = Array.isArray(parsed) ? parsed[0] : parsed;
+				const inner = typeof first === "string" ? JSON.parse(first) : first;
+				if (inner && inner.message) {
+					return String(inner.message).replace(/<[^>]*>/g, "").trim();
+				}
+			} catch (e) {
+				const flat = raw.replace(/<[^>]*>/g, "").trim();
+				if (flat) return flat;
+			}
+		}
+		if (status === 413) return __("That file is too large.");
+		if (status === 403) return __("You do not have permission to upload here.");
+		return __("Upload failed ({0}).", [status || 0]);
+	}
+
+	function removeAttachment(key) {
+		const i = state.attachments.findIndex((r) => r.key === key);
+		if (i === -1) return;
+		const row = state.attachments[i];
+		if (row.abort) {
+			try {
+				row.abort();
+			} catch (e) {
+				// an already-finished xhr throws nothing useful here
+			}
+		}
+		state.attachments.splice(i, 1);
+		renderAttachments();
+		// A row already adopted server-side is left alone deliberately. The daily
+		// Triton Chat Attachment sweep collects anything never used; deleting on
+		// remove would make the button a destructive action on a private File, which
+		// is not what "take it off this message" means.
+	}
+
+	// Drop every staged file, aborting anything still in flight.
+	//
+	// Called wherever the conversation changes underneath the composer — a new chat, or
+	// switching to a stored session. Staged files belong to the message that was never
+	// sent; carrying them across would attach them to a turn in a conversation the user
+	// did not stage them in. Same rule `state.contextRefs = []` already follows at both
+	// of those sites, and written once rather than twice because an abort loop that
+	// exists in two places is an abort loop that will diverge in one of them.
+	function clearAttachments() {
+		state.attachments.forEach((r) => {
+			if (r.abort) {
+				try {
+					r.abort();
+				} catch (e) {
+					// nothing useful to do with a finished xhr
+				}
+			}
+		});
+		state.attachments = [];
+		// The Google card goes with them. It is advice about the message being composed,
+		// and that message is what just went away.
+		hideGoogleLinkEmptyState();
+		renderAttachments();
+	}
+
+	// Wholesale repaint, exactly like renderChips(): the tray is small, the rows are
+	// cheap, and a partial update is one more thing that can disagree with `state`.
+	// The progress bar is the one exception — `paintProgress` writes a width rather
+	// than re-rendering, because repainting sixty times a second while bytes fly
+	// destroys the element the user is about to click cancel on.
+	function renderAttachments() {
+		const bar = state.els.attachBar;
+		if (!bar) return;
+		// The Google card is a tray OCCUPANT, not a chip: it is not derived from
+		// `state.attachments`, so the wholesale repaint must not take it with it. Detach it
+		// first and put it back after — cheaper and more obviously correct than teaching
+		// the repaint to diff, and it survives with its listeners because the node itself is
+		// never rebuilt. It also has to be counted in `is-empty`, or a tray holding only the
+		// card would collapse to display:none and the card would be invisible rather than
+		// absent, which is the worst of the three outcomes.
+		const notice = bar.querySelector(".triton-attach-empty");
+		if (notice) notice.remove();
+		bar.innerHTML = "";
+		bar.classList.toggle("is-empty", !state.attachments.length && !notice);
+		state.attachments.forEach((row) => {
+			const chip = document.createElement("span");
+			chip.className = "triton-attach-chip" + (row.status === "failed" ? " is-failed" : "");
+			chip.setAttribute("role", "listitem");
+			chip.dataset.key = row.key;
+			// Same discipline as renderChips: innerHTML with esc() around every
+			// user-authored value, and a filename is user-authored.
+			chip.innerHTML =
+				`<span class="triton-attach-icon">${row.drive_id ? "▲" : "📄"}</span>` +
+				`<span class="triton-attach-name">${esc(row.name)}</span>` +
+				`<span class="triton-attach-meta">${esc(
+					row.status === "failed" ? row.error || __("Failed") : humanSize(row.size)
+				)}</span>` +
+				`<button class="triton-attach-x">✕</button>` +
+				(row.status === "uploading" ? `<span class="triton-attach-progress"></span>` : "");
+			const x = chip.querySelector(".triton-attach-x");
+			x.title = row.status === "uploading" ? __("Cancel") : __("Remove");
+			x.setAttribute("aria-label", x.title);
+			x.addEventListener("click", () => removeAttachment(row.key));
+			chip.title = row.name;
+			bar.appendChild(chip);
+			if (row.status === "uploading") paintProgress(row);
+		});
+		// Below the chips: it is a note about the tray, not one of its entries.
+		if (notice) bar.appendChild(notice);
+	}
+
+	function paintProgress(row) {
+		const bar = state.els.attachBar;
+		if (!bar) return;
+		const chip = bar.querySelector(`.triton-attach-chip[data-key="${row.key}"]`);
+		const fill = chip && chip.querySelector(".triton-attach-progress");
+		if (fill) fill.style.width = Math.round((row.progress || 0) * 100) + "%";
+	}
+
+	// The refs that ride the next turn. Only "ready" rows: a failed chip is a note to
+	// the user, not a payload.
+	//
+	// These join `state.contextRefs` in the SAME `context` array the widget already
+	// sends, rather than a new POST key. `runStream` posts a closed six-field body
+	// and `triton_chat.stream_query`'s Python signature accepts exactly those six
+	// names; Frappe filters unknown form-dict keys against the signature, so a
+	// seventh field is dropped silently — no error, no 400, and a feature that looks
+	// correct end to end while the model never sees the file.
+	//
+	// No `url`, `href`, `link`, `source_url` or `uri` key on these objects, on
+	// purpose: those five names are what `scrub_urls` walks, and it blanks any value
+	// containing a space — which every `/private/files/Purchase Order 123.pdf` has.
+	function attachmentRefs() {
+		// ONE ref shape for both kinds, and `name` is the Triton Chat Attachment
+		// DOCNAME — never the filename. The server resolves every ref by docname under
+		// an `owner = session.user` filter and re-reads the filename, size, content type,
+		// file_url and Drive id from the row itself. Anything else the client sends is
+		// ignored deliberately: honouring a client-supplied `file_url` would turn any
+		// session into arbitrary file read under the caller's own identity.
+		//
+		// A Drive pick is a row too (source = "Drive Link"), so it takes the same shape.
+		// `type: "drive_file"` would be dropped by the attachment resolver AND fall
+		// through to _build_prompt's page-context `else` branch, rendering a bogus
+		// "- report.pdf ()" line into the preamble on every turn.
+		return state.attachments
+			.filter((r) => r.status === "ready" && r.attachment)
+			.map((r) => ({ type: "file", name: r.attachment, title: r.name }));
+	}
+
+	// The pills under a user bubble, live and on reload. Nodes and textContent, no
+	// anchor: there is no URL here to link to and deliberately so — the attachment
+	// is addressed by its docname and its bytes come from a whitelisted endpoint,
+	// because there is no reason to publish the key to a door and then rely on the
+	// lock.
+	function renderAttachmentPills(container, items) {
+		if (!items || !items.length) return;
+		const box = document.createElement("div");
+		box.className = "triton-msg-attachments";
+		items.forEach((it) => {
+			const label = it.name || it.file_name || it.title || __("Attachment");
+			const pill = document.createElement("span");
+			pill.className = "triton-msg-attachment";
+			pill.textContent = (it.drive_id ? "▲ " : "📄 ") + label;
+			pill.title = label;
+			box.appendChild(pill);
+		});
+		container.appendChild(box);
+	}
+
+	// ---- drag / drop and paste -------------------------------------------
+	//
+	// Bound to the PANEL, never to `document`. A document-level keydown would
+	// silently retarget the Alt+T assertion in scripts/test_triton_widget_guards.js,
+	// which finds the first `document.addEventListener("keydown"` by indexOf and
+	// inspects only the next 800 characters; drag events are a different name and
+	// would be safe, but keeping every listener on the panel keeps the rule simple.
+	function bindDropTarget() {
+		const panel = state.els.panel;
+		let depth = 0;
+		const isFileDrag = (e) => {
+			const dt = e.dataTransfer;
+			if (!dt) return false;
+			const types = Array.prototype.slice.call(dt.types || []);
+			return types.indexOf("Files") !== -1;
+		};
+		panel.addEventListener("dragenter", (e) => {
+			if (!attachmentLimits().enabled || !isFileDrag(e)) return;
+			e.preventDefault();
+			// dragenter/dragleave fire once per child element crossed, so a counter is
+			// the only way the overlay does not flicker across the message list.
+			depth += 1;
+			panel.classList.add("is-dropping");
+		});
+		panel.addEventListener("dragover", (e) => {
+			if (!attachmentLimits().enabled || !isFileDrag(e)) return;
+			// Without preventDefault on dragover the drop event never fires and the
+			// browser navigates to the file instead, replacing the Desk.
+			e.preventDefault();
+			if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+		});
+		panel.addEventListener("dragleave", () => {
+			depth = Math.max(0, depth - 1);
+			if (!depth) panel.classList.remove("is-dropping");
+		});
+		panel.addEventListener("drop", (e) => {
+			depth = 0;
+			panel.classList.remove("is-dropping");
+			if (!attachmentLimits().enabled || !isFileDrag(e)) return;
+			e.preventDefault();
+			acceptFiles(e.dataTransfer.files);
+		});
+	}
+
+	function onComposerPaste(e) {
+		if (!attachmentLimits().enabled) return;
+		const cd = e.clipboardData;
+		if (!cd) return;
+		const files = [];
+		Array.prototype.slice.call(cd.items || []).forEach((item) => {
+			if (item.kind !== "file") return;
+			const f = item.getAsFile();
+			if (f) files.push(f);
+		});
+		if (!files.length) return; // ordinary text paste — leave it entirely alone
+		e.preventDefault();
+		// A pasted screenshot arrives as "image.png" on every paste, so three of them
+		// are three chips with one name. Stamp them.
+		files.forEach((f, i) => {
+			const named =
+				f.name && f.name !== "image.png"
+					? f
+					: new File([f], `pasted-${Date.now()}${files.length > 1 ? "-" + (i + 1) : ""}.${(
+							f.type.split("/")[1] || "png"
+					  ).replace(/[^a-z0-9]/gi, "")}`, { type: f.type });
+			acceptFiles([named]);
+		});
+	}
+
+	// ---- Google Drive picker ---------------------------------------------
+	//
+	// TWO loaders, and NEITHER resolves on `script.onload`.
+	//
+	// `ensureMermaid` above resolves on onload because mermaid's contract is one
+	// hop: the script defines `window.mermaid` and it is there. Google's is not.
+	// `apis.google.com/js/api.js` is a bootstrap that injects further scripts, so
+	// onload fires while `google.picker` is still undefined — this repo already paid
+	// for that lesson against the Maps loader (address_autocomplete.js:78-88,
+	// v1.160.2, diagnosed live against production over several days). The picker
+	// namespace only exists inside the `gapi.load("picker", …)` callback, so that is
+	// where the promise resolves.
+	//
+	// Neither memo caches its rejection, which is the second deliberate difference
+	// from ensureMermaid. `_mermaidPromise` is never reset, so one network blip
+	// leaves diagrams as fenced code for the page's lifetime — a fine degrade.
+	// "The attach-from-Drive button is dead until you reload" is not.
+	//
+	// And there is no version to pin. The house convention is an exact-version
+	// jsdelivr URL (mermaid@11.15.0, @twilio/voice-sdk@2.18.1); these two scripts are
+	// served only from Google origins and carry no version, which is why
+	// address_autocomplete.js:487 hardcodes a Google host too. The exception is
+	// deliberate, not an oversight.
+	let _gapiPickerPromise = null;
+	let _gisPromise = null;
+	let _driveTokenClient = null;
+
+	function drivePickerConfig() {
+		// Nested under `attachments`, which is itself emitted only inside the widget
+		// access gate — so a non-whitelisted user is never handed the browser key.
+		const a = (state.config && state.config.attachments) || {};
+		const d = a.drive_picker || null;
+		// All THREE, not two. `app_id` is the GCP project number, and the Picker needs it
+		// via setAppId for a `drive.file` grant to attach to the picked file. Without it
+		// the pick succeeds and Triton's later read 404s — a failure that surfaces in a
+		// different system from the one that caused it.
+		return d && d.api_key && d.client_id && d.app_id ? d : null;
+	}
+
+	function loadScriptOnce(src) {
+		return new Promise((resolve, reject) => {
+			const existing = document.querySelector(`script[src="${src}"]`);
+			if (existing) {
+				if (existing.dataset.tritonLoaded) return resolve();
+				existing.addEventListener("load", () => resolve());
+				existing.addEventListener("error", () => reject(new Error("script load failed")));
+				return;
+			}
+			const s = document.createElement("script");
+			s.src = src;
+			s.async = true;
+			s.onload = () => {
+				s.dataset.tritonLoaded = "1";
+				resolve();
+			};
+			s.onerror = () => {
+				s.remove(); // so a retry is a fresh element rather than a dead one
+				reject(new Error("script load failed"));
+			};
+			document.head.appendChild(s);
+		});
+	}
+
+	function ensureGapiPicker() {
+		if (window.google && window.google.picker) return Promise.resolve(window.google.picker);
+		if (_gapiPickerPromise) return _gapiPickerPromise;
+		const p = loadScriptOnce("https://apis.google.com/js/api.js").then(
+			() =>
+				new Promise((resolve, reject) => {
+					if (!window.gapi || !window.gapi.load) {
+						reject(new Error("gapi missing after load"));
+						return;
+					}
+					// THE SECOND HOP. Resolving on the script's onload instead of here is
+					// the v1.160.2 bug.
+					window.gapi.load("picker", {
+						callback: () => {
+							if (window.google && window.google.picker) resolve(window.google.picker);
+							else reject(new Error("picker namespace missing after gapi.load"));
+						},
+						onerror: () => reject(new Error("gapi.load('picker') failed")),
+						timeout: 15000,
+						ontimeout: () => reject(new Error("gapi.load('picker') timed out")),
+					});
+				})
+		);
+		_gapiPickerPromise = p;
+		p.catch(() => {
+			if (_gapiPickerPromise === p) _gapiPickerPromise = null; // retryable
+		});
+		return p;
+	}
+
+	function ensureGis() {
+		if (window.google && window.google.accounts && window.google.accounts.oauth2) {
+			return Promise.resolve(window.google.accounts.oauth2);
+		}
+		if (_gisPromise) return _gisPromise;
+		const p = loadScriptOnce("https://accounts.google.com/gsi/client").then(() => {
+			// GIS does define its namespace synchronously — but it is checked rather
+			// than assumed, because assuming it is the same mistake one script over.
+			if (window.google && window.google.accounts && window.google.accounts.oauth2) {
+				return window.google.accounts.oauth2;
+			}
+			throw new Error("google.accounts.oauth2 missing after load");
+		});
+		_gisPromise = p;
+		p.catch(() => {
+			if (_gisPromise === p) _gisPromise = null; // retryable
+		});
+		return p;
+	}
+
+	// Called at panel open, never from the click handler. Building the token client
+	// ahead of time is what lets requestAccessToken() run with no await in front of
+	// it, which is what keeps the popup out of the blocker.
+	//
+	// `drive.file` and nothing wider: the Picker narrows that scope to exactly the
+	// files the user picks, so consenting here grants Triton no standing over the
+	// rest of their Drive.
+	function warmDrivePicker() {
+		const cfg = drivePickerConfig();
+		if (!cfg) return;
+		ensureGapiPicker().catch(() => {});
+		ensureGis()
+			.then((oauth2) => {
+				if (_driveTokenClient) return;
+				_driveTokenClient = oauth2.initTokenClient({
+					client_id: cfg.client_id,
+					scope: "https://www.googleapis.com/auth/drive.file",
+					callback: () => {}, // replaced per request, below
+				});
+			})
+			.catch(() => {});
+	}
+
+	// Ask the server whether Triton can read Drive as this user. Never throws, never
+	// blocks anything, and never leaves `state.googleLink` in a shape the click handler
+	// has to defend against.
+	//
+	// `opts.force` maps to the server's `refresh` flag, which bypasses its cache. Only the
+	// "I've connected" button sets it, and that is the point: nothing in Triton calls back
+	// into ERPNext when a user finishes consenting, so the user pressing that button IS the
+	// cache-invalidation signal. Everywhere else takes the cached answer.
+	async function refreshGoogleLink(opts) {
+		const force = !!(opts && opts.force);
+		try {
+			// `silent` is belt to the server's braces. frappe.xcall forwards its fourth
+			// argument to frappe.call, and `silent` suppresses the message display — which
+			// covers the one case the server-side mute cannot: require_widget_access()
+			// refusing outright (a 417 with a real exception) because an admin turned
+			// attachments off while widgets were open. Without it that refusal is a modal
+			// for everyone still holding a cached config, company-wide, until they reload.
+			const res = await frappe.xcall(
+				"erpnext_enhancements.triton_attachments.google_link_status",
+				{ refresh: force ? 1 : 0 },
+				"POST",
+				{ silent: true }
+			);
+			const next = (res && typeof res === "object" && res) || {};
+			// The state is whitelisted rather than trusted. Anything unrecognised — an older
+			// server, a proxy that rewrote the body — has to land on "unknown", because
+			// "unknown" is the value that changes no behaviour.
+			const status =
+				next.state === "connected" || next.state === "disconnected" ? next.state : "unknown";
+			state.googleLink = {
+				state: status,
+				connect_url: typeof next.connect_url === "string" ? next.connect_url : "",
+			};
+		} catch (e) {
+			// A failed probe is NOT a disconnected account, and this catch is the only thing
+			// standing between a Triton outage and every user being told to reconnect. The
+			// previously-seen connect_url is kept so an already-open card stays actionable.
+			state.googleLink = {
+				state: "unknown",
+				connect_url: (state.googleLink && state.googleLink.connect_url) || "",
+			};
+		}
+		return state.googleLink;
+	}
+
+	function onAttachDrive() {
+		const cfg = drivePickerConfig();
+		if (!cfg) return;
+
+		// A SYNCHRONOUS read of a value refreshed elsewhere (build(), and every panel
+		// open). Deliberately not `await refreshGoogleLink()`: an await here would spend
+		// the click's transient activation and the consent popup below would be blocked
+		// rather than slow — the same rule the comment above requestAccessToken() states,
+		// and the reason warmDrivePicker() exists at all.
+		//
+		// Only "disconnected" stops the click, because it is the only answer the server
+		// proved. "unknown" and a probe that has not landed yet both fall through to the
+		// pre-existing path: worst case the pick succeeds and Triton reads nothing, which
+		// is exactly today's behaviour and strictly better than blocking a working user.
+		if (state.googleLink && state.googleLink.state === "disconnected") {
+			showGoogleLinkEmptyState();
+			return;
+		}
+
+		// Still valid? Then no popup at all — straight to the picker, which is an
+		// in-page iframe and needs no user activation.
+		if (state.driveToken && Date.now() < state.driveTokenExpires - 60000) {
+			openDrivePicker(state.driveToken, cfg);
+			return;
+		}
+
+		if (!_driveTokenClient) {
+			// Warming failed or has not finished. Say so and retry in the background;
+			// awaiting here instead would spend the click's transient activation and
+			// the popup would be blocked rather than slow.
+			frappe.show_alert({
+				message: __("Google Drive is still loading — try that again in a moment."),
+				indicator: "orange",
+			});
+			warmDrivePicker();
+			return;
+		}
+
+		_driveTokenClient.callback = (resp) => {
+			if (!resp || resp.error || !resp.access_token) {
+				// A closed consent window reports error "access_denied" — not a failure
+				// worth an alert, the user just changed their mind.
+				if (resp && resp.error && resp.error !== "access_denied") {
+					frappe.show_alert({
+						message: __("Could not connect to Google Drive."),
+						indicator: "red",
+					});
+				}
+				return;
+			}
+			state.driveToken = resp.access_token;
+			state.driveTokenExpires = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
+			openDrivePicker(state.driveToken, cfg);
+		};
+		// FIRST statement after the guards, and synchronous. Any `await` above this
+		// line spends the click's transient activation and the popup is blocked.
+		_driveTokenClient.requestAccessToken({ prompt: "" });
+	}
+
+	// The inline "Triton is not linked to your Google account yet" card.
+	//
+	// INLINE, in the attach tray, and never a `frappe.ui.Dialog`. A dialog is unusable
+	// from this panel at all: `.modal` is z-index 1040 and `.triton-panel` is 1041
+	// (triton_widget.css), so a dialog opened from here renders BEHIND the thing that
+	// opened it. That is the same constraint `raiseDriveDialog()` works around for the
+	// picker, and it is a property of the panel rather than of any one dialog.
+	//
+	// Built from nodes and textContent throughout. `connect_url` is server-authored, and
+	// it still goes through isSafeUrl() before it becomes an href — the scheme gate is
+	// cheap and "the server wrote it" is how the last `javascript:` sink got in.
+	function showGoogleLinkEmptyState() {
+		const bar = state.els.attachBar;
+		if (!bar) return;
+		hideGoogleLinkEmptyState();
+
+		const link = state.googleLink || {};
+		const url = isSafeUrl(link.connect_url) ? link.connect_url : "";
+		const me = (window.frappe && frappe.session && frappe.session.user) || "";
+
+		const card = document.createElement("div");
+		card.className = "triton-attach-empty";
+		// The tray is role="list" aria-live="polite", so this has to be a listitem to keep
+		// the tray valid; the live region is why the card announces itself when it appears.
+		card.setAttribute("role", "listitem");
+
+		const head = document.createElement("div");
+		head.className = "triton-attach-empty-head";
+		const title = document.createElement("span");
+		title.className = "triton-attach-empty-title";
+		title.textContent = __("Triton is not linked to your Google account");
+		const dismiss = document.createElement("button");
+		dismiss.type = "button";
+		dismiss.className = "triton-attach-empty-x";
+		dismiss.textContent = "✕";
+		dismiss.title = __("Dismiss");
+		dismiss.setAttribute("aria-label", dismiss.title);
+		dismiss.addEventListener("click", () => hideGoogleLinkEmptyState());
+		head.appendChild(title);
+		head.appendChild(dismiss);
+		card.appendChild(head);
+
+		const body = document.createElement("p");
+		body.className = "triton-attach-empty-body";
+		body.textContent = __(
+			"Triton reads a Drive file as you, with your own Google account — it never copies the file, so your sharing stays in charge of it. That account has to be linked once before Triton can read anything."
+		);
+		card.appendChild(body);
+
+		// Naming the account is the only defence available from this side against the real
+		// failure: Triton's consent flow has no login_hint, so whichever Google account the
+		// browser happens to be signed into is the one that gets linked. Consenting as the
+		// wrong identity writes the credential onto a different Triton user, and this widget
+		// keeps running as the bridge-provisioned one — so attachments still return nothing
+		// and nothing anywhere says why.
+		if (me) {
+			const who = document.createElement("p");
+			who.className = "triton-attach-empty-note";
+			who.textContent = __(
+				"Sign in as {0}. Choosing a different Google account links the wrong person, and attachments will still come back empty.",
+				[me]
+			);
+			card.appendChild(who);
+		}
+
+		const landing = document.createElement("p");
+		landing.className = "triton-attach-empty-note";
+		landing.textContent = __(
+			"Connecting opens the Triton web app in a new tab. You can close it once it loads, then come back here and press \u201cI have connected\u201d."
+		);
+		card.appendChild(landing);
+
+		const actions = document.createElement("div");
+		actions.className = "triton-attach-empty-actions";
+
+		if (url) {
+			const connect = document.createElement("a");
+			connect.className = "triton-attach-empty-btn is-primary";
+			connect.textContent = __("Connect Google");
+			connect.href = url;
+			connect.target = "_blank";
+			// noopener AND noreferrer. The new tab must not be handed a window.opener
+			// reference back into the desk, and it is a different origin besides.
+			connect.rel = "noopener noreferrer";
+			actions.appendChild(connect);
+		} else {
+			// base_url unset server-side. Say that, rather than rendering a dead button.
+			const missing = document.createElement("p");
+			missing.className = "triton-attach-empty-note";
+			missing.textContent = __(
+				"Triton's address is not configured on this site, so there is nothing to connect to yet. Ask an administrator to set it in Triton Settings."
+			);
+			card.appendChild(missing);
+		}
+
+		const recheck = document.createElement("button");
+		recheck.type = "button";
+		recheck.className = "triton-attach-empty-btn";
+		recheck.textContent = __("I have connected");
+		const verdict = document.createElement("span");
+		verdict.className = "triton-attach-empty-status";
+		recheck.addEventListener("click", async () => {
+			recheck.disabled = true;
+			verdict.textContent = __("Checking…");
+			const res = await refreshGoogleLink({ force: true });
+			// Dismissed, or the tray was rebuilt out from under this, while the probe ran.
+			if (!card.isConnected) return;
+			if (res.state === "connected") {
+				hideGoogleLinkEmptyState();
+				// The ONE place an await precedes requestAccessToken(), and it is a different
+				// click from the ▲ — this button's, not the picker button's. Transient
+				// activation is a ~5s budget rather than a token this consumed, so a probe
+				// that answers promptly still opens the popup; a slow one degrades to the
+				// existing "Could not connect to Google Drive" alert and pressing ▲ works.
+				// The ▲ path itself stays await-free, which is the invariant that matters.
+				onAttachDrive();
+				return;
+			}
+			recheck.disabled = false;
+			verdict.textContent =
+				res.state === "disconnected"
+					? __("Still not linked. You may have signed in with a different Google account.")
+					: __("Could not reach Triton to check. Try the Drive button again anyway.");
+		});
+		actions.appendChild(recheck);
+		actions.appendChild(verdict);
+		card.appendChild(actions);
+
+		// The tray collapses itself when it holds no chips, so un-collapse it by hand: the
+		// card is a tray occupant that renderAttachments() knows nothing about.
+		bar.classList.remove("is-empty");
+		bar.appendChild(card);
+	}
+
+	function hideGoogleLinkEmptyState() {
+		const bar = state.els.attachBar;
+		if (!bar) return;
+		const card = bar.querySelector(".triton-attach-empty");
+		if (card) card.remove();
+		// Re-collapse only if nothing else is in there. Toggling the class here instead of
+		// calling renderAttachments() keeps a dismiss from rebuilding every chip — which
+		// would destroy the progress element paintProgress() is writing into mid-upload.
+		bar.classList.toggle("is-empty", !state.attachments.length);
+	}
+
+	function openDrivePicker(token, cfg) {
+		ensureGapiPicker()
+			.then((picker) => {
+				const view = new picker.DocsView(picker.ViewId.DOCS)
+					.setIncludeFolders(false)
+					.setSelectFolderEnabled(false)
+					.setOwnedByMe(false);
+				const builder = new picker.PickerBuilder()
+					.setOAuthToken(token)
+					.setDeveloperKey(cfg.api_key)
+					.addView(view)
+					.enableFeature(picker.Feature.MULTISELECT_ENABLED)
+					.setCallback((data) => onDrivePicked(data, picker));
+				if (cfg.app_id) builder.setAppId(cfg.app_id);
+				builder.build().setVisible(true);
+				raiseDriveDialog();
+			})
+			.catch(() => {
+				frappe.show_alert({
+					message: __("Could not open the Google Drive picker."),
+					indicator: "red",
+				});
+			});
+	}
+
+	// The picker appends its own dialog to document.body — which is where it has to
+	// stay. `.triton-panel` sets a non-none `transform` in BOTH states plus
+	// `overflow: hidden`, so a position:fixed descendant is positioned against the
+	// panel's 410x640 box and then clipped by it; and a frappe.ui.Dialog is no help
+	// either, because `.modal` is z-index 1040 and the panel is 1041, so the picker
+	// would open BEHIND the thing that launched it.
+	//
+	// Google's own z-index is injected at runtime and is not knowable from here, so
+	// this overrides it explicitly rather than hoping. Retried a few times because
+	// the dialog is appended asynchronously.
+	function raiseDriveDialog() {
+		let tries = 0;
+		const raise = () => {
+			const dialogs = document.querySelectorAll(".picker-dialog, .picker-dialog-bg");
+			dialogs.forEach((el) => {
+				el.style.zIndex = el.classList.contains("picker-dialog") ? "1061" : "1060";
+			});
+			if (!dialogs.length && ++tries < 10) setTimeout(raise, 100);
+		};
+		raise();
+	}
+
+	async function onDrivePicked(data, picker) {
+		if (!data || data.action !== picker.Action.PICKED) return;
+		const limits = attachmentLimits();
+		for (const doc of data.docs || []) {
+			if (limits.maxFiles && state.attachments.length >= limits.maxFiles) break;
+			if (state.attachments.some((r) => r.drive_id === doc.id)) continue;
+			// No upload and no ERPNext File: the bytes stay in Drive and Triton fetches
+			// them as the picking user, so a file whose sharing is revoked tomorrow
+			// stops being readable tomorrow. Copying it here would re-home somebody
+			// else's ACL decision inside ours, permanently — the rule
+			// `chat/sync/attachments.py` states and enforces for the same reason.
+			//
+			// A Drive pick still gets a Triton Chat Attachment ROW, and that is what
+			// makes it addressable. The prompt builder resolves every ref by docname
+			// under an owner filter and ignores everything the client asserts about it,
+			// so a ref with no row behind it describes nothing. Staging the Drive id
+			// client-side and skipping this call is the shape that silently does
+			// nothing: describe_attachments_for_prompt only reads `type == "file"`.
+			const row = {
+				key: attachKey(),
+				name: doc.name || doc.id,
+				size: Number(doc.sizeBytes) || 0,
+				status: "uploading",
+				progress: 1,
+				error: "",
+				attachment: null,
+				drive_id: doc.id,
+				abort: null,
+			};
+			state.attachments.push(row);
+			renderAttachments();
+			try {
+				const adopted = await frappe.xcall(
+					"erpnext_enhancements.triton_attachments.attach_drive_file",
+					{
+						drive_file_id: doc.id,
+						file_name: doc.name || "",
+						mime_type: doc.mimeType || "",
+						drive_url: doc.url || "",
+						session_id: state.sessionId || 0,
+					}
+				);
+				if (!state.attachments.some((r) => r.key === row.key)) continue;
+				row.attachment = adopted.name;
+				row.name = adopted.title || row.name;
+				row.status = "ready";
+			} catch (e) {
+				if (!state.attachments.some((r) => r.key === row.key)) continue;
+				row.status = "failed";
+				row.error = String((e && e.message) || e || __("Could not attach that Drive file"));
+			}
+			renderAttachments();
+		}
+	}
+
 	// ---- message rendering ----------------------------------------------
 	function clearEmpty() {
 		const e = state.els.messages.querySelector(".triton-empty");
@@ -1123,11 +2158,17 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			</div>`;
 	}
 
-	function addUserMsg(text) {
+	// `attachments` is optional and additive: every existing caller passes one
+	// argument and gets exactly today's bubble. It exists because this function is
+	// also the history path — `renderHistoryMessage` routes every stored user turn
+	// through it — so without a second parameter an attachment chip cannot survive a
+	// reload no matter what the server stores.
+	function addUserMsg(text, attachments) {
 		clearEmpty();
 		const el = document.createElement("div");
 		el.className = "triton-msg triton-user";
 		el.innerHTML = esc(text).replace(/\n/g, "<br>");
+		renderAttachmentPills(el, attachments);
 		state.els.messages.appendChild(el);
 		scrollDown();
 	}
@@ -1630,7 +2671,10 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		const meta = m.ui_metadata || {};
 		if (meta.system_note) return; // hidden continuation turns
 		if (m.role === "user") {
-			addUserMsg(m.content);
+			// A seventh ui_metadata key, and the first one that is read for a USER turn
+			// — the other six are all assistant-side. Absent on every turn stored before
+			// this ships, and absent renders today's bubble rather than an error.
+			addUserMsg(m.content, meta.attachments);
 			return;
 		}
 		const live = newAssistantMsg();
@@ -1673,6 +2717,9 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		localStorage.removeItem(LS_SESSION);
 		state.contextRefs = [];
 		renderChips();
+		// Staged files belong to the message that was never sent. Carrying them into a
+		// fresh conversation would attach them to a turn nobody asked for.
+		clearAttachments();
 		closeHistory();
 		state.els.messages.innerHTML = "";
 		showEmpty();
@@ -1694,6 +2741,13 @@ import { BubbleChatSurface } from "./chat_surface.js";
 	function onSend() {
 		const text = state.els.text.value.trim();
 		if (!text || state.streaming) return;
+		// Sending now would drop the file silently: `attachmentRefs()` skips anything
+		// not "ready", so the turn would go out with the prompt and none of what the
+		// user attached it to.
+		if (state.attachments.some((r) => r.status === "uploading")) {
+			frappe.show_alert({ message: __("Still uploading — one moment."), indicator: "orange" });
+			return;
+		}
 		state.els.text.value = "";
 		autoGrow();
 		send(text, {});
@@ -1705,7 +2759,10 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		state.streaming = true;
 		state.els.send.disabled = true;
 
-		if (!opts.hidden) addUserMsg(text);
+		// Captured before the turn, so the bubble shows what was actually sent even if
+		// the user starts staging the next file while this one streams.
+		const refs = opts.hidden ? [] : attachmentRefs();
+		if (!opts.hidden) addUserMsg(text, refs);
 		const live = newAssistantMsg(true);
 		state.live = live;
 		setStatus(live, __("Connecting to Triton…"));
@@ -1718,6 +2775,19 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			if (!opts.hidden && state.contextRefs.length) {
 				state.contextRefs = [];
 				renderChips();
+			}
+			// Same rule for attachments, and the same reason: a file the user attached
+			// to one question is not attached to the next one. The `Triton Chat
+			// Attachment` rows survive — this clears the tray, not the files.
+			//
+			// clearAttachments() rather than a bare reassignment, because this is
+			// reachable with an upload still in flight: onSend() refuses that case, but
+			// `SapphireTriton.ask()` calls send() directly and never passes through it.
+			// The orphaned xhr would resolve into a row that no longer exists and be
+			// dropped by uploadOne's own guard — harmless, but it would finish sending
+			// bytes nobody is waiting for.
+			if (!opts.hidden && state.attachments.length) {
+				clearAttachments();
 			}
 		} catch (e) {
 			clearStatus(live);
@@ -1740,7 +2810,16 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			body: JSON.stringify({
 				session_id: state.sessionId,
 				prompt: text,
-				context: opts.hidden ? "[]" : JSON.stringify(state.contextRefs),
+				// Attachments ride the EXISTING context channel rather than a new field.
+				// `stream_query`'s Python signature is a closed list of six names and
+				// Frappe filters unknown POST keys against it, so a seventh is dropped
+				// silently — the client would look correct while the model never saw the
+				// file. This array is already parsed server-side into the page-context
+				// preamble; a `file` ref needs one more branch in that loop and nothing
+				// else. Until that branch ships the refs are ignored, not mangled.
+				context: opts.hidden
+					? "[]"
+					: JSON.stringify(state.contextRefs.concat(attachmentRefs())),
 				hidden: opts.hidden ? 1 : 0,
 				// Per-message model override; "" lets Triton auto-route.
 				model: state.model || "",

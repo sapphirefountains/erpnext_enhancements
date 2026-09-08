@@ -35,6 +35,7 @@ blocking desk status edits is what keeps the lifecycle honest.
 | `Triton Settings` | Single — connection settings for the Triton assistant |
 | `Triton Assistant Settings` | Assistant behaviour configuration |
 | `Triton Allowed User` | Per-user access to the assistant |
+| `Triton Chat Attachment` | Anchor row for one file attached to a Triton chat turn. Owner-scoped (`permissions.py`, wired under both `permission_query_conditions` and `has_permission`). It exists so the uploaded `File` has something to be attached *to*: an orphan private File is readable only through `File.has_permission`'s `doc.owner == user` shortcut — an accident rather than a policy — and nothing in core ever garbage-collects one. Attached here, the file inherits this row's hook and is deleted with it. Behaviour lives in [`triton_attachments.py`](../triton_attachments.py) |
 | `Training Insight` | Captured insights for assistant tuning |
 
 ## Relationship to Triton

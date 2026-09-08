@@ -13,6 +13,14 @@
   "enable_page_context",
   "enable_write_actions",
   "debug_logging",
+  "attachments_section",
+  "enable_attachments",
+  "triton_max_upload_mb",
+  "triton_attachment_retention_days",
+  "column_break_attachments",
+  "triton_drive_picker_api_key",
+  "triton_drive_picker_client_id",
+  "triton_drive_picker_app_id",
   "access_section",
   "restrict_to_whitelist",
   "allowed_users"
@@ -72,6 +80,54 @@
    "fieldname": "debug_logging",
    "fieldtype": "Check",
    "label": "Debug Logging"
+  },
+  {
+   "fieldname": "attachments_section",
+   "fieldtype": "Section Break",
+   "label": "Attachments"
+  },
+  {
+   "default": "1",
+   "description": "Allow users to attach files to a Triton chat. Uploads are stored as private ERPNext files and Triton reads them on demand with the user's own permissions — nothing is copied into the model's context until it asks.",
+   "fieldname": "enable_attachments",
+   "fieldtype": "Check",
+   "label": "Enable chat attachments"
+  },
+  {
+   "default": "25",
+   "description": "Largest single attachment, in megabytes. Capped by System Settings → Maximum File Size (also megabytes) if that is lower, and 0 here means \"use the 25 MB default\" rather than \"allow nothing\".",
+   "fieldname": "triton_max_upload_mb",
+   "fieldtype": "Int",
+   "label": "Max Attachment Size (MB)"
+  },
+  {
+   "default": "30",
+   "description": "How long an attachment is kept before the nightly sweep deletes it and its file. Triton owns the conversation, so ERPNext never learns that a chat was deleted — a fixed retention window is the only expiry signal available. 0 means the 30-day default.",
+   "fieldname": "triton_attachment_retention_days",
+   "fieldtype": "Int",
+   "label": "Attachment Retention (days)"
+  },
+  {
+   "fieldname": "column_break_attachments",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Google Picker BROWSER key — it is sent to every user's browser by design, so restrict it by HTTP referrer to this site's hostname in the Google Cloud console (that restriction is the control; this field cannot be one). Use a SEPARATE key from Travel Settings and from the Fountain Move maps key, so a leak here can be rotated without breaking trip maps. Leave blank to hide the \"Attach from Drive\" button entirely.",
+   "fieldname": "triton_drive_picker_api_key",
+   "fieldtype": "Data",
+   "label": "Google Picker API Key"
+  },
+  {
+   "description": "OAuth 2.0 Web client ID for the Drive picker. Public by design (a client ID is not a secret; do NOT add the client secret anywhere — the picker's token flow does not use one). Request the narrow drive.file scope, which limits the app to the files the user picks. Both this and the API key must be set or the Drive button stays hidden — a picker with half its credentials opens and then fails inside Google's iframe, which looks like a broken feature.",
+   "fieldname": "triton_drive_picker_client_id",
+   "fieldtype": "Data",
+   "label": "Google Picker Client ID"
+  },
+  {
+   "description": "The Google Cloud PROJECT NUMBER of the project the API key and client ID were created in (Cloud console home, \"Project number\"). The Picker requires it via setAppId, and Google requires it to be the same project as the OAuth client. Without it a drive.file grant does not attach to the picked file, so the pick appears to succeed and Triton cannot read the file afterwards. Digits only, no project ID.",
+   "fieldname": "triton_drive_picker_app_id",
+   "fieldtype": "Data",
+   "label": "Google Picker App ID (project number)"
   },
   {
    "fieldname": "access_section",
