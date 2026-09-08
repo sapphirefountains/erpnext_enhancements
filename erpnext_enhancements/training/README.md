@@ -165,7 +165,14 @@ stylesheet (`player.css`, Aurora). It reuses the exact data path: `get_builder_b
 to load, `save_draft_version` to autosave, the version's `modified` as the optimistic
 lock, whole block table sent with every `block_key` carried.
 
-It authors CONTENT completely: **Rich Text** and **Callout** are edited in place with a
+A left **rail** lists lessons grouped by chapter and adds / reorders (drag) / deletes them; a
+**⚙ Lesson** panel edits the lesson settings (summary, chapter, estimated minutes, learner
+questions, work-submission gate, and the end-of-lesson quiz settings); and the draft
+**lifecycle** — new draft version, submit for review, publish (with the full `change_type`
+strings the DocType stores) — lives in the page menu. A new lesson carries a `temp_id` the save
+maps back to the server-minted name.
+
+It authors content completely: **Rich Text** and **Callout** are edited in place with a
 formatting toolbar (bold, italic, headings, lists, link); **Checklist / Flashcards /
 Accordion** have inline structured editors beside their live preview; **External Embed**
 takes a URL. Blocks can be **added** (a `+` between blocks opens a type menu), **reordered**

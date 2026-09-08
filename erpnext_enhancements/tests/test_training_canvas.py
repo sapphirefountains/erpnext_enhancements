@@ -156,6 +156,51 @@ class TestCanvasEditsContentInPlace(unittest.TestCase):
         self.assertIn("block.callout_tone = val", _canvas())
 
 
+class TestCanvasBuildsWholeCourses(unittest.TestCase):
+    """Lesson management, settings and the draft lifecycle — the canvas is a whole
+    builder, not just a block editor."""
+
+    def test_lessons_can_be_added_reordered_and_deleted(self):
+        code = _canvas()
+        for method in ("add_lesson(", "remove_lesson(", "commit_lesson_order("):
+            self.assertIn(method, code)
+        # reorder goes through the dedicated endpoint that does not churn the lock.
+        self.assertIn("training_author.reorder_lessons", code)
+
+    def test_a_new_lesson_carries_a_temp_id_not_a_fake_name(self):
+        """A client-invented name would disagree with the row the server mints; the
+        save maps temp_id -> name in created_lessons and the canvas adopts it."""
+        code = _canvas()
+        self.assertIn("temp_id", code)
+        self.assertIn("adopt_created", code)
+
+    def test_deleted_lessons_are_sent_for_deletion(self):
+        self.assertIn("deleted_lessons", _canvas())
+
+    def test_lesson_settings_go_through_the_allowlist(self):
+        code = _canvas()
+        self.assertIn("set_lesson_field", code)
+        fields = re.search(r"TC_LESSON_FIELDS = \[([^\]]*)\]", code)
+        self.assertIsNotNone(fields, "TC_LESSON_FIELDS not found")
+        sent = set(re.findall(r'"(\w+)"', fields.group(1)))
+        for f in ("summary", "chapter_key", "has_quiz", "quiz_pass_score", "requires_submission"):
+            self.assertIn(f, sent)
+
+    def test_the_lifecycle_is_wired(self):
+        code = _canvas()
+        for endpoint in ("create_draft_version", "submit_for_review", "publish_version"):
+            self.assertIn("training_author." + endpoint, code)
+
+    def test_publish_sends_the_full_change_type_strings(self):
+        """A truncated change_type is rejected by publish_version — the exact bug the
+        classic builder shipped. The full parenthesised strings must be sent."""
+        code = _canvas()
+        self.assertIn("Minor Edit (keep completions)", code)
+        self.assertIn("Material Change (require retake)", code)
+        self.assertNotIn('"Minor Edit"', code)
+        self.assertNotIn('"Material Change"', code)
+
+
 class TestCanvasPageIsRegistered(unittest.TestCase):
     def test_the_page_is_gated_to_authors(self):
         import json

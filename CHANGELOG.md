@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.380.0] - 2026-09-08
+
+### Added
+
+- **Training Canvas is now a whole-course builder, not just a block editor.** It gains a two-pane layout:
+  a left **lesson rail** (lessons grouped by chapter) that adds, reorders (drag, via the dedicated
+  `reorder_lessons` endpoint that does not churn the lock token) and deletes lessons — a new lesson carries
+  a `temp_id` the save maps back to the server-minted name (`created_lessons`), so no client ever invents a
+  key that disagrees with its row. A **⚙ Lesson** panel edits the lesson's settings through the field
+  allowlist (`TC_LESSON_FIELDS` mirroring `LESSON_ALLOWED_FIELDS`): summary, chapter, estimated minutes,
+  learner-questions and work-submission gates, and the end-of-lesson quiz settings (questions to ask, pass
+  score, shuffle). The draft **lifecycle** — New draft version (`create_draft_version`), Submit for review
+  (`submit_for_review`), and Publish (`publish_version`, with the full `change_type` strings the DocType
+  stores — a truncated value is rejected, the exact bug the classic builder once shipped) — lives in the
+  page menu. Quiz questions themselves and in-video checkpoints remain in the classic builder. Guarded by
+  `test_training_canvas` (lesson add/reorder/delete, `temp_id` round-trip, deletion, settings allowlist,
+  lifecycle endpoints, and the full change_type strings).
+
 ## [1.379.0] - 2026-09-08
 
 ### Added

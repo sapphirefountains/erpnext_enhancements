@@ -10,29 +10,36 @@
 // (public/js/training/blocks.js -> TR.renderBlock) and lets the author edit ON that
 // render — the thing you edit is the thing a learner sees, in the learner stylesheet.
 //
-// It authors CONTENT completely: Rich Text and Callout are edited in place with a
-// formatting toolbar; Checklist / Flashcards / Accordion have inline structured
-// editors; External Embed takes a URL; blocks can be added, reordered and removed on
-// the canvas; each block has a settings row (heading is edited on the render itself).
-// Media that needs a signed draft asset URL (Image, PDF, Downloadable File, Video,
-// Image Hotspots) and the in-video checkpoint scrubber stay in the classic builder,
-// which this page never replaces — a media block renders as a hand-off card.
+// It authors a course completely: a lesson rail (add / reorder / delete / chapters),
+// a lesson-settings panel (summary, minutes, gating, quiz settings), content blocks
+// edited in place (Rich Text and Callout with a formatting toolbar; Checklist /
+// Flashcards / Accordion inline editors; External Embed), block add / reorder / remove,
+// and the draft lifecycle (new draft, submit for review, publish). Media that needs a
+// signed draft asset URL (Image, PDF, Downloadable File, Video, Image Hotspots) and the
+// in-video checkpoint scrubber stay in the classic builder, which this page never
+// replaces — a media block renders as a hand-off card.
 //
 // Decisions that are load-bearing, not preferences:
 //
-// 1. **The renderer is the learner's, unmodified.** blocks.js is frappe-free and
-//    designed to run outside the player; we build a partial `ctx` (translate only)
-//    and mirror training_author._split_lesson to turn the draft's edit shape
-//    (content=HTML, data=JSON, callout_tone) into the render shape blocks.js reads.
+// 1. **The renderer is the learner's, unmodified.** blocks.js is frappe-free; we build
+//    a partial `ctx` (translate only) and mirror training_author._split_lesson to turn
+//    the draft's edit shape (content=HTML, data=JSON, callout_tone) into the render
+//    shape blocks.js reads.
 //
-// 2. **Saves send the WHOLE block table, every field, block_key carried.** The
-//    server replaces the child table by position (_apply_blocks). A dropped or
-//    regenerated block_key strands learner watch-progress and orphans checkpoints;
-//    a dropped `data`/`callout_tone` blanks interactive content. New blocks mint a
-//    stable client `blk-…` key the server keeps.
+// 2. **Saves send the WHOLE block table, every field, block_key carried.** The server
+//    replaces the child table by position (_apply_blocks). A dropped or regenerated
+//    block_key strands learner watch-progress and orphans checkpoints; a dropped
+//    `data`/`callout_tone` blanks interactive content. New blocks mint a stable client
+//    `blk-…` key the server keeps; a new lesson carries a `temp_id` the save maps back.
 //
-// 3. **The optimistic lock is the version's `modified`.** Hold it, send it, adopt
-//    the token the save returns — the next save is rejected against the old one.
+// 3. **The optimistic lock is the version's `modified`.** Hold it, send it, adopt the
+//    token the save returns — the next save is rejected against the old one.
+//
+// 4. **Field allowlists are the contract on both sides.** TC_LESSON_FIELDS /
+//    TC_BLOCK_FIELDS mirror LESSON_ALLOWED_FIELDS / BLOCK_ALLOWED_FIELDS in
+//    api/training_author.py; a field outside them is dropped and comes back in
+//    `rejected`, which we surface. Checkpoints and quiz-question bodies are refused by
+//    design and are not sent here.
 //
 // Class names come from training_canvas.css and are not invented here.
 
@@ -55,9 +62,21 @@ const TC_ASSETS = [
 	"/assets/erpnext_enhancements/js/training/blocks.js",
 ];
 
-// Mirrors BLOCK_ALLOWED_FIELDS in api/training_author.py. A field sent that the
-// server does not allow is silently dropped (reported back in `rejected`); a field
-// omitted from a whole-table replace is blanked. So this list is the contract.
+// Mirror LESSON_ALLOWED_FIELDS / BLOCK_ALLOWED_FIELDS in api/training_author.py.
+const TC_LESSON_FIELDS = [
+	"lesson_title",
+	"chapter_key",
+	"idx_in_chapter",
+	"estimated_minutes",
+	"summary",
+	"allow_questions",
+	"requires_submission",
+	"has_quiz",
+	"quiz_questions_to_ask",
+	"quiz_pass_score",
+	"quiz_shuffle_questions",
+	"quiz_shuffle_options",
+];
 const TC_BLOCK_FIELDS = [
 	"block_key",
 	"block_type",
@@ -76,21 +95,15 @@ const TC_BLOCK_FIELDS = [
 	"callout_tone",
 ];
 
-// The block types the canvas edits in place. Media/in-video types are authored in
-// the classic builder (they need a signed draft asset URL or the video runtime).
 const TC_TEXT_TYPES = { "Rich Text": true, Callout: true };
 const TC_INTERACTIVE_TYPES = { Checklist: true, Flashcards: true, Accordion: true };
 const TC_MEDIA_TYPES = { Image: true, Video: true, PDF: true, "Downloadable File": true, "Image Hotspots": true };
-
-// The add-block menu: everything the canvas authors here, in offer order.
 const TC_ADDABLE = ["Rich Text", "Callout", "Checklist", "Flashcards", "Accordion", "External Embed", "Divider"];
+const TC_CALLOUT_TONES = [["info", __("Info")], ["tip", __("Tip")], ["warning", __("Warning")], ["danger", __("Danger")]];
 
-const TC_CALLOUT_TONES = [
-	["info", __("Info")],
-	["tip", __("Tip")],
-	["warning", __("Warning")],
-	["danger", __("Danger")],
-];
+// The full change_type strings the DocType stores; publish_version rejects anything else.
+const TC_MINOR = "Minor Edit (keep completions)";
+const TC_MATERIAL = "Material Change (require retake)";
 
 const TC_SAVE_DEBOUNCE_MS = 1200;
 
@@ -102,6 +115,9 @@ class TrainingCanvas {
 		this.reset();
 		this.build_chrome();
 		this.page.set_secondary_action(__("Reload"), () => this.reload());
+		this.page.add_menu_item(__("New draft version"), () => this.new_draft());
+		this.page.add_menu_item(__("Submit for review"), () => this.submit_for_review());
+		this.page.add_menu_item(__("Publish…"), () => this.publish());
 		this.page.add_menu_item(__("Open classic builder"), () => this.open_classic());
 	}
 
@@ -111,10 +127,11 @@ class TrainingCanvas {
 		this.chapters = [];
 		this.lessons = [];
 		this.lesson_name = null;
-		this.dirty = {};
+		this.dirty = { lessons: {}, deleted: [], chapters: null };
 		this.removed_blocks = {};
 		this._saving = false;
 		this._conflict = false;
+		this._temp = 0;
 		clearTimeout(this._save_timer);
 	}
 
@@ -124,39 +141,47 @@ class TrainingCanvas {
 		this.$app = $(`
 			<div class="tc-app">
 				<div class="tc-bar">
-					<select class="tc-lessons form-control" aria-label="${__("Lesson")}"></select>
+					<button class="tc-icon tc-rail-toggle" title="${__("Lessons")}" aria-label="${__("Toggle lessons")}">☰</button>
+					<span class="tc-course-name"></span>
 					<span class="tc-spacer"></span>
 					<span class="tc-status" role="status" aria-live="polite">
 						<span class="tc-pip"></span><span class="tc-status-text">${__("Saved")}</span>
 					</span>
+					<button class="btn btn-default btn-sm tc-lessonset">⚙ ${__("Lesson")}</button>
 					<button class="btn btn-default btn-sm tc-classic">${__("Classic builder")}</button>
 				</div>
 				<div class="tc-rt-toolbar" hidden></div>
-				<div class="tc-scroll">
-					<div class="tc-sheet">
-						<div class="tc-eyebrow"></div>
-						<h1 class="tc-title" contenteditable="false" spellcheck="false"></h1>
-						<div class="tr-shell"><div class="tc-blocks"></div></div>
+				<div class="tc-main">
+					<aside class="tc-rail"></aside>
+					<div class="tc-scroll">
+						<div class="tc-sheet">
+							<div class="tc-lessonsettings" hidden></div>
+							<div class="tc-eyebrow"></div>
+							<h1 class="tc-title" contenteditable="false" spellcheck="false"></h1>
+							<div class="tr-shell"><div class="tc-blocks"></div></div>
+						</div>
 					</div>
 				</div>
 			</div>
 		`).appendTo(this.$body);
 
-		this.$lessons = this.$app.find(".tc-lessons");
+		this.$rail = this.$app.find(".tc-rail");
 		this.$status = this.$app.find(".tc-status");
 		this.$sheet = this.$app.find(".tc-sheet");
 		this.$title = this.$app.find(".tc-title");
 		this.$blocks = this.$app.find(".tc-blocks");
+		this.$lessonset = this.$app.find(".tc-lessonsettings");
 		this.build_rt_toolbar(this.$app.find(".tc-rt-toolbar"));
 
-		this.$lessons.on("change", () => this.select_lesson(this.$lessons.val()));
 		this.$app.find(".tc-classic").on("click", () => this.open_classic());
+		this.$app.find(".tc-rail-toggle").on("click", () => this.$app.toggleClass("is-rail-collapsed"));
+		this.$app.find(".tc-lessonset").on("click", () => this.toggle_lesson_settings());
 		this.$title.on("input", () => {
 			const lesson = this.current_lesson();
 			if (!lesson || !this.editable()) return;
 			lesson.lesson_title = this.$title.text();
 			this.dirty_lesson(lesson).lesson_title = lesson.lesson_title;
-			this.$lessons.find(`option[value="${lesson.name}"]`).text(lesson.lesson_title || __("Untitled lesson"));
+			this.render_rail();
 			this.mark_dirty();
 		});
 	}
@@ -194,12 +219,12 @@ class TrainingCanvas {
 	load_assets() {
 		if (this._assets) return this._assets;
 		const version = (frappe.boot.versions && frappe.boot.versions.erpnext_enhancements) || "0";
-		this._assets = Promise.all(
-			TC_ASSETS.map((path) => tc_load_asset(path + "?v=" + encodeURIComponent(version)))
-		).catch((error) => {
-			this._assets = null;
-			throw error;
-		});
+		this._assets = Promise.all(TC_ASSETS.map((path) => tc_load_asset(path + "?v=" + encodeURIComponent(version)))).catch(
+			(error) => {
+				this._assets = null;
+				throw error;
+			}
+		);
 		return this._assets;
 	}
 
@@ -207,10 +232,7 @@ class TrainingCanvas {
 		this.$blocks.html(`<div class="tc-empty">${__("Loading…")}</div>`);
 		Promise.all([
 			this.load_assets(),
-			frappe.call({
-				method: "erpnext_enhancements.api.training_author.get_builder_bootstrap",
-				args: { course },
-			}),
+			frappe.call({ method: "erpnext_enhancements.api.training_author.get_builder_bootstrap", args: { course } }),
 		])
 			.then(([, r]) => {
 				this.apply_bootstrap((r && r.message) || {});
@@ -239,7 +261,7 @@ class TrainingCanvas {
 	}
 
 	lesson(name) {
-		return this.lessons.find((l) => l.name === name) || null;
+		return this.lessons.find((l) => (l.name || l.__temp) === name) || null;
 	}
 
 	current_lesson() {
@@ -255,23 +277,20 @@ class TrainingCanvas {
 		if (!this.course) return this.render_course_picker();
 		if (!this.version) return this.render_no_draft();
 
-		this.$app.find(".tc-eyebrow").text(this.course.course_title || this.course.name || "");
-		this.$lessons.empty();
-		this.lessons.forEach((lesson) => {
-			$("<option></option>")
-				.attr("value", lesson.name)
-				.text(lesson.lesson_title || __("Untitled lesson"))
-				.appendTo(this.$lessons);
-		});
-		this.$lessons.val(this.lesson_name || "");
+		this.$app.find(".tc-course-name").text(this.course.course_title || this.course.name || "");
+		this.$app.find(".tc-eyebrow").text(this.course.course_title || "");
+		this.$app.toggleClass("is-readonly", !this.editable());
 		this.$title.attr("contenteditable", this.editable() ? "true" : "false");
+		this.render_rail();
 		this.render_sheet();
+		if (!this.$lessonset.prop("hidden")) this.render_lesson_settings();
 		this.paint_status(this.has_dirty() ? "dirty" : "saved");
 	}
 
 	render_course_picker() {
-		this.$app.find(".tc-eyebrow").text("");
+		this.$app.find(".tc-course-name").text("");
 		this.$title.text(__("Training Canvas"));
+		this.$rail.empty();
 		this.$blocks.html(
 			`<div class="tc-empty"><h2>${__("Open a course to edit")}</h2>${__(
 				"Open a Training Course and choose Edit on the canvas, or add ?course=… to the URL."
@@ -280,18 +299,255 @@ class TrainingCanvas {
 	}
 
 	render_no_draft() {
-		this.$app.find(".tc-eyebrow").text(this.course.course_title || "");
+		this.$app.find(".tc-course-name").text(this.course.course_title || "");
 		this.$title.text("");
+		this.$rail.empty();
 		this.$blocks.html(
 			`<div class="tc-empty"><h2>${__("No open draft")}</h2>${__(
-				"This course has no draft version open for editing. Create one in the classic builder, then come back to the canvas."
-			)}<br><button class="btn btn-primary btn-sm tc-open-classic" style="margin-top:12px">${__(
-				"Open classic builder"
+				"This course has no draft version open for editing. Raise one to start editing."
+			)}<br><button class="btn btn-primary btn-sm tc-raise" style="margin-top:12px">${__(
+				"New draft version"
 			)}</button></div>`
 		);
-		this.$blocks.find(".tc-open-classic").on("click", () => this.open_classic());
+		this.$blocks.find(".tc-raise").on("click", () => this.new_draft());
 	}
 
+	// ------------------------------------------------------------ lesson rail
+	render_rail() {
+		this.$rail.empty();
+		const $add = $(`<button class="tc-rail-add btn btn-default btn-sm">+ ${__("Lesson")}</button>`);
+		$add.on("click", () => this.add_lesson());
+		if (!this.editable()) $add.attr("disabled", "disabled");
+
+		const $list = $('<div class="tc-rail-list"></div>');
+		const byChapter = {};
+		this.lessons.forEach((l) => {
+			const key = l.chapter_key || "";
+			(byChapter[key] = byChapter[key] || []).push(l);
+		});
+		const order = this.chapters.map((c) => c.chapter_key).concat([""]);
+		const seen = {};
+		order.forEach((key) => {
+			if (seen[key] || !byChapter[key]) return;
+			seen[key] = true;
+			const chapter = this.chapters.find((c) => c.chapter_key === key);
+			const label = chapter ? chapter.chapter_title : key ? key : __("Unfiled");
+			$('<div class="tc-rail-chapter"></div>').text(label).appendTo($list);
+			byChapter[key].forEach((lesson) => $list.append(this.lesson_row(lesson)));
+		});
+
+		this.$rail.append($add, $list);
+		if (window.Sortable && this.editable()) {
+			Sortable.create($list[0], {
+				handle: ".tc-rail-title",
+				draggable: ".tc-rail-row",
+				onEnd: () => this.commit_lesson_order($list),
+			});
+		}
+	}
+
+	lesson_row(lesson) {
+		const id = lesson.name || lesson.__temp;
+		const $row = $(`
+			<div class="tc-rail-row ${id === this.lesson_name ? "is-current" : ""}" data-lesson="${frappe.utils.escape_html(id)}">
+				<span class="tc-rail-title"></span>
+				<button class="tc-rail-del" title="${__("Delete lesson")}" aria-label="${__("Delete lesson")}">🗑</button>
+			</div>
+		`);
+		$row.find(".tc-rail-title").text(lesson.lesson_title || __("Untitled lesson"));
+		$row.on("click", (e) => {
+			if ($(e.target).closest(".tc-rail-del").length) return;
+			this.select_lesson(id);
+		});
+		$row.find(".tc-rail-del").on("click", () => this.remove_lesson(lesson));
+		if (!this.editable()) $row.find(".tc-rail-del").attr("hidden", "hidden");
+		return $row;
+	}
+
+	add_lesson() {
+		if (!this.editable()) return;
+		this.save(); // flush the current lesson's edits before creating a new one
+		const lesson = {
+			__temp: "new-" + ++this._temp,
+			lesson_title: __("New lesson"),
+			chapter_key: (this.current_lesson() || {}).chapter_key || (this.chapters[0] || {}).chapter_key || "",
+			blocks: [],
+			quiz: [],
+			checkpoints: [],
+		};
+		this.lessons.push(lesson);
+		const patch = this.dirty_lesson(lesson);
+		patch.lesson_title = lesson.lesson_title;
+		patch.chapter_key = lesson.chapter_key;
+		this.lesson_name = lesson.__temp;
+		this.mark_dirty();
+		this.render();
+	}
+
+	remove_lesson(lesson) {
+		if (!this.editable()) return;
+		frappe.confirm(__("Delete this lesson and everything in it?"), () => {
+			this.lessons = this.lessons.filter((l) => l !== lesson);
+			if (lesson.name) this.dirty.deleted.push(lesson.name);
+			delete this.dirty.lessons[lesson.name || lesson.__temp];
+			if (this.lesson_name === (lesson.name || lesson.__temp)) {
+				this.lesson_name = this.lessons.length ? this.lessons[0].name || this.lessons[0].__temp : null;
+			}
+			this.mark_dirty();
+			this.render();
+		});
+	}
+
+	commit_lesson_order($list) {
+		if (!this.editable()) return;
+		const order = $list.find(".tc-rail-row").map((_, el) => $(el).attr("data-lesson")).get();
+		// Reorder the in-memory list to match, then persist through the dedicated
+		// endpoint (it renumbers idx_in_chapter without churning the lock token).
+		this.lessons.sort((a, b) => order.indexOf(a.name || a.__temp) - order.indexOf(b.name || b.__temp));
+		const names = this.lessons.map((l) => l.name).filter(Boolean);
+		frappe
+			.call({
+				method: "erpnext_enhancements.api.training_author.reorder_lessons",
+				args: { course_version: this.version.name, order: JSON.stringify(names) },
+			})
+			.then(() => frappe.show_alert({ message: __("Lesson order saved."), indicator: "green" }, 3))
+			.catch(() => this.render_rail());
+	}
+
+	// -------------------------------------------------------- lesson settings
+	toggle_lesson_settings() {
+		if (!this.$lessonset.prop("hidden")) return this.$lessonset.attr("hidden", "hidden");
+		this.$lessonset.removeAttr("hidden");
+		this.render_lesson_settings();
+	}
+
+	render_lesson_settings() {
+		const lesson = this.current_lesson();
+		this.$lessonset.empty();
+		if (!lesson) return;
+		const ed = this.editable();
+		const field = (label, node) =>
+			$('<label class="tc-set"></label>').append($("<span></span>").text(label), node).appendTo(this.$lessonset);
+		const num = (val) => (Number.isFinite(Number(val)) ? Number(val) : 0);
+
+		$('<div class="tc-lessonset-head"></div>').text(__("Lesson settings")).appendTo(this.$lessonset);
+
+		const $summary = $('<textarea class="form-control" rows="2"></textarea>').val(lesson.summary || "");
+		$summary.on("input", () => this.set_lesson_field(lesson, "summary", $summary.val()));
+		field(__("Summary"), $summary);
+
+		if (this.chapters.length) {
+			const $ch = $('<select class="form-control"></select>');
+			$('<option value=""></option>').text(__("Unfiled")).appendTo($ch);
+			this.chapters.forEach((c) => $("<option></option>").attr("value", c.chapter_key).text(c.chapter_title).appendTo($ch));
+			$ch.val(lesson.chapter_key || "");
+			$ch.on("change", () => { this.set_lesson_field(lesson, "chapter_key", $ch.val()); this.render_rail(); });
+			field(__("Chapter"), $ch);
+		}
+
+		const $min = $('<input type="number" min="0" class="form-control" />').val(num(lesson.estimated_minutes));
+		$min.on("input", () => this.set_lesson_field(lesson, "estimated_minutes", num($min.val())));
+		field(__("Estimated minutes"), $min);
+
+		const check = (labelText, fieldName) => {
+			const $c = $('<input type="checkbox" />').prop("checked", !!num(lesson[fieldName]));
+			$c.on("change", () => this.set_lesson_field(lesson, fieldName, $c.prop("checked") ? 1 : 0));
+			field(labelText, $c);
+			return $c;
+		};
+		check(__("Allow learner questions"), "allow_questions");
+		check(__("Require a work submission"), "requires_submission");
+		const $quiz = check(__("End-of-lesson quiz"), "has_quiz");
+
+		const $quizbox = $('<div class="tc-quizset"></div>');
+		const paintQuiz = () => {
+			$quizbox.toggle(!!num(lesson.has_quiz));
+		};
+		const qnum = (label, fieldName) => {
+			const $n = $('<input type="number" min="0" class="form-control" />').val(num(lesson[fieldName]));
+			$n.on("input", () => this.set_lesson_field(lesson, fieldName, num($n.val())));
+			$('<label class="tc-set"></label>').append($("<span></span>").text(label), $n).appendTo($quizbox);
+		};
+		qnum(__("Questions to ask"), "quiz_questions_to_ask");
+		qnum(__("Pass score (%)"), "quiz_pass_score");
+		const qcheck = (label, fieldName) => {
+			const $c = $('<input type="checkbox" />').prop("checked", !!num(lesson[fieldName]));
+			$c.on("change", () => this.set_lesson_field(lesson, fieldName, $c.prop("checked") ? 1 : 0));
+			$('<label class="tc-set"></label>').append($("<span></span>").text(label), $c).appendTo($quizbox);
+		};
+		qcheck(__("Shuffle questions"), "quiz_shuffle_questions");
+		qcheck(__("Shuffle options"), "quiz_shuffle_options");
+		this.$lessonset.append($quizbox);
+		$quiz.on("change", paintQuiz);
+		paintQuiz();
+
+		$('<div class="tc-hint"></div>')
+			.html(__("Quiz questions themselves, and in-video checkpoints, are edited in the classic builder."))
+			.appendTo(this.$lessonset);
+
+		if (!ed) this.$lessonset.find("input, textarea, select").attr("disabled", "disabled");
+	}
+
+	set_lesson_field(lesson, field, value) {
+		if (!this.editable() || TC_LESSON_FIELDS.indexOf(field) === -1) return;
+		lesson[field] = value;
+		this.dirty_lesson(lesson)[field] = value;
+		this.mark_dirty();
+	}
+
+	// ---------------------------------------------------------- lifecycle
+	new_draft() {
+		if (!this.course) return;
+		this.save();
+		frappe.confirm(__("Raise a new draft version to edit? It copies the live content."), () => {
+			frappe
+				.call({ method: "erpnext_enhancements.api.training_author.create_draft_version", args: { course: this.course.name } })
+				.then(() => this.reload())
+				.catch((e) => frappe.msgprint({ message: (e && e.message) || __("Could not create a draft."), indicator: "red" }));
+		});
+	}
+
+	submit_for_review() {
+		if (!this.version) return;
+		this.save();
+		frappe
+			.call({ method: "erpnext_enhancements.api.training_author.submit_for_review", args: { course_version: this.version.name } })
+			.then(() => { frappe.show_alert({ message: __("Submitted for review."), indicator: "green" }, 4); this.reload(); })
+			.catch((e) => frappe.msgprint({ message: (e && e.message) || __("Could not submit."), indicator: "red" }));
+	}
+
+	publish() {
+		if (!this.version) return;
+		this.save();
+		const dialog = new frappe.ui.Dialog({
+			title: __("Publish this version"),
+			fields: [
+				{
+					fieldname: "change_type",
+					label: __("Change type"),
+					fieldtype: "Select",
+					options: [TC_MINOR, TC_MATERIAL].join("\n"),
+					default: TC_MINOR,
+					reqd: 1,
+				},
+				{ fieldname: "release_notes", label: __("Release notes"), fieldtype: "Small Text" },
+			],
+			primary_action_label: __("Publish"),
+			primary_action: (values) => {
+				dialog.hide();
+				frappe
+					.call({
+						method: "erpnext_enhancements.api.training_author.publish_version",
+						args: { course_version: this.version.name, change_type: values.change_type, release_notes: values.release_notes || "" },
+					})
+					.then(() => { frappe.show_alert({ message: __("Published."), indicator: "green" }, 4); this.reload(); })
+					.catch((e) => frappe.msgprint({ message: (e && e.message) || __("Could not publish."), indicator: "red" }));
+			},
+		});
+		dialog.show();
+	}
+
+	// --------------------------------------------------------------- sheet
 	render_sheet() {
 		const lesson = this.current_lesson();
 		this.$title.text(lesson ? lesson.lesson_title || "" : "");
@@ -310,12 +566,10 @@ class TrainingCanvas {
 		});
 	}
 
-	// A partial ctx: translate only. No transport/mediaUrl.
 	render_ctx() {
 		return { t: (text) => __(text) };
 	}
 
-	// edit shape -> learner render shape (mirrors training_author._split_lesson).
 	to_render_block(block) {
 		return Object.assign(
 			{
@@ -337,7 +591,6 @@ class TrainingCanvas {
 		);
 	}
 
-	// Mirrors training_author._augment_interactive_block.
 	interactive_keys(block) {
 		const type = block.block_type;
 		if (type === "Callout") {
@@ -345,21 +598,15 @@ class TrainingCanvas {
 			return ["tip", "warning", "danger", "info"].indexOf(tone) !== -1 ? { tone } : {};
 		}
 		const data = this.block_data(block);
-		if (type === "Checklist") {
-			return { items: (data.items || []).map((x) => String(x)).filter((x) => x.trim()) };
-		}
+		if (type === "Checklist") return { items: (data.items || []).map((x) => String(x)).filter((x) => x.trim()) };
 		if (type === "Flashcards") {
 			return {
-				cards: (data.cards || [])
-					.filter((c) => c && typeof c === "object")
-					.map((c) => ({ front: String(c.front || ""), back: String(c.back || "") })),
+				cards: (data.cards || []).filter((c) => c && typeof c === "object").map((c) => ({ front: String(c.front || ""), back: String(c.back || "") })),
 			};
 		}
 		if (type === "Accordion") {
 			return {
-				panels: (data.panels || [])
-					.filter((p) => p && typeof p === "object")
-					.map((p) => ({ title: String(p.title || ""), body: frappe.utils.xss_sanitise(String(p.body || "")) })),
+				panels: (data.panels || []).filter((p) => p && typeof p === "object").map((p) => ({ title: String(p.title || ""), body: frappe.utils.xss_sanitise(String(p.body || "")) })),
 			};
 		}
 		return {};
@@ -375,9 +622,8 @@ class TrainingCanvas {
 
 	// ------------------------------------------------------- block wrapper
 	block_wrap(lesson, block) {
-		const removed = !!this.removed_blocks[block.block_key];
 		const $wrap = $(`
-			<div class="tc-blockwrap ${removed ? "is-removed" : ""}" data-block-key="${frappe.utils.escape_html(block.block_key || "")}">
+			<div class="tc-blockwrap" data-block-key="${frappe.utils.escape_html(block.block_key || "")}">
 				<div class="tc-blocktools">
 					<button class="tc-tool" data-act="up" title="${__("Move up")}" aria-label="${__("Move up")}">↑</button>
 					<button class="tc-tool" data-act="down" title="${__("Move down")}" aria-label="${__("Move down")}">↓</button>
@@ -386,42 +632,26 @@ class TrainingCanvas {
 				</div>
 				<div class="tc-blockmount"></div>
 				<div class="tc-blocksettings" hidden></div>
-				<div class="tc-removed-note">${__("Removed — saved when the draft saves.")}
-					<button class="tc-undo">${__("Undo")}</button></div>
 			</div>
 		`);
-
-		const $mount = $wrap.find(".tc-blockmount");
-		this.render_block_editor(lesson, block, $mount);
-
+		this.render_block_editor(lesson, block, $wrap.find(".tc-blockmount"));
 		$wrap.find('[data-act="up"]').on("click", () => this.move_block(lesson, block, -1));
 		$wrap.find('[data-act="down"]').on("click", () => this.move_block(lesson, block, 1));
 		$wrap.find('[data-act="remove"]').on("click", () => this.remove_block(lesson, block));
 		$wrap.find('[data-act="settings"]').on("click", () => this.toggle_settings(lesson, block, $wrap));
-		$wrap.find(".tc-undo").on("click", () => this.restore_block(lesson, block));
 		if (!this.editable()) $wrap.find(".tc-blocktools").attr("hidden", "hidden");
 		return $wrap;
 	}
 
-	// Render each block into its mount, editable where the canvas supports it.
 	render_block_editor(lesson, block, $mount) {
 		$mount.empty();
 		const type = block.block_type;
-
-		if (TC_MEDIA_TYPES[type]) {
-			$mount.append(this.media_placeholder(block));
-			return;
-		}
-		if (type === "External Embed") {
-			$mount.append(this.embed_editor(lesson, block));
-			return;
-		}
+		if (TC_MEDIA_TYPES[type]) return $mount.append(this.media_placeholder(block));
+		if (type === "External Embed") return $mount.append(this.embed_editor(lesson, block));
 		if (TC_INTERACTIVE_TYPES[type]) {
 			$mount.append(this.render_learner(block));
-			$mount.append(this.interactive_editor(lesson, block));
-			return;
+			return $mount.append(this.interactive_editor(lesson, block));
 		}
-		// Rich Text, Callout, Divider — render the learner node and edit it in place.
 		const node = this.render_learner(block);
 		this.wire_inline_edit(lesson, block, node);
 		$mount.append(node);
@@ -438,19 +668,17 @@ class TrainingCanvas {
 		}
 	}
 
-	// Rich Text / Callout: heading + body edited on the render itself.
 	wire_inline_edit(lesson, block, node) {
 		if (!this.editable()) return;
 		node.classList.add("tc-live");
 		const editable = !!TC_TEXT_TYPES[block.block_type];
-
 		const heading = node.querySelector(".tr-block-heading");
-		if (heading) this.make_editable_text(heading, () => {
-			block.heading = heading.textContent;
-			this.dirty_blocks(lesson);
-			this.mark_dirty();
-		});
-
+		if (heading)
+			this.make_editable_text(heading, () => {
+				block.heading = heading.textContent;
+				this.dirty_blocks(lesson);
+				this.mark_dirty();
+			});
 		if (editable) {
 			const body = node.querySelector(".tr-block-body");
 			if (body) {
@@ -472,7 +700,6 @@ class TrainingCanvas {
 		el.setAttribute("contenteditable", "true");
 		el.setAttribute("spellcheck", "false");
 		el.addEventListener("input", oninput);
-		// keep headings single-line: Enter blurs instead of inserting a <div>.
 		el.addEventListener("keydown", (e) => {
 			if (e.key === "Enter") {
 				e.preventDefault();
@@ -487,7 +714,7 @@ class TrainingCanvas {
 		const cmd = (label, title, action) =>
 			$(`<button class="tc-rt-btn" title="${title}" aria-label="${title}">${label}</button>`)
 				.on("mousedown", (e) => {
-					e.preventDefault(); // keep the selection in the editable
+					e.preventDefault();
 					action();
 				})
 				.appendTo($bar);
@@ -511,8 +738,6 @@ class TrainingCanvas {
 	}
 
 	hide_rt_toolbar() {
-		// Deferred: a click on a toolbar button blurs the body first; without the
-		// delay the toolbar vanishes before the command runs.
 		setTimeout(() => {
 			const a = document.activeElement;
 			if (a && (a.classList.contains("tc-rich") || this.$rt[0].contains(a))) return;
@@ -572,14 +797,11 @@ class TrainingCanvas {
 		return $("<div></div>");
 	}
 
-	// A reusable add/remove/edit list bound to one key on block.data.
 	list_editor(lesson, block, key, rowFn) {
 		const data = this.block_data(block);
 		let rows = Array.isArray(data[key]) ? data[key] : [];
-		const $ed = $(`<div class="tc-ied" role="group"><div class="tc-ied-rows"></div>
-			<button class="tc-ied-add">+ ${__("Add")}</button></div>`);
+		const $ed = $(`<div class="tc-ied" role="group"><div class="tc-ied-rows"></div><button class="tc-ied-add">+ ${__("Add")}</button></div>`);
 		const $rows = $ed.find(".tc-ied-rows");
-
 		const commit = (rerender) => {
 			data[key] = rows;
 			block.data = JSON.stringify(data);
@@ -592,16 +814,11 @@ class TrainingCanvas {
 			rows.forEach((val, i) => {
 				const $row = $(`<div class="tc-ied-row"></div>`);
 				rowFn($row, val, (nv) => { rows[i] = nv; commit(false); });
-				$('<button class="tc-ied-del" aria-label="' + __("Remove") + '">✕</button>')
-					.on("click", () => { rows.splice(i, 1); commit(true); })
-					.appendTo($row);
+				$('<button class="tc-ied-del" aria-label="' + __("Remove") + '">✕</button>').on("click", () => { rows.splice(i, 1); commit(true); }).appendTo($row);
 				$rows.append($row);
 			});
 		};
-		$ed.find(".tc-ied-add").on("click", () => {
-			rows = rows.concat([this.blank_row(key)]);
-			commit(true);
-		});
+		$ed.find(".tc-ied-add").on("click", () => { rows = rows.concat([this.blank_row(key)]); commit(true); });
 		if (!this.editable()) $ed.find(".tc-ied-add").attr("disabled", "disabled");
 		paint();
 		return $ed;
@@ -642,8 +859,6 @@ class TrainingCanvas {
 		$row.append($('<div class="tc-panel-row"></div>').append($t, $b));
 	}
 
-	// Re-render one block's mount in place (used after a structural interactive edit
-	// or a tone change), keeping the surrounding wrap and scroll position.
 	rerender_block(lesson, block) {
 		const $wrap = this.$blocks.find(`.tc-blockwrap[data-block-key="${block.block_key}"]`);
 		if (!$wrap.length) return;
@@ -660,35 +875,28 @@ class TrainingCanvas {
 
 	render_settings(lesson, block, $panel) {
 		const field = (label, node) => $('<label class="tc-set"></label>').append($("<span></span>").text(label), node).appendTo($panel);
-
 		if (block.block_type === "Callout") {
 			const $seg = $('<div class="tc-seg"></div>');
 			TC_CALLOUT_TONES.forEach(([val, label]) => {
 				const on = (block.callout_tone || "info").toLowerCase() === val;
-				$(`<button class="${on ? "is-on" : ""}"></button>`)
-					.text(label)
-					.on("click", () => {
-						block.callout_tone = val;
-						this.dirty_blocks(lesson);
-						this.mark_dirty();
-						this.rerender_block(lesson, block);
-						$seg.find("button").removeClass("is-on");
-					})
-					.appendTo($seg);
+				$(`<button class="${on ? "is-on" : ""}"></button>`).text(label).on("click", () => {
+					block.callout_tone = val;
+					this.dirty_blocks(lesson);
+					this.mark_dirty();
+					this.rerender_block(lesson, block);
+					$seg.find("button").removeClass("is-on");
+				}).appendTo($seg);
 			});
 			field(__("Tone"), $seg);
 		}
-
 		if (block.block_type !== "Divider") {
 			const $cap = $('<input type="text" class="form-control" />').val(block.caption || "");
 			$cap.on("input", () => { block.caption = $cap.val(); this.dirty_blocks(lesson); this.mark_dirty(); });
 			field(__("Caption"), $cap);
 		}
-
 		const $req = $('<input type="checkbox" />').prop("checked", !!Number(block.required_for_completion));
 		$req.on("change", () => { block.required_for_completion = $req.prop("checked") ? 1 : 0; this.dirty_blocks(lesson); this.mark_dirty(); });
 		field(__("Required to finish the lesson"), $req);
-
 		if (!this.editable()) $panel.find("input, button").attr("disabled", "disabled");
 	}
 
@@ -704,10 +912,7 @@ class TrainingCanvas {
 		this.$app.find(".tc-menu").remove();
 		const $menu = $('<div class="tc-menu"></div>');
 		TC_ADDABLE.forEach((type) => {
-			$("<button></button>").text(type).on("click", () => {
-				$menu.remove();
-				this.add_block(lesson, type, index);
-			}).appendTo($menu);
+			$("<button></button>").text(type).on("click", () => { $menu.remove(); this.add_block(lesson, type, index); }).appendTo($menu);
 		});
 		$("body").append($menu);
 		const r = $anchor[0].getBoundingClientRect();
@@ -730,7 +935,6 @@ class TrainingCanvas {
 		this.dirty_blocks(lesson);
 		this.mark_dirty();
 		this.render_sheet();
-		// Focus the new block's first editable.
 		const $new = this.$blocks.find(`.tc-blockwrap[data-block-key="${block.block_key}"]`);
 		const el = $new.find('[contenteditable="true"], input, textarea')[0];
 		if (el) el.focus();
@@ -750,23 +954,17 @@ class TrainingCanvas {
 
 	remove_block(lesson, block) {
 		if (!this.editable()) return;
-		this.removed_blocks[block.block_key] = true;
 		lesson.blocks = lesson.blocks.filter((b) => b !== block);
 		this.dirty_blocks(lesson);
 		this.mark_dirty();
 		this.render_sheet();
 	}
 
-	restore_block() {
-		// Blocks are removed from the model immediately (not soft) in this build, so
-		// Undo re-adds by re-rendering the removed marker's block. Kept minimal: the
-		// removed marker only shows for a block still present in the list.
-	}
-
 	// --------------------------------------------------------- dirty + save
 	dirty_lesson(lesson) {
-		this.dirty[lesson.name] = this.dirty[lesson.name] || { name: lesson.name };
-		return this.dirty[lesson.name];
+		const key = lesson.name || lesson.__temp;
+		if (!this.dirty.lessons[key]) this.dirty.lessons[key] = lesson.name ? { name: lesson.name } : { temp_id: lesson.__temp };
+		return this.dirty.lessons[key];
 	}
 
 	dirty_blocks(lesson) {
@@ -780,7 +978,7 @@ class TrainingCanvas {
 	}
 
 	has_dirty() {
-		return Object.keys(this.dirty).length > 0;
+		return Object.keys(this.dirty.lessons).length > 0 || this.dirty.deleted.length > 0 || !!this.dirty.chapters;
 	}
 
 	mark_dirty() {
@@ -793,25 +991,25 @@ class TrainingCanvas {
 		clearTimeout(this._save_timer);
 		if (!this.editable() || this._saving || !this.has_dirty()) return Promise.resolve();
 		const sent = this.dirty;
-		this.dirty = {};
+		this.dirty = { lessons: {}, deleted: [], chapters: null };
 		this._saving = true;
 		this.paint_status("saving");
+		const payload = {
+			lessons: Object.values(sent.lessons),
+			deleted_lessons: sent.deleted.slice(),
+			chapters: sent.chapters || undefined,
+		};
 		return frappe
 			.call({
 				method: "erpnext_enhancements.api.training_author.save_draft_version",
-				args: {
-					course_version: this.version.name,
-					payload: JSON.stringify({ lessons: Object.values(sent) }),
-					modified: this.version.modified,
-				},
+				args: { course_version: this.version.name, payload: JSON.stringify(payload), modified: this.version.modified },
 			})
 			.then((r) => {
 				const state = (r && r.message) || {};
 				this._saving = false;
 				if (state.modified) this.version.modified = state.modified;
-				// New blocks come back with server-owned keys; adopt them so the next
-				// save and the DOM data-block-key attributes stay in step.
-				this.adopt_saved_keys(sent, state);
+				if (state.chapters) this.chapters = state.chapters;
+				this.adopt_created(state.created_lessons);
 				this.report_rejected(state.rejected);
 				this.paint_status(this.has_dirty() ? "dirty" : "saved");
 				if (this.has_dirty()) this.mark_dirty();
@@ -819,9 +1017,12 @@ class TrainingCanvas {
 			})
 			.catch((error) => {
 				this._saving = false;
-				Object.entries(sent).forEach(([name, patch]) => {
-					this.dirty[name] = Object.assign(patch, this.dirty[name] || {});
+				// Put the batch back on top of anything typed since.
+				Object.entries(sent.lessons).forEach(([k, patch]) => {
+					this.dirty.lessons[k] = Object.assign(patch, this.dirty.lessons[k] || {});
 				});
+				this.dirty.deleted = Array.from(new Set(sent.deleted.concat(this.dirty.deleted)));
+				this.dirty.chapters = this.dirty.chapters || sent.chapters || null;
 				const message = String((error && error.message) || "");
 				if (/modif|stale|out of date|newer|conflict/i.test(message)) this.enter_conflict();
 				else this.paint_status("dirty");
@@ -829,11 +1030,16 @@ class TrainingCanvas {
 			});
 	}
 
-	adopt_saved_keys(sent, state) {
-		// The mock/real server may re-key new blocks; when it does not echo a map we
-		// simply reload the lesson names it saved on the next explicit reload. For the
-		// common path (keys preserved), nothing to do.
-		if (!state.saved || !state.saved.length) return;
+	adopt_created(created) {
+		if (!created || !created.length) return;
+		created.forEach(({ temp_id, name }) => {
+			const lesson = this.lessons.find((l) => l.__temp === temp_id);
+			if (!lesson) return;
+			if (this.lesson_name === lesson.__temp) this.lesson_name = name;
+			lesson.name = name;
+			delete lesson.__temp;
+		});
+		this.render_rail();
 	}
 
 	report_rejected(rejected) {
@@ -862,7 +1068,9 @@ class TrainingCanvas {
 		this.save();
 		this.lesson_name = name;
 		this.removed_blocks = {};
+		this.render_rail();
 		this.render_sheet();
+		if (!this.$lessonset.prop("hidden")) this.render_lesson_settings();
 	}
 
 	paint_status(kind) {
