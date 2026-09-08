@@ -275,6 +275,22 @@ not own. Row scoping keys on the `user` column, same as every learner-owned doct
 can finish; v1 collects, grades and shows status but does not yet stop completion.
 Bench-free coverage: [`../tests/test_training_submissions.py`](../tests/test_training_submissions.py).
 
+### Manager analytics (WI-071 Phase H)
+
+A read-only dashboard at **`/training_analytics`** (`www/training_analytics.py` +
+`.html`) for training managers: org-wide completion / overdue / awaiting-sign-off,
+the Phase-F grading backlog, a by-course table with completion bars and average
+score, active-cohort progress, and recent completions. One whitelisted read,
+[`analytics.py`](analytics.py) `get_training_analytics`, is the single source; the
+page renders it server-side with autoescaped Jinja (on the page at first paint, no
+fetch). **Manager-only** — the {System Manager, Training Manager, HR Manager} set
+that is unscoped in [`permissions.py`](permissions.py), because it reports across
+every learner; a non-manager gets a 404. The rollup is Python over guarded `get_all`
+reads, not SQL, on purpose: the *overdue* rule is a predicate (a `<`-on-a-nullable-date
+filter silently sweeps in NULLs), a Cancelled assignment is out of the completion-rate
+denominator, and average score comes from real completions. Bench-free coverage:
+[`../tests/test_training_analytics.py`](../tests/test_training_analytics.py).
+
 ## Video
 
 **Putting a real video in a lesson:**
