@@ -1,0 +1,149 @@
+{
+ "actions": [],
+ "autoname": "TRN-ANN-.#####",
+ "creation": "2026-09-08 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "scope",
+  "course",
+  "batch",
+  "column_break_head",
+  "published",
+  "pinned",
+  "posted_on",
+  "expires_on",
+  "body_section",
+  "body"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "default": "All Learners",
+   "description": "Who sees it: everyone with training, or only the learners of one course or one batch.",
+   "fieldname": "scope",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Scope",
+   "options": "All Learners\nCourse\nBatch",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.scope==\"Course\"",
+   "fieldname": "course",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Course",
+   "options": "Training Course"
+  },
+  {
+   "depends_on": "eval:doc.scope==\"Batch\"",
+   "fieldname": "batch",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Batch",
+   "options": "Training Batch"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "Untick to keep it as a draft — only published announcements reach learners.",
+   "fieldname": "published",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Published"
+  },
+  {
+   "default": "0",
+   "description": "Pinned announcements sort to the top of the learner's home.",
+   "fieldname": "pinned",
+   "fieldtype": "Check",
+   "label": "Pinned"
+  },
+  {
+   "description": "When it was posted. Set on first save; used to sort newest first.",
+   "fieldname": "posted_on",
+   "fieldtype": "Datetime",
+   "label": "Posted On",
+   "read_only": 1
+  },
+  {
+   "description": "Optional. After this, the announcement stops showing to learners.",
+   "fieldname": "expires_on",
+   "fieldtype": "Datetime",
+   "label": "Expires On"
+  },
+  {
+   "fieldname": "body_section",
+   "fieldtype": "Section Break",
+   "label": "Message"
+  },
+  {
+   "description": "The announcement itself. Plain text — shown to learners as written (line breaks kept).",
+   "fieldname": "body",
+   "fieldtype": "Text",
+   "label": "Body",
+   "reqd": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-08 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Announcement",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Author",
+   "write": 1
+  }
+ ],
+ "search_fields": "title,scope",
+ "sort_field": "posted_on",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}

@@ -481,6 +481,9 @@ def get_learner_bootstrap():
         # Additive: practical evaluations booked for this learner (WI-071 Phase C).
         # None (doctype not migrated) or [] (none booked) draws nothing.
         "evaluations": _learner_evaluations(user),
+        # Additive: published announcements relevant to this learner (WI-071 Phase D).
+        # None (doctype not migrated) or [] (none) draws nothing.
+        "announcements": _learner_announcements(user),
         # Every key here is read by the player, and every setting the player reads
         # is here. Both halves of that sentence were false: `max_playback_rate` and
         # `doc_min_dwell_seconds` were read by video.js and blocks.js and sent by
@@ -1669,6 +1672,54 @@ def _learner_evaluations(user):
             "location": r.location or "",
         }
         for r in rows
+    ]
+
+
+def _learner_announcements(user):
+    """Published, unexpired announcements relevant to this learner (WI-071 Phase D).
+
+    ``None`` when the doctype has not migrated; ``[]`` when there are none. Relevance
+    is the union of: ``All Learners``; a ``Course`` the learner is or was assigned; a
+    ``Batch`` they are a member of. Each slice is queried on its own scope so a course
+    or batch announcement never reaches somebody outside it. Pinned first, then
+    newest. The body is plain text and is rendered by the player with ``textContent``,
+    so no scope leaks and no markup runs.
+    """
+    if not frappe.db.exists("DocType", "Training Announcement"):
+        return None
+
+    now = str(now_datetime())
+    fields = ["name", "title", "body", "scope", "pinned", "posted_on", "expires_on"]
+    seen = {}
+
+    def collect(filters):
+        for row in frappe.get_all(
+            "Training Announcement", filters=filters, fields=fields, order_by="pinned desc, posted_on desc", limit=30
+        ):
+            if row.expires_on and str(row.expires_on) < now:
+                continue
+            seen[row.name] = row
+
+    collect({"published": 1, "scope": "All Learners"})
+    course_names = frappe.get_all("Training Assignment", filters={"user": user}, pluck="course", distinct=True)
+    if course_names:
+        collect({"published": 1, "scope": "Course", "course": ["in", list(set(course_names))]})
+    batch_names = frappe.get_all("Training Batch Member", filters={"learner": user}, pluck="parent")
+    if batch_names:
+        collect({"published": 1, "scope": "Batch", "batch": ["in", list(set(batch_names))]})
+
+    if not seen:
+        return []
+    rows = sorted(seen.values(), key=lambda r: (cint(r.pinned), str(r.posted_on or "")), reverse=True)
+    return [
+        {
+            "name": r.name,
+            "title": r.title,
+            "body": r.body or "",
+            "pinned": cint(r.pinned),
+            "posted_on": str(r.posted_on or ""),
+        }
+        for r in rows[:10]
     ]
 
 

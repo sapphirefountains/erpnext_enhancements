@@ -604,6 +604,11 @@
 		function renderCatalog() {
 			head.appendChild(el("h1", "tr-title", t("Your training")));
 
+			// Announcements first — a pinned notice is the most important thing on the
+			// page. Author/manager-posted, scoped to everyone, a course, or a batch.
+			var announcements = announcementBlock();
+			if (announcements) main.appendChild(announcements);
+
 			// The learner's own points / streak / badges, when they have earned any.
 			// Server-fed on the boot payload; hidden for a clean slate rather than
 			// shown as a row of zeros (see youStrip).
@@ -1740,6 +1745,25 @@
 				if (evaluation.scheduled_on) bits.push(fmt(t("on {0}"), [evaluation.scheduled_on]));
 				if (evaluation.location) bits.push(evaluation.location);
 				row.appendChild(el("div", "tr-eval-meta", bits.join(" · ")));
+				section.appendChild(row);
+			});
+			return section;
+		}
+
+		// Announcements relevant to this learner (b.announcements) — everyone's, their
+		// courses', their batches'. Plain text via textContent (never innerHTML), so a
+		// body cannot smuggle markup; pinned ones come first from the server. Empty
+		// draws nothing.
+		function announcementBlock() {
+			var announcements = b.announcements;
+			if (!announcements || !announcements.length) return null;
+			var section = el("section", "tr-announcements");
+			section.appendChild(el("h2", "tr-section-title", t("Announcements")));
+			announcements.forEach(function (announcement) {
+				var row = el("div", "tr-announcement");
+				if (announcement.pinned) row.classList.add("is-pinned");
+				row.appendChild(el("div", "tr-announcement-title", announcement.title));
+				row.appendChild(el("div", "tr-announcement-body", announcement.body));
 				section.appendChild(row);
 			});
 			return section;
