@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.376.1] - 2026-09-08
+
+### Fixed
+
+- **The "Attach from Google Drive" button was a `▲` character, not a logo.** It was a placeholder
+  that shipped. It is now Google's actual Drive mark — the **2026 gradient refresh**, which is the
+  current one: Google replaced the flat four-colour Workspace icons in May 2026, the first change
+  since 2020, so even a faithful copy of the old logo would have been out of date.
+
+  The artwork is Google's own file, taken verbatim from
+  `gstatic.com/images/branding/productlogos/drive_2026/v2/web/192px.svg`. It is **not** a
+  recreation, and that is deliberate twice over: Google's brand terms forbid altering the mark,
+  and a gradient logo redrawn from memory is exactly the kind of thing that looks subtly wrong
+  forever. The only two edits are mechanical and non-visual — a `viewBox`, which the original
+  lacks and without which it cannot scale below 192px, and namespaced ids, because the widget's
+  DOM is the whole Desk and `id="a"` through `id="d"` collide there.
+
+  Vendored rather than hot-linked from `gstatic`: the composer should not need a third-party
+  request to draw its own button, and the picker already fails soft if Google is unreachable.
+
+  Defined **once** as an SVG `<symbol>` in the panel and referenced by `<use>` from all three
+  places it appears (the composer button, a staged chip, and the pill under a sent turn).
+  Inlining it three times would duplicate the mask and the three gradients *and* their ids —
+  and SVG resolves `url(#id)` against the first match in the document, so removing whichever chip
+  happened to be first would have silently broken the fills on every other one.
+
+  The pill renderer keeps its filename in `textContent` and takes the icon as a separate node, so
+  the innerHTML-free rule that renderer exists to hold is untouched. The node is built with
+  `createElementNS` — `createElement("svg")` returns an `HTMLUnknownElement`, which renders
+  nothing and reports no error.
+
+  Verified by rendering the shipped markup and the real stylesheet at every size the widget uses,
+  in both Desk themes.
+
 ## [1.376.0] - 2026-09-08
 
 ### Changed
