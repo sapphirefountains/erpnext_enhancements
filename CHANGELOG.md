@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.374.1] - 2026-09-08
+
+### Fixed
+
+- **The builder's "🔱 Triton" button prefilled Triton's *greeting* into the author's own input box.**
+  `window.SapphireTriton.ask` drops its prompt into the user's message box and never auto-sends (the
+  widget's guard), so the text has to read in the first person. It was phrased as Triton's opener ("Do you
+  need help WITH a training or with BUILDING one?"), which read backwards sitting in the author's box.
+  Reworded to a first-person authoring message that still steers Triton to `draft_course_spec` /
+  `author_training_course` and the review gate.
+
 ## [1.374.0] - 2026-09-08
 
 ### Changed
