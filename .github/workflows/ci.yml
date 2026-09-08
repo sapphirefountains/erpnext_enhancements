@@ -666,6 +666,26 @@ jobs:
       # carry a reason, and a third test prunes them when they stop being true.
       - name: Training boundary contract (every reply key has a reader, and vice versa)
         run: python -m unittest erpnext_enhancements.tests.test_training_boundary_contract -v
+      # WI-071 LMS-expansion suites. Each is its OWN step: every one installs its own
+      # `frappe` stub in setUpModule, and sharing a process cross-talks (CLAUDE.md).
+      # AI course authoring -- the Course Spec validator + the deterministic
+      # spec->builder-payload mapping (every AI question flagged unreviewed).
+      - name: Training AI course authoring (spec validator + materializer)
+        run: python -m unittest erpnext_enhancements.tests.test_training_course_authoring -v
+      # Batches -- the assignment fan-out on Active + the employee fetch fix.
+      - name: Training batches (fan-out + employee resolution)
+        run: python -m unittest erpnext_enhancements.tests.test_training_batch -v
+      # Live classes -- the join-URL scheme guard + the learner surface scoping.
+      - name: Training live classes (join-url guard + surface)
+        run: python -m unittest erpnext_enhancements.tests.test_training_live_classes -v
+      # Scheduled evaluations -- record_evaluation feeds the existing sign-off engine
+      # (no second attestation path), and the permission guards around it.
+      - name: Training scheduled evaluations (feeds the sign-off)
+        run: python -m unittest erpnext_enhancements.tests.test_training_evaluations -v
+      # Announcements -- scope validation + the per-scope learner surface (a scoped
+      # notice never leaks outside its course/batch).
+      - name: Training announcements (scope + surface)
+        run: python -m unittest erpnext_enhancements.tests.test_training_announcements -v
       # The kiosk service worker is registered at ROOT scope, so what it answers
       # for is every page's problem. It used to serve the whole app's assets
       # cache-first with ignoreSearch, which froze JavaScript across the site for

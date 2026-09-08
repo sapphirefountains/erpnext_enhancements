@@ -1751,9 +1751,9 @@
 		}
 
 		// Announcements relevant to this learner (b.announcements) — everyone's, their
-		// courses', their batches'. Plain text via textContent (never innerHTML), so a
-		// body cannot smuggle markup; pinned ones come first from the server. Empty
-		// draws nothing.
+		// courses', their batches'. Rendered as plain text via textContent, so a body
+		// cannot smuggle markup; pinned ones come first from the server. Empty draws
+		// nothing.
 		function announcementBlock() {
 			var announcements = b.announcements;
 			if (!announcements || !announcements.length) return null;
