@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.376.0] - 2026-09-08
+
+### Changed
+
+- **The learner training player (`/training`) is reskinned to the "Aurora" direction — a dark-first,
+  violet→cyan palette with more motion.** The old sky-blue accent (`#00a0dd`) is replaced everywhere by a
+  violet accent (`#7c3aed` light / `#8b5cf6` dark) and **two** gradient tokens: `--tr-accent-grad`
+  (`#7c3aed → #06b6d4` light; `#a855f7 → #22d3ee` dark) paints the *decorative* hero surfaces that carry no
+  text — every progress fill and the video-coverage meter; and `--tr-cta-grad` (`#7c3aed → #0e7490`, one
+  token, both themes) paints the surfaces that carry a **white label** — the primary CTA and the quiz submit
+  button — with a deepened cyan end so the label clears WCAG AA (≥ 4.5:1) across its whole width. The neutral
+  ground, surfaces, text and borders move with the palette in both schemes, and `--tr-radius` opens from 14px
+  to 16px. Two contrast fixes fell out of a WCAG audit of the new palette: the completion score is a **solid**
+  accent violet (a clipped violet→cyan gradient failed at its cyan end on the light ground), and in-content
+  lesson links get a dedicated `--tr-link` token that is the accent in light and a lighter violet (`#a78bfa`)
+  in dark, where the accent itself sat at 4.14:1 on a surface card. Semantic colours stay literal, as they
+  must: the quiz correct/wrong greens and reds (`#2e9e4f` / `#e03636`), the pass mark, the overdue chip and
+  the badge medal do **not** follow the palette — Aurora's `ok`/`warn` map onto the separate
+  `--tr-ok`/`--tr-warn` tokens (the WI-071 Phase-F submission chips), never onto the answer key.
+- **More motion, all of it `prefers-reduced-motion`-safe.** New: course cards lift and glow (violet-cyan) on
+  hover/focus and dip on press, with the progress fill brightening as the card rises; the primary buttons
+  spring on press and gain a soft focus halo; progress meters now animate from 0 → value with a light sweep
+  crossing the fill (`meter()` writes the width one frame after mount); the catalog "your stats" strip counts
+  up on load (the XP count-up the completion screen already did); the completion mark springs in; and the
+  completion confetti is retuned to Aurora hues (violet / cyan / ok-green). Under reduced motion the cards and
+  buttons keep their colour, glow and halo but do not move, meters and count-ups jump to their final values,
+  and the confetti is skipped — the existing contract that the scripts write the final state directly is kept.
+- **A latent cascade bug is fixed on the way in: the primary CTA was rendering as a plain surface button.**
+  `.tr-button-primary` and `.tr-button-quiet` sit *above* the base `.tr-button` rule in the file, so on equal
+  specificity the base's `background`/`border`/`color` shorthands overrode them entirely — the "primary" CTA
+  had no accent at all, and nothing tests visual override so it went unnoticed. Both are now compounded
+  (`.tr-button.tr-button-primary`) so they outrank the base; player.js always emits the base and the variant
+  together, so the compound selector matches the same elements. Without this the Aurora gradient never reached
+  the most important button.
+- **Both injected fallback stylesheets and the CSS palette stay pinned together.** `quiz.js`'s
+  `ensureStyles()` fallback (used where `player.css` is absent — the authoring preview) is repointed to the
+  Aurora tokens: its `var(--primary,…)` / `var(--text-color,…)` / `var(--border-color,…)` fallbacks now match
+  the new `:root` values, and its selection tints move off sky-blue. Guarded by the existing
+  `test_training_player_css_contract` (class contract + injected-palette parity) — no new `tr-*` classes were
+  added, only new tokens, pseudo-elements and state rules, so the emitted-class contract is unchanged. The
+  desk course builder keeps its own identity and is untouched.
+
 ## [1.375.0] - 2026-09-08
 
 ### Added

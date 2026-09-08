@@ -115,14 +115,29 @@
 	}
 
 	function meter(percent, srLabel) {
+		var target = pct(percent);
 		var wrap = el("div", "tr-meter");
 		wrap.setAttribute("role", "progressbar");
 		wrap.setAttribute("aria-valuemin", "0");
 		wrap.setAttribute("aria-valuemax", "100");
-		wrap.setAttribute("aria-valuenow", String(pct(percent)));
+		wrap.setAttribute("aria-valuenow", String(target));
 		if (srLabel) wrap.setAttribute("aria-label", srLabel);
 		var fill = el("div", "tr-meter-fill");
-		fill.style.width = pct(percent) + "%";
+		// Aurora "meter fill": the bar grows from 0 to its value. It starts empty
+		// and the real width is written one frame later, so the CSS width
+		// transition has two values to interpolate between. Under reduced motion
+		// the final width is set outright and nothing moves. (prefersReduced and
+		// requestAnimationFrame are hoisted/global — safe to call from here.)
+		if (prefersReduced()) {
+			fill.style.width = target + "%";
+		} else {
+			fill.style.width = "0%";
+			requestAnimationFrame(function () {
+				requestAnimationFrame(function () {
+					fill.style.width = target + "%";
+				});
+			});
+		}
 		wrap.appendChild(fill);
 		return wrap;
 	}
@@ -168,7 +183,8 @@
 		var width = (canvas.width = host.clientWidth || 320);
 		var height = (canvas.height = host.clientHeight || 480);
 		var ctx = canvas.getContext("2d");
-		var colors = ["#00a0dd", "#0077b6", "#d99b1f", "#2e9e4f", "#7fe0ff"];
+		// Aurora completion hues: violet, purple, cyan, ok-green, light violet.
+		var colors = ["#8b5cf6", "#a855f7", "#22d3ee", "#34d399", "#c4b5fd"];
 		var pieces = [];
 		for (var i = 0; i < 80; i++) {
 			pieces.push({
@@ -1824,9 +1840,19 @@
 			var badges = intOf(stats.badges_earned);
 			if (!points && !streak && !badges) return null;
 			var row = el("div", "tr-stat-row");
-			row.appendChild(statTile(points, t("Points")));
-			row.appendChild(statTile(streak, streak === 1 ? t("Day") : t("Days")));
-			row.appendChild(statTile(badges, badges === 1 ? t("Badge") : t("Badges")));
+			// Aurora "XP count-up": this strip sits at the top of the catalog, on
+			// screen at load, so each tile counts up once from 0 on render (the same
+			// build-at-0-then-countUp the completion screen uses). countUp writes the
+			// final value outright under reduced motion.
+			[
+				[points, t("Points")],
+				[streak, streak === 1 ? t("Day") : t("Days")],
+				[badges, badges === 1 ? t("Badge") : t("Badges")],
+			].forEach(function (spec) {
+				var tile = statTile(0, spec[1]);
+				row.appendChild(tile);
+				countUp(tile.querySelector(".tr-stat-num"), spec[0], 900);
+			});
 			return row;
 		}
 

@@ -72,46 +72,67 @@
  * colours stay literal elsewhere and never enter this block.
  */
 :root {
-	--tr-bg: #eef2f6;
+	--tr-bg: #f3f2fb;
 	--tr-surface: #ffffff;
-	--tr-surface-alt: #e7edf3;
-	--tr-text: #16202a;
-	/* #55636f clears WCAG AA (4.5:1) on both --tr-bg and --tr-surface; the old
-	   #6c7680 sat at ~4.4:1 and carried every eyebrow, chip and meta line under
-	   it — thin in daylight on a phone, and a contrast failure on a product that
-	   issues compliance certificates. */
-	--tr-muted: #55636f;
-	--tr-border: #dde4ea;
-	--tr-accent: #00a0dd;
-	--tr-accent-soft: #e2f4fc;
+	--tr-surface-alt: #eceaf6;
+	--tr-text: #1a1830;
+	/* #5f6488 clears WCAG AA (4.5:1) on both --tr-bg and --tr-surface; it carries
+	   every eyebrow, chip and meta line under it, so anything thinner is a contrast
+	   failure on a product that issues compliance certificates. */
+	--tr-muted: #5f6488;
+	--tr-border: #e2e0f0;
+	/* Aurora: a violet accent, with a violet→cyan gradient for the hero surfaces
+	   (the primary CTA, progress fills, the completion score). --tr-accent is the
+	   flat fallback for everywhere a gradient will not do — a border, an SVG
+	   stroke, a rgba() tint — and --tr-accent-grad paints the surfaces that carry
+	   the identity. Keep both in step. */
+	--tr-accent: #7c3aed;
+	--tr-accent-grad: linear-gradient(135deg, #7c3aed 0%, #06b6d4 100%);
+	/* A text-safe variant of the gradient for the surfaces that carry WHITE label
+	   text — the primary CTA and the quiz submit button. Its cyan end is deepened
+	   to #0e7490 so white clears WCAG AA (>= 4.5:1, measured 5.36–5.70) across the
+	   whole label; --tr-accent-grad keeps the brighter #06b6d4 for the decorative
+	   meter fills, which carry no text. Theme-independent (white on it is legible on
+	   either ground), so it is declared once here and not redefined in dark. */
+	--tr-cta-grad: linear-gradient(135deg, #7c3aed 0%, #0e7490 100%);
+	--tr-accent-soft: #ede9fe;
 	--tr-accent-text: #ffffff;
+	/* In-content links (lesson prose, callouts). Light is the accent itself; dark
+	   needs a violet lighter than the accent to clear AA on the surface card
+	   (#8b5cf6 sits at 4.14:1 there — just under). See the dark block. */
+	--tr-link: var(--tr-accent);
 	/* Semantic status colours, separate from the brand accent: a "passed" grade and
-	   a "needs rework" one carry meaning the blue accent should not. Used by the
+	   a "needs rework" one carry meaning the violet accent should not. Used by the
 	   work-submission chips (WI-071 Phase F). */
-	--tr-ok: #1a7f4b;
-	--tr-ok-soft: #e4f4ea;
-	--tr-warn: #b25a00;
-	--tr-warn-soft: #fbeed9;
+	--tr-ok: #059669;
+	--tr-ok-soft: #d1fae5;
+	--tr-warn: #d97706;
+	--tr-warn-soft: #fef3c7;
 	--tr-shadow: 0 1px 2px rgba(16, 38, 54, 0.04), 0 6px 16px rgba(16, 38, 54, 0.06);
 	--tr-shadow-lg: 0 12px 32px rgba(12, 34, 54, 0.16);
-	--tr-radius: 14px;
+	--tr-radius: 16px;
 }
 
 @media (prefers-color-scheme: dark) {
 	:root {
-		--tr-bg: #12171d;
-		--tr-surface: #1b232c;
-		--tr-surface-alt: #232d37;
-		--tr-text: #e9eef2;
-		--tr-muted: #98a4af;
-		--tr-border: #2c3742;
-		--tr-accent: #29b6f6;
-		--tr-accent-soft: #103244;
-		--tr-accent-text: #06222f;
-		--tr-ok: #4cc98a;
-		--tr-ok-soft: #12301f;
-		--tr-warn: #e0a458;
-		--tr-warn-soft: #33260f;
+		--tr-bg: #0a0b14;
+		--tr-surface: #161829;
+		--tr-surface-alt: #1e2138;
+		--tr-text: #f0f1fa;
+		--tr-muted: #8b93b8;
+		--tr-border: #292b45;
+		--tr-accent: #8b5cf6;
+		--tr-accent-grad: linear-gradient(135deg, #a855f7 0%, #22d3ee 100%);
+		--tr-accent-soft: #241a40;
+		--tr-accent-text: #ffffff;
+		/* Lighter than the accent so a lesson link clears AA on the surface card
+		   (#a78bfa = 6.45:1 vs #8b5cf6's 4.14:1). --tr-cta-grad is inherited from
+		   :root; it is white-safe on either ground so it needs no dark variant. */
+		--tr-link: #a78bfa;
+		--tr-ok: #34d399;
+		--tr-ok-soft: #0e2e22;
+		--tr-warn: #fbbf24;
+		--tr-warn-soft: #332708;
 		--tr-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.42);
 		--tr-shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.55);
 	}
@@ -185,9 +206,11 @@
 }
 
 /* Links keep the accent rather than the host's #06c, which does not sit in this
-   palette and is close to unreadable on the dark surface. */
+   palette and is close to unreadable on the dark surface. --tr-link is the accent
+   in light and a lighter violet in dark, where the accent itself misses AA on a
+   surface card. */
 .tr-shell a {
-	color: var(--tr-accent);
+	color: var(--tr-link);
 	text-decoration: underline;
 }
 
@@ -629,7 +652,28 @@
 	height: 100%;
 	border-radius: inherit;
 	background: var(--tr-accent);
-	transition: width 240ms ease;
+	background-image: var(--tr-accent-grad);
+	/* Aurora: meter() writes the width one frame after mount, so the fill grows
+	   0 → value; a light highlight sweeps across it once (::after below). Under
+	   reduced motion meter() sets the final width directly and the sweep is off. */
+	transition: width 800ms cubic-bezier(0.22, 1, 0.36, 1);
+	position: relative;
+	overflow: hidden;
+}
+
+/* One-shot highlight that crosses the fill as it grows. Clipped to the fill by
+   its own overflow:hidden, so it reads as light travelling along the bar. */
+.tr-meter-fill::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(100deg, transparent 0%, rgba(255, 255, 255, 0.5) 50%, transparent 100%);
+	transform: translateX(-120%);
+	animation: tr-meter-sweep 900ms ease 0.15s 1;
+}
+
+@keyframes tr-meter-sweep {
+	to { transform: translateX(120%); }
 }
 
 /* --------------------------------------------------------------- utilities */
@@ -651,6 +695,7 @@
 
 @media (prefers-reduced-motion: reduce) {
 	.tr-meter-fill { transition: none; }
+	.tr-meter-fill::after { animation: none; }
 	/* The ring stays as a static "still working" mark. */
 	.tr-loading::before { animation: none; }
 }
@@ -682,17 +727,33 @@
 .tr-block-pdf,
 .tr-block-file { /* the default card is correct for these */ }
 
-/* player.js's button variants. The base .tr-button below already carries the
-   44px floor, the border and the type; these only change emphasis. */
-.tr-button-primary {
+/* player.js's button variants. The base .tr-button carries the 44px floor, the
+   border and the type; these only change emphasis.
+
+   Compounded as .tr-button.<variant> ON PURPOSE. The base .tr-button rule lives
+   in the buttons section far BELOW these, so a single-class .tr-button-primary
+   loses every equal-specificity tie to it — its `background`, `border` and
+   `color` shorthands all reset here to the base's surface values, and the
+   "primary" CTA rendered as a plain surface button (its accent and, once added,
+   its gradient never showed). player.js always emits the base and the variant
+   together (`el(.., "tr-button tr-button-primary")`), so the two-class selector
+   matches the same elements and simply outranks the base instead of racing it. */
+.tr-button.tr-button-primary {
 	border-color: var(--tr-accent);
 	background: var(--tr-accent);
+	/* Aurora: the primary CTA carries the violet→cyan gradient — the text-safe
+	   --tr-cta-grad (deepened cyan end), because this button has a WHITE label and
+	   the brighter --tr-accent-grad cyan fails contrast under it. --tr-accent above
+	   is the flat fallback if the gradient var is ever missing. */
+	background-image: var(--tr-cta-grad);
 	color: var(--tr-accent-text);
 }
 
 /* Back / secondary navigation. Quiet, but still a 44px target — "← All courses"
-   is pressed as often as anything else on the page. */
-.tr-button-quiet {
+   is pressed as often as anything else on the page. Compounded for the same
+   ordering reason as .tr-button-primary above — otherwise the base repaints its
+   transparent background and muted text back to the surface default. */
+.tr-button.tr-button-quiet {
 	border-color: transparent;
 	background: transparent;
 	color: var(--tr-muted);
@@ -763,6 +824,29 @@
 	box-shadow: var(--tr-shadow);
 	/* Clips the cover to the card's rounded top corners. */
 	overflow: hidden;
+	/* Aurora: lift + glow on hover/focus, a small dip on press. */
+	transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+		box-shadow 220ms ease, border-color 220ms ease;
+}
+
+/* focus-within so a keyboard user tabbing onto the card's Resume button gets the
+   same lift a pointer hover does. The glow is the accent-soft tint — barely there
+   in light, a violet bloom on the dark ground. */
+.tr-card:hover,
+.tr-card:focus-within {
+	transform: translateY(-4px);
+	border-color: var(--tr-accent);
+	box-shadow: 0 10px 28px var(--tr-accent-soft), var(--tr-shadow);
+}
+
+.tr-card:active {
+	transform: scale(0.99);
+}
+
+/* The progress fill brightens a touch as the card rises. */
+.tr-card:hover .tr-meter-fill,
+.tr-card:focus-within .tr-meter-fill {
+	filter: brightness(1.12);
 }
 
 .tr-card-cover {
@@ -813,9 +897,9 @@
 /* The shared meter() helper: this card's progress bar and, with a different
    label, the lesson subhead. (It is the renamed .tr-progress.) player.js puts
    role=progressbar and aria-valuenow on the wrapper, so the bar itself carries
-   no text and the fill is written as an inline width. No transition: the fill
-   is set once when the view renders and is never updated in place — animating
-   it would only animate from 0 on first paint. */
+   no text and the fill is written as an inline width. meter() now writes that
+   width one frame after mount, so the fill animates in from 0 (Aurora "meter
+   fill"); the transition and gradient live in the .tr-meter-fill rule above. */
 .tr-meter {
 	height: 8px;
 	border-radius: 999px;
@@ -827,6 +911,7 @@
 	height: 100%;
 	width: 0;
 	background: var(--tr-accent);
+	background-image: var(--tr-accent-grad);
 }
 
 /* Reads out the meter immediately above it, so it is pulled back against the
@@ -1466,9 +1551,25 @@
 	touch-action: manipulation;
 	-webkit-appearance: none;
 	appearance: none;
+	/* Aurora: a spring dip on press and a soft focus halo (below) both ride this. */
+	transition: transform 130ms cubic-bezier(0.34, 1.56, 0.64, 1),
+		filter 130ms ease, box-shadow 200ms ease;
 }
 
-.tr-button:active:not([disabled]):not([aria-disabled="true"]) { filter: brightness(0.94); }
+.tr-button:active:not([disabled]):not([aria-disabled="true"]) {
+	transform: scale(0.96);
+	filter: brightness(0.94);
+}
+
+/* Aurora focus halo: a clear accent ring plus a soft outer glow, so keyboard
+   focus reads on the dark ground. Scoped to the player's own controls. */
+.tr-button:focus-visible,
+.tr-shell a:focus-visible,
+.tr-shell button:focus-visible {
+	outline: 2px solid var(--tr-accent);
+	outline-offset: 2px;
+	box-shadow: 0 0 0 6px var(--tr-accent-soft);
+}
 
 /* An <a> waiting on a signed URL has no href yet, so it is not even focusable:
    aria-disabled is the only signal there is. pointer-events keeps a tap from
@@ -1589,6 +1690,7 @@
    Never set a width here, and never key anything off the local estimate. */
 .tr-video .tr-video-meter-fill {
 	background: var(--tr-accent);
+	background-image: var(--tr-accent-grad);
 	border-radius: 999px;
 	transition: width 240ms ease;
 }
@@ -1909,8 +2011,8 @@
         .tr-rev-head) the real parent is named too. */
 :root .tr-quiz {
 	/* Keep in step with :root — a var cannot reference the name it shadows. */
-	--tr-bg: #eef2f6;
-	--tr-accent: #00a0dd;
+	--tr-bg: #f3f2fb;
+	--tr-accent: #7c3aed;
 	/* The fallback's private names; safe to alias, nothing else reads them. */
 	--tr-fg: var(--tr-text);
 	--tr-muted-c: var(--tr-muted);
@@ -1928,8 +2030,8 @@
 
 @media (prefers-color-scheme: dark) {
 	:root .tr-quiz {
-		--tr-bg: #12171d;
-		--tr-accent: #29b6f6;
+		--tr-bg: #0a0b14;
+		--tr-accent: #8b5cf6;
 	}
 }
 
@@ -2225,6 +2327,8 @@
 	margin-left: 0;
 	border-color: var(--tr-accent);
 	background: var(--tr-accent);
+	/* Text-safe gradient — white label, same reason as .tr-button-primary. */
+	background-image: var(--tr-cta-grad);
 	color: var(--tr-accent-text);
 }
 
@@ -3001,7 +3105,8 @@
 	text-align: center;
 }
 
-/* The finished mark. Literal green, like the quiz verdict and the gate line. */
+/* The finished mark. Literal green, like the quiz verdict and the gate line. It
+   springs in on mount (Aurora completion); reduced motion shows it at rest. */
 .tr-complete-mark {
 	display: flex;
 	align-items: center;
@@ -3015,6 +3120,12 @@
 	font-size: 2.2rem;
 	font-weight: 700;
 	line-height: 1;
+	animation: tr-complete-pop 500ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes tr-complete-pop {
+	from { transform: scale(0.6); opacity: 0; }
+	to { transform: scale(1); opacity: 1; }
 }
 
 .tr-complete-line {
@@ -3022,11 +3133,17 @@
 	color: var(--tr-muted);
 }
 
+/* Aurora: the earned score is the accent violet — solid, not gradient-clipped.
+   A clipped violet→cyan gradient failed contrast at its cyan end on the light
+   ground (2.43:1 as large text), and no single gradient clears both grounds
+   without being theme-aware; a solid accent passes in both (light 5.13:1, dark
+   4.46:1) and the confetti, count-up and mark-pop carry the celebration. */
 .tr-complete-score {
 	font-size: 2.4rem;
 	font-weight: 700;
 	line-height: 1.1;
 	letter-spacing: -0.02em;
+	color: var(--tr-accent);
 }
 
 /* Completion reuses the shared stat tiles; give them room under the score. */
@@ -3238,7 +3355,8 @@
 @media (prefers-reduced-motion: reduce) {
 	.tr-view.is-entering,
 	.tr-video .tr-video-panel,
-	.tr-skel {
+	.tr-skel,
+	.tr-complete-mark {
 		animation: none;
 	}
 
@@ -3246,6 +3364,20 @@
 	.tr-quiz .tr-q-options .tr-opt-mark,
 	.tr-quiz .tr-quiz-dots .tr-dot::after {
 		transition: none;
+	}
+
+	/* Aurora interactions collapse to their static end state: the card and button
+	   keep their hover colour, glow and focus halo but do not move. */
+	.tr-card,
+	.tr-button {
+		transition: none;
+	}
+
+	.tr-card:hover,
+	.tr-card:focus-within,
+	.tr-card:active,
+	.tr-button:active:not([disabled]):not([aria-disabled="true"]) {
+		transform: none;
 	}
 }
 
