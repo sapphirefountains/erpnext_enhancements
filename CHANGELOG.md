@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.377.0] - 2026-09-08
+
+### Fixed
+
+- **The desk Training workspace was stuck on its three-card install default and never picked up the rest of
+  the module.** On prod the `Workspace` row still read Authoring / Learners / Setup (8 links) while the app
+  JSON had grown to six cards — none of the extra cards ever synced. The cause was not permissions or missing
+  doctypes (all present, all readable): Frappe's importer only re-imports a workspace when the file is *newer*
+  than the stored row, and the JSON's `modified` had been left at the `2026-08-01` install timestamp through
+  every later edit, so each migrate compared equal ages and skipped the import. Bumped `modified`, and added
+  `resync_training_workspace` — a `reload_doc(..., force=True)` patch that rebuilds the existing public
+  workspace past the age check (belt-and-suspenders, since a bumped timestamp alone fixes the timestamp-gated
+  case). The workspace is also **completed**: it now links every standalone doctype in the module across seven
+  cards — **Authoring** (Course, Course Version, Lesson, Question, Checkpoint), **Learners** (Assignment,
+  Submission, Attempt, Completion, Question Thread), **Cohorts & Sessions** (Batch, Live Class, Evaluation,
+  Announcement), **Verification** (Signoff, Certificate), **Recognition** (Badge, Badge Award, Learner Stat),
+  **Reports** (Completion Matrix, Question Analytics), and **Setup** (Settings, Category, Video Asset). The
+  previously-unreachable **Training Submission** (WI-071 Phase F), cohorts, live classes, evaluations and
+  announcements now have desk entry points. Child/join tables stay out, as they should. Guarded by
+  `test_workspaces` (content↔links parity and `link_count`).
+
 ## [1.376.0] - 2026-09-08
 
 ### Changed
