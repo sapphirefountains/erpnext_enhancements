@@ -489,11 +489,6 @@ def get_learner_bootstrap():
         # player both lists these and indexes them by lesson_key for the lesson-view
         # submit box's "already submitted / graded" state.
         "submissions": _learner_submissions(user),
-        # Additive: may this user create courses? Gates the floating "Create a course
-        # with Triton" trident. False for a plain learner (a Website User with no
-        # Training Course create permission), so the FAB never shows them an action
-        # they cannot take; True for an author/manager who has opened /training.
-        "can_author": bool(frappe.has_permission("Training Course", "create")),
         # Every key here is read by the player, and every setting the player reads
         # is here. Both halves of that sentence were false: `max_playback_rate` and
         # `doc_min_dwell_seconds` were read by video.js and blocks.js and sent by
@@ -2163,22 +2158,6 @@ def submit_lesson_work(course, lesson_key, file=None, text=None, block_key=None)
     from erpnext_enhancements.training import submissions
 
     return submissions.submit_work(course, lesson_key, file=file, text=text, block_key=block_key)
-
-
-@frappe.whitelist(methods=["POST"])
-def draft_course(brief):
-    """Draft a whole course from a natural-language brief. Delegates to :mod:`api.training_ai`.
-
-    A thin re-export so the learner player can dial it under its single transport ``PREFIX``,
-    the same reason ``ask_lesson_question`` and ``submit_lesson_work`` live here. The real work,
-    the author gate and the AI-enabled gate all live in
-    ``training_ai.draft_course_with_triton``; this adds nothing but the address. The floating
-    trident on ``/training`` only shows for a user whose bootstrap ``can_author`` is true, but
-    that is a convenience, not the guard — the delegate re-checks the create permission itself.
-    """
-    from erpnext_enhancements.api import training_ai
-
-    return training_ai.draft_course_with_triton(brief)
 
 
 @frappe.whitelist(methods=["POST"])

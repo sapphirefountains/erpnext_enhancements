@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.374.0] - 2026-09-08
+
+### Changed
+
+- **Course authoring with Triton now reuses the real Triton assistant instead of a second widget.** The
+  self-contained "Create a course with Triton" trident added in v1.373.0 (on both the builder and the
+  learner `/training` player, with its own `draft_course_with_triton` Vertex-drafting endpoint) duplicated
+  what the global Triton chat bubble already does — and can't run on `/training` anyway, which serves
+  desk-less Website-User learners. It's removed. The **builder** gains a "🔱 Triton" button in its top bar
+  that opens the **real** bubble via the widget's sanctioned `window.SapphireTriton.ask(prompt, context)`
+  — prompt prefilled (never sent; the author edits first), current course pinned as context — exactly the
+  pattern the **Training Course** form already uses. Triton proposes a Course Spec and calls the
+  `author_training_course` FAC tool, which materialises an unpublished, review-gated draft; there is one
+  authoring path, behind the review gate. The learner `/training` player carries no Triton at all now (it
+  is a learner surface). Removed with it: the `draft_course`/`can_author` player wiring, the `draftCourse`
+  transport method, the `tr-triton-*` player styles, and the `draft_course_with_triton` endpoint and its
+  helpers. `author_course_from_spec` and `course_spec` (the deterministic materialiser the FAC tool uses)
+  stay. Guard: `test_training_triton_authoring` (replaces `test_training_course_authoring_fab`).
+
 ## [1.373.1] - 2026-09-08
 
 ### Fixed

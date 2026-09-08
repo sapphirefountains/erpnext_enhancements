@@ -1124,32 +1124,18 @@
 }
 
 
-/* --- Triton "create a course" trident (WI-071) ----------------------- */
-/* Bottom-LEFT so it never collides with the global Triton chat bubble, which
-   owns bottom-right on every desk page. Same trident, a different job. */
-.tb-triton-fab {
-	position: fixed;
-	left: 24px;
-	bottom: 24px;
-	width: 52px;
-	height: 52px;
-	border-radius: 50%;
+
+/* --- Triton authoring button (opens the real Triton bubble) ---------- */
+.tb-triton-btn {
+	border: none;
+	border-radius: 8px;
+	padding: 5px 12px;
 	background: linear-gradient(135deg, #1f6feb, #0a3d91);
 	color: #fff;
-	font-size: 26px;
-	line-height: 52px;
-	text-align: center;
+	font: inherit;
+	font-weight: 600;
 	cursor: pointer;
-	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
-	z-index: 1039;
-	border: none;
-	transition: transform 0.18s cubic-bezier(0.18, 0.89, 0.32, 1.28), box-shadow 0.15s ease;
-	user-select: none;
 }
-.tb-triton-fab:hover {
-	transform: translateY(-2px) scale(1.05);
-	box-shadow: 0 10px 26px rgba(0, 0, 0, 0.3);
-}
-.tb-triton-fab:active {
-	transform: scale(0.88);
+.tb-triton-btn:hover {
+	filter: brightness(1.08);
 }
