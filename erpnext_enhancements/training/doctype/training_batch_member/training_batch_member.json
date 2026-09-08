@@ -20,8 +20,7 @@
    "reqd": 1
   },
   {
-   "description": "Set for staff so cohort reporting can group by Employee; blank for a customer contact.",
-   "fetch_from": "learner.name",
+   "description": "Set for staff so cohort reporting can group by Employee; blank for a customer contact. Derived from the learner's User (matched on user_id) by the Training Batch controller.",
    "fieldname": "employee",
    "fieldtype": "Link",
    "in_list_view": 1,
