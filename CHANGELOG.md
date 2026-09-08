@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.372.1] - 2026-09-08
+
+### Fixed
+
+- **Resuming a training course threw `ReferenceError: course is not defined`, so no started course could be
+  reopened.** The learner player's `adoptAttempt` — which runs on every course open — read a bare,
+  undeclared `course` on the line that captures the assignment's sign-off status. It only bit a *resume*:
+  the function returns early when there is no attempt to adopt, so opening a fresh course to look at its
+  outline never reached the bad line, but resuming an in-progress course (or starting a lesson, which
+  mints an attempt) always did, and the page fell to its error screen. The bug was live from **v1.334.0**
+  (where the line was added, wiring the sign-off round-trip) until now — it survived because the crash is
+  a client-side `ReferenceError` that never reaches the Frappe Error Log, and because the one payload the
+  author expected (`assignment_status` / `signoff_with`) is carried by the *card* and the *finished-attempt*
+  reply, not by anything in `adoptAttempt`'s scope. The assignment status now comes from `state.assignment`
+  — the open assignment `get_course` returns and `load()` stores before `adoptAttempt` runs, which is the
+  correct source — so a resume of an awaiting-sign-off course still routes to its sign-off view;
+  `signoffWith` was already set correctly by the finish round-trip and is left to it. A regression test
+  (`TestResumeDoesNotReadAFreeVariable`) pins `adoptAttempt` to reference no free `course`, and an
+  exhaustive scan confirmed this was the only free-variable read of its kind across the four player scripts.
+
 ## [1.372.0] - 2026-09-08
 
 ### Added

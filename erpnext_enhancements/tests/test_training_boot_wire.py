@@ -285,6 +285,41 @@ class TestOutlineRowFields(unittest.TestCase):
         )
 
 
+class TestResumeDoesNotReadAFreeVariable(unittest.TestCase):
+    """`adoptAttempt` runs on every course open and threw
+    ``ReferenceError: course is not defined`` on every **resume** — a bare,
+    undeclared ``course`` on the sign-off-status line, live from v1.334.0 to
+    v1.372.1.
+
+    It bit a *resume* specifically and nothing else: the function returns early on
+    a null attempt (line 1), so it only reaches that line when there is an attempt
+    to adopt — which is exactly an in-progress course being resumed, never a fresh
+    course opened to look at its outline. Nothing in the function's lexical scope
+    binds ``course`` (its only enclosing function is ``Player(rootEl, boot,
+    transport)``), so the assignment status has to come from ``state.assignment``,
+    which ``load()`` fills before this runs. The body is comment-stripped, so the
+    explanatory comment naming the old bug does not count as a read.
+    """
+
+    def _body(self):
+        return _js_body(_player_code(), "function adoptAttempt(")
+
+    def test_it_reads_no_bare_course(self):
+        # adoptAttempt binds no `course` anywhere up its scope chain, so any
+        # `course` token in its code is the free-variable ReferenceError itself.
+        self.assertNotIn(
+            "course",
+            self._body(),
+            "adoptAttempt references `course`, which nothing in its scope binds — "
+            "the free variable that threw on every resume",
+        )
+
+    def test_the_assignment_status_comes_from_state_assignment(self):
+        body = self._body()
+        self.assertIn("state.assignment.status", body)
+        self.assertIn("state.assignmentStatus = state.assignment.status", body)
+
+
 class TestTransportNamesExist(unittest.TestCase):
     """The other half of the same contract, kept here so both are checked together.
 
