@@ -632,6 +632,11 @@
 			var evaluations = evaluationBlock();
 			if (evaluations) main.appendChild(evaluations);
 
+			// The learner's own work submissions and grades. A "Needs rework" is the one
+			// thing on this page that is waiting on them, so it sits above the cards too.
+			var submissions = submissionBlock();
+			if (submissions) main.appendChild(submissions);
+
 			// `assigned` and `library`, which is what get_learner_bootstrap actually
 			// returns. This read `b.courses` and `b.catalog.courses` -- neither of
 			// which the server has ever sent -- so the page reported "nothing is
@@ -1157,6 +1162,13 @@
 			});
 			main.appendChild(column);
 
+			// A lesson that asks for a hand-in (requires_submission) shows the submit
+			// box between the content and the Q&A. Its "already submitted / graded"
+			// state comes from b.submissions, so no extra round-trip on lesson render.
+			if (intOf(lesson.requires_submission)) {
+				main.appendChild(renderSubmission(lesson));
+			}
+
 			main.appendChild(renderQuestions(lesson));
 
 			renderBottomBar();
@@ -1170,6 +1182,138 @@
 		// it, so the feature shipped and then did nothing.
 
 		var qaState = { lessonKey: null, open: false, busy: false, data: null, error: null };
+
+		// The lesson-view work-submission box (WI-071 Phase F). Reset per lesson, same
+		// as qaState: a different lesson is a different hand-in.
+		var submitState = { lessonKey: null, busy: false, error: null };
+
+		function renderSubmission(lesson) {
+			var key = lesson.lesson_key || "";
+			if (submitState.lessonKey !== key) {
+				submitState = { lessonKey: key, busy: false, error: null };
+			}
+
+			var wrap = el("section", "tr-submit");
+			wrap.appendChild(el("h2", "tr-submit-title", t("Submit your work")));
+			wrap.appendChild(
+				el("p", "tr-submit-intro", t("This lesson asks you to hand in your work. A trainer will review it."))
+			);
+
+			// The latest hand-in for this lesson, from the boot payload. Shows the
+			// learner where they stand before the form: passed, waiting, or sent back.
+			var latest = latestSubmissionFor(key);
+			if (latest) wrap.appendChild(submissionRow(latest));
+
+			// Passed is terminal — the work is accepted, so no form to submit again.
+			if (latest && latest.status === "Passed") return wrap;
+
+			if (latest && (latest.status === "Submitted" || latest.status === "Under Review")) {
+				wrap.appendChild(
+					el("p", "tr-muted", t("Your work is in and waiting to be graded. You can send an updated version if you need to."))
+				);
+			}
+
+			wrap.appendChild(renderSubmitForm(lesson, key));
+			if (submitState.error) fail(wrap, submitState.error);
+			return wrap;
+		}
+
+		function renderSubmitForm(lesson, key) {
+			var form = el("div", "tr-submit-form");
+			var slug = String(key || "lesson").replace(/[^A-Za-z0-9_-]/g, "-");
+
+			var fileId = "submit-file-" + slug;
+			var fileLabel = el("label", "tr-submit-label", t("Attach your file"));
+			fileLabel.setAttribute("for", fileId);
+			var fileInput = el("input", "tr-submit-file");
+			fileInput.type = "file";
+			fileInput.id = fileId;
+			form.appendChild(fileLabel);
+			form.appendChild(fileInput);
+
+			var noteId = "submit-note-" + slug;
+			var noteLabel = el("label", "tr-submit-label", t("Add a note (optional)"));
+			noteLabel.setAttribute("for", noteId);
+			var note = el("textarea", "tr-submit-note");
+			note.rows = 2;
+			note.id = noteId;
+			form.appendChild(noteLabel);
+			form.appendChild(note);
+
+			var hint = el("p", "tr-submit-hint");
+			hint.setAttribute("role", "status");
+			form.appendChild(hint);
+
+			var send = button(t("Submit work"), "tr-button tr-button-primary", function () {
+				if (submitState.busy) return;
+				var file = fileInput.files && fileInput.files[0];
+				var text = (note.value || "").trim();
+				if (!file && !text) {
+					// Not a server round-trip's worth of error: say it in place and stop.
+					hint.textContent = t("Attach a file or write a note first.");
+					return;
+				}
+				submitState.busy = true;
+				submitState.error = null;
+				render();
+
+				var upload = file ? call("uploadFile", file) : Promise.resolve("");
+				upload
+					.then(function (fileUrl) {
+						var url = fileUrl || "";
+						return call("submitWork", {
+							course: state.course && state.course.name,
+							lesson_key: key,
+							file: url,
+							text: text,
+						}).then(function () {
+							// The reply's own keys are ignored on purpose, the way
+							// askQuestion ignores its thread id: a fresh hand-in is always
+							// "Submitted", and the record's name is never shown. Reading them
+							// off the reply would put keys on the wire the boundary contract
+							// cannot see through the delegating endpoint. So the optimistic
+							// row is built from what we already know.
+							return url;
+						});
+					})
+					.then(function (url) {
+						submitState.busy = false;
+						recordSubmitted(lesson, key, url);
+						render();
+					})
+					.catch(function (err) {
+						submitState.busy = false;
+						submitState.error = err;
+						render();
+					});
+			});
+			if (submitState.busy) {
+				send.disabled = true;
+				send.textContent = t("Submitting…");
+			}
+			form.appendChild(send);
+			return form;
+		}
+
+		// Fold a just-made submission into b.submissions so the box and the home strip
+		// both reflect it immediately, without waiting for the next boot. The server is
+		// the authority on the real record; this is an optimistic echo of what it just
+		// accepted (always "Submitted" — a fresh hand-in is never pre-graded).
+		function recordSubmitted(lesson, key, fileUrl) {
+			if (!b.submissions) b.submissions = [];
+			b.submissions.unshift({
+				name: "",
+				course_title: (state.course && state.course.title) || (state.course && state.course.name) || "",
+				lesson_key: key,
+				lesson_title: lesson.title || "",
+				status: "Submitted",
+				grade: "",
+				feedback: "",
+				file: fileUrl || "",
+				submitted_on: t("just now"),
+				graded_on: "",
+			});
+		}
 
 		function renderQuestions(lesson) {
 			var key = lesson.lesson_key || "";
@@ -1771,6 +1915,68 @@
 
 		// The catalog's link into the transcript, shown in both the empty and the
 		// populated catalog — a learner between assignments still has a record.
+		// The learner's own work submissions and their grades (b.submissions).
+		// A "Needs rework" is the most action-needing thing here, so the strip sits
+		// high on the home page; the feedback is plain text via textContent so a
+		// grader's note cannot smuggle markup. null/empty draws nothing.
+		function submissionBlock() {
+			var subs = b.submissions;
+			if (!subs || !subs.length) return null;
+			var section = el("section", "tr-submissions");
+			section.appendChild(el("h2", "tr-section-title", t("Your submissions")));
+			subs.forEach(function (sub) {
+				section.appendChild(submissionRow(sub));
+			});
+			return section;
+		}
+
+		// One submission, as a row. Shared by the home strip and the lesson-view box
+		// so a status and its feedback always read the same way in both places.
+		function submissionRow(sub) {
+			var row = el("div", "tr-submission " + submissionStateClass(sub.status));
+			var top = el("div", "tr-submission-head");
+			top.appendChild(el("div", "tr-submission-title", sub.lesson_title || sub.course_title || ""));
+			top.appendChild(el("span", "tr-submission-status", submissionStatusLabel(sub.status)));
+			row.appendChild(top);
+			var bits = [];
+			if (sub.lesson_title && sub.course_title) bits.push(sub.course_title);
+			if (sub.grade) bits.push(fmt(t("grade: {0}"), [sub.grade]));
+			if (sub.submitted_on) bits.push(fmt(t("submitted {0}"), [sub.submitted_on]));
+			if (bits.length) row.appendChild(el("div", "tr-submission-meta", bits.join(" · ")));
+			if (sub.feedback) {
+				var fb = el("div", "tr-submission-feedback");
+				fb.appendChild(el("div", "tr-submission-feedback-label", t("Feedback")));
+				fb.appendChild(el("div", "tr-submission-feedback-body", sub.feedback));
+				row.appendChild(fb);
+			}
+			return row;
+		}
+
+		function submissionStatusLabel(status) {
+			if (status === "Passed") return t("Passed");
+			if (status === "Needs Rework") return t("Needs rework");
+			if (status === "Under Review") return t("Under review");
+			return t("Submitted");
+		}
+
+		// State classes only (is-*), which the css-contract exempts. The palette that
+		// colours passed/rework/pending lives in player.css.
+		function submissionStateClass(status) {
+			if (status === "Passed") return "is-passed";
+			if (status === "Needs Rework") return "is-rework";
+			return "is-pending";
+		}
+
+		// The learner's newest submission for one lesson, matched by lesson_key.
+		// b.submissions is newest-first from the server, so the first match wins.
+		function latestSubmissionFor(key) {
+			var subs = b.submissions || [];
+			for (var i = 0; i < subs.length; i++) {
+				if (subs[i].lesson_key === key) return subs[i];
+			}
+			return null;
+		}
+
 		function recordOpen() {
 			var wrap = el("div", "tr-record-open");
 			wrap.appendChild(

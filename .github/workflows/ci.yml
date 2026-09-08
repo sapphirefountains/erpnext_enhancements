@@ -686,6 +686,11 @@ jobs:
       # notice never leaks outside its course/batch).
       - name: Training announcements (scope + surface)
         run: python -m unittest erpnext_enhancements.tests.test_training_announcements -v
+      # Work submissions -- the visibility gate on submitting, the private file being
+      # re-parented onto its submission (access follows the record), manager-only
+      # grading with the Needs-Rework feedback rule, and the row scoping.
+      - name: Training work submissions (submit gate + grading + scoping)
+        run: python -m unittest erpnext_enhancements.tests.test_training_submissions -v
       # The kiosk service worker is registered at ROOT scope, so what it answers
       # for is every page's problem. It used to serve the whole app's assets
       # cache-first with ignoreSearch, which froze JavaScript across the site for

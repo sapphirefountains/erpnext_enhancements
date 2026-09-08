@@ -267,6 +267,7 @@ def _lesson_with_quiz_and_checkpoint():
 		summary="How to drain safely.",
 		estimated_minutes=12,
 		allow_questions=1,
+		requires_submission=0,
 		has_quiz=1,
 		quiz_questions_to_ask=0,
 		quiz_pass_score=80,

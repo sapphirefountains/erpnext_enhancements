@@ -119,6 +119,19 @@ def signoff_query_conditions(user=None):
 	return _own_rows_condition("Training Signoff", _resolve(user))
 
 
+def submission_query_conditions(user=None):
+	"""A work submission is scoped to the learner who made it.
+
+	Graders are Training Managers, who are already unscoped and see the whole
+	queue — so unlike the sign-off there is no second, grader-shaped arm here. A
+	supervisor who is *not* a manager reaches a report's submissions through the
+	direct-reports arm, same as everywhere else.
+	"""
+	if _is_unscoped(user):
+		return ""
+	return _own_rows_condition("Training Submission", _resolve(user))
+
+
 # -------------------------------------------------------------------- has_permission
 
 
@@ -159,5 +172,11 @@ def signoff_has_permission(doc, ptype=None, user=None):
 	# learner is not one of their Employee.reports_to (a Named Supervisor or a
 	# stand-in Training Manager) — otherwise they cannot action their own queue.
 	if doc.get("supervisor_user") == _resolve(user):
+		return True
+	return _own_row(doc, _resolve(user))
+
+
+def submission_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
 		return True
 	return _own_row(doc, _resolve(user))

@@ -428,6 +428,7 @@ def _publish_lesson(
 		summary="How to drain safely.",
 		estimated_minutes=12,
 		allow_questions=1,
+		requires_submission=0,
 		has_quiz=has_quiz,
 		quiz_questions_to_ask=questions_to_ask,
 		quiz_pass_score=pass_score,
