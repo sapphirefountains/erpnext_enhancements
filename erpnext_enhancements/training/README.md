@@ -202,8 +202,24 @@ so a re-save, a newly-added member, or a re-drive after a deploy FLUSHDB complet
 what was missed rather than double-assigning. Due dates prefer the cohort's end
 date, then its start date, then the course default. `enrolled_on` is stamped once
 per member. A member's `Employee` is derived from their User (`user_id` match), not
-fetched from the login id. Still to come in Phase A: a learner "my cohort" surface
-on `/training`. Bench-free coverage: [`../tests/test_training_batch.py`](../tests/test_training_batch.py).
+fetched from the login id. The learner sees their active cohorts as a "Your cohorts"
+strip on `/training` (`get_learner_bootstrap` → `batches`). Bench-free coverage:
+[`../tests/test_training_batch.py`](../tests/test_training_batch.py).
+
+### Live classes (WI-071 Phase B)
+
+A **Training Live Class** is one scheduled synchronous session for a batch — a title,
+`starts_on`, a duration, a host, and the **join link** members click. It is
+deliberately thin: **the player never hosts video itself**, it hands the learner the
+link. Members of the session's batch see upcoming and in-progress sessions as an
+"Upcoming live sessions" strip on `/training` (`get_learner_bootstrap` → `live_classes`,
+from `_learner_live_classes`, scoped strictly to the learner's own membership and to
+`Scheduled`/`Live`). The join URL is **http(s)-only, enforced on save and at render** —
+it is served as an anchor and clicked, so a `javascript:` scheme is refused both
+places. The calendar-invite side (an ICS / Google Calendar event to members) is the
+*native* half and is deliberately deferred: the Google Calendar accounts are disabled
+on prod (Task→calendar sync was removed in v1.346.0). Bench-free coverage:
+[`../tests/test_training_live_classes.py`](../tests/test_training_live_classes.py).
 
 ## Video
 

@@ -2733,6 +2733,50 @@
 	color: var(--tr-muted);
 }
 
+/* --------------------------------------------------------------- sessions */
+
+.tr-sessions {
+	margin: 4px 0 20px;
+}
+
+.tr-session {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px 14px;
+	margin-bottom: 8px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	box-shadow: var(--tr-shadow);
+}
+
+.tr-session-info {
+	flex: 1;
+	min-width: 0;
+}
+
+.tr-session-title {
+	font-weight: 600;
+}
+
+.tr-session-meta {
+	margin-top: 3px;
+	font-size: 0.8rem;
+	color: var(--tr-muted);
+}
+
+.tr-session-join {
+	flex: none;
+	padding: 8px 16px;
+	border-radius: var(--tr-radius);
+	background: var(--tr-accent);
+	color: var(--tr-accent-text);
+	font-weight: 600;
+	text-decoration: none;
+	white-space: nowrap;
+}
+
 /* ------------------------------------------------------------- completion */
 
 .tr-complete {
