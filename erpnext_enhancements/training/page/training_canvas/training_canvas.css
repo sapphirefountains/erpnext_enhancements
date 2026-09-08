@@ -1,0 +1,288 @@
+/*
+ * Training Canvas (/app/training-canvas?course=…) — a full-bleed WYSIWYG spike.
+ *
+ * The authoring surface renders each Training Content Block with the REAL learner
+ * renderer (public/js/training/blocks.js -> TR.renderBlock) inside a `.tr-shell`,
+ * so the author edits the exact thing a learner sees, styled by the learner
+ * stylesheet (player.css, loaded at runtime). This file styles only the page
+ * CHROME around that render and the edit affordances layered onto it — every
+ * `.tr-*` class belongs to player.css and must not be redefined here.
+ *
+ * This is the class registry for training_canvas.js: a class the JS invents that
+ * is not defined here renders as an unstyled div. Prefix is `tc-`.
+ *
+ * FULL-BLEED: the desk page is created with make_app_page (single_column). Two
+ * things box it in — the Bootstrap `.container` inside .page-body (max-width +
+ * gutters) and `.layout-main-section` (its own padding). on_page_load stamps the
+ * page wrapper with `.training-canvas-fullbleed`; the overrides below, scoped to
+ * that class so they cannot leak to other desk pages, take the canvas edge to
+ * edge and let it own the viewport height under the navbar + page head.
+ */
+
+.training-canvas-fullbleed .page-body .container {
+	max-width: none;
+	padding: 0;
+	margin: 0;
+}
+
+.training-canvas-fullbleed .layout-main-section {
+	padding: 0;
+	border: none;
+	margin: 0;
+}
+
+.training-canvas-fullbleed .layout-main-section-wrapper {
+	margin-bottom: 0;
+}
+
+/* The whole custom UI. Fills the space under the desk navbar (~60px) and the
+   page head (~55px). */
+.tc-app {
+	display: flex;
+	flex-direction: column;
+	height: calc(100vh - 115px);
+	min-height: 420px;
+	background: var(--bg-color, #f4f5f6);
+}
+
+/* ------------------------------------------------------------------- top bar */
+
+.tc-bar {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 8px 14px;
+	background: var(--card-bg, #fff);
+	border-bottom: 1px solid var(--border-color, #e2e2e2);
+}
+
+.tc-lessons {
+	min-width: 220px;
+	max-width: 360px;
+}
+
+.tc-bar .tc-spacer {
+	flex: 1;
+}
+
+.tc-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	font-size: 0.85rem;
+	color: var(--text-muted, #6c7680);
+	white-space: nowrap;
+}
+
+.tc-status .tc-pip {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: #3ecf7e;
+	transition: background 0.2s ease;
+}
+
+.tc-status.is-dirty .tc-pip {
+	background: #e0a458;
+}
+
+.tc-status.is-saving .tc-pip {
+	background: #29b6f6;
+	animation: tc-pulse 0.8s ease infinite;
+}
+
+.tc-status.is-conflict .tc-pip {
+	background: #e03636;
+}
+
+@keyframes tc-pulse {
+	50% {
+		opacity: 0.3;
+	}
+}
+
+/* ------------------------------------------------------------- conflict banner */
+
+.tc-banner {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 16px;
+	background: rgba(224, 54, 54, 0.1);
+	border-bottom: 1px solid #e03636;
+	color: #a12020;
+	font-size: 0.9rem;
+}
+
+.tc-banner button {
+	margin-left: auto;
+}
+
+/* ------------------------------------------------------------------ the sheet */
+
+.tc-scroll {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: 32px 20px 120px;
+}
+
+.tc-sheet {
+	max-width: 760px;
+	margin: 0 auto;
+}
+
+.tc-eyebrow {
+	font-size: 0.72rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--text-muted, #6c7680);
+}
+
+.tc-title {
+	margin: 3px 0 22px;
+	font-size: 1.7rem;
+	font-weight: 800;
+	letter-spacing: -0.02em;
+	line-height: 1.2;
+	color: var(--heading-color, #1a1830);
+	outline: none;
+	border-radius: 6px;
+}
+
+.tc-title:focus {
+	box-shadow: 0 0 0 3px var(--tr-accent-soft, #ede9fe);
+}
+
+/* The learner render lives inside .tr-shell so every player.css rule applies.
+   Undo the shell's mobile column cap and its bottom action-bar reservation —
+   there is no sticky learner bar on the canvas. */
+.tc-sheet .tr-shell {
+	max-width: none;
+	padding: 0;
+	font-size: 16px;
+}
+
+/* --------------------------------------------------------- edit affordances */
+
+/* Layered onto the real .tr-block render. Editable blocks (Rich Text / Callout)
+   get a hover ring and an editing ring; every card gets a type tag on hover. */
+.tc-sheet .tr-block {
+	position: relative;
+	transition: box-shadow 0.15s ease;
+}
+
+.tc-editable {
+	cursor: text;
+}
+
+.tc-editable:hover {
+	box-shadow: 0 0 0 1px var(--tr-accent-soft, #ede9fe), var(--tr-shadow);
+}
+
+.tc-editable.is-editing {
+	box-shadow: 0 0 0 2px var(--tr-accent, #7c3aed);
+}
+
+.tc-sheet [contenteditable="true"]:focus {
+	outline: none;
+}
+
+.tc-tag {
+	position: absolute;
+	top: -9px;
+	left: 12px;
+	font-size: 0.62rem;
+	font-weight: 700;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	padding: 1px 7px;
+	border-radius: 999px;
+	background: var(--tr-accent, #7c3aed);
+	color: var(--tr-accent-text, #fff);
+	opacity: 0;
+	transition: opacity 0.15s ease;
+	pointer-events: none;
+}
+
+.tc-sheet .tr-block:hover .tc-tag,
+.tc-editable.is-editing .tc-tag {
+	opacity: 1;
+}
+
+.tc-tag.is-ro {
+	background: var(--tr-surface-alt, #eceaf6);
+	color: var(--tr-muted, #5f6488);
+}
+
+/* Media / hotspot blocks need a signed draft asset URL the canvas spike does not
+   mint — render a placeholder that hands the author to the classic builder. */
+.tc-placeholder {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 18px;
+	border: 1px dashed var(--tr-border, #e2e0f0);
+	border-radius: var(--tr-radius, 16px);
+	background: var(--tr-surface-alt, #eceaf6);
+	color: var(--tr-muted, #5f6488);
+	margin-bottom: 14px;
+}
+
+.tc-placeholder .tc-ph-icon {
+	font-size: 1.4rem;
+	flex: 0 0 auto;
+}
+
+.tc-placeholder .tc-ph-body {
+	flex: 1;
+	min-width: 0;
+}
+
+.tc-placeholder b {
+	color: var(--tr-text, #1a1830);
+}
+
+/* ---------------------------------------------------------------- add row */
+
+.tc-add {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 7px;
+	margin-top: 18px;
+}
+
+.tc-add button {
+	border: 1px solid var(--tr-border, #e2e0f0);
+	background: var(--tr-surface, #fff);
+	color: var(--tr-muted, #5f6488);
+	border-radius: 9px;
+	padding: 7px 12px;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.tc-add button:hover {
+	border-color: var(--tr-accent, #7c3aed);
+	color: var(--tr-accent, #7c3aed);
+}
+
+/* ------------------------------------------------------------- empty states */
+
+.tc-empty {
+	max-width: 460px;
+	margin: 12vh auto 0;
+	text-align: center;
+	color: var(--text-muted, #6c7680);
+	line-height: 1.6;
+}
+
+.tc-empty h2 {
+	margin: 0 0 8px;
+	font-size: 1.2rem;
+	color: var(--heading-color, #1a1830);
+}

@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.378.0] - 2026-09-08
+
+### Added
+
+- **Training Canvas — a full-bleed WYSIWYG authoring spike** at `/app/training-canvas?course=…`
+  (`training/page/training_canvas/`). It renders every content block with the **learner's own
+  renderer** (`public/js/training/blocks.js` → `TR.renderBlock`) inside a `.tr-shell`, styled by the
+  learner stylesheet (`player.css`, now Aurora), and lets the author edit the text **on that render** —
+  the thing you edit is the thing a learner sees, not a form field beside a separate preview. It reuses
+  the exact classic-builder data path: `get_builder_bootstrap` to load, `save_draft_version` to autosave
+  (whole block table by position, every `block_key` carried), the version's `modified` as the optimistic
+  lock, and it surfaces the server's `rejected` list. As a spike it edits the text block types (Rich Text,
+  Callout) and block/lesson headings in place; media and in-video blocks render as a placeholder that hands
+  off to the classic builder, which remains the complete authoring surface and is untouched. Full-bleed via
+  a `training-canvas-fullbleed` marker class scoped so its edge-to-edge overrides cannot leak to other desk
+  pages. Gated to System Manager / Training Author / Training Manager. The renderer is loaded at runtime
+  with the same versioned hand-rolled loader the builder preview uses (never `frappe.require`, whose
+  `extn()` mis-types a cache-busted URL). Guarded by `test_training_canvas`.
+
+### Fixed
+
+- **`get_builder_bootstrap` dropped interactive blocks' `data` and Callout `callout_tone` — an edit after
+  reload blanked them.** The builder bootstrap returned each block's edit shape but omitted those two fields
+  (`_builder_lesson`), while a save re-sends the whole block table by position (`_apply_blocks` replaces it).
+  So after a reload an interactive block (Checklist/Flashcards/Image Hotspots/Accordion) loaded with no
+  `data`, and the next lesson save re-sent it without any — silently blanking the stored list; a Callout
+  likewise lost its tint. This bit the classic builder too; it was only masked because it had no reliable
+  interactive-edit-after-reload path, and it would have destroyed content on the first autosave of the new
+  WYSIWYG canvas. Both fields are now returned (they were already save-allowlisted). Guarded by
+  `test_training_canvas` (parses the returned dict, so a comment quoting the field names can't satisfy it).
+
 ## [1.377.0] - 2026-09-08
 
 ### Fixed
