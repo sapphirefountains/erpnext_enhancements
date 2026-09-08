@@ -221,6 +221,22 @@ places. The calendar-invite side (an ICS / Google Calendar event to members) is 
 on prod (Task→calendar sync was removed in v1.346.0). Bench-free coverage:
 [`../tests/test_training_live_classes.py`](../tests/test_training_live_classes.py).
 
+### Scheduled evaluations (WI-071 Phase C)
+
+Some competencies are not proved by a quiz, so a course can require a supervisor
+**sign-off** ([`signoff.py`](signoff.py)). A **Training Evaluation** *books* that
+sign-off: an evaluator, a time, a learner, a place, and an auto-invite to both. The
+learner sees booked evaluations on `/training` (`get_learner_bootstrap` →
+`evaluations`). When the evaluator (or a Manager — never the learner) presses
+**Record Outcome** on the evaluation form, [`evaluations.py`](evaluations.py)
+`record_evaluation` **creates and submits a real `Training Signoff` through the
+existing engine** (`signoff.record_signoff`), links it, and marks the evaluation
+Completed — so the completion gate is satisfied by the *same* attestation a manual
+sign-off produces. **There is no second way to sign anything off**: the evaluation is
+the scheduling wrapper, the sign-off is the evidence. The calendar invite is the
+deferred native half. Bench-free coverage:
+[`../tests/test_training_evaluations.py`](../tests/test_training_evaluations.py).
+
 ## Video
 
 **Putting a real video in a lesson:**

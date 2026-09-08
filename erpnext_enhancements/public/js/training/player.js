@@ -622,6 +622,11 @@
 			var sessions = liveClassBlock();
 			if (sessions) main.appendChild(sessions);
 
+			// Practical evaluations booked for this learner — a supervisor watching them
+			// do the thing. Shown here too so a booked slot is not buried below the cards.
+			var evaluations = evaluationBlock();
+			if (evaluations) main.appendChild(evaluations);
+
 			// `assigned` and `library`, which is what get_learner_bootstrap actually
 			// returns. This read `b.courses` and `b.catalog.courses` -- neither of
 			// which the server has ever sent -- so the page reported "nothing is
@@ -1714,6 +1719,27 @@
 					join.rel = "noopener noreferrer";
 					row.appendChild(join);
 				}
+				section.appendChild(row);
+			});
+			return section;
+		}
+
+		// Practical evaluations booked for this learner (b.evaluations): a supervisor
+		// watching them demonstrate a competency. When, who, and where — the verdict
+		// itself lives on the sign-off, never here. null/empty draws nothing.
+		function evaluationBlock() {
+			var evaluations = b.evaluations;
+			if (!evaluations || !evaluations.length) return null;
+			var section = el("section", "tr-evals");
+			section.appendChild(el("h2", "tr-section-title", t("Upcoming evaluations")));
+			evaluations.forEach(function (evaluation) {
+				var row = el("div", "tr-eval");
+				row.appendChild(el("div", "tr-eval-title", evaluation.course_title));
+				var bits = [];
+				if (evaluation.evaluator) bits.push(fmt(t("with {0}"), [evaluation.evaluator]));
+				if (evaluation.scheduled_on) bits.push(fmt(t("on {0}"), [evaluation.scheduled_on]));
+				if (evaluation.location) bits.push(evaluation.location);
+				row.appendChild(el("div", "tr-eval-meta", bits.join(" · ")));
 				section.appendChild(row);
 			});
 			return section;
