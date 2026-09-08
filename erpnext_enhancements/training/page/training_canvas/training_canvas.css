@@ -704,30 +704,62 @@
 	color: var(--tr-accent, #7c3aed);
 }
 
-/* Media / in-video blocks hand off to the classic builder. */
-.tc-placeholder {
+/* ----------------------------------------------------------------- media */
+
+/* Image / PDF / File attach, the video-asset picker, and the hotspot editor.
+   Registering a new video (Drive probe) and in-video checkpoints stay classic. */
+.tc-media {
 	display: flex;
-	align-items: center;
-	gap: 12px;
-	padding: 18px;
-	border: 1px dashed var(--tr-border, #e2e0f0);
+	flex-direction: column;
+	gap: 10px;
+	padding: 14px;
+	border: 1px solid var(--tr-border, #e2e0f0);
 	border-radius: var(--tr-radius, 16px);
 	background: var(--tr-surface-alt, #eceaf6);
+}
+
+.tc-media .tc-set > .form-control,
+.tc-media .tc-set > select {
+	flex: 1;
+}
+
+.tc-media-preview {
+	min-height: 36px;
+}
+
+.tc-media-img {
+	max-width: 100%;
+	max-height: 320px;
+	border-radius: 10px;
+	display: block;
+}
+
+.tc-media-link {
+	color: var(--tr-accent, #7c3aed);
+	font-weight: 600;
+	word-break: break-all;
+}
+
+.tc-hotspot-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 1;
+}
+
+.tc-hotspot-row span {
+	font-size: 0.75rem;
 	color: var(--tr-muted, #5f6488);
 }
 
-.tc-placeholder .tc-ph-icon {
-	font-size: 1.4rem;
+.tc-hotspot-row .tc-xy {
+	width: 64px;
 	flex: 0 0 auto;
 }
 
-.tc-placeholder .tc-ph-body {
+.tc-hotspot-row > .form-control:not(.tc-xy) {
 	flex: 1;
 	min-width: 0;
-}
-
-.tc-placeholder b {
-	color: var(--tr-text, #1a1830);
 }
 
 /* ------------------------------------------------------------- empty states */

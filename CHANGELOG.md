@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.381.0] - 2026-09-08
+
+### Added
+
+- **The Training Canvas authors media too — it is now feature-complete for content.** Every one of the
+  twelve block types can be added from the `+` menu and edited on the canvas: **Image / PDF / Downloadable
+  File** attach a private file through the classic builder's `/api/method/upload_file` idiom (`is_private`,
+  XHR, Training Lesson) and preview it; **Video** picks a registered Training Video Asset (from the bootstrap)
+  and sets its poster and coverage gate; **Image Hotspots** attaches a diagram and places pins (x/y percent +
+  label) with a live learner preview. Only two specialised operations still hand off to the classic builder,
+  each linked from the video block: **registering a new video** (the Drive probe that sets the coverage
+  denominator — nothing the browser measures is authoritative) and placing **in-video checkpoints** on the
+  timeline scrubber. Guarded by `test_training_canvas` (all types addable, private upload idiom, video-asset
+  picker, hotspot placement). With this the canvas covers the whole authoring loop — lessons, structure,
+  every block type, settings and lifecycle — while the classic builder remains for those two specialised jobs.
+
 ## [1.380.0] - 2026-09-08
 
 ### Added

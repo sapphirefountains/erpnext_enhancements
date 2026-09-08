@@ -177,10 +177,14 @@ formatting toolbar (bold, italic, headings, lists, link); **Checklist / Flashcar
 Accordion** have inline structured editors beside their live preview; **External Embed**
 takes a URL. Blocks can be **added** (a `+` between blocks opens a type menu), **reordered**
 and **removed** on the canvas, and each has a **settings** row (caption, "required to
-finish", and Callout tone; headings are edited on the render itself). Media that needs a
-signed draft asset URL (**Image, PDF, Downloadable File, Video, Image Hotspots**) and the
-in-video **checkpoint** scrubber stay in the classic builder — a media block renders as a
-hand-off card — so the classic builder is complemented, never replaced.
+finish", and Callout tone; headings are edited on the render itself). **Media** is authored
+here too: **Image / PDF / Downloadable File** attach a private file (the classic builder's
+`/api/method/upload_file` idiom) and preview it; **Video** picks a registered Training Video
+Asset with poster and coverage gate; **Image Hotspots** attaches a diagram and places pins.
+Every one of the twelve block types can be added from the `+` menu. Only two specialised
+things stay in the classic builder: **registering a new video** (the Drive-probe that sets
+the coverage denominator) and placing **in-video checkpoints** on the timeline — both linked
+from the video block. So the classic builder is complemented, never replaced.
 
 **It forced a real round-trip fix that also helped the classic builder.**
 `get_builder_bootstrap` returned each block's edit shape but *omitted* `data` (the

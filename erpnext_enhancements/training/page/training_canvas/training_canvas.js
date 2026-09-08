@@ -98,7 +98,20 @@ const TC_BLOCK_FIELDS = [
 const TC_TEXT_TYPES = { "Rich Text": true, Callout: true };
 const TC_INTERACTIVE_TYPES = { Checklist: true, Flashcards: true, Accordion: true };
 const TC_MEDIA_TYPES = { Image: true, Video: true, PDF: true, "Downloadable File": true, "Image Hotspots": true };
-const TC_ADDABLE = ["Rich Text", "Callout", "Checklist", "Flashcards", "Accordion", "External Embed", "Divider"];
+const TC_ADDABLE = [
+	"Rich Text",
+	"Callout",
+	"Checklist",
+	"Flashcards",
+	"Accordion",
+	"Image",
+	"Video",
+	"PDF",
+	"Downloadable File",
+	"External Embed",
+	"Image Hotspots",
+	"Divider",
+];
 const TC_CALLOUT_TONES = [["info", __("Info")], ["tip", __("Tip")], ["warning", __("Warning")], ["danger", __("Danger")]];
 
 // The full change_type strings the DocType stores; publish_version rejects anything else.
@@ -251,6 +264,7 @@ class TrainingCanvas {
 		this.course = data.course || null;
 		this.version = data.version || null;
 		this.chapters = data.chapters || [];
+		this.video_assets = data.video_assets || [];
 		this.lessons = (data.lessons || []).map((lesson) => {
 			lesson.blocks = lesson.blocks || [];
 			return lesson;
@@ -646,7 +660,7 @@ class TrainingCanvas {
 	render_block_editor(lesson, block, $mount) {
 		$mount.empty();
 		const type = block.block_type;
-		if (TC_MEDIA_TYPES[type]) return $mount.append(this.media_placeholder(block));
+		if (TC_MEDIA_TYPES[type]) return $mount.append(this.media_editor(lesson, block));
 		if (type === "External Embed") return $mount.append(this.embed_editor(lesson, block));
 		if (TC_INTERACTIVE_TYPES[type]) {
 			$mount.append(this.render_learner(block));
@@ -773,19 +787,149 @@ class TrainingCanvas {
 		return $box;
 	}
 
-	// ------------------------------------------------------ media hand-off
-	media_placeholder(block) {
-		const $node = $(`
-			<div class="tc-placeholder">
-				<span class="tc-ph-icon">🧩</span>
-				<div class="tc-ph-body"><b>${frappe.utils.escape_html(block.block_type)}</b>${
-			block.heading ? " — " + frappe.utils.escape_html(block.heading) : ""
-		}<br>${__("Media and in-video blocks are edited in the classic builder.")}</div>
-				<button class="btn btn-default btn-xs">${__("Edit")}</button>
-			</div>
-		`);
-		$node.find("button").on("click", () => this.open_classic());
-		return $node;
+	// ------------------------------------------------------------ media blocks
+	num(v) {
+		const n = Number(v);
+		return Number.isFinite(n) ? n : 0;
+	}
+
+	media_editor(lesson, block) {
+		const type = block.block_type;
+		if (type === "Video") return this.video_editor(lesson, block);
+		if (type === "Image Hotspots") return this.hotspots_editor(lesson, block);
+		return this.file_editor(lesson, block);
+	}
+
+	// Image / PDF / Downloadable File — attach a private file and preview it.
+	file_editor(lesson, block) {
+		const isImage = block.block_type === "Image";
+		const $box = $('<div class="tc-media"></div>');
+		$('<div class="tc-embed-label"></div>').text(block.block_type).appendTo($box);
+		const $preview = $('<div class="tc-media-preview"></div>').appendTo($box);
+		const $btn = $('<button class="btn btn-default btn-sm"></button>');
+		const paint = () => {
+			const url = isImage ? block.image : block.file;
+			$preview.empty();
+			if (isImage && url) $('<img class="tc-media-img" alt="">').attr("src", url).appendTo($preview);
+			else if (url) $('<a class="tc-media-link" target="_blank" rel="noopener"></a>').attr("href", url).text(url.split("/").pop() || url).appendTo($preview);
+			else $('<div class="tc-muted"></div>').text(__("No file attached yet.")).appendTo($preview);
+			$btn.text(url ? __("Replace file") : __("Attach file"));
+		};
+		$btn.on("click", () => this.attach_media(lesson, block, isImage ? "image" : "file", isImage ? "image/*" : block.block_type === "PDF" ? "application/pdf" : ""));
+		if (!this.editable()) $btn.attr("disabled", "disabled");
+		$box.append($btn);
+		paint();
+		return $box;
+	}
+
+	// Video — pick a registered Training Video Asset (from the bootstrap) and set the
+	// poster / coverage gate. Registering a NEW video (the Drive probe) and placing
+	// in-video checkpoints stay in the classic builder.
+	video_editor(lesson, block) {
+		const $box = $('<div class="tc-media"></div>');
+		$('<div class="tc-embed-label"></div>').text(__("Video")).appendTo($box);
+		const field = (label, node) => $('<label class="tc-set"></label>').append($("<span></span>").text(label), node).appendTo($box);
+		const $sel = $('<select class="form-control"></select>');
+		$('<option value=""></option>').text(__("— pick a video asset —")).appendTo($sel);
+		(this.video_assets || []).forEach((a) => $("<option></option>").attr("value", a.name).text(a.title || a.name).appendTo($sel));
+		$sel.val(block.video_asset || "");
+		$sel.on("change", () => { block.video_asset = $sel.val(); this.dirty_blocks(lesson); this.mark_dirty(); });
+		field(__("Video asset"), $sel);
+		const $poster = $('<input type="url" class="form-control" />').val(block.poster_image || "");
+		$poster.on("input", () => { block.poster_image = $poster.val(); this.dirty_blocks(lesson); this.mark_dirty(); });
+		field(__("Poster image URL"), $poster);
+		const $cov = $('<input type="number" min="0" max="100" class="form-control" />').val(this.num(block.min_coverage_percent));
+		$cov.on("input", () => { block.min_coverage_percent = this.num($cov.val()); this.dirty_blocks(lesson); this.mark_dirty(); });
+		field(__("Coverage to pass (%)"), $cov);
+		const $cp = $('<input type="checkbox" />').prop("checked", !!this.num(block.checkpoints_enabled));
+		$cp.on("change", () => { block.checkpoints_enabled = $cp.prop("checked") ? 1 : 0; this.dirty_blocks(lesson); this.mark_dirty(); });
+		field(__("In-video checkpoints"), $cp);
+		$('<div class="tc-hint"></div>').text(__("Register a new video, and place its checkpoints on the timeline, in the classic builder.")).appendTo($box);
+		$('<button class="btn btn-default btn-xs" style="margin-top:6px"></button>').text(__("Open classic builder")).on("click", () => this.open_classic()).appendTo($box);
+		if (!this.editable()) $box.find("input, select").attr("disabled", "disabled");
+		return $box;
+	}
+
+	// Image Hotspots — attach the diagram, then place pins (x/y percent + label)
+	// with a live learner preview above the row editor.
+	hotspots_editor(lesson, block) {
+		const $box = $('<div class="tc-media"></div>');
+		if (block.image) $box.append(this.render_learner(block));
+		else $('<div class="tc-muted"></div>').text(__("Attach a diagram image, then place hotspots on it.")).appendTo($box);
+		const $btn = $('<button class="btn btn-default btn-sm"></button>').text(block.image ? __("Replace image") : __("Attach image"));
+		$btn.on("click", () => this.attach_media(lesson, block, "image", "image/*"));
+		if (!this.editable()) $btn.attr("disabled", "disabled");
+		$box.append($btn);
+		$box.append(this.list_editor(lesson, block, "hotspots", (row, val, set) => this.hotspot_row(row, val, set)));
+		return $box;
+	}
+
+	hotspot_row($row, val, set) {
+		val = val && typeof val === "object" ? val : { x: 50, y: 50, label: "" };
+		const $x = $('<input type="number" min="0" max="100" class="form-control tc-xy" />').val(this.num(val.x));
+		const $y = $('<input type="number" min="0" max="100" class="form-control tc-xy" />').val(this.num(val.y));
+		const $l = $('<input type="text" class="form-control" />').attr("placeholder", __("Label")).val(val.label || "");
+		const upd = () => set({ x: this.num($x.val()), y: this.num($y.val()), label: $l.val() });
+		[$x, $y, $l].forEach(($i) => $i.on("input", upd));
+		if (!this.editable()) [$x, $y, $l].forEach(($i) => $i.attr("disabled", "disabled"));
+		$row.append($('<div class="tc-hotspot-row"></div>').append($("<span>x%</span>"), $x, $("<span>y%</span>"), $y, $l));
+	}
+
+	pick_file(accept) {
+		return new Promise((resolve) => {
+			const input = document.createElement("input");
+			input.type = "file";
+			if (accept) input.accept = accept;
+			input.onchange = () => resolve((input.files && input.files[0]) || null);
+			input.click();
+		});
+	}
+
+	// XMLHttpRequest, not fetch: a large media file needs upload progress, which
+	// fetch has no event for. Mirrors the classic builder's upload idiom (private
+	// file on Training Lesson).
+	upload(file, extra) {
+		return new Promise((resolve, reject) => {
+			const form = new FormData();
+			form.append("file", file, file.name);
+			form.append("is_private", "1");
+			Object.entries(extra || {}).forEach(([key, value]) => {
+				if (value) form.append(key, value);
+			});
+			const xhr = new XMLHttpRequest();
+			xhr.open("POST", "/api/method/upload_file", true);
+			xhr.setRequestHeader("X-Frappe-CSRF-Token", frappe.csrf_token);
+			xhr.onload = () => {
+				let data = null;
+				try {
+					data = JSON.parse(xhr.responseText);
+				} catch (e) {
+					data = null;
+				}
+				const url = data && data.message && data.message.file_url;
+				if (xhr.status >= 200 && xhr.status < 300 && url) resolve(data.message);
+				else reject(new Error(__("Upload failed.")));
+			};
+			xhr.onerror = () => reject(new Error(__("Upload failed.")));
+			xhr.send(form);
+		});
+	}
+
+	attach_media(lesson, block, field, accept) {
+		if (!this.editable()) return;
+		this.pick_file(accept).then((file) => {
+			if (!file) return;
+			frappe.show_alert({ message: __("Uploading {0}…", [file.name]), indicator: "blue" }, 8);
+			this.upload(file, { doctype: "Training Lesson", docname: lesson.name || "" })
+				.then((result) => {
+					block[field] = result.file_url;
+					this.dirty_blocks(lesson);
+					this.mark_dirty();
+					this.rerender_block(lesson, block);
+					frappe.show_alert({ message: __("Attached."), indicator: "green" }, 3);
+				})
+				.catch((e) => frappe.msgprint({ message: (e && e.message) || __("Upload failed."), indicator: "red" }));
+		});
 	}
 
 	// ---------------------------------------------------- interactive editors
@@ -827,6 +971,7 @@ class TrainingCanvas {
 	blank_row(key) {
 		if (key === "cards") return { front: "", back: "" };
 		if (key === "panels") return { title: "", body: "<p></p>" };
+		if (key === "hotspots") return { x: 50, y: 50, label: "" };
 		return "";
 	}
 
@@ -931,6 +1076,7 @@ class TrainingCanvas {
 		else if (type === "Checklist") block.data = JSON.stringify({ items: [""] });
 		else if (type === "Flashcards") block.data = JSON.stringify({ cards: [{ front: "", back: "" }] });
 		else if (type === "Accordion") block.data = JSON.stringify({ panels: [{ title: "", body: "<p></p>" }] });
+		else if (type === "Image Hotspots") block.data = JSON.stringify({ hotspots: [] });
 		lesson.blocks.splice(index, 0, block);
 		this.dirty_blocks(lesson);
 		this.mark_dirty();

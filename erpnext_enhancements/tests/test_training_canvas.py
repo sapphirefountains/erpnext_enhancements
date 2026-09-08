@@ -201,6 +201,35 @@ class TestCanvasBuildsWholeCourses(unittest.TestCase):
         self.assertNotIn('"Material Change"', code)
 
 
+class TestCanvasAuthorsMedia(unittest.TestCase):
+    """Media blocks are authored on the canvas too — attach files, pick a video
+    asset, place hotspots — reusing the classic builder's upload idiom."""
+
+    def test_every_block_type_can_be_added(self):
+        """The add menu offers all twelve types, not just text — so a whole lesson
+        can be built without leaving the canvas."""
+        code = _canvas()
+        block = re.search(r"TC_ADDABLE = \[(.*?)\]", code, re.DOTALL)
+        self.assertIsNotNone(block, "TC_ADDABLE not found")
+        offered = set(re.findall(r'"([^"]+)"', block.group(1)))
+        for t in ("Image", "Video", "PDF", "Downloadable File", "Image Hotspots", "External Embed"):
+            self.assertIn(t, offered, f"{t!r} cannot be added on the canvas")
+
+    def test_files_upload_as_private_via_upload_file(self):
+        code = _canvas()
+        self.assertIn("attach_media", code)
+        self.assertIn("/api/method/upload_file", code)
+        self.assertIn('"is_private"', code)
+
+    def test_video_picks_a_registered_asset(self):
+        code = _canvas()
+        self.assertIn("video_editor", code)
+        self.assertIn("video_assets", code)
+
+    def test_hotspots_are_placed_on_the_canvas(self):
+        self.assertIn("hotspots_editor", _canvas())
+
+
 class TestCanvasPageIsRegistered(unittest.TestCase):
     def test_the_page_is_gated_to_authors(self):
         import json
