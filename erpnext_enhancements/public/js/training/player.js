@@ -257,6 +257,11 @@
 		rootEl.appendChild(head);
 		rootEl.appendChild(main);
 		rootEl.appendChild(foot);
+
+		// The floating "Create a course with Triton" trident, for a user who may
+		// author (b.can_author). A plain learner never sees it. Fixed bottom-left so
+		// it does not collide with anything the learner surface puts bottom-right.
+		if (b.can_author) rootEl.appendChild(tritonFab());
 		rootEl.removeAttribute("aria-busy");
 
 		// -------------------------------------------------------------- routing
@@ -1326,6 +1331,98 @@
 				submitted_on: t("just now"),
 				graded_on: "",
 			});
+		}
+
+		// ------------------------------------------- create a course with Triton
+		//
+		// The floating trident (mounted only when b.can_author) and the dialog it
+		// opens. Everything here is built with el() and textContent, never a raw
+		// HTML string, so it stays inside the learner runtime's rule against that.
+		function tritonFab() {
+			var fab = button("\u{1F531}", "tr-triton-fab", openTritonCourseDialog);
+			fab.setAttribute("title", t("Create a course with Triton"));
+			fab.setAttribute("aria-label", t("Create a course with Triton"));
+			return fab;
+		}
+
+		function openTritonCourseDialog() {
+			var overlay = el("div", "tr-triton-overlay");
+			var dialog = el("div", "tr-triton-dialog");
+			dialog.setAttribute("role", "dialog");
+			dialog.setAttribute("aria-modal", "true");
+
+			dialog.appendChild(el("h2", "tr-triton-title", t("Create a course with Triton")));
+			dialog.appendChild(
+				el("p", "tr-triton-intro", t("Describe the audience and what they should be able to do afterwards. Triton drafts a course you review before anyone sees it."))
+			);
+
+			var field = el("textarea", "tr-triton-input");
+			field.rows = 4;
+			dialog.appendChild(field);
+
+			var status = el("p", "tr-triton-status");
+			status.setAttribute("role", "status");
+			dialog.appendChild(status);
+
+			var actions = el("div", "tr-triton-actions");
+			actions.appendChild(button(t("Cancel"), "tr-button tr-button-quiet", close));
+			var draft = button(t("Draft with Triton"), "tr-button tr-button-primary", submit);
+			actions.appendChild(draft);
+			dialog.appendChild(actions);
+
+			overlay.appendChild(dialog);
+			rootEl.appendChild(overlay);
+			field.focus();
+
+			var busy = false;
+
+			function close() {
+				if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+			}
+
+			function submit() {
+				if (busy) return;
+				var brief = (field.value || "").trim();
+				if (!brief) {
+					status.textContent = t("Tell Triton what the course should teach.");
+					return;
+				}
+				busy = true;
+				draft.disabled = true;
+				draft.textContent = t("Drafting…");
+				status.textContent = t("Triton is drafting the course… this can take a moment.");
+				// Reply bound to `drafted`, not `res`: the boundary contract treats
+				// `res` as a server-reply binder and would demand every sub-key it reads
+				// be sent by a scanned endpoint, but this one delegates to training_ai.
+				call("draftCourse", { brief: brief })
+					.then(function (drafted) {
+						showResult(drafted || {});
+					})
+					.catch(function (err) {
+						busy = false;
+						draft.disabled = false;
+						draft.textContent = t("Draft with Triton");
+						status.textContent = (err && err.message) || t("Something went wrong. Please try again.");
+					});
+			}
+
+			function showResult(drafted) {
+				clear(dialog);
+				dialog.appendChild(el("h2", "tr-triton-title", t("Draft ready")));
+				dialog.appendChild(
+					el("p", "tr-triton-intro", fmt(t("Triton drafted “{0}” as an unpublished draft. Open it in the builder to review, edit and publish."), [drafted.course_title || drafted.course || ""]))
+				);
+				var done = el("div", "tr-triton-actions");
+				done.appendChild(button(t("Close"), "tr-button tr-button-quiet", close));
+				done.appendChild(
+					button(t("Open in builder"), "tr-button tr-button-primary", function () {
+						var url = drafted.url || ("/app/training-builder?course=" + encodeURIComponent(drafted.course || ""));
+						window.open(url, "_blank");
+						close();
+					})
+				);
+				dialog.appendChild(done);
+			}
 		}
 
 		function renderQuestions(lesson) {

@@ -695,6 +695,11 @@ jobs:
       # sweep), cancelled excluded from completion rate, cohort progress, backlog.
       - name: Training analytics (manager rollup)
         run: python -m unittest erpnext_enhancements.tests.test_training_analytics -v
+      # "Create a course with Triton" -- the drafting endpoint's gates + JSON
+      # extraction, and source-surface guards that the floating trident is wired on
+      # both SPAs and its method is whitelisted + on the player transport.
+      - name: Training Triton course-authoring trident (gates + wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_training_course_authoring_fab -v
       # The kiosk service worker is registered at ROOT scope, so what it answers
       # for is every page's problem. It used to serve the whole app's assets
       # cache-first with ignoreSearch, which froze JavaScript across the site for

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.373.0] - 2026-09-08
+
+### Added
+
+- **"Create a course with Triton" — a floating trident on the training SPAs.** A course author can now
+  describe a course in a sentence and have Triton draft the whole thing — lessons, teaching content and a
+  quiz — as an **unpublished, review-gated draft** they open in the builder, edit, and publish. The
+  floating trident (the 🔱, matching the global Triton bubble's brand) appears on **both** training SPAs:
+  the course **builder** (bottom-left, so it never collides with the global chat bubble that owns
+  bottom-right), and the learner **`/training`** player — where it is shown **only** to a user who may
+  create courses (`get_learner_bootstrap` gains `can_author`, false for a plain Website-User learner), so
+  nobody sees a button for an action they cannot take.
+
+  The division of labour is the one the AI-authoring work already established: the model *proposes* a
+  **Course Spec** (validated against `course_spec.COURSE_SPEC_SCHEMA`) and the deterministic materialiser
+  `author_course_from_spec` *builds* it and **never publishes** — so the worst a bad draft can do is leave
+  an unpublished course for the author to fix or delete; nothing reaches a learner without a human pressing
+  publish. New endpoint `training_ai.draft_course_with_triton` (author-gated and AI-switch-gated, with a
+  brief cap, JSON extraction that tolerates a fenced/prose-wrapped reply, and one corrective retry on a
+  validation miss); a thin `api.training.draft_course` re-export so the player can dial it under its single
+  transport prefix. The learner-player dialog is built with `el()`/`textContent` only (no raw HTML — the
+  runtime's rule), and every new `tr-triton-*` class is styled. Bench-free tests
+  (`test_training_course_authoring_fab`) cover the gates, the JSON extraction, and the cross-SPA wiring;
+  the whole flow was reproduced end-to-end in the player harness before shipping.
+
 ## [1.372.2] - 2026-09-08
 
 ### Fixed

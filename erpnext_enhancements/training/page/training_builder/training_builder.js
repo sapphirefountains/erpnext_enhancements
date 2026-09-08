@@ -181,7 +181,73 @@ class TrainingBuilder {
 		this.$body = $(page.body);
 		this.reset();
 		this.build_chrome();
+		this.build_triton_fab();
 		this.bind_unload_guard();
+	}
+
+	// ----- Triton: create a whole course from a brief -----------------------
+	//
+	// A floating trident, bottom-left so it never collides with the global Triton
+	// chat bubble (bottom-right on every desk page). It opens the one focused
+	// thing an author wants from here that the chat bubble does not offer as a
+	// button: "describe a course and have Triton draft it." The draft lands as an
+	// unpublished, review-gated version (api.training_ai.draft_course_with_triton
+	// -> author_course_from_spec, which never publishes), so a bad draft is a
+	// throwaway, never something a learner can reach.
+	build_triton_fab() {
+		this.$triton_fab = $(
+			`<button type="button" class="tb-triton-fab" title="${__("Create a course with Triton")}" aria-label="${__(
+				"Create a course with Triton"
+			)}">\u{1F531}</button>`
+		)
+			.appendTo(this.$body)
+			.on("click", () => this.create_course_with_triton());
+	}
+
+	create_course_with_triton() {
+		const dialog = new frappe.ui.Dialog({
+			title: __("Create a course with Triton"),
+			fields: [
+				{
+					fieldname: "brief",
+					fieldtype: "Small Text",
+					label: __("What should the course teach?"),
+					reqd: 1,
+					description: __(
+						"Describe the audience and what they should be able to do afterwards. Triton drafts a course — lessons, content and a quiz — as an unpublished draft you review before anyone sees it."
+					),
+				},
+			],
+			primary_action_label: __("Draft with Triton"),
+			primary_action: (values) => {
+				dialog.disable_primary_action();
+				dialog.set_message(__("Triton is drafting the course… this can take a moment."));
+				frappe.call({
+					method: "erpnext_enhancements.api.training_ai.draft_course_with_triton",
+					args: { brief: values.brief },
+					// Whole-course drafting is a long call; the builder should not time it out.
+					freeze: false,
+				})
+					.then((r) => {
+						const out = (r && r.message) || {};
+						dialog.hide();
+						frappe.show_alert({
+							message: __("Triton drafted “{0}” as a draft. Review it, then publish.", [
+								out.course_title || out.course,
+							]),
+							indicator: "green",
+						});
+						if (out.course) this.load(out.course);
+					})
+					.catch(() => {
+						// frappe.call already surfaced the server message; just let the
+						// author edit the brief and try again.
+						dialog.enable_primary_action();
+						dialog.clear_message();
+					});
+			},
+		});
+		dialog.show();
 	}
 
 	reset() {
