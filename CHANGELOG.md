@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.370.0] - 2026-09-08
+
+### Added
+
+- **Announcements on the training home (WI-071 Phase D).** A `Training Announcement` is a short,
+  plain-text notice an author or manager posts to **all** learners, or scoped to one **course** or one
+  **batch**, optionally pinned and with an expiry. Learners see the ones relevant to them at the top of
+  `/training` (`get_learner_bootstrap` gains an `announcements` key), pinned first. Relevance is computed
+  as the union of three **separate scoped reads** — All Learners, a course the learner is or was
+  assigned, a batch they belong to — so a course or batch announcement never leaks to anyone outside it,
+  and only `published`, unexpired ones are sent. The body is plain text, rendered with `textContent`
+  (never `innerHTML`), so a notice cannot smuggle markup. Deliberately small: no rich text, no threads,
+  and the "email everyone it reaches" notification is left for a follow-up — posting the notice is the
+  value. Bench-free coverage in `tests/test_training_announcements.py` (scope validation + the per-scope
+  surface); boot-wire, boundary and CSS-contract stay green with no allowlist edits.
+
 ## [1.369.0] - 2026-09-08
 
 ### Added

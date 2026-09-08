@@ -2802,6 +2802,36 @@
 	color: var(--tr-muted);
 }
 
+/* ---------------------------------------------------------- announcements */
+
+.tr-announcements {
+	margin: 4px 0 20px;
+}
+
+.tr-announcement {
+	padding: 12px 14px;
+	margin-bottom: 8px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	box-shadow: var(--tr-shadow);
+}
+
+.tr-announcement.is-pinned {
+	border-left: 3px solid var(--tr-accent);
+}
+
+.tr-announcement-title {
+	font-weight: 600;
+}
+
+.tr-announcement-body {
+	margin-top: 4px;
+	font-size: 0.9rem;
+	color: var(--tr-muted);
+	white-space: pre-wrap;
+}
+
 /* ------------------------------------------------------------- completion */
 
 .tr-complete {

@@ -237,6 +237,19 @@ the scheduling wrapper, the sign-off is the evidence. The calendar invite is the
 deferred native half. Bench-free coverage:
 [`../tests/test_training_evaluations.py`](../tests/test_training_evaluations.py).
 
+### Announcements (WI-071 Phase D)
+
+A **Training Announcement** is a short, plain-text notice an author or manager posts
+to **all** learners, or scoped to one **course** or one **batch**, optionally pinned
+and with an expiry. Learners see the relevant ones at the top of `/training`
+(`get_learner_bootstrap` → `announcements`), pinned first. Relevance is the union of
+**three separate scoped reads** — All Learners, the learner's own courses, their own
+batches — so a course or batch announcement never leaks outside it, and only
+`published`, unexpired ones are sent. The body is plain text, rendered with
+`textContent` (never `innerHTML`). Deliberately small: no rich text, no threads; the
+"email everyone it reaches" notification is a deferred follow-up. Bench-free coverage:
+[`../tests/test_training_announcements.py`](../tests/test_training_announcements.py).
+
 ## Video
 
 **Putting a real video in a lesson:**
