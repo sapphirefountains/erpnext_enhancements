@@ -353,6 +353,11 @@
 		getTranscript: function () { return { enabled: true, completions: COMPLETIONS }; },
 		askQuestion: function () { return {}; },
 		lessonQuestions: function () { return { enabled: true, mine: [], public: [] }; },
+		// Work submissions (WI-071 Phase F). The preview never touches a real File
+		// store, so uploadFile hands back a fake private URL and submitWork echoes a
+		// Submitted verdict -- enough for the submit box to render its states.
+		uploadFile: function (file) { return "/private/files/" + ((file && file.name) || "preview"); },
+		submitWork: function () { return { submission: "TRN-SUB-PREVIEW", status: "Submitted", notified: false }; },
 		leaderboard: function () { return LEADERBOARD; }
 	};
 

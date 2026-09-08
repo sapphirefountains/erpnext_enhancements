@@ -28,6 +28,7 @@
   "quiz_questions",
   "engagement_section",
   "allow_questions",
+  "requires_submission",
   "transcript",
   "published_section",
   "published_content_json",
@@ -188,6 +189,13 @@
    "fieldname": "allow_questions",
    "fieldtype": "Check",
    "label": "Allow Learner Questions"
+  },
+  {
+   "default": "0",
+   "description": "Ask the learner to hand in a file on this lesson (a photo of the finished work, a filled-in sheet). A Training Manager grades it. In v1 the submission is collected and graded but does not yet block lesson completion.",
+   "fieldname": "requires_submission",
+   "fieldtype": "Check",
+   "label": "Ask for a Work Submission"
   },
   {
    "description": "Paste the lesson's script or the video's transcript. Used to draft quiz questions. A transcript with timings (WebVTT) additionally enables checkpoint-timestamp suggestions — without timings the model would have to invent them.",

@@ -490,6 +490,7 @@ def _split_lesson(lesson):
         "summary": lesson.summary or "",
         "minutes": cint(lesson.estimated_minutes),
         "allow_questions": cint(lesson.allow_questions),
+        "requires_submission": cint(lesson.requires_submission),
         "blocks": [],
         "quiz": {
             "enabled": cint(lesson.has_quiz),
@@ -961,6 +962,7 @@ LESSON_ALLOWED_FIELDS = frozenset(
         "summary",
         "transcript",
         "allow_questions",
+        "requires_submission",
         "has_quiz",
         "quiz_questions_to_ask",
         "quiz_pass_score",
@@ -1204,6 +1206,7 @@ def _builder_lesson(lesson, questions, checkpoints):
         "idx_in_chapter": cint(lesson.idx_in_chapter),
         "estimated_minutes": cint(lesson.estimated_minutes),
         "allow_questions": cint(lesson.allow_questions),
+        "requires_submission": cint(lesson.requires_submission),
         "has_quiz": cint(lesson.has_quiz),
         "quiz_questions_to_ask": cint(lesson.quiz_questions_to_ask),
         "quiz_pass_score": cint(lesson.quiz_pass_score),

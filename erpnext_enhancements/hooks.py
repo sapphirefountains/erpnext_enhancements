@@ -79,6 +79,11 @@ doctype_js = {
 	# rather than saving a verdict on the form. In public/js like the Course script
 	# above -- NOT the doctype-folder file (see the double-load note below).
 	"Training Evaluation": ["public/js/training/training_evaluation.js"],
+	# training: the Submission form's "Grade" button, which files a real grade
+	# through submissions.grade_submission (stamps grader, times it, mails the
+	# learner) rather than a raw field edit. In public/js like the Evaluation script
+	# above -- NOT the doctype-folder file (the double-load trap).
+	"Training Submission": ["public/js/training/training_submission.js"],
 	# training: the GCS signing key goes in through a dialog, not the field. The
 	# field is a Password, which Frappe renders as a SINGLE-LINE masked input --
 	# a control that cannot take a 2 KB multi-line service-account JSON by paste
@@ -1791,6 +1796,7 @@ permission_query_conditions = {
 	"Training Completion": "erpnext_enhancements.training.permissions.completion_query_conditions",
 	"Training Certificate": "erpnext_enhancements.training.permissions.certificate_query_conditions",
 	"Training Signoff": "erpnext_enhancements.training.permissions.signoff_query_conditions",
+	"Training Submission": "erpnext_enhancements.training.permissions.submission_query_conditions",
 	# Chat (ADR 0009 §F.18): row-level scoping is MEMBERSHIP, not role. Chat Room is
 	# the only chat doctype carrying a DocPerm at all (`read` for "Chat User"), so it is
 	# the only one where this hook is the live gate -- the other three ship with an
@@ -1827,6 +1833,7 @@ has_permission = {
 	"Training Completion": "erpnext_enhancements.training.permissions.completion_has_permission",
 	"Training Certificate": "erpnext_enhancements.training.permissions.certificate_has_permission",
 	"Training Signoff": "erpnext_enhancements.training.permissions.signoff_has_permission",
+	"Training Submission": "erpnext_enhancements.training.permissions.submission_has_permission",
 	# Chat: the twin of every query condition above, and parity here is the house
 	# doctrine -- ten and ten before this block, four and four after it.
 	# "Chat Room" is not just the single-document gate: it IS the realtime security

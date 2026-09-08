@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.371.0] - 2026-09-08
+
+### Added
+
+- **Learner work submissions and grading (WI-071 Phase F).** Some lessons cannot be assessed by a quiz —
+  the learner has to *do* something and hand in the result (a photo of finished work, a filled-in sheet).
+  A `Training Lesson` now carries a **Ask for a Work Submission** flag (`requires_submission`); a lesson
+  with it set shows the learner a submit box between the content and the Q&A. The learner attaches one
+  file and an optional note; a **Training Manager** grades it **Passed**, **Needs Rework**, or claims it
+  **Under Review** from a queue. The learner sees their own submissions and any feedback in a strip on
+  the `/training` home, and inline in the lesson (passed, waiting, or sent back). A `Needs Rework`
+  verdict must carry feedback — the one grade that is useless without words.
+
+  New `Training Submission` doctype (`user` / course / lesson / file / status / grade / feedback), a
+  learner endpoint `submit_lesson_work` (delegating to `training.submissions.submit_work`, gated by the
+  same visibility predicate as taking the course), a manager endpoint `grade_submission` (re-checks the
+  Training Manager role server-side), a `get_submission_queue`, and a desk **Grade** button. Row scoping
+  in `training/permissions.py` (`submission_query_conditions` / `submission_has_permission`, keyed on the
+  `user` column) hands each learner their own submissions and the unscoped roles the whole queue —
+  authors deliberately excluded, as everywhere else in the module.
+
+  The submitted file is **private and follows the record**: the player uploads it through Frappe's own
+  `upload_file` (a private `File`), and `submit_work` re-parents it onto the new submission
+  (`attached_to_doctype` / `attached_to_name`, `is_private=1`). From then on Frappe's standard
+  private-file check gates it by read permission on the submission — the learner reads their own, a
+  grader (a manager) reads all, and no bespoke serving route is needed. A learner cannot staple a file
+  they do not own to a submission. Grading a submission emails the learner (best-effort, gated on
+  *Send Notifications* like the rest of the module's mail).
+
+  *Deferred to a follow-up:* completion-gating — a lesson **blocking** on a `Passed` submission before it
+  can be finished. v1 collects and grades the work and shows its status; it does not yet stop a lesson
+  completing without it. Bench-free tests cover the submit gate, the file re-parenting, manager-only
+  grading with the feedback rule, and the scoping (`test_training_submissions`, registered in `ci.yml`).
+
 ## [1.370.0] - 2026-09-08
 
 ### Added

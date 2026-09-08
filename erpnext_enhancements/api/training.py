@@ -484,6 +484,11 @@ def get_learner_bootstrap():
         # Additive: published announcements relevant to this learner (WI-071 Phase D).
         # None (doctype not migrated) or [] (none) draws nothing.
         "announcements": _learner_announcements(user),
+        # Additive: this learner's own work submissions and grades (WI-071 Phase F).
+        # None (doctype not migrated) or [] (nothing submitted) draws nothing. The
+        # player both lists these and indexes them by lesson_key for the lesson-view
+        # submit box's "already submitted / graded" state.
+        "submissions": _learner_submissions(user),
         # Every key here is read by the player, and every setting the player reads
         # is here. Both halves of that sentence were false: `max_playback_rate` and
         # `doc_min_dwell_seconds` were read by video.js and blocks.js and sent by
@@ -1723,6 +1728,78 @@ def _learner_announcements(user):
     ]
 
 
+def _learner_submissions(user):
+    """This learner's own work submissions and their grades (WI-071 Phase F).
+
+    ``None`` when the Training Submission doctype has not migrated; ``[]`` when the
+    learner has submitted nothing. Filtered on their own rows (``get_all`` ignores
+    DocPerm, and the row is theirs), newest first. Each row carries the lesson's
+    ``lesson_key`` as well as its title so the player can both list them in the home
+    strip and match the latest one against the lesson a learner is looking at — the
+    submit box in the lesson reads its "already submitted / graded" state from here
+    rather than from a second round-trip. Feedback is plain text, rendered by the
+    player with ``textContent``.
+    """
+    if not frappe.db.exists("DocType", "Training Submission"):
+        return None
+
+    rows = frappe.get_all(
+        "Training Submission",
+        filters={"user": user},
+        fields=[
+            "name",
+            "course",
+            "lesson",
+            "status",
+            "grade",
+            "feedback",
+            "file",
+            "submission_text",
+            "submitted_on",
+            "graded_on",
+        ],
+        order_by="submitted_on desc, creation desc",
+        limit=50,
+    )
+    if not rows:
+        return []
+
+    course_titles = {
+        row.name: row.course_title
+        for row in frappe.get_all(
+            "Training Course",
+            filters={"name": ["in", list({r.course for r in rows if r.course})]},
+            fields=["name", "course_title"],
+        )
+    }
+    lessons = {
+        row.name: row
+        for row in frappe.get_all(
+            "Training Lesson",
+            filters={"name": ["in", list({r.lesson for r in rows if r.lesson})]},
+            fields=["name", "lesson_key", "lesson_title"],
+        )
+    }
+    out = []
+    for r in rows:
+        lesson = lessons.get(r.lesson)
+        out.append(
+            {
+                "name": r.name,
+                "course_title": course_titles.get(r.course, r.course),
+                "lesson_key": lesson.lesson_key if lesson else "",
+                "lesson_title": (lesson.lesson_title if lesson else "") or "",
+                "status": r.status or "Submitted",
+                "grade": r.grade or "",
+                "feedback": r.feedback or "",
+                "file": r.file or "",
+                "submitted_on": str(r.submitted_on or ""),
+                "graded_on": str(r.graded_on or ""),
+            }
+        )
+    return out
+
+
 def _signoff_outstanding(doc):
     """True when the course wants a supervisor sign-off and does not have one.
 
@@ -2063,6 +2140,24 @@ def lesson_questions(course, lesson_key):
     from erpnext_enhancements.training import qa
 
     return qa.get_lesson_questions(course, lesson_key)
+
+
+@frappe.whitelist(methods=["POST"])
+def submit_lesson_work(course, lesson_key, file=None, text=None, block_key=None):
+    """Hand in a file against a lesson that asks for one. Delegates to :mod:`training.submissions`.
+
+    A thin re-export, here for the same reason ``ask_lesson_question`` is: the player's
+    transport has a single ``PREFIX`` and one gate, and a second prefix in the client is a
+    second place for a rename to break silently. The learner uploads the file first through
+    Frappe's own ``upload_file`` (a private ``File``) and passes its ``file_url`` as ``file``;
+    ``submissions.submit_work`` re-parents that file onto the new submission so access follows
+    the record. Grading is *not* re-exported here — it is a Desk action for a Training Manager,
+    called at its own path from ``public/js/training/training_submission.js`` — because the
+    /training player is the learner surface and a manager grades from the Desk.
+    """
+    from erpnext_enhancements.training import submissions
+
+    return submissions.submit_work(course, lesson_key, file=file, text=text, block_key=block_key)
 
 
 @frappe.whitelist(methods=["POST"])

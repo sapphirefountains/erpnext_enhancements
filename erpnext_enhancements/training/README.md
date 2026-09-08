@@ -250,6 +250,31 @@ batches — so a course or batch announcement never leaks outside it, and only
 "email everyone it reaches" notification is a deferred follow-up. Bench-free coverage:
 [`../tests/test_training_announcements.py`](../tests/test_training_announcements.py).
 
+### Work submissions and grading (WI-071 Phase F)
+
+Some lessons cannot be assessed by a quiz — the learner has to *do* something and hand
+in the result. A **Training Lesson** with **Ask for a Work Submission**
+(`requires_submission`) set shows the learner a submit box in the player; they attach
+one file and an optional note, and a **Training Manager** grades it **Passed**, **Needs
+Rework**, or claims it **Under Review** from a queue ([`submissions.py`](submissions.py)).
+The learner sees their own submissions and any feedback on the `/training` home
+(`get_learner_bootstrap` → `submissions`) and inline in the lesson. Grading is
+manager-only and re-checked on the server; a `Needs Rework` verdict must carry feedback.
+
+The one thing worth knowing before touching this: **the submitted file is private and
+follows the record.** The player uploads it through Frappe's own `upload_file` (a
+private `File`), then `submit_work` re-parents that file onto the new **Training
+Submission** (`attached_to_doctype` / `attached_to_name`, `is_private=1`). Access is
+then Frappe's standard private-file check — read permission on the submission — so the
+learner opens their own file, a grader (a manager, unscoped in
+[`permissions.py`](permissions.py)) opens all, and there is **no bespoke serving route**
+like the author-uploaded lesson video needs (that is shipped *to* a learner who does not
+own it; this is a file the learner already owns). A learner cannot attach a file they do
+not own. Row scoping keys on the `user` column, same as every learner-owned doctype.
+*Deferred:* completion-gating — a lesson **blocking** on a `Passed` submission before it
+can finish; v1 collects, grades and shows status but does not yet stop completion.
+Bench-free coverage: [`../tests/test_training_submissions.py`](../tests/test_training_submissions.py).
+
 ## Video
 
 **Putting a real video in a lesson:**

@@ -113,6 +113,11 @@
 		// directly: PREFIX is single, and this map is the one place endpoint names appear.
 		askQuestion: "ask_lesson_question",
 		lessonQuestions: "lesson_questions",
+		// Work submissions (WI-071 Phase F). The learner uploads the file through
+		// Frappe's own upload_file (a different prefix -- see transport.uploadFile
+		// below) and then this hands its URL in. Grading is not here: it is a Desk
+		// action for a Training Manager, not part of the learner runtime.
+		submitWork: "submit_lesson_work",
 		// The board. gamification.py has computed points, badges and streaks since
 		// v1.215.0 and its one endpoint had no caller, so every number existed and
 		// none was ever shown to the person who earned it.
@@ -182,6 +187,47 @@
 	Object.keys(METHOD).forEach(function (name) {
 		transport[name] = function (payload) { return call(METHOD[name], payload); };
 	});
+
+	// A learner's work submission is the one thing the player sends that is not
+	// JSON: a file. It goes through Frappe's own upload_file -- a DIFFERENT prefix
+	// from every other call, and a multipart body, so it cannot ride the generic
+	// wrapper above. The file is uploaded PRIVATE; submit_lesson_work then
+	// re-parents it onto the submission so access follows the record. The browser
+	// sets the multipart boundary itself, so we must NOT set Content-Type here.
+	// Resolves to the new file's URL.
+	transport.uploadFile = function (file) {
+		if (!file) return Promise.reject(new Error("No file selected."));
+		var form = new FormData();
+		form.append("file", file, file.name || "submission");
+		form.append("is_private", "1");
+		form.append("folder", "Home");
+		return fetch("/api/method/upload_file", {
+			method: "POST",
+			credentials: "same-origin",
+			signal: abortSignal(),
+			headers: {
+				"Accept": "application/json",
+				"X-Frappe-CSRF-Token": window.TRAINING_CSRF || ""
+			},
+			body: form
+		}).then(function (response) {
+			return response.text().then(function (body) {
+				var data = null;
+				try { data = body ? JSON.parse(body) : null; } catch (e) { data = null; }
+				if (!response.ok) {
+					var message = "";
+					try {
+						var messages = JSON.parse((data && data._server_messages) || "[]");
+						message = JSON.parse(messages[0] || "{}").message || "";
+					} catch (e2) { message = ""; }
+					var error = new Error(message || ("HTTP " + response.status));
+					error.status = response.status;
+					throw error;
+				}
+				return data && data.message ? data.message.file_url : null;
+			});
+		});
+	};
 
 	// The last beat on pagehide, and the one place fetch will not do: the page is
 	// going away, and an in-flight fetch goes with it. sendBeacon is the only
