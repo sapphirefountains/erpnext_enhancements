@@ -187,6 +187,24 @@ discovers and calls the two tools (per its `docs/convergence.md`, one owner per
 cross-repo overlap). Bench-free coverage is in
 [`../tests/test_training_course_authoring.py`](../tests/test_training_course_authoring.py).
 
+### Batches (cohorts)
+
+A **Training Batch** is a cohort — a set of learners moving through a set of courses
+together (`Training Batch` + its `Training Batch Member` / `Training Batch Course`
+child tables; WI-071 Phase A). It is deliberately thin: when a batch goes **Active**
+it raises an assignment for every member × every course **through the existing
+Training Assignment engine**, never a second assignment path — so a cohort cannot
+drift out of step with the individual-assignment model.
+
+The fan-out ([`batch.py`](batch.py) `sync_batch`, enqueued after commit by the
+controller's `on_update`) is **idempotent**: every raise is guarded on open status,
+so a re-save, a newly-added member, or a re-drive after a deploy FLUSHDB completes
+what was missed rather than double-assigning. Due dates prefer the cohort's end
+date, then its start date, then the course default. `enrolled_on` is stamped once
+per member. A member's `Employee` is derived from their User (`user_id` match), not
+fetched from the login id. Still to come in Phase A: a learner "my cohort" surface
+on `/training`. Bench-free coverage: [`../tests/test_training_batch.py`](../tests/test_training_batch.py).
+
 ## Video
 
 **Putting a real video in a lesson:**

@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.367.0] - 2026-09-07
+
+### Added
+
+- **Training Batches now raise their members' assignments (WI-071 Phase A, the fan-out).** v1.365.0
+  landed the batch *data model*; this makes it do something. When a `Training Batch` goes **Active**,
+  it fans an assignment out for **every member × every course** — through the **existing** Training
+  Assignment engine (`training_author.run_bulk_assign`), never a second assignment path, so a cohort
+  cannot drift out of step with the individual-assignment model the module already trusts. The fan-out
+  (`training/batch.py::sync_batch`) is **enqueued after commit** (a thirty-person, four-course cohort is
+  120 inserts — no business happening inside the manager's save) and **idempotent**: every raise is
+  guarded on open status, so a re-save, a newly-added member, or a re-drive after the deploy FLUSHDB
+  drops the queued job simply completes what was missed rather than double-assigning. The due date
+  prefers the cohort's end date, then its start date, then the course default. `enrolled_on` is stamped
+  once per member. Bench-free coverage in `tests/test_training_batch.py`.
+
+- **Learners see their cohort(s) on the training home.** `/training` now shows a "Your cohorts" strip
+  above the course list — each active batch the learner belongs to, with its course count and due date —
+  server-fed on the boot payload (`get_learner_bootstrap` gains a `batches` key from a new, defensively
+  guarded `_learner_batches`, exactly like the stats strip: `None`/`[]` simply draws nothing). It names
+  the group and how much it owes; the courses themselves stay the assigned cards below, so nothing is
+  duplicated. The boot-wire, boundary and CSS-contract tests stay green with no allowlist edits — the
+  key is read at top level and the rows are content.
+
+### Fixed
+
+- **Training Batch Member copied the login id into the Employee field.** The doctype shipped (v1.365.0)
+  with `fetch_from: learner.name`, but `learner` is a **User** link — so `learner.name` is the login id,
+  not an Employee, breaking the "group a cohort by Employee" reporting the field exists for. The
+  controller now derives `employee` from the User matched on `user_id` (blank for a customer Website
+  User with no Employee), and the broken `fetch_from` is removed.
+
 ## [1.366.0] - 2026-09-07
 
 ### Added
