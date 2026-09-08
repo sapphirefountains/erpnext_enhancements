@@ -985,10 +985,23 @@
 			}
 			state.attempt = attempt.attempt || state.attempt;
 			if (attempt.status) state.status = attempt.status;
-			// Carried separately from the attempt's own status because they are
-			// different records with different vocabularies; see renderSignoff.
-			if (course.assignment_status) state.assignmentStatus = course.assignment_status;
-			if (course.signoff_with) state.signoffWith = course.signoff_with;
+			// The ASSIGNMENT's status -- a different record from the attempt, with a
+			// different vocabulary ("Awaiting Sign-off" is an assignment status and
+			// never an attempt one) -- is what routes a finished course to its
+			// sign-off view in renderCourse. It rides on the course payload's
+			// `assignment`, which load() put on state before this ran, so a *resume*
+			// of an awaiting-sign-off course lands on the sign-off view.
+			//
+			// This line read a bare, undeclared `course` and so threw
+			// "ReferenceError: course is not defined" on every resume -- any truthy
+			// attempt reaches here, and an in-progress course always has one -- from
+			// v1.334.0 until this fix. `state.assignment` is the object actually in
+			// scope and the correct source. `signoffWith` is set from the
+			// finished-attempt reply in finishLesson (the only payload that carries
+			// the supervisor's name), so it is left to that path.
+			if (state.assignment && state.assignment.status) {
+				state.assignmentStatus = state.assignment.status;
+			}
 			// The attempt carries the per-lesson progress map, and the course view
 			// needs it: without this `state.progress` is only ever populated by
 			// get_lesson, so the outline had nothing to read and every lesson showed
