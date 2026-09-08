@@ -200,12 +200,15 @@ class TrainingBuilder {
 			return;
 		}
 		const context = this.course ? { doctype: "Training Course", name: this.course } : null;
+		// Prefill is the AUTHOR's opening message, not Triton's greeting: SapphireTriton.ask
+		// drops this text into the user's input box (it never auto-sends -- the widget's
+		// guard), so it has to read in the first person. It still steers Triton to the
+		// right tools and the review gate.
 		window.SapphireTriton.ask(
 			__(
-				"I'm in the training course builder. Do you need help WITH a training or with BUILDING one? " +
-					"If building, ask me what it should cover and any specifics, then draft it with " +
-					"draft_course_spec and create it with author_training_course — it will be an unpublished " +
-					"draft for me to review before publishing."
+				"I'd like help with a training course. Ask me what it should cover and any specifics, " +
+					"then draft it with draft_course_spec and create it with author_training_course — " +
+					"it'll be an unpublished draft for me to review before publishing."
 			),
 			context
 		);
