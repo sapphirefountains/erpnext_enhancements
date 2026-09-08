@@ -291,6 +291,24 @@ filter silently sweeps in NULLs), a Cancelled assignment is out of the completio
 denominator, and average score comes from real completions. Bench-free coverage:
 [`../tests/test_training_analytics.py`](../tests/test_training_analytics.py).
 
+### Building a course with Triton (reuse the real assistant)
+
+Course authoring goes through the **real** Triton assistant — the global desk chat
+bubble — not a second widget. The **Training Course** form and the **builder**
+(a "🔱 Triton" button in its top bar) both open it via the widget's sanctioned
+public opener `window.SapphireTriton.ask(prompt, context)`, which pops the bubble
+with a training prompt **prefilled** (never sent — the author edits first) and the
+current course **pinned as context**. Triton then proposes a Course Spec and calls
+the `author_training_course` FAC tool, which materialises an **unpublished,
+review-gated** draft via `author_course_from_spec` and **never publishes** — the
+one authoring path, behind the review gate.
+
+An earlier iteration (v1.373.0) shipped a self-contained "Create a course with
+Triton" trident on both the builder and the learner `/training` player, with its own
+`draft_course_with_triton` endpoint. That duplicated the real bubble and was removed
+in v1.374.0 (the learner player carries no Triton at all; `/training` is a learner
+surface). Guard: [`../tests/test_training_triton_authoring.py`](../tests/test_training_triton_authoring.py).
+
 ## Video
 
 **Putting a real video in a lesson:**

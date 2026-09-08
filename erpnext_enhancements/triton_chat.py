@@ -111,7 +111,7 @@ def get_settings() -> dict:
         "enable_write_actions": bool(behavior.enable_write_actions),
         "debug": bool(behavior.debug_logging),
         "restrict_to_whitelist": bool(behavior.restrict_to_whitelist),
-        # Attachments (v1.373.0). Read RAW here and defaulted at the point of use, not with
+        # Attachments (v1.375.0). Read RAW here and defaulted at the point of use, not with
         # an `or` chain: `enable_attachments` is a Check whose declared default is 1, and a
         # deliberate 0 must survive -- `cint(x or 1)` is the exact bug
         # test_triton_widget_defaults.py exists to catch on `default_model`. The two Int

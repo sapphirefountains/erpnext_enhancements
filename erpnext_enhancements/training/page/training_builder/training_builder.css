@@ -1122,3 +1122,20 @@
 	box-shadow: 0 0 0 2px #fff;
 	pointer-events: none;
 }
+
+
+
+/* --- Triton authoring button (opens the real Triton bubble) ---------- */
+.tb-triton-btn {
+	border: none;
+	border-radius: 8px;
+	padding: 5px 12px;
+	background: linear-gradient(135deg, #1f6feb, #0a3d91);
+	color: #fff;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+.tb-triton-btn:hover {
+	filter: brightness(1.08);
+}

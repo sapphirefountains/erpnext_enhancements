@@ -441,7 +441,7 @@ re-authorizes on each fetch keeps that property; a delegated service account des
   `https://triton.sapphirefountains.com` with Google. The accounts match on email, so it
   attaches to the same Triton user.
 
-  **Built in v1.373.0.** `triton_attachments.google_link_status()` probes
+  **Built in v1.375.0.** `triton_attachments.google_link_status()` probes
   `GET /api/v1/integrations/google/drive?limit=1` as the user and reports `connected` /
   `disconnected` / `unknown`; the widget renders an inline empty state on `disconnected` and
   fails **open** on `unknown`, so a Triton outage never tells the whole company to reconnect.
@@ -553,7 +553,7 @@ are given above precisely because these URLs will not last:
 
 ## Follow-ups (Triton side, not built here)
 
-These are changes to the **Triton** repo. Each is a deploy there, so none is in v1.373.0; the ERPNext
+These are changes to the **Triton** repo. Each is a deploy there, so none is in v1.375.0; the ERPNext
 side ships the best defence available without them.
 
 1. **`GET /api/v1/auth/google/connect` with a `login_hint`.** The single real gap. Today's

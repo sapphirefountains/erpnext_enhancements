@@ -695,6 +695,11 @@ jobs:
       # sweep), cancelled excluded from completion rate, cohort progress, backlog.
       - name: Training analytics (manager rollup)
         run: python -m unittest erpnext_enhancements.tests.test_training_analytics -v
+      # Triton authoring reuse -- the custom trident is gone (no draft_course_with_triton,
+      # no /training FAB, no can_author) and the builder opens the REAL Triton bubble via
+      # window.SapphireTriton.ask, the same pattern the Training Course form uses.
+      - name: Training Triton authoring (reuse the real bubble)
+        run: python -m unittest erpnext_enhancements.tests.test_training_triton_authoring -v
       # The kiosk service worker is registered at ROOT scope, so what it answers
       # for is every page's problem. It used to serve the whole app's assets
       # cache-first with ignoreSearch, which froze JavaScript across the site for
@@ -1386,7 +1391,7 @@ jobs:
       # (the picker just opens on Flash), so it needs a test rather than review.
       - name: Triton widget default model (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_triton_widget_defaults.py -q
-      # Triton chat attachments (v1.373.0). Its own step for the reason the two above have
+      # Triton chat attachments (v1.375.0). Its own step for the reason the two above have
       # one: each bench-free suite installs its own frappe stub at module scope, and this one
       # extends `frappe.utils` with three date helpers the other two were never written
       # against. Sharing a process would let one suite's stub decide another's outcome.

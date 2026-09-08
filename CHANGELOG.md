@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.373.0] - 2026-09-08
+## [1.375.0] - 2026-09-08
 
 ### Added
 
@@ -220,6 +220,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Deliberately not folded into `get_config`, which runs on every page load for every user and must make no
   network call — now pinned by a test that installs a raising `requests.request` rather than asserting a
   key name.
+
+## [1.374.1] - 2026-09-08
+
+### Fixed
+
+- **The builder's "🔱 Triton" button prefilled Triton's *greeting* into the author's own input box.**
+  `window.SapphireTriton.ask` drops its prompt into the user's message box and never auto-sends (the
+  widget's guard), so the text has to read in the first person. It was phrased as Triton's opener ("Do you
+  need help WITH a training or with BUILDING one?"), which read backwards sitting in the author's box.
+  Reworded to a first-person authoring message that still steers Triton to `draft_course_spec` /
+  `author_training_course` and the review gate.
+
+## [1.374.0] - 2026-09-08
+
+### Changed
+
+- **Course authoring with Triton now reuses the real Triton assistant instead of a second widget.** The
+  self-contained "Create a course with Triton" trident added in v1.373.0 (on both the builder and the
+  learner `/training` player, with its own `draft_course_with_triton` Vertex-drafting endpoint) duplicated
+  what the global Triton chat bubble already does — and can't run on `/training` anyway, which serves
+  desk-less Website-User learners. It's removed. The **builder** gains a "🔱 Triton" button in its top bar
+  that opens the **real** bubble via the widget's sanctioned `window.SapphireTriton.ask(prompt, context)`
+  — prompt prefilled (never sent; the author edits first), current course pinned as context — exactly the
+  pattern the **Training Course** form already uses. Triton proposes a Course Spec and calls the
+  `author_training_course` FAC tool, which materialises an unpublished, review-gated draft; there is one
+  authoring path, behind the review gate. The learner `/training` player carries no Triton at all now (it
+  is a learner surface). Removed with it: the `draft_course`/`can_author` player wiring, the `draftCourse`
+  transport method, the `tr-triton-*` player styles, and the `draft_course_with_triton` endpoint and its
+  helpers. `author_course_from_spec` and `course_spec` (the deterministic materialiser the FAC tool uses)
+  stay. Guard: `test_training_triton_authoring` (replaces `test_training_course_authoring_fab`).
+
+## [1.373.1] - 2026-09-08
+
+### Fixed
+
+- **"Ask the author" (and the ask box and the work-submission box) failed with a bare "TypeError".** The
+  learner player built three server calls with `course: state.course && state.course.name` — but
+  `get_course` returns the course object as `{course: <docname>, title, …}` with **no `name` key**, so
+  `state.course.name` is `undefined`. `JSON.stringify` **drops** an undefined value, so the request
+  reached the server with `course` missing entirely, and `lesson_questions(course, lesson_key)` raised
+  `TypeError: missing 1 required positional argument: 'course'` — surfaced to the learner as a red
+  "TypeError" inside the Q&A panel. The fix sends the reliable docname, `state.courseName` (set by
+  `load()` / `openCourse`), at all three call sites. This is why it never showed in the Error Log (a
+  framework arg-mismatch, not an app exception) and why the player harness never caught it: the harness's
+  canned `get_course` reply carries a `name` key the real payload does not. A regression test
+  (`TestCourseIsSentUnderTheRightName`) pins that the player never reads the non-existent
+  `state.course.name`.
+
+## [1.373.0] - 2026-09-08
+
+### Added
+
+- **"Create a course with Triton" — a floating trident on the training SPAs.** A course author can now
+  describe a course in a sentence and have Triton draft the whole thing — lessons, teaching content and a
+  quiz — as an **unpublished, review-gated draft** they open in the builder, edit, and publish. The
+  floating trident (the 🔱, matching the global Triton bubble's brand) appears on **both** training SPAs:
+  the course **builder** (bottom-left, so it never collides with the global chat bubble that owns
+  bottom-right), and the learner **`/training`** player — where it is shown **only** to a user who may
+  create courses (`get_learner_bootstrap` gains `can_author`, false for a plain Website-User learner), so
+  nobody sees a button for an action they cannot take.
+
+  The division of labour is the one the AI-authoring work already established: the model *proposes* a
+  **Course Spec** (validated against `course_spec.COURSE_SPEC_SCHEMA`) and the deterministic materialiser
+  `author_course_from_spec` *builds* it and **never publishes** — so the worst a bad draft can do is leave
+  an unpublished course for the author to fix or delete; nothing reaches a learner without a human pressing
+  publish. New endpoint `training_ai.draft_course_with_triton` (author-gated and AI-switch-gated, with a
+  brief cap, JSON extraction that tolerates a fenced/prose-wrapped reply, and one corrective retry on a
+  validation miss); a thin `api.training.draft_course` re-export so the player can dial it under its single
+  transport prefix. The learner-player dialog is built with `el()`/`textContent` only (no raw HTML — the
+  runtime's rule), and every new `tr-triton-*` class is styled. Bench-free tests
+  (`test_training_course_authoring_fab`) cover the gates, the JSON extraction, and the cross-SPA wiring;
+  the whole flow was reproduced end-to-end in the player harness before shipping.
 
 ## [1.372.2] - 2026-09-08
 

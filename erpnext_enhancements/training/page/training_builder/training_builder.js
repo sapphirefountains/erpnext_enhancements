@@ -184,6 +184,36 @@ class TrainingBuilder {
 		this.bind_unload_guard();
 	}
 
+	// ----- Triton authoring -------------------------------------------------
+	//
+	// Reuse the REAL Triton assistant -- the global desk bubble, bottom-right on
+	// every desk page -- rather than a second widget of our own. window.SapphireTriton.ask
+	// opens it with a prompt prefilled (never sent -- the author edits first) and,
+	// when a course is loaded, that course pinned as context. The write still
+	// happens in ERPNext behind the review gate: Triton proposes a Course Spec and
+	// calls author_training_course, which creates an unpublished draft. So this is
+	// only the door in, never a second authoring path -- the same pattern as the
+	// Training Course form's "Draft a course with Triton AI" button.
+	open_triton_authoring() {
+		if (!(window.SapphireTriton && window.SapphireTriton.ask)) {
+			frappe.msgprint(__("The Triton assistant is not enabled on this site."));
+			return;
+		}
+		const context = this.course ? { doctype: "Training Course", name: this.course } : null;
+		// Prefill is the AUTHOR's opening message, not Triton's greeting: SapphireTriton.ask
+		// drops this text into the user's input box (it never auto-sends -- the widget's
+		// guard), so it has to read in the first person. It still steers Triton to the
+		// right tools and the review gate.
+		window.SapphireTriton.ask(
+			__(
+				"I'd like help with a training course. Ask me what it should cover and any specifics, " +
+					"then draft it with draft_course_spec and create it with author_training_course — " +
+					"it'll be an unpublished draft for me to review before publishing."
+			),
+			context
+		);
+	}
+
 	reset() {
 		this.course = null;
 		this.version = null;
@@ -226,6 +256,7 @@ class TrainingBuilder {
 				<div class="tb-topbar-title"></div>
 				<span class="tb-badge"></span>
 				<span class="tb-save-state"></span>
+				<button type="button" class="tb-triton-btn" title="${__("Build or plan a course with Triton")}">\u{1F531} ${__("Triton")}</button>
 				<button type="button" class="tb-inspector-toggle">${__("Inspector")}</button>
 			</div>
 		`).appendTo(this.$body);
@@ -267,6 +298,7 @@ class TrainingBuilder {
 
 		this.$topbar.find(".tb-outline-toggle").on("click", () => this.$outline.toggleClass("is-open"));
 		this.$topbar.find(".tb-inspector-toggle").on("click", () => this.toggle_inspector(true));
+		this.$topbar.find(".tb-triton-btn").on("click", () => this.open_triton_authoring());
 		this.$inspector.find('[data-act="close-inspector"]').on("click", () => this.toggle_inspector(false));
 		this.$scrim.on("click", () => this.toggle_inspector(false));
 		this.$outline.find('[data-act="add-lesson"]').on("click", () => this.add_lesson());
