@@ -1,0 +1,157 @@
+{
+ "actions": [],
+ "autoname": "TRN-EVAL-.#####",
+ "creation": "2026-09-08 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "course",
+  "learner",
+  "evaluator",
+  "evaluator_user",
+  "column_break_head",
+  "status",
+  "scheduled_on",
+  "duration_minutes",
+  "location",
+  "outcome_section",
+  "signoff",
+  "notes"
+ ],
+ "fields": [
+  {
+   "description": "The course whose practical competency is being evaluated. Normally one that requires a supervisor sign-off — the evaluation is how that sign-off gets booked rather than happening whenever.",
+   "fieldname": "course",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Course",
+   "options": "Training Course",
+   "reqd": 1
+  },
+  {
+   "description": "The learner being evaluated. Named `user` on the sign-off it feeds; here it is the person whose competency is booked to be watched.",
+   "fieldname": "learner",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Learner",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "description": "Who runs the evaluation. An Employee, because the sign-off it produces is a statement made in a role (matching Training Signoff.supervisor).",
+   "fieldname": "evaluator",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Evaluator",
+   "options": "Employee",
+   "reqd": 1
+  },
+  {
+   "description": "Derived from the evaluator's Employee record, not typed. This is who record_evaluation checks the caller against.",
+   "fieldname": "evaluator_user",
+   "fieldtype": "Link",
+   "label": "Evaluator User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Scheduled",
+   "description": "Scheduled while it is booked; set by recording an outcome (Completed) or by hand (Canceled / No Show). The learner sees only Scheduled evaluations.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Scheduled\nCompleted\nCanceled\nNo Show",
+   "reqd": 1
+  },
+  {
+   "description": "When the evaluation is booked for (local time).",
+   "fieldname": "scheduled_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Scheduled On",
+   "reqd": 1
+  },
+  {
+   "default": "30",
+   "fieldname": "duration_minutes",
+   "fieldtype": "Int",
+   "label": "Duration (Minutes)"
+  },
+  {
+   "description": "Where it happens — a site, a room, or a meeting link.",
+   "fieldname": "location",
+   "fieldtype": "Data",
+   "label": "Location"
+  },
+  {
+   "fieldname": "outcome_section",
+   "fieldtype": "Section Break",
+   "label": "Outcome"
+  },
+  {
+   "description": "The Training Signoff this evaluation produced. Set by record_evaluation when the outcome is recorded — the evaluation books the observation; the sign-off is the attestation.",
+   "fieldname": "signoff",
+   "fieldtype": "Link",
+   "label": "Sign-off",
+   "options": "Training Signoff",
+   "read_only": 1
+  },
+  {
+   "description": "Scheduling notes — what to bring, what will be assessed. The competency verdict itself is recorded on the sign-off, not here.",
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-08 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Evaluation",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Training Author"
+  }
+ ],
+ "search_fields": "course,learner,evaluator,status",
+ "sort_field": "scheduled_on",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "learner",
+ "track_changes": 1
+}

@@ -74,6 +74,11 @@ doctype_js = {
 	# placeholder for three releases after the builder actually shipped, so anyone
 	# who trusted the button never found the builder — it now routes to the page.
 	"Training Course": ["public/js/training/training_course.js"],
+	# training: the Evaluation form's "Record Outcome" button, which files a real
+	# Training Signoff through the existing engine (evaluations.record_evaluation)
+	# rather than saving a verdict on the form. In public/js like the Course script
+	# above -- NOT the doctype-folder file (see the double-load note below).
+	"Training Evaluation": ["public/js/training/training_evaluation.js"],
 	# training: the GCS signing key goes in through a dialog, not the field. The
 	# field is a Password, which Frappe renders as a SINGLE-LINE masked input --
 	# a control that cannot take a 2 KB multi-line service-account JSON by paste

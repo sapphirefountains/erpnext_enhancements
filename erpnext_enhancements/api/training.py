@@ -478,6 +478,9 @@ def get_learner_bootstrap():
         # Additive: upcoming / in-progress live sessions for those cohorts, with the
         # join link. None (doctype not migrated) or [] (nothing coming up) draws nothing.
         "live_classes": _learner_live_classes(user),
+        # Additive: practical evaluations booked for this learner (WI-071 Phase C).
+        # None (doctype not migrated) or [] (none booked) draws nothing.
+        "evaluations": _learner_evaluations(user),
         # Every key here is read by the player, and every setting the player reads
         # is here. Both halves of that sentence were false: `max_playback_rate` and
         # `doc_min_dwell_seconds` were read by video.js and blocks.js and sent by
@@ -1611,6 +1614,59 @@ def _learner_live_classes(user):
             "duration_minutes": cint(r.duration_minutes),
             "join_url": r.join_url or "",
             "status": r.status,
+        }
+        for r in rows
+    ]
+
+
+def _learner_evaluations(user):
+    """Upcoming practical evaluations booked for this learner (WI-071 Phase C).
+
+    ``None`` when the Training Evaluation doctype has not migrated; ``[]`` when none
+    are booked. Filtered on the learner's own rows (``get_all`` ignores DocPerm) and
+    on ``Scheduled`` only, from a little before now so one happening today still
+    shows. Hands back when, who, and where — never a completed evaluation's outcome
+    (that lives on the sign-off).
+    """
+    if not frappe.db.exists("DocType", "Training Evaluation"):
+        return None
+
+    from frappe.utils import add_to_date, now_datetime
+
+    cutoff = add_to_date(now_datetime(), hours=-3)
+    rows = frappe.get_all(
+        "Training Evaluation",
+        filters={"learner": user, "status": "Scheduled", "scheduled_on": [">=", cutoff]},
+        fields=["name", "course", "evaluator", "scheduled_on", "duration_minutes", "location"],
+        order_by="scheduled_on asc",
+        limit=10,
+    )
+    if not rows:
+        return []
+    course_titles = {
+        row.name: row.course_title
+        for row in frappe.get_all(
+            "Training Course",
+            filters={"name": ["in", list({r.course for r in rows})]},
+            fields=["name", "course_title"],
+        )
+    }
+    evaluator_names = {
+        row.name: row.employee_name
+        for row in frappe.get_all(
+            "Employee",
+            filters={"name": ["in", list({r.evaluator for r in rows if r.evaluator})]},
+            fields=["name", "employee_name"],
+        )
+    }
+    return [
+        {
+            "name": r.name,
+            "course_title": course_titles.get(r.course, r.course),
+            "evaluator": evaluator_names.get(r.evaluator, ""),
+            "scheduled_on": str(r.scheduled_on or ""),
+            "duration_minutes": cint(r.duration_minutes),
+            "location": r.location or "",
         }
         for r in rows
     ]

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.369.0] - 2026-09-08
+
+### Added
+
+- **Scheduled evaluations (WI-071 Phase C).** Some competencies are not proved by a quiz — "can drain
+  and refill a basin unsupervised" — so a course can require a supervisor sign-off. Today that sign-off
+  happens *whenever* the supervisor gets to it; this **books** it. A `Training Evaluation` names an
+  evaluator, a time, a learner, and a place; on save it **auto-invites** the learner and the evaluator
+  (best-effort email + notification, gated like the rest of the module's mail). Members see their booked
+  evaluations as an "Upcoming evaluations" strip on `/training` (`get_learner_bootstrap` gains an
+  `evaluations` key from `_learner_evaluations`, scoped to the learner's own `Scheduled` rows). When the
+  evaluator (or a Training Manager — never the learner) records the outcome from the evaluation form's
+  **Record Outcome** button, `evaluations.record_evaluation` **creates and submits a real
+  `Training Signoff` through the existing engine** (`signoff.record_signoff`), links it back, and marks
+  the evaluation Completed — so the completion gate is satisfied by the *same* attestation a manual
+  sign-off produces. There is no second way to sign anything off; the evaluation is the scheduling
+  wrapper, the sign-off is the evidence. The calendar-invite side (an ICS / Google Calendar event) is
+  the *native* half and is deferred (the calendar accounts are disabled on prod). Bench-free coverage in
+  `tests/test_training_evaluations.py` (the permission guards, the feed-to-sign-off, the evaluator
+  derivation); boot-wire, boundary, css-contract and hooks-integrity all green with no allowlist edits.
+
 ## [1.368.0] - 2026-09-07
 
 ### Added
