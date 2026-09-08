@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.373.1] - 2026-09-08
+
+### Fixed
+
+- **"Ask the author" (and the ask box and the work-submission box) failed with a bare "TypeError".** The
+  learner player built three server calls with `course: state.course && state.course.name` — but
+  `get_course` returns the course object as `{course: <docname>, title, …}` with **no `name` key**, so
+  `state.course.name` is `undefined`. `JSON.stringify` **drops** an undefined value, so the request
+  reached the server with `course` missing entirely, and `lesson_questions(course, lesson_key)` raised
+  `TypeError: missing 1 required positional argument: 'course'` — surfaced to the learner as a red
+  "TypeError" inside the Q&A panel. The fix sends the reliable docname, `state.courseName` (set by
+  `load()` / `openCourse`), at all three call sites. This is why it never showed in the Error Log (a
+  framework arg-mismatch, not an app exception) and why the player harness never caught it: the harness's
+  canned `get_course` reply carries a `name` key the real payload does not. A regression test
+  (`TestCourseIsSentUnderTheRightName`) pins that the player never reads the non-existent
+  `state.course.name`.
+
 ## [1.373.0] - 2026-09-08
 
 ### Added

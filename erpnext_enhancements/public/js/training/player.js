@@ -1280,7 +1280,7 @@
 					.then(function (fileUrl) {
 						var url = fileUrl || "";
 						return call("submitWork", {
-							course: state.course && state.course.name,
+							course: state.courseName,
 							lesson_key: key,
 							file: url,
 							text: text,
@@ -1321,7 +1321,7 @@
 			if (!b.submissions) b.submissions = [];
 			b.submissions.unshift({
 				name: "",
-				course_title: (state.course && state.course.title) || (state.course && state.course.name) || "",
+				course_title: (state.course && state.course.title) || (state.courseName) || "",
 				lesson_key: key,
 				lesson_title: lesson.title || "",
 				status: "Submitted",
@@ -1517,7 +1517,7 @@
 					qaState.busy = true;
 					qaState.error = null;
 					var args = {
-						course: state.course && state.course.name,
+						course: state.courseName,
 						lesson_key: key,
 						question: text,
 					};
@@ -1566,7 +1566,7 @@
 			qaState.busy = true;
 			render();
 			return call("lessonQuestions", {
-				course: state.course && state.course.name,
+				course: state.courseName,
 				lesson_key: key,
 			})
 				.then(function (data) {

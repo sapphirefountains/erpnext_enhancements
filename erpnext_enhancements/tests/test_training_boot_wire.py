@@ -355,6 +355,39 @@ class TestQuizAnswersAreNotDoubleNested(unittest.TestCase):
         )
 
 
+class TestCourseIsSentUnderTheRightName(unittest.TestCase):
+    """``get_course`` returns the course object as ``{course: <docname>, title, …}``
+    — there is **no** ``name`` key. So ``state.course.name`` is ``undefined``, and
+    ``JSON.stringify`` **drops** an undefined value: a call built with
+    ``course: state.course.name`` reaches the server with ``course`` missing
+    entirely, and ``lesson_questions(course, lesson_key)`` raises
+    ``TypeError: missing 1 required positional argument: 'course'`` — surfaced to
+    the learner as a bare "TypeError" on **Ask the author** (and identically on the
+    ask box and the work-submission box). The reliable docname is
+    ``state.courseName``, set by ``load()`` / ``openCourse``.
+
+    The player harness never caught this because its canned ``get_course`` reply
+    carries a ``name`` key the real payload does not — a fidelity gap, now a bug
+    that shipped. This guard is blunt on purpose: the course object never has a
+    ``name``, so ANY read of ``state.course.name`` is the defect.
+    """
+
+    def test_the_player_never_reads_the_nonexistent_course_name(self):
+        self.assertNotIn(
+            "state.course.name",
+            _player_code(),
+            "state.course has no `name` key (get_course sends `course`); reading "
+            "state.course.name is always undefined and drops `course` from the call",
+        )
+
+    def test_the_qa_and_submit_calls_use_state_coursename(self):
+        code = _player_code()
+        # Each of these three sends `course` to the server; all must use the docname.
+        for site in ('call("lessonQuestions"', 'call("askQuestion"', 'call("submitWork"'):
+            self.assertIn(site, code)
+        self.assertIn("course: state.courseName", code)
+
+
 class TestTransportNamesExist(unittest.TestCase):
     """The other half of the same contract, kept here so both are checked together.
 
