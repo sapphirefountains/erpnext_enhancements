@@ -480,6 +480,30 @@
  * just picked at the opposite end of a 640px panel from the box you are typing
  * in. It collapses entirely when empty rather than reserving a strip of
  * padding, because most turns have no attachment. */
+/* Google's Drive mark, sized by context rather than by a fixed width, so the button and
+   the chips can differ without a second copy of the artwork. `flex: 0 0 auto` because the
+   chip is a flex row and an SVG with no intrinsic width otherwise collapses to nothing. */
+.triton-drive-icon {
+	width: 1.15em;
+	height: 1.15em;
+	flex: 0 0 auto;
+	vertical-align: -0.2em;
+	/* The logo carries its own colour and must not inherit the button's. */
+	color: inherit;
+}
+
+.triton-msg-attachment .triton-drive-icon {
+	margin-right: 4px;
+}
+
+/* The sprite is a definition, not a picture: it must occupy no space and never paint. */
+.triton-svg-defs {
+	position: absolute;
+	width: 0;
+	height: 0;
+	overflow: hidden;
+}
+
 .triton-attach-bar {
 	flex: 0 0 auto;
 	padding: 8px 10px 0;

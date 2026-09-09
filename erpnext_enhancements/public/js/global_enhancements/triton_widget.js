@@ -318,11 +318,33 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			<div class="triton-context-bar">
 				<button class="triton-context-add" title="Attach the page you're viewing">＋ Add this page</button>
 			</div>
+			<svg class="triton-svg-defs" aria-hidden="true" focusable="false" width="0" height="0">
+				<!-- Google Drive, 2026 gradient refresh. Google's own asset, taken verbatim
+				     from gstatic (productlogos/drive_2026/v2/web/192px.svg); the only edits
+				     are a viewBox, which the original lacks and without which it cannot
+				     scale, and namespaced ids. The artwork itself is untouched, which is
+				     both a brand requirement and the reason it is copied rather than drawn.
+				     Vendored rather than hot-linked so the composer does not depend on a
+				     third-party request to render its own button. -->
+				<symbol id="triton-drive-logo" viewBox="0 0 192 192">
+					<mask id="triton-drive-mask" width="168" height="154" x="12" y="18" maskUnits="userSpaceOnUse" style="mask-type:alpha"><path fill="#b43333" d="M63.09 37c14.626-25.333 51.193-25.334 65.819 0l45.033 78c14.626 25.334-3.657 57.001-32.91 57.001H50.967c-29.253 0-47.536-31.667-32.91-57.001z"/></mask>
+					<g mask="url(#triton-drive-mask)">
+						<path fill="url(#triton-drive-yellow)" d="M206.905 172.02h-91.888l-19.015-32.934 45.944-79.578z"/>
+						<path fill="url(#triton-drive-blue)" d="M-14.919 172.006 50.04 59.494v.002L31.032 92.422h38.02L115 172.004l-129.918.001z"/>
+						<path fill="url(#triton-drive-green)" d="M96.007-20.085 141.954 59.5l-19.011 32.928H31.048z"/>
+					</g>
+					<defs>
+						<linearGradient id="triton-drive-yellow" x1="193.6" x2="103.09" y1="165.6" y2="111.21" gradientUnits="userSpaceOnUse"><stop offset=".09" stop-color="#ffe921"/><stop offset="1" stop-color="#fec700"/></linearGradient>
+						<linearGradient id="triton-drive-blue" x1="114.4" x2="15.53" y1="181.61" y2="121.8" gradientUnits="userSpaceOnUse"><stop offset=".15" stop-color="#a9a8ff"/><stop offset=".33" stop-color="#6d97ff"/><stop offset=".48" stop-color="#3186ff"/></linearGradient>
+						<linearGradient id="triton-drive-green" x1="128.88" x2="28.7" y1="37.88" y2="84.64" gradientUnits="userSpaceOnUse"><stop offset=".55" stop-color="#0ebc5f"/><stop offset=".85" stop-color="#78c9ff"/></linearGradient>
+					</defs>
+				</symbol>
+			</svg>
 			<div class="triton-messages"></div>
 			<div class="triton-attach-bar is-empty" role="list" aria-live="polite"></div>
 			<div class="triton-input-bar">
 				<button class="triton-attach" title="Attach a file" aria-label="Attach a file">📎</button>
-				<button class="triton-attach-drive is-hidden" title="Attach from Google Drive" aria-label="Attach from Google Drive">▲</button>
+				<button class="triton-attach-drive is-hidden" title="Attach from Google Drive" aria-label="Attach from Google Drive"><svg class="triton-drive-icon" aria-hidden="true" focusable="false"><use href="#triton-drive-logo"></use></svg></button>
 				<textarea class="triton-text" rows="1" placeholder="Ask about your data…"></textarea>
 				<button class="triton-send" title="Send">➤</button>
 			</div>
@@ -450,14 +472,14 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			// probe reads Drive once as this user, and Triton's own client refreshes and
 			// re-saves an expired OAuth token as a side effect of doing so — a write its
 			// source already documents as racing the dashboard's calendar fan-out into a
-			// burst of 401s. Idle is still minutes ahead of anyone reaching the ▲.
+			// burst of 401s. Idle is still minutes ahead of anyone reaching the Drive button.
 			// ...and only for somebody who actually uses the panel. The probe costs a
 			// bridge mint plus a Triton round trip, and for a disconnected user the 60s
 			// negative TTL means most page loads are a real one rather than a cache hit —
 			// so probing every Desk page load bills every employee for a feature most of
 			// them never open. A stored session id is the cheapest available evidence that
 			// this person uses the assistant; everyone else gets probed on first open,
-			// which is still minutes before they could reach the ▲.
+			// which is still minutes before they could reach the Drive button.
 			//
 			// .bind(window), not a bare reference: requestIdleCallback called with an
 			// undefined receiver throws "Illegal invocation" in Chrome.
@@ -1118,7 +1140,7 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			if (drivePickerConfig()) {
 				warmDrivePicker();
 				// Deliberately not awaited, and nothing downstream waits on it: the panel
-				// opens at the speed of the click. By the time anyone reaches the ▲ this has
+				// opens at the speed of the click. By the time anyone reaches the Drive button this has
 				// landed; if it has not, onAttachDrive() reads "unknown" and proceeds exactly
 				// as it did before any of this existed.
 				refreshGoogleLink();
@@ -1254,6 +1276,27 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			),
 			mimes: a.allowed_mime_types || [],
 		};
+	}
+
+	// One <use> of the sprite above. Static markup with no interpolation, so it is safe in
+	// the innerHTML the chip renderer already uses for its escaped values.
+	const DRIVE_ICON =
+		'<svg class="triton-drive-icon" aria-hidden="true" focusable="false">' +
+		'<use href="#triton-drive-logo"></use></svg>';
+
+	// The same thing as a node, for the one renderer that is deliberately innerHTML-free.
+	// Built with createElementNS because createElement("svg") makes an HTMLUnknownElement,
+	// which renders nothing and gives no error.
+	function driveIconNode() {
+		const NS = "http://www.w3.org/2000/svg";
+		const svg = document.createElementNS(NS, "svg");
+		svg.setAttribute("class", "triton-drive-icon");
+		svg.setAttribute("aria-hidden", "true");
+		svg.setAttribute("focusable", "false");
+		const use = document.createElementNS(NS, "use");
+		use.setAttribute("href", "#triton-drive-logo");
+		svg.appendChild(use);
+		return svg;
 	}
 
 	function humanSize(bytes) {
@@ -1510,7 +1553,7 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			// Same discipline as renderChips: innerHTML with esc() around every
 			// user-authored value, and a filename is user-authored.
 			chip.innerHTML =
-				`<span class="triton-attach-icon">${row.drive_id ? "▲" : "📄"}</span>` +
+				`<span class="triton-attach-icon">${row.drive_id ? DRIVE_ICON : "📄"}</span>` +
 				`<span class="triton-attach-name">${esc(row.name)}</span>` +
 				`<span class="triton-attach-meta">${esc(
 					row.status === "failed" ? row.error || __("Failed") : humanSize(row.size)
@@ -1580,7 +1623,15 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			const label = it.name || it.file_name || it.title || __("Attachment");
 			const pill = document.createElement("span");
 			pill.className = "triton-msg-attachment";
-			pill.textContent = (it.drive_id ? "▲ " : "📄 ") + label;
+			// The label stays in textContent — it is a filename somebody chose, and this
+			// renderer's whole point is that it never reaches innerHTML. The icon is a
+			// separate node in front of it rather than a character in the same string.
+			if (it.drive_id) {
+				pill.appendChild(driveIconNode());
+			} else {
+				pill.appendChild(document.createTextNode("📄 "));
+			}
+			pill.appendChild(document.createTextNode(label));
 			pill.title = label;
 			box.appendChild(pill);
 		});
@@ -2006,11 +2057,11 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			if (res.state === "connected") {
 				hideGoogleLinkEmptyState();
 				// The ONE place an await precedes requestAccessToken(), and it is a different
-				// click from the ▲ — this button's, not the picker button's. Transient
+				// click from the Drive button — this button's, not that one's. Transient
 				// activation is a ~5s budget rather than a token this consumed, so a probe
 				// that answers promptly still opens the popup; a slow one degrades to the
-				// existing "Could not connect to Google Drive" alert and pressing ▲ works.
-				// The ▲ path itself stays await-free, which is the invariant that matters.
+				// existing "Could not connect to Google Drive" alert and pressing Drive works.
+				// The Drive-button path itself stays await-free, which is the invariant that matters.
 				onAttachDrive();
 				return;
 			}

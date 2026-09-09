@@ -151,13 +151,33 @@ LINK_UNKNOWN = "unknown"
 #: exception and returns ``[]``, so a revoked credential would probe as *connected*). One
 #: ``files.list`` with ``pageSize=1``; the discovery document is bundled, so there is no
 #: second round trip.
-_GOOGLE_PROBE_PATH = "/api/v1/integrations/google/drive?limit=1"
+#: Triton's purpose-built connection probe (Triton v0.75.0). Reads the credential row and
+#: reports what it says: no Google call, no database write.
+_GOOGLE_STATUS_PATH = "/api/v1/integrations/google/status"
+
+#: The fallback, for a Triton that predates that endpoint. One Drive read as this user --
+#: cheap (a single files.list with pageSize=1) but NOT free of side effects, which is the
+#: whole reason the endpoint above exists: constructing Triton's GoogleWorkspaceClient runs
+#: `_load_credentials`, and that refreshes an expired token and commits the result onto the
+#: APIKey row as a side effect of being constructed. Triton's own source documents that
+#: write racing the dashboard's calendar fan-out into a burst of 401s. A probe is polled, so
+#: it is the worst possible caller for it.
+_GOOGLE_DRIVE_PROBE_PATH = "/api/v1/integrations/google/drive?limit=1"
 
 #: Where the user goes to hand Triton a Google credential. It is Triton's ordinary Google
 #: login (``access_type=offline``, ``prompt=consent``), and its callback resolves the user by
 #: *email* and updates the existing row -- which is why a bridge-provisioned user comes back
 #: with a credential on the same row rather than a second one.
-_GOOGLE_CONNECT_PATH = "/api/v1/auth/google/login"
+#: Triton v0.75.0's purpose-built link flow: it takes a `hint`, passes it to Google as
+#: `login_hint`, REFUSES when the account that consented is not the one named, and ends on a
+#: "you can close this tab" page instead of dropping a Triton session into the browser.
+_GOOGLE_CONNECT_PATH = "/api/v1/auth/google/connect"
+
+#: The fallback for an older Triton, which is the ordinary login. It works -- the credential
+#: lands on the row the bridge provisioned, because both sides key on the lowercased email --
+#: but it cannot catch the wrong-account case, and it finishes by logging the person into the
+#: Triton SPA with a JWT in the query string.
+_GOOGLE_LOGIN_PATH = "/api/v1/auth/google/login"
 
 #: (connect, read) seconds. Deliberately NOT ``settings["timeout"]``, which is 120: this runs
 #: on panel open, and a widget that hangs for two minutes deciding whether to show a hint is
@@ -526,6 +546,11 @@ def google_link_status(refresh: int | str = 0) -> dict:
 
     Why the status code decides and the body does not:
 
+    Triton v0.75.0 answers this from ``/api/v1/integrations/google/status``, which reads the
+    stored credential row and reports on it without calling Google and without writing
+    anything. An older Triton 404s that path and the probe falls back to one Drive read,
+    whose status codes are read as follows:
+
     * **400 is authoritative.** Triton's ``_gws`` guard raises it on a falsy ``client.creds``,
       and that is the *identical* predicate the model's own tool gates on -- ``intelligence``
       constructs the same ``GoogleWorkspaceClient`` and checks the same attribute. So this is
@@ -552,30 +577,39 @@ def google_link_status(refresh: int | str = 0) -> dict:
     """
     settings = require_widget_access()
     key = _link_cache_key(frappe.session.user)
-    # Recomputed from settings on every call rather than stored with the cached state: the
-    # cached thing is the *finding*, and a base_url edited in the Desk must not be shadowed by
-    # a half-hour-old copy of itself.
-    connect_url = _google_connect_url(settings)
-
     if not cint(refresh):
         cached = _cached_link_state(key)
         if cached:
             return {
                 "state": cached["state"],
-                "connect_url": connect_url,
+                # Recomputed from settings on every call rather than stored with the cached
+                # state: the cached thing is the *finding*, and a base_url edited in the Desk
+                # must not be shadowed by a half-hour-old copy of itself. Which route it
+                # points at DOES come from the cache, because that is a fact about the Triton
+                # on the other end rather than about our settings.
+                "connect_url": _google_connect_url(
+                    settings, bool(cached.get("supports_connect"))
+                ),
                 # The probe's timestamp, not this request's -- the field says when we last
                 # actually found out, which is what a "checked just now?" affordance needs.
                 "checked_at": cached.get("checked_at") or "",
             }
 
-    state = _probe_google_link(settings)
+    state, supports_connect = _probe_google_link(settings)
     checked_at = _now_iso()
+    connect_url = _google_connect_url(settings, supports_connect)
 
     ttl = _LINK_CACHE_TTL.get(state)
     if ttl:
         try:
             frappe.cache().set_value(
-                key, {"state": state, "checked_at": checked_at}, expires_in_sec=ttl
+                key,
+                {
+                    "state": state,
+                    "checked_at": checked_at,
+                    "supports_connect": supports_connect,
+                },
+                expires_in_sec=ttl,
             )
         except Exception:
             # A cache that will not write costs a request per panel open, not a feature.
@@ -886,15 +920,35 @@ def _cached_link_state(key: str) -> dict | None:
     return None
 
 
-def _google_connect_url(settings: dict) -> str:
+def _google_connect_url(settings: dict, supports_connect: bool = False) -> str:
     """The consent link handed to the browser. Never carries a credential.
 
     Built from ``base_url`` alone -- the Gateway Secret lives on the same settings dict and
     has no business in anything this module returns. Empty when the gateway is unconfigured,
-    because a link to ``/api/v1/auth/google/login`` on no host is worse than no button.
+    because a link to a login route on no host is worse than no button.
+
+    **The ``hint`` is a constraint, not a credential, which is why it can ride in a query
+    string.** Triton compares it against the verified ID token and refuses on a mismatch, so
+    forging it only ever denies the forger: naming somebody else makes your own sign-in fail,
+    and naming yourself in a link you send to a colleague makes theirs fail. There is nothing
+    to gain, so there is nothing to sign -- and that is what keeps a bearer token out of this
+    URL.
+
+    ``supports_connect`` comes from the probe rather than from configuration. Triton ships
+    ``/auth/google/connect`` and ``/integrations/google/status`` in the same release, so a
+    status endpoint that answered at all is proof the connect route is there too. An older
+    Triton gets the plain login, which still attaches the credential to the right row (both
+    sides key on the lowercased email) but cannot catch the wrong-account case.
     """
     base = (settings.get("base_url") or "").strip().rstrip("/")
-    return f"{base}{_GOOGLE_CONNECT_PATH}" if base else ""
+    if not base:
+        return ""
+    if not supports_connect:
+        return f"{base}{_GOOGLE_LOGIN_PATH}"
+    user = (frappe.session.user or "").strip().lower()
+    if not user or user == "Guest".lower():
+        return f"{base}{_GOOGLE_CONNECT_PATH}"
+    return f"{base}{_GOOGLE_CONNECT_PATH}?hint={quote(user, safe='')}"
 
 
 @contextmanager
@@ -927,7 +981,7 @@ def _muted():
             flags.mute_messages = previous
 
 
-def _probe_google_link(settings: dict) -> str:
+def _probe_google_link(settings: dict) -> tuple[str, bool]:
     """One cheap Drive read as this user. Returns one of the three ``LINK_*`` states.
 
     Its own request helper rather than ``triton_chat._request``, and that is the reason this
@@ -946,9 +1000,72 @@ def _probe_google_link(settings: dict) -> str:
     """
     base = (settings.get("base_url") or "").strip().rstrip("/")
     if not base:
-        return LINK_UNKNOWN
-    url = f"{base}{_GOOGLE_PROBE_PATH}"
+        return LINK_UNKNOWN, False
 
+    resp = _probe_request(f"{base}{_GOOGLE_STATUS_PATH}")
+    if resp is None:
+        return LINK_UNKNOWN, False
+    status = cint(getattr(resp, "status_code", None) or 0)
+    if status == 200:
+        return _state_from_status(resp), True
+    if status != 404:
+        # Not a 404, so the route exists and something else went wrong -- an outage, a
+        # gateway error. The endpoint being present is still the fact we needed.
+        return LINK_UNKNOWN, True
+
+    # 404: a Triton older than v0.75.0. Fall back rather than reporting `unknown`, because
+    # `unknown` fails open and the empty state would simply never appear -- a silent
+    # regression of the exact feature this probe exists to drive, lasting until Triton
+    # deploys. Falling back instead means there is no ordering dependency between the two
+    # repos; the side effect above just goes away on the day Triton ships.
+    resp = _probe_request(f"{base}{_GOOGLE_DRIVE_PROBE_PATH}")
+    if resp is None:
+        return LINK_UNKNOWN, False
+    status = cint(getattr(resp, "status_code", None) or 0)
+    if status == 200:
+        return LINK_CONNECTED, False
+    if status == 400:
+        return LINK_DISCONNECTED, False
+    return LINK_UNKNOWN, False
+
+
+def _state_from_status(resp) -> str:
+    """Read Triton's status payload. Anything unrecognised is ``unknown``, never a verdict.
+
+    ``{"connected": bool, "has_refresh_token": bool, "scopes": [...], "expired": bool|null}``.
+
+    The second clause is the reason this is better than the Drive read it replaces. A
+    credential with **no refresh token that is already past its expiry** can never be renewed
+    -- Triton's ``_load_credentials`` only refreshes ``if creds and creds.expired and
+    creds.refresh_token`` -- so it will fail every future read, and reconnecting is precisely
+    the fix. The Drive probe answers 500 for that user (Drive's 401 is not in Triton's retry
+    set), which maps to ``unknown``, which shows them nothing at all.
+
+    ``expired`` is ``None`` when Triton could not tell without a network call, and ``None``
+    is deliberately not ``True``: an unknowable expiry must not be reported as a dead
+    credential.
+    """
+    try:
+        body = resp.json()
+    except Exception:
+        return LINK_UNKNOWN
+    if not isinstance(body, dict):
+        return LINK_UNKNOWN
+    if not body.get("connected"):
+        return LINK_DISCONNECTED
+    if not body.get("has_refresh_token") and body.get("expired") is True:
+        return LINK_DISCONNECTED
+    return LINK_CONNECTED
+
+
+def _probe_request(url: str):
+    """One authed GET, re-minting once on 401 **or 403**. ``None`` if no HTTP answer arrived.
+
+    403 and not 401 alone: Triton's ``get_current_user`` answers 403 for a stale or invalid
+    JWT, and only a wholly absent ``Authorization`` header produces 401 (from FastAPI's own
+    bearer scheme). The retry-on-401 pattern copied from ``triton_chat._request`` would
+    therefore never refresh a token that had simply aged out of our cache.
+    """
     for attempt in range(2):
         try:
             # Muted: mint_user_token reports its failures with frappe.throw, and a throw
@@ -957,7 +1074,7 @@ def _probe_google_link(settings: dict) -> str:
                 token = mint_user_token(force_refresh=attempt > 0)
         except Exception:
             # The bridge is unreachable or unconfigured. Not a statement about Google.
-            return LINK_UNKNOWN
+            return None
         try:
             resp = requests.request(
                 "GET",
@@ -966,17 +1083,12 @@ def _probe_google_link(settings: dict) -> str:
                 timeout=_LINK_PROBE_TIMEOUT,
             )
         except Exception:
-            return LINK_UNKNOWN
+            return None
 
-        status = cint(getattr(resp, "status_code", None) or 0)
-        if status in (401, 403) and attempt == 0:
+        if cint(getattr(resp, "status_code", None) or 0) in (401, 403) and attempt == 0:
             continue
-        if status == 200:
-            return LINK_CONNECTED
-        if status == 400:
-            return LINK_DISCONNECTED
-        return LINK_UNKNOWN
-    return LINK_UNKNOWN
+        return resp
+    return None
 
 
 def _resolve_by_url(file_url, user: str) -> str:
