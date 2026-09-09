@@ -99,6 +99,9 @@ const VZ_STYLE = `
 .vz-up-date{font-size:13px;color:var(--text-muted);margin-top:3px;}
 .vz-do-btn{flex:0 0 auto;min-height:44px;padding:0 15px;border-radius:8px;border:1px solid var(--primary,#2490ef);background:var(--primary,#2490ef);color:#fff;font-weight:600;font-size:15px;cursor:pointer;white-space:nowrap;}
 .vz-do-btn:disabled{opacity:.5;cursor:not-allowed;}
+.vz-log-btn{display:block;width:100%;min-height:48px;padding:12px 15px;border-radius:10px;border:1px dashed var(--border-color);background:transparent;color:var(--text-color);font-weight:600;font-size:15px;cursor:pointer;}
+.vz-log-btn:active{border-color:var(--primary,#2490ef);}
+.vz-log-hint{font-size:13px;color:var(--text-muted);margin:6px 2px 0;}
 .vz-empty{text-align:center;color:var(--text-muted);padding:40px 10px;font-size:15px;}
 .vz-done-screen{text-align:center;padding:48px 16px;}
 .vz-done-screen .vz-done-icon{font-size:52px;}
@@ -182,13 +185,150 @@ class VisitWizard {
 				upcoming.forEach((visit) => this.$wrap.append(this.upcoming_card(visit)));
 			}
 
-			if (!today.length && !upcoming.length) {
-				this.$wrap.append(
-					`<div class="vz-empty">${__("No open or upcoming visits.")}<br>
-					<a href="/app/sapphire-maintenance-record">${__("Open the record list")}</a></div>`
-				);
-			}
+			// Always offered, scheduled work or not: a tech standing at a
+			// fountain with nothing due today still needs to be able to fill
+			// the form in, and a form missed on Tuesday still needs writing up.
+			this.$wrap.append(
+				`<div class="vz-section-head">${__("Not on the list?")}</div>`
+			);
+			this.$wrap.append(this.log_visit_card());
 		});
+	}
+
+	log_visit_card() {
+		const $btn = $(`<button type="button" class="vz-log-btn">${__("+ Log a visit")}</button>`).on(
+			"click",
+			() => this.open_log_dialog()
+		);
+		return $("<div></div>")
+			.append($btn)
+			.append(
+				`<div class="vz-log-hint">${__(
+					"For a visit nobody scheduled, or to fill in the form for a day you missed."
+				)}</div>`
+			);
+	}
+
+	open_log_dialog() {
+		frappe
+			.call("erpnext_enhancements.api.maintenance_visit.get_loggable_sites")
+			.then((r) => {
+				const sites = (r && r.message) || [];
+				if (!sites.length) {
+					frappe.msgprint({
+						title: __("Nothing to log against"),
+						message: __(
+							"No Active maintenance contract has covered water features yet, so there is no form to fill in. Ask the office to add the features to the contract."
+						),
+						indicator: "orange",
+					});
+					return;
+				}
+				const by_contract = {};
+				sites.forEach((site) => {
+					by_contract[site.contract] = site;
+				});
+
+				const dialog = new frappe.ui.Dialog({
+					title: __("Log a visit"),
+					fields: [
+						{
+							fieldname: "contract",
+							fieldtype: "Select",
+							label: __("Site"),
+							reqd: 1,
+							options: sites.map((site) => ({
+								label: site.project_title,
+								value: site.contract,
+							})),
+							default: sites[0].contract,
+						},
+						{
+							fieldname: "serial_no",
+							fieldtype: "Select",
+							label: __("Water Feature"),
+						},
+						{
+							fieldname: "visit_date",
+							fieldtype: "Date",
+							label: __("Date of visit"),
+							reqd: 1,
+							default: frappe.datetime.get_today(),
+							description: __("Today, or the earlier day you are filling in for."),
+						},
+					],
+					primary_action_label: __("Start form"),
+					primary_action: (values) => {
+						if (values.visit_date > frappe.datetime.get_today()) {
+							frappe.msgprint(__("A visit cannot be logged for a future date."));
+							return;
+						}
+						const site = by_contract[values.contract] || {};
+						if (site.visit_shape !== "Per Site Visit" && !values.serial_no) {
+							frappe.msgprint(__("Pick which water feature this visit covers."));
+							return;
+						}
+						dialog.disable_primary_action();
+						dialog.set_message(__("Creating…"));
+						frappe
+							.call({
+								method: "erpnext_enhancements.api.maintenance_visit.create_visit",
+								args: {
+									contract: values.contract,
+									serial_no:
+										site.visit_shape === "Per Site Visit"
+											? null
+											: values.serial_no || null,
+									visit_date: values.visit_date,
+								},
+							})
+							.then((res) => {
+								const name = res && res.message;
+								if (!name) throw new Error("no record returned");
+								if (site.open_draft && site.open_draft === name) {
+									frappe.show_alert({
+										message: __("This site already had an open form — opening that one."),
+										indicator: "blue",
+									});
+								}
+								dialog.hide();
+								window.history.replaceState(
+									null,
+									"",
+									`/app/visit-wizard?record=${encodeURIComponent(name)}`
+								);
+								this.load_record(name);
+							})
+							.catch(() => {
+								dialog.clear_message();
+								dialog.enable_primary_action();
+							});
+					},
+				});
+
+				// The feature picker only means anything on a Per Feature
+				// contract — a Per Site Visit record covers every feature at
+				// once, so offering a choice there would be a lie.
+				const sync_feature = () => {
+					const site = by_contract[dialog.get_value("contract")] || {};
+					const per_site = site.visit_shape === "Per Site Visit";
+					const features = site.features || [];
+					dialog.set_df_property("serial_no", "hidden", per_site || !features.length);
+					dialog.set_df_property("serial_no", "reqd", !per_site && features.length ? 1 : 0);
+					dialog.set_df_property(
+						"serial_no",
+						"options",
+						features.map((feature) => ({
+							label: feature.item_name || feature.serial_no,
+							value: feature.serial_no,
+						}))
+					);
+					dialog.set_value("serial_no", features.length && !per_site ? features[0].serial_no : "");
+				};
+				dialog.fields_dict.contract.$input.on("change", sync_feature);
+				sync_feature();
+				dialog.show();
+			});
 	}
 
 	today_card(visit) {

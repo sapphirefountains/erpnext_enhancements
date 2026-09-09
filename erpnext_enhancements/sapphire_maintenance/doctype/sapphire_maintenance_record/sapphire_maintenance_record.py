@@ -37,7 +37,7 @@ Whitelisted helpers used by the desk form's JS: ``get_visit_payload``
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import flt
+from frappe.utils import flt, getdate, nowdate
 
 
 class SapphireMaintenanceRecord(Document):
@@ -110,13 +110,28 @@ class SapphireMaintenanceRecord(Document):
 			as_dict=True,
 		)
 
+	def _is_backfill(self):
+		"""True when this record documents work done on an earlier day.
+
+		Set by ``api.maintenance_visit.create_visit`` when a technician logs a
+		visit for a past date. It gates the kiosk clock autofill: a Job Interval
+		running *now* belongs to today's job, not to the visit being written up
+		for last Tuesday, and stamping it would bill the wrong labour onto the
+		wrong day's timesheet.
+		"""
+		if not self.get("visit_date"):
+			return False
+		return getdate(self.visit_date) < getdate(nowdate())
+
 	def _autofill_clock_in(self):
 		"""Seed clock-in from the technician's running kiosk interval on this project.
 
 		The kiosk (Job Interval) already knows when work started — don't make
 		the tech enter it twice. Only fills a blank field; manual entries win.
+		A backfilled visit is left alone (see :meth:`_is_backfill`) — the tech
+		types the real times, or leaves them blank and no timesheet is made.
 		"""
-		if self.clock_in_time or self.docstatus != 0:
+		if self.clock_in_time or self.docstatus != 0 or self._is_backfill():
 			return
 		interval = self._job_interval(["Open", "Paused"])
 		if interval:
@@ -127,8 +142,11 @@ class SapphireMaintenanceRecord(Document):
 
 		A still-running interval means the tech is submitting before clocking
 		out — stamp "now" and carry the interval's pause time. A recently
-		completed interval supplies its real end time.
+		completed interval supplies its real end time. A backfilled visit is
+		skipped entirely: "now" is the wrong day for it.
 		"""
+		if self._is_backfill():
+			return
 		if self.clock_in_time and not self.clock_out_time:
 			interval = self._job_interval(["Open", "Paused"])
 			if interval:

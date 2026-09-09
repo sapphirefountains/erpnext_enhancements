@@ -16,6 +16,7 @@
   "visit_label",
   "technician",
   "scheduled_visit_date",
+  "visit_date",
   "dispatch_digest_sent_on",
   "clock_in_time",
   "clock_out_time",
@@ -92,6 +93,12 @@
    "fieldtype": "Date",
    "in_list_view": 1,
    "label": "Scheduled Visit Date"
+  },
+  {
+   "description": "The date the work was actually done. Blank means \"the day it was submitted\" - it is only set explicitly when a visit is logged for a past date (a backfilled form). Drives the contract cadence roll-forward, so a visit backfilled on Friday for Tuesday's work schedules the next visit from Tuesday.",
+   "fieldname": "visit_date",
+   "fieldtype": "Date",
+   "label": "Visit Date"
   },
   {
    "description": "Date this visit was last included in a morning technician digest. Same-day re-runs skip it (at-most-once/day); if the visit is rescheduled to a later day it re-enters that day's digest.",
