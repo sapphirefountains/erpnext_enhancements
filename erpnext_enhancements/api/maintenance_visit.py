@@ -47,6 +47,12 @@ UPCOMING_WINDOW_DAYS = 30
 UPCOMING_WINDOW_START_DAYS = 8
 UPCOMING_LIMIT = 50
 
+# How far back create_visit will accept a backfilled visit_date. A backfill is
+# meant for "I forgot to fill the form in on Tuesday", not for reconstructing
+# last season — and a mistyped year would otherwise roll the contract cadence
+# to a nonsense date, since the roll-forward keys on visit_date.
+MAX_BACKFILL_DAYS = 60
+
 PAYLOAD_TABLE_MAP = {
     "maintenance_results": "results",
     "chemistry_readings": "readings",
@@ -570,6 +576,152 @@ def create_visit_today(contract, serial_no=None):
     record.maintenance_contract = contract_doc.name
     record.serial_no = serial_no or None
     record.visit_label = EXTRA_VISIT_LABEL
+    if "Maintenance User" in frappe.get_roles():
+        record.technician = frappe.session.user
+    record.insert()
+    return record.name
+
+
+@frappe.whitelist()
+def get_loggable_sites():
+    """Every site a technician may log a visit against, right now.
+
+    Unlike :func:`get_upcoming_visits` this applies **no date window and no
+    due-date filter** — it is the "I'm standing at a fountain and there is no
+    visit scheduled for today" list, and the entry point for backfilling a
+    form somebody forgot to fill in on the day.
+
+    Each Active contract yields one entry carrying its covered features, so
+    the caller can offer a feature picker for Per Feature contracts (a Per
+    Site Visit contract logs one record for the whole site). ``open_draft``
+    names an existing unsubmitted record for the site when there is one — the
+    caller should open that rather than create a second.
+
+    Returns:
+        list[dict]: [{contract, project, project_title, customer, visit_shape,
+        next_visit_date, open_draft, features: [{serial_no, item_name}]}],
+        ordered by project title.
+    """
+    contracts = frappe.get_list(
+        "Sapphire Maintenance Contract",
+        filters={"status": "Active"},
+        fields=["name", "project", "customer", "visit_shape"],
+    )
+    if not contracts:
+        return []
+
+    by_name = {c.name: c for c in contracts}
+    features = frappe.get_all(
+        "Sapphire Contract Feature",
+        filters={"parent": ["in", list(by_name)], "parenttype": "Sapphire Maintenance Contract"},
+        fields=["parent", "serial_no", "next_visit_date"],
+        order_by="idx asc",
+    )
+    projects = {c.project for c in contracts if c.project}
+    titles = dict(
+        frappe.get_all(
+            "Project", filters={"name": ["in", list(projects)]}, fields=["name", "project_name"], as_list=True
+        )
+    ) if projects else {}
+    serials = {f.serial_no for f in features if f.serial_no}
+    item_names = dict(
+        frappe.get_all(
+            "Serial No", filters={"name": ["in", list(serials)]}, fields=["name", "item_name"], as_list=True
+        )
+    ) if serials else {}
+
+    grouped = {}
+    for feature in features:
+        grouped.setdefault(feature.parent, []).append(feature)
+
+    entries = []
+    for contract in contracts:
+        rows = grouped.get(contract.name, [])
+        due = [row.next_visit_date for row in rows if row.next_visit_date]
+        entries.append({
+            "contract": contract.name,
+            "project": contract.project,
+            "project_title": titles.get(contract.project) or contract.project,
+            "customer": contract.customer,
+            "visit_shape": contract.visit_shape,
+            "next_visit_date": str(min(due)) if due else None,
+            "open_draft": frappe.db.get_value(
+                "Sapphire Maintenance Record",
+                {"maintenance_contract": contract.name, "docstatus": 0},
+                "name",
+            ),
+            "features": [
+                {"serial_no": row.serial_no, "item_name": item_names.get(row.serial_no)}
+                for row in rows
+                if row.serial_no
+            ],
+        })
+
+    entries.sort(key=lambda entry: (entry["project_title"] or "").lower())
+    return entries
+
+
+@frappe.whitelist()
+def create_visit(contract, serial_no=None, visit_date=None):
+    """Start a visit record for a site on a chosen date — today, or backfilled.
+
+    This is the unscheduled path: it does not care whether anything was due.
+    ``visit_date`` defaults to today and may be **backdated** up to
+    :data:`MAX_BACKFILL_DAYS` so a technician can fill in the form for work
+    already done on an earlier day.
+
+    Deliberately carries **no** ``visit_label``. A label suppresses the cadence
+    roll-forward in ``api.maintenance_scheduling.update_next_visit_dates``,
+    which is right for a pulled-forward extra visit (:func:`create_visit_today`)
+    and wrong here: a backfilled form *is* the visit that was due, so it must
+    advance the schedule — from ``visit_date``, not from the day it was typed in.
+
+    An existing open draft for the site is returned as-is instead of creating a
+    duplicate, so two technicians tapping the same site converge on one record.
+
+    Returns:
+        str: the Sapphire Maintenance Record name (the wizard opens it).
+    """
+    from frappe.utils import add_days, getdate, nowdate
+
+    contract_doc = frappe.get_doc("Sapphire Maintenance Contract", contract)
+    if contract_doc.status != "Active":
+        frappe.throw(_("{0} is not an Active contract.").format(contract))
+
+    today = getdate(nowdate())
+    visit_date = getdate(visit_date) if visit_date else today
+    if visit_date > today:
+        frappe.throw(_("A visit cannot be logged for a future date."))
+    if visit_date < add_days(today, -MAX_BACKFILL_DAYS):
+        frappe.throw(
+            _("A visit can only be backdated {0} days. Check the date, or ask a supervisor to enter it.").format(
+                MAX_BACKFILL_DAYS
+            )
+        )
+
+    covered = [row.serial_no for row in contract_doc.covered_features]
+    if not covered:
+        frappe.throw(
+            _("{0} has no covered water features, so there is nothing to fill in. Add them to the contract first.").format(
+                contract
+            )
+        )
+    if serial_no and serial_no not in covered:
+        frappe.throw(_("{0} is not a covered feature on {1}.").format(serial_no, contract))
+
+    existing = frappe.db.get_value(
+        "Sapphire Maintenance Record", {"maintenance_contract": contract_doc.name, "docstatus": 0}, "name"
+    )
+    if existing:
+        return existing
+
+    record = frappe.new_doc("Sapphire Maintenance Record")
+    record.customer = contract_doc.customer
+    record.project = contract_doc.project
+    record.maintenance_contract = contract_doc.name
+    record.serial_no = serial_no or None
+    record.scheduled_visit_date = visit_date
+    record.visit_date = visit_date
     if "Maintenance User" in frappe.get_roles():
         record.technician = frappe.session.user
     record.insert()

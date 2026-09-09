@@ -30,7 +30,12 @@ def update_next_visit_dates(doc, method):
         return
 
     serials = _visited_serials(doc)
-    completion_date = getdate(nowdate())
+    # The day the work happened, not the day the form was submitted. These are
+    # the same for a visit filled in on site; they differ for a backfilled form
+    # (api.maintenance_visit.create_visit stamps visit_date), and there the
+    # schedule must roll from the actual service date or a Friday backfill of
+    # Tuesday's work would push every later visit three days late.
+    completion_date = getdate(doc.get("visit_date") or nowdate())
 
     contract = _resolve_contract(doc)
     if contract:

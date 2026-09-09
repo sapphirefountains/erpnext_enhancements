@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.383.0] - 2026-09-09
+
+### Added
+
+- **A technician can log a maintenance visit on any day, for any site, scheduled or not.** The Visit
+  Wizard's picker previously offered only what the scheduler had already drafted (`get_my_visits_today`)
+  and features due in 8-30 days (`get_upcoming_visits`) — so a tech standing at a fountain with nothing
+  due had no way in, and a form nobody filled in on Tuesday could not be written up on Friday. The picker
+  now always ends with **Not on the list? → Log a visit**, backed by two endpoints: `get_loggable_sites`
+  (every Active contract with covered features, **no date window and no due-date filter**) and
+  `create_visit` (a chosen site + a date defaulting to today, backdatable to `MAX_BACKFILL_DAYS` = 60).
+  Choosing a site that already has an open draft opens that draft rather than creating a second, so two
+  technicians tapping the same site converge on one record.
+- **`visit_date` on Sapphire Maintenance Record** — the day the work was actually done, as distinct from
+  `scheduled_visit_date` (when it was planned). Deliberately ships with **no `default`**: on a normal
+  doctype MariaDB writes a new column's default into every existing row, which would stamp a service date
+  onto historical records that never had one and then feed it to the cadence maths. Blank keeps meaning
+  "unknown — use the submission date".
+
+### Changed
+
+- **The contract cadence now rolls forward from the date the work happened, not the date the form was
+  submitted.** `update_next_visit_dates` reads `doc.visit_date or nowdate()`. For a visit filled in on
+  site these are the same day and nothing changes; for a Friday backfill of Tuesday's work the next visit
+  is now scheduled from Tuesday, where keying on submission day would have pushed every subsequent visit
+  three days later and compounded the drift each time a form ran late.
+- **A backfilled visit no longer inherits today's kiosk clock.** `_autofill_clock_in` / `_autofill_clock_out`
+  skip records whose `visit_date` is in the past (`_is_backfill`): a Job Interval running *now* belongs to
+  today's job, and stamping it would have put last week's visit on today's timesheet at today's times.
+
+### Notes
+
+- `create_visit` leaves `visit_label` **empty**, and that is load-bearing rather than an oversight.
+  `update_next_visit_dates` returns early on any truthy label, which is correct for seasonal visits and for
+  `create_visit_today`'s "Extra Visit" pull-forward (an extra one-off must not consume the scheduled visit)
+  and wrong for a backfill, which *is* the scheduled visit arriving late.
+- Tests live in `tests/test_maintenance_sections.py`, which is a **real-bench suite** and therefore does not
+  run in CI — verify with `bench --site <site> run-tests --app erpnext_enhancements`.
+
 ## [1.382.0] - 2026-09-08
 
 ### Added

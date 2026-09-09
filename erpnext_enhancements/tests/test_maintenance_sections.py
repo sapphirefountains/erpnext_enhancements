@@ -792,3 +792,124 @@ class TestMaintenanceSections(unittest.TestCase):
 			getdate(feature.next_visit_date),
 			getdate(calculate_next_date(getdate(nowdate()), "Monthly")),
 		)
+
+	# ------------------------------------------------- unscheduled / backfilled
+
+	def test_create_visit_defaults_to_today_and_is_unlabelled(self):
+		"""An ad-hoc visit must NOT carry a visit_label.
+
+		A label suppresses the cadence roll-forward, which is right for a
+		pulled-forward Extra Visit and wrong here: an unscheduled or backfilled
+		form is the real visit and has to advance the schedule.
+		"""
+		from erpnext_enhancements.api.maintenance_visit import create_visit
+
+		contract = self._make_contract(
+			features=[{"serial_no": SERIALS[0], "frequency": "Monthly"}]
+		)
+		name = create_visit(contract.name, serial_no=SERIALS[0])
+		record = frappe.get_doc("Sapphire Maintenance Record", name)
+
+		self.assertFalse(record.visit_label)
+		self.assertEqual(getdate(record.visit_date), getdate(nowdate()))
+
+	def test_create_visit_accepts_a_past_date(self):
+		from erpnext_enhancements.api.maintenance_visit import create_visit
+
+		contract = self._make_contract(
+			features=[{"serial_no": SERIALS[0], "frequency": "Monthly"}]
+		)
+		when = add_days(nowdate(), -4)
+		name = create_visit(contract.name, serial_no=SERIALS[0], visit_date=when)
+		record = frappe.get_doc("Sapphire Maintenance Record", name)
+
+		self.assertEqual(getdate(record.visit_date), getdate(when))
+		self.assertEqual(getdate(record.scheduled_visit_date), getdate(when))
+
+	def test_create_visit_rejects_future_and_far_past_dates(self):
+		from erpnext_enhancements.api.maintenance_visit import MAX_BACKFILL_DAYS, create_visit
+
+		contract = self._make_contract(
+			features=[{"serial_no": SERIALS[0], "frequency": "Monthly"}]
+		)
+		with self.assertRaises(frappe.ValidationError):
+			create_visit(contract.name, serial_no=SERIALS[0], visit_date=add_days(nowdate(), 1))
+		with self.assertRaises(frappe.ValidationError):
+			create_visit(
+				contract.name,
+				serial_no=SERIALS[0],
+				visit_date=add_days(nowdate(), -(MAX_BACKFILL_DAYS + 1)),
+			)
+
+	def test_create_visit_returns_the_existing_open_draft(self):
+		"""Two techs tapping the same site converge on one record."""
+		from erpnext_enhancements.api.maintenance_visit import create_visit
+
+		contract = self._make_contract(
+			features=[{"serial_no": SERIALS[0], "frequency": "Monthly"}]
+		)
+		first = create_visit(contract.name, serial_no=SERIALS[0])
+		second = create_visit(contract.name, serial_no=SERIALS[0])
+		self.assertEqual(first, second)
+
+	def test_backfilled_visit_rolls_cadence_from_the_service_date(self):
+		"""Friday's backfill of Tuesday's work schedules from Tuesday.
+
+		Keying the roll-forward on submission day instead would push every
+		subsequent visit later by however long the paperwork lagged.
+		"""
+		from erpnext_enhancements.api.maintenance_scheduling import (
+			calculate_next_date,
+			update_next_visit_dates,
+		)
+		from erpnext_enhancements.api.maintenance_visit import create_visit
+
+		contract = self._make_contract(
+			features=[{"serial_no": SERIALS[0], "frequency": "Monthly"}]
+		)
+		serviced_on = add_days(nowdate(), -3)
+		name = create_visit(contract.name, serial_no=SERIALS[0], visit_date=serviced_on)
+		record = frappe.get_doc("Sapphire Maintenance Record", name)
+		update_next_visit_dates(record, None)
+
+		contract.reload()
+		feature = contract.covered_features[0]
+		self.assertEqual(getdate(feature.last_visit_date), getdate(serviced_on))
+		self.assertEqual(
+			getdate(feature.next_visit_date),
+			getdate(calculate_next_date(getdate(serviced_on), "Monthly")),
+		)
+
+	def test_backfilled_visit_does_not_inherit_todays_clock(self):
+		"""A Job Interval running now belongs to today's job, not last week's form."""
+		from erpnext_enhancements.api.maintenance_visit import create_visit
+
+		contract = self._make_contract(
+			features=[{"serial_no": SERIALS[0], "frequency": "Monthly"}]
+		)
+		name = create_visit(
+			contract.name, serial_no=SERIALS[0], visit_date=add_days(nowdate(), -5)
+		)
+		record = frappe.get_doc("Sapphire Maintenance Record", name)
+		self.assertTrue(record._is_backfill())
+		record.save(ignore_permissions=True)
+		self.assertFalse(record.clock_in_time)
+
+	def test_get_loggable_sites_ignores_the_due_date_window(self):
+		"""The unscheduled path must list a site whose next visit is far off."""
+		from erpnext_enhancements.api.maintenance_visit import get_loggable_sites
+
+		contract = self._make_contract(
+			features=[
+				{
+					"serial_no": SERIALS[0],
+					"frequency": "Monthly",
+					"next_visit_date": add_days(nowdate(), 300),
+				}
+			]
+		)
+		entries = {entry["contract"]: entry for entry in get_loggable_sites()}
+		self.assertIn(contract.name, entries)
+		self.assertEqual(
+			[f["serial_no"] for f in entries[contract.name]["features"]], [SERIALS[0]]
+		)
