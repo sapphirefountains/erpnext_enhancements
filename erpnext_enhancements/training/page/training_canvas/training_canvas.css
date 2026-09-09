@@ -1,0 +1,779 @@
+/*
+ * Training Canvas (/app/training-canvas?course=…) — a full-bleed WYSIWYG spike.
+ *
+ * The authoring surface renders each Training Content Block with the REAL learner
+ * renderer (public/js/training/blocks.js -> TR.renderBlock) inside a `.tr-shell`,
+ * so the author edits the exact thing a learner sees, styled by the learner
+ * stylesheet (player.css, loaded at runtime). This file styles only the page
+ * CHROME around that render and the edit affordances layered onto it — every
+ * `.tr-*` class belongs to player.css and must not be redefined here.
+ *
+ * This is the class registry for training_canvas.js: a class the JS invents that
+ * is not defined here renders as an unstyled div. Prefix is `tc-`.
+ *
+ * FULL-BLEED: the desk page is created with make_app_page (single_column). Two
+ * things box it in — the Bootstrap `.container` inside .page-body (max-width +
+ * gutters) and `.layout-main-section` (its own padding). on_page_load stamps the
+ * page wrapper with `.training-canvas-fullbleed`; the overrides below, scoped to
+ * that class so they cannot leak to other desk pages, take the canvas edge to
+ * edge and let it own the viewport height under the navbar + page head.
+ */
+
+.training-canvas-fullbleed .page-body .container {
+	max-width: none;
+	padding: 0;
+	margin: 0;
+}
+
+.training-canvas-fullbleed .layout-main-section {
+	padding: 0;
+	border: none;
+	margin: 0;
+}
+
+.training-canvas-fullbleed .layout-main-section-wrapper {
+	margin-bottom: 0;
+}
+
+/* The whole custom UI. Fills the space under the desk navbar (~60px) and the
+   page head (~55px). */
+.tc-app {
+	display: flex;
+	flex-direction: column;
+	height: calc(100vh - 115px);
+	min-height: 420px;
+	background: var(--bg-color, #f4f5f6);
+}
+
+/* ------------------------------------------------------------------- top bar */
+
+.tc-bar {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 8px 14px;
+	background: var(--card-bg, #fff);
+	border-bottom: 1px solid var(--border-color, #e2e2e2);
+}
+
+.tc-icon {
+	border: 1px solid var(--tr-border, #e2e0f0);
+	background: var(--tr-surface, #fff);
+	color: var(--tr-muted, #5f6488);
+	border-radius: 8px;
+	width: 32px;
+	height: 32px;
+	font-size: 1rem;
+	cursor: pointer;
+}
+
+.tc-icon:hover {
+	border-color: var(--tr-accent, #7c3aed);
+	color: var(--tr-accent, #7c3aed);
+}
+
+.tc-course-name {
+	font-weight: 700;
+	letter-spacing: -0.01em;
+	color: var(--heading-color, #1a1830);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 40vw;
+}
+
+.tc-bar .tc-spacer {
+	flex: 1;
+}
+
+/* --------------------------------------------------------- two-pane layout */
+
+.tc-main {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+}
+
+.tc-rail {
+	flex: 0 0 248px;
+	min-width: 0;
+	overflow: auto;
+	padding: 12px;
+	border-right: 1px solid var(--border-color, #e2e2e2);
+	background: var(--card-bg, #fff);
+}
+
+.training-canvas-fullbleed .is-rail-collapsed .tc-rail {
+	display: none;
+}
+
+.tc-rail-add {
+	width: 100%;
+	margin-bottom: 12px;
+}
+
+.tc-rail-list {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.tc-rail-chapter {
+	margin: 12px 0 4px;
+	font-size: 0.7rem;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--text-muted, #6c7680);
+}
+
+.tc-rail-chapter:first-child {
+	margin-top: 0;
+}
+
+.tc-rail-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 10px;
+	border-radius: 9px;
+	cursor: pointer;
+	color: var(--text-color, #1a1830);
+}
+
+.tc-rail-row:hover {
+	background: var(--tr-accent-soft, #ede9fe);
+}
+
+.tc-rail-row.is-current {
+	background: var(--tr-accent-soft, #ede9fe);
+	box-shadow: inset 3px 0 0 var(--tr-accent, #7c3aed);
+}
+
+.tc-rail-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 0.9rem;
+	font-weight: 600;
+}
+
+.tc-rail-del {
+	flex: 0 0 auto;
+	border: none;
+	background: transparent;
+	color: var(--text-muted, #6c7680);
+	border-radius: 6px;
+	width: 24px;
+	height: 22px;
+	font-size: 0.75rem;
+	cursor: pointer;
+	opacity: 0;
+}
+
+.tc-rail-row:hover .tc-rail-del {
+	opacity: 1;
+}
+
+.tc-rail-del:hover {
+	background: rgba(224, 54, 54, 0.12);
+	color: #e03636;
+}
+
+/* ------------------------------------------------------- lesson settings */
+
+.tc-lessonsettings {
+	margin: 0 0 24px;
+	padding: 16px;
+	border: 1px solid var(--tr-border, #e2e0f0);
+	border-radius: var(--tr-radius, 16px);
+	background: var(--tr-surface-alt, #eceaf6);
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.tc-lessonsettings[hidden] {
+	display: none;
+}
+
+.tc-lessonset-head {
+	font-size: 0.8rem;
+	font-weight: 700;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	color: var(--tr-muted, #5f6488);
+}
+
+.tc-quizset {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 12px;
+	border-radius: 12px;
+	background: var(--tr-surface, #fff);
+	border: 1px solid var(--tr-border, #e2e0f0);
+}
+
+.tc-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	font-size: 0.85rem;
+	color: var(--text-muted, #6c7680);
+	white-space: nowrap;
+}
+
+.tc-status .tc-pip {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: #3ecf7e;
+	transition: background 0.2s ease;
+}
+
+.tc-status.is-dirty .tc-pip {
+	background: #e0a458;
+}
+
+.tc-status.is-saving .tc-pip {
+	background: #29b6f6;
+	animation: tc-pulse 0.8s ease infinite;
+}
+
+.tc-status.is-conflict .tc-pip {
+	background: #e03636;
+}
+
+@keyframes tc-pulse {
+	50% {
+		opacity: 0.3;
+	}
+}
+
+/* ------------------------------------------------------------- conflict banner */
+
+.tc-banner {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 16px;
+	background: rgba(224, 54, 54, 0.1);
+	border-bottom: 1px solid #e03636;
+	color: #a12020;
+	font-size: 0.9rem;
+}
+
+.tc-banner button {
+	margin-left: auto;
+}
+
+/* ------------------------------------------------------------------ the sheet */
+
+.tc-scroll {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: 32px 20px 120px;
+}
+
+.tc-sheet {
+	max-width: 760px;
+	margin: 0 auto;
+}
+
+.tc-eyebrow {
+	font-size: 0.72rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--text-muted, #6c7680);
+}
+
+.tc-title {
+	margin: 3px 0 22px;
+	font-size: 1.7rem;
+	font-weight: 800;
+	letter-spacing: -0.02em;
+	line-height: 1.2;
+	color: var(--heading-color, #1a1830);
+	outline: none;
+	border-radius: 6px;
+}
+
+.tc-title:focus {
+	box-shadow: 0 0 0 3px var(--tr-accent-soft, #ede9fe);
+}
+
+/* The learner render lives inside .tr-shell so every player.css rule applies.
+   Undo the shell's mobile column cap and its bottom action-bar reservation —
+   there is no sticky learner bar on the canvas. */
+.tc-sheet .tr-shell {
+	max-width: none;
+	padding: 0;
+	font-size: 16px;
+}
+
+/* ------------------------------------------------------- rich-text toolbar */
+
+/* Pinned under the top bar, shown only while a Rich Text / Callout body has focus.
+   Acts on the active editable via execCommand. */
+.tc-rt-toolbar {
+	flex: 0 0 auto;
+	display: flex;
+	gap: 4px;
+	padding: 6px 14px;
+	background: var(--card-bg, #fff);
+	border-bottom: 1px solid var(--border-color, #e2e2e2);
+	overflow-x: auto;
+}
+
+.tc-rt-btn {
+	border: 1px solid var(--tr-border, #e2e0f0);
+	background: var(--tr-surface, #fff);
+	color: var(--tr-text, #1a1830);
+	border-radius: 7px;
+	min-width: 30px;
+	padding: 4px 9px;
+	font: inherit;
+	font-size: 0.82rem;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.tc-rt-btn:hover {
+	border-color: var(--tr-accent, #7c3aed);
+	color: var(--tr-accent, #7c3aed);
+}
+
+/* An explicit `display` on a class beats the `[hidden]` attribute's UA
+   `display:none`, so these two — shown only on demand — need `[hidden]` restated
+   at higher specificity or they render at all times. */
+.tc-rt-toolbar[hidden],
+.tc-blocksettings[hidden] {
+	display: none;
+}
+
+/* -------------------------------------------------------- the block wrapper */
+
+.tc-blockwrap {
+	position: relative;
+}
+
+.tc-blockwrap.is-removed {
+	opacity: 0.5;
+}
+
+/* The per-block tool cluster, revealed on hover/focus of the wrap. */
+.tc-blocktools {
+	position: absolute;
+	top: -12px;
+	right: 8px;
+	z-index: 3;
+	display: flex;
+	gap: 3px;
+	padding: 2px;
+	border-radius: 9px;
+	background: var(--tr-surface, #fff);
+	border: 1px solid var(--tr-border, #e2e0f0);
+	box-shadow: var(--tr-shadow);
+	opacity: 0;
+	transition: opacity 0.14s ease;
+}
+
+.tc-blockwrap:hover .tc-blocktools,
+.tc-blockwrap:focus-within .tc-blocktools {
+	opacity: 1;
+}
+
+.tc-tool {
+	border: none;
+	background: transparent;
+	color: var(--tr-muted, #5f6488);
+	border-radius: 6px;
+	width: 26px;
+	height: 24px;
+	font-size: 0.8rem;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.tc-tool:hover {
+	background: var(--tr-accent-soft, #ede9fe);
+	color: var(--tr-accent, #7c3aed);
+}
+
+.tc-tool-danger:hover {
+	background: rgba(224, 54, 54, 0.12);
+	color: #e03636;
+}
+
+/* The editable render sits here; a subtle hover ring signals "you can edit this". */
+.tc-blockmount .tc-live {
+	transition: box-shadow 0.15s ease;
+}
+
+.tc-blockmount .tc-live:hover {
+	box-shadow: 0 0 0 1px var(--tr-accent-soft, #ede9fe), var(--tr-shadow);
+}
+
+.tc-sheet [contenteditable="true"]:focus {
+	outline: none;
+}
+
+.tc-sheet .tr-block-body.tc-rich:focus {
+	box-shadow: inset 0 0 0 2px var(--tr-accent, #7c3aed);
+	border-radius: 8px;
+}
+
+.tc-removed-note {
+	display: none;
+	margin: 6px 0 14px;
+	font-size: 0.85rem;
+	color: var(--tr-muted, #5f6488);
+}
+
+.tc-blockwrap.is-removed .tc-removed-note {
+	display: block;
+}
+
+.tc-undo {
+	border: none;
+	background: none;
+	color: var(--tr-accent, #7c3aed);
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+/* ----------------------------------------------------------- block settings */
+
+.tc-blocksettings {
+	margin: 4px 0 14px;
+	padding: 12px 14px;
+	border: 1px solid var(--tr-border, #e2e0f0);
+	border-radius: 12px;
+	background: var(--tr-surface-alt, #eceaf6);
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.tc-set {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	font-size: 0.85rem;
+}
+
+.tc-set > span {
+	flex: 0 0 auto;
+	min-width: 90px;
+	color: var(--tr-muted, #5f6488);
+	font-weight: 600;
+}
+
+.tc-set > .form-control {
+	flex: 1;
+}
+
+.tc-seg {
+	display: inline-flex;
+	border: 1px solid var(--tr-border, #e2e0f0);
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.tc-seg button {
+	border: none;
+	background: var(--tr-surface, #fff);
+	color: var(--tr-muted, #5f6488);
+	padding: 5px 11px;
+	font: inherit;
+	font-size: 0.82rem;
+	cursor: pointer;
+	border-left: 1px solid var(--tr-border, #e2e0f0);
+}
+
+.tc-seg button:first-child {
+	border-left: none;
+}
+
+.tc-seg button.is-on {
+	background: var(--tr-accent, #7c3aed);
+	color: var(--tr-accent-text, #fff);
+}
+
+/* ------------------------------------------------------ interactive editors */
+
+.tc-ied {
+	margin: 8px 0 4px;
+	padding: 12px;
+	border: 1px dashed var(--tr-border, #e2e0f0);
+	border-radius: 12px;
+	background: var(--tr-surface-alt, #eceaf6);
+}
+
+.tc-ied-rows {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.tc-ied-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+
+.tc-ied-row > .form-control,
+.tc-ied-row > .tc-card-row,
+.tc-ied-row > .tc-panel-row {
+	flex: 1;
+	min-width: 0;
+}
+
+.tc-card-row,
+.tc-panel-row {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.tc-panel-body {
+	resize: vertical;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.85rem;
+}
+
+.tc-ied-del {
+	flex: 0 0 auto;
+	border: 1px solid var(--tr-border, #e2e0f0);
+	background: var(--tr-surface, #fff);
+	color: var(--tr-muted, #5f6488);
+	border-radius: 7px;
+	width: 30px;
+	height: 30px;
+	cursor: pointer;
+}
+
+.tc-ied-del:hover {
+	border-color: #e03636;
+	color: #e03636;
+}
+
+.tc-ied-add {
+	margin-top: 10px;
+	border: 1px solid var(--tr-border, #e2e0f0);
+	background: var(--tr-surface, #fff);
+	color: var(--tr-muted, #5f6488);
+	border-radius: 8px;
+	padding: 6px 12px;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.tc-ied-add:hover {
+	border-color: var(--tr-accent, #7c3aed);
+	color: var(--tr-accent, #7c3aed);
+}
+
+/* ---------------------------------------------------------- external embed */
+
+.tc-embed {
+	margin-bottom: 4px;
+}
+
+.tc-embed-label {
+	font-size: 0.72rem;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--tr-muted, #5f6488);
+	margin-bottom: 6px;
+}
+
+.tc-embed-url {
+	width: 100%;
+	margin-bottom: 10px;
+}
+
+.tc-embed-frame {
+	width: 100%;
+	aspect-ratio: 16 / 9;
+	border: 0;
+	border-radius: 10px;
+	background: #000;
+}
+
+.tc-muted {
+	color: var(--tr-muted, #5f6488);
+	padding: 10px 0;
+}
+
+.tc-hint {
+	margin-top: 8px;
+	font-size: 0.82rem;
+	color: var(--tr-muted, #5f6488);
+}
+
+/* ----------------------------------------------------- add-block affordance */
+
+/* A thin hover line between blocks with a centred + that opens the type menu. */
+.tc-addline {
+	position: relative;
+	height: 16px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.tc-addline::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 1px;
+	background: var(--tr-border, #e2e0f0);
+	opacity: 0;
+	transition: opacity 0.14s ease;
+}
+
+.tc-addline:hover::before {
+	opacity: 1;
+}
+
+.tc-addbtn {
+	position: relative;
+	z-index: 1;
+	width: 24px;
+	height: 24px;
+	border-radius: 50%;
+	border: 1px solid var(--tr-border, #e2e0f0);
+	background: var(--tr-surface, #fff);
+	color: var(--tr-muted, #5f6488);
+	font-size: 1rem;
+	line-height: 1;
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.tc-addline:hover .tc-addbtn {
+	opacity: 1;
+}
+
+.tc-addbtn:hover {
+	border-color: var(--tr-accent, #7c3aed);
+	color: var(--tr-accent, #7c3aed);
+	transform: scale(1.1);
+}
+
+.tc-menu {
+	position: fixed;
+	z-index: 1100;
+	min-width: 180px;
+	padding: 6px;
+	border: 1px solid var(--tr-border, #e2e0f0);
+	border-radius: 12px;
+	background: var(--tr-surface, #fff);
+	box-shadow: var(--tr-shadow-lg);
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.tc-menu button {
+	text-align: left;
+	border: none;
+	background: transparent;
+	color: var(--tr-text, #1a1830);
+	border-radius: 8px;
+	padding: 8px 12px;
+	font: inherit;
+	cursor: pointer;
+}
+
+.tc-menu button:hover {
+	background: var(--tr-accent-soft, #ede9fe);
+	color: var(--tr-accent, #7c3aed);
+}
+
+/* ----------------------------------------------------------------- media */
+
+/* Image / PDF / File attach, the video-asset picker, and the hotspot editor.
+   Registering a new video (Drive probe) and in-video checkpoints stay classic. */
+.tc-media {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 14px;
+	border: 1px solid var(--tr-border, #e2e0f0);
+	border-radius: var(--tr-radius, 16px);
+	background: var(--tr-surface-alt, #eceaf6);
+}
+
+.tc-media .tc-set > .form-control,
+.tc-media .tc-set > select {
+	flex: 1;
+}
+
+.tc-media-preview {
+	min-height: 36px;
+}
+
+.tc-media-img {
+	max-width: 100%;
+	max-height: 320px;
+	border-radius: 10px;
+	display: block;
+}
+
+.tc-media-link {
+	color: var(--tr-accent, #7c3aed);
+	font-weight: 600;
+	word-break: break-all;
+}
+
+.tc-hotspot-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 1;
+}
+
+.tc-hotspot-row span {
+	font-size: 0.75rem;
+	color: var(--tr-muted, #5f6488);
+}
+
+.tc-hotspot-row .tc-xy {
+	width: 64px;
+	flex: 0 0 auto;
+}
+
+.tc-hotspot-row > .form-control:not(.tc-xy) {
+	flex: 1;
+	min-width: 0;
+}
+
+/* ------------------------------------------------------------- empty states */
+
+.tc-empty {
+	max-width: 460px;
+	margin: 12vh auto 0;
+	text-align: center;
+	color: var(--text-muted, #6c7680);
+	line-height: 1.6;
+}
+
+.tc-empty h2 {
+	margin: 0 0 8px;
+	font-size: 1.2rem;
+	color: var(--heading-color, #1a1830);
+}

@@ -806,3 +806,9 @@ erpnext_enhancements.patches.backfill_plaid_banking_settings_defaults
 # bool() leaves attachments switched off until this runs, in the same migrate.
 # Fill-blank-only, never over a stored 0. Safe twice.
 erpnext_enhancements.patches.backfill_triton_assistant_settings_defaults
+# v1.377.0 -- force the Training desk workspace to re-sync from its app JSON. The prod row
+# still had the 3-card install default (Authoring/Learners/Setup) because the JSON's `modified`
+# was never bumped past install, so the importer's age check skipped every later edit. The JSON
+# now carries the full card set with a bumped `modified`; this reload_doc(force=True) rebuilds the
+# existing public workspace regardless of the age check. Safe twice.
+erpnext_enhancements.patches.resync_training_workspace

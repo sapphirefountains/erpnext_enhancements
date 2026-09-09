@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"tr_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"tr_sc_courses\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Published Courses\",\"col\":3}},{\"id\":\"tr_sc_drafts\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"My Drafts\",\"col\":3}},{\"id\":\"tr_sc_review\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Awaiting Review\",\"col\":3}},{\"id\":\"tr_sc_overdue\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Overdue Assignments\",\"col\":3}},{\"id\":\"tr_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"tr_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Training</b></span>\",\"col\":12}},{\"id\":\"tr_card_authoring\",\"type\":\"card\",\"data\":{\"card_name\":\"Authoring\",\"col\":4}},{\"id\":\"tr_card_learners\",\"type\":\"card\",\"data\":{\"card_name\":\"Learners\",\"col\":4}},{\"id\":\"tr_card_verification\",\"type\":\"card\",\"data\":{\"card_name\":\"Verification\",\"col\":4}},{\"id\":\"tr_card_recognition\",\"type\":\"card\",\"data\":{\"card_name\":\"Recognition\",\"col\":4}},{\"id\":\"tr_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"tr_card_setup\",\"type\":\"card\",\"data\":{\"card_name\":\"Setup\",\"col\":4}}]",
+ "content": "[{\"id\":\"tr_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"tr_sc_courses\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Published Courses\",\"col\":3}},{\"id\":\"tr_sc_drafts\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"My Drafts\",\"col\":3}},{\"id\":\"tr_sc_review\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Awaiting Review\",\"col\":3}},{\"id\":\"tr_sc_overdue\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Overdue Assignments\",\"col\":3}},{\"id\":\"tr_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"tr_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Training</b></span>\",\"col\":12}},{\"id\":\"tr_card_authoring\",\"type\":\"card\",\"data\":{\"card_name\":\"Authoring\",\"col\":4}},{\"id\":\"tr_card_learners\",\"type\":\"card\",\"data\":{\"card_name\":\"Learners\",\"col\":4}},{\"id\":\"tr_card_cohorts\",\"type\":\"card\",\"data\":{\"card_name\":\"Cohorts & Sessions\",\"col\":4}},{\"id\":\"tr_card_verification\",\"type\":\"card\",\"data\":{\"card_name\":\"Verification\",\"col\":4}},{\"id\":\"tr_card_recognition\",\"type\":\"card\",\"data\":{\"card_name\":\"Recognition\",\"col\":4}},{\"id\":\"tr_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"tr_card_setup\",\"type\":\"card\",\"data\":{\"card_name\":\"Setup\",\"col\":4}}]",
  "creation": "2026-08-01 12:00:00.000000",
  "docstatus": 0,
  "doctype": "Workspace",
@@ -15,7 +15,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Authoring",
-   "link_count": 4,
+   "link_count": 5,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -62,8 +62,18 @@
   {
    "hidden": 0,
    "is_query_report": 0,
+   "label": "Training Checkpoint",
+   "link_count": 0,
+   "link_to": "Training Checkpoint",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "Learners",
-   "link_count": 3,
+   "link_count": 5,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -73,6 +83,26 @@
    "label": "Training Assignment",
    "link_count": 0,
    "link_to": "Training Assignment",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Submission",
+   "link_count": 0,
+   "link_to": "Training Submission",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Attempt",
+   "link_count": 0,
+   "link_to": "Training Attempt",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
@@ -93,6 +123,54 @@
    "label": "Training Question Thread",
    "link_count": 0,
    "link_to": "Training Question Thread",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Cohorts & Sessions",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Batch",
+   "link_count": 0,
+   "link_to": "Training Batch",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Live Class",
+   "link_count": 0,
+   "link_to": "Training Live Class",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Evaluation",
+   "link_count": 0,
+   "link_to": "Training Evaluation",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Announcement",
+   "link_count": 0,
+   "link_to": "Training Announcement",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
@@ -230,7 +308,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-08-01 12:00:00.000000",
+ "modified": "2026-09-08 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Training",
  "name": "Training",

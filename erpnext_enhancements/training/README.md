@@ -155,6 +155,45 @@ Two consequences worth knowing before they surprise you:
   `Material Change (require retake)`. The parenthetical is part of the stored
   value, not a label; `publish_version` rejects anything else.
 
+### Editing on the canvas (WYSIWYG)
+
+`/app/training-canvas?course=…` ([`page/training_canvas/`](page/training_canvas/)) is a
+**full-bleed WYSIWYG builder** alongside the classic one. It renders every block with the
+learner's own renderer (`public/js/training/blocks.js` → `TR.renderBlock`) and edits it
+**on that render** — the thing you edit is the thing a learner sees, in the learner
+stylesheet (`player.css`, Aurora). It reuses the exact data path: `get_builder_bootstrap`
+to load, `save_draft_version` to autosave, the version's `modified` as the optimistic
+lock, whole block table sent with every `block_key` carried.
+
+A left **rail** lists lessons grouped by chapter and adds / reorders (drag) / deletes them; a
+**⚙ Lesson** panel edits the lesson settings (summary, chapter, estimated minutes, learner
+questions, work-submission gate, and the end-of-lesson quiz settings); and the draft
+**lifecycle** — new draft version, submit for review, publish (with the full `change_type`
+strings the DocType stores) — lives in the page menu. A new lesson carries a `temp_id` the save
+maps back to the server-minted name.
+
+It authors content completely: **Rich Text** and **Callout** are edited in place with a
+formatting toolbar (bold, italic, headings, lists, link); **Checklist / Flashcards /
+Accordion** have inline structured editors beside their live preview; **External Embed**
+takes a URL. Blocks can be **added** (a `+` between blocks opens a type menu), **reordered**
+and **removed** on the canvas, and each has a **settings** row (caption, "required to
+finish", and Callout tone; headings are edited on the render itself). **Media** is authored
+here too: **Image / PDF / Downloadable File** attach a private file (the classic builder's
+`/api/method/upload_file` idiom) and preview it; **Video** picks a registered Training Video
+Asset with poster and coverage gate; **Image Hotspots** attaches a diagram and places pins.
+Every one of the twelve block types can be added from the `+` menu. Only two specialised
+things stay in the classic builder: **registering a new video** (the Drive-probe that sets
+the coverage denominator) and placing **in-video checkpoints** on the timeline — both linked
+from the video block. So the classic builder is complemented, never replaced.
+
+**It forced a real round-trip fix that also helped the classic builder.**
+`get_builder_bootstrap` returned each block's edit shape but *omitted* `data` (the
+interactive list JSON) and `callout_tone`, while a save re-sends the whole block table by
+position (`_apply_blocks`). So after a reload an interactive block loaded with neither,
+and the next save blanked its stored list. `_builder_lesson` now returns both;
+[`tests/test_training_canvas.py`](../tests/test_training_canvas.py) guards the round-trip
+and the canvas's use of the real endpoints.
+
 ### Drafting a whole course with AI
 
 On a Training Course form, authors get a **Draft a course with Triton AI** button

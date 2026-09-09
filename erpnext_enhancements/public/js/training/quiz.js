@@ -803,9 +803,9 @@
 	// ------------------------------------------------------------------ styles
 
 	var CSS = [
-		".tr-quiz{--tr-fg:var(--text-color,#16202a);--tr-muted-c:var(--text-muted,#55636f);",
-		"--tr-bg:var(--card-bg,#fff);--tr-line:var(--border-color,#dde4ea);",
-		"--tr-accent:var(--primary,#00a0dd);--tr-ok:var(--green-500,#2e9e4f);",
+		".tr-quiz{--tr-fg:var(--text-color,#1a1830);--tr-muted-c:var(--text-muted,#5f6488);",
+		"--tr-bg:var(--card-bg,#fff);--tr-line:var(--border-color,#e2e0f0);",
+		"--tr-accent:var(--primary,#7c3aed);--tr-ok:var(--green-500,#2e9e4f);",
 		"--tr-bad:var(--red-500,#e03636);color:var(--tr-fg);font-size:16px;line-height:1.5;",
 		"max-width:52rem;margin:0 auto;position:relative}",
 		".tr-quiz *{box-sizing:border-box}",
@@ -815,7 +815,7 @@
 		".tr-dot{width:.75rem;height:.75rem;padding:0;border-radius:50%;cursor:pointer;",
 		"border:1px solid var(--tr-line);background:transparent}",
 		".tr-dot.is-done{background:var(--tr-accent);border-color:var(--tr-accent)}",
-		".tr-dot.is-current{box-shadow:0 0 0 3px rgba(0,160,221,.25)}",
+		".tr-dot.is-current{box-shadow:0 0 0 3px rgba(124,58,237,.25)}",
 		".tr-q{padding:1rem 0;border-top:1px solid var(--tr-line)}",
 		".tr-q:first-child{border-top:0}",
 		".tr-quiz.is-paged .tr-q{border-top:0}",
@@ -829,7 +829,7 @@
 		".tr-opt{display:flex;gap:.75rem;align-items:flex-start;min-height:44px;padding:.625rem .75rem;",
 		"border:1px solid var(--tr-line);border-radius:.5rem;cursor:pointer;background:var(--tr-bg)}",
 		".tr-opt:focus-visible{outline:2px solid var(--tr-accent);outline-offset:2px}",
-		".tr-opt.is-on{border-color:var(--tr-accent);background:rgba(0,160,221,.08)}",
+		".tr-opt.is-on{border-color:var(--tr-accent);background:rgba(124,58,237,.08)}",
 		".tr-opt-mark{flex:0 0 auto;width:1.25rem;height:1.25rem;margin-top:.125rem;border-radius:50%;",
 		"border:2px solid var(--tr-line)}",
 		'.tr-opt[role="checkbox"] .tr-opt-mark{border-radius:.25rem}',

@@ -1,0 +1,25 @@
+{
+ "content": "",
+ "creation": "2026-09-08 12:00:00.000000",
+ "doctype": "Page",
+ "modified": "2026-09-08 12:00:00.000000",
+ "module": "Training",
+ "name": "training-canvas",
+ "owner": "Administrator",
+ "page_name": "training-canvas",
+ "public": 0,
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Training Author"
+  },
+  {
+   "role": "Training Manager"
+  }
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Training Canvas"
+}

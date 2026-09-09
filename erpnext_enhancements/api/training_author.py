@@ -1231,6 +1231,14 @@ def _builder_lesson(lesson, questions, checkpoints):
                 "required_for_completion": cint(block.required_for_completion),
                 "min_coverage_percent": cint(block.min_coverage_percent),
                 "checkpoints_enabled": cint(block.checkpoints_enabled),
+                # The interactive payload (Checklist/Flashcards/Hotspots/Accordion
+                # list JSON) and the Callout tint. Both are save-allowlisted
+                # (BLOCK_ALLOWED_FIELDS) but were missing here, so after a reload an
+                # interactive block loaded with no `data`, and the next whole-table
+                # save re-sent the block WITHOUT it -- blanking the stored list. The
+                # WYSIWYG canvas edits these in place, so they have to round-trip.
+                "data": block.data or "",
+                "callout_tone": block.callout_tone or "",
             }
             for block in lesson.blocks or []
         ],

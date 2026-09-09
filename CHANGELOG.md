@@ -7,6 +7,154 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.382.0] - 2026-09-08
+
+### Added
+
+- **The Training Canvas authors media too — it is now feature-complete for content.** Every one of the
+  twelve block types can be added from the `+` menu and edited on the canvas: **Image / PDF / Downloadable
+  File** attach a private file through the classic builder's `/api/method/upload_file` idiom (`is_private`,
+  XHR, Training Lesson) and preview it; **Video** picks a registered Training Video Asset (from the bootstrap)
+  and sets its poster and coverage gate; **Image Hotspots** attaches a diagram and places pins (x/y percent +
+  label) with a live learner preview. Only two specialised operations still hand off to the classic builder,
+  each linked from the video block: **registering a new video** (the Drive probe that sets the coverage
+  denominator — nothing the browser measures is authoritative) and placing **in-video checkpoints** on the
+  timeline scrubber. Guarded by `test_training_canvas` (all types addable, private upload idiom, video-asset
+  picker, hotspot placement). With this the canvas covers the whole authoring loop — lessons, structure,
+  every block type, settings and lifecycle — while the classic builder remains for those two specialised jobs.
+
+## [1.381.0] - 2026-09-08
+
+### Added
+
+- **Training Canvas is now a whole-course builder, not just a block editor.** It gains a two-pane layout:
+  a left **lesson rail** (lessons grouped by chapter) that adds, reorders (drag, via the dedicated
+  `reorder_lessons` endpoint that does not churn the lock token) and deletes lessons — a new lesson carries
+  a `temp_id` the save maps back to the server-minted name (`created_lessons`), so no client ever invents a
+  key that disagrees with its row. A **⚙ Lesson** panel edits the lesson's settings through the field
+  allowlist (`TC_LESSON_FIELDS` mirroring `LESSON_ALLOWED_FIELDS`): summary, chapter, estimated minutes,
+  learner-questions and work-submission gates, and the end-of-lesson quiz settings (questions to ask, pass
+  score, shuffle). The draft **lifecycle** — New draft version (`create_draft_version`), Submit for review
+  (`submit_for_review`), and Publish (`publish_version`, with the full `change_type` strings the DocType
+  stores — a truncated value is rejected, the exact bug the classic builder once shipped) — lives in the
+  page menu. Quiz questions themselves and in-video checkpoints remain in the classic builder. Guarded by
+  `test_training_canvas` (lesson add/reorder/delete, `temp_id` round-trip, deletion, settings allowlist,
+  lifecycle endpoints, and the full change_type strings).
+
+## [1.380.0] - 2026-09-08
+
+### Added
+
+- **Training Canvas is now a working WYSIWYG content editor, not just a preview.** Building on the
+  v1.379.0 spike, the canvas now authors content in place: **Rich Text** and **Callout** bodies edit
+  directly on the learner render with a formatting toolbar (bold, italic, H2/H3, bulleted/numbered lists,
+  link, clear) that appears while a body has focus; **Checklist / Flashcards / Accordion** get inline
+  structured editors (add / edit / remove rows) beside their live learner preview, writing the list back
+  into the block's `data` JSON; **External Embed** takes a URL with a live iframe preview. Blocks can be
+  **added** (a `+` between blocks opens a type menu; a new block mints a stable client `blk-…` key the
+  server keeps), **reordered** (per-block ↑/↓) and **removed** on the canvas, and each block has a
+  **settings** row — caption, "required to finish the lesson", and, for a Callout, its tone
+  (info/tip/warning/danger); headings are edited on the render itself. Media that needs a signed draft
+  asset URL (Image, PDF, Downloadable File, Video, Image Hotspots) and the in-video checkpoint scrubber
+  still hand off to the classic builder, which is complemented, never replaced. All of it rides the same
+  `save_draft_version` autosave, optimistic lock and `rejected`-surfacing as before. Guarded by
+  `test_training_canvas` (formatting toolbar, add/move/remove, client-key minting, interactive `data`
+  writes, Callout tone).
+
+## [1.379.0] - 2026-09-08
+
+### Added
+
+- **Training Canvas — a full-bleed WYSIWYG authoring spike** at `/app/training-canvas?course=…`
+  (`training/page/training_canvas/`). It renders every content block with the **learner's own
+  renderer** (`public/js/training/blocks.js` → `TR.renderBlock`) inside a `.tr-shell`, styled by the
+  learner stylesheet (`player.css`, now Aurora), and lets the author edit the text **on that render** —
+  the thing you edit is the thing a learner sees, not a form field beside a separate preview. It reuses
+  the exact classic-builder data path: `get_builder_bootstrap` to load, `save_draft_version` to autosave
+  (whole block table by position, every `block_key` carried), the version's `modified` as the optimistic
+  lock, and it surfaces the server's `rejected` list. As a spike it edits the text block types (Rich Text,
+  Callout) and block/lesson headings in place; media and in-video blocks render as a placeholder that hands
+  off to the classic builder, which remains the complete authoring surface and is untouched. Full-bleed via
+  a `training-canvas-fullbleed` marker class scoped so its edge-to-edge overrides cannot leak to other desk
+  pages. Gated to System Manager / Training Author / Training Manager. The renderer is loaded at runtime
+  with the same versioned hand-rolled loader the builder preview uses (never `frappe.require`, whose
+  `extn()` mis-types a cache-busted URL). Guarded by `test_training_canvas`.
+
+### Fixed
+
+- **`get_builder_bootstrap` dropped interactive blocks' `data` and Callout `callout_tone` — an edit after
+  reload blanked them.** The builder bootstrap returned each block's edit shape but omitted those two fields
+  (`_builder_lesson`), while a save re-sends the whole block table by position (`_apply_blocks` replaces it).
+  So after a reload an interactive block (Checklist/Flashcards/Image Hotspots/Accordion) loaded with no
+  `data`, and the next lesson save re-sent it without any — silently blanking the stored list; a Callout
+  likewise lost its tint. This bit the classic builder too; it was only masked because it had no reliable
+  interactive-edit-after-reload path, and it would have destroyed content on the first autosave of the new
+  WYSIWYG canvas. Both fields are now returned (they were already save-allowlisted). Guarded by
+  `test_training_canvas` (parses the returned dict, so a comment quoting the field names can't satisfy it).
+
+## [1.378.0] - 2026-09-08
+
+### Fixed
+
+- **The desk Training workspace was stuck on its three-card install default and never picked up the rest of
+  the module.** On prod the `Workspace` row still read Authoring / Learners / Setup (8 links) while the app
+  JSON had grown to six cards — none of the extra cards ever synced. The cause was not permissions or missing
+  doctypes (all present, all readable): Frappe's importer only re-imports a workspace when the file is *newer*
+  than the stored row, and the JSON's `modified` had been left at the `2026-08-01` install timestamp through
+  every later edit, so each migrate compared equal ages and skipped the import. Bumped `modified`, and added
+  `resync_training_workspace` — a `reload_doc(..., force=True)` patch that rebuilds the existing public
+  workspace past the age check (belt-and-suspenders, since a bumped timestamp alone fixes the timestamp-gated
+  case). The workspace is also **completed**: it now links every standalone doctype in the module across seven
+  cards — **Authoring** (Course, Course Version, Lesson, Question, Checkpoint), **Learners** (Assignment,
+  Submission, Attempt, Completion, Question Thread), **Cohorts & Sessions** (Batch, Live Class, Evaluation,
+  Announcement), **Verification** (Signoff, Certificate), **Recognition** (Badge, Badge Award, Learner Stat),
+  **Reports** (Completion Matrix, Question Analytics), and **Setup** (Settings, Category, Video Asset). The
+  previously-unreachable **Training Submission** (WI-071 Phase F), cohorts, live classes, evaluations and
+  announcements now have desk entry points. Child/join tables stay out, as they should. Guarded by
+  `test_workspaces` (content↔links parity and `link_count`).
+
+## [1.377.0] - 2026-09-08
+
+### Changed
+
+- **The learner training player (`/training`) is reskinned to the "Aurora" direction — a dark-first,
+  violet→cyan palette with more motion.** The old sky-blue accent (`#00a0dd`) is replaced everywhere by a
+  violet accent (`#7c3aed` light / `#8b5cf6` dark) and **two** gradient tokens: `--tr-accent-grad`
+  (`#7c3aed → #06b6d4` light; `#a855f7 → #22d3ee` dark) paints the *decorative* hero surfaces that carry no
+  text — every progress fill and the video-coverage meter; and `--tr-cta-grad` (`#7c3aed → #0e7490`, one
+  token, both themes) paints the surfaces that carry a **white label** — the primary CTA and the quiz submit
+  button — with a deepened cyan end so the label clears WCAG AA (≥ 4.5:1) across its whole width. The neutral
+  ground, surfaces, text and borders move with the palette in both schemes, and `--tr-radius` opens from 14px
+  to 16px. Two contrast fixes fell out of a WCAG audit of the new palette: the completion score is a **solid**
+  accent violet (a clipped violet→cyan gradient failed at its cyan end on the light ground), and in-content
+  lesson links get a dedicated `--tr-link` token that is the accent in light and a lighter violet (`#a78bfa`)
+  in dark, where the accent itself sat at 4.14:1 on a surface card. Semantic colours stay literal, as they
+  must: the quiz correct/wrong greens and reds (`#2e9e4f` / `#e03636`), the pass mark, the overdue chip and
+  the badge medal do **not** follow the palette — Aurora's `ok`/`warn` map onto the separate
+  `--tr-ok`/`--tr-warn` tokens (the WI-071 Phase-F submission chips), never onto the answer key.
+- **More motion, all of it `prefers-reduced-motion`-safe.** New: course cards lift and glow (violet-cyan) on
+  hover/focus and dip on press, with the progress fill brightening as the card rises; the primary buttons
+  spring on press and gain a soft focus halo; progress meters now animate from 0 → value with a light sweep
+  crossing the fill (`meter()` writes the width one frame after mount); the catalog "your stats" strip counts
+  up on load (the XP count-up the completion screen already did); the completion mark springs in; and the
+  completion confetti is retuned to Aurora hues (violet / cyan / ok-green). Under reduced motion the cards and
+  buttons keep their colour, glow and halo but do not move, meters and count-ups jump to their final values,
+  and the confetti is skipped — the existing contract that the scripts write the final state directly is kept.
+- **A latent cascade bug is fixed on the way in: the primary CTA was rendering as a plain surface button.**
+  `.tr-button-primary` and `.tr-button-quiet` sit *above* the base `.tr-button` rule in the file, so on equal
+  specificity the base's `background`/`border`/`color` shorthands overrode them entirely — the "primary" CTA
+  had no accent at all, and nothing tests visual override so it went unnoticed. Both are now compounded
+  (`.tr-button.tr-button-primary`) so they outrank the base; player.js always emits the base and the variant
+  together, so the compound selector matches the same elements. Without this the Aurora gradient never reached
+  the most important button.
+- **Both injected fallback stylesheets and the CSS palette stay pinned together.** `quiz.js`'s
+  `ensureStyles()` fallback (used where `player.css` is absent — the authoring preview) is repointed to the
+  Aurora tokens: its `var(--primary,…)` / `var(--text-color,…)` / `var(--border-color,…)` fallbacks now match
+  the new `:root` values, and its selection tints move off sky-blue. Guarded by the existing
+  `test_training_player_css_contract` (class contract + injected-palette parity) — no new `tr-*` classes were
+  added, only new tokens, pseudo-elements and state rules, so the emitted-class contract is unchanged. The
+  desk course builder keeps its own identity and is untouched.
+
 ## [1.376.1] - 2026-09-08
 
 ### Fixed
