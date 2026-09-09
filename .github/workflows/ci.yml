@@ -280,6 +280,14 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_payment_followup_wire -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
+      # How the Visit Wizard renders authored text. Filesystem-only, no stub. Both
+      # guarded mistakes shipped and neither shows up in a diff: passing Text Editor
+      # HTML through frappe.utils.xss_sanitise (which escapes by default) renders
+      # markup as literal <ul><li><b> in the technician's guidance panel, and writing
+      # a regex character class with raw control bytes instead of unicode escape sequences makes
+      # git treat the whole file as binary.
+      - name: Visit Wizard renders instructions as markup, not tags
+        run: python -m unittest erpnext_enhancements.tests.test_visit_wizard_markup -v
       # Desk home-grid tile artwork. Filesystem + xml only -- no stub, so it sits on a
       # plain step beside the other pure-filesystem suite. Guards a failure mode that is
       # entirely silent: setup/desktop_icon_map.py names an SVG per tile and the

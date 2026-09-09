@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.383.1] - 2026-09-09
+
+### Fixed
+
+- **The Visit Wizard showed technicians raw HTML tags instead of formatted instructions.**
+  Every guidance panel -- a Section's `step_instructions`, a Template's safety and wrap-up
+  text -- was passed through `frappe.utils.xss_sanitise`, whose default strategies are
+  `["html", "js"]`: it escapes `<`, `>`, `"`, `'` and `/`. So Text Editor content authored in
+  the Desk rendered as a literal `<ul><li><b>` in the field. The panel still looked populated,
+  which is why it survived review. Text Editor fields now go through `vz_rich_html`, which
+  parses with `DOMParser` (which neither executes scripts nor fetches resources) and strips
+  only executable nodes, event-handler attributes and `javascript:`/`data:text/html` URLs.
+- **Site safety notes collapsed into one run-on paragraph.** The Maintenance Profile's
+  safety and wrap-up notes and a Serial No's site instructions are Small Text, so they stay
+  escaped -- but their line breaks carry the meaning (one hazard per line). `vz_plain_html`
+  escapes and then converts newlines, so the red safety banner reads as the list it was
+  written as.
+- **The wrap-up panel escaped its own markup twice.** `render_wrapup` escaped the site note
+  and wrapped it in `<p>` tags, then handed the result to `render_help`, which escaped the
+  lot again -- so the panel's own tags became visible text too.
+
+### Notes
+
+- Guarded by `tests/test_visit_wizard_markup.py` (bench-free unittest, wired into ci.yml):
+  no `xss_sanitise(` call may return to the file, both helpers must exist, the rich-text path
+  must keep stripping executable nodes, and **the file may contain no raw control bytes** --
+  writing a regex character class with literal control characters rather than escape
+  sequences works at runtime but makes git treat the file as binary and stop producing
+  readable diffs.
+
 ## [1.383.0] - 2026-09-09
 
 ### Added

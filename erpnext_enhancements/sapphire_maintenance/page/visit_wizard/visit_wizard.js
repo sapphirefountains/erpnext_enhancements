@@ -108,6 +108,50 @@ const VZ_STYLE = `
 .vz-readonly .vz-card,.vz-readonly .vz-nav{pointer-events:none;opacity:.75;}
 `;
 
+// Two kinds of authored text reach this page and they need opposite treatment.
+//
+// Text Editor fields — a Section's step_instructions, a Template's safety and
+// wrap-up guidance — hold real HTML written in the Desk. `frappe.utils.xss_sanitise`
+// escapes <, >, ", ' and / *by default* (its default strategies are ["html","js"]),
+// so putting that HTML through it renders the markup as visible tags: the literal
+// "<ul><li><b>" technicians were reading in the guidance panels. Parse it instead
+// and strip only what could execute. DOMParser neither runs scripts nor fetches
+// resources, so nothing in the stored string can fire while we clean it.
+const VZ_STRIP_TAGS = "script,style,iframe,object,embed,link,meta,base,form,input,button";
+const VZ_URL_ATTRS = ["href", "src", "xlink:href", "action", "formaction"];
+
+function vz_rich_html(value) {
+	const raw = String(value == null ? "" : value);
+	if (!raw.trim()) return "";
+	const doc = new DOMParser().parseFromString(raw, "text/html");
+	doc.querySelectorAll(VZ_STRIP_TAGS).forEach((node) => node.remove());
+	doc.querySelectorAll("*").forEach((node) => {
+		Array.from(node.attributes).forEach((attr) => {
+			const name = attr.name.toLowerCase();
+			// Strip whitespace and control characters before testing the scheme —
+			// "java\nscript:" and "java\tscript:" are still executed by browsers.
+			const val = (attr.value || "").replace(/[\s\u0000-\u001f]/g, "").toLowerCase();
+			if (name.startsWith("on")) {
+				node.removeAttribute(attr.name);
+			} else if (
+				VZ_URL_ATTRS.includes(name) &&
+				(val.startsWith("javascript:") || val.startsWith("data:text/html"))
+			) {
+				node.removeAttribute(attr.name);
+			}
+		});
+	});
+	return doc.body.innerHTML;
+}
+
+// Small Text fields — the Maintenance Profile's safety and wrap-up notes, a
+// Serial No's site instructions — are plain text, so they stay escaped. But
+// their line breaks carry the meaning (one hazard per line), and without this
+// they collapse into a single run-on paragraph in the red safety banner.
+function vz_plain_html(value) {
+	return frappe.utils.escape_html(String(value == null ? "" : value)).replace(/\n/g, "<br>");
+}
+
 class VisitWizard {
 	constructor(page, wrapper) {
 		this.page = page;
@@ -714,8 +758,7 @@ class VisitWizard {
 		const has_text = meta.instructions && String(meta.instructions).trim();
 		if (!has_text && !images.length) return;
 
-		const sanitise = frappe.utils.xss_sanitise;
-		let body = has_text ? `<div>${sanitise(meta.instructions)}</div>` : "";
+		let body = has_text ? `<div>${vz_rich_html(meta.instructions)}</div>` : "";
 		images.forEach((img) => {
 			if (!img.image) return;
 			body += `<img src="${encodeURI(img.image)}" alt="" loading="lazy">`;
@@ -740,21 +783,24 @@ class VisitWizard {
 	// ----- step: safety ----------------------------------------------------
 
 	render_safety() {
-		const sanitise = frappe.utils.xss_sanitise;
 		const profile = this.dashboard.profile || {};
 		const serial = this.dashboard.serial_no || {};
 		const contract = this.dashboard.contract || {};
 
+		// These are Small Text / Data fields, so they stay escaped — but through
+		// vz_plain_html, which keeps the line breaks. One hazard per line is how
+		// these notes are written, and collapsing them into a single paragraph is
+		// how a technician skims past the one that mattered.
 		this.$wrap.append(`
 			<div class="vz-banner vz-banner-red">
 				<h6>${__("Safety Instructions")}</h6>
-				${sanitise(profile.safety_instructions || __("No specific safety instructions provided."))}
+				${vz_plain_html(profile.safety_instructions || __("No specific safety instructions provided."))}
 			</div>
 			<div class="vz-banner vz-banner-blue">
 				<h6>${__("Access & Site")}</h6>
-				${__("Code")}: <b>${sanitise(profile.access_codes || contract.gate_code || "N/A")}</b>
-				${contract.key_location ? `<br>${__("Key")}: ${sanitise(contract.key_location)}` : ""}
-				${serial.custom_site_instructions ? `<br>${sanitise(serial.custom_site_instructions)}` : ""}
+				${__("Code")}: <b>${vz_plain_html(profile.access_codes || contract.gate_code || "N/A")}</b>
+				${contract.key_location ? `<br>${__("Key")}: ${vz_plain_html(contract.key_location)}` : ""}
+				${serial.custom_site_instructions ? `<br>${vz_plain_html(serial.custom_site_instructions)}` : ""}
 			</div>
 		`);
 
@@ -998,9 +1044,13 @@ class VisitWizard {
 		const template_wrapup = this.template_meta.wrapup || {};
 		const site_note = (this.dashboard.profile || {}).wrapup_instructions;
 		const wrapup_meta = {
+			// The template's half is Text Editor HTML and the site note is plain
+			// Small Text, so each is prepared for its own type here and the result
+			// goes through render_help as ready markup. Escaping the whole thing
+			// downstream is what turned this panel's own <p> tags into visible text.
 			instructions:
 				(template_wrapup.instructions || "") +
-				(site_note ? `<p><b>${__("This site")}:</b> ${frappe.utils.escape_html(site_note)}</p>` : ""),
+				(site_note ? `<p><b>${__("This site")}:</b> ${vz_plain_html(site_note)}</p>` : ""),
 			images: template_wrapup.images || [],
 		};
 		this.render_help(wrapup_meta, __("Wrapping up"));
