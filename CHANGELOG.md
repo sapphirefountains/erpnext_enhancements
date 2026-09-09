@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.383.2] - 2026-09-09
+
+### Added
+
+- **Site instruction photos for the maintenance forms** - 147 images across 21 site/season folders under
+  `public/images/maintenance/`, extracted from the Maintenance Contract Site knowledge-base documents,
+  resized to max 1000px and named by content hash. The new Sapphire Maintenance Sections reference them
+  from `step_images` as `/assets/erpnext_enhancements/images/maintenance/<site>/<hash>.jpg`.
+
+  Content-hashed on purpose: raw `/assets` paths are served immutable for a year with no cache-busting,
+  so replacing a photo at a stable filename would never reach a device that had already cached it. A new
+  photo is a new hash, and therefore a new URL. Google Maps tiles embedded in those PDFs were filtered
+  out by size (512x512) rather than shipped - the wizard already turns a step's lat/lng into a live
+  tap-to-navigate link, which is more useful than a baked tile and avoids redistributing map imagery.
+
 ## [1.383.1] - 2026-09-09
 
 ### Fixed
