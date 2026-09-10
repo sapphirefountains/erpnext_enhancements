@@ -140,6 +140,97 @@ def signoff_query_conditions(user=None):
 	return f"({base} or `tabTraining Signoff`.`user` in ({joined}))"
 
 
+def achievement_query_conditions(user=None):
+	"""The team feed is staff-only, and only what people have left visible.
+
+	Three clauses, and every one of them is load-bearing:
+
+	* **your own**, whatever you have chosen — an opt-out hides you from other
+	  people, not from yourself;
+	* rows marked ``Team`` — the opt-out is stamped on the row at creation and
+	  re-swept when somebody changes their mind, so it is one indexed read here
+	  rather than a join a future caller could forget;
+	* ``learner_type = Staff`` — customer Website Users hold ``Training Learner``
+	  and must never see a staff feed. The endpoint already refuses them by
+	  construction; this is the ``/api/resource`` door.
+
+	This was caught by the generalised assertion in
+	``tests/test_training_signoff_loop.py`` rather than by me, which is exactly what
+	it was written for: three doctypes leaked this way before v1.386.0 and the
+	fourth was about to.
+	"""
+	if _is_unscoped(user):
+		return ""
+	resolved = _resolve(user)
+	table = "`tabTraining Achievement`"
+	own = frappe.db.escape(resolved)
+	return (
+		f"({table}.`user` = {own}"
+		f" or ({table}.`visibility` = 'Team' and {table}.`learner_type` = 'Staff'))"
+	)
+
+
+def achievement_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	resolved = _resolve(user)
+	if doc.get("user") == resolved:
+		return True
+	return doc.get("visibility") == "Team" and doc.get("learner_type") == "Staff"
+
+
+def kudos_query_conditions(user=None):
+	"""Kudos are readable exactly where the achievement behind them is.
+
+	Scoped on the parent rather than on ``from_user``: a reaction is a public act
+	on a public row, and scoping it to its sender would mean somebody could see the
+	item and not the congratulations under it.
+
+	Worth noting why this needed writing at all — the generalised leak assertion
+	looks for a ``user`` column and this doctype's is called ``from_user``, so it
+	sailed through. The assertion has been widened; the lesson is that a naming
+	convention is only a safety net where it is actually followed.
+	"""
+	if _is_unscoped(user):
+		return ""
+	resolved = _resolve(user)
+	own = frappe.db.escape(resolved)
+	return (
+		"`tabTraining Kudos`.`achievement` in ("
+		"select `name` from `tabTraining Achievement` where "
+		f"`user` = {own} or (`visibility` = 'Team' and `learner_type` = 'Staff'))"
+	)
+
+
+def kudos_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	resolved = _resolve(user)
+	target = frappe.db.get_value(
+		"Training Achievement", doc.get("achievement"), ["user", "visibility", "learner_type"], as_dict=True
+	)
+	if not target:
+		return False
+	if target.user == resolved:
+		return True
+	return target.visibility == "Team" and target.learner_type == "Staff"
+
+
+def profile_preference_query_conditions(user=None):
+	"""Your own settings and nobody else's. There is no reason to read another
+	person's opt-out, and knowing who has opted out of a feed is itself a small
+	piece of information about them."""
+	if _is_unscoped(user):
+		return ""
+	return f"`tabTraining Profile Preference`.`user` = {frappe.db.escape(_resolve(user))}"
+
+
+def profile_preference_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	return doc.get("user") == _resolve(user)
+
+
 def badge_award_query_conditions(user=None):
 	"""A badge award is scoped to the learner who earned it.
 

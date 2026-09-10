@@ -187,6 +187,58 @@ broken in the direction that does not announce itself.
   all return nothing, and nothing means refused. A customer contact has a User and no Employee,
   which is exactly why they can never acquire authority over staff.
 
+- **A team feed, on a record that structurally cannot carry a score.** The obvious design is to
+  let colleagues react to a `Training Completion`. That is the compliance artefact — its own
+  controller calls it "the only record in the module that anybody outside it will ever be asked to
+  produce: to a client, to an insurer" — and it carries `score_percent`,
+  `video_coverage_percent`, `attempt`, `status` and `revoked_reason`. Both plausible reuse routes
+  for reactions begin with a read check on the referenced document (`api/comments.py`, and
+  frappe's own `desk/like.py`), so "let colleagues react to a completion" reduces **exactly** to
+  "publish second-attempt scores and revocations company-wide".
+
+  So `Training Achievement` is a separate, deliberately public row: a snapshot title, a kind, a
+  date, and no numbers at all. There is no field a future change could widen into performance
+  data, because there is no field that holds any. Two consequences follow and both are the point:
+  a **failed** attempt never mints one, so the feed cannot become a record of who struggled; and a
+  **revoked** completion has its achievement deleted, so the feed stops congratulating somebody
+  for a certification the company has since pulled — while the completion, which is evidence,
+  stays exactly where it is. Deleted rather than tombstoned, because a tombstone would publish the
+  withdrawal, which is the one part of this that is genuinely nobody else's business.
+
+- **`Training Kudos` — reaction and comment as one record**, which collapses the moderation
+  surface with them. Not Frappe's `Comment`, for two concrete reasons: `public/js/comments.js` is
+  Vue and needs the desk bundle that `www/training.py` forbids, and the player is contractually
+  `innerHTML`-free while `Comment.content` is HTML-editor output. The reactions are **words, not
+  emoji** — a thumbs-up is encouragement to one person and sarcasm to another; "Nice work" cannot
+  be. One per person per achievement: a second is somebody changing their mind, not a second
+  cheer.
+
+- **The leaderboard was the entire staff list.** `LEADERBOARD_LIMIT` is 20 against sixteen active
+  employees, so the board named everybody in rank order — including last place, with no way off
+  it, and publishing streaks to the whole company. It is now top five plus your own line, it says
+  *"Top 5 of 16. You are #11."* out loud so a trimmed board does not read as the whole company,
+  and **streaks are self-only**: how many days in a row somebody has studied, published to their
+  colleagues, is a stick, and the person it beats hardest is whoever had a week off.
+
+  Rank is computed over everybody and only then trimmed — otherwise leaving the board would
+  silently promote everyone below you, which is both wrong and a way to work out who opted out.
+
+- **A real opt-out**, in `Training Profile Preference` and deliberately **not** on
+  `Training Learner Stat` — that row says of itself that nothing in it is evidence and it can be
+  thrown away and rebuilt, and `rebuild_learner_stat` does exactly that, so a preference stored
+  there would be silently reset by a routine recalculation and the person would find out by being
+  back on a leaderboard they had left. Both settings default to **on**; an opt-in feed in a
+  sixteen-person company is an empty feed, and empty reads as broken rather than as private.
+  Changing it re-sweeps what is already posted, because an opt-out that only applied to the future
+  is not what anybody means by it. The control sits on the feed itself rather than in a settings
+  page nobody opens.
+
+- The feed is backfilled from history so it does not open empty — three completions, four badge
+  awards and one sign-off would have read as broken rather than new. Work anniversaries are seeded
+  too and are the only entries with no source document: they give the feed a spine on day one, and
+  an anniversary is the one thing worth celebrating that nobody had to *do* anything to earn,
+  which matters in a feed whose whole risk is becoming a scoreboard.
+
 - **The visual editor had no entry point at all.** `training-canvas` shipped in v1.364.0 and,
   until now, grepping for it outside its own directory returned two CHANGELOG lines and its own
   test file. Nothing linked to it. The surface built specifically for authors who are not

@@ -1,0 +1,98 @@
+{
+ "actions": [],
+ "allow_import": 0,
+ "autoname": "hash",
+ "creation": "2026-09-10 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "achievement",
+  "from_user",
+  "column_break_head",
+  "reaction",
+  "note"
+ ],
+ "fields": [
+  {
+   "fieldname": "achievement",
+   "fieldtype": "Link",
+   "label": "Achievement",
+   "options": "Training Achievement",
+   "reqd": 1,
+   "search_index": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "from_user",
+   "fieldtype": "Link",
+   "label": "From",
+   "options": "User",
+   "reqd": 1,
+   "read_only": 1,
+   "search_index": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reaction",
+   "fieldtype": "Select",
+   "label": "Reaction",
+   "reqd": 1,
+   "in_list_view": 1,
+   "options": "Nice work\nRespect\nLearned from you\nWelcome aboard\nThank you",
+   "description": "A fixed, deliberately small set -- and words rather than emoji, because a thumbs-up is read differently by different people and none of these can be."
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note",
+   "description": "Optional, 280 characters, plain text. Reaction and comment collapse into one record, which collapses the moderation surface with them."
+  }
+ ],
+ "icon": "fa fa-heart",
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Kudos",
+ "naming_rule": "Hash",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Training Learner"
+  }
+ ],
+ "search_fields": "achievement,from_user",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": [],
+ "track_changes": 0
+}

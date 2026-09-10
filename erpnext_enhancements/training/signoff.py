@@ -360,6 +360,12 @@ def after_signoff_submitted(doc):
 	try:
 		if doc.outcome == COMPETENT:
 			from erpnext_enhancements.api import training as training_api
+			from erpnext_enhancements.training import social
+
+			# A hands-on sign-off is the achievement people are proudest of, and the
+			# one the old system had no way to show anybody. Minted before the
+			# re-drive, so it lands even if the completion path has a problem.
+			social.on_signoff(doc)
 
 			training_api.resume_after_signoff(
 				attempt=doc.get("attempt"), course=doc.get("course"), user=doc.get("user")

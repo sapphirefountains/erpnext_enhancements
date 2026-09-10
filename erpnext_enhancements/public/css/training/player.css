@@ -3957,3 +3957,135 @@
 	font-size: 0.9rem;
 	overflow-wrap: break-word;
 }
+
+/* ---- Team feed (WI-072) ------------------------------------------------------
+   Quiet on purpose. This is sixteen people, not a network: an item should read
+   like somebody mentioning something in the yard, not like a post. No avatars, no
+   counts, no ranking, and nothing on an item that could be compared with the item
+   above it. Tokens only. */
+
+.tr-feed {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.tr-feed-item {
+	padding: 14px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+}
+
+.tr-feed-what {
+	font-weight: 600;
+	overflow-wrap: break-word;
+}
+
+.tr-feed-when {
+	margin-top: 2px;
+	color: var(--tr-muted);
+	font-size: 0.85rem;
+}
+
+.tr-feed-kudos {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-top: 10px;
+}
+
+.tr-feed-kudo {
+	font-size: 0.92rem;
+}
+
+.tr-feed-kudo-who {
+	font-weight: 600;
+}
+
+.tr-feed-kudo-what {
+	margin-left: 6px;
+	color: var(--tr-muted);
+}
+
+.tr-feed-kudo-note {
+	margin-top: 2px;
+	color: var(--tr-muted);
+	overflow-wrap: break-word;
+}
+
+.tr-feed-compose {
+	margin-top: 12px;
+}
+
+.tr-feed-note {
+	display: block;
+	width: 100%;
+	padding: 8px 10px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	color: inherit;
+	font: inherit;
+	/* 16px minimum or iOS Safari zooms the page on focus and the reader loses
+	   their place in the feed. */
+	font-size: 16px;
+}
+
+.tr-feed-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+}
+
+.tr-feed-actions .tr-button {
+	font-size: 0.88rem;
+	padding: 6px 10px;
+}
+
+/* The opt-out, on the feed itself rather than in a settings page nobody opens.
+   Somebody uncomfortable being on the feed is uncomfortable while looking at it,
+   and that is when the control needs to be to hand. */
+
+.tr-feed-slot {
+	display: block;
+}
+
+.tr-feed-prefs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 16px;
+	margin-bottom: 14px;
+	padding: 10px 14px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface-alt);
+}
+
+.tr-pref {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	cursor: pointer;
+	font-size: 0.92rem;
+}
+
+.tr-pref-box {
+	/* Big enough to hit with a thumb; the default checkbox is not. */
+	width: 18px;
+	height: 18px;
+	accent-color: var(--tr-accent);
+}
+
+.tr-pref-label {
+	color: var(--tr-muted);
+}
+
+/* "Top 5 of 16. You are #11." Said out loud so a trimmed board does not read as
+   the whole company — which is what it literally was until v1.386.0. */
+.tr-board-note {
+	margin-top: 8px;
+	color: var(--tr-muted);
+	font-size: 0.88rem;
+}

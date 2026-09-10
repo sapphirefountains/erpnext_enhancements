@@ -852,3 +852,11 @@ erpnext_enhancements.patches.seed_credential_types
 # switch left off is the check not firing. WARN, never block -- a hard gate does not stop the
 # visit, it moves it off the books. Writes only over 0/absent, never over a 1. Safe twice.
 erpnext_enhancements.patches.enable_uncertified_dispatch_warning
+# v1.386.0 (WI-072) -- backfills the team feed from history so it does not open empty. Prod holds
+# three completions, four badge awards and one sign-off; a feed with three items reads as broken
+# rather than new, and gets judged on that. Nothing is invented: every row points at a real
+# record with its own date. Work anniversaries are the one exception and are deliberate -- they
+# give the feed a spine on day one, and an anniversary is the only thing worth celebrating that
+# nobody had to DO anything to earn, which matters in a feed whose whole risk is becoming a
+# scoreboard. Idempotent (social.record refuses duplicates); never raises. Safe twice.
+erpnext_enhancements.patches.backfill_training_achievements

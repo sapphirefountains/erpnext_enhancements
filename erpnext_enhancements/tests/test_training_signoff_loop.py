@@ -289,7 +289,15 @@ class TestGamificationTablesAreScoped(unittest.TestCase):
                 p.get("role") == "Training Learner" and p.get("read")
                 for p in data.get("permissions", [])
             )
-            has_user = any(f.get("fieldname") == "user" for f in data.get("fields", []))
+            # `user` OR `from_user`: the convention is `user`, and Training Kudos
+            # broke it. A naming convention is only a safety net where it is
+            # actually followed, so the scan looks for either -- Kudos grants
+            # Training Learner read and would have gone straight past a check that
+            # trusted the convention.
+            owner_columns = {"user", "from_user"}
+            has_user = any(
+                f.get("fieldname") in owner_columns for f in data.get("fields", [])
+            )
             if grants_learner and has_user and data.get("name") not in registered:
                 unscoped.append(data.get("name"))
         self.assertEqual(

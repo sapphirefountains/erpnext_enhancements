@@ -1853,6 +1853,16 @@ permission_query_conditions = {
 	# public+Answered ones; the DocPerm returned EVERY thread on the site to
 	# anybody holding Training Learner, unanswered private questions included.
 	"Training Question Thread": "erpnext_enhancements.training.permissions.question_thread_query_conditions",
+	# The team feed (WI-072). Same shape as the three above and found the same way:
+	# the generalised assertion in test_training_signoff_loop caught these before
+	# they shipped. Achievement is staff-only and honours the opt-out stamped on the
+	# row; Kudos is scoped by the achievement it hangs on, not by its sender, since
+	# a reaction is a public act on a public row; a Preference is nobody's business
+	# but its owner's -- knowing who has opted out of a feed is itself information
+	# about them.
+	"Training Achievement": "erpnext_enhancements.training.permissions.achievement_query_conditions",
+	"Training Kudos": "erpnext_enhancements.training.permissions.kudos_query_conditions",
+	"Training Profile Preference": "erpnext_enhancements.training.permissions.profile_preference_query_conditions",
 	# A licence number, a medical card and a certificate number are personal. The
 	# `Employee` DocPerm on Employee Credential is deliberate -- it is what puts a
 	# technician's own forklift ticket on their own profile, and what keeps the HR
@@ -1907,6 +1917,9 @@ has_permission = {
 	"Training Badge Award": "erpnext_enhancements.training.permissions.badge_award_has_permission",
 	"Training Learner Stat": "erpnext_enhancements.training.permissions.learner_stat_has_permission",
 	"Training Question Thread": "erpnext_enhancements.training.permissions.question_thread_has_permission",
+	"Training Achievement": "erpnext_enhancements.training.permissions.achievement_has_permission",
+	"Training Kudos": "erpnext_enhancements.training.permissions.kudos_has_permission",
+	"Training Profile Preference": "erpnext_enhancements.training.permissions.profile_preference_has_permission",
 	"Employee Credential": "erpnext_enhancements.hr_enhancements.permissions.credential_has_permission",
 	# Chat: the twin of every query condition above, and parity here is the house
 	# doctrine -- ten and ten before this block, four and four after it.

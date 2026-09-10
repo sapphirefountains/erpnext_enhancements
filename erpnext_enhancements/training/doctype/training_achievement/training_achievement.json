@@ -1,0 +1,165 @@
+{
+ "actions": [],
+ "allow_import": 0,
+ "autoname": "hash",
+ "creation": "2026-09-10 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "user",
+  "employee",
+  "learner_type",
+  "column_break_head",
+  "kind",
+  "title",
+  "occurred_on",
+  "source_section",
+  "source_completion",
+  "source_badge_award",
+  "source_signoff",
+  "visibility"
+ ],
+ "fields": [
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "Who",
+   "options": "User",
+   "reqd": 1,
+   "read_only": 1,
+   "search_index": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Employee",
+   "options": "Employee",
+   "read_only": 1
+  },
+  {
+   "fieldname": "learner_type",
+   "fieldtype": "Select",
+   "label": "Learner Type",
+   "options": "Staff\nCustomer",
+   "reqd": 1,
+   "read_only": 1,
+   "search_index": 1,
+   "in_standard_filter": 1,
+   "description": "Derived, never accepted from a caller. Every read of this table takes it as a mandatory positional -- the construction gamification.py uses, for the reason it states: an optional privacy filter is one somebody eventually leaves out."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "label": "What happened",
+   "in_list_view": 1,
+   "read_only": 1,
+   "options": "Course Completed\nBadge Earned\nSigned Off\nWork Anniversary"
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "A SNAPSHOT of the course or badge name as it was. The record must still read correctly after the thing it names is renamed or retired."
+  },
+  {
+   "fieldname": "occurred_on",
+   "fieldtype": "Datetime",
+   "label": "When",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "source_section",
+   "fieldtype": "Section Break",
+   "label": "Source",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "source_completion",
+   "fieldtype": "Link",
+   "label": "Completion",
+   "options": "Training Completion",
+   "read_only": 1,
+   "description": "Back-reference only. NOTHING on the completion is ever served through this record -- it holds scores, attempt counts, coverage and revocation reasons, and this table exists precisely so none of that has to be widened."
+  },
+  {
+   "fieldname": "source_badge_award",
+   "fieldtype": "Link",
+   "label": "Badge Award",
+   "options": "Training Badge Award",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_signoff",
+   "fieldtype": "Link",
+   "label": "Sign-off",
+   "options": "Training Signoff",
+   "read_only": 1
+  },
+  {
+   "fieldname": "visibility",
+   "fieldtype": "Select",
+   "label": "Visibility",
+   "options": "Team\nPrivate",
+   "default": "Team",
+   "read_only": 1,
+   "description": "Private when the person has opted out of the feed. Set at creation from their preference and re-swept when they change it."
+  }
+ ],
+ "icon": "fa fa-trophy",
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Achievement",
+ "naming_rule": "Hash",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager"
+  },
+  {
+   "read": 1,
+   "role": "Training Learner"
+  }
+ ],
+ "search_fields": "user,kind,title",
+ "sort_field": "occurred_on",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

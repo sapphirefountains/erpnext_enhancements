@@ -551,6 +551,7 @@
 			else if (view === "record") renderRecord();
 			else if (view === "queue") renderQueue();
 			else if (view === "people") renderDirectory();
+			else if (view === "feed") renderFeed();
 			else if (view === "person") renderPerson();
 			// A light entrance so a view change reads as a transition, not a cut.
 			// .is-entering is a state class (exempt from the CSS class contract) and
@@ -793,7 +794,14 @@
 						row.points,
 						row.courses_completed,
 						row.badges_earned,
-						fmt(t("{0} d"), [row.current_streak_days]),
+						// Streaks are self-only from v1.386.0 — the server sends null for
+						// everybody else. "How many days in a row somebody has studied"
+						// published to their colleagues is a stick, and the person it
+						// beats hardest is whoever had a week off. An em dash, not "0 d",
+						// because zero is a real streak and this is not one.
+						row.current_streak_days == null
+							? "—"
+							: fmt(t("{0} d"), [row.current_streak_days]),
 					].forEach(function (value) {
 						tr.appendChild(el("td", null, value));
 					});
@@ -801,6 +809,27 @@
 				});
 				table.appendChild(body);
 				region.appendChild(table);
+
+				// Said out loud, so a top five does not read as the whole company. The
+				// board used to be exactly that: LEADERBOARD_LIMIT is 20 against sixteen
+				// employees, so everybody was on it in rank order including last place,
+				// with no way off.
+				var board = boardState.data || {};
+				if (board.total_ranked > rows.length) {
+					region.appendChild(
+						el(
+							"p",
+							"tr-board-note",
+							board.my_rank
+								? fmt(t("Top {0} of {1}. You are #{2}."), [
+										rows.length,
+										board.total_ranked,
+										board.my_rank,
+								  ])
+								: fmt(t("Top {0} of {1}."), [rows.length, board.total_ranked])
+						)
+					);
+				}
 			}
 
 			wrap.appendChild(region);
@@ -2045,6 +2074,11 @@
 			// even one that would come back empty.
 			if (b.is_staff) {
 				wrap.appendChild(
+					button(t("The team"), "tr-button tr-button-quiet", function () {
+						go("feed");
+					})
+				);
+				wrap.appendChild(
 					button(t("People"), "tr-button tr-button-quiet", function () {
 						go("people");
 					})
@@ -2291,6 +2325,196 @@
 			});
 			wrap.appendChild(list);
 			return wrap;
+		}
+
+		// ------------------------------------------------------------------- feed
+		//
+		// What colleagues can see and react to. Every item is "X finished Y" and
+		// nothing else — no score, no attempt count, no coverage, no failure. In a
+		// company of sixteen where everybody knows everybody, a feed that publishes
+		// how many goes somebody needed is a feed that makes people wait until they
+		// are sure before they start, which is the opposite of the point.
+		//
+		// The reactions are words rather than emoji. A thumbs-up is encouragement to
+		// one person and sarcasm to another; "Nice work" cannot be.
+
+		var REACTIONS = ["Nice work", "Respect", "Learned from you", "Welcome aboard", "Thank you"];
+
+		function renderFeed() {
+			var bar = el("div", "tr-subhead-row");
+			bar.appendChild(button("← " + t("All courses"), "tr-button tr-button-quiet", function () {
+				go("catalog");
+			}));
+			bar.appendChild(el("h1", "tr-title", t("What the team has been up to")));
+			head.appendChild(bar);
+
+			// The opt-out lives on the feed rather than in a settings page nobody
+			// opens. Somebody who is uncomfortable being on it is uncomfortable while
+			// looking at it, and that is the moment the control needs to be to hand.
+			var prefs = el("div", "tr-feed-prefs");
+			main.appendChild(prefs);
+			renderFeedPrefs(prefs);
+
+			// Its own slot, same reason as the record view: a shared clear(main) would
+			// wipe the preferences panel above the moment the feed resolved.
+			var slot = el("div", "tr-feed-slot");
+			main.appendChild(slot);
+			var pending = el("div", "tr-loading", t("Loading…"));
+			pending.setAttribute("role", "status");
+			slot.appendChild(pending);
+
+			call("feed", {})
+				.then(function (data) {
+					clear(slot);
+					var items = (data && data.items) || [];
+					if (!items.length) {
+						slot.appendChild(
+							el("p", "tr-empty", t("Nothing here yet. Finish something and it will be."))
+						);
+						return;
+					}
+					var list = el("div", "tr-feed");
+					items.forEach(function (item) {
+						list.appendChild(feedItem(item));
+					});
+					slot.appendChild(list);
+				})
+				.catch(function (err) {
+					clear(slot);
+					fail(slot, err);
+				});
+		}
+
+		function renderFeedPrefs(slot) {
+			call("feedPrefs", {})
+				.then(function (prefs) {
+					clear(slot);
+					if (!prefs) return;
+					slot.appendChild(
+						prefToggle(
+							t("Show my achievements to the team"),
+							prefs.show_on_feed,
+							function (value) {
+								return call("setFeedPrefs", { show_on_feed: value ? 1 : 0 });
+							}
+						)
+					);
+					slot.appendChild(
+						prefToggle(
+							t("Show me on the leaderboard"),
+							prefs.show_on_leaderboard,
+							function (value) {
+								return call("setFeedPrefs", { show_on_leaderboard: value ? 1 : 0 });
+							}
+						)
+					);
+				})
+				.catch(function () {
+					// A feed that renders without its settings is far better than a feed
+					// that refuses to render because the settings call failed.
+					clear(slot);
+				});
+		}
+
+		function prefToggle(label, checked, save) {
+			var row = el("label", "tr-pref");
+			var box = document.createElement("input");
+			box.type = "checkbox";
+			box.className = "tr-pref-box";
+			box.checked = !!checked;
+			box.addEventListener("change", function () {
+				box.disabled = true;
+				save(box.checked)
+					.then(function () {
+						box.disabled = false;
+						// Turning yourself off re-sweeps rows already posted, so the feed
+						// below is now stale in a way the reader would not expect.
+						if (!box.checked) go("feed");
+					})
+					.catch(function () {
+						// Put the tick back rather than leaving the screen claiming a
+						// setting that did not save.
+						box.checked = !box.checked;
+						box.disabled = false;
+					});
+			});
+			row.appendChild(box);
+			row.appendChild(el("span", "tr-pref-label", label));
+			return row;
+		}
+
+		function feedItem(item) {
+			var card = el("div", "tr-feed-item");
+			card.appendChild(el("div", "tr-feed-what", feedHeadline(item)));
+			if (item.occurred_on) {
+				card.appendChild(el("div", "tr-feed-when", String(item.occurred_on).slice(0, 10)));
+			}
+
+			var kudosWrap = el("div", "tr-feed-kudos");
+			(item.kudos || []).forEach(function (k) {
+				var line = el("div", "tr-feed-kudo");
+				line.appendChild(el("span", "tr-feed-kudo-who", k.from_name || k.from_user));
+				line.appendChild(el("span", "tr-feed-kudo-what", k.reaction));
+				if (k.note) line.appendChild(el("div", "tr-feed-kudo-note", k.note));
+				kudosWrap.appendChild(line);
+			});
+			card.appendChild(kudosWrap);
+
+			// You cannot congratulate yourself, and being shown the buttons only to
+			// be refused by the server would be a worse way to learn that.
+			if (!item.is_own) {
+				card.appendChild(kudosControls(item, kudosWrap));
+			}
+			return card;
+		}
+
+		function feedHeadline(item) {
+			var who = item.full_name || item.user || "";
+			if (item.kind === "Badge Earned") return fmt(t("{0} earned {1}"), [who, item.title]);
+			if (item.kind === "Signed Off") return fmt(t("{0} was signed off on {1}"), [who, item.title]);
+			if (item.kind === "Work Anniversary") return fmt(t("{0}: {1}"), [who, item.title]);
+			return fmt(t("{0} finished {1}"), [who, item.title]);
+		}
+
+		function kudosControls(item, kudosWrap) {
+			var wrap = el("div", "tr-feed-actions");
+			var note = document.createElement("input");
+			note.type = "text";
+			note.className = "tr-feed-note";
+			note.maxLength = 280;
+			note.placeholder = t("Say something (optional)");
+
+			REACTIONS.forEach(function (reaction) {
+				wrap.appendChild(
+					button(reaction, "tr-button tr-button-quiet", function () {
+						call("sendKudos", {
+							achievement: item.name,
+							reaction: reaction,
+							note: note.value.trim() || null,
+						})
+							.then(function () {
+								// Appended in place rather than re-fetching the feed: a
+								// scroll position is a hard thing to give somebody back.
+								var line = el("div", "tr-feed-kudo");
+								line.appendChild(el("span", "tr-feed-kudo-who", t("You")));
+								line.appendChild(el("span", "tr-feed-kudo-what", reaction));
+								if (note.value.trim()) {
+									line.appendChild(el("div", "tr-feed-kudo-note", note.value.trim()));
+								}
+								kudosWrap.appendChild(line);
+								note.value = "";
+								wrap.remove();
+							})
+							.catch(function (err) {
+								fail(wrap, err);
+							});
+					})
+				);
+			});
+			var box = el("div", "tr-feed-compose");
+			box.appendChild(note);
+			box.appendChild(wrap);
+			return box;
 		}
 
 		// -------------------------------------------------------------- directory

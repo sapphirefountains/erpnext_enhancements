@@ -2196,6 +2196,54 @@ def leaderboard(scope=None):
 
 
 @frappe.whitelist(methods=["POST"])
+def get_feed(before=None):
+    """The team feed. Delegates to :mod:`training.social`.
+
+    Empty for a customer contact by construction rather than by a filter here —
+    ``social._rows`` takes ``learner_type`` as a mandatory positional and returns
+    nothing for ``Customer``. A guard in this function would be a second place for
+    the rule to live, and the second place is the one that gets forgotten.
+    """
+    from erpnext_enhancements.training import social
+
+    user = _learner()
+    _require_runtime()
+    return social.feed(user, before=before)
+
+
+@frappe.whitelist(methods=["POST"])
+def send_kudos(achievement, reaction, note=None):
+    """Congratulate a colleague. One per person per achievement; re-sending edits."""
+    from erpnext_enhancements.training import social
+
+    user = _learner()
+    _require_runtime()
+    return social.add_kudos(user, achievement, reaction, note)
+
+
+@frappe.whitelist(methods=["POST"])
+def get_feed_preferences():
+    """What this person has chosen to show. Both settings default to on."""
+    from erpnext_enhancements.training import social
+
+    user = _learner()
+    _require_runtime()
+    return social.get_preferences(user)
+
+
+@frappe.whitelist(methods=["POST"])
+def set_feed_preferences(show_on_feed=None, show_on_leaderboard=None):
+    """Change them. Also re-sweeps rows already posted — an opt-out that only
+    applied to the future would leave everything already up there, which is not
+    what anybody means by it."""
+    from erpnext_enhancements.training import social
+
+    user = _learner()
+    _require_runtime()
+    return social.set_preferences(user, show_on_feed, show_on_leaderboard)
+
+
+@frappe.whitelist(methods=["POST"])
 def get_profile(user=None):
     """One person's profile. Delegates to :mod:`hr_enhancements.profile`.
 

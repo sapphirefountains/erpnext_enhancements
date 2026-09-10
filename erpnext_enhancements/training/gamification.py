@@ -78,6 +78,13 @@ STREAK_GRACE_DAYS = 1
 
 LEADERBOARD_LIMIT = 20
 
+#: How many rows of the board anybody actually sees, plus their own line if it is
+#: not among them. LEADERBOARD_LIMIT stays 20 because that is how many rows are
+#: *fetched and ranked* — rank has to be computed over everybody or leaving the
+#: board would promote everyone below you, and that would both be wrong and give
+#: away who opted out.
+BOARD_VISIBLE = 5
+
 MANAGER_ROLES = {"System Manager", "Training Manager", "HR Manager"}
 
 # The manager view of the customer board, said out loud. A missing customer fails
@@ -208,23 +215,64 @@ def get_leaderboard(scope=None):
 	learner_type = _resolve_scope(scope, me)
 	rows = _stat_rows(learner_type, customer=_customer_bound(learner_type, me))
 
+	# Ranked over EVERYBODY, then trimmed. Rank has to be computed before the
+	# opt-outs are removed, or leaving the board would silently promote everyone
+	# below you — which is both wrong and a way to work out who opted out.
 	names = _full_names([row.get("user") for row in rows])
-	out = []
+	ranked = []
 	for index, row in enumerate(rows, start=1):
 		user = row.get("user")
-		out.append(
+		ranked.append(
 			{
 				"rank": index,
+				"user": user,
 				"full_name": names.get(user) or user,
 				"points": cint(row.get("total_points")),
 				"courses_completed": cint(row.get("courses_completed")),
 				"badges_earned": cint(row.get("badges_earned")),
-				"current_streak_days": _decayed_streak(row),
-				"longest_streak_days": cint(row.get("longest_streak_days")),
+				# Streaks are SELF-ONLY (WI-072). "How many days in a row somebody
+				# has studied" published to their colleagues is a stick, and the one
+				# it beats hardest is whoever had a week off.
+				"current_streak_days": _decayed_streak(row) if user == me else None,
+				"longest_streak_days": cint(row.get("longest_streak_days")) if user == me else None,
 				"is_me": user == me,
 			}
 		)
-	return {"enabled": True, "scope": learner_type, "rows": out}
+
+	visible = [row for row in ranked if row["is_me"] or _shows_on_board(row["user"])]
+	mine = next((row for row in ranked if row["is_me"]), None)
+
+	# Top five plus your own line, rather than the whole staff list in rank order.
+	# LEADERBOARD_LIMIT is 20 against sixteen active employees, so the board WAS
+	# everybody including last place, with no way off it. A ranking that names the
+	# person at the bottom in a company this size is not a motivator.
+	board = visible[:BOARD_VISIBLE]
+	if mine and not any(row["rank"] == mine["rank"] for row in board):
+		board = board + [mine]
+
+	return {
+		"enabled": True,
+		"scope": learner_type,
+		"rows": board,
+		# Said out loud rather than left to be inferred from a short list: the
+		# reader can see it is a top five and not the whole company.
+		"total_ranked": len(visible),
+		"my_rank": mine["rank"] if mine else None,
+	}
+
+
+def _shows_on_board(user):
+	"""Whether this person has left themselves on the leaderboard. Defaults to yes.
+
+	Absent preferences mean the default, and the default is on: an opt-in board in
+	a sixteen-person company is an empty one.
+	"""
+	if not frappe.db.exists("DocType", "Training Profile Preference"):
+		return True
+	value = frappe.db.get_value(
+		"Training Profile Preference", {"user": user}, "show_on_leaderboard"
+	)
+	return True if value is None else bool(value)
 
 
 # ------------------------------------------------------------- building the row

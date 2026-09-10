@@ -134,7 +134,16 @@
 		// one -- so a field added later is invisible to colleagues until somebody
 		// deliberately lists it.
 		profile: "get_profile",
-		directory: "get_directory"
+		directory: "get_directory",
+		// The team feed (WI-072). Reactions hang on Training Achievement, a
+		// deliberately public row carrying a snapshot title and nothing else --
+		// never on Training Completion, which holds scores, attempt counts and
+		// revocation reasons, and which reacting to would have meant publishing all
+		// of that to the whole company.
+		feed: "get_feed",
+		sendKudos: "send_kudos",
+		feedPrefs: "get_feed_preferences",
+		setFeedPrefs: "set_feed_preferences"
 	};
 	var PREFIX = "/api/method/erpnext_enhancements.api.training.";
 

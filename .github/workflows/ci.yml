@@ -725,6 +725,16 @@ jobs:
       # drift.
       - name: Training authoring entry (the editor is reachable, starters are specs)
         run: python -m unittest erpnext_enhancements.tests.test_training_authoring_entry -v
+      # The team feed, and the one rule it exists to obey: it never carries a
+      # number somebody could be judged by. Reactions hang on Training Achievement,
+      # a record with NO performance fields at all -- because both reuse routes for
+      # reactions begin with a read check on the referenced document, so reacting
+      # to a Training Completion would have meant publishing second-attempt scores
+      # and revocation reasons company-wide. Also pins the audience filter (a
+      # mandatory positional, never a default), the opt-out, and the row scoping on
+      # all three new doctypes.
+      - name: Training social (the feed carries no numbers, and customers see none of it)
+        run: python -m unittest erpnext_enhancements.tests.test_training_social -v
       # Tiered sign-off authority. The behavioural half is the Junior/Senior/Master
       # rule; the STRUCTURAL half is the point. A sign-off can be submitted through
       # two doors -- record_signoff sets ignore_permissions and the Desk Submit

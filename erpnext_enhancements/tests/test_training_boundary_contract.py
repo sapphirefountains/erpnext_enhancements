@@ -88,6 +88,7 @@ SOURCES = {
     "qa": APP / "training/qa.py",
     "gamification": APP / "training/gamification.py",
     "signoff": APP / "training/signoff.py",
+    "social": APP / "training/social.py",
 }
 
 JS_FILES = [JS_DIR / name for name in ("player.js", "video.js", "quiz.js", "blocks.js")] + [
@@ -143,6 +144,13 @@ RESPONSE_BINDERS = (
     # deliberate asymmetry. Exactly what this file's own comment warns an allowlist
     # becomes. Adding the binder can only find MORE reads, never hide an orphan.
     "data",
+    # The feed-preferences reply. A genuine top-level reply binder --
+    # `call("feedPrefs").then(function (prefs) {...})` -- not a nested row.
+    "prefs",
+    # The leaderboard reply, read off the lazy panel's cached state
+    # (`var board = boardState.data || {}`) rather than straight out of a .then.
+    # Same kind of thing: it holds a server reply and nothing else.
+    "board",
 )
 
 # ---------------------------------------------------------------------------
@@ -175,6 +183,15 @@ SENT_BUT_NOT_READ = {
     "signoff": "the Training Signoff docname, returned for the desk and for logs; the queue removes the row it already holds",
     "scope": "which leaderboard the server decided to serve; _resolve_scope already refuses a scope the caller may not have, so echoing it is a receipt, not a control",
     "lesson_title": "qa echoes the lesson a thread belongs to; the panel is already inside that lesson and would only be repeating its own heading",
+    # Keys on the kudos rows NESTED inside a feed item. Nested content is out of
+    # this module's scope by design (see the docstring: course cards, outline rows
+    # and lesson blocks are all excluded for the same reason) -- adding `item` and
+    # `k` as binders would be worse than the gap, because `item` is also a DOM
+    # element name throughout the player and would manufacture dozens of false
+    # reads in the other direction. Both are covered by name in
+    # tests/test_training_social.py instead.
+    "kudos": "nested feed-item rows; covered by TestTheFeedCarriesNoNumbers in test_training_social",
+    "reaction": "nested kudos rows; covered by TestKudosAreOnePerPerson in test_training_social",
     "min_video_coverage": "read as state.gates.min_video_coverage; object identity pinned by TestGateThresholdBinding",
     "questions": "read as ctx.quiz.questions when TR.Quiz is mounted",
     "type": "read as question.type off the question rows, which are content, not envelope",
