@@ -119,6 +119,67 @@ def signoff_query_conditions(user=None):
 	return _own_rows_condition("Training Signoff", _resolve(user))
 
 
+def badge_award_query_conditions(user=None):
+	"""A badge award is scoped to the learner who earned it.
+
+	``Training Badge Award`` grants ``read`` to ``Training Learner`` in its
+	doctype JSON, and ``Training Learner`` is held by **customer** Website Users
+	as well as staff — so without this, ``/api/resource/Training Badge Award``
+	enumerated every staff member's badges to any client contact. The leaderboard
+	is unaffected: ``gamification._stat_rows`` and ``_award_missing_badges`` read
+	through ``frappe.get_all``, which does not check permissions at all.
+
+	Note the sibling that is deliberately *not* scoped: ``Training Badge`` itself
+	is a catalogue of badge definitions with no ``user`` column, and the player
+	shows learners what there is to earn. Leaving it open is the intent, not an
+	oversight.
+	"""
+	if _is_unscoped(user):
+		return ""
+	return _own_rows_condition("Training Badge Award", _resolve(user))
+
+
+def learner_stat_query_conditions(user=None):
+	"""A learner stat row is scoped to the learner it describes.
+
+	Same leak, same shape as ``badge_award_query_conditions`` — this table holds
+	points, streaks and completion counts, and ``current_streak_days`` /
+	``longest_streak_days`` are nobody else's business. The leaderboard's own
+	two-population separation (``gamification._stat_rows``, which takes
+	``learner_type`` as a mandatory positional) is the surface that *is* meant to
+	publish a ranking; a raw REST read is not.
+	"""
+	if _is_unscoped(user):
+		return ""
+	return _own_rows_condition("Training Learner Stat", _resolve(user))
+
+
+def question_thread_query_conditions(user=None):
+	"""Your own questions, plus the ones an author chose to publish.
+
+	This mirrors what ``qa.list_lesson_threads`` already returns — own rows, and
+	rows that are ``is_public`` **and** ``Answered`` — and it exists because the
+	endpoint was the only thing enforcing that. ``Training Question Thread``
+	grants ``read`` to ``Training Learner`` with no scoping hook, so
+	``/api/resource/Training Question Thread`` returned every thread on the site:
+	other people's unanswered questions, on courses the reader was never given,
+	to customer Website Users included. "I don't understand how to drain the
+	basin" is exactly the kind of thing somebody asks precisely because it is not
+	going on a noticeboard.
+
+	Both halves matter. ``is_public`` alone is not enough: an author sets it while
+	the thread is still ``Open``, and an unanswered question published to the
+	whole company is the thing the flag exists to avoid.
+	"""
+	if _is_unscoped(user):
+		return ""
+	table = "`tabTraining Question Thread`"
+	return (
+		f"({_own_rows_condition('Training Question Thread', _resolve(user))}"
+		f" or ({table}.`is_public` = 1 and {table}.`status` = 'Answered'))"
+	)
+
+
 def submission_query_conditions(user=None):
 	"""A work submission is scoped to the learner who made it.
 
@@ -172,6 +233,26 @@ def signoff_has_permission(doc, ptype=None, user=None):
 	# learner is not one of their Employee.reports_to (a Named Supervisor or a
 	# stand-in Training Manager) — otherwise they cannot action their own queue.
 	if doc.get("supervisor_user") == _resolve(user):
+		return True
+	return _own_row(doc, _resolve(user))
+
+
+def question_thread_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	if _own_row(doc, _resolve(user)):
+		return True
+	return bool(doc.get("is_public")) and doc.get("status") == "Answered"
+
+
+def badge_award_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	return _own_row(doc, _resolve(user))
+
+
+def learner_stat_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
 		return True
 	return _own_row(doc, _resolve(user))
 

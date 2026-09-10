@@ -660,6 +660,21 @@ jobs:
       # reads of the desk JS, which never runs in CI and has no bench here.
       - name: Training builder entry path (routing, guards, change_type)
         run: python -m unittest erpnext_enhancements.tests.test_training_builder_entry -v
+      # The WYSIWYG canvas. This suite existed from the day the canvas shipped and
+      # was never wired here, so the one Training surface with no CI coverage was
+      # the one an author spends all day in -- and it held a live defect
+      # (`callout_tone: "info"` against a Select declaring Tip/Warning/Danger)
+      # that killed the whole lesson autosave on the first Callout anyone created.
+      - name: Training canvas (WYSIWYG authoring surface)
+        run: python -m unittest erpnext_enhancements.tests.test_training_canvas -v
+      # Does recording a sign-off actually finish anything? It did not: Training
+      # Signoff had no on_submit at all, so `Competent` moved nothing and the
+      # assignment stayed at "Awaiting Sign-off" for ever. Same suite pins the
+      # recertification window on the attestation (a check that PASSED when it
+      # should have failed) and the row-scoping on the three doctypes that grant
+      # Training Learner read -- a role customer Website Users hold.
+      - name: Training sign-off loop (on_submit, expiry, row scoping)
+        run: python -m unittest erpnext_enhancements.tests.test_training_signoff_loop -v
       # Does the learner page's stylesheet style the page the scripts build? It
       # did not: 130 of the 138 classes the player emits had no rule, because the
       # CSS was written against an earlier vocabulary and never followed the

@@ -7,6 +7,154 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.386.0] - 2026-09-10
+
+The first instalment of **WI-072** — the HR module and Training redesign. This release is
+the *defects* half: everything below was already broken on production, and most of it was
+broken in the direction that does not announce itself.
+
+### Security
+
+- **Three Training doctypes were readable by customers.** `Training Badge Award`,
+  `Training Learner Stat` and `Training Question Thread` each grant `read` to
+  `Training Learner` in their doctype JSON, and none was registered in
+  `permission_query_conditions` or `has_permission`. `Training Learner` is held by customer
+  Website Users. So a client contact could enumerate every staff member's points, streaks
+  and badge awards through `/api/resource`, and read every learner's unanswered private
+  question to the author. **DocPerms with no scoping hook is the one combination that
+  leaks**, and it is invisible until somebody looks — the endpoints were all correct, so
+  nothing in the product misbehaved.
+
+  The thread scoping mirrors what `qa.list_lesson_threads` already returned: your own rows,
+  plus rows that are `is_public` **and** `Answered`. Both halves matter — an author sets
+  `is_public` while a thread is still `Open`, and an unanswered question published to the
+  whole company is the thing that flag exists to avoid.
+
+  `Training Badge` is deliberately left unscoped and there is a test pinning that: it is a
+  catalogue of definitions with no `user` column, and the player shows learners what there
+  is to earn.
+
+### Fixed
+
+- **Recording a sign-off finished nothing.** `Training Signoff` had no `on_submit` at all —
+  the controller held `validate`, `before_submit` and five private helpers, and
+  `record_signoff` submitted the document, emailed the learner and returned. A supervisor
+  recording *Competent* therefore moved nothing: no completion was minted and the
+  assignment stayed parked at `Awaiting Sign-off` indefinitely. The only route to a
+  completion was the learner going back to `/training` and pressing finish a second time,
+  which — having been told they were done and were waiting on somebody else — nobody does.
+
+  `on_submit` now re-drives the attempt through `api.training.resume_after_signoff`, which
+  re-evaluates **every** gate rather than writing a completion directly: the sign-off
+  unblocks one gate, it does not grant a pass, so a learner with a lesson still outstanding
+  stays outstanding. *Needs More Practice* takes the assignment back out of `Awaiting
+  Sign-off`, because left there it reads as "waiting on somebody else" for ever when the
+  ball is in fact back with the learner. `on_cancel` re-opens the gate. Both handlers are
+  contractually incapable of raising — the attestation is the evidence and must record even
+  if the bookkeeping behind it fails.
+
+  This also removes a false claim from the controller docstring, which said
+  `training/grading.py` re-opened the assignment on a cancel. `grading.py` contains no
+  reference to sign-off and never did.
+
+- **A hands-on sign-off never expired, so a recertification check passed when it should
+  have failed.** `competent_signoff_name` filtered on course + user + outcome + docstatus
+  with **no date clause**. "Draining a Fountain Basin Safely" recertifies every 24 months:
+  at month 25 the completion expired, the assignment was raised again, the learner
+  re-watched the video, and the sign-off gate re-opened against the *original two-year-old
+  signature* — with nobody watching them do it the second time. **Note the failure
+  direction. It passes.** Same family as the PAD SPACE trailing-space checks and the
+  emptiness-keyed backfill: an acceptance criterion written the obvious way reports clean
+  for ever and nobody goes looking.
+
+  An attestation is now valid for the course's own `recertify_months` window; no window
+  means no expiry, which is the honest reading of a course that never recertifies. The
+  comparison is done **in Python, not in the filter** — a datetime pushed into
+  `frappe.db.get_value` filters is coalesced, so a row with a NULL `signed_on` (every
+  sign-off written before `_stamp_signed_on` existed) lands on whichever side of the
+  comparison the sentinel falls, and it is not the side you assumed. A NULL now fails
+  closed.
+
+- **The first Callout an author created on the canvas broke saving.**
+  `training_canvas.js` declared its tones in lowercase and invented an `"info"` the Select
+  did not have, then stamped it on every new Callout. `callout_tone` is a Select on
+  `Training Content Block`; `_validate_selects` runs on child rows and `save_draft_version`
+  performs a full `lesson.save()` — so the value did not degrade to a default, it **threw**,
+  and it took the whole lesson autosave with it.
+
+  `Info` is now a real option (the player CSS already rendered it — the base
+  `.tr-block-callout` accent look was documented as the info/none case), the canvas writes
+  the DocType's vocabulary verbatim, and a cross-file test asserts the two lists are equal
+  so neither side can gain a tone without the other. Worth knowing for the next one of
+  these: **a DocType JSON is hash-gated, not timestamp-gated** (`import_file.py` has an
+  explicit `doctype != "DocType"` escape on the age check), so a Select change lands on
+  migrate with no `modified` bump — unlike a Workspace, which still needs one.
+
+- **Learners could not see author-uploaded images or PDFs, ever.** Both authoring surfaces
+  upload with `is_private = 1` attached to `Training Lesson`; no learner role holds a
+  DocPerm on `Training Lesson`; and `get_media_url` signed only Video and External Embed.
+  So `blocks.js` fell back to the raw `/private/files/…` path that publish serialises into
+  the payload, and every author-uploaded image rendered as a broken icon from the day the
+  module shipped. The author never saw it, because in the builder they are the owner.
+
+  Answered with a gated endpoint rather than by making the files public — course content is
+  not world-readable and customer contacts share this runtime. `download_lesson_file` is
+  **the one GET in `api/training.py`**, because an `<img src>` and a PDF frame cannot send a
+  POST or a CSRF token. The POST-only rule is kept rather than bent: the query string
+  carries one opaque nonce minted by `get_media_url` (which is POST and does the real
+  authorisation), the learner, attempt and block it stands for never travel, the session is
+  re-checked on redemption, and it expires on the same setting as a signed video URL. The
+  exemption is recorded in `test_training_endpoint_surface` with a reason, and guarded by a
+  new assertion that an exempt endpoint may not take a domain identifier as a parameter.
+
+- **Adding a block red-modalled the author every four seconds.**
+  `TrainingLesson._validate_blocks` threw on a media block with nothing attached and on a
+  Rich Text block with no text — which is exactly the shape both `add_block`
+  implementations create — and autosave then fired seconds later. Frappe's `request.js`
+  msgprints `_server_messages` regardless of any `.catch`, so nothing was lost and the
+  editor was simply unusable. This is the single loudest complaint about the WYSIWYG.
+
+  The rule had to **move**, not merely relax: `_materialize_lessons` writes with
+  `db.set_value` and never re-runs lesson validation, so that throw was the only thing
+  standing between an empty block and a learner. There is now one predicate,
+  `TrainingLesson.incomplete_blocks()`, read twice — ignored while the version is a draft,
+  and a refusal in `TrainingCourseVersion.before_submit` that names every offending lesson
+  and block. Deliberately **no** `msgprint` on validate either, not even an `alert`: a
+  msgprint queues onto `_server_messages` and rides out on the response whatever the client
+  does with it, so a warning there is a toast on every autosave — the same defect in a
+  friendlier colour.
+
+- **The one person actually holding HR Manager could not see a single training record.**
+  `HR Manager` appeared in zero of the 32 Training doctype JSONs. It is worse than a missing
+  list view: `Workspace.__init__` raises `PermissionError` when the workspace's module is not
+  in `allow_modules`, `get_workspace_sidebar_items` swallows that exception, and
+  `allow_modules` is built **only** from DocPerms on non-child doctypes. So the Training
+  workspace was silently absent from her sidebar and the Training desk tile — which exists
+  and renders — routed her into a permission error. `roles: []` on a Workspace JSON does not
+  mean "everyone"; it means "no extra restriction *on top of* the module gate".
+
+  HR Manager now holds DocPerms on the thirteen compliance and catalogue doctypes, and joins
+  the blanket sign-off set. Deliberately **not** on Course Version, Lesson, Content Block,
+  Chapter, Checkpoint, Question, Answer Option or Quiz Question — that is authoring, and
+  `Training Answer Option` holds `is_correct`. Known and accepted: `triton@` holds HR
+  Manager, so the assistant identity gains attestation authority too; Nik declined trimming
+  those roles when asked.
+
+### Added
+
+- `erpnext_enhancements/tests/test_training_signoff_loop.py`, wired into CI. Beyond pinning
+  the three fixes above, it carries the generalisation that would have caught the leak:
+  **any** Training doctype granting `Training Learner` read on rows with a `user` column,
+  and not registered in `permission_query_conditions`, fails the build. That assertion found
+  `Training Question Thread`, which nobody had noticed.
+- **`test_training_canvas.py` into `ci.yml`.** The suite existed from the day the canvas
+  shipped and was never wired in, so the one Training surface an author spends all day in
+  had zero CI coverage — and held the Callout defect above.
+- `work-items/WI-072-hr-module-and-training-redesign.md`, the plan of record for the rest:
+  the `HR Enhancements` module, the `Position` tier tree, tiered sign-off, the profile and
+  colleague pages, credentials and expiry, the social layer, the editor, PTO, and the
+  assignment UI. Tracked on PRJ-00616 as TASK-2026-01938 with a task per deliverable.
+
 ## [1.385.0] - 2026-09-10
 
 ### Added

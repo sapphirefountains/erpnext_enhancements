@@ -16,8 +16,19 @@ controller enforces are both about identity:
 
 Submittable, because a submitted sign-off is an attestation somebody's name is on
 and the framework then refuses to let it be edited. Withdrawing one is a cancel,
-which leaves it visible — and ``training/grading.py`` is what re-opens the
-assignment when that happens.
+which leaves it visible.
+
+**``on_submit`` is what makes any of this finish**, and it did not exist until
+v1.386.0. This controller held ``validate`` and ``before_submit`` and nothing
+else; ``record_signoff`` submitted the document, emailed the learner and
+returned. So recording *Competent* moved nothing: the assignment stayed parked at
+``Awaiting Sign-off`` indefinitely, no completion was minted, and the only way to
+finish the course was for the learner — who had already been told they were done
+and waiting on somebody else — to go back to ``/training`` and press finish a
+second time. The docstring here used to say ``training/grading.py`` re-opened the
+assignment on a cancel; ``grading.py`` contains no reference to sign-off at all
+and never did. Both transitions now live in ``training/signoff.py``, which
+already owns the ``Awaiting Sign-off`` write in the other direction.
 """
 
 import frappe
@@ -32,7 +43,7 @@ NEEDS_PRACTICE = "Needs More Practice"
 # supervisor. A Training Manager records sign-offs made on paper or over the
 # radio, which is a real workflow — the audit value is in the named supervisor
 # on the document, not in which login pressed submit.
-DELEGATE_ROLES = {"System Manager", "Training Manager"}
+DELEGATE_ROLES = {"System Manager", "Training Manager", "HR Manager"}
 
 
 class TrainingSignoff(Document):
@@ -53,6 +64,24 @@ class TrainingSignoff(Document):
 		validate would block a legitimate request. It is the submitted attestation
 		that must not come from the learner."""
 		self._reject_learner_submitting()
+
+	def on_submit(self):
+		"""Advance whatever this attestation was blocking.
+
+		Delegated rather than written here, and deliberately after the framework
+		has committed ``docstatus``: the attestation is the evidence and it must
+		record even if the bookkeeping behind it fails, so
+		``signoff.after_signoff_submitted`` is contractually incapable of raising.
+		"""
+		from erpnext_enhancements.training import signoff
+
+		signoff.after_signoff_submitted(self)
+
+	def on_cancel(self):
+		"""Withdrawing an attestation re-opens what it unblocked."""
+		from erpnext_enhancements.training import signoff
+
+		signoff.after_signoff_cancelled(self)
 
 	# ------------------------------------------------------------------ helpers
 

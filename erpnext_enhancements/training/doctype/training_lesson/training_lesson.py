@@ -69,15 +69,50 @@ class TrainingLesson(Document):
 			row.block_key = key
 			used.add(key)
 
-	def _validate_blocks(self):
+	def incomplete_blocks(self):
+		"""Blocks that are not finished yet, as ``(idx, block_type, why)`` tuples.
+
+		The one implementation of "this block has nothing in it". Used twice, and
+		the two readings of it are the whole point: while a version is a **draft**
+		this is advisory, and at **publish** it is a hard refusal.
+		"""
+		out = []
 		for row in self.blocks or []:
 			field = REQUIRED_MEDIA_FIELD.get(row.block_type)
 			if field and not row.get(field):
-				frappe.throw(
-					_("Block {0} is a {1} block with nothing attached.").format(row.idx, row.block_type)
-				)
-			if row.block_type in ("Rich Text", "Callout") and not (row.content or "").strip():
-				frappe.throw(_("Block {0} is a {1} block with no text.").format(row.idx, row.block_type))
+				out.append((row.idx, row.block_type, _("nothing attached")))
+			elif row.block_type in ("Rich Text", "Callout") and not (row.content or "").strip():
+				out.append((row.idx, row.block_type, _("no text")))
+		return out
+
+	def _validate_blocks(self):
+		"""Structural rules that hold even mid-edit.
+
+		**Emptiness is deliberately not one of them any more.** An author adding a
+		block creates exactly the shape this used to throw on — both the classic
+		builder and the canvas seed an Image block with no image and a Rich Text
+		block with no text — and then autosave fires a few seconds later and calls
+		``lesson.save()``. Frappe's ``request.js`` msgprints ``_server_messages``
+		regardless of any ``.catch``, so the author got a red dialog every four
+		seconds until they attached the file. Nothing was lost; it was simply
+		unusable, and it is the single loudest complaint about the editor.
+
+		So saving an unfinished block is simply allowed, and the refusal moved to
+		publish — see ``incomplete_blocks`` and ``TrainingCourseVersion``. Both
+		halves are required: publishing materialises lessons with ``db.set_value``
+		and never re-runs this validation, so until v1.386.0 this throw was the
+		**only** thing standing between an empty block and a learner.
+
+		Note what is deliberately *not* done here: no ``msgprint``, not even an
+		``alert``. ``msgprint`` queues onto ``_server_messages`` and rides out on
+		the response whatever the client does with it, so a warning on ``validate``
+		is a toast on every autosave — the same defect in a friendlier colour. The
+		author is looking at a WYSIWYG; the empty block is visible on the page. The
+		machine-readable signal goes to the editor through the bootstrap payload
+		(``incomplete_blocks``) so it can badge the block, and to the author as a
+		single sentence when they press Publish.
+		"""
+		for row in self.blocks or []:
 			if not 0 <= cint(row.min_coverage_percent) <= 100:
 				frappe.throw(_("Block {0}: minimum watched must be between 0 and 100.").format(row.idx))
 			if row.block_type == "External Embed":

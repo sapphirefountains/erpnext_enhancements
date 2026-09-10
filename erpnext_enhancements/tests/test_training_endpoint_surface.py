@@ -54,6 +54,29 @@ NOT_DIALLED_BY_THE_PLAYER = {
         "decorator gates HTTP dispatch, not a Python call) and keeps the rule "
         "uniform if it is ever dialled directly."
     ),
+    "download_lesson_file": (
+        "Fetched by the browser as an <img src> and as a PDF frame, not by the "
+        "player's JSON transport, so it can never appear in the METHOD map. See "
+        "GET_IS_THE_ONLY_OPTION for why it is also the one GET here."
+    ),
+}
+
+# The POST-only rule exists so attempt ids, lesson keys and checkpoint keys never
+# reach an access log. An endpoint may be exempted ONLY where a GET is forced by
+# the browser rather than chosen -- and the exemption is from the METHOD, not from
+# the reason behind it: the query string still has to be free of domain
+# identifiers. Both halves are asserted below, so an exemption cannot quietly
+# become a way to put an attempt id in a URL.
+GET_IS_THE_ONLY_OPTION = {
+    "download_lesson_file": (
+        "An <img src> and a PDF frame cannot send a POST or a CSRF token, and an "
+        "author-uploaded image has to render inside the page. The rule's substance "
+        "is kept rather than waived: the URL carries one opaque nonce minted by "
+        "get_media_url (which IS POST and does the authorisation), the learner, "
+        "attempt and block it stands for are held server-side in the cache and "
+        "never travel, the session is re-checked on redemption, and it expires on "
+        "the same setting as a signed video URL."
+    ),
 }
 
 
@@ -132,6 +155,8 @@ class PostOnlyTest(unittest.TestCase):
                 for kw in dec.keywords:
                     if kw.arg == "methods":
                         declared = ast.literal_eval(kw.value)
+            if name in GET_IS_THE_ONLY_OPTION:
+                continue
             if declared != ["POST"]:
                 offenders.append(f"{name} -> {declared!r}")
         self.assertEqual(
@@ -145,6 +170,38 @@ class PostOnlyTest(unittest.TestCase):
 
 class TheTwoSidesAgreeTest(unittest.TestCase):
     """The player dials by string. Nothing else checks these names line up."""
+
+    def test_a_get_exemption_takes_no_domain_identifiers(self):
+        """The exemption is from the verb, not from the reason for the verb.
+
+        An exempted endpoint may not accept an attempt id, a lesson key, a block
+        key or a checkpoint key as a parameter -- those are exactly what the rule
+        keeps out of access logs. It gets an opaque token and looks the rest up.
+        """
+        tree = _tree()
+        forbidden = {"attempt", "lesson", "lesson_key", "block_key", "checkpoint", "course", "user"}
+        offenders = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef) or node.name not in GET_IS_THE_ONLY_OPTION:
+                continue
+            params = {a.arg for a in node.args.args} | {a.arg for a in node.args.kwonlyargs}
+            leaked = sorted(params & forbidden)
+            if leaked:
+                offenders.append(f"{node.name} takes {leaked}")
+        self.assertEqual(
+            offenders,
+            [],
+            "a GET-exempt endpoint puts domain identifiers in the query string, "
+            f"which is the thing the POST-only rule exists to prevent: {offenders}",
+        )
+
+    def test_every_get_exemption_is_still_a_real_endpoint(self):
+        gone = sorted(set(GET_IS_THE_ONLY_OPTION) - set(_whitelisted()))
+        self.assertEqual(gone, [], f"GET_IS_THE_ONLY_OPTION names {gone}, which no longer exist")
+
+    def test_every_get_exemption_explains_itself(self):
+        thin = sorted(k for k, v in GET_IS_THE_ONLY_OPTION.items() if len((v or "").split()) < 20)
+        self.assertEqual(thin, [], f"these GET exemptions do not say why: {thin}")
 
     def test_every_dialled_name_exists(self):
         missing = sorted(_method_map() - set(_whitelisted()))

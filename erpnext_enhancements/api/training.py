@@ -44,6 +44,7 @@ Indentation is 4 spaces, matching the majority of ``api/``.
 """
 
 import statistics
+from urllib.parse import quote
 
 import frappe
 from frappe import _
@@ -68,6 +69,16 @@ CHECKPOINT_TOLERANCE_SECONDS = 2
 
 # Block types that carry no measurable playback, so no signed URL and no coverage.
 EMBED_BLOCK_TYPE = "External Embed"
+
+# Block types whose media is a plain Frappe File attached to the lesson, and the
+# field each keeps it in. These are uploaded `is_private = 1` and no learner role
+# holds a DocPerm on Training Lesson, so they are unreachable by their raw
+# `/private/files/...` path and go through `download_lesson_file` instead.
+FILE_BLOCK_FIELD = {
+    "Image": "image",
+    "PDF": "file",
+    "Downloadable File": "file",
+}
 
 
 # --------------------------------------------------------------------- guards
@@ -1260,6 +1271,18 @@ def finish_attempt(attempt):
     _learner()
     _require_runtime()
     doc = _attempt(attempt)
+    return _evaluate_attempt(doc)
+
+
+def _evaluate_attempt(doc):
+    """Every gate on *doc*, and the completion when they all pass.
+
+    Split out of :func:`finish_attempt` in v1.386.0 so the supervisor's sign-off
+    can re-drive it. The learner's own path reaches this after ``_learner()`` and
+    ``_attempt()``; :func:`resume_after_signoff` reaches it from a doc_event with
+    no session learner at all, which is why the identity checks stay in the
+    caller and none of them are repeated here.
+    """
     if doc.status != "In Progress":
         # Re-opening something already finished. The score comes off the record
         # rather than being recomputed: it is what the learner was graded on, and
@@ -1374,6 +1397,56 @@ def finish_attempt(attempt):
         completion=completion,
         reward=_completion_reward(doc, completion),
     )
+
+
+def resume_after_signoff(attempt=None, course=None, user=None):
+    """Re-run the gates for a learner whose sign-off has just landed.
+
+    **This is what closed the sign-off loop.** Until v1.386.0 nothing called
+    anything when a supervisor submitted a ``Competent`` attestation:
+    ``Training Signoff`` had no ``on_submit``, ``record_signoff`` notified the
+    learner and returned, and the assignment stayed parked in ``Awaiting
+    Sign-off`` for ever. The completion was only ever minted by the learner
+    pressing "finish" a second time — which, having already been told they were
+    done and waiting on somebody else, nobody does.
+
+    Not whitelisted, and it takes no verdict of its own: it re-evaluates *every*
+    gate through :func:`_evaluate_attempt`, so a learner whose sign-off arrives
+    while a lesson is still outstanding stays outstanding. The sign-off unblocks
+    one gate; it does not grant a pass.
+
+    Contractually cannot raise. It runs inside ``TrainingSignoff.on_submit``, and
+    an attestation must not fail to record because the completion behind it hit a
+    problem — the sign-off is the evidence, the completion is bookkeeping that can
+    be re-driven. Returns the completion docname, or ``None``.
+    """
+    if not _runtime_ready():
+        return None
+
+    name = attempt
+    if not name and course and user:
+        # A sign-off raised from the Desk need not name an attempt. Fall back to
+        # the learner's live attempt on that course; `creation desc` because a
+        # retake is the one that matters.
+        name = frappe.db.get_value(
+            "Training Attempt",
+            {"course": course, "user": user, "status": "In Progress"},
+            "name",
+            order_by="creation desc",
+        )
+    if not name:
+        return None
+
+    try:
+        doc = frappe.get_doc("Training Attempt", name)
+        result = _evaluate_attempt(doc) or {}
+        return result.get("completion")
+    except Exception:
+        frappe.log_error(
+            f"Could not finish attempt {name} after its sign-off was recorded.",
+            "Training sign-off resume",
+        )
+        return None
 
 
 def _recorded_score(doc):
@@ -2173,17 +2246,30 @@ def get_media_url(attempt, block_key):
     _require_runtime()
     doc = _attempt(attempt)
 
-    lessons = [row.name for row in _version_lessons(doc.course_version)]
-    block = None
-    if lessons:
-        block = frappe.db.get_value(
-            "Training Content Block",
-            {"parent": ["in", lessons], "parenttype": "Training Lesson", "block_key": block_key},
-            ["block_type", "video_asset", "embed_url", "poster_image", "video_duration_seconds"],
-            as_dict=True,
-        )
+    block = _block_in_attempt(doc, block_key)
     if not block:
-        frappe.throw(_("That video is not part of this course."))
+        frappe.throw(_("That media is not part of this course."))
+
+    if block.block_type in FILE_BLOCK_FIELD:
+        # An author-uploaded image or PDF. These are attached to Training Lesson
+        # with `is_private = 1`, and no learner role holds a DocPerm on Training
+        # Lesson -- so the raw `/private/files/...` path that publish serialises
+        # into the payload 403s for every learner. blocks.js falls back to that
+        # raw path when the transport returns nothing, which is why an image an
+        # author could see in the builder rendered as a broken icon in the player,
+        # from the day the module shipped until v1.386.0.
+        #
+        # Answered with a gated endpoint rather than by making the files public:
+        # course content is not world-readable, and customer contacts share this
+        # runtime. The gate is the one already proven here -- the block has to
+        # belong to a version this attempt is on.
+        return {
+            "url": _lesson_file_url(attempt, block_key),
+            "embed_url": "",
+            "reason": None if block.get(FILE_BLOCK_FIELD[block.block_type]) else "not_available",
+            "poster": "",
+            "duration_seconds": 0,
+        }
 
     if block.block_type == EMBED_BLOCK_TYPE:
         # Embeds are cross-origin and carry no coverage gate; the player renders
@@ -2207,7 +2293,113 @@ def get_media_url(attempt, block_key):
     }
 
 
+@frappe.whitelist(methods=["GET"])
+def download_lesson_file(token):
+    """Serve one author-uploaded image or PDF to a learner who is entitled to it.
+
+    **The one GET in this module, and the only one that can be.** A browser
+    fetches this as an ``<img src>`` and as a PDF frame; neither can send a POST
+    or a CSRF token. Everything else here is POST-only precisely so that attempt
+    ids, lesson keys and checkpoint keys never reach an access log, and that rule
+    is kept rather than bent: **the query string carries one opaque nonce and
+    nothing else.** Which learner, which attempt and which block it stands for
+    are held server-side in the cache and never travel.
+
+    The token is minted by :func:`get_media_url`, which is POST and does the real
+    authorisation — the block has to belong to a lesson on the version of an
+    attempt that belongs to the caller. This is the same short-lived-URL shape
+    ``gcs_media.signed_url_for_asset`` already uses for video, for the same
+    reason; only the signer differs, because a Frappe File has no bucket to sign
+    against.
+
+    The session is re-checked on redemption, so a token pasted into another
+    person's browser is refused even inside its window.
+
+    Served inline rather than as an attachment (``display_content_as``), because
+    the whole point is that it renders in the page.
+    """
+    _learner()
+    _require_runtime()
+
+    payload = frappe.cache().get_value(_media_token_key(token)) or {}
+    if not payload or payload.get("user") != frappe.session.user:
+        # Expired, forged, or someone else's. One message for all three: telling
+        # them apart tells an attacker which tokens exist.
+        frappe.throw(_("That link has expired. Reload the lesson."), frappe.PermissionError)
+
+    doc = _attempt(payload.get("attempt"))
+    block = _block_in_attempt(doc, payload.get("block_key"))
+    if not block or block.block_type not in FILE_BLOCK_FIELD:
+        frappe.throw(_("That file is not part of this course."))
+
+    file_url = block.get(FILE_BLOCK_FIELD[block.block_type])
+    if not file_url:
+        frappe.throw(_("That block has no file attached."))
+
+    name = frappe.db.get_value("File", {"file_url": file_url}, "name")
+    if not name:
+        # The block still points at a path but the File row is gone -- a deleted
+        # attachment, or a restore that missed it. Say so rather than 500ing.
+        frappe.throw(_("That file is no longer on the site."))
+
+    file_doc = frappe.get_doc("File", name)
+    frappe.local.response.filename = file_doc.file_name or "attachment"
+    frappe.local.response.filecontent = file_doc.get_content()
+    frappe.local.response.type = "download"
+    frappe.local.response.display_content_as = "inline"
+
+
 # -------------------------------------------------------------------- helpers
+
+
+def _media_token_key(token):
+    return f"training:media-token:{token}"
+
+
+def _lesson_file_url(attempt, block_key):
+    """Mint a short-lived opaque URL for :func:`download_lesson_file`.
+
+    TTL rides on the same setting as a signed video URL, so an administrator
+    tightening one tightens both and the two cannot drift into telling a learner
+    different things about how long a page stays good for.
+    """
+    token = frappe.generate_hash(length=32)
+    minutes = cint(get_settings().signed_url_ttl_minutes) or 15
+    frappe.cache().set_value(
+        _media_token_key(token),
+        {"user": frappe.session.user, "attempt": attempt, "block_key": block_key},
+        expires_in_sec=minutes * 60,
+    )
+    return (
+        "/api/method/erpnext_enhancements.api.training.download_lesson_file"
+        f"?token={quote(token)}"
+    )
+
+
+def _block_in_attempt(doc, block_key):
+    """One content block, if it belongs to a lesson on this attempt's version.
+
+    The membership half of every media gate here. Shared by
+    :func:`get_media_url` and :func:`download_lesson_file` so the video path and
+    the file path cannot come to disagree about what "part of this course" means.
+    """
+    lessons = [row.name for row in _version_lessons(doc.course_version)]
+    if not lessons:
+        return None
+    return frappe.db.get_value(
+        "Training Content Block",
+        {"parent": ["in", lessons], "parenttype": "Training Lesson", "block_key": block_key},
+        [
+            "block_type",
+            "image",
+            "file",
+            "video_asset",
+            "embed_url",
+            "poster_image",
+            "video_duration_seconds",
+        ],
+        as_dict=True,
+    )
 
 
 def _as_list(value):

@@ -1123,8 +1123,14 @@ class TestFinishAttemptHasOneSerializer(unittest.TestCase):
 
     def test_every_exit_goes_through_it(self):
         """Counted rather than spot-checked: a fourth exit added later that
-        assembles its own dict is the same bug again."""
-        body = _python_function_source(self._runtime(), "finish_attempt")
+        assembles its own dict is the same bug again.
+
+        Reads ``_evaluate_attempt``, which is where the three exits have lived
+        since v1.386.0 split the gate evaluation out of ``finish_attempt`` so a
+        supervisor's sign-off could re-drive it. ``finish_attempt`` is now the
+        identity check and a delegation, and counting exits in it would count
+        zero and pass for ever."""
+        body = _python_function_source(self._runtime(), "_evaluate_attempt")
         self.assertEqual(body.count("_finished_attempt_payload("), 3)
         self.assertNotIn('"passed":', body)
 
@@ -1155,7 +1161,7 @@ class TestFinishAttemptHasOneSerializer(unittest.TestCase):
     def test_the_reopened_path_reads_the_recorded_score(self):
         """Off the record, not recomputed — recomputing could quietly disagree
         with the completion certificate already issued."""
-        body = _python_function_source(self._runtime(), "finish_attempt")
+        body = _python_function_source(self._runtime(), "_evaluate_attempt")
         self.assertIn("_recorded_score(doc)", body)
 
     def test_a_missing_score_is_none_not_zero(self):

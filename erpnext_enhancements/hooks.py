@@ -1805,6 +1805,20 @@ permission_query_conditions = {
 	"Training Certificate": "erpnext_enhancements.training.permissions.certificate_query_conditions",
 	"Training Signoff": "erpnext_enhancements.training.permissions.signoff_query_conditions",
 	"Training Submission": "erpnext_enhancements.training.permissions.submission_query_conditions",
+	# Gamification (WI-072 §0). Both of these grant `read` to "Training Learner" in
+	# their doctype JSON, and Training Learner is held by CUSTOMER Website Users as
+	# well as staff -- so until v1.386.0 a client contact could enumerate every staff
+	# member's points, streaks and badge awards through /api/resource. They shipped
+	# with DocPerms and no scoping hook, which is the one combination that leaks.
+	# `Training Badge` itself stays unscoped on purpose: it is a catalogue of badge
+	# definitions with no `user` column, and the player shows learners what there is
+	# to earn.
+	"Training Badge Award": "erpnext_enhancements.training.permissions.badge_award_query_conditions",
+	"Training Learner Stat": "erpnext_enhancements.training.permissions.learner_stat_query_conditions",
+	# Ask-the-author (WI-072 §0, same leak). The endpoint returns own rows plus
+	# public+Answered ones; the DocPerm returned EVERY thread on the site to
+	# anybody holding Training Learner, unanswered private questions included.
+	"Training Question Thread": "erpnext_enhancements.training.permissions.question_thread_query_conditions",
 	# Chat (ADR 0009 §F.18): row-level scoping is MEMBERSHIP, not role. Chat Room is
 	# the only chat doctype carrying a DocPerm at all (`read` for "Chat User"), so it is
 	# the only one where this hook is the live gate -- the other three ship with an
@@ -1847,6 +1861,12 @@ has_permission = {
 	"Training Certificate": "erpnext_enhancements.training.permissions.certificate_has_permission",
 	"Training Signoff": "erpnext_enhancements.training.permissions.signoff_has_permission",
 	"Training Submission": "erpnext_enhancements.training.permissions.submission_has_permission",
+	# The single-document twins of the two gamification query conditions above. A
+	# query condition filters lists and says nothing about frappe.get_doc(), so
+	# shipping one without the other leaves the hole in whichever half you skipped.
+	"Training Badge Award": "erpnext_enhancements.training.permissions.badge_award_has_permission",
+	"Training Learner Stat": "erpnext_enhancements.training.permissions.learner_stat_has_permission",
+	"Training Question Thread": "erpnext_enhancements.training.permissions.question_thread_has_permission",
 	# Chat: the twin of every query condition above, and parity here is the house
 	# doctrine -- ten and ten before this block, four and four after it.
 	# "Chat Room" is not just the single-document gate: it IS the realtime security

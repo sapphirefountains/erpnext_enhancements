@@ -94,6 +94,11 @@
    "role": "Training Author",
    "share": 1,
    "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager"
   }
  ],
  "sort_field": "modified",
