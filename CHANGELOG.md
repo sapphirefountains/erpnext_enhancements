@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.384.1] - 2026-09-10
+
+### Fixed
+
+- **Project Contract's `feature_description` and `key_location` widened from Data to Small Text.**
+  Both are maintenance-agreement fields and both were capped at 140 characters, which is under what
+  they are actually for. `feature_description` defines *what the agreement covers* - a multi-feature
+  site ("Bowl fountain (3 levels), scupper wall, and splash pad with surge tank. Choreo and Dynablast
+  pumps, Stenner chemical pumps, sump pumps in the corner pit.") does not fit, and the cap silently
+  pushed people into writing a less complete description on a contract document. `key_location` holds
+  real directions ("around the right side of the garage, up the hill, into the backyard") and feeds
+  the Visit Wizard's Access & Site banner, which since v1.384.0 renders line breaks - so it can now
+  carry a short set of directions rather than one truncated sentence.
+
+  Note that `site_access_notes` (already Small Text) is **not** an alternative home for this: it is
+  gated `depends_on: template_key=="sow"`, so it does not render on a maintenance agreement at all.
+
+  Widening a Data column to Text is non-destructive; existing values are unaffected.
+
 ## [1.384.0] - 2026-09-10
 
 ### Added
