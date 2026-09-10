@@ -550,6 +550,8 @@
 			else if (view === "complete") renderComplete();
 			else if (view === "record") renderRecord();
 			else if (view === "queue") renderQueue();
+			else if (view === "people") renderDirectory();
+			else if (view === "person") renderPerson();
 			// A light entrance so a view change reads as a transition, not a cut.
 			// .is-entering is a state class (exempt from the CSS class contract) and
 			// player.css disables it under prefers-reduced-motion. The forced reflow
@@ -2037,6 +2039,17 @@
 			// boot payload rather than a call on render, so fourteen of sixteen
 			// people never see a button that opens an empty list -- and the one who
 			// does sees how many before deciding to tap it.
+			// Staff only. `is_staff` comes off the boot payload rather than a role
+			// check in the browser, because customer contacts hold Training Learner
+			// and a client should never be offered a link to the staff directory —
+			// even one that would come back empty.
+			if (b.is_staff) {
+				wrap.appendChild(
+					button(t("People"), "tr-button tr-button-quiet", function () {
+						go("people");
+					})
+				);
+			}
 			var waiting = (b.stats && b.stats.signoffs_to_record) || b.signoffs_to_record || 0;
 			if (waiting > 0) {
 				wrap.appendChild(
@@ -2064,33 +2077,45 @@
 			bar.appendChild(el("h1", "tr-title", t("My record")));
 			head.appendChild(bar);
 
+			// The profile half, above the certificate list. Two calls on one screen
+			// rather than one fat endpoint: `getTranscript` is an existing, tested
+			// path that mints certificate URLs, and folding it into the profile would
+			// mean rewriting the half that already works to add the half that does
+			// not exist. Both panels fail independently.
+			var profileSlot = el("div", "tr-profile-slot");
+			main.appendChild(profileSlot);
+			loadProfile(profileSlot, null);
+
+			// Its own slot, cleared on its own. Sharing `main` would mean the
+			// transcript's clear() wiping the profile panel above it the moment it
+			// resolved — and it resolves second about half the time.
+			var slot = el("div", "tr-record-slot");
+			main.appendChild(slot);
 			var pending = el("div", "tr-loading", t("Loading your record…"));
 			pending.setAttribute("role", "status");
-			main.appendChild(pending);
+			slot.appendChild(pending);
 
 			call("getTranscript", {})
 				.then(function (data) {
-					clear(main);
+					clear(slot);
 					data = data || {};
 					var rows = data.completions || [];
 					if (!rows.length) {
-						main.appendChild(
+						slot.appendChild(
 							el("p", "tr-empty", t("You have not finished a course yet. Your certificates will appear here."))
 						);
 						return;
 					}
+					slot.appendChild(el("h2", "tr-section-title", t("Certificates")));
 					var list = el("div", "tr-record");
 					rows.forEach(function (row) {
 						list.appendChild(recordRow(row));
 					});
-					main.appendChild(list);
+					slot.appendChild(list);
 				})
 				.catch(function (err) {
-					clear(main);
-					fail(main, err);
-					main.appendChild(button(t("Back"), "tr-button", function () {
-						go("catalog");
-					}));
+					clear(slot);
+					fail(slot, err);
 				});
 		}
 
@@ -2116,6 +2141,225 @@
 				item.appendChild(link);
 			}
 			return item;
+		}
+
+		// ---------------------------------------------------------------- profile
+		//
+		// Ask #3, and the reason the payload is shaped the way it is: your own
+		// profile answers "what do I need to do?", a colleague's answers "who around
+		// here knows how to do this?". The server builds those as two different
+		// dicts rather than one filtered one, so nothing here has to remember which
+		// fields are private — a colleague payload simply does not carry them, and
+		// the self-only panels below do not draw because there is nothing to draw.
+
+		function loadProfile(slot, user) {
+			var pending = el("div", "tr-loading", t("Loading…"));
+			pending.setAttribute("role", "status");
+			slot.appendChild(pending);
+			return call("profile", user ? { user: user } : {})
+				.then(function (data) {
+					clear(slot);
+					if (data) renderProfileInto(slot, data);
+				})
+				.catch(function (err) {
+					clear(slot);
+					fail(slot, err);
+				});
+		}
+
+		function renderProfileInto(slot, person) {
+			var card = el("div", "tr-profile");
+
+			var top = el("div", "tr-profile-head");
+			top.appendChild(el("div", "tr-profile-name", person.full_name || person.user || ""));
+			var sub = [];
+			if (person.position && person.position.name) sub.push(person.position.name);
+			else if (person.designation) sub.push(person.designation);
+			if (person.department) sub.push(person.department);
+			if (sub.length) top.appendChild(el("div", "tr-profile-role", sub.join(" · ")));
+			card.appendChild(top);
+
+			var facts = el("div", "tr-profile-facts");
+			if (person.manager) facts.appendChild(chip(fmt(t("Reports to {0}"), [person.manager])));
+			if (person.years_of_service != null) {
+				facts.appendChild(chip(fmt(t("{0} years here"), [String(person.years_of_service)])));
+			}
+			if (person.points) facts.appendChild(chip(fmt(t("{0} points"), [String(person.points)])));
+			if (person.work_anniversary) {
+				facts.appendChild(
+					chip(fmt(t("Anniversary {0}"), [String(person.work_anniversary).slice(0, 10)]))
+				);
+			}
+			if (facts.childNodes.length) card.appendChild(facts);
+
+			card.appendChild(
+				profileList(
+					t("Badges"),
+					// `award`, not `b`: `b` is the boot payload throughout this file, and
+					// shadowing it inside a callback reads as "the boot payload has a
+					// badge field" to a human and to the boundary scan alike.
+					(person.badges || []).map(function (award) {
+						return {
+							title: award.badge,
+							note: award.awarded_on ? String(award.awarded_on).slice(0, 10) : "",
+						};
+					}),
+					t("No badges yet.")
+				)
+			);
+
+			card.appendChild(
+				profileList(
+					t("Qualified for"),
+					(person.qualifications || []).map(function (q) {
+						return { title: q.name, note: q.status === "Expiring" ? t("renew soon") : "" };
+					}),
+					t("Nothing recorded yet.")
+				)
+			);
+
+			card.appendChild(
+				profileList(
+					t("Completed"),
+					(person.completed || []).map(function (c) {
+						return {
+							title: c.title || c.course,
+							note: c.completed_on ? String(c.completed_on).slice(0, 10) : "",
+						};
+					}),
+					t("Nothing finished yet.")
+				)
+			);
+
+			// Self-only panels. A colleague payload carries none of these keys, so
+			// they do not draw — there is no is_self branch here to get wrong.
+			if (person.assigned && person.assigned.length) {
+				card.appendChild(
+					profileList(
+						t("Still to do"),
+						person.assigned.map(function (a) {
+							return {
+								title: a.course_title || a.course,
+								note: a.due_date
+									? fmt(t("due {0}"), [String(a.due_date).slice(0, 10)])
+									: a.status,
+							};
+						}),
+						""
+					)
+				);
+			}
+			if (person.expiring && person.expiring.length) {
+				card.appendChild(
+					profileList(
+						t("Running out"),
+						person.expiring.map(function (e) {
+							return { title: e.title, note: String(e.expires_on || "").slice(0, 10) };
+						}),
+						""
+					)
+				);
+			}
+			if (person.devices && person.devices.length) {
+				card.appendChild(
+					profileList(
+						t("Kit signed out to you"),
+						person.devices.map(function (d) {
+							return { title: d.device_name || d.name, note: d.model || "" };
+						}),
+						""
+					)
+				);
+			}
+
+			slot.appendChild(card);
+		}
+
+		function profileList(title, items, emptyText) {
+			var wrap = el("div", "tr-profile-block");
+			wrap.appendChild(el("h3", "tr-profile-block-title", title));
+			if (!items.length) {
+				if (emptyText) wrap.appendChild(el("p", "tr-empty", emptyText));
+				return wrap;
+			}
+			var list = el("ul", "tr-profile-items");
+			items.forEach(function (item) {
+				var row = el("li", "tr-profile-item");
+				row.appendChild(el("span", "tr-profile-item-title", item.title || ""));
+				if (item.note) row.appendChild(el("span", "tr-profile-item-note", item.note));
+				list.appendChild(row);
+			});
+			wrap.appendChild(list);
+			return wrap;
+		}
+
+		// -------------------------------------------------------------- directory
+
+		function renderDirectory() {
+			var bar = el("div", "tr-subhead-row");
+			bar.appendChild(button("← " + t("All courses"), "tr-button tr-button-quiet", function () {
+				go("catalog");
+			}));
+			bar.appendChild(el("h1", "tr-title", t("People")));
+			head.appendChild(bar);
+
+			var pending = el("div", "tr-loading", t("Loading…"));
+			pending.setAttribute("role", "status");
+			main.appendChild(pending);
+
+			call("directory", {})
+				.then(function (data) {
+					clear(main);
+					var people = (data && data.people) || [];
+					if (!people.length) {
+						// A customer contact lands here with an empty list rather than a
+						// permission error: the directory is staff-only, and saying so
+						// plainly beats a dialog on a page they were shown a link to.
+						main.appendChild(
+							el("p", "tr-empty", t("The staff directory is not available to you."))
+						);
+						return;
+					}
+					var list = el("div", "tr-directory");
+					people.forEach(function (person) {
+						list.appendChild(directoryRow(person));
+					});
+					main.appendChild(list);
+				})
+				.catch(function (err) {
+					clear(main);
+					fail(main, err);
+				});
+		}
+
+		function directoryRow(person) {
+			var item = el("div", "tr-directory-row");
+			var body = el("div", "tr-directory-main");
+			body.appendChild(el("div", "tr-directory-name", person.full_name || person.user || ""));
+			var sub = [person.designation, person.department].filter(Boolean).join(" · ");
+			if (sub) body.appendChild(el("div", "tr-directory-role", sub));
+			item.appendChild(body);
+			if (person.badge_count) {
+				item.appendChild(chip(fmt(t("{0} badges"), [String(person.badge_count)])));
+			}
+			item.appendChild(
+				button(t("View"), "tr-button tr-button-quiet", function () {
+					state.viewingUser = person.user;
+					go("person");
+				})
+			);
+			return item;
+		}
+
+		function renderPerson() {
+			var bar = el("div", "tr-subhead-row");
+			bar.appendChild(button("← " + t("People"), "tr-button tr-button-quiet", function () {
+				go("people");
+			}));
+			head.appendChild(bar);
+			var slot = el("div", "tr-profile-slot");
+			main.appendChild(slot);
+			loadProfile(slot, state.viewingUser);
 		}
 
 		// ------------------------------------------------------ sign-off queue

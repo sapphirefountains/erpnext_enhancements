@@ -187,6 +187,32 @@ broken in the direction that does not announce itself.
   all return nothing, and nothing means refused. A customer contact has a User and no Employee,
   which is exactly why they can never acquire authority over staff.
 
+- **The profile, and browsable colleague profiles.** `/training` now opens on a real record:
+  badges, what you have completed, what you are qualified for, what is still to do, what is
+  running out, and the HR facts that make it a profile rather than a transcript — position,
+  department, who you report to, tenure, next work anniversary, kit signed out to you. Almost all
+  of that already existed on prod (16/16 have a department, 14/16 a manager, `device_management`
+  already injects an Assigned Devices panel on the Employee form) and none of it reached a page
+  anybody opened.
+
+  **The colleague view is built additively, and that is the whole design.**
+  `colleague_profile` *selects* `PUBLIC_FIELDS` out of the shared dict; it never deletes private
+  keys from the full one. With a subtractive filter, every field added to the profile in future
+  is public until somebody remembers to exclude it — and the person adding a field is never
+  thinking about the directory. Same reasoning `gamification.py` wrote down for the leaderboard:
+  *"an optional privacy filter is a privacy filter somebody eventually leaves out."*
+
+  So a colleague sees badges, completed course **titles**, and which qualifications somebody
+  currently holds. Never a score, an attempt, a failure, a due date, a certificate number, an
+  issuing body, or a course somebody is part-way through. The player does not branch on whose
+  profile it is drawing — a colleague payload simply has nothing to draw for the private panels,
+  so the boundary lives in the data rather than in an `if` somebody later inverts.
+
+  **Customers are kept out by employment, not by role.** `Training Learner` is on every customer
+  contact, so every entry point requires an `Employee` record instead of checking a role — a role
+  can be granted by accident, whether somebody works here cannot. The directory link is not even
+  offered to them.
+
 - **The dispatch advisory has never fired once, and now can.** `training/compliance.py` warns
   when somebody is scheduled onto a `Task` or a `Sapphire Maintenance Record` they are not
   certified for. It has been wired up since v1.215.0 and on this site has produced **zero**

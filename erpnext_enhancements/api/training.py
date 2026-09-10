@@ -505,6 +505,14 @@ def get_learner_bootstrap():
         # point is drawn only when there is something behind it, so fourteen of
         # sixteen people never see a button that opens an empty list.
         "signoffs_to_record": _signoff_queue_count(user),
+        # Additive: whether this learner works here. Decides whether the staff
+        # directory is offered at all — a customer contact holds Training Learner
+        # too, and should never be shown a link to a colleague list, even one that
+        # would come back empty. Employment rather than a role, because a role can
+        # be granted by accident and "does this person work here" cannot.
+        "is_staff": bool(
+            frappe.db.exists("Employee", {"user_id": user, "status": "Active"})
+        ),
         # Every key here is read by the player, and every setting the player reads
         # is here. Both halves of that sentence were false: `max_playback_rate` and
         # `doc_min_dwell_seconds` were read by video.js and blocks.js and sent by
@@ -2185,6 +2193,40 @@ def leaderboard(scope=None):
     from erpnext_enhancements.training import gamification
 
     return gamification.get_leaderboard(scope)
+
+
+@frappe.whitelist(methods=["POST"])
+def get_profile(user=None):
+    """One person's profile. Delegates to :mod:`hr_enhancements.profile`.
+
+    ``user`` omitted is your own; ``user`` given is a colleague, and the module
+    builds a **different, smaller** payload for that case rather than filtering
+    the full one — so a field added to the profile later is invisible to
+    colleagues until somebody deliberately lists it.
+
+    No authority decision is made here. ``colleague_profile`` refuses anybody
+    without an Employee record at both ends, which is how customer Website Users
+    holding ``Training Learner`` are kept out of the staff directory: by requiring
+    employment rather than by checking a role, since a role can be granted by
+    accident.
+    """
+    from erpnext_enhancements.hr_enhancements import profile
+
+    me = _learner()
+    _require_runtime()
+    if user and user != me:
+        return profile.colleague_profile(me, user)
+    return profile.my_profile(me)
+
+
+@frappe.whitelist(methods=["POST"])
+def get_directory():
+    """Colleagues this person may browse. Staff only; empty for a customer."""
+    from erpnext_enhancements.hr_enhancements import profile
+
+    me = _learner()
+    _require_runtime()
+    return {"people": profile.directory(me)}
 
 
 @frappe.whitelist(methods=["POST"])

@@ -127,7 +127,14 @@
 		// standing beside a basin -- there was no non-desk sign-off surface at all
 		// before this, so a Senior Technician had the power and nowhere to use it.
 		signoffQueue: "my_signoff_queue",
-		recordSignoff: "record_field_signoff"
+		recordSignoff: "record_field_signoff",
+		// The profile and the directory (WI-072). `profile` with no argument is your
+		// own working record; with a user it is a colleague's directory entry, which
+		// the server builds as a DIFFERENT, smaller payload rather than a filtered
+		// one -- so a field added later is invisible to colleagues until somebody
+		// deliberately lists it.
+		profile: "get_profile",
+		directory: "get_directory"
 	};
 	var PREFIX = "/api/method/erpnext_enhancements.api.training.";
 

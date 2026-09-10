@@ -704,6 +704,17 @@ jobs:
       # direction: it PASSES. Same family as the PAD SPACE whitespace queries.
       - name: Training dispatch advisory (it fires, and it only ever warns)
         run: python -m unittest erpnext_enhancements.tests.test_training_dispatch_advisory -v
+      # The profile, and the line between "my record" and "a colleague's entry".
+      # The construction is what is pinned, not the field list: the colleague
+      # payload is built by SELECTING public fields, never by deleting private
+      # ones -- with a subtractive filter every field added later is public until
+      # somebody remembers to exclude it, and the person adding a field is never
+      # thinking about the directory. Also pins that customers are kept out by
+      # requiring EMPLOYMENT rather than by checking a role, since Training
+      # Learner is held by every customer contact and a role can be granted by
+      # accident.
+      - name: HR profile (what a colleague may see, and what a customer may not)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_profile -v
       # Tiered sign-off authority. The behavioural half is the Junior/Senior/Master
       # rule; the STRUCTURAL half is the point. A sign-off can be submitted through
       # two doors -- record_signoff sets ignore_permissions and the Desk Submit

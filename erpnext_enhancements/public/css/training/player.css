@@ -3836,3 +3836,124 @@
 	opacity: 0.6;
 	pointer-events: none;
 }
+
+/* ---- Profile & directory (WI-072) -------------------------------------------
+   The same markup renders your own profile and a colleague's. It does not branch
+   on which: a colleague payload simply does not carry the self-only keys, so the
+   panels that would show a due date or a piece of kit have nothing to draw. That
+   is the privacy boundary living in the data rather than in a stylesheet or an
+   if-statement somebody later inverts. Tokens only. */
+
+.tr-profile-slot,
+.tr-record-slot {
+	display: block;
+}
+
+.tr-profile {
+	padding: 16px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	margin-bottom: 16px;
+}
+
+.tr-profile-head {
+	margin-bottom: 10px;
+}
+
+.tr-profile-name {
+	font-size: 1.35rem;
+	font-weight: 700;
+	overflow-wrap: break-word;
+}
+
+.tr-profile-role {
+	margin-top: 2px;
+	color: var(--tr-muted);
+	overflow-wrap: break-word;
+}
+
+.tr-profile-facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-bottom: 4px;
+}
+
+.tr-profile-block {
+	margin-top: 18px;
+}
+
+.tr-profile-block-title {
+	margin: 0 0 8px;
+	font-size: 0.95rem;
+	font-weight: 700;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+	color: var(--tr-muted);
+}
+
+.tr-profile-items {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.tr-profile-item {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 8px 0;
+	border-bottom: 1px solid var(--tr-border);
+}
+
+.tr-profile-item:last-child {
+	border-bottom: 0;
+}
+
+.tr-profile-item-title {
+	overflow-wrap: break-word;
+	min-width: 0;
+}
+
+.tr-profile-item-note {
+	color: var(--tr-muted);
+	font-size: 0.9rem;
+	white-space: nowrap;
+}
+
+.tr-directory {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.tr-directory-row {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	padding: 12px 14px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+}
+
+.tr-directory-main {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.tr-directory-name {
+	font-weight: 700;
+	overflow-wrap: break-word;
+}
+
+.tr-directory-role {
+	margin-top: 2px;
+	color: var(--tr-muted);
+	font-size: 0.9rem;
+	overflow-wrap: break-word;
+}
