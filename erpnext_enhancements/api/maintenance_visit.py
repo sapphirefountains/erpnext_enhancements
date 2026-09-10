@@ -241,7 +241,36 @@ def get_visit_bootstrap(record):
         "dashboard": get_dashboard_context(doc.project, doc.serial_no) if doc.project else {},
         "sections": _section_meta(doc),
         "template_meta": _template_meta(doc.get("template")),
+        "features": _feature_names(doc),
         "state": _wizard_state(doc),
+    }
+
+
+def _feature_names(doc):
+    """Readable labels for the water features this record covers.
+
+    A Per Site Visit record tags its rows with a Serial No, and the wizard's
+    feature tabs used to show that raw docname — "MAINT-DAYDAIRY-East-Fountain"
+    across a phone-width tab strip. Map each one to its Serial No ``item_name``
+    so the tabs read the way the site does.
+
+    Returns:
+        dict: {serial_no: label}. Serials with no item_name are omitted, and the
+        wizard falls back to the docname for those.
+    """
+    serials = set()
+    for table in PAYLOAD_TABLE_MAP:
+        for row in doc.get(table, []):
+            if row.get("serial_no"):
+                serials.add(row.get("serial_no"))
+    if not serials:
+        return {}
+    return {
+        row.name: row.item_name
+        for row in frappe.get_all(
+            "Serial No", filters={"name": ["in", list(serials)]}, fields=["name", "item_name"]
+        )
+        if row.item_name
     }
 
 

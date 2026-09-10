@@ -49,6 +49,15 @@ const VZ_STYLE = `
 .vz-chip{display:inline-block;font-size:13px;border-radius:10px;padding:2px 9px;margin-left:6px;vertical-align:middle;}
 .vz-chip-red{background:#fde8e8;color:#b91c1c;}
 .vz-chip-green{background:#e7f7ed;color:#15803d;}
+.vz-chip-req{background:#fef3c7;color:#92400e;font-weight:600;}
+.vz-step-dots{display:flex;gap:5px;margin:0 0 10px;}
+.vz-step-dot{flex:1;height:4px;border-radius:2px;background:var(--control-bg);border:none;padding:0;cursor:pointer;}
+.vz-step-dot.vz-done{background:#15803d;}
+.vz-step-dot.vz-todo{background:#f59e0b;}
+.vz-step-dot.vz-here{background:var(--primary,#2490ef);}
+.vz-savestate{position:fixed;left:0;right:0;bottom:calc(74px + env(safe-area-inset-bottom));text-align:center;font-size:13px;pointer-events:none;z-index:6;}
+.vz-savestate span{display:inline-block;padding:4px 12px;border-radius:12px;background:var(--control-bg);color:var(--text-muted);border:1px solid var(--border-color);}
+.vz-savestate.vz-err span{background:#fde8e8;color:#b91c1c;border-color:#b91c1c;font-weight:600;pointer-events:auto;}
 .vz-num{width:100%;margin-top:10px;font-size:26px;text-align:center;padding:11px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);}
 .vz-num:focus{outline:2px solid var(--primary,#2490ef);}
 .vz-stepper{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;}
@@ -148,6 +157,34 @@ function vz_rich_html(value) {
 // Serial No's site instructions — are plain text, so they stay escaped. But
 // their line breaks carry the meaning (one hazard per line), and without this
 // they collapse into a single run-on paragraph in the red safety banner.
+// Which rows count as answered. This MIRRORS
+// SapphireMaintenanceRecord._validate_mandatory_rows on the server, and the two
+// must stay in step: if they drift, the wizard tells a technician the step is
+// finished and then submit refuses it — by which point they are back at the truck.
+// Consumables are exempt there and here; an untouched qty-0 dosing prefill is a
+// legitimate "none used".
+const VZ_ANSWERED = {
+	maintenance_results: (row) => !!(row.selection || row.answer),
+	chemistry_readings: (row) => !!parseFloat(row.reading_value),
+	cleaning_tasks: (row) => !!(row.is_done || row.notes),
+	consumables: () => true,
+};
+
+function vz_row_answered(table, row) {
+	const test = VZ_ANSWERED[table];
+	return test ? test(row) : true;
+}
+
+// A mandatory row says so on the card, and says whether it is still outstanding.
+// Before this, is_mandatory was carried all the way from the template to the
+// submit gate without ever being shown to the person filling the form in.
+function vz_required_chip(table, row) {
+	if (!row.is_mandatory) return "";
+	return vz_row_answered(table, row)
+		? `<span class="vz-chip vz-chip-green">&#10003;</span>`
+		: `<span class="vz-chip vz-chip-req">${__("Required")}</span>`;
+}
+
 function vz_plain_html(value) {
 	return frappe.utils.escape_html(String(value == null ? "" : value)).replace(/\n/g, "<br>");
 }
@@ -159,6 +196,15 @@ class VisitWizard {
 		$("<style>").text(VZ_STYLE).appendTo(page.body);
 		this.$wrap = $('<div class="vz-wrap"></div>').appendTo(page.body);
 		this.page.set_secondary_action(__("Reload"), () => this.reload(), "refresh");
+		// Closing the tab mid-visit used to lose whatever had not autosaved yet,
+		// silently. Technicians work on phones and switch apps constantly.
+		window.addEventListener("beforeunload", (event) => {
+			if (this.doc && this.doc.docstatus === 0 && this.has_dirty()) {
+				event.preventDefault();
+				event.returnValue = "";
+				return "";
+			}
+		});
 		this.reset();
 	}
 
@@ -167,6 +213,7 @@ class VisitWizard {
 		this.dashboard = {};
 		this.section_meta = {};
 		this.template_meta = {};
+		this.feature_names = {};
 		this.steps = [];
 		this.step_index = 0;
 		this.features = [];
@@ -443,6 +490,7 @@ class VisitWizard {
 				this.dashboard = data.dashboard || {};
 				this.section_meta = data.sections || {};
 				this.template_meta = data.template_meta || {};
+				this.feature_names = data.features || {};
 				this.apply_state(data.state);
 				this.safety_ok = !!this.doc.safety_acknowledged;
 				this.build_steps();
@@ -525,6 +573,50 @@ class VisitWizard {
 	schedule_save() {
 		clearTimeout(this._save_timer);
 		this._save_timer = setTimeout(() => this.flush_save(), 4000);
+		this.set_save_state("pending");
+	}
+
+	// Autosave used to be entirely silent, including when it failed: the patch
+	// was re-queued and the error rethrown into nothing, so a technician on a
+	// bad signal could fill in a whole visit believing it was saved. Now the
+	// state is always on screen, and a failure retries on its own.
+	set_save_state(state) {
+		this._save_state = state;
+		if (!this.$wrap) return;
+		let $el = this.$wrap.find(".vz-savestate");
+		if (!$el.length) {
+			$el = $('<div class="vz-savestate"></div>').appendTo(this.$wrap);
+		}
+		const labels = {
+			pending: __("Unsaved changes"),
+			saving: __("Saving..."),
+			saved: __("Saved"),
+			error: __("NOT SAVED - retrying"),
+		};
+		$el.toggleClass("vz-err", state === "error");
+		if (!labels[state]) {
+			$el.empty();
+			return;
+		}
+		$el.html(`<span>${labels[state]}</span>`);
+		if (state === "saved") {
+			clearTimeout(this._saved_timer);
+			this._saved_timer = setTimeout(() => {
+				if (this._save_state === "saved") this.set_save_state("idle");
+			}, 2000);
+		}
+	}
+
+	// Failed saves used to sit in this.dirty until the technician happened to
+	// edit something else. Retry on a backoff instead, so a signal that comes
+	// back flushes the work without anyone noticing it had gone.
+	schedule_retry() {
+		clearTimeout(this._retry_timer);
+		this._retry_attempt = Math.min((this._retry_attempt || 0) + 1, 5);
+		const delay = 1000 * Math.pow(2, this._retry_attempt);
+		this._retry_timer = setTimeout(() => {
+			if (this.has_dirty()) this.flush_save().catch(() => {});
+		}, delay);
 	}
 
 	has_dirty() {
@@ -556,6 +648,7 @@ class VisitWizard {
 		const patch = { fields: sent_dirty.fields, rows };
 		this.dirty = { fields: {}, rows: {} };
 		this.pending_added = [];
+		this.set_save_state("saving");
 
 		return frappe
 			.call({
@@ -573,6 +666,8 @@ class VisitWizard {
 				});
 				this.apply_state(state);
 				this.refresh_reading_flags();
+				this._retry_attempt = 0;
+				this.set_save_state(this.has_dirty() ? "pending" : "saved");
 			})
 			.catch((error) => {
 				// keep the edits — newer in-flight changes win over the failed batch
@@ -585,6 +680,8 @@ class VisitWizard {
 				});
 				this.dirty = merged;
 				this.pending_added = added_local.concat(this.pending_added);
+				this.set_save_state("error");
+				this.schedule_retry();
 				throw error;
 			});
 	}
@@ -624,13 +721,34 @@ class VisitWizard {
 		}
 
 		const pct = this.doc.completion_percent || 0;
+		const left = this.step_outstanding(step);
 		this.$wrap.append(`
 			<div class="vz-stepline">
 				<span>${__("Step {0} of {1}", [this.step_index + 1, this.steps.length])} · ${frappe.utils.escape_html(step.title)}</span>
-				<span>${pct}%</span>
+				<span>${left ? `<span class="vz-chip vz-chip-req">${__("{0} required left", [left])}</span> ` : ""}${pct}%</span>
 			</div>
 			<div class="vz-progress"><div style="width:${pct}%"></div></div>
 		`);
+
+		// One bar per step, coloured by whether that step still owes a required
+		// answer. The percentage alone never said WHICH step was unfinished, so
+		// the first a technician heard of it was submit refusing at the truck.
+		const $dots = $('<div class="vz-step-dots"></div>');
+		this.steps.forEach((candidate, index) => {
+			const outstanding = this.step_outstanding(candidate);
+			const cls = index === this.step_index ? "vz-here" : outstanding ? "vz-todo" : "vz-done";
+			$(`<button type="button" class="vz-step-dot ${cls}"></button>`)
+				.attr(
+					"title",
+					outstanding
+						? `${candidate.title} — ${__("{0} required left", [outstanding])}`
+						: candidate.title
+				)
+				.attr("aria-label", candidate.title)
+				.on("click", () => this.go(index))
+				.appendTo($dots);
+		});
+		this.$wrap.append($dots);
 
 		if (this.features.length && step.table) {
 			this.render_feature_tabs();
@@ -647,19 +765,46 @@ class VisitWizard {
 		renderers[step.key]();
 
 		this.render_nav();
+		// render() empties the wrapper, so the save indicator has to be put back
+		// or a pending/failed save goes quiet the moment you change step.
+		if (this._save_state) this.set_save_state(this._save_state);
 	}
 
+	// Real buttons, not clickable divs — a tab strip you cannot reach from the
+	// keyboard is unusable with an accessibility switch or an external keyboard.
+	// Labels come from the Serial No's item_name (see api _feature_names); the
+	// docname is the fallback and reads badly on a phone-width strip.
 	render_feature_tabs() {
-		const $tabs = $('<div class="vz-tabs"></div>').appendTo(this.$wrap);
+		const $tabs = $('<div class="vz-tabs" role="tablist"></div>').appendTo(this.$wrap);
+		const table = this.steps[this.step_index].table;
 		this.features.forEach((serial) => {
-			$(`<div class="vz-tab ${serial === this.feature ? "vz-active" : ""}">${frappe.utils.escape_html(serial)}</div>`)
+			const active = serial === this.feature;
+			const label = (this.feature_names || {})[serial] || serial;
+			// Outstanding required rows for this feature on this step, so a tab
+			// that still needs work says so before you leave the site.
+			const left = (this.doc[table] || []).filter(
+				(row) => row.serial_no === serial && row.is_mandatory && !vz_row_answered(table, row)
+			).length;
+			$(`<button type="button" role="tab" aria-selected="${active}" class="vz-tab ${active ? "vz-active" : ""}">
+					${frappe.utils.escape_html(label)}${left ? ` <span class="vz-chip vz-chip-req">${left}</span>` : ""}
+				</button>`)
 				.on("click", () => {
-					this.flush_save();
+					this.flush_save().catch(() => {});
 					this.feature = serial;
 					this.render();
 				})
 				.appendTo($tabs);
 		});
+	}
+
+	// Required rows still unanswered on a step, counted across ALL features
+	// rather than just the visible tab — a Per Site Visit record can be finished
+	// on the fountain in front of you and still owe answers on the other one.
+	step_outstanding(step) {
+		if (!step.table) return 0;
+		return (this.doc[step.table] || []).filter(
+			(row) => row.is_mandatory && !vz_row_answered(step.table, row)
+		).length;
 	}
 
 	render_nav() {
@@ -791,17 +936,45 @@ class VisitWizard {
 		// vz_plain_html, which keeps the line breaks. One hazard per line is how
 		// these notes are written, and collapsing them into a single paragraph is
 		// how a technician skims past the one that mattered.
+		// "N/A" is not information. The banner used to print every field it had,
+		// so a site with no gate and no key rendered "Code: N/A" and "Key: N/A",
+		// training technicians to skim past the panel that also carries the
+		// things that will hurt them.
+		const useful = (value) => {
+			const text = String(value == null ? "" : value).trim();
+			return text && !/^(n\/?a\.?|none|nil|-{1,2})$/i.test(text);
+		};
+		const access = [];
+		const code = profile.access_codes || contract.gate_code;
+		if (useful(code)) {
+			// A value that already labels itself ("Gate code: 2244 - Key: N/A")
+			// does not want a second "Code:" bolted on the front.
+			access.push(
+				String(code).includes(":")
+					? vz_plain_html(code)
+					: `${__("Code")}: <b>${vz_plain_html(code)}</b>`
+			);
+		}
+		if (useful(contract.key_location)) {
+			access.push(`${__("Key")}: ${vz_plain_html(contract.key_location)}`);
+		}
+		if (useful(serial.custom_site_instructions)) {
+			access.push(vz_plain_html(serial.custom_site_instructions));
+		}
+
 		this.$wrap.append(`
 			<div class="vz-banner vz-banner-red">
 				<h6>${__("Safety Instructions")}</h6>
 				${vz_plain_html(profile.safety_instructions || __("No specific safety instructions provided."))}
 			</div>
-			<div class="vz-banner vz-banner-blue">
+			${
+				access.length
+					? `<div class="vz-banner vz-banner-blue">
 				<h6>${__("Access & Site")}</h6>
-				${__("Code")}: <b>${vz_plain_html(profile.access_codes || contract.gate_code || "N/A")}</b>
-				${contract.key_location ? `<br>${__("Key")}: ${vz_plain_html(contract.key_location)}` : ""}
-				${serial.custom_site_instructions ? `<br>${vz_plain_html(serial.custom_site_instructions)}` : ""}
-			</div>
+				${access.join("<br>")}
+			</div>`
+					: ""
+			}
 		`);
 
 		// Visit-type safety guidance from the form template (the site-specific
@@ -840,6 +1013,7 @@ class VisitWizard {
 		const $card = $(`
 			<div class="vz-card ${row.out_of_range ? "vz-bad" : ""}" data-reading-row="${frappe.utils.escape_html(row.name || "")}">
 				<span class="vz-card-title">${frappe.utils.escape_html(row.reading || "")}</span>
+				<span class="vz-req-slot">${vz_required_chip("chemistry_readings", row)}</span>
 				<span class="vz-chip vz-range-chip ${row.out_of_range ? "vz-chip-red" : ""}">${range_label}</span>
 				<input class="vz-num" type="number" inputmode="decimal" step="any"
 					placeholder="—" value="${row.reading_value || ""}">
@@ -852,6 +1026,7 @@ class VisitWizard {
 		$card.find(".vz-num").on("change", (event) => {
 			const value = parseFloat(event.target.value) || 0;
 			this.set_row("chemistry_readings", row, "reading_value", value);
+			$card.find(".vz-req-slot").html(vz_required_chip("chemistry_readings", row));
 			// immediate local range hint; the server's verdict lands on save
 			const low = row.min_value || 0;
 			const high = row.max_value || 0;
@@ -963,7 +1138,7 @@ class VisitWizard {
 		const choices = options.length ? options : ["Pass", "Fail", "Replace", "Other"];
 		const $card = $(`
 			<div class="vz-card ${row.selection || row.answer ? "vz-done" : ""}">
-				<div class="vz-card-title">${frappe.utils.escape_html(row.question || "")}</div>
+				<div class="vz-card-title">${frappe.utils.escape_html(row.question || "")} <span class="vz-req-slot">${vz_required_chip("maintenance_results", row)}</span></div>
 				<div class="vz-seg"></div>
 				<div class="vz-row-extra" style="display:none;">
 					<input type="text" placeholder="${__("Details")}" value="">
@@ -998,6 +1173,7 @@ class VisitWizard {
 					if (negative(choice)) $btn.addClass("vz-neg");
 				}
 				$card.toggleClass("vz-done", !!(row.selection || row.answer));
+				$card.find(".vz-req-slot").html(vz_required_chip("maintenance_results", row));
 				sync_extra();
 			});
 			$seg.append($btn);
@@ -1023,7 +1199,7 @@ class VisitWizard {
 			<div class="vz-card vz-check-card ${row.is_done ? "vz-on vz-done" : ""}">
 				<div class="vz-check-box">${row.is_done ? "✓" : ""}</div>
 				<div style="flex:1;">
-					<div class="vz-card-title">${frappe.utils.escape_html(row.task || "")}</div>
+					<div class="vz-card-title">${frappe.utils.escape_html(row.task || "")} <span class="vz-req-slot">${vz_required_chip("cleaning_tasks", row)}</span></div>
 					${row.notes ? `<div class="vz-card-sub">${frappe.utils.escape_html(row.notes)}</div>` : ""}
 				</div>
 			</div>
@@ -1032,6 +1208,7 @@ class VisitWizard {
 			this.set_row("cleaning_tasks", row, "is_done", done);
 			$card.toggleClass("vz-on vz-done", !!done);
 			$card.find(".vz-check-box").text(done ? "✓" : "");
+			$card.find(".vz-req-slot").html(vz_required_chip("cleaning_tasks", row));
 		});
 		return $card;
 	}
