@@ -812,3 +812,12 @@ erpnext_enhancements.patches.backfill_triton_assistant_settings_defaults
 # now carries the full card set with a bumped `modified`; this reload_doc(force=True) rebuilds the
 # existing public workspace regardless of the age check. Safe twice.
 erpnext_enhancements.patches.resync_training_workspace
+# v1.385.0 -- retunes the two Offsite Backup Settings dials the nightly-full schedule
+# invalidated. alert_if_full_older_than_hours 192 -> 36 (eight days was one Sunday plus grace;
+# against a nightly full backup it can only fire after the database tier has been shouting for
+# six days) and min_keep 14 -> 21 (a floor counted in OBJECTS, and a full run uploads three
+# where a database-only run uploaded one, so the old 14 went from a fortnight of nights to
+# four and a half). Both are Single fields with existing rows, so the JSON defaults reach a
+# fresh site and nothing else (v1.277.3). Writes only over the value this app used to ship, or
+# over no row at all -- never over an operator's own number. Safe twice.
+erpnext_enhancements.patches.retune_offsite_backup_settings_for_nightly_full

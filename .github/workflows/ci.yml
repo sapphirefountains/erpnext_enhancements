@@ -280,6 +280,16 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_payment_followup_wire -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
+      # Whether the nightly offsite backup ships the file archives is one membership
+      # test -- `include_files = backup_type in FULL_TYPES`. Drop the scheduled type out
+      # of that tuple and the run silently reverts to database-only: it still succeeds,
+      # still writes a green Offsite Backup Log row, and still satisfies the watchdog,
+      # because the tier the watchdog queries is the same type that just stopped
+      # including files. Nothing fails until a restore comes back with every row and
+      # none of the attachments. AST + JSON only, no frappe stub, so it sits on this
+      # pure-filesystem step.
+      - name: Offsite backup schedule (every automatic run ships the files)
+        run: python -m unittest erpnext_enhancements.tests.test_offsite_backup_schedule -v
       # How the Visit Wizard renders authored text. Filesystem-only, no stub. Both
       # guarded mistakes shipped and neither shows up in a diff: passing Text Editor
       # HTML through frappe.utils.xss_sanitise (which escapes by default) renders

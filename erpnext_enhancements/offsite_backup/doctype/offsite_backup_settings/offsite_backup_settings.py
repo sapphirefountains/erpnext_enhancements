@@ -35,13 +35,13 @@ class OffsiteBackupSettings(Document):
 		retention_days = cint(self.retention_days)
 		if 1 <= retention_days <= 6:
 			# Almost certainly a typo for a longer window. A genuine one-week
-			# retention is expressed as 7; anything under that would start deleting
-			# the archive before the weekly full backup has even run twice, and 0
-			# already means "never prune".
+			# retention is expressed as 7; anything under that keeps less than a
+			# week of nightly full backups standing, and 0 already means
+			# "never prune".
 			frappe.throw(
 				_(
-					"A retention window of {0} day(s) would delete backups faster than the "
-					"weekly full backup replaces them. Use 7 or more, or 0 to never prune."
+					"A retention window of {0} day(s) would keep less than a week of nightly "
+					"backups. Use 7 or more, or 0 to never prune."
 				).format(retention_days)
 			)
 

@@ -34,7 +34,7 @@
   },
   {
    "default": "0",
-   "description": "Master switch for the scheduled backups (02:00 daily, 03:00 Sundays) and the staleness watchdog. Off, nothing is scheduled. Run Backup Now works either way, so you can prove the setup before switching this on.",
+   "description": "Master switch for the scheduled backup (02:00 nightly, always full — database + public files + private files) and the staleness watchdog. Off, nothing is scheduled. Run Backup Now works either way, so you can prove the setup before switching this on.",
    "fieldname": "enabled",
    "fieldtype": "Check",
    "label": "Enable Offsite Backups"
@@ -93,8 +93,8 @@
    "fieldtype": "Column Break"
   },
   {
-   "default": "14",
-   "description": "Safety floor. The newest this many objects are never pruned regardless of age, and pruning is skipped altogether when the folder listing returns fewer than this — a partial listing must not cascade into deletion.",
+   "default": "21",
+   "description": "Safety floor, counted in OBJECTS rather than runs. A full nightly backup uploads three of them (database, public files, private files), so 21 is a week of nights. The newest this many objects are never pruned regardless of age, and pruning is skipped altogether when the folder listing returns fewer than this — a partial listing must not cascade into deletion.",
    "fieldname": "min_keep",
    "fieldtype": "Int",
    "label": "Always Keep Newest"
@@ -129,8 +129,8 @@
    "label": "Alert If Database Backup Older Than (hours)"
   },
   {
-   "default": "192",
-   "description": "Checked separately from the database tier, against Weekly and Manual Full runs only — otherwise a healthy nightly database backup masks a weekly file backup that has been skipped every Sunday for months. 192 is eight days.",
+   "default": "36",
+   "description": "Checked separately from the database tier, against full runs only (Nightly, Manual Full, and the historical Weekly). Every scheduled run is now full, so this matches the database threshold; the two tiers only come apart when the nightly run is failing and somebody is taking database-only backups by hand. 36 gives a missed night one cycle of grace.",
    "fieldname": "alert_if_full_older_than_hours",
    "fieldtype": "Int",
    "label": "Alert If Full Backup Older Than (hours)"

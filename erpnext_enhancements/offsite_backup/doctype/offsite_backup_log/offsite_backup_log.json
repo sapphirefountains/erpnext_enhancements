@@ -22,12 +22,13 @@
  ],
  "fields": [
   {
+   "description": "Nightly is the scheduled run and is always full (database + public files + private files). Daily and Weekly appear only on rows written before the schedule became nightly-full — Daily was database-only, Weekly was the Sunday full backup — and are kept so those rows still validate.",
    "fieldname": "backup_type",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Backup Type",
-   "options": "Daily\nWeekly\nManual\nManual Full",
+   "options": "Nightly\nDaily\nWeekly\nManual\nManual Full",
    "reqd": 1
   },
   {

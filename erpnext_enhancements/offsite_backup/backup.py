@@ -10,11 +10,13 @@ site: take the dump, ship it to a Shared Drive, *prove* the bytes arrived, prune
 a policy with two independent floors under it, and shout when backups stop
 happening.
 
-Three scheduler entry points, all registered in ``hooks.py``:
+Two scheduler entry points, both registered in ``hooks.py``:
 
-* :func:`run_daily_backup` — 02:00 site time, database only.
-* :func:`run_weekly_backup` — Sunday 03:00 site time, database + public files +
-  private files.
+* :func:`run_nightly_backup` — 02:00 site time, database + public files +
+  private files. **Every automatic run is a full one.** There is no
+  database-only tier on the schedule: a dump that cannot restore the files the
+  site serves is not a backup of the site, and it was the only thing the
+  schedule kept on six nights out of seven.
 * :func:`watchdog` — 08:00 site time, alerts when either tier has gone stale.
 
 Plus :func:`run_backup_now`, the whitelisted endpoint behind the settings form's
@@ -85,9 +87,19 @@ MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024
 # checksummed.
 MD5_BLOCK = 8 * 1024 * 1024
 
-# Runs that include the files archives as well as the database.
-FULL_TYPES = ("Weekly", "Manual Full")
-SCHEDULED_TYPES = ("Daily", "Weekly")
+# Runs that include the files archives as well as the database — which, on the
+# schedule, is now all of them. ``Weekly`` is listed here but deliberately not in
+# ALL_TYPES below: nothing starts one any more, and it stays so the watchdog's
+# full tier keeps counting the Sunday runs taken before the change. Those were
+# genuinely full backups and dropping them would make the tier read as "no full
+# backup has ever completed" for one morning after the deploy.
+#
+# ``Daily`` is not here at all, and that is the point of renaming the scheduled
+# type. Every ``Daily`` row in the Log is a database-only run, and folding the
+# new behaviour into the old label would retroactively re-describe history in the
+# one place that is supposed to be the evidence of what was actually shipped.
+FULL_TYPES = ("Nightly", "Weekly", "Manual Full")
+SCHEDULED_TYPES = ("Nightly",)
 # Everything :func:`run_backup_now` is allowed to start. It is a whitelisted
 # endpoint, so its argument is untrusted input, not a hint.
 MANUAL_TYPES = ("Manual", "Manual Full")
@@ -147,14 +159,17 @@ def _redact(text):
 # -------------------------------------------------------------- entry points
 
 
-def run_daily_backup():
-	"""Scheduler entry point — 02:00 site time. Database only."""
-	_schedule("Daily")
+def run_nightly_backup():
+	"""Scheduler entry point — 02:00 site time. Database + public and private files.
 
-
-def run_weekly_backup():
-	"""Scheduler entry point — Sundays 03:00 site time. Database + files."""
-	_schedule("Weekly")
+	The only scheduled run there is. It replaced a database-only nightly plus a
+	full backup at 03:00 on Sundays, an arrangement whose failure mode was that by
+	the end of the week the newest recoverable copy of the *files* was close to
+	seven days old — while the Log showed a green run every single night and the watchdog
+	agreed. Nothing was broken; the schedule simply was not keeping what a restore
+	needs.
+	"""
+	_schedule("Nightly")
 
 
 def _schedule(backup_type):
@@ -167,10 +182,10 @@ def _schedule(backup_type):
 
 	running = _running_run()
 	if running:
-		# Logged, not merely returned. A weekly backup that silently stops
-		# happening because a daily one is wedged is the exact failure this module
-		# is supposed to make impossible, and a line in a log file nobody reads is
-		# not a signal.
+		# Logged, not merely returned. The nightly backup silently not happening
+		# because an earlier run is wedged is the exact failure this module is
+		# supposed to make impossible, and a line in a log file nobody reads is not
+		# a signal.
 		_log_skipped(
 			backup_type,
 			f"An offsite backup was already running ({running.get('name')}, "
@@ -246,7 +261,7 @@ def run_backup_now(backup_type="Manual Full"):
 # ------------------------------------------------------------------ the work
 
 
-def execute_backup(backup_type="Daily"):
+def execute_backup(backup_type="Nightly"):
 	"""Take a backup, ship it, verify it, prune, and record what happened.
 
 	Runs on the long queue under the scheduled and manual entry points, and in the
@@ -767,11 +782,12 @@ def _log_skipped(backup_type, reason):
 def watchdog():
 	"""Alert when either backup tier has gone stale.
 
-	The two tiers are checked **separately and against their own thresholds**,
-	because they fail independently: a healthy nightly database backup would
-	otherwise mask a weekly file backup that has been skipped every Sunday for
-	months, and the aggregate "last successful backup" would look perfect the
-	whole time.
+	The two tiers are checked **separately and against their own thresholds**, and
+	the nightly full backup does not make that redundant. Every scheduled run now
+	satisfies both tiers at once, so they only come apart when the nightly run is
+	failing and somebody is taking database-only backups by hand to keep going —
+	which is precisely the case where the aggregate "last successful backup" reads
+	healthy and no files have been shipped for a week.
 
 	This is also the only check that catches the failure mode where *nothing runs
 	at all* — a failure email only ever fires when a job actually ran and threw.
@@ -786,7 +802,7 @@ def watchdog():
 
 	tiers = (
 		("database", None, cint(settings.alert_if_older_than_hours) or 36),
-		("full (database + files)", FULL_TYPES, cint(settings.alert_if_full_older_than_hours) or 192),
+		("full (database + files)", FULL_TYPES, cint(settings.alert_if_full_older_than_hours) or 36),
 	)
 
 	problems = []
