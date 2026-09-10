@@ -24,12 +24,28 @@ timezone (`America/Denver`):
 
 | Cron | Job | Does |
 |---|---|---|
-| `0 2 * * *` | `run_daily_backup` | Database only |
-| `0 3 * * 0` | `run_weekly_backup` | Database + public files + private files |
+| `0 2 * * *` | `run_nightly_backup` | Database + public files + private files |
 | `0 8 * * *` | `watchdog` | Alerts when either tier has gone stale |
 
-The slots are deliberately clear of the existing cron cluster at 05:00, 06:00,
+**Every automatic run is a full backup.** The schedule used to be a database-only
+run at 02:00 and a full one at 03:00 on Sundays, and its failure mode was that for
+most of the week the newest recoverable copy of the *files* was days old — while
+the Log showed a green run every night and the watchdog agreed. Nothing was
+failing; the schedule simply was not keeping what a restore needs. The Sunday
+entry is gone rather than kept, because it would now be a second full backup an
+hour after the first one.
+
+The slot is deliberately clear of the existing cron cluster at 05:00, 06:00,
 06:30, 07:00 and 07:15.
+
+The scheduled runs are logged as **`Nightly`**. `Daily` and `Weekly` rows in the
+Log are from before this change — `Daily` was database-only, `Weekly` was the
+Sunday full backup. Both remain valid Select options so those rows still validate,
+and `Weekly` stays in `FULL_TYPES` so the watchdog's full tier keeps counting the
+Sunday runs that did happen; neither can start a new run. The type was renamed
+rather than redefined on purpose: folding new behaviour into the old label would
+retroactively re-describe history in the one place that is supposed to be the
+evidence of what was actually shipped.
 
 **Every scheduled entry point is a thin shim.** It checks the master switch, calls
 `reconcile_stale_runs()`, bails if a run is already in flight, and enqueues the real
@@ -74,7 +90,9 @@ cd /home/frappe/frappe-bench
 bench --site <site> execute erpnext_enhancements.offsite_backup.backup.execute_backup --kwargs '{"backup_type": "Manual Full"}'
 ```
 
-`backup_type` is one of `Daily`, `Weekly`, `Manual`, `Manual Full`.
+`backup_type` is one of `Nightly`, `Manual`, `Manual Full`. (`Daily` and `Weekly` are
+historical labels only — `execute_backup` rejects them. `Manual` is the database-only
+shape, `Manual Full` the same thing `Nightly` does.)
 
 ## The parts that are load-bearing
 
@@ -134,6 +152,11 @@ Objects older than `retention_days` are deleted, except:
 - **nothing** is pruned when the listing returns fewer than `min_keep` objects, so a
   partial or truncated listing cannot cascade into deleting the tail of the archive.
 
+`min_keep` counts **objects, not runs**, and a full run uploads three of them
+(database, public files, private files). That is why it moved from 14 to 21 when
+the schedule went nightly-full: 14 objects had been a fortnight of nights under the
+old one-object-a-night mix and would have become four and a half.
+
 `createdTime` is parsed as RFC-3339 into an aware UTC datetime and compared against
 an aware UTC cutoff. Anything unparseable is left alone — an unreadable timestamp is
 not evidence that a file is old.
@@ -159,14 +182,21 @@ watchdog.
 ### Skips are logged
 
 A run that bails because another is in flight writes a `Skipped` row. A line in a log
-file nobody reads is how a weekly backup quietly stops happening for a year.
+file nobody reads is how a scheduled backup quietly stops happening for a year.
 
 ### The watchdog checks the two tiers separately
 
-Database (any type) against `alert_if_older_than_hours`, full (`Weekly` /
-`Manual Full`) against `alert_if_full_older_than_hours`. Checked together, a healthy
-nightly database backup masks a weekly file backup that has been skipped every Sunday
-for months.
+Database (any type) against `alert_if_older_than_hours`, full (`Nightly` /
+`Manual Full`, plus the historical `Weekly`) against
+`alert_if_full_older_than_hours`.
+
+The nightly full backup does not make this redundant. Every scheduled run now
+satisfies both tiers at once, so they come apart in exactly one case: the nightly
+run is failing and somebody is taking database-only backups by hand to keep going.
+That is precisely when the aggregate "last successful backup" reads healthy and no
+files have been shipped for a week. Both thresholds are 36 hours now — one missed
+night, one cycle of grace — where the full tier used to sit at 192 because it only
+had a shot at running once a week.
 
 This is also the only check that catches *nothing running at all*. A failure email
 only ever fires when a job actually ran and threw; a disabled scheduler, a dead

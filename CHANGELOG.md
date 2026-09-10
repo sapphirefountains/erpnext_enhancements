@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.385.0] - 2026-09-10
+
+### Added
+
+- **`test_offsite_backup_schedule.py`**, which is closer to the point of this release than a
+  footnote to it. Whether an automatic run ships the file archives is a single membership
+  test - `include_files = backup_type in FULL_TYPES`. Take the scheduled type back out of
+  that tuple (a rename, a tidy-up, a second tier added and half-wired) and the failure
+  **passes**: the run succeeds, the Log row is green, `files_uploaded` reads 1 instead of 3,
+  and the watchdog's full tier is satisfied because it queries the same type that just
+  stopped being full. Same shape as the PAD SPACE checks and the emptiness-keyed backfill -
+  an acceptance criterion written the obvious way reports clean forever and nobody goes
+  looking. Bench-free: `backup.py` imports `frappe` at module scope, so its constants are
+  read out of the AST rather than imported, and the suite runs on the pure-filesystem CI
+  step. Verified by reintroducing the bug.
+
+### Changed
+
+- **The nightly offsite backup is now a full backup - database *and* both file archives.** The
+  schedule was a database-only run at 02:00 with a full one at 03:00 on Sundays, which meant that
+  for most of the week the newest recoverable copy of the *files* a site serves was days old. That
+  is the shape of failure this module exists to prevent and it was invisible: nothing was failing,
+  the Log showed a green run every night, and the watchdog agreed, because the database tier it
+  was watching genuinely was fresh. A restore from Thursday's backup would have brought back every
+  row and none of the attachments, drawings or signed forms attached to them.
+- **The Sunday 03:00 cron is removed rather than kept.** It would now be a second full backup an
+  hour after the first one - the same multi-GB upload twice, against the same retention budget.
+- **The scheduled run is logged as `Nightly`, not `Daily`.** Every `Daily` row already in Offsite
+  Backup Log is a database-only run, and reusing the label would have retroactively re-described
+  history in the one place that is supposed to be the evidence of what was actually shipped.
+  `Daily` and `Weekly` stay as Select options so those rows still validate, and `Weekly` stays in
+  `FULL_TYPES` so the watchdog's full tier keeps counting the Sunday runs that did happen - but
+  `execute_backup` will not start a run under either name any more. `Manual` and `Manual Full`
+  already cover both shapes by hand and are unchanged, as is the **Run Backup Now** button.
+- **`alert_if_full_older_than_hours` drops from 192 to 36.** Eight days was one Sunday plus a day
+  of grace. Against a nightly full backup it is a threshold that can only fire once the database
+  tier has already been shouting for six days, so the tier that actually watches the files stops
+  being an independent check and becomes an echo of the other one. The watchdog still checks the
+  two tiers separately, and that is still worth doing: they come apart when the nightly run is
+  failing and somebody is taking database-only backups by hand to keep going, which is exactly
+  when the aggregate "last successful backup" reads healthy.
+- **`min_keep` rises from 14 to 21.** It is a floor counted in **objects**, not runs, and a full
+  run uploads three of them where a database-only run uploaded one. The old mix was 10 objects a
+  week, so 14 objects was a fortnight of nights; the same 14 against a nightly full backup is four
+  and a half. 21 puts the floor back to a week. `retention_days` (90) is unchanged and is still the
+  actual policy.
+
+### Fixed
+
+- Offsite Backup Settings' retention-window guard no longer explains itself in terms of "the weekly
+  full backup", which no longer exists.
+
+### Migration
+
+- `retune_offsite_backup_settings_for_nightly_full` moves the two dials above on the **existing**
+  Offsite Backup Settings row. They are fields on a Single that already have rows in `tabSingles`,
+  so changing the `default` in the doctype JSON reaches a fresh install and nothing else
+  (v1.277.3) - the form would have kept showing 192 and 14 while the JSON claimed otherwise. The
+  predicate is *"still holds the value this app shipped"*, not *"is empty"*: an operator who
+  deliberately set their own number keeps it, and a field with no row at all is written because no
+  row is not a decision. Safe to run twice.
+
 ## [1.384.0] - 2026-09-10
 
 ### Added

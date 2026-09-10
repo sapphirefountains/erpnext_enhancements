@@ -921,22 +921,24 @@ scheduler_events = {
 		# 07:15) — a multi-GB dump and upload must not contend with the KPI
 		# snapshots or the QuickBooks pulls for the long queue.
 		#
-		# Both backup entry points are thin shims: they check the master switch,
-		# reconcile any stranded Running row, and hand off to the long queue with a
+		# The backup entry point is a thin shim: it checks the master switch,
+		# reconciles any stranded Running row, and hands off to the long queue with a
 		# 4h timeout. The dump itself never runs on the scheduler tick.
 		#
-		# 02:00 daily — database only.
-		"0 2 * * *": ["erpnext_enhancements.offsite_backup.backup.run_daily_backup"],
-		# 03:00 Sunday — database + public files + private files. An hour after the
-		# nightly run so the two cannot overlap even if the daily one runs long;
-		# if it somehow still is, the weekly logs a Skipped row rather than queueing
-		# behind it.
-		"0 3 * * 0": ["erpnext_enhancements.offsite_backup.backup.run_weekly_backup"],
-		# 08:00 daily — staleness watchdog. Checks the database and full tiers
-		# separately against their own thresholds, because a healthy nightly
-		# database backup would otherwise mask a weekly file backup that has been
-		# skipped every Sunday for months. This is the check that catches "nothing
-		# ran at all": a failure email only fires when a job runs and throws.
+		# 02:00 nightly — database + public files + private files. Every automatic
+		# run is a full one. This used to be database-only with a separate full
+		# backup at 03:00 on Sundays, which meant that for most of the week the
+		# newest recoverable copy of the files was days old while the Log showed a
+		# green run every night. The Sunday entry is gone rather than kept: it would
+		# now be a second full backup an hour after the first one.
+		"0 2 * * *": ["erpnext_enhancements.offsite_backup.backup.run_nightly_backup"],
+		# 08:00 daily — staleness watchdog. Still checks the database and full tiers
+		# separately against their own thresholds even though every scheduled run now
+		# satisfies both: the tiers come apart when the nightly run is failing and
+		# somebody is taking database-only backups by hand, which is exactly when the
+		# aggregate "last successful backup" reads healthy. This is also the check
+		# that catches "nothing ran at all": a failure email only fires when a job
+		# runs and throws.
 		"0 8 * * *": ["erpnext_enhancements.offsite_backup.backup.watchdog"],
 		# Hand-off SLA compliance summary — Friday 07:30 site TZ. A cron entry
 		# rather than the "weekly" bucket because that bucket cannot pin a
