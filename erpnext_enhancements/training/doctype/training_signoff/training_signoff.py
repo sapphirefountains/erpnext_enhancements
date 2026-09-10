@@ -64,6 +64,7 @@ class TrainingSignoff(Document):
 		validate would block a legitimate request. It is the submitted attestation
 		that must not come from the learner."""
 		self._reject_learner_submitting()
+		self._require_authority()
 
 	def on_submit(self):
 		"""Advance whatever this attestation was blocking.
@@ -117,6 +118,38 @@ class TrainingSignoff(Document):
 		if DELEGATE_ROLES & set(frappe.get_roles(frappe.session.user)):
 			return
 		frappe.throw(_("A sign-off has to be submitted by the supervisor, not by the learner."))
+
+	def _require_authority(self):
+		"""The tier rule, enforced on **this** door.
+
+		``record_signoff`` sets ``ignore_permissions = True`` and calls ``submit()``;
+		the Desk form's own Submit button calls ``submit()`` directly and never goes
+		near the endpoint. So a rule that lives only in ``signoff._assert_may_sign``
+		is not a rule, it is a suggestion that one of the two doors happens to make
+		— and this is the door a supervisor sitting in the Desk actually uses.
+
+		The same call also **snapshots** the basis and both positions onto the
+		document, because a Position link resolves to today and an attestation is
+		about what was true when it was made. Same doctrine as the completion's
+		course-title and content-hash snapshots, for the same reason.
+		"""
+		from erpnext_enhancements.training import authority
+
+		basis = authority.snapshot_positions(self, frappe.session.user)
+		if basis:
+			return
+		if frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_patch:
+			# A data migration writing historical attestations has no session
+			# supervisor to check. The other rules -- self-signoff, notes, the
+			# derived supervisor_user -- still hold.
+			return
+		frappe.throw(
+			_("{0} cannot record this sign-off. It needs the named supervisor, somebody senior "
+			  "to {1} on the same ladder, or a Training Manager.").format(
+				frappe.session.user, self.user
+			),
+			frappe.PermissionError,
+		)
 
 	def _require_notes_when_not_competent(self):
 		if self.outcome == NEEDS_PRACTICE and not (self.competency_notes or "").strip():

@@ -239,9 +239,18 @@ class TestDeferredLinksAreRestored(unittest.TestCase):
     def test_every_link_target_exists(self):
         """The Phase-1 lesson, generalised: a Link naming a DocType this app does
         not ship fails migrate outright."""
+        # Scanned across the WHOLE app, not just training/doctype. Training links
+        # out of its own module as of v1.386.0 — Training Signoff snapshots the
+        # attesting and learner `Position`, which lives in HR Enhancements — and
+        # migrate does not care which module a target sits in, only that the app
+        # ships it. Scoping this to one directory would report a target as missing
+        # on the day a perfectly valid cross-module link is added, and the obvious
+        # way to make it green again is to add an exception, which is how the check
+        # stops meaning anything.
+        app_dir = DOCTYPE_DIR.parents[1]
         shipped = {
             json.loads(_read(p))["name"]
-            for p in DOCTYPE_DIR.glob("*/*.json")
+            for p in app_dir.glob("**/doctype/*/*.json")
             if json.loads(_read(p)).get("doctype") == "DocType"
         }
         core = {

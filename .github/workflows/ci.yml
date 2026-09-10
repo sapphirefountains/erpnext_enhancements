@@ -686,6 +686,16 @@ jobs:
       # which render as blank space with no error.
       - name: HR module (reachability, position ladder, workspace wiring)
         run: python -m unittest erpnext_enhancements.tests.test_hr_module -v
+      # Tiered sign-off authority. The behavioural half is the Junior/Senior/Master
+      # rule; the STRUCTURAL half is the point. A sign-off can be submitted through
+      # two doors -- record_signoff sets ignore_permissions and the Desk Submit
+      # button never touches the endpoint -- so a rule living only in the endpoint
+      # is a suggestion that one of the two doors happens to make. This walks the
+      # AST of all five call sites, because a comment naming the predicate is not a
+      # call to it, and that exact confusion is how the Phase-4 contract passed on a
+      # gate that did not gate.
+      - name: Training sign-off authority (tiers, and every door that asks)
+        run: python -m unittest erpnext_enhancements.tests.test_training_authority -v
       # Does the learner page's stylesheet style the page the scripts build? It
       # did not: 130 of the 138 classes the player emits had no rule, because the
       # CSS was written against an earlier vocabulary and never followed the

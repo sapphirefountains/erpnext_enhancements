@@ -155,6 +155,38 @@ broken in the direction that does not announce itself.
   one DocPerm and the whole area disappears for every non-manager with nothing reported
   anywhere, which is why `test_hr_module` asserts it rather than assuming it.
 
+- **Tiered sign-off authority.** `training/authority.py` decides who may attest for whom, and
+  returns *why* rather than a bool — `Observed Supervisor`, `Position Tier`, `Manager Delegate`,
+  or nothing. The learner is refused first and unconditionally, whatever roles or position they
+  hold. Tier authority is strictly higher tier **inside the same job family**, never a same-tier
+  peer, because two Junior Technicians signing each other's basin course is an attestation about
+  nothing.
+
+  **It is read from five places, and the one that matters is not the endpoint.** `record_signoff`
+  sets `ignore_permissions = True` and calls `submit()`; the Desk form's own Submit button calls
+  `submit()` directly and never touches the endpoint at all. A rule living only in
+  `_assert_may_sign` would therefore be a suggestion that one of the two doors happens to make —
+  the same shape as the six sign-off endpoints that shipped in v1.215.0 with no caller of any
+  kind. So `TrainingSignoff.before_submit` asks it too, and `test_training_authority` walks the
+  AST of all five sites rather than grepping, because a comment naming the predicate is not a
+  call to it.
+
+  The three visibility sites are not decoration either. Authority you cannot see a queue for is
+  authority nobody exercises: on this site not one of the four Junior Technicians reports to the
+  one Senior Technician, so without the tier arm on `signoff_query_conditions`,
+  `signoff_has_permission` and `get_signoff_queue` he would be granted the power and shown an
+  empty list.
+
+  The submitted document now **snapshots** the basis and both positions. A Position link resolves
+  to today; what an audit asks in 2029 is what was true when the attestation was made — the same
+  doctrine as the completion's course-title and content-hash snapshots. The addressee stays
+  frozen at routing time (a reporting-line change must not move who may sign) while tier
+  eligibility is evaluated live.
+
+  Fails closed throughout: no Employee record, no Position, an unknown ladder or a retired rung
+  all return nothing, and nothing means refused. A customer contact has a User and no Employee,
+  which is exactly why they can never acquire authority over staff.
+
 - **`Position` — the company ladder, and the thing sign-off authority will be read from.**
   A nested-set tree: groups are job families (Technician, Designer), the leaves under them
   are rungs, and `tier` decides authority — higher outranks lower, **only inside the same

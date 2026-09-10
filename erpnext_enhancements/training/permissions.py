@@ -108,15 +108,36 @@ def certificate_query_conditions(user=None):
 
 
 def signoff_query_conditions(user=None):
-	"""A sign-off is scoped to the learner it is about.
+	"""A sign-off is scoped to the learner it is about, plus the people you may sign.
 
-	The supervisor reaches it through the direct-reports arm of
-	``_own_rows_condition`` — which is exactly what makes the sign-off queue a
-	plain filtered list view rather than a bespoke endpoint.
+	Three arms, and the third is new in v1.386.0. Your own rows and your direct
+	reports come from ``_own_rows_condition`` — that is what makes the sign-off
+	queue a plain filtered list view rather than a bespoke endpoint. The third arm
+	is **position tier**: the learners you outrank on your own ladder.
+
+	Without it the tier rule is half-built in the way that reads as working. A
+	Senior Technician would be *allowed* to sign the four Junior Technicians and
+	would see none of their requests, because on this site none of them reports to
+	him — they all report to the Project Manager, and so does he. Authority you
+	cannot see the queue for is authority nobody exercises.
+
+	The observed-supervisor arm is already covered: ``signoff_has_permission``
+	handles the single-document read, and the queue filters on ``supervisor_user``
+	directly. Folding it in here too would double-count.
 	"""
 	if _is_unscoped(user):
 		return ""
-	return _own_rows_condition("Training Signoff", _resolve(user))
+
+	resolved = _resolve(user)
+	base = _own_rows_condition("Training Signoff", resolved)
+
+	from erpnext_enhancements.training import authority
+
+	signable = authority.signable_learner_users(resolved)
+	if not signable:
+		return base
+	joined = ", ".join(frappe.db.escape(u) for u in signable)
+	return f"({base} or `tabTraining Signoff`.`user` in ({joined}))"
 
 
 def badge_award_query_conditions(user=None):
@@ -229,12 +250,21 @@ def certificate_has_permission(doc, ptype=None, user=None):
 def signoff_has_permission(doc, ptype=None, user=None):
 	if _is_unscoped(user):
 		return True
+	resolved = _resolve(user)
 	# The supervisor named on the sign-off can always see it, even when the
 	# learner is not one of their Employee.reports_to (a Named Supervisor or a
 	# stand-in Training Manager) — otherwise they cannot action their own queue.
-	if doc.get("supervisor_user") == _resolve(user):
+	if doc.get("supervisor_user") == resolved:
 		return True
-	return _own_row(doc, _resolve(user))
+	if _own_row(doc, resolved):
+		return True
+
+	# The twin of the tier arm on the query condition. A query condition filters
+	# lists and says nothing about frappe.get_doc(), so a supervisor who could see
+	# a request in the list would hit a permission error opening it.
+	from erpnext_enhancements.training import authority
+
+	return authority.authority_basis(doc, resolved) == authority.TIER
 
 
 def question_thread_has_permission(doc, ptype=None, user=None):

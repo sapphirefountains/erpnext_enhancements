@@ -55,7 +55,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_months, cint, get_datetime, get_url, now_datetime
 
-from erpnext_enhancements.training import notifications
+from erpnext_enhancements.training import authority, notifications
 from erpnext_enhancements.training.doctype.training_settings.training_settings import is_enabled
 from erpnext_enhancements.training.doctype.training_signoff.training_signoff import (
 	COMPETENT,
@@ -89,6 +89,11 @@ AWAITING = "Awaiting Sign-off"
 
 # Assignment states a sign-off request should not disturb.
 CLOSED_ASSIGNMENT_STATUSES = ("Completed", "Cancelled", "Waived")
+
+#: Columns the supervisor queue reads. Named once because it is now fetched from
+#: two branches, and a field present in one and not the other is the kind of
+#: difference that only shows up for whoever hits the second branch.
+QUEUE_FIELDS = ["name", "course", "course_version", "user", "supervisor_user", "creation"]
 
 
 def _in_maintenance_context():
@@ -409,20 +414,28 @@ def _set_assignment_status(doc, status):
 
 
 def _assert_may_sign(doc, caller):
-	"""Never the learner. Then: the named supervisor, or a Training Manager.
+	"""Never the learner. Then whichever authority basis applies.
 
-	The learner check is first and unconditional, and it is stricter than
-	``TrainingSignoff.before_submit`` on purpose — see the module docstring.
+	The decision itself lives in ``training/authority.py`` and is read from five
+	places, this being one — see that module for why one of the other four is the
+	load-bearing one. What stays here is the *message*, because a refusal has to
+	tell somebody what to do next and the predicate has no idea.
+
+	The learner check is repeated rather than delegated even though
+	``authority_basis`` also refuses them: it is first, it is unconditional, and it
+	earns its own sentence. "You cannot sign off your own training" is a different
+	thing to be told than "you are not senior enough".
 	"""
 	if doc.user == caller:
 		frappe.throw(
 			_("You cannot sign off your own training. Ask your supervisor or a Training Manager."),
 			frappe.PermissionError,
 		)
-	if doc.supervisor_user == caller or _is_manager(caller):
+	if authority.may_sign(doc, caller):
 		return
 	frappe.throw(
-		_("Only {0} or a Training Manager can record this sign-off.").format(
+		_("You cannot record this sign-off. It needs {0}, somebody senior to them on the same "
+		  "ladder, or a Training Manager.").format(
 			doc.supervisor_user or _("the named supervisor")
 		),
 		frappe.PermissionError,
@@ -526,16 +539,35 @@ def signoff_outstanding(course, learner_user):
 def get_signoff_queue():
 	"""Outstanding requests this person may act on, for a supervisor's dashboard."""
 	caller = _session_user()
-	filters = {"docstatus": 0}
-	if not _is_manager(caller):
-		filters["supervisor_user"] = caller
-
-	rows = frappe.get_all(
-		SIGNOFF_DOCTYPE,
-		filters=filters,
-		fields=["name", "course", "course_version", "user", "supervisor_user", "creation"],
-		order_by="creation asc",
-	)
+	if _is_manager(caller):
+		rows = frappe.get_all(
+			SIGNOFF_DOCTYPE,
+			filters={"docstatus": 0},
+			fields=QUEUE_FIELDS,
+			order_by="creation asc",
+		)
+	else:
+		# Two arms, not one, and the second is why the tier rule is worth having.
+		# Filtering on `supervisor_user` alone showed a Senior Technician nothing:
+		# on this site none of the four Junior Technicians reports to him — they
+		# all report to the Project Manager, and so does he — so every request he
+		# is now allowed to sign was routed to somebody else. Authority you cannot
+		# see a queue for is authority nobody exercises.
+		#
+		# `or_filters` rather than two queries: `filters` AND together, and a row
+		# has to satisfy either arm. Deduplicated by construction because a single
+		# row is returned once however many arms it matches.
+		signable = authority.signable_learner_users(caller)
+		or_filters = {"supervisor_user": caller}
+		if signable:
+			or_filters["user"] = ["in", signable]
+		rows = frappe.get_all(
+			SIGNOFF_DOCTYPE,
+			filters={"docstatus": 0},
+			or_filters=or_filters,
+			fields=QUEUE_FIELDS,
+			order_by="creation asc",
+		)
 	courses = {}
 	for row in rows:
 		detail = courses.get(row.course)
