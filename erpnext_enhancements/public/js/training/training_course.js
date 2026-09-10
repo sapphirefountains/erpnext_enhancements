@@ -21,6 +21,7 @@ const RULE_TARGET_DOCTYPES = {
 	"All Employees": "",
 	Department: "Department",
 	Designation: "Designation",
+	Position: "Position",
 	"Role Profile": "Role Profile",
 	Role: "Role",
 	"Employee Grade": "Employee Grade",
@@ -245,31 +246,87 @@ function publish(frm, draft) {
 	);
 }
 
+// Assigning a group is the thing that was missing, and it is why nobody was ever
+// assigned anything: the engine has been complete since v1.207.0 and the only way
+// to point it at a group was to hand-add a rule to a child table on this form and
+// wait for a scheduled sweep. Prod carried zero rules and five assignments, ever.
+//
+// The dialog previews before it acts. "Assign to Production" reads identically
+// whether Production has four people in it or none, and assigning fifteen people
+// is not something anybody should do blind.
+const ASSIGN_GROUPS = ["All Employees", "Department", "Designation", "Position", "Role Profile"];
+
 function assign(frm) {
-	frappe.prompt(
-		[
+	const dialog = new frappe.ui.Dialog({
+		title: __("Assign This Course"),
+		fields: [
+			{
+				fieldname: "mode",
+				fieldtype: "Select",
+				label: __("Assign to"),
+				options: [__("These people"), __("A whole group")].join("\n"),
+				default: __("These people"),
+				reqd: 1,
+			},
 			{
 				fieldname: "employees",
 				fieldtype: "MultiSelectList",
 				label: __("Employees"),
-				reqd: 1,
+				depends_on: `eval:doc.mode === "${__("These people")}"`,
 				get_data(txt) {
 					return frappe.db.get_link_options("Employee", txt, { status: "Active" });
 				},
 			},
+			{
+				fieldname: "target_type",
+				fieldtype: "Select",
+				label: __("Group"),
+				options: ASSIGN_GROUPS.join("\n"),
+				depends_on: `eval:doc.mode === "${__("A whole group")}"`,
+				onchange: () => preview(dialog),
+			},
+			{
+				fieldname: "target_value",
+				fieldtype: "Dynamic Link",
+				label: __("Which one"),
+				options: "target_type",
+				depends_on: `eval:doc.mode === "${__("A whole group")}" && doc.target_type && doc.target_type !== "All Employees"`,
+				onchange: () => preview(dialog),
+			},
+			{ fieldname: "preview", fieldtype: "HTML" },
 			{ fieldname: "due_date", fieldtype: "Date", label: __("Due date") },
 		],
-		(values) => {
+		primary_action_label: __("Assign"),
+		primary_action(values) {
+			const group = values.mode === __("A whole group");
+			if (!group && !(values.employees || []).length) {
+				frappe.msgprint(__("Pick at least one person."));
+				return;
+			}
+			if (group && !values.target_type) {
+				frappe.msgprint(__("Pick a group."));
+				return;
+			}
 			frappe.call({
-				method: "erpnext_enhancements.api.training_author.assign_course",
-				args: {
-					course: frm.doc.name,
-					employees: values.employees,
-					due_date: values.due_date,
-				},
+				method: group
+					? "erpnext_enhancements.api.training_author.assign_course_to_group"
+					: "erpnext_enhancements.api.training_author.assign_course",
+				args: group
+					? {
+							course: frm.doc.name,
+							target_type: values.target_type,
+							target_value: values.target_value,
+							due_date: values.due_date,
+					  }
+					: {
+							course: frm.doc.name,
+							employees: values.employees,
+							due_date: values.due_date,
+					  },
 				freeze: true,
 				callback(r) {
 					const out = r.message || {};
+					dialog.hide();
 					frappe.show_alert({
 						message: out.queued
 							? __("Assigning {0} people in the background…", [out.queued])
@@ -279,9 +336,36 @@ function assign(frm) {
 				},
 			});
 		},
-		__("Assign This Course"),
-		__("Assign")
-	);
+	});
+	dialog.show();
+}
+
+// Names them before the button is pressed. Resolved server-side through the same
+// map the auto-assign engine uses, so the preview and the engine cannot disagree
+// about what "every Junior Technician" means.
+function preview(dialog) {
+	const values = dialog.get_values(true) || {};
+	const wrapper = dialog.fields_dict.preview.$wrapper;
+	if (!values.target_type || (values.target_type !== "All Employees" && !values.target_value)) {
+		wrapper.empty();
+		return;
+	}
+	frappe.call({
+		method: "erpnext_enhancements.api.training_author.resolve_assignment_group",
+		args: { target_type: values.target_type, target_value: values.target_value },
+		callback(r) {
+			const users = (r.message || {}).users || [];
+			wrapper.empty();
+			const box = $('<div class="text-muted small"></div>').appendTo(wrapper);
+			if (!users.length) {
+				// Said plainly rather than left blank. An empty group and an
+				// unselected one look the same, and only one of them is a mistake.
+				box.text(__("Nobody is in that group right now."));
+				return;
+			}
+			box.text(__("{0} people: {1}", [users.length, users.join(", ")]));
+		},
+	});
 }
 
 function retire(frm) {

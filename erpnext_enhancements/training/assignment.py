@@ -34,7 +34,17 @@ from erpnext_enhancements.training.doctype.training_settings.training_settings i
 
 # The Employee fields a rule can key off. A save that touches none of them cannot
 # change what anybody owes, so it is not worth a sweep.
-EMPLOYEE_TRIGGER_FIELDS = ("department", "designation", "grade", "employment_type", "status")
+EMPLOYEE_TRIGGER_FIELDS = (
+	"department",
+	"designation",
+	"grade",
+	"employment_type",
+	"status",
+	# A promotion changes what you owe. custom_position is the ladder rung
+	# (WI-072), and moving somebody up it is exactly the moment their required
+	# training should be re-evaluated.
+	"custom_position",
+)
 
 # Rule targets that resolve against a field on Employee.
 EMPLOYEE_FIELD_FOR_RULE = {
@@ -42,6 +52,13 @@ EMPLOYEE_FIELD_FOR_RULE = {
 	"Designation": "designation",
 	"Employee Grade": "grade",
 	"Employment Type": "employment_type",
+	# The ladder rung, which is usually what "everyone who does this job at this
+	# level" actually means -- "every Junior Technician" is a rule about
+	# competence, where "every Designation" is a rule about job titles that happen
+	# to line up today. The `has_column` guard below covers a site that has not
+	# migrated the custom field yet: the rule simply never matches rather than
+	# erroring.
+	"Position": "custom_position",
 }
 
 
@@ -218,7 +235,7 @@ def _matching_rule(course, user):
 	employee = frappe.db.get_value(
 		"Employee",
 		{"user_id": user, "status": "Active"},
-		["name", "department", "designation", "grade", "employment_type"],
+		["name", "department", "designation", "grade", "employment_type", "custom_position"],
 		as_dict=True,
 	)
 	roles = None

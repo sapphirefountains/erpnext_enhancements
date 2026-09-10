@@ -829,3 +829,11 @@ erpnext_enhancements.patches.retune_offsite_backup_settings_for_nightly_full
 # from whatever parent happens to resolve at the time. Insert-only; never overwrites a
 # custom_position already set. Safe twice.
 erpnext_enhancements.patches.seed_positions_from_designations
+# v1.386.0 (WI-072) -- seeds two assignment rules and turns auto-assign on for the two published
+# Required courses. Prod reached v1.385.0 with ZERO assignment rules, five assignments ever, and
+# two of sixteen employees holding any training record: the engine has been complete since
+# v1.207.0 and was never aimed at anything. Matched by slug rather than docname, skips any course
+# that already has rules, and assigns nobody itself -- _active() refuses during a patch and the
+# deploy FLUSHDB would destroy an enqueued job anyway, so the new 06:40 sweep does the work.
+# Safe twice.
+erpnext_enhancements.patches.seed_training_assignment_rules

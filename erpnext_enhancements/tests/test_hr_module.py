@@ -387,3 +387,129 @@ class TestPositionsOutrankedBy(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAssignmentCanActuallyReachPeople(unittest.TestCase):
+    """The precondition for everything else in WI-072.
+
+    Prod reached v1.385.0 with zero `Training Assignment Rule` rows, five
+    assignments in total ever, and two of sixteen employees holding any training
+    record. The engine was complete and had never been aimed at anything, for two
+    compounding reasons: there was no way to assign a *group* except by hand-adding
+    a child row and republishing the course, and `sync_course` had exactly one
+    caller — `publish_version` — which fires only if `auto_assign` was already set
+    at the moment of publishing.
+
+    So a profile page, a badge, a leaderboard and a skills matrix all render empty
+    until this works, and none of them would report why.
+    """
+
+    HOOKS = APP / "hooks.py"
+    AUTHOR = APP / "api/training_author.py"
+    ASSIGNMENT = APP / "training/assignment.py"
+    TASKS = APP / "training/tasks.py"
+    COURSE_JS = APP / "public/js/training/training_course.js"
+
+    def test_a_group_can_be_assigned_in_one_action(self):
+        src = self.AUTHOR.read_text(encoding="utf-8")
+        self.assertIn("def assign_course_to_group(", src)
+        self.assertIn("def resolve_assignment_group(", src)
+
+    def test_the_group_assigner_is_not_a_second_assignment_path(self):
+        """`run_bulk_assign` is where the already-open check, the per-target
+        isolation and the notification live. A group assigner writing its own rows
+        would be a second place for all three to be got wrong."""
+        src = self.AUTHOR.read_text(encoding="utf-8")
+        body = src[src.index("def assign_course_to_group") : src.index("def _group_users")]
+        self.assertIn("assign_course(", body)
+        self.assertNotIn("frappe.get_doc(", body)
+
+    def test_group_resolution_reuses_the_engine_map(self):
+        """One mapping, or the dialog's preview and the auto-assign engine come to
+        disagree about what 'every Junior Technician' means."""
+        src = self.AUTHOR.read_text(encoding="utf-8")
+        body = src[src.index("def _group_users") : src.index("def run_bulk_assign")]
+        self.assertIn("EMPLOYEE_FIELD_FOR_RULE", body)
+
+    def test_the_ladder_is_an_assignment_target(self):
+        """'Every Junior Technician' is a rule about competence; 'every Designation'
+        is a rule about job titles that happen to line up today."""
+        self.assertIn('"Position": "custom_position"', self.ASSIGNMENT.read_text(encoding="utf-8"))
+
+    def test_the_employee_row_carries_the_column_the_rule_reads(self):
+        """The match is `employee.get(field) == value`, so a field the row was never
+        fetched with can never match — and would fail silently, forever."""
+        src = self.ASSIGNMENT.read_text(encoding="utf-8")
+        body = src[src.index("def _matching_rule") : src.index("def _has_role_profile")]
+        self.assertIn("custom_position", body)
+
+    def test_a_promotion_re_evaluates_what_you_owe(self):
+        self.assertIn("custom_position", self.ASSIGNMENT.read_text(encoding="utf-8").split("EMPLOYEE_FIELD_FOR_RULE")[0])
+
+    def test_there_is_a_sweep_and_it_is_scheduled(self):
+        """Without it, turning auto-assign on for a course that is already live does
+        nothing at all, and neither does adding a rule to one."""
+        self.assertIn("def sweep_auto_assignments(", self.TASKS.read_text(encoding="utf-8"))
+        self.assertIn(
+            "erpnext_enhancements.training.tasks.sweep_auto_assignments",
+            self.HOOKS.read_text(encoding="utf-8"),
+        )
+
+    def test_the_sweep_runs_before_the_reminder_digest(self):
+        """Anything raised today should be in this morning's email, not tomorrow's.
+
+        Compared as times, not as strings. `"40 6 * * *"` sorts *after*
+        `"15 7 * * *"` lexically while 06:40 is genuinely earlier than 07:15 — the
+        kind of assertion that would pass on a wrong schedule and fail on a right
+        one.
+        """
+        import re
+
+        hooks = self.HOOKS.read_text(encoding="utf-8")
+
+        def minutes_before(job):
+            at = hooks.index(job)
+            cron = re.findall(r'"(\d+ \d+ \* \* \*)"', hooks[:at])[-1]
+            minute, hour = cron.split()[:2]
+            return int(hour) * 60 + int(minute)
+
+        self.assertLess(
+            minutes_before("tasks.sweep_auto_assignments"),
+            minutes_before("tasks.send_due_reminders"),
+            "the sweep runs after the digest, so a newly raised assignment waits a day",
+        )
+
+    def test_the_sweep_cannot_lose_every_course_to_one_bad_one(self):
+        src = self.TASKS.read_text(encoding="utf-8")
+        body = src[src.index("def sweep_auto_assignments") :]
+        self.assertIn("except Exception:", body)
+        self.assertIn("log_error", body)
+
+    def test_every_rule_target_is_mapped_in_all_four_places(self):
+        """The vocabulary lives in four files — the child DocType's Select, the
+        course controller's target map, the engine's Employee-field map, and the
+        form script that stamps `applies_to_doctype` before Frappe validates the
+        link. A target present in the Select and missing anywhere else fails for
+        that option only, and nothing else notices."""
+        options = [
+            o
+            for o in _read(APP / "training/doctype/training_assignment_rule/training_assignment_rule.json")[
+                "fields"
+            ][1]["options"].split("\n")
+            if o.strip()
+        ]
+        controller = (APP / "training/doctype/training_course/training_course.py").read_text(
+            encoding="utf-8"
+        )
+        engine = self.ASSIGNMENT.read_text(encoding="utf-8")
+        script = self.COURSE_JS.read_text(encoding="utf-8")
+        for option in options:
+            with self.subTest(option=option):
+                self.assertIn(f'"{option}"', controller)
+                if option not in ("All Employees", "Role", "Role Profile"):
+                    self.assertIn(f'"{option}"', engine)
+                bare = option.replace(" ", "")
+                self.assertTrue(
+                    f'"{option}"' in script or f"{bare}:" in script,
+                    f"{option!r} is not mapped in the course form script",
+                )

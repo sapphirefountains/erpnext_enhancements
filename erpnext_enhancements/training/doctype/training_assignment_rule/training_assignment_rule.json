@@ -29,7 +29,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Applies To",
-   "options": "All Employees\nDepartment\nDesignation\nRole Profile\nRole\nEmployee Grade\nEmployment Type",
+   "options": "All Employees\nDepartment\nDesignation\nPosition\nRole Profile\nRole\nEmployee Grade\nEmployment Type",
    "reqd": 1
   },
   {

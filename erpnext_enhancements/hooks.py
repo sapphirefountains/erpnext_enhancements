@@ -762,6 +762,23 @@ scheduler_events = {
 		# digest per learner covering every course they owe, not one per assignment.
 		# Gated by Training Settings -> Send Notifications.
 		"15 7 * * *": ["erpnext_enhancements.training.tasks.send_due_reminders"],
+		# Raise whatever the assignment rules currently say is missing. 06:40, before
+		# the reminder digest above, so anything raised today is in that morning's
+		# email rather than tomorrow's.
+		#
+		# This is the job that was never there. `assignment.sync_course` had ONE
+		# caller -- publish_version -- and it fires only if `auto_assign` was already
+		# set at the moment of publishing, so turning auto-assign on for a live
+		# course did nothing, and neither did adding a rule to one. The engine has
+		# been complete since v1.207.0 and prod reached v1.385.0 with zero assignment
+		# rules and five assignments in total, ever.
+		#
+		# It also makes the publish-time fan-out re-drivable, which this app has a
+		# specific reason to want: the prod deploy FLUSHDBs the queue redis and
+		# destroys every pending background job, so publishing shortly before a merge
+		# loses its sweep silently. Idempotent -- `_assign` skips anybody who already
+		# has an open assignment. Gated by Training Settings -> Auto Assign.
+		"40 6 * * *": ["erpnext_enhancements.training.tasks.sweep_auto_assignments"],
 		# ---- Chat sync engine (ADR 0009 Phase 2, v1.262.0) -------------------------------
 		# EVERY job below no-ops while `Chat Settings.enabled` is 0, which is how it ships.
 		# They are registered dormant on purpose: a scheduler entry added later, by hand, on

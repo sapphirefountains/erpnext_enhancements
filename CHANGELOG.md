@@ -187,6 +187,36 @@ broken in the direction that does not announce itself.
   all return nothing, and nothing means refused. A customer contact has a User and no Employee,
   which is exactly why they can never acquire authority over staff.
 
+- **Distribution, which is the precondition for everything else and had never happened.** Prod
+  reached v1.385.0 with **zero** `Training Assignment Rule` rows, `auto_assign = 0` on all six
+  courses, five `Training Assignment` records in total ever, and **two of sixteen active
+  employees holding any training record at all**. The engine in `training/assignment.py` has
+  been complete since v1.207.0 and had simply never been aimed at anything. Three fixes:
+
+  **An "Assign to…" that can name a group.** Department, Designation, Position, Role Profile or
+  everybody — and it *previews* first, naming who it will assign before the button is pressed,
+  because "assign to Production" reads identically whether Production holds four people or none.
+  It is a wrapper over the existing `assign_course`, not a second assignment path:
+  `run_bulk_assign` is where the already-open check, the per-target isolation and the
+  notification live.
+
+  **A daily sweep** (`sweep_auto_assignments`, 06:40, before the 07:15 digest). `sync_course` had
+  exactly one caller — `publish_version` — and it fires only if `auto_assign` was *already* set at
+  the moment of publishing. So turning auto-assign on for a course that is already live did
+  nothing, and neither did adding a rule to one. The sweep also makes the publish-time fan-out
+  **re-drivable**, which matters specifically here: the prod deploy `FLUSHDB`s the queue redis
+  and destroys every pending background job, so publishing shortly before a merge loses its
+  sweep silently — the same failure that lost a batch of Drive folders.
+
+  **`Position` as a rule target.** "Every Junior Technician" is a rule about competence; "every
+  Designation" is a rule about job titles that happen to line up today. A promotion now
+  re-evaluates what somebody owes, because `custom_position` joined `EMPLOYEE_TRIGGER_FIELDS`.
+
+  Two default rules are seeded for review — *Using the Training Module* to everybody, *Draining a
+  Fountain Basin Safely* to Production — matched by slug rather than docname, skipping any course
+  that already has rules. The patch assigns nobody itself: `_active()` refuses during a patch,
+  and enqueuing would be worse than useless with the deploy `FLUSHDB` immediately after.
+
 - **Sign-off from the field.** There was no non-desk sign-off surface of any kind —
   `training_signoff.js` is a Desk form button and `get_signoff_queue` was dialled only from the
   Desk list script. Granting a Senior Technician authority he can exercise only from a desk he
