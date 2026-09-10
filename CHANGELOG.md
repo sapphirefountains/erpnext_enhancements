@@ -187,6 +187,42 @@ broken in the direction that does not announce itself.
   all return nothing, and nothing means refused. A customer contact has a User and no Employee,
   which is exactly why they can never acquire authority over staff.
 
+- **The visual editor had no entry point at all.** `training-canvas` shipped in v1.364.0 and,
+  until now, grepping for it outside its own directory returned two CHANGELOG lines and its own
+  test file. Nothing linked to it. The surface built specifically for authors who are not
+  developers was reachable only by knowing the URL and typing it — which is a fair part of why
+  "the WYSIWYG needs to be more robust" and "nobody can build a course" turned out to be the same
+  complaint. There is now an **Edit Visually** button on the Training Course form, and on a draft
+  it is the primary action rather than the second one. The classic builder stays: roughly 2,600
+  of its 3,842 lines have no canvas equivalent (chapters, the quiz pool, checkpoint placement,
+  video registration, preview), and it remains the power tool until each of those lands.
+
+- **Starter courses — "New" gives you an empty form, and that is where authoring stops.** Most of
+  what prevents somebody writing a course is not a missing toolbar button; it is being asked to
+  invent the content and the shape at the same time. Four starters give away the shape: **Safety
+  Talk** (the ten-minute tailgate briefing), **Equipment Walkthrough**, **SOP Walkthrough** and
+  **New Hire Orientation**. Creating one lands you straight in the visual editor, because the next
+  thing you do is replace the words.
+
+  Every starter is skeletal and its prose is *instructions to the author* — "replace this with the
+  one thing most likely to hurt somebody on this job" — never filler pretending to be content.
+  Filler is worse than an empty page, because filler gets published.
+
+  **A starter is a Course Spec and nothing else**: the same dict the AI drafting path produces,
+  through the same `validate_course_spec` and the same `author_course_from_spec`. No second
+  scaffolder, no second validator, no second block vocabulary. That constraint is enforced by
+  tests, and it is also why a starter that wants a photo says so in an Info callout rather than
+  carrying an empty Image block — uploaded media is deliberately outside what a spec may express.
+
+- The Training Course **list view** now offers three ways in side by side: start from a shape,
+  draft one with AI, or the plain New form for somebody who knows exactly what they want. The AI
+  button appears only where the Triton widget actually loaded — a button that opens nothing is
+  worse than no button, which this module already learned when an "Open Builder" placeholder
+  outlived its feature by three releases and told everyone the builder did not exist.
+
+- `Callout` gained an **Info** tone across all three places that vocabulary lives (the DocType
+  Select, the Course Spec validator, the player CSS, which already rendered it).
+
 - **The profile, and browsable colleague profiles.** `/training` now opens on a real record:
   badges, what you have completed, what you are qualified for, what is still to do, what is
   running out, and the HR facts that make it a profile rather than a transcript — position,

@@ -113,11 +113,17 @@ function render_actions(frm, draft, is_manager) {
 	// The builder shipped in Phase 3, but this button went on saying it had not
 	// for three releases — the placeholder outlived the thing it was standing in
 	// for. Anyone who trusted it never found the builder at all.
+	// The visual editor first, because it is the one an author who is not a
+	// developer can use, and until v1.386.0 NOTHING linked to it at all -- grepping
+	// for "training-canvas" outside its own directory returned two CHANGELOG lines
+	// and its test file. It shipped, and the only way to reach it was to know the
+	// URL and type it.
+	const $canvas = frm.add_custom_button(__("Edit Visually"), () => open_canvas(frm));
 	const $builder = frm.add_custom_button(__("Open Builder"), () => open_builder(frm));
 	// Primary only when nothing else already is: a manager looking at a draft has
 	// Publish highlighted, and two primary buttons side by side just make the
 	// author guess which one is the safe click.
-	if (draft && !is_manager) $builder.addClass("btn-primary");
+	if (draft && !is_manager) $canvas.addClass("btn-primary");
 
 	// Added after clear_custom_buttons() (which would otherwise wipe it) so it
 	// survives on an existing course too.
@@ -141,6 +147,14 @@ function add_triton_authoring_button(frm) {
 			)
 		);
 	});
+}
+
+function open_canvas(frm) {
+	// Same route_options handshake as the builder below, and the same reason: the
+	// page reads `course` from the query string first and falls back to
+	// route_options, so this works whether it is already mounted or opened cold.
+	frappe.route_options = { course: frm.doc.name };
+	frappe.set_route("training-canvas");
 }
 
 function open_builder(frm) {

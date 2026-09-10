@@ -715,6 +715,16 @@ jobs:
       # accident.
       - name: HR profile (what a colleague may see, and what a customer may not)
         run: python -m unittest erpnext_enhancements.tests.test_hr_profile -v
+      # Can somebody who is not a developer start a course? The visual editor
+      # shipped in v1.364.0 with NO entry point anywhere -- grepping for
+      # "training-canvas" outside its own directory returned two CHANGELOG lines
+      # and its own test file, so the surface built for non-technical authors was
+      # reachable only by typing the URL. Also pins that a starter is a Course Spec
+      # and nothing else: same validator, same builder, same block and tone
+      # vocabulary as the AI path, because a second scaffolder is a second thing to
+      # drift.
+      - name: Training authoring entry (the editor is reachable, starters are specs)
+        run: python -m unittest erpnext_enhancements.tests.test_training_authoring_entry -v
       # Tiered sign-off authority. The behavioural half is the Junior/Senior/Master
       # rule; the STRUCTURAL half is the point. A sign-off can be submitted through
       # two doors -- record_signoff sets ignore_permissions and the Desk Submit

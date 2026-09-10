@@ -317,6 +317,12 @@ doctype_list_js = {
 		"public/js/global_enhancements/supplier_list.js",
 	],
 	"Task": "public/js/project_enhancements/task_gantt.js",
+	# training (WI-072) — the moment somebody decides to build a course. "New" gives
+	# an empty form and asks the author to invent the content and the shape at the
+	# same time, which is where authoring stops for most people. This adds two ways
+	# in beside it: start from a shape, or draft it with AI. Both land on the same
+	# unpublished Draft behind the same review gate.
+	"Training Course": "public/js/training/training_course_list.js",
 	"File": "public/js/global_enhancements/file_list.js",
 	"Item": "public/js/item_list.js",
 	# procurement — the Order Stage pill: a real colour per stage (frappe's
