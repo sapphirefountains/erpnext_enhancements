@@ -72,6 +72,42 @@ class TestVisitWizardMarkup(unittest.TestCase):
 			"vz_plain_html should escape and then convert newlines to <br>",
 		)
 
+	def test_answered_rules_cover_every_gated_table(self):
+		"""VZ_ANSWERED mirrors the server's submit gate and must not drift.
+
+		``_validate_mandatory_rows`` blocks submit on results, readings and tasks
+		and exempts consumables. If the wizard's copy loses a table, it tells a
+		technician the step is finished and submit then refuses it -- after they
+		have left the site.
+		"""
+		for table in ("maintenance_results", "chemistry_readings", "cleaning_tasks", "consumables"):
+			self.assertRegex(
+				self.code,
+				rf"VZ_ANSWERED\s*=\s*\{{[\s\S]*?{table}\s*:",
+				f"VZ_ANSWERED has no rule for {table}",
+			)
+
+	def test_mandatory_rows_are_marked_before_submit(self):
+		"""is_mandatory reached the submit gate without ever being shown."""
+		self.assertIn("function vz_required_chip(", self.code)
+		for table in ("chemistry_readings", "maintenance_results", "cleaning_tasks"):
+			self.assertIn(
+				f'vz_required_chip("{table}"',
+				self.code,
+				f"{table} cards do not show which rows are required",
+			)
+
+	def test_autosave_failure_is_visible_and_retried(self):
+		"""A silent failed autosave can lose a whole visit on a bad signal."""
+		self.assertIn("set_save_state(", self.code)
+		self.assertIn("schedule_retry(", self.code)
+		self.assertRegex(
+			self.code,
+			r'set_save_state\("error"\)[\s\S]{0,120}?schedule_retry\(\)',
+			"a failed save must both show an error and schedule a retry",
+		)
+		self.assertIn("beforeunload", self.code, "closing the tab must warn while edits are unsaved")
+
 	def test_no_raw_control_bytes(self):
 		"""Literal control characters make git treat the file as binary."""
 		offenders = [

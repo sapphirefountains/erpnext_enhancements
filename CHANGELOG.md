@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.384.0] - 2026-09-10
+
+### Added
+
+- **The Visit Wizard now says whether your work is saved.** Autosave was entirely silent, including
+  when it failed: `flush_save` re-queued the patch and rethrew the error into nothing, so a technician
+  on a weak signal could fill in an entire visit believing it was safe. There is now a persistent
+  indicator (Unsaved changes / Saving / Saved / **NOT SAVED - retrying**), a failed save **retries on
+  its own** with exponential backoff, and closing the tab with unsaved edits warns first.
+- **Required rows are marked while you fill the form in, not when you try to submit.** `is_mandatory`
+  travelled all the way from the template to the submit gate without ever being shown to the person
+  answering. Mandatory rows now carry a Required chip that flips to a tick as they are answered, the
+  step header shows how many are still outstanding, and a per-step bar strip shows *which* steps still
+  owe answers. Previously the first anyone heard of a missed required row was submit refusing - by
+  which point the technician is back at the truck.
+- **`get_visit_bootstrap` returns `features`**, a Serial No to item_name map, so the wizard's
+  per-feature tabs read "Day Dairy - East Fountain" instead of `MAINT-DAYDAIRY-East-Fountain`. Tabs
+  also show a count of required rows still outstanding *for that feature*, so a two-fountain site
+  cannot look finished because the fountain in front of you is.
+
+### Changed
+
+- **Feature tabs are real buttons** with `role="tab"` rather than clickable divs - the strip was
+  unreachable from a keyboard or switch device.
+- **The Access & Site banner drops empty values.** It used to print every field it had, so a site with
+  no gate and no key rendered "Code: N/A" and "Key: N/A", training technicians to skim past the panel
+  that also carries the things that will hurt them. Values that already label themselves ("Gate code:
+  2244 - Key: N/A") no longer get a second "Code:" bolted on the front, and the banner is omitted
+  entirely when there is nothing useful in it.
+
+### Notes
+
+- `VZ_ANSWERED` in the wizard mirrors `SapphireMaintenanceRecord._validate_mandatory_rows` on the
+  server and the two must stay in step - if they drift, the wizard reports a step finished that submit
+  then refuses. `tests/test_visit_wizard_markup.py` asserts a rule exists for every gated table.
+
 ## [1.383.2] - 2026-09-09
 
 ### Added
