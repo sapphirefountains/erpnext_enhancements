@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"hr_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>HR</b></span>\",\"col\":12}},{\"id\":\"hr_intro\",\"type\":\"paragraph\",\"data\":{\"text\":\"Your training, your record and the company ladder. Everything a learner actually does happens on <b>Open my training</b> \\u2014 this page is where you look things up.\",\"col\":12}},{\"id\":\"hr_sc_train\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Open my training\",\"col\":3}},{\"id\":\"hr_sc_tree\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Company tree\",\"col\":3}},{\"id\":\"hr_sc_people\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Who reports to whom\",\"col\":3}},{\"id\":\"hr_sc_sign\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sign-offs to record\",\"col\":3}},{\"id\":\"hr_sc_over\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Overdue training\",\"col\":3}},{\"id\":\"hr_sp1\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"hr_cards\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Records</b></span>\",\"col\":12}},{\"id\":\"hr_card_you\",\"type\":\"card\",\"data\":{\"card_name\":\"You\",\"col\":4}},{\"id\":\"hr_card_company\",\"type\":\"card\",\"data\":{\"card_name\":\"The company\",\"col\":4}},{\"id\":\"hr_card_training\",\"type\":\"card\",\"data\":{\"card_name\":\"Training\",\"col\":4}},{\"id\":\"hr_card_verify\",\"type\":\"card\",\"data\":{\"card_name\":\"Verification\",\"col\":4}},{\"id\":\"hr_card_recog\",\"type\":\"card\",\"data\":{\"card_name\":\"Recognition\",\"col\":4}},{\"id\":\"hr_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "content": "[{\"id\":\"hr_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>HR</b></span>\",\"col\":12}},{\"id\":\"hr_intro\",\"type\":\"paragraph\",\"data\":{\"text\":\"Your training, your record and the company ladder. Everything a learner actually does happens on <b>Open my training</b> \\u2014 this page is where you look things up.\",\"col\":12}},{\"id\":\"hr_sc_train\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Open my training\",\"col\":3}},{\"id\":\"hr_sc_tree\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Company tree\",\"col\":3}},{\"id\":\"hr_sc_people\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Who reports to whom\",\"col\":3}},{\"id\":\"hr_sc_sign\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sign-offs to record\",\"col\":3}},{\"id\":\"hr_sc_over\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Overdue training\",\"col\":3}},{\"id\":\"hr_sc_expiring\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Credentials expiring\",\"col\":3}},{\"id\":\"hr_sc_matrix\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Who can I send?\",\"col\":3}},{\"id\":\"hr_sp1\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"hr_cards\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Records</b></span>\",\"col\":12}},{\"id\":\"hr_card_you\",\"type\":\"card\",\"data\":{\"card_name\":\"You\",\"col\":4}},{\"id\":\"hr_card_company\",\"type\":\"card\",\"data\":{\"card_name\":\"The company\",\"col\":4}},{\"id\":\"hr_card_training\",\"type\":\"card\",\"data\":{\"card_name\":\"Training\",\"col\":4}},{\"id\":\"hr_card_verify\",\"type\":\"card\",\"data\":{\"card_name\":\"Verification\",\"col\":4}},{\"id\":\"hr_card_recog\",\"type\":\"card\",\"data\":{\"card_name\":\"Recognition\",\"col\":4}},{\"id\":\"hr_card_quals\",\"type\":\"card\",\"data\":{\"card_name\":\"Qualifications\",\"col\":4}},{\"id\":\"hr_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
  "creation": "2026-09-10 12:00:00.000000",
  "custom_blocks": [],
  "docstatus": 0,
@@ -226,10 +226,48 @@
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Reports",
-   "link_count": 1,
+   "label": "Qualifications",
+   "link_count": 2,
    "onboard": 0,
    "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Credentials held",
+   "link_count": 0,
+   "link_to": "Employee Credential",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Credential types",
+   "link_count": 0,
+   "link_to": "Credential Type",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Skills Matrix",
+   "link_count": 0,
+   "link_to": "Skills Matrix",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
   },
   {
    "hidden": 0,
@@ -289,6 +327,21 @@
    "link_to": "Training Assignment",
    "stats_filter": "{\"status\": \"Overdue\"}",
    "type": "DocType"
+  },
+  {
+   "color": "Red",
+   "doc_view": "List",
+   "label": "Credentials expiring",
+   "link_to": "Employee Credential",
+   "stats_filter": "{\"status\": [\"in\", [\"Expiring\", \"Expired\"]]}",
+   "type": "DocType"
+  },
+  {
+   "color": "Purple",
+   "doc_view": "Report",
+   "label": "Who can I send?",
+   "link_to": "Skills Matrix",
+   "type": "Report"
   }
  ],
  "title": "HR"

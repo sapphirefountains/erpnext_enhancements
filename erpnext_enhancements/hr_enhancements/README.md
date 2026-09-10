@@ -73,6 +73,63 @@ Three things are deliberately *not* the ladder:
   ERPNext v16 core, so `/app/employee/view/tree` works today and is linked from the
   workspace beside the position tree.
 
+## Credentials
+
+`Employee Credential` holds a qualification somebody **else** issued — OSHA, forklift,
+CDL and its DOT medical card, first aid, respirator fit test, electrical. Every one of
+those was structurally unrecordable before v1.386.0: `Training Certificate.completion`
+is `reqd: 1`, so the app could only ever hold a certificate that originated in one of
+its own courses, and a forklift ticket lived in a filing cabinet.
+
+**Not a variant of `Training Certificate`, deliberately.** A completion is evidence
+*this system* produced and can re-derive — version, content hash, score, all
+recomputable from the attempt behind it. A credential is evidence somebody outside
+produced, which this app can only *hold*. Merging them would mean either weakening the
+completion's guarantees or inventing an attempt for a forklift ticket. Two records, one
+shared idea of expiry, and both feed the same profile, the same horizon and the same
+dispatch advisory. `tests/test_hr_credentials.py` asserts that `completion` is still
+required, so if it ever stops being, the question gets re-opened rather than forgotten.
+
+**Status is derived and never typed** — `Valid` / `Expiring` / `Expired` / `Revoked`,
+recomputed on every save and re-swept nightly at 05:20. It is arithmetic on a date, so
+a typed value is wrong the day after somebody types it, and the whole worth of the
+record is that it is true on the morning of the job. Revocation beats the calendar.
+`Expiring` is `Valid` inside the ninety-day horizon and **still counts as qualified** —
+a horizon that reads as a refusal does the opposite of its job.
+
+**A forward view, not an alarm.** A Monday digest names everything lapsing inside the
+horizon, one email to the holder and a roll-up to their supervisor (the holder books
+the course; the supervisor stops scheduling them past the date). Nothing in this app
+warned about anything *before* the fact until now: `certificates.expire_and_recertify`
+reacts after a training certificate lapses, and `fixtures/notification.json` holds
+nineteen alerts across a dozen doctypes and **zero** HR or training ones.
+
+**The `Employee` DocPerm is load-bearing and so is its scoping hook.** The grant is what
+puts a technician's own card on their own profile and what keeps this module inside
+`allow_modules`; without `permissions.credential_query_conditions` it would also put
+everybody's licence number and medical card in front of everybody. They ship in the same
+release — DocPerms with no scoping hook is the one combination that leaks, and the
+Training module has just finished paying for that lesson three times.
+
+## Skills Matrix
+
+People down the side, qualifications across the top, four words in each cell —
+`Current`, `Expiring`, `Lapsed`, `Never`. It answers **"who can I send?"**, which
+nothing here could before: `Training Completion Matrix` reports what has already
+happened one course at a time, and `training/compliance.py` warns about one individual
+at the moment of dispatch.
+
+One grid over **both** sources, because a technician is qualified by a mixture of
+internal courses and external credentials and a manager scheduling a basin drain does
+not care which system a ticket came out of. Column keys are namespaced `course:` /
+`cred:` — a Credential Type and a Training Course may share a title, and a collision
+would merge two columns into one, which reads as everybody suddenly being qualified.
+
+Readable by Projects Manager and Maintenance Manager as well as HR: whoever schedules
+the work needs it more than HR does. Its `ref_doctype` is `Employee`, which its readers
+can actually read — `Training Completion Matrix` lists HR Manager while Training
+Completion granted HR Manager nothing, so it errored for exactly its intended reader.
+
 ## Files
 
 - `doctype/position/` — the tree, the tier rule, and the two authority helpers.

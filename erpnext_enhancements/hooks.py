@@ -779,6 +779,17 @@ scheduler_events = {
 		# loses its sweep silently. Idempotent -- `_assign` skips anybody who already
 		# has an open assignment. Gated by Training Settings -> Auto Assign.
 		"40 6 * * *": ["erpnext_enhancements.training.tasks.sweep_auto_assignments"],
+		# ---- HR Enhancements (WI-072) ---------------------------------------------------
+		# A credential's status is arithmetic on a date: correct the day it is saved and
+		# wrong every day after. Re-derived nightly at 05:20, well before anybody looks.
+		"20 5 * * *": ["erpnext_enhancements.hr_enhancements.tasks.refresh_credential_status"],
+		# The forward view, Mondays at 07:30. Nothing in this app warned about anything
+		# BEFORE the fact until now -- certificates.expire_and_recertify reacts after a
+		# training certificate lapses, and fixtures/notification.json holds nineteen alerts
+		# and not one HR or training one. An expiry model with no horizon tells you about a
+		# problem on the morning of the job. One email per person, plus a roll-up to each
+		# supervisor; gated by Training Settings -> Notifications, same as every other mail.
+		"30 7 * * 1": ["erpnext_enhancements.hr_enhancements.tasks.send_expiry_digest"],
 		# ---- Chat sync engine (ADR 0009 Phase 2, v1.262.0) -------------------------------
 		# EVERY job below no-ops while `Chat Settings.enabled` is 0, which is how it ships.
 		# They are registered dormant on purpose: a scheduler entry added later, by hand, on
@@ -1836,6 +1847,12 @@ permission_query_conditions = {
 	# public+Answered ones; the DocPerm returned EVERY thread on the site to
 	# anybody holding Training Learner, unanswered private questions included.
 	"Training Question Thread": "erpnext_enhancements.training.permissions.question_thread_query_conditions",
+	# A licence number, a medical card and a certificate number are personal. The
+	# `Employee` DocPerm on Employee Credential is deliberate -- it is what puts a
+	# technician's own forklift ticket on their own profile, and what keeps the HR
+	# module inside allow_modules -- so the scoping hook ships in the same commit,
+	# not after it. Own rows, direct reports, and the people you outrank.
+	"Employee Credential": "erpnext_enhancements.hr_enhancements.permissions.credential_query_conditions",
 	# Chat (ADR 0009 §F.18): row-level scoping is MEMBERSHIP, not role. Chat Room is
 	# the only chat doctype carrying a DocPerm at all (`read` for "Chat User"), so it is
 	# the only one where this hook is the live gate -- the other three ship with an
@@ -1884,6 +1901,7 @@ has_permission = {
 	"Training Badge Award": "erpnext_enhancements.training.permissions.badge_award_has_permission",
 	"Training Learner Stat": "erpnext_enhancements.training.permissions.learner_stat_has_permission",
 	"Training Question Thread": "erpnext_enhancements.training.permissions.question_thread_has_permission",
+	"Employee Credential": "erpnext_enhancements.hr_enhancements.permissions.credential_has_permission",
 	# Chat: the twin of every query condition above, and parity here is the house
 	# doctrine -- ten and ten before this block, four and four after it.
 	# "Chat Room" is not just the single-document gate: it IS the realtime security

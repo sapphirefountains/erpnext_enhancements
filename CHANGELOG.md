@@ -187,6 +187,49 @@ broken in the direction that does not announce itself.
   all return nothing, and nothing means refused. A customer contact has a User and no Employee,
   which is exactly why they can never acquire authority over staff.
 
+- **External credentials — the largest gap in the module, and one no proposal had.**
+  `Employee Credential` holds a qualification somebody *else* issued: OSHA 10 and 30, forklift,
+  aerial lift, CDL and its DOT medical card, first aid/CPR, respirator fit test, electrical,
+  confined space, lockout/tagout, pool operator. Every one of those was **structurally
+  unrecordable** — `Training Certificate.completion` is `reqd: 1`, so the app could only ever
+  hold a certificate that originated in one of its own courses, and a forklift ticket lived in a
+  filing cabinet. These are the things a GC asks for at the gate and an insurer asks for after an
+  incident.
+
+  Deliberately **not** a variant of `Training Certificate`. A completion is evidence this system
+  produced and can re-derive; a credential is evidence somebody outside produced, which this app
+  can only hold. Merging them would mean weakening the completion's guarantees or inventing an
+  attempt for a forklift ticket. A test asserts `completion` is still required, so if that ever
+  changes the question is re-opened rather than forgotten.
+
+  Status is **derived and never typed** — it is arithmetic on a date, so a typed value is wrong
+  the day after somebody types it, and the record's whole worth is being true on the morning of
+  the job. Revocation beats the calendar. `Expiring` is `Valid` inside the ninety-day horizon and
+  **still counts as qualified**: a horizon that reads as a refusal does the opposite of its job.
+
+  The `Employee` DocPerm and its scoping hook ship together, not one release apart. The grant is
+  what puts a technician's own card on their own profile and what keeps the module inside
+  `allow_modules`; without the hook it would put everybody's license number and medical card in
+  front of everybody.
+
+- **A forward view, which this app has never had.** A nightly sweep re-derives status (05:20) and
+  a Monday digest (07:30) names everything lapsing inside the horizon — one email to the holder,
+  a roll-up to their supervisor. Until now nothing warned about anything *before* the fact:
+  `certificates.expire_and_recertify` reacts after a certificate lapses, and
+  `fixtures/notification.json` holds nineteen alerts across a dozen doctypes and **zero** HR or
+  training ones. An expiry model with no horizon tells you about a problem on the morning of the
+  job.
+
+- **The Skills Matrix** — people down the side, qualifications across the top, four words per
+  cell. It answers *"who can I send?"*, which nothing here could: `Training Completion Matrix`
+  reports what already happened one course at a time, and `compliance.py` warns about one person
+  at the moment of dispatch. One grid over **both** internal courses and external credentials,
+  because a manager scheduling a basin drain does not care which system a ticket came out of.
+  Readable by Projects Manager and Maintenance Manager as well as HR — whoever schedules the work
+  needs it most. Column keys are namespaced by source, because a Credential Type and a Training
+  Course may share a title and a collision would merge two columns into one, which reads as
+  everybody suddenly being qualified.
+
 - **Distribution, which is the precondition for everything else and had never happened.** Prod
   reached v1.385.0 with **zero** `Training Assignment Rule` rows, `auto_assign = 0` on all six
   courses, five `Training Assignment` records in total ever, and **two of sixteen active

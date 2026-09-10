@@ -127,6 +127,30 @@
   {
    "child": 1,
    "collapsible": 1,
+   "icon": "badge-check",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Credentials",
+   "link_to": "Employee Credential",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "table",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Skills Matrix",
+   "link_to": "Skills Matrix",
+   "link_type": "Report",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
    "icon": "list",
    "indent": 0,
    "keep_closed": 0,

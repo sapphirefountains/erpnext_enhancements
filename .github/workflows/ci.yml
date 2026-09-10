@@ -686,6 +686,16 @@ jobs:
       # which render as blank space with no error.
       - name: HR module (reachability, position ladder, workspace wiring)
         run: python -m unittest erpnext_enhancements.tests.test_hr_module -v
+      # External credentials -- OSHA, forklift, CDL, first aid, fit tests. Pins the
+      # thing that leaks if you get it wrong: Employee Credential grants read to the
+      # `Employee` role (deliberately -- it is what puts a technician's own card on
+      # their own profile and what keeps the module inside allow_modules), so the
+      # scoping hook has to ship in the same release, not after it. Also pins that
+      # status is derived rather than typed, that revocation beats the calendar, and
+      # that "Expiring" still reads as qualified -- a horizon that reads as a refusal
+      # does the opposite of its job.
+      - name: HR credentials (scoping, expiry, skills matrix)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_credentials -v
       # Tiered sign-off authority. The behavioural half is the Junior/Senior/Master
       # rule; the STRUCTURAL half is the point. A sign-off can be submitted through
       # two doors -- record_signoff sets ignore_permissions and the Desk Submit
