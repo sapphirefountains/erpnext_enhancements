@@ -696,6 +696,14 @@ jobs:
       # does the opposite of its job.
       - name: HR credentials (scoping, expiry, skills matrix)
         run: python -m unittest erpnext_enhancements.tests.test_hr_credentials -v
+      # The safety check that reported clean because it had nothing to look at.
+      # compliance.py warns when somebody is scheduled onto work they are not
+      # certified for -- and on this site it has never produced a single finding,
+      # because all three of its sources required the person to have ALREADY been
+      # assigned the course, and there were no assignment rules. Note the failure
+      # direction: it PASSES. Same family as the PAD SPACE whitespace queries.
+      - name: Training dispatch advisory (it fires, and it only ever warns)
+        run: python -m unittest erpnext_enhancements.tests.test_training_dispatch_advisory -v
       # Tiered sign-off authority. The behavioural half is the Junior/Senior/Master
       # rule; the STRUCTURAL half is the point. A sign-off can be submitted through
       # two doors -- record_signoff sets ignore_permissions and the Desk Submit

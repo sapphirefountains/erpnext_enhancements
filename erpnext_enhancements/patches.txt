@@ -844,3 +844,11 @@ erpnext_enhancements.patches.seed_training_assignment_rules
 # out of one of its own courses. Validity months are a HINT the controller uses to fill an empty
 # expiry, never to overwrite one typed off the card. Insert-only. Safe twice.
 erpnext_enhancements.patches.seed_credential_types
+# v1.386.0 (WI-072) -- turns the uncertified-dispatch advisory ON, now that it can fire. All
+# three of its previous finding sources required the person to have ALREADY been assigned the
+# course, so on a site with zero assignment rules it fired for nobody, ever, and reported clean
+# doing it. It gains a fourth source this release (a Required course the person's rules say they
+# owe, never assigned) and the site gains rules. Nik chose "warn only, but make it fire"; a
+# switch left off is the check not firing. WARN, never block -- a hard gate does not stop the
+# visit, it moves it off the books. Writes only over 0/absent, never over a 1. Safe twice.
+erpnext_enhancements.patches.enable_uncertified_dispatch_warning

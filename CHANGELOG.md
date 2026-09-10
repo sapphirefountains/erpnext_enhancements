@@ -187,6 +187,29 @@ broken in the direction that does not announce itself.
   all return nothing, and nothing means refused. A customer contact has a User and no Employee,
   which is exactly why they can never acquire authority over staff.
 
+- **The dispatch advisory has never fired once, and now can.** `training/compliance.py` warns
+  when somebody is scheduled onto a `Task` or a `Sapphire Maintenance Record` they are not
+  certified for. It has been wired up since v1.215.0 and on this site has produced **zero**
+  findings — not because everybody is certified, but because `_uncertified` drew from three
+  sources (an open assignment, a revoked or expired completion, a completion past its date) and
+  **every one requires the person to have already been assigned the course**. With no assignment
+  rules on the site, it described nobody and reported all-clear doing it.
+
+  **Note the failure direction: it passes.** Same family as the PAD SPACE trailing-space queries
+  and the emptiness-keyed backfill — a check written the obvious way reports clean forever and
+  nobody goes looking, because green is what you were hoping for.
+
+  There is now a fourth source — a Required course this person's rules say they owe, with nothing
+  to show for it — narrowed by the **assignment engine's own targeting** rather than by a second
+  rule. Without that narrowing every technician would be warned about "Accounting in ERPNext",
+  and an advisory that cries wolf goes from useless to ignored, which is worse.
+
+  It stays **warn-only**, asserted through the AST so a `frappe.throw` cannot arrive later
+  disguised as a helper call: a hard gate does not stop the visit, it moves the visit off the
+  books and into somebody's truck where nobody can see it. `warn_on_uncertified_dispatch` is
+  switched on by patch, over `0`/absent only and never over a deliberate `1` — enabling it before
+  now would have changed nothing at all.
+
 - **External credentials — the largest gap in the module, and one no proposal had.**
   `Employee Credential` holds a qualification somebody *else* issued: OSHA 10 and 30, forklift,
   aerial lift, CDL and its DOT medical card, first aid/CPR, respirator fit test, electrical,
