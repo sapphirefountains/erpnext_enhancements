@@ -121,7 +121,13 @@
 		// The board. gamification.py has computed points, badges and streaks since
 		// v1.215.0 and its one endpoint had no caller, so every number existed and
 		// none was ever shown to the person who earned it.
-		leaderboard: "leaderboard"
+		leaderboard: "leaderboard",
+		// Sign-off from the field (WI-072). Tiered authority is only worth having if
+		// the person holding the tier can act on it, and here that is a technician
+		// standing beside a basin -- there was no non-desk sign-off surface at all
+		// before this, so a Senior Technician had the power and nowhere to use it.
+		signoffQueue: "my_signoff_queue",
+		recordSignoff: "record_field_signoff"
 	};
 	var PREFIX = "/api/method/erpnext_enhancements.api.training.";
 

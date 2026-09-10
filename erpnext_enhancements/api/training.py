@@ -500,6 +500,11 @@ def get_learner_bootstrap():
         # player both lists these and indexes them by lesson_key for the lesson-view
         # submit box's "already submitted / graded" state.
         "submissions": _learner_submissions(user),
+        # Additive: how many sign-offs this person may record right now (WI-072).
+        # 0 for almost everybody, which is the point — the field sign-off entry
+        # point is drawn only when there is something behind it, so fourteen of
+        # sixteen people never see a button that opens an empty list.
+        "signoffs_to_record": _signoff_queue_count(user),
         # Every key here is read by the player, and every setting the player reads
         # is here. Both halves of that sentence were false: `max_playback_rate` and
         # `doc_min_dwell_seconds` were read by video.js and blocks.js and sent by
@@ -2183,6 +2188,57 @@ def leaderboard(scope=None):
 
 
 @frappe.whitelist(methods=["POST"])
+def my_signoff_queue():
+    """Sign-offs this person may record, for the field surface. Delegates to
+    :mod:`training.signoff`.
+
+    A thin re-export, same reason as :func:`ask_lesson_question` below: the
+    player's transport has one ``PREFIX`` and one gate, and a second prefix in the
+    client is a second place for a rename to break silently.
+
+    **Why this exists at all.** Tiered sign-off is only worth having if the person
+    who holds the tier can act on it, and the person who holds it here is a field
+    technician. Until now there was no non-desk sign-off surface of any kind:
+    ``training_signoff.js`` is a Desk form button and ``get_signoff_queue`` was
+    dialled only from the Desk list script. Granting a Senior Technician authority
+    he can exercise only from a desk he does not sit at is granting nothing.
+
+    No authority decision is made here — ``get_signoff_queue`` already applies the
+    two arms (named supervisor, and the learners this caller outranks), so a
+    filter here would be a second copy of a rule that has one home.
+    """
+    from erpnext_enhancements.training import signoff
+
+    _learner()
+    _require_runtime()
+    return {"queue": signoff.get_signoff_queue()}
+
+
+@frappe.whitelist(methods=["POST"])
+def record_field_signoff(signoff, outcome, competency_notes=None):
+    """Record a verdict from the field surface. Delegates to :mod:`training.signoff`.
+
+    ``signature_image`` is deliberately not accepted here. The desk form takes one
+    and this does not, because an Attach Image on a phone means an upload round
+    trip before the attestation is recorded at all — and the thing that makes a
+    sign-off evidence is the named supervisor and the timestamp, not a picture of
+    a signature. Somebody standing beside a basin should be able to finish this in
+    two taps.
+
+    Every rule still applies: ``record_signoff`` refuses the learner outright, and
+    ``TrainingSignoff.before_submit`` re-checks authority on the way through
+    regardless of which door called it.
+    """
+    from erpnext_enhancements.training import signoff as signoff_module
+
+    _learner()
+    _require_runtime()
+    return signoff_module.record_signoff(
+        signoff=signoff, outcome=outcome, competency_notes=competency_notes
+    )
+
+
+@frappe.whitelist(methods=["POST"])
 def ask_lesson_question(course, lesson_key, question, at_seconds=None):
     """File a learner's question against a lesson. Delegates to :mod:`training.qa`.
 
@@ -2350,6 +2406,25 @@ def download_lesson_file(token):
 
 
 # -------------------------------------------------------------------- helpers
+
+
+def _signoff_queue_count(user):
+    """How many outstanding sign-offs *user* may record. Never raises.
+
+    Counted through ``signoff.get_signoff_queue`` rather than by a filter of its
+    own, so the number on the button and the list behind it cannot disagree —
+    which they would the first time the authority rule gained an arm and only one
+    of the two places learned about it.
+
+    Best-effort: this runs inside the boot payload, and a learner must be able to
+    open ``/training`` even if the sign-off machinery is unavailable.
+    """
+    try:
+        from erpnext_enhancements.training import signoff
+
+        return len(signoff.get_signoff_queue() or [])
+    except Exception:
+        return 0
 
 
 def _media_token_key(token):

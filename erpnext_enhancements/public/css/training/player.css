@@ -3738,3 +3738,101 @@
 		transition: none;
 	}
 }
+
+/* ---- Sign-off queue (WI-072) ------------------------------------------------
+   The supervisor's half of the tier rule, on a phone. Sized for a thumb beside a
+   fountain rather than for a desk: full-width actions, a note box that is visible
+   before it is needed rather than hidden behind a disclosure, and no signature
+   capture at all. Tokens only, per the injected-stylesheet palette contract. */
+
+.tr-queue {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.tr-queue-row {
+	padding: 14px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+}
+
+/* The invalid state is a state class (is-*), which the class contract exempts.
+   It fires when "needs more practice" is pressed with no note -- the server
+   refuses that too, and a round trip to be told so on a phone beside a fountain
+   is a bad way to find out. */
+.tr-queue-row.is-invalid {
+	border-color: #e03636;
+}
+
+.tr-queue-row.is-done {
+	background: var(--tr-surface-alt);
+	border-style: dashed;
+}
+
+.tr-queue-title {
+	font-weight: 700;
+	overflow-wrap: break-word;
+}
+
+.tr-queue-who {
+	margin-top: 2px;
+	color: var(--tr-muted);
+	font-size: 0.9rem;
+	overflow-wrap: break-word;
+}
+
+/* The course's own "what to verify" text. This is the whole reason a supervisor
+   can attest to something specific rather than to a general impression, so it is
+   given real prominence rather than being tucked under a "details" toggle. */
+.tr-queue-what {
+	margin-top: 10px;
+	padding: 10px 12px;
+	border-left: 3px solid var(--tr-accent);
+	background: var(--tr-surface-alt);
+	border-radius: 0 var(--tr-radius) var(--tr-radius) 0;
+	font-size: 0.95rem;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+.tr-queue-note {
+	display: block;
+	width: 100%;
+	margin-top: 12px;
+	padding: 10px 12px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	color: inherit;
+	font: inherit;
+	/* 16px minimum, or iOS Safari zooms the whole page on focus and the
+	   supervisor loses their place in the list. */
+	font-size: 16px;
+	resize: vertical;
+}
+
+.tr-queue-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.tr-queue-actions .tr-button {
+	flex: 1 1 auto;
+	/* A 44px target is the smallest thing somebody wearing work gloves can hit
+	   reliably; this is the one screen in the app where that is the normal case. */
+	min-height: 44px;
+}
+
+.tr-queue-done {
+	font-weight: 600;
+	color: var(--tr-muted);
+}
+
+.tr-queue-row[aria-busy="true"] {
+	opacity: 0.6;
+	pointer-events: none;
+}

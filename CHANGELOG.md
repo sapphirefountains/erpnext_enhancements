@@ -187,6 +187,20 @@ broken in the direction that does not announce itself.
   all return nothing, and nothing means refused. A customer contact has a User and no Employee,
   which is exactly why they can never acquire authority over staff.
 
+- **Sign-off from the field.** There was no non-desk sign-off surface of any kind —
+  `training_signoff.js` is a Desk form button and `get_signoff_queue` was dialled only from the
+  Desk list script. Granting a Senior Technician authority he can exercise only from a desk he
+  does not sit at is granting nothing, so `/training` now has a queue: what is waiting, the
+  course's own "what to verify" text, a note box, and two buttons sized for somebody wearing
+  work gloves.
+
+  No signature capture, deliberately. An Attach Image on a phone means an upload round trip
+  before the attestation is recorded at all, and what makes a sign-off evidence is the named
+  supervisor and the timestamp, not a picture of a squiggle.
+
+  The entry point is drawn only when there is something behind it — the boot payload carries
+  the count — so fourteen of sixteen people never see a button that opens an empty list.
+
 - **`Position` — the company ladder, and the thing sign-off authority will be read from.**
   A nested-set tree: groups are job families (Technician, Designer), the leaves under them
   are rungs, and `tier` decides authority — higher outranks lower, **only inside the same
@@ -219,6 +233,15 @@ broken in the direction that does not announce itself.
   that row order is a product decision, not a detail. The sidebar file is stamped newer than
   the orphaned `standard = 0` "HR" sidebar sitting on prod since 2026-02-08, because
   Workspace Sidebar is timestamp-gated on import even though a DocType is not.
+- **`test_training_boundary_contract` now sees three modules it was blind to.** Adding the
+  lazy-panel binder `data` to `RESPONSE_BINDERS` immediately exposed that `completions` had been
+  sitting in the sent-but-not-read allowlist with the reason "the transcript view, not the lesson
+  player" — which was simply false; `renderRecord` reads `data.completions`, the scan could not
+  see it, and a real read had been filed as a deliberate asymmetry. Exactly what that file's own
+  comment warns an allowlist becomes. Removing it then surfaced `mine`, `public` and `rows` as
+  "read but never sent", because the scan followed `grading` and `progress` but not `qa`,
+  `gamification` or `signoff` — the three other modules `api/training.py` re-exports rather than
+  implements. All three are now followed, and the six keys that shook out carry real reasons.
 - `erpnext_enhancements/tests/test_hr_module.py`, wired into CI: the reachability tripwire
   above, the tier predicate (peer, cross-family, group and retired-rung cases), and a check
   that the workspace has no dead card or shortcut references — those render as blank space

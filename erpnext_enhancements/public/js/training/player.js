@@ -549,6 +549,7 @@
 			else if (view === "signoff") renderSignoff();
 			else if (view === "complete") renderComplete();
 			else if (view === "record") renderRecord();
+			else if (view === "queue") renderQueue();
 			// A light entrance so a view change reads as a transition, not a cut.
 			// .is-entering is a state class (exempt from the CSS class contract) and
 			// player.css disables it under prefers-reduced-motion. The forced reflow
@@ -2032,6 +2033,22 @@
 			wrap.appendChild(
 				button(t("My record & certificates"), "tr-button tr-button-quiet", openRecord)
 			);
+			// Drawn only when there is something behind it. The count comes from the
+			// boot payload rather than a call on render, so fourteen of sixteen
+			// people never see a button that opens an empty list -- and the one who
+			// does sees how many before deciding to tap it.
+			var waiting = (b.stats && b.stats.signoffs_to_record) || b.signoffs_to_record || 0;
+			if (waiting > 0) {
+				wrap.appendChild(
+					button(
+						fmt(t("Sign-offs to record ({0})"), [String(waiting)]),
+						"tr-button tr-button-quiet",
+						function () {
+							go("queue");
+						}
+					)
+				);
+			}
 			return wrap;
 		}
 
@@ -2098,6 +2115,131 @@
 				link.rel = "noopener";
 				item.appendChild(link);
 			}
+			return item;
+		}
+
+		// ------------------------------------------------------ sign-off queue
+		//
+		// The supervisor's half, on a phone. Tiered authority is only worth having
+		// if the person holding the tier can act on it, and here that is a
+		// technician standing beside a basin -- before this there was no non-desk
+		// sign-off surface anywhere, so a Senior Technician had the authority and
+		// nowhere to exercise it.
+		//
+		// Deliberately not a signature capture. An Attach Image on a phone means an
+		// upload round trip before the attestation is recorded at all, and what
+		// makes a sign-off evidence is the named supervisor and the timestamp, not
+		// a picture of a squiggle. Two taps, done.
+
+		function renderQueue() {
+			var bar = el("div", "tr-subhead-row");
+			bar.appendChild(button("← " + t("All courses"), "tr-button tr-button-quiet", function () {
+				go("catalog");
+			}));
+			bar.appendChild(el("h1", "tr-title", t("Sign-offs to record")));
+			head.appendChild(bar);
+
+			var pending = el("div", "tr-loading", t("Loading…"));
+			pending.setAttribute("role", "status");
+			main.appendChild(pending);
+
+			call("signoffQueue", {})
+				.then(function (data) {
+					clear(main);
+					var rows = (data && data.queue) || [];
+					if (!rows.length) {
+						main.appendChild(el("p", "tr-empty", t("Nothing is waiting on you.")));
+						return;
+					}
+					var list = el("div", "tr-queue");
+					rows.forEach(function (row) {
+						list.appendChild(queueRow(row, list));
+					});
+					main.appendChild(list);
+				})
+				.catch(function (err) {
+					clear(main);
+					fail(main, err);
+					main.appendChild(button(t("Back"), "tr-button", function () {
+						go("catalog");
+					}));
+				});
+		}
+
+		function queueRow(row, list) {
+			var item = el("div", "tr-queue-row");
+			item.appendChild(el("div", "tr-queue-title", row.course_title || row.course || t("Course")));
+			item.appendChild(el("div", "tr-queue-who", row.user || ""));
+			// The course's own "what to verify" text, which is the whole reason a
+			// supervisor can attest to anything specific rather than to a feeling.
+			if (row.instructions) {
+				item.appendChild(el("div", "tr-queue-what", row.instructions));
+			}
+
+			var note = document.createElement("textarea");
+			note.className = "tr-queue-note";
+			note.rows = 2;
+			note.placeholder = t("What you watched (required if not yet competent)");
+			item.appendChild(note);
+
+			var actions = el("div", "tr-queue-actions");
+			var busy = false;
+
+			function record(outcome) {
+				if (busy) return;
+				// The server refuses "Needs More Practice" with no note, and a round
+				// trip to be told so on a phone beside a fountain is a bad way to
+				// find out. Same rule, said earlier -- not a second rule.
+				if (outcome !== "Competent" && !note.value.trim()) {
+					note.focus();
+					item.classList.add("is-invalid");
+					return;
+				}
+				item.classList.remove("is-invalid");
+				busy = true;
+				item.setAttribute("aria-busy", "true");
+				call("recordSignoff", {
+					signoff: row.name,
+					outcome: outcome,
+					competency_notes: note.value.trim() || null,
+				})
+					.then(function (data) {
+						// Removed in place rather than re-fetching the whole list: a
+						// supervisor working through four of these should not watch the
+						// page rebuild under them after each one.
+						item.classList.add("is-done");
+						clear(item);
+						// The server's outcome, not the local one. They agree today, and
+						// the server is the thing that decides what was actually recorded
+						// -- echoing the button that was pressed would keep saying
+						// "Competent" on the day the server starts disagreeing.
+						var recorded = (data && data.outcome) || outcome;
+						item.appendChild(
+							el("div", "tr-queue-done", fmt(t("Recorded: {0}"), [recorded]))
+						);
+						if (!list.querySelector(".tr-queue-row:not(.is-done)")) {
+							clear(main);
+							main.appendChild(el("p", "tr-empty", t("Nothing is waiting on you.")));
+						}
+					})
+					.catch(function (err) {
+						busy = false;
+						item.removeAttribute("aria-busy");
+						fail(item, err);
+					});
+			}
+
+			actions.appendChild(
+				button(t("Competent"), "tr-button", function () {
+					record("Competent");
+				})
+			);
+			actions.appendChild(
+				button(t("Needs more practice"), "tr-button tr-button-quiet", function () {
+					record("Needs More Practice");
+				})
+			);
+			item.appendChild(actions);
 			return item;
 		}
 
