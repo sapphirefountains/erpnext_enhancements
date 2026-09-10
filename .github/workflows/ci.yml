@@ -735,6 +735,16 @@ jobs:
       # all three new doctypes.
       - name: Training social (the feed carries no numbers, and customers see none of it)
         run: python -m unittest erpnext_enhancements.tests.test_training_social -v
+      # Time off and onboarding. The scope decisions are what is pinned: no
+      # balances (that is where the payroll arguments live, and PTO is not tracked
+      # as a liability here), calendar days counted honestly since there is no
+      # holiday calendar to subtract, and approval routed through reports_to rather
+      # than the Position ladder -- the ONE place in WI-072 where those deliberately
+      # come apart, because a Senior Technician outranks a Junior on competence and
+      # has no standing over their Thursday. Asserted through the AST, since the
+      # prose explaining that necessarily names the thing being excluded.
+      - name: HR time off + onboarding (scope, authority, and the scoping hooks)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_timeoff_onboarding -v
       # Tiered sign-off authority. The behavioural half is the Junior/Senior/Master
       # rule; the STRUCTURAL half is the point. A sign-off can be submitted through
       # two doors -- record_signoff sets ignore_permissions and the Desk Submit

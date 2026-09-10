@@ -640,7 +640,14 @@ doc_events = {
 		# course their department/designation owes, on day one. No-ops when user_id
 		# is not set yet (employees are routinely created before a login exists) —
 		# the on_update handler catches it when one appears.
-		"after_insert": "erpnext_enhancements.training.assignment.on_employee_insert",
+		"after_insert": [
+			"erpnext_enhancements.training.assignment.on_employee_insert",
+			# hr_enhancements (WI-072): raise the first-week checklist. Contractually
+			# cannot raise -- an Employee record failing to save because a checklist
+			# could not be built would be the tail wagging the dog, and the training
+			# handler above has the same contract for the same reason.
+			"erpnext_enhancements.hr_enhancements.onboarding.on_employee_insert",
+		],
 		"on_update": [
 			# Cell Number -> linked User.phone (Call via Triton dials it)
 			"erpnext_enhancements.sync_contact.sync_employee_phone_to_user",
@@ -1869,6 +1876,13 @@ permission_query_conditions = {
 	# module inside allow_modules -- so the scoping hook ships in the same commit,
 	# not after it. Own rows, direct reports, and the people you outrank.
 	"Employee Credential": "erpnext_enhancements.hr_enhancements.permissions.credential_query_conditions",
+	# Time off and onboarding (WI-072). Both grant the `Employee` role, which every
+	# staff account holds, so both need scoping in the same release -- own rows,
+	# your direct reports, and (for time off) anything you are the named approver
+	# of. No position-tier arm on either: time off is "who plans your week", which
+	# is what reports_to means and what a competence ladder does not.
+	"Time Off Request": "erpnext_enhancements.hr_enhancements.permissions.timeoff_query_conditions",
+	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_query_conditions",
 	# Chat (ADR 0009 §F.18): row-level scoping is MEMBERSHIP, not role. Chat Room is
 	# the only chat doctype carrying a DocPerm at all (`read` for "Chat User"), so it is
 	# the only one where this hook is the live gate -- the other three ship with an
@@ -1921,6 +1935,8 @@ has_permission = {
 	"Training Kudos": "erpnext_enhancements.training.permissions.kudos_has_permission",
 	"Training Profile Preference": "erpnext_enhancements.training.permissions.profile_preference_has_permission",
 	"Employee Credential": "erpnext_enhancements.hr_enhancements.permissions.credential_has_permission",
+	"Time Off Request": "erpnext_enhancements.hr_enhancements.permissions.timeoff_has_permission",
+	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_has_permission",
 	# Chat: the twin of every query condition above, and parity here is the house
 	# doctrine -- ten and ten before this block, four and four after it.
 	# "Chat Room" is not just the single-document gate: it IS the realtime security

@@ -78,6 +78,73 @@ def _visible_users(user):
 	return sorted(a for a in allowed if a)
 
 
+def timeoff_query_conditions(user=None):
+	"""Your own time off, your reports', and — if you are the named approver — theirs.
+
+	**No tier arm, deliberately.** Time off is "who plans your week", which is
+	exactly what ``Employee.reports_to`` means and exactly what a Position tier
+	does not: a Senior Technician outranks a Junior on competence and has no
+	standing at all over their Thursday. Giving the ladder a say here would be
+	borrowing an authority nobody granted it.
+	"""
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return ""
+	allowed = {resolved}
+	manager = frappe.db.get_value("Employee", {"user_id": resolved}, "name")
+	if manager:
+		allowed.update(
+			u
+			for u in frappe.get_all("Employee", filters={"reports_to": manager}, pluck="user_id")
+			if u
+		)
+	joined = ", ".join(frappe.db.escape(u) for u in sorted(a for a in allowed if a))
+	own = frappe.db.escape(resolved)
+	table = "`tabTime Off Request`"
+	return f"({table}.`user` in ({joined}) or {table}.`approver_user` = {own})"
+
+
+def timeoff_has_permission(doc, ptype=None, user=None):
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return True
+	if doc.get("user") == resolved or doc.get("approver_user") == resolved:
+		return True
+	manager = frappe.db.get_value("Employee", {"user_id": resolved}, "name")
+	if not manager:
+		return False
+	return frappe.db.exists("Employee", {"user_id": doc.get("user"), "reports_to": manager})
+
+
+def onboarding_query_conditions(user=None):
+	"""Your own checklist and your reports'. Same reasoning as time off."""
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return ""
+	allowed = {resolved}
+	manager = frappe.db.get_value("Employee", {"user_id": resolved}, "name")
+	if manager:
+		allowed.update(
+			u
+			for u in frappe.get_all("Employee", filters={"reports_to": manager}, pluck="user_id")
+			if u
+		)
+	joined = ", ".join(frappe.db.escape(u) for u in sorted(a for a in allowed if a))
+	return f"`tabOnboarding Checklist`.`user` in ({joined})"
+
+
+def onboarding_has_permission(doc, ptype=None, user=None):
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return True
+	if doc.get("user") == resolved:
+		return True
+	manager = frappe.db.get_value("Employee", {"user_id": resolved}, "name")
+	if not manager:
+		return False
+	return frappe.db.exists("Employee", {"user_id": doc.get("user"), "reports_to": manager})
+
+
 def credential_query_conditions(user=None):
 	resolved = _resolve(user)
 	if _is_unscoped(resolved):

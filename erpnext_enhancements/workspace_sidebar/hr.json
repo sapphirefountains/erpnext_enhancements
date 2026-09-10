@@ -116,6 +116,41 @@
   {
    "child": 0,
    "collapsible": 1,
+   "icon": "calendar",
+   "indent": 1,
+   "keep_closed": 0,
+   "label": "Time & joining",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Section Break"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "calendar",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Time off",
+   "link_to": "Time Off Request",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "list-checks",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Onboarding",
+   "link_to": "Onboarding Checklist",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
    "icon": "badge-check",
    "indent": 1,
    "keep_closed": 0,

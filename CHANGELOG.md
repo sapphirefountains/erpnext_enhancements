@@ -187,6 +187,34 @@ broken in the direction that does not announce itself.
   all return nothing, and nothing means refused. A customer contact has a User and no Employee,
   which is exactly why they can never acquire authority over staff.
 
+- **Time off — request, approve, calendar, and nothing else.** No balances, no accrual, no
+  carryover. That scope is a decision: balances are where the real complexity and every payroll
+  argument live, and they are only worth carrying if PTO is tracked as a liability. `total_days`
+  counts **calendar** days and says so, because there is no holiday calendar here to subtract and
+  a number quietly pretending otherwise would be wrong in the direction that shortens somebody's
+  leave.
+
+  **Approval routes through `reports_to`, not the Position ladder** — the one place in this whole
+  release where those deliberately come apart. Time off is "who plans your week", which is what
+  the reporting line means and what a competence tier does not: a Senior Technician outranks a
+  Junior on whether they can drain a basin and has no standing over their Thursday. The rest of
+  WI-072 uses the ladder *because* the reporting tree could not express competence; borrowing it
+  back here would grant it something nobody gave it.
+
+  The overlap check warns and never refuses — two people off the same week is a scheduling
+  conversation, and blocking would mean somebody who needs the day simply not asking. `who_is_out`
+  gives dispatch names and dates and **not** the type or reason: a sick day is not something to
+  publish to the crew. The calendar colours only `Approved` green, because a Requested day is not
+  a day off yet and showing it as one would have people scheduling around a request that later
+  gets declined. `Canceled`, one l.
+
+- **A new-hire checklist**, raised automatically on Employee insert — joining the existing
+  `after_insert` hook rather than adding a second one whose ordering nobody declared, and
+  contractually incapable of raising, because an Employee failing to save over a checklist would
+  be the tail wagging the dog. Owners are plain words rather than Links: half of a first week is
+  done by whoever is free that morning, and a required assignee is exactly how a checklist stops
+  getting filled in.
+
 - **A team feed, on a record that structurally cannot carry a score.** The obvious design is to
   let colleagues react to a `Training Completion`. That is the compliance artefact — its own
   controller calls it "the only record in the module that anybody outside it will ever be asked to

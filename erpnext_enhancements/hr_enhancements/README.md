@@ -130,6 +130,52 @@ the work needs it more than HR does. Its `ref_doctype` is `Employee`, which its 
 can actually read — `Training Completion Matrix` lists HR Manager while Training
 Completion granted HR Manager nothing, so it errored for exactly its intended reader.
 
+## Time off
+
+**Request → approve → calendar.** No balances, no accrual, no carryover — a decision
+rather than an omission. Balances are where the real complexity and every payroll
+argument live, and they are only worth carrying if PTO is being tracked as a
+liability; it is not, here.
+
+`total_days` counts **calendar** days, because there is no holiday calendar on this
+site to subtract from them, and a number quietly pretending to be working days would
+be wrong by an unpredictable amount and wrong in the direction that shortens somebody's
+leave.
+
+**Approval is the reporting line, not the ladder — the one place in WI-072 where those
+deliberately come apart.** Time off is "who plans your week", which is exactly what
+`Employee.reports_to` means and exactly what a Position tier does not: a Senior
+Technician outranks a Junior on whether they can drain a basin and has no standing at
+all over their Thursday. The rest of this module routes authority through the ladder
+*because* the reporting tree could not express competence; borrowing it back here would
+be granting it something nobody gave it. `tests/test_hr_timeoff_onboarding.py` asserts
+that through the AST rather than by reading the source, since the prose explaining the
+decision necessarily names the thing being excluded.
+
+The overlap check **warns and never refuses**: two people off the same week is a
+scheduling conversation, not this record's business to prevent, and blocking would mean
+somebody who genuinely needs the day simply not asking. `who_is_out` returns names and
+dates and deliberately **not** the type or the reason — a sick day is not something to
+publish to the crew. The calendar colours only `Approved` green, because a Requested day
+is not a day off yet.
+
+Not submittable: "I put in for Thursday and then didn't" is a change of mind, not an
+amendment of a document. `Canceled`, one l, house style.
+
+## Onboarding
+
+A checklist raised automatically when an Employee is added, joining the existing
+`after_insert` hook rather than adding a second one whose ordering nobody declared. It
+is contractually incapable of raising — an Employee record failing to save because a
+checklist could not be built would be the tail wagging the dog.
+
+**Owners are plain words, not Links.** Half of a first week is done by whoever is free
+that morning, and a required assignee is exactly how a checklist stops getting filled
+in. The record's job is showing what has not happened yet, not knowing whose fault it
+is. Progress is derived on every save, because a stored percentage goes stale the moment
+somebody ticks a box; a tick is stamped once, and un-ticking clears it, or the row would
+claim it was done by somebody on a date while showing as outstanding.
+
 ## Files
 
 - `doctype/position/` — the tree, the tier rule, and the two authority helpers.
