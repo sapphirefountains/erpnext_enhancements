@@ -675,6 +675,17 @@ jobs:
       # Training Learner read -- a role customer Website Users hold.
       - name: Training sign-off loop (on_submit, expiry, row scoping)
         run: python -m unittest erpnext_enhancements.tests.test_training_signoff_loop -v
+      # The HR module, and mostly one question: can the people it is for actually
+      # SEE it? A Frappe workspace whose module is not in the user's allow_modules
+      # does not 403, it silently is not there -- desktop.py raises PermissionError
+      # and the sidebar builder swallows it -- and allow_modules is built only from
+      # DocPerms. `Position` granting read to `Employee` is what holds that door
+      # open for ordinary staff, so it is asserted rather than assumed. Also pins
+      # the tier predicate (never a peer, never across job families, never a
+      # retired rung) and checks the workspace has no dead card/shortcut references,
+      # which render as blank space with no error.
+      - name: HR module (reachability, position ladder, workspace wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_module -v
       # Does the learner page's stylesheet style the page the scripts build? It
       # did not: 130 of the 138 classes the player emits had no rule, because the
       # CSS was written against an earlier vocabulary and never followed the

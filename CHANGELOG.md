@@ -142,6 +142,55 @@ broken in the direction that does not announce itself.
 
 ### Added
 
+- **A new `HR Enhancements` module, labelled `HR`.** One desk area an employee opens to find
+  their own record, the company ladder and the people tree, without knowing where anything
+  lives. Not named `HR`: hrms ships a module by exactly that name, and claiming it is the
+  Plaid Settings collision again (v1.361.0). The label users see is set on the workspace.
+
+  The load-bearing part is not the workspace, it is `Position` granting `read` to `Employee`.
+  A Frappe workspace whose module is not in the viewer's `allow_modules` **silently is not
+  there** — `desktop.py` raises `PermissionError` and the sidebar builder swallows it — and
+  `allow_modules` is built only from DocPerms on non-child doctypes. `Workspace Manager`
+  bypasses the gate entirely, so whoever builds a module cannot see this failure. Drop that
+  one DocPerm and the whole area disappears for every non-manager with nothing reported
+  anywhere, which is why `test_hr_module` asserts it rather than assuming it.
+
+- **`Position` — the company ladder, and the thing sign-off authority will be read from.**
+  A nested-set tree: groups are job families (Technician, Designer), the leaves under them
+  are rungs, and `tier` decides authority — higher outranks lower, **only inside the same
+  family**, and never a same-tier peer. `outranks()` / `positions_outranked_by()` are the
+  single expression of that rule.
+
+  Three things it deliberately is not. Not `Designation`, which stays the HR job title —
+  it is core, flat, and already consumed by the auto-assignment engine and payroll
+  reporting, so **changing a Designation changes no authority**. Not a `tier` field on
+  `Employee`, which would put rank on the person rather than the position and give the
+  org-chart ask nothing. And not `Employee.reports_to` — on this site the reporting tree
+  says the *opposite* of the ladder: Jesse Griffin is the one Senior Technician and has
+  **zero direct reports**, while all four Junior Technicians report to the Project Manager,
+  as does he. Routing sign-off through `reports_to` cannot reach the one person who has
+  actually watched them work. `Employee` is already a nested set on `reports_to` in v16
+  core, so `/app/employee/view/tree` works today and is linked beside the position tree.
+
+- `Employee.custom_position` and a read-only fetched `custom_position_tier`, under a
+  `Position & Competency` section. The fetched tier is display only; every authority check
+  reads the Position itself, because a fetched value is a copy and a copy can be stale.
+- `patches/seed_positions_from_designations.py` — seeds the ladder and places every Employee
+  on it. **Only one ladder is asserted**, the Technician Junior/Senior/Master one that was
+  actually specified; every other Designation becomes a single-rung family that outranks
+  nobody, because "Electrical Designer" is a specialty and giving it a rank would silently
+  assert authority over somebody that nobody granted. Not a fixture: `Position` is a nested
+  set and fixture import is delete-and-reinsert, which rebuilds `lft`/`rgt` from whatever
+  `parent_position` happens to resolve at the time.
+- An `HR` desk tile (`id-card`, teal alongside Workforce and Training) and a sidebar whose
+  **first row is the workspace itself** — the tile routes to the sidebar's first Link, so
+  that row order is a product decision, not a detail. The sidebar file is stamped newer than
+  the orphaned `standard = 0` "HR" sidebar sitting on prod since 2026-02-08, because
+  Workspace Sidebar is timestamp-gated on import even though a DocType is not.
+- `erpnext_enhancements/tests/test_hr_module.py`, wired into CI: the reachability tripwire
+  above, the tier predicate (peer, cross-family, group and retired-rung cases), and a check
+  that the workspace has no dead card or shortcut references — those render as blank space
+  with no error at all.
 - `erpnext_enhancements/tests/test_training_signoff_loop.py`, wired into CI. Beyond pinning
   the three fixes above, it carries the generalisation that would have caught the leak:
   **any** Training doctype granting `Training Learner` read on rows with a `user` column,

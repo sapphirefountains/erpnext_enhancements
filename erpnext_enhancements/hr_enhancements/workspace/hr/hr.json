@@ -1,0 +1,295 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"hr_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>HR</b></span>\",\"col\":12}},{\"id\":\"hr_intro\",\"type\":\"paragraph\",\"data\":{\"text\":\"Your training, your record and the company ladder. Everything a learner actually does happens on <b>Open my training</b> \\u2014 this page is where you look things up.\",\"col\":12}},{\"id\":\"hr_sc_train\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Open my training\",\"col\":3}},{\"id\":\"hr_sc_tree\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Company tree\",\"col\":3}},{\"id\":\"hr_sc_people\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Who reports to whom\",\"col\":3}},{\"id\":\"hr_sc_sign\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sign-offs to record\",\"col\":3}},{\"id\":\"hr_sc_over\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Overdue training\",\"col\":3}},{\"id\":\"hr_sp1\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"hr_cards\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Records</b></span>\",\"col\":12}},{\"id\":\"hr_card_you\",\"type\":\"card\",\"data\":{\"card_name\":\"You\",\"col\":4}},{\"id\":\"hr_card_company\",\"type\":\"card\",\"data\":{\"card_name\":\"The company\",\"col\":4}},{\"id\":\"hr_card_training\",\"type\":\"card\",\"data\":{\"card_name\":\"Training\",\"col\":4}},{\"id\":\"hr_card_verify\",\"type\":\"card\",\"data\":{\"card_name\":\"Verification\",\"col\":4}},{\"id\":\"hr_card_recog\",\"type\":\"card\",\"data\":{\"card_name\":\"Recognition\",\"col\":4}},{\"id\":\"hr_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "creation": "2026-09-10 12:00:00.000000",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "hr",
+ "idx": 0,
+ "is_hidden": 0,
+ "label": "HR",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "You",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "My assigned training",
+   "link_count": 0,
+   "link_to": "Training Assignment",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "My completions",
+   "link_count": 0,
+   "link_to": "Training Completion",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "My certificates",
+   "link_count": 0,
+   "link_to": "Training Certificate",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "The company",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Positions",
+   "link_count": 0,
+   "link_to": "Position",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "People",
+   "link_count": 0,
+   "link_to": "Employee",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Departments",
+   "link_count": 0,
+   "link_to": "Department",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Job titles",
+   "link_count": 0,
+   "link_to": "Designation",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Courses",
+   "link_count": 0,
+   "link_to": "Training Course",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Cohorts",
+   "link_count": 0,
+   "link_to": "Training Batch",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Announcements",
+   "link_count": 0,
+   "link_to": "Training Announcement",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Categories",
+   "link_count": 0,
+   "link_to": "Training Category",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Verification",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Sign-offs",
+   "link_count": 0,
+   "link_to": "Training Signoff",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Evaluations",
+   "link_count": 0,
+   "link_to": "Training Evaluation",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Certificates issued",
+   "link_count": 0,
+   "link_to": "Training Certificate",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Recognition",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Badges",
+   "link_count": 0,
+   "link_to": "Training Badge",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Badges awarded",
+   "link_count": 0,
+   "link_to": "Training Badge Award",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Learner stats",
+   "link_count": 0,
+   "link_to": "Training Learner Stat",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Training Completion Matrix",
+   "link_count": 0,
+   "link_to": "Training Completion Matrix",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-09-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "HR",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 6,
+ "shortcuts": [
+  {
+   "color": "Blue",
+   "label": "Open my training",
+   "type": "URL",
+   "url": "/training"
+  },
+  {
+   "color": "Purple",
+   "doc_view": "Tree",
+   "label": "Company tree",
+   "link_to": "Position",
+   "type": "DocType"
+  },
+  {
+   "color": "Green",
+   "doc_view": "Tree",
+   "label": "Who reports to whom",
+   "link_to": "Employee",
+   "type": "DocType"
+  },
+  {
+   "color": "Orange",
+   "doc_view": "List",
+   "label": "Sign-offs to record",
+   "link_to": "Training Signoff",
+   "stats_filter": "{\"docstatus\": 0}",
+   "type": "DocType"
+  },
+  {
+   "color": "Red",
+   "doc_view": "List",
+   "label": "Overdue training",
+   "link_to": "Training Assignment",
+   "stats_filter": "{\"status\": \"Overdue\"}",
+   "type": "DocType"
+  }
+ ],
+ "title": "HR"
+}

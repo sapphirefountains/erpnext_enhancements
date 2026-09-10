@@ -821,3 +821,11 @@ erpnext_enhancements.patches.resync_training_workspace
 # fresh site and nothing else (v1.277.3). Writes only over the value this app used to ship, or
 # over no row at all -- never over an operator's own number. Safe twice.
 erpnext_enhancements.patches.retune_offsite_backup_settings_for_nightly_full
+# v1.386.0 (WI-072) -- seeds the Position ladder and places every Employee on it. Asserts ONE
+# ladder, the Technician Junior/Senior/Master one Nik specified; every other Designation
+# becomes a single-rung family that outranks nobody, because "Electrical Designer" is a
+# specialty and giving it a rank would silently assert authority over somebody. Not a fixture:
+# Position is a nested set, and fixture import is delete-and-reinsert, which rebuilds lft/rgt
+# from whatever parent happens to resolve at the time. Insert-only; never overwrites a
+# custom_position already set. Safe twice.
+erpnext_enhancements.patches.seed_positions_from_designations
