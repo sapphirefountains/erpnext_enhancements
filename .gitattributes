@@ -1,0 +1,64 @@
+# Line endings are decided here rather than by each developer's core.autocrlf.
+#
+# WHY THIS FILE EXISTS. Every text file in this repo is already stored with LF —
+# 2,927 of them, verified against main before this was written, with zero CRLF
+# and zero mixed. What was missing was anything *saying* so, and the gap showed
+# up as merge conflicts rather than as bad bytes.
+#
+# Without a policy here, git falls back to each machine's core.autocrlf. On
+# Windows that is normally `true`, which checks files out as CRLF and converts
+# back to LF on commit — but it deliberately does NOT renormalise a file already
+# stored with CRLF, so one file committed the wrong way stays wrong indefinitely.
+# CHANGELOG.md was exactly that: stored CRLF for most of this repo's life until
+# v1.402.0 happened to rewrite it whole. The next branch to touch it then
+# conflicted on all 24,931 lines — two whole-file rewrites, no common ground —
+# for a change that added seventy. Two open branches and a file everybody edits
+# is all it takes, and CHANGELOG.md is a file EVERY change edits, by policy.
+#
+# `eol=lf` rather than bare `text=auto` is deliberate. `text=auto` alone would
+# fix the stored bytes and leave Windows working trees on CRLF, which keeps the
+# working tree and the index disagreeing — and that disagreement is what makes a
+# byte-level edit (a script, or an agent writing a file) round-trip differently
+# depending on who ran it. Everything here deploys to Linux; there is no reader
+# that needs CRLF. Matching the working tree to the index makes what you see the
+# thing that is committed.
+#
+# Applying this changes no committed content: `git add --renormalize .` stages
+# nothing, because the index was already LF. It does rewrite text files in an
+# existing Windows working tree on the next checkout, which is a no-op for git
+# and silences the "LF will be replaced by CRLF" warning on every add.
+#
+# The sibling `triton` repo carries a narrower version of this file, listing the
+# individual deploy scripts that must be LF to run on the VM. The rule below
+# covers that case here too — see infra/configs/startup_script.sh.
+
+* text=auto eol=lf
+
+# Belt and braces for the files where a CRLF is not cosmetic but a failure: a
+# shell script with CRLF line endings dies on Linux with `bad interpreter:
+# /bin/bash^M`, and the Cloud Build YAML below is what deploys this app.
+*.sh            text eol=lf
+*.bash          text eol=lf
+cloudbuild.yaml text eol=lf
+infra/**/*.yaml text eol=lf
+infra/**/*.sh   text eol=lf
+
+# Binary, never line-ending converted and never diffed as text. `text=auto`
+# detects these correctly on its own; they are listed so that a misdetection on
+# some future file cannot corrupt one silently.
+*.jpg  binary
+*.jpeg binary
+*.png  binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.pdf  binary
+*.zip  binary
+*.woff  binary
+*.woff2 binary
+*.ttf  binary
+*.eot  binary
+*.otf  binary
+*.xlsx binary
+*.docx binary
+*.pptx binary
