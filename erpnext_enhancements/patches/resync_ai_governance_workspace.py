@@ -1,6 +1,6 @@
 """Force the AI Governance desk workspace to re-sync from its app JSON.
 
-v1.402.0 adds a **Call Routing** shortcut and link card so the new
+v1.403.0 adds a **Call Routing** shortcut and link card so the new
 `Call Routing Settings` / `Call Routing Rule` DocTypes are reachable from the desk
 rather than only from the awesome bar. Without this patch that edit would very
 likely never arrive.

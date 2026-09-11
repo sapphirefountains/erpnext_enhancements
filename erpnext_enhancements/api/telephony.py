@@ -898,7 +898,7 @@ def get_telephony_routing():
     falls back to its env config if the fetch fails, so editing Triton
     Settings is the only configuration step needed on this side.
 
-    Since 1.402.0 the payload also carries a ``routing`` block: the compiled
+    Since 1.403.0 the payload also carries a ``routing`` block: the compiled
     Call Routing Rules the gateway matches each inbound call against, plus the
     default forward number, ring duration, voicemail wording and holiday dates
     it needs to act on them. That rides on this endpoint deliberately rather

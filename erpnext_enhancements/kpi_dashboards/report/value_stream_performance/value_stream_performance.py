@@ -56,8 +56,17 @@ import frappe
 from frappe import _
 from frappe.utils import add_months, flt, getdate, nowdate
 
-#: Statuses that count as won and lost. "Closed" is neither — on this site it is
-#: used for administratively closed deals, and 144 opportunities carry it.
+#: Statuses that count as won and lost.
+#:
+#: This used to read: "Closed" is neither -- on this site it is used for administratively
+#: closed deals, and 144 opportunities carry it. That was an accurate description of the
+#: data and the wrong conclusion about it. `tabVersion` shows every migrated opportunity
+#: landed as `Closed` in the July 2025 Zoho import, and the August 2025 re-import passes
+#: promoted rows out of it; the 144 were simply the ones nobody promoted. Nik ran those
+#: passes and ruled in v1.402.0 that what was left behind was lost, so they now carry
+#: `Lost` and are counted here. `patches/remap_orphan_opportunity_statuses.py` has the
+#: full evidence, including why the revenue correlation that pointed the other way was
+#: circular.
 WON_STATUSES = ("Closed Won",)
 LOST_STATUSES = ("Lost",)
 

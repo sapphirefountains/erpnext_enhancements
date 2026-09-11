@@ -50,7 +50,7 @@ Every function is documented inline. This README is the map.
 
 `telephony.py` whitelisted surface: `get_gateway_config`, `append_call_transcript`, `get_call_transcript`, `get_caller_info`, `update_caller_info`, `log_call_transcript`, `process_unified_recording`, `get_softphone_token`, `get_telephony_routing`, `preview_call_routing`, `receive_mms`, `send_voicemail_email`, `trigger_outbound_call`, `get_employee_number`, `log_call_details`, `process_unified_sms`, `send_sms`.
 
-`get_telephony_routing` is the Triton gateway's whole view of how inbound calls should be handled: the desk softphone identities, the branded caller ID, and (since 1.402.0) a `routing` block carrying the compiled [Call Routing Rules](../ai_governance/README.md). It is one endpoint rather than two on purpose — Triton caches it for 60s and prefetches it while the caller is still listening to the phone menu, so the dial decision never waits on us. `preview_call_routing` is the desk-side counterpart: System Manager only, it answers "who would ring for this call, and why" without placing one.
+`get_telephony_routing` is the Triton gateway's whole view of how inbound calls should be handled: the desk softphone identities, the branded caller ID, and (since 1.403.0) a `routing` block carrying the compiled [Call Routing Rules](../ai_governance/README.md). It is one endpoint rather than two on purpose — Triton caches it for 60s and prefetches it while the caller is still listening to the phone menu, so the dial decision never waits on us. `preview_call_routing` is the desk-side counterpart: System Manager only, it answers "who would ring for this call, and why" without placing one.
 
 ## Security model
 
@@ -59,7 +59,7 @@ Every function is documented inline. This README is the map.
   - `telephony.get_gateway_config` — returns only non-sensitive routing config (no secrets).
   - `telephony.append_call_transcript` / `get_call_transcript` / `get_caller_info` / `update_caller_info` / `process_unified_recording` / `process_unified_sms` and `call_intelligence.process_call_intelligence` — guarded by `@validate_webhook_secret` (Bearer shared secret).
   - `telephony.receive_mms` — guarded by `@validate_twilio_request` (HMAC signature).
-  - `telephony.get_telephony_routing` — guarded by `@validate_webhook_secret`. Since 1.402.0 its
+  - `telephony.get_telephony_routing` — guarded by `@validate_webhook_secret`. Since 1.403.0 its
     `routing` block carries staff **mobile numbers**, resolved from Employee records so the
     gateway needs no lookup of its own. That makes the shared secret on this endpoint load-bearing
     in a way it was not when the payload was two softphone identities: treat a widened response
