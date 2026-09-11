@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"dh_head_sc\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"dh_sc_water_feature_design\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Water Feature Design\",\"col\":4}},{\"id\":\"dh_sc_control_panel_design\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Control Panel Design\",\"col\":4}},{\"id\":\"dh_sc_configurable_product\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Configurable Product\",\"col\":4}},{\"id\":\"dh_head_cards\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports &amp; Masters</b></span>\",\"col\":12}},{\"id\":\"dh_card_standards\",\"type\":\"card\",\"data\":{\"card_name\":\"Standards\",\"col\":4}},{\"id\":\"dh_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "content": "[{\"id\":\"dh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"dh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Water Feature Design\",\"col\":4}},{\"id\":\"dh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Control Panel Design\",\"col\":4}},{\"id\":\"dh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Configurable Product\",\"col\":4}},{\"id\":\"dh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project\",\"col\":4}},{\"id\":\"dh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Water Engineering Wizard\",\"col\":4}},{\"id\":\"dh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Design Dashboard\",\"col\":4}},{\"id\":\"dh_08\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"dh_09\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Designs still open\",\"col\":6}},{\"id\":\"dh_10\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"dh_11\",\"type\":\"card\",\"data\":{\"card_name\":\"Design work\",\"col\":4}},{\"id\":\"dh_12\",\"type\":\"card\",\"data\":{\"card_name\":\"Standards\",\"col\":4}},{\"id\":\"dh_13\",\"type\":\"card\",\"data\":{\"card_name\":\"What it feeds\",\"col\":4}},{\"id\":\"dh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
  "creation": "2026-09-11 16:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -13,8 +13,66 @@
   {
    "hidden": 0,
    "is_query_report": 0,
+   "label": "Design work",
+   "link_count": 5,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Water Feature Design",
+   "link_count": 0,
+   "link_to": "Water Feature Design",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Control Panel Design",
+   "link_count": 0,
+   "link_to": "Control Panel Design",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Configurable Product",
+   "link_count": 0,
+   "link_to": "Configurable Product",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Product Configuration",
+   "link_count": 0,
+   "link_to": "Product Configuration",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Nozzle Profile",
+   "link_count": 0,
+   "link_to": "Nozzle Profile",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "Standards",
-   "link_count": 3,
+   "link_count": 4,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -41,9 +99,67 @@
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Nozzle Profile",
+   "label": "Item",
    "link_count": 0,
-   "link_to": "Nozzle Profile",
+   "link_to": "Item",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Process Document",
+   "link_count": 0,
+   "link_to": "Process Document",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "What it feeds",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Opportunity",
+   "link_count": 0,
+   "link_to": "Opportunity",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Project",
+   "link_count": 0,
+   "link_to": "Project",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Master Project",
+   "link_count": 0,
+   "link_to": "Master Project",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Task",
+   "link_count": 0,
+   "link_to": "Task",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
@@ -52,7 +168,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Reports",
-   "link_count": 1,
+   "link_count": 4,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -65,9 +181,39 @@
    "link_type": "Report",
    "onboard": 0,
    "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Hand-Off SLA Compliance",
+   "link_count": 0,
+   "link_to": "Hand-Off SLA Compliance",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Item Naming Audit",
+   "link_count": 0,
+   "link_to": "Item Naming Audit",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "BOM Explorer",
+   "link_count": 0,
+   "link_to": "BOM Explorer",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-09-11 16:00:00.000000",
+ "modified": "2026-09-11 20:00:00.000000",
  "modified_by": "Administrator",
  "module": null,
  "name": "Design Hub",
@@ -75,7 +221,13 @@
  "owner": "Administrator",
  "parent_page": "",
  "public": 1,
- "quick_lists": [],
+ "quick_lists": [
+  {
+   "document_type": "Water Feature Design",
+   "label": "Designs still open",
+   "quick_list_filter": "[[\"Water Feature Design\",\"status\",\"!=\",\"Issued\"]]"
+  }
+ ],
  "roles": [
   {
    "role": "Design Team"
@@ -87,19 +239,44 @@
  "sequence_id": 0.0,
  "shortcuts": [
   {
+   "color": "Blue",
+   "doc_view": "List",
+   "format": "{} in progress",
    "label": "Water Feature Design",
    "link_to": "Water Feature Design",
+   "stats_filter": "{\"status\":[\"!=\",\"Issued\"]}",
    "type": "DocType"
   },
   {
+   "doc_view": "List",
    "label": "Control Panel Design",
    "link_to": "Control Panel Design",
    "type": "DocType"
   },
   {
+   "doc_view": "List",
    "label": "Configurable Product",
    "link_to": "Configurable Product",
    "type": "DocType"
+  },
+  {
+   "color": "Blue",
+   "doc_view": "List",
+   "format": "{} active",
+   "label": "Project",
+   "link_to": "Project",
+   "stats_filter": "{\"status\":[\"in\",[\"Active\",\"Client Hold\"]]}",
+   "type": "DocType"
+  },
+  {
+   "label": "Water Engineering Wizard",
+   "link_to": "water-engineering-wizard",
+   "type": "Page"
+  },
+  {
+   "label": "Design Dashboard",
+   "type": "URL",
+   "url": "/app/design-dashboard"
   }
  ],
  "title": "Design Hub",

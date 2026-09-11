@@ -894,3 +894,10 @@ erpnext_enhancements.patches.backfill_dated_history
 # docstatus 2, AND expires_on differing from what _default_dates would derive. Everything else
 # gets a history_note and a NULL date. Safe twice.
 erpnext_enhancements.patches.backfill_certificate_revocation_dates
+# v1.401.0 (WI-074 G) -- re-imports all nine `* Hub` workspaces now that they carry grouped
+# link cards, count badges and quick lists. force=True because the ordinary sync is age-gated
+# against the ROW's timestamp and six people hold Workspace Manager, so any hand-edit makes the
+# file lose silently. Adopts `Executive Hub`, hand-made in the Desk in February and never in
+# this repo, carrying its Home Dashboard Tasks block across and dropping its shortcut to a Page
+# that does not exist on this site. Safe twice.
+erpnext_enhancements.patches.flesh_out_hub_workspaces

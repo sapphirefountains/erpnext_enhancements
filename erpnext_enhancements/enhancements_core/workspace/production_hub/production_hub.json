@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"ph_head_sc\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"ph_sc_sapphire_maintenance_record\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sapphire Maintenance Record\",\"col\":4}},{\"id\":\"ph_sc_site_hazard\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Site Hazard\",\"col\":4}},{\"id\":\"ph_sc_safety_incident\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Safety Incident\",\"col\":4}},{\"id\":\"ph_head_cards\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports &amp; Masters</b></span>\",\"col\":12}},{\"id\":\"ph_card_permits_and_isolation\",\"type\":\"card\",\"data\":{\"card_name\":\"Permits and isolation\",\"col\":4}},{\"id\":\"ph_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "content": "[{\"id\":\"ph_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"ph_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sapphire Maintenance Record\",\"col\":4}},{\"id\":\"ph_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Job Interval\",\"col\":4}},{\"id\":\"ph_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Safety Incident\",\"col\":4}},{\"id\":\"ph_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Site Hazard\",\"col\":4}},{\"id\":\"ph_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Day Board\",\"col\":4}},{\"id\":\"ph_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Time Kiosk\",\"col\":4}},{\"id\":\"ph_08\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Production Dashboard\",\"col\":4}},{\"id\":\"ph_09\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"ph_10\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Hazards still open\",\"col\":6}},{\"id\":\"ph_11\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Permits in force\",\"col\":6}},{\"id\":\"ph_12\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"ph_13\",\"type\":\"card\",\"data\":{\"card_name\":\"On the job\",\"col\":4}},{\"id\":\"ph_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Permits and isolation\",\"col\":4}},{\"id\":\"ph_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Safety\",\"col\":4}},{\"id\":\"ph_16\",\"type\":\"card\",\"data\":{\"card_name\":\"Stock and tools\",\"col\":4}},{\"id\":\"ph_17\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
  "creation": "2026-09-11 16:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -13,8 +13,66 @@
   {
    "hidden": 0,
    "is_query_report": 0,
+   "label": "On the job",
+   "link_count": 5,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Sapphire Maintenance Record",
+   "link_count": 0,
+   "link_to": "Sapphire Maintenance Record",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Job Interval",
+   "link_count": 0,
+   "link_to": "Job Interval",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Task",
+   "link_count": 0,
+   "link_to": "Task",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Project",
+   "link_count": 0,
+   "link_to": "Project",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Time Kiosk Log",
+   "link_count": 0,
+   "link_to": "Time Kiosk Log",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "Permits and isolation",
-   "link_count": 4,
+   "link_count": 5,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -51,6 +109,16 @@
   {
    "hidden": 0,
    "is_query_report": 0,
+   "label": "Lockout Periodic Inspection",
+   "link_count": 0,
+   "link_to": "Lockout Periodic Inspection",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "Lone Work Session",
    "link_count": 0,
    "link_to": "Lone Work Session",
@@ -61,8 +129,104 @@
   {
    "hidden": 0,
    "is_query_report": 0,
+   "label": "Safety",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Safety Incident",
+   "link_count": 0,
+   "link_to": "Safety Incident",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Site Hazard",
+   "link_count": 0,
+   "link_to": "Site Hazard",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "PPE Hazard Assessment",
+   "link_count": 0,
+   "link_to": "PPE Hazard Assessment",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Work Restriction",
+   "link_count": 0,
+   "link_to": "Work Restriction",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Stock and tools",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Item",
+   "link_count": 0,
+   "link_to": "Item",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Stock Entry",
+   "link_count": 0,
+   "link_to": "Stock Entry",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Storage Location",
+   "link_count": 0,
+   "link_to": "Storage Location",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Inventory Count Session",
+   "link_count": 0,
+   "link_to": "Inventory Count Session",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "Reports",
-   "link_count": 3,
+   "link_count": 6,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -72,6 +236,16 @@
    "label": "Job Photo Compliance",
    "link_count": 0,
    "link_to": "Job Photo Compliance",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Crew Qualification Roster",
+   "link_count": 0,
+   "link_to": "Crew Qualification Roster",
    "link_type": "Report",
    "onboard": 0,
    "type": "Link"
@@ -89,15 +263,35 @@
   {
    "hidden": 0,
    "is_query_report": 1,
+   "label": "Skills Matrix",
+   "link_count": 0,
+   "link_to": "Skills Matrix",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
    "label": "Supplier Pickup List",
    "link_count": 0,
    "link_to": "Supplier Pickup List",
    "link_type": "Report",
    "onboard": 0,
    "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Payroll Hours Export",
+   "link_count": 0,
+   "link_to": "Payroll Hours Export",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-09-11 16:00:00.000000",
+ "modified": "2026-09-11 20:00:00.000000",
  "modified_by": "Administrator",
  "module": null,
  "name": "Production Hub",
@@ -105,7 +299,18 @@
  "owner": "Administrator",
  "parent_page": "",
  "public": 1,
- "quick_lists": [],
+ "quick_lists": [
+  {
+   "document_type": "Site Hazard",
+   "label": "Hazards still open",
+   "quick_list_filter": "[[\"Site Hazard\",\"status\",\"=\",\"Open\"]]"
+  },
+  {
+   "document_type": "Confined Space Entry Permit",
+   "label": "Permits in force",
+   "quick_list_filter": "[[\"Confined Space Entry Permit\",\"status\",\"=\",\"Open\"]]"
+  }
+ ],
  "roles": [
   {
    "role": "Production Team"
@@ -120,19 +325,52 @@
  "sequence_id": 0.0,
  "shortcuts": [
   {
+   "doc_view": "List",
    "label": "Sapphire Maintenance Record",
    "link_to": "Sapphire Maintenance Record",
    "type": "DocType"
   },
   {
-   "label": "Site Hazard",
-   "link_to": "Site Hazard",
+   "color": "Green",
+   "doc_view": "List",
+   "format": "{} on the clock",
+   "label": "Job Interval",
+   "link_to": "Job Interval",
+   "stats_filter": "{\"status\":[\"in\",[\"Open\",\"Paused\"]]}",
    "type": "DocType"
   },
   {
+   "color": "Red",
+   "doc_view": "List",
+   "format": "{} open",
    "label": "Safety Incident",
    "link_to": "Safety Incident",
+   "stats_filter": "{\"status\":[\"in\",[\"Open\",\"Under investigation\"]]}",
    "type": "DocType"
+  },
+  {
+   "color": "Orange",
+   "doc_view": "List",
+   "format": "{} open",
+   "label": "Site Hazard",
+   "link_to": "Site Hazard",
+   "stats_filter": "{\"status\":\"Open\"}",
+   "type": "DocType"
+  },
+  {
+   "label": "Day Board",
+   "link_to": "maintenance-day-board",
+   "type": "Page"
+  },
+  {
+   "label": "Time Kiosk",
+   "link_to": "time-kiosk",
+   "type": "Page"
+  },
+  {
+   "label": "Production Dashboard",
+   "type": "URL",
+   "url": "/app/production-dashboard"
   }
  ],
  "title": "Production Hub",
