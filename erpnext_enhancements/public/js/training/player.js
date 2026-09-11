@@ -1079,9 +1079,21 @@
 			// here could not have matched whatever the server wrote. That is a
 			// separate bug from nothing setting the status, and it would have
 			// outlived the fix for it.
+			// This used to be `go("signoff"); return;` -- and it ran BEFORE the outline
+			// below was built, so a learner waiting on a supervisor could not open the
+			// course at all. It was a closed loop, not just a detour: renderSignoff's only
+			// exit was "Back to your courses", and that card calls openCourse ->
+			// renderCourse -> straight back here. There was no route to the lessons from
+			// anywhere in the app.
+			//
+			// The same three sentences now ride above the outline instead. Waiting on
+			// somebody else is a thing to be TOLD, not a reason to lock the door: the one
+			// question a learner has in that state is "what did I actually agree to?", and
+			// re-reading is the only way to answer it.
 			if (state.assignmentStatus === "Awaiting Sign-off") {
-				go("signoff");
-				return;
+				var waiting = signoffBox(course);
+				waiting.classList.add("is-banner");
+				main.appendChild(waiting);
 			}
 
 			var list = el("ol", "tr-outline");
@@ -2916,9 +2928,12 @@
 
 		// --------------------------------------------------------------- signoff
 
-		function renderSignoff() {
-			var course = state.course || {};
-			head.appendChild(el("h1", "tr-title", t("Waiting for sign-off")));
+		//: The "you are waiting on a supervisor" panel, built once and rendered in two
+		//: places: as the whole of the sign-off view, and as a banner above the course
+		//: outline. Shared rather than duplicated because the two must never drift --
+		//: a learner who reads one and then the other is reading about their own
+		//: record, and two versions of it is two answers to the same question.
+		function signoffBox(course) {
 			var box = el("div", "tr-signoff");
 			box.appendChild(
 				el("p", null,
@@ -2944,7 +2959,18 @@
 			// escalation job's business, and a learner-triggered nag would be one
 			// email per refresh.
 			box.appendChild(el("p", "tr-signoff-note", t("Nothing else is needed from you.")));
-			main.appendChild(box);
+			return box;
+		}
+
+		function renderSignoff() {
+			var course = state.course || {};
+			head.appendChild(el("h1", "tr-title", t("Waiting for sign-off")));
+			main.appendChild(signoffBox(course));
+			// The second exit, and the point of E1. Without it this view is a dead end:
+			// "Back to your courses" lands on a card that routes straight back here.
+			foot.appendChild(button(t("Review the course"), "tr-button tr-button-quiet", function () {
+				go("course");
+			}));
 			foot.appendChild(button(t("Back to your courses"), "tr-button", function () {
 				go("catalog");
 			}));

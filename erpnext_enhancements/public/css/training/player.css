@@ -610,6 +610,19 @@
 	margin: 0;
 }
 
+/* The same panel above a course outline rather than instead of it (E1). Flatter
+   and quieter than the standalone view: here it is a status line the learner
+   reads on the way past, not the whole screen. A modifier on the base class
+   rather than a class of its own -- `tests/test_training_player_css_contract.py`
+   requires a rule for every standalone class the scripts emit, and styles
+   `is-*` modifiers as `.base.is-state`. */
+.tr-signoff.is-banner {
+	gap: 8px;
+	margin-bottom: 20px;
+	box-shadow: none;
+	border-left: 3px solid var(--tr-accent, var(--tr-border));
+}
+
 /* Course-authored instructions: what the supervisor expects of the learner, so
    it is lifted out of the surrounding paragraphs. */
 .tr-signoff-what {
