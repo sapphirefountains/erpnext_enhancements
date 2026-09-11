@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"aigov_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>AI Governance</b></span>\",\"col\":12}},{\"id\":\"aigov_sc_pending\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Pending Confirmations\",\"col\":4}},{\"id\":\"aigov_sc_log\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Action Log\",\"col\":4}},{\"id\":\"aigov_sc_triton\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Triton Settings\",\"col\":4}},{\"id\":\"aigov_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"aigov_links\",\"type\":\"card\",\"data\":{\"card_name\":\"Records\",\"col\":4}},{\"id\":\"aigov_triton\",\"type\":\"card\",\"data\":{\"card_name\":\"Triton Assistant\",\"col\":4}}]",
+ "content": "[{\"id\":\"aigov_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>AI Governance</b></span>\",\"col\":12}},{\"id\":\"aigov_sc_pending\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Pending Confirmations\",\"col\":4}},{\"id\":\"aigov_sc_log\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Action Log\",\"col\":4}},{\"id\":\"aigov_sc_triton\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Triton Settings\",\"col\":4}},{\"id\":\"aigov_sc_routing\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Call Routing\",\"col\":4}},{\"id\":\"aigov_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"aigov_links\",\"type\":\"card\",\"data\":{\"card_name\":\"Records\",\"col\":4}},{\"id\":\"aigov_triton\",\"type\":\"card\",\"data\":{\"card_name\":\"Triton Assistant\",\"col\":4}},{\"id\":\"aigov_routing\",\"type\":\"card\",\"data\":{\"card_name\":\"Call Routing\",\"col\":4}}]",
  "creation": "2026-06-11 12:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -89,9 +89,35 @@
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Call Routing",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Call Routing Settings",
+   "link_to": "Call Routing Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Call Routing Rule",
+   "link_to": "Call Routing Rule",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-06-15 00:00:00.000000",
+ "modified": "2026-09-11 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "AI Governance",
  "name": "AI Governance",
@@ -120,6 +146,12 @@
   {
    "label": "Triton Settings",
    "link_to": "Triton Settings",
+   "type": "DocType"
+  },
+  {
+   "color": "Blue",
+   "label": "Call Routing",
+   "link_to": "Call Routing Settings",
    "type": "DocType"
   }
  ],

@@ -1,0 +1,414 @@
+{
+  "_readme": [
+    "Shared call-routing test vectors. This file is committed IDENTICALLY in two repos:",
+    "  erpnext_enhancements/tests/data/call_routing_vectors.json",
+    "  triton/backend/tests/data/call_routing_vectors.json",
+    "",
+    "The routing decision is made by Triton (it owns the Twilio webhook) against rules",
+    "configured in ERPNext (a System Manager owns the policy). That means the matcher",
+    "exists in both codebases, and two copies of an algorithm drift. These vectors are the",
+    "defence: change the behaviour on one side without the other and the other side's suite",
+    "goes red on the next CI run.",
+    "",
+    "So: if you are here because a test failed, the question is not 'how do I make this",
+    "pass' — it is 'which of the two implementations is now wrong'. Update the vectors only",
+    "when the CONTRACT is meant to change, and update both repos in the same breath.",
+    "",
+    "Cases use `routing` when present, otherwise the top-level `default_routing`."
+  ],
+
+  "e164": [
+    { "in": "7025214969", "out": "+17025214969", "why": "how production actually stores Employee.cell_number" },
+    { "in": "+1 (702) 521-4969", "out": "+17025214969", "why": "punctuation and spaces" },
+    { "in": "17025214969", "out": "+17025214969", "why": "already carries the country code" },
+    { "in": "+442071838750", "out": "+442071838750", "why": "an explicit + is trusted, not re-homed to the US" },
+    { "in": "555", "out": "", "why": "too short to dial — dropped rather than guessed at" },
+    { "in": "", "out": "", "why": "empty" },
+    { "in": null, "out": "", "why": "an unset field" },
+    { "in": "ext. 204", "out": "", "why": "digits that are not a phone number" }
+  ],
+
+  "number_match": [
+    { "from": "+18015551234", "patterns": ["801"], "expect": true, "why": "a partial entry is a prefix" },
+    { "from": "+18015551234", "patterns": ["8015551234"], "expect": true, "why": "exact" },
+    { "from": "8015551234", "patterns": ["+1 801-555-1234"], "expect": true, "why": "both sides normalise first" },
+    { "from": "+18015551234", "patterns": ["702"], "expect": false, "why": "different area code" },
+    { "from": "+18015551234", "patterns": [], "expect": false, "why": "an empty list matches nothing, not everything" },
+    { "from": "", "patterns": ["801"], "expect": false, "why": "a withheld caller ID cannot be compared" },
+    { "from": "anonymous", "patterns": ["801"], "expect": false, "why": "neither can a non-number" }
+  ],
+
+  "default_routing": {
+    "schema_version": 1,
+    "paused": false,
+    "timezone": "America/Denver",
+    "default_forward_number": "+17025214969",
+    "default_ring_seconds": 30,
+    "voicemail_message": "",
+    "holidays": ["2026-11-26"],
+    "rules": [
+      {
+        "name": "Service to Rich",
+        "priority": 10,
+        "intent": "Service",
+        "caller_scope": "Any caller",
+        "caller_numbers": [],
+        "schedule": "Weekdays",
+        "days": [0, 1, 2, 3, 4],
+        "from_time": "08:00:00",
+        "to_time": "17:00:00",
+        "skip_on_holidays": true,
+        "ring_seconds": 0,
+        "also_ring_softphones": true,
+        "targets": [{ "type": "number", "value": "+18015550111", "label": "Rich Hansen" }]
+      },
+      {
+        "name": "VIP line",
+        "priority": 20,
+        "intent": "Any",
+        "caller_scope": "Matching numbers",
+        "caller_numbers": ["801555"],
+        "schedule": "Any time",
+        "days": [],
+        "from_time": null,
+        "to_time": null,
+        "skip_on_holidays": false,
+        "ring_seconds": 45,
+        "also_ring_softphones": true,
+        "targets": [{ "type": "account_manager" }]
+      },
+      {
+        "name": "Weekend on-call",
+        "priority": 30,
+        "intent": "Any",
+        "caller_scope": "Any caller",
+        "caller_numbers": [],
+        "schedule": "Weekends",
+        "days": [5, 6],
+        "from_time": null,
+        "to_time": null,
+        "skip_on_holidays": false,
+        "ring_seconds": 0,
+        "also_ring_softphones": false,
+        "targets": [
+          { "type": "number", "value": "+17025214969", "label": "Brian Morisseau" },
+          { "type": "client", "value": "erpnext_brian_morisseau_sapphirefountains_com", "label": "brian.morisseau@sapphirefountains.com" }
+        ]
+      },
+      {
+        "name": "After hours",
+        "priority": 40,
+        "intent": "Any",
+        "caller_scope": "Any caller",
+        "caller_numbers": [],
+        "schedule": "Every day",
+        "days": [0, 1, 2, 3, 4, 5, 6],
+        "from_time": "17:00:00",
+        "to_time": "08:00:00",
+        "skip_on_holidays": false,
+        "ring_seconds": 0,
+        "also_ring_softphones": false,
+        "targets": [{ "type": "voicemail" }]
+      }
+    ]
+  },
+
+  "cases": [
+    {
+      "name": "weekday business hours, Service selected",
+      "facts": { "weekday": 1, "minutes": 600, "intent": "Service", "from_number": "+13035550000", "known_caller": false, "is_holiday": false },
+      "expect": {
+        "rule": "Service to Rich",
+        "voicemail": false,
+        "numbers": ["+18015550111"],
+        "clients": [],
+        "include_softphones": true,
+        "account_manager": false,
+        "ring_seconds": 30
+      },
+      "why": "ring_seconds 0 on the rule inherits the 30s default"
+    },
+    {
+      "name": "weekday business hours, a menu option no rule claims",
+      "facts": { "weekday": 1, "minutes": 600, "intent": "Rental", "from_number": "+13035550000", "known_caller": false, "is_holiday": false },
+      "expect": {
+        "rule": null,
+        "voicemail": false,
+        "numbers": ["+17025214969"],
+        "clients": [],
+        "include_softphones": true,
+        "account_manager": true,
+        "ring_seconds": 30
+      },
+      "why": "no match is not silence — it is exactly the behaviour that predated rules"
+    },
+    {
+      "name": "weekday evening falls to after hours",
+      "facts": { "weekday": 1, "minutes": 1140, "intent": "Service", "from_number": "+13035550000", "known_caller": false, "is_holiday": false },
+      "expect": { "rule": "After hours", "voicemail": true, "numbers": [], "clients": [], "include_softphones": false, "account_manager": false },
+      "why": "19:00 is outside the 08:00-17:00 window, so Service to Rich is passed over"
+    },
+    {
+      "name": "the after-hours window wraps past midnight",
+      "facts": { "weekday": 2, "minutes": 120, "intent": "General", "from_number": "+13035550000", "known_caller": false, "is_holiday": false },
+      "expect": { "rule": "After hours", "voicemail": true, "numbers": [], "clients": [], "include_softphones": false, "account_manager": false },
+      "why": "02:00 is inside 17:00-08:00. A naive start<=m<end would make this window match nothing at all"
+    },
+    {
+      "name": "weekend rings the on-call pair and nobody else",
+      "facts": { "weekday": 5, "minutes": 660, "intent": "Build", "from_number": "+13035550000", "known_caller": false, "is_holiday": false },
+      "expect": {
+        "rule": "Weekend on-call",
+        "voicemail": false,
+        "numbers": ["+17025214969"],
+        "clients": ["erpnext_brian_morisseau_sapphirefountains_com"],
+        "include_softphones": false,
+        "account_manager": false,
+        "ring_seconds": 30
+      },
+      "why": "also_ring_softphones off is the deliberate 'only these people' choice"
+    },
+    {
+      "name": "a VIP number beats the later rules but not an earlier one it does not match",
+      "facts": { "weekday": 1, "minutes": 600, "intent": "Rental", "from_number": "+18015559999", "known_caller": true, "is_holiday": false },
+      "expect": {
+        "rule": "VIP line",
+        "voicemail": false,
+        "numbers": [],
+        "clients": [],
+        "include_softphones": true,
+        "account_manager": true,
+        "ring_seconds": 45
+      },
+      "why": "priority 10 wants Service, so Rental reaches priority 20"
+    },
+    {
+      "name": "a holiday makes the office-hours rule stand down",
+      "facts": { "weekday": 3, "minutes": 600, "intent": "Service", "from_number": "+13035550000", "known_caller": false, "is_holiday": true },
+      "expect": {
+        "rule": null,
+        "voicemail": false,
+        "numbers": ["+17025214969"],
+        "clients": [],
+        "include_softphones": true,
+        "account_manager": true,
+        "ring_seconds": 30
+      },
+      "why": "Thanksgiving Thursday 10:00: skip_on_holidays drops rule 1, and 10:00 is outside the after-hours window"
+    },
+    {
+      "name": "known-caller scope excludes an unknown caller",
+      "routing": {
+        "schema_version": 1,
+        "paused": false,
+        "timezone": "America/Denver",
+        "default_forward_number": "+17025214969",
+        "default_ring_seconds": 30,
+        "holidays": [],
+        "rules": [
+          {
+            "name": "Customers only",
+            "priority": 10,
+            "intent": "Any",
+            "caller_scope": "Known customer",
+            "caller_numbers": [],
+            "schedule": "Any time",
+            "days": [],
+            "from_time": null,
+            "to_time": null,
+            "skip_on_holidays": false,
+            "ring_seconds": 0,
+            "also_ring_softphones": true,
+            "targets": [{ "type": "account_manager" }]
+          }
+        ]
+      },
+      "facts": { "weekday": 1, "minutes": 600, "intent": "General", "from_number": "+13035550000", "known_caller": false, "is_holiday": false },
+      "expect": { "rule": null, "voicemail": false, "numbers": ["+17025214969"], "clients": [], "include_softphones": true, "account_manager": true }
+    },
+    {
+      "name": "custom days are parsed from free text",
+      "routing": {
+        "schema_version": 1,
+        "paused": false,
+        "timezone": "America/Denver",
+        "default_forward_number": "",
+        "default_ring_seconds": 30,
+        "holidays": [],
+        "rules": [
+          {
+            "name": "Mon Wed Fri",
+            "priority": 10,
+            "intent": "Any",
+            "caller_scope": "Any caller",
+            "caller_numbers": [],
+            "schedule": "Custom days",
+            "custom_days": "Mon, Wed & Fri",
+            "from_time": null,
+            "to_time": null,
+            "skip_on_holidays": false,
+            "ring_seconds": 0,
+            "also_ring_softphones": true,
+            "targets": [{ "type": "number", "value": "+18015550111" }]
+          }
+        ]
+      },
+      "facts": { "weekday": 2, "minutes": 600, "intent": "General", "from_number": "", "known_caller": false, "is_holiday": false },
+      "expect": { "rule": "Mon Wed Fri", "voicemail": false, "numbers": ["+18015550111"], "clients": [], "include_softphones": true, "account_manager": false },
+      "why": "Wednesday is 2; note `days` is absent here so it must be derived from custom_days"
+    },
+    {
+      "name": "custom days do not match a day they do not name",
+      "routing": {
+        "schema_version": 1,
+        "paused": false,
+        "timezone": "America/Denver",
+        "default_forward_number": "",
+        "default_ring_seconds": 30,
+        "holidays": [],
+        "rules": [
+          {
+            "name": "Mon Wed Fri",
+            "priority": 10,
+            "intent": "Any",
+            "caller_scope": "Any caller",
+            "caller_numbers": [],
+            "schedule": "Custom days",
+            "custom_days": "Mon, Wed & Fri",
+            "from_time": null,
+            "to_time": null,
+            "skip_on_holidays": false,
+            "ring_seconds": 0,
+            "also_ring_softphones": true,
+            "targets": [{ "type": "number", "value": "+18015550111" }]
+          }
+        ]
+      },
+      "facts": { "weekday": 1, "minutes": 600, "intent": "General", "from_number": "", "known_caller": false, "is_holiday": false },
+      "expect": { "rule": null, "voicemail": false, "numbers": [], "clients": [], "include_softphones": true, "account_manager": true },
+      "why": "no default forward number configured, so the fallback is softphones alone"
+    },
+    {
+      "name": "a matched rule that resolves to nobody is passed over, not answered with silence",
+      "routing": {
+        "schema_version": 1,
+        "paused": false,
+        "timezone": "America/Denver",
+        "default_forward_number": "+17025214969",
+        "default_ring_seconds": 30,
+        "holidays": [],
+        "rules": [
+          {
+            "name": "Everyone is missing a cell number",
+            "priority": 10,
+            "intent": "Any",
+            "caller_scope": "Any caller",
+            "caller_numbers": [],
+            "schedule": "Any time",
+            "days": [],
+            "from_time": null,
+            "to_time": null,
+            "skip_on_holidays": false,
+            "ring_seconds": 0,
+            "also_ring_softphones": false,
+            "targets": []
+          }
+        ]
+      },
+      "facts": { "weekday": 1, "minutes": 600, "intent": "General", "from_number": "", "known_caller": false, "is_holiday": false },
+      "expect": { "rule": null, "voicemail": false, "numbers": ["+17025214969"], "clients": [], "include_softphones": true, "account_manager": true },
+      "why": "every Employee target was dropped at compile time for having no cell number — a live risk, since only 2 of 20 records had one"
+    },
+    {
+      "name": "voicemail is exclusive even when the rule also lists phones",
+      "routing": {
+        "schema_version": 1,
+        "paused": false,
+        "timezone": "America/Denver",
+        "default_forward_number": "+17025214969",
+        "default_ring_seconds": 30,
+        "holidays": [],
+        "rules": [
+          {
+            "name": "Nuisance caller",
+            "priority": 10,
+            "intent": "Any",
+            "caller_scope": "Matching numbers",
+            "caller_numbers": ["8885551212"],
+            "schedule": "Any time",
+            "days": [],
+            "from_time": null,
+            "to_time": null,
+            "skip_on_holidays": false,
+            "ring_seconds": 0,
+            "also_ring_softphones": true,
+            "targets": [{ "type": "voicemail" }, { "type": "number", "value": "+18015550111" }]
+          }
+        ]
+      },
+      "facts": { "weekday": 1, "minutes": 600, "intent": "General", "from_number": "+18885551212", "known_caller": false, "is_holiday": false },
+      "expect": { "rule": "Nuisance caller", "voicemail": true, "numbers": [], "clients": [], "include_softphones": false, "account_manager": false },
+      "why": "'send these callers to voicemail' cannot also mean 'and ring the office'"
+    },
+    {
+      "name": "paused falls back without consulting a single rule",
+      "routing": {
+        "schema_version": 1,
+        "paused": true,
+        "timezone": "America/Denver",
+        "default_forward_number": "+17025214969",
+        "default_ring_seconds": 30,
+        "holidays": [],
+        "rules": [
+          {
+            "name": "Would have matched",
+            "priority": 10,
+            "intent": "Any",
+            "caller_scope": "Any caller",
+            "caller_numbers": [],
+            "schedule": "Any time",
+            "days": [],
+            "from_time": null,
+            "to_time": null,
+            "skip_on_holidays": false,
+            "ring_seconds": 0,
+            "also_ring_softphones": false,
+            "targets": [{ "type": "voicemail" }]
+          }
+        ]
+      },
+      "facts": { "weekday": 1, "minutes": 600, "intent": "General", "from_number": "", "known_caller": false, "is_holiday": false },
+      "expect": { "rule": null, "voicemail": false, "numbers": ["+17025214969"], "clients": [], "include_softphones": true, "account_manager": true }
+    },
+    {
+      "name": "a payload from a newer ERPNext is refused rather than half-read",
+      "routing": {
+        "schema_version": 99,
+        "paused": false,
+        "default_forward_number": "+17025214969",
+        "default_ring_seconds": 30,
+        "rules": [
+          {
+            "name": "Shape this build does not understand",
+            "priority": 10,
+            "intent": "Any",
+            "caller_scope": "Any caller",
+            "schedule": "Any time",
+            "also_ring_softphones": false,
+            "targets": [{ "type": "voicemail" }]
+          }
+        ]
+      },
+      "facts": { "weekday": 1, "minutes": 600, "intent": "General", "from_number": "", "known_caller": false, "is_holiday": false },
+      "expect": { "rule": null, "voicemail": false, "numbers": ["+17025214969"], "clients": [], "include_softphones": true, "account_manager": true },
+      "why": "the deploys are independent, so either side can be newer"
+    },
+    {
+      "name": "garbage fails open",
+      "routing": { "schema_version": 1, "paused": false, "default_forward_number": "+17025214969", "default_ring_seconds": 30, "rules": "not a list" },
+      "facts": { "weekday": 1, "minutes": 600, "intent": "General", "from_number": "", "known_caller": false, "is_holiday": false },
+      "expect": { "rule": null, "voicemail": false, "numbers": ["+17025214969"], "clients": [], "include_softphones": true, "account_manager": true },
+      "why": "a configuration mistake must never route every caller to voicemail"
+    }
+  ]
+}

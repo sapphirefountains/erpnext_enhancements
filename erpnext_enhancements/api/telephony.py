@@ -897,7 +897,22 @@ def get_telephony_routing():
     outbound calls and SMS should present. Triton caches this briefly and
     falls back to its env config if the fetch fails, so editing Triton
     Settings is the only configuration step needed on this side.
+
+    Since 1.403.0 the payload also carries a ``routing`` block: the compiled
+    Call Routing Rules the gateway matches each inbound call against, plus the
+    default forward number, ring duration, voicemail wording and holiday dates
+    it needs to act on them. That rides on this endpoint deliberately rather
+    than on a new one — Triton already fetches this on a 60-second cache and
+    prefetches it while the caller listens to the IVR greeting, so the dial
+    decision never waits on an ERPNext round trip.
+
+    The two original keys are unchanged and are built before the routing block,
+    which is itself wrapped so it can only ever return a refusal rather than
+    raise: a gateway running an older build, or a broken rule set, must not take
+    down the softphone identities Triton has depended on since 1.23.0.
     """
+    from erpnext_enhancements.ai_governance import call_routing
+
     settings = frappe.get_doc("Triton Settings")
     users = _softphone_users(settings)
     if users:
@@ -907,7 +922,33 @@ def get_telephony_routing():
     return {
         "erpnext_client_identities": identities,
         "primary_number": (getattr(settings, "primary_twilio_number", "") or "").strip() or None,
+        "routing": call_routing.get_routing_payload(),
     }
+
+
+@frappe.whitelist()
+def preview_call_routing(from_number="", intent="General", at=None):
+    """Who would ring for a hypothetical inbound call, and why.
+
+    Backs the "Test Routing" button on Call Routing Settings. System Manager
+    only — this exposes staff mobile numbers and the shape of the on-call
+    arrangement, and it is the same role that can edit the rules.
+
+    Answers with the matched rule, the resolved legs, every rule that was
+    passed over *and the reason it was passed over*, and the configuration
+    warnings. A first-match-wins table that cannot explain itself is one nobody
+    trusts, and "why did that call not reach me" is the question this exists to
+    answer without anyone reading TwiML out of a Cloud Run log.
+    """
+    frappe.only_for("System Manager")
+
+    from erpnext_enhancements.ai_governance import call_routing
+
+    return call_routing.preview(
+        from_number=(from_number or "").strip(),
+        intent=(intent or "General").strip() or "General",
+        when=frappe.utils.get_datetime(at) if at else None,
+    )
 
 @frappe.whitelist(allow_guest=True)
 @validate_twilio_request

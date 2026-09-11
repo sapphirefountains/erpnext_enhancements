@@ -102,7 +102,7 @@ The app ships the Frappe modules registered in [`modules.txt`](erpnext_enhanceme
 | **Plaid Banking** (`plaid_banking/`) | Bank balance retrieval and caching | [README](erpnext_enhancements/plaid_banking/README.md) |
 | **Accounting Intake** (`accounting_intake/`) | Document intake → AI extraction → two-gate review → draft posting | [README](erpnext_enhancements/accounting_intake/README.md) |
 | **KPI Dashboards** (`kpi_dashboards/`) | Nightly department KPI snapshots and dashboard workspaces | [README](erpnext_enhancements/kpi_dashboards/README.md) |
-| **AI Governance** (`ai_governance/`) | AI write-confirmation records, Triton settings, model usage | [README](erpnext_enhancements/ai_governance/README.md) |
+| **AI Governance** (`ai_governance/`) | AI write-confirmation records, Triton settings, model usage, inbound call-routing rules | [README](erpnext_enhancements/ai_governance/README.md) |
 | **Integration Hub** (`integration_hub/`) | Integrations Health page, GA4 / Search Console dashboard | [README](erpnext_enhancements/integration_hub/README.md) |
 | **Google Drive** (`google_drive/`) | Drive folder provisioning, sync, link manager | [README](erpnext_enhancements/google_drive/README.md) |
 | **Morning Briefing** (`morning_briefing/`) | The per-user Daily Briefing cache | [README](erpnext_enhancements/morning_briefing/README.md) |

@@ -911,3 +911,9 @@ erpnext_enhancements.patches.flesh_out_hub_workspaces
 # Dashboard Charts, one of which ("Opportunities Won") plots exactly the 144 rows being
 # retired -- remapping without it turns a wrong chart into an empty one. Safe twice.
 erpnext_enhancements.patches.remap_orphan_opportunity_statuses
+# v1.403.0 -- re-imports the AI Governance workspace now that it carries a Call Routing
+# shortcut and link card. force=True because the ordinary sync is age-gated against the ROW's
+# timestamp: this workspace's JSON had sat at its 2026-06-15 write date, so file and row read
+# as the same age on every migrate and the edit would never have landed. Same failure that
+# left the Training workspace on its install default. Safe twice.
+erpnext_enhancements.patches.resync_ai_governance_workspace
