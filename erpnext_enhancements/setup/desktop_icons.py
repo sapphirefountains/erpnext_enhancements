@@ -51,12 +51,76 @@ def _sync():
 		frappe.db.set_value("Desktop Icon", label, "logo_url", url)
 		changed = True
 
+	if _sync_roles():
+		changed = True
+
 	if changed:
 		# `Desktop Icon` is read_only:1 and we wrote past the ORM, so its `on_update`
 		# -- which is what normally invalidates these two -- never ran. Both keys are
 		# required: `desktop_icons` holds the per-user icon list, `bootinfo` embeds it.
 		frappe.cache.delete_key("desktop_icons")
 		frappe.cache.delete_key("bootinfo")
+
+
+def _sync_roles():
+	"""Derive every tile's `roles` from its workspace's. Return True if anything moved.
+
+	**A tile is visible exactly when its page is openable**, which is the only rule
+	that does not rot. `Desktop Icon.roles` and `Workspace.roles` are two separate
+	gates in v16 -- `get_desktop_icons` intersects the first with the user's roles
+	(desktop_icon.py:182,:200), `Workspace.is_permitted` reads the second
+	(desk/desktop.py:59-74) -- so keeping them as two hand-maintained lists would
+	guarantee they drift, and the drift is silent in both directions: a tile that
+	opens a refusal, or a page nobody can find.
+
+	Deriving also means the decision is recorded once, in the workspace JSON that
+	ships in this repo, rather than twice.
+
+	**`Desktop Icon.roles` is show/hide, never a permission boundary.** Typing the
+	route still works; `Workspace.roles` is what actually refuses the page, and
+	DocPerms are what refuse the data. Nothing here is access control.
+
+	Note `roles: []` on a workspace means "no restriction beyond the module gate",
+	not "nobody" -- so an empty desired set correctly clears the tile's roles and
+	leaves it visible to everyone, which is what 26 of the 34 shipped workspaces want.
+
+	This function must NEVER call `get_desktop_icons()`. Without `bootinfo` that
+	returns [] and then caches the empty list per user (desktop_icon.py:184-212),
+	which would blank the home grid for everybody until the cache expired.
+	"""
+	changed = False
+
+	for label in TILES:
+		if not frappe.db.exists("Workspace", label) or not frappe.db.exists("Desktop Icon", label):
+			continue
+
+		desired = set(
+			frappe.get_all(
+				"Has Role",
+				filters={"parenttype": "Workspace", "parent": label},
+				pluck="role",
+			)
+			or []
+		)
+		current = set(
+			frappe.get_all(
+				"Has Role",
+				filters={"parenttype": "Desktop Icon", "parent": label},
+				pluck="role",
+			)
+			or []
+		)
+		if desired == current:
+			continue
+
+		# Through the ORM, because this is a child table. The logo_url stamp above
+		# writes past it deliberately; a child table cannot be set that way.
+		doc = frappe.get_doc("Desktop Icon", label)
+		doc.set("roles", [{"role": role} for role in sorted(desired)])
+		doc.save(ignore_permissions=True)
+		changed = True
+
+	return changed
 
 
 def _create_tile(label):

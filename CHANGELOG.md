@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.396.0] - 2026-09-11
+
+### Added
+
+- **Per-role home grids, which WI-072 recorded as impossible.** Its reasoning — "every active
+  employee holds roughly thirty roles", so role-gating achieves nothing — is about
+  `Workspace.roles`, and that is the wrong gate. Core v16's **`Desktop Icon` has its own `roles`
+  child table**, and `get_desktop_icons()` intersects it with `frappe.get_roles(user)` before boot
+  returns the grid. This app already stamps 34 tiles on every migrate, so the work was one unset
+  field on rows we already write.
+
+  The tile's roles are **derived** from its workspace's, not kept as a second list: a tile is
+  visible exactly when its page is openable. Two hand-maintained lists would drift, and the drift is
+  silent in both directions — a tile that opens a refusal, or a page nobody can find.
+
+  **`Desktop Icon.roles` is show/hide, never a permission boundary.** Typing the route still works.
+  `Workspace.roles` refuses the page; DocPerms refuse the data. Nothing here is access control, and
+  it must not be described as such. Worth knowing that zero icons in frappe or erpnext populate
+  `roles`, so the enforcement path — while real and readable — is unexercised upstream; it has its
+  own regression test here rather than trust.
+
+- **Seven team hubs**, one per `* Team` role. Six existed as hand-made shells carrying
+  `content = "[]"` — the per-role grids of WI-072 D1, started and never populated — and are now
+  adopted into the repo and filled. `Support Hub` is new: Support Team is the largest on the site at
+  thirteen people and had no hub at all. `Executive Hub` and `Finance Hub` were already finished and
+  gated, and were the template rather than work.
+
+  They route the reports that already existed and were reachable from nowhere: **22 of the app's 29
+  shipped reports were linked from no workspace or sidebar.** The grid content was built; it was
+  simply unrouted. Every role, doctype and report referenced was verified against production before
+  shipping — 10/10, 32/32, 19/19 — because a link to something that does not exist renders exactly
+  like one to something that does.
+
+  The hubs deliberately declare **no module**, for two reasons both checked against
+  `origin/version-16`. `Workspace.is_permitted` skips the module gate entirely when `module` is
+  NULL, and these are cross-functional — assigning any one module would hide a hub from everyone
+  holding no DocPerm in it, which is how the HR Manager ended up unable to see the Training
+  workspace at all. And `remove_orphan_entities` only force-deletes a workspace with **both**
+  `module` and `app` set, so a module here would be irreversible in practice: the first migrate that
+  could not find a matching file would delete the owner's page. `tests/test_workspaces.py` now
+  requires every workspace to declare a real module *or* be named in a short, justified
+  `MODULELESS_HUBS` list, so the next one cannot slip in unnoticed.
+
+- `patches/fill_team_hub_workspaces.py` imports them with `force=True`. Workspace import is
+  **timestamp-gated and fails in silence** — and these six rows carry whatever stamp the owner's
+  last Desk save produced, so no file timestamp can be guaranteed to win. Uses `import_file_by_path`
+  rather than `reload_doc`, whose first argument is a module these workspaces deliberately lack.
+
+### Changed
+
+- The `HR` workspace stays ungated and keeps its 23 links; its links already self-filter by each
+  viewer's read permission, so one page serves everybody their own half — time off, policies,
+  credentials, reporting a hazard. `HR Hub` is the gated surface, carrying the manager work and the
+  OSHA reports. Gating the module workspace itself would have taken self-service from thirteen
+  people to hide a handful of records from them.
+
 ## [1.395.2] - 2026-09-11
 
 ### Fixed

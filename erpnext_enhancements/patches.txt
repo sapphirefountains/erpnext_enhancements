@@ -869,3 +869,12 @@ erpnext_enhancements.patches.backfill_training_achievements
 erpnext_enhancements.patches.resync_hr_and_training_workspaces
 erpnext_enhancements.patches.link_reimbursement_suppliers
 erpnext_enhancements.patches.protect_employee_compensation_fields
+# v1.396.0 (WI-074 B) -- adopts the six hand-made `* Hub` workspaces into the repo and adds
+# Support Hub, the one Team with no hub at all (13 people, the largest). force=True because
+# workspace import is TIMESTAMP-gated and fails in silence: these rows carry whatever stamp
+# the owner's last Desk save produced, so no file timestamp can be guaranteed to win. They
+# deliberately declare NO module -- is_permitted skips the module gate when module is NULL
+# (these are cross-functional), and remove_orphan_entities only force-deletes a workspace
+# with BOTH module and app set, so a module here would be irreversible. Gating is entirely
+# on Workspace.roles, one `* Team` role each. Safe twice.
+erpnext_enhancements.patches.fill_team_hub_workspaces

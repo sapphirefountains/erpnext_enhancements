@@ -1,0 +1,203 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"hh_head_sc\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"hh_sc_employee\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Employee\",\"col\":4}},{\"id\":\"hh_sc_time_off_request\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Time Off Request\",\"col\":4}},{\"id\":\"hh_sc_onboarding_checklist\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Onboarding Checklist\",\"col\":4}},{\"id\":\"hh_sc_policy_acknowledgement\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Policy Acknowledgement\",\"col\":4}},{\"id\":\"hh_head_cards\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports &amp; Masters</b></span>\",\"col\":12}},{\"id\":\"hh_card_people\",\"type\":\"card\",\"data\":{\"card_name\":\"People\",\"col\":4}},{\"id\":\"hh_card_safety_records\",\"type\":\"card\",\"data\":{\"card_name\":\"Safety records\",\"col\":4}},{\"id\":\"hh_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "creation": "2026-09-11 16:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 1,
+ "icon": "hr",
+ "is_hidden": 0,
+ "label": "HR Hub",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "People",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Employee",
+   "link_count": 0,
+   "link_to": "Employee",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Position",
+   "link_count": 0,
+   "link_to": "Position",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Employee Credential",
+   "link_count": 0,
+   "link_to": "Employee Credential",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Tier Review",
+   "link_count": 0,
+   "link_to": "Tier Review",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Safety records",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Safety Incident",
+   "link_count": 0,
+   "link_to": "Safety Incident",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Site Hazard",
+   "link_count": 0,
+   "link_to": "Site Hazard",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Work Restriction",
+   "link_count": 0,
+   "link_to": "Work Restriction",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "HR Case Record",
+   "link_count": 0,
+   "link_to": "HR Case Record",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "OSHA 300 Log",
+   "link_count": 0,
+   "link_to": "OSHA 300 Log",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "OSHA 300A Summary",
+   "link_count": 0,
+   "link_to": "OSHA 300A Summary",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "OSHA Privacy Case List",
+   "link_count": 0,
+   "link_to": "OSHA Privacy Case List",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Qualification Coverage",
+   "link_count": 0,
+   "link_to": "Qualification Coverage",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-09-11 16:00:00.000000",
+ "modified_by": "Administrator",
+ "module": null,
+ "name": "HR Hub",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "HR Team"
+  },
+  {
+   "role": "HR Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "sequence_id": 0.0,
+ "shortcuts": [
+  {
+   "label": "Employee",
+   "link_to": "Employee",
+   "type": "DocType"
+  },
+  {
+   "label": "Time Off Request",
+   "link_to": "Time Off Request",
+   "type": "DocType"
+  },
+  {
+   "label": "Onboarding Checklist",
+   "link_to": "Onboarding Checklist",
+   "type": "DocType"
+  },
+  {
+   "label": "Policy Acknowledgement",
+   "link_to": "Policy Acknowledgement",
+   "type": "DocType"
+  }
+ ],
+ "title": "HR Hub",
+ "type": "Workspace"
+}

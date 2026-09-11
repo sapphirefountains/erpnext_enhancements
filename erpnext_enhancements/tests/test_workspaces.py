@@ -214,5 +214,113 @@ class TestFinanceHub(unittest.TestCase):
                     self.assertEqual(row.get("is_query_report"), 1)
 
 
+#: Workspaces that deliberately ship with no `module`. Keep this list SHORT and
+#: justified -- see TestModulelessWorkspacesAreDeliberate.
+MODULELESS_HUBS = {
+    "HR Hub",
+    "Design Hub",
+    "Marketing Hub",
+    "Sales Hub",
+    "Operations Hub",
+    "Production Hub",
+    "Support Hub",
+}
+
+TEAM_ROLE_FOR_HUB = {
+    "HR Hub": "HR Team",
+    "Design Hub": "Design Team",
+    "Marketing Hub": "Marketing Team",
+    "Sales Hub": "Sales Team",
+    "Operations Hub": "Operations Team",
+    "Production Hub": "Production Team",
+    "Support Hub": "Support Team",
+}
+
+
+class TestModulelessWorkspacesAreDeliberate(unittest.TestCase):
+    """A workspace with no `module` is a real choice with real consequences, and
+    nothing in the framework flags one. Two consequences worth naming:
+
+    * `Workspace.on_update` calls `export_to_files` only `if self.module`, so on a
+      developer bench a Desk edit to one of these is NOT written back to its JSON --
+      the repo stops being the source of truth for it silently;
+    * in exchange, `remove_orphan_entities` never force-deletes it (it filters on
+      module AND app both set), and `is_permitted` skips the module gate entirely,
+      which is what a cross-functional hub needs.
+
+    So the answer is not "never" -- it is "only on purpose, and listed here".
+    """
+
+    def test_every_workspace_declares_a_real_module_or_is_listed(self):
+        modules = {
+            m.strip()
+            for m in (APP_ROOT / "modules.txt").read_text(encoding="utf-8").splitlines()
+            if m.strip()
+        }
+        offenders = []
+        for path in workspace_files():
+            doc = load(path)
+            name = doc.get("name") or path.stem
+            module = doc.get("module")
+            if module:
+                if module not in modules:
+                    offenders.append(f"{name}: module {module!r} is not in modules.txt")
+            elif name not in MODULELESS_HUBS:
+                offenders.append(f"{name}: no module, and not listed in MODULELESS_HUBS")
+        self.assertEqual(offenders, [], "; ".join(offenders))
+
+    def test_the_scan_reaches_the_hubs(self):
+        """An allow-list rule over an empty corpus passes forever."""
+        names = {(load(p).get("name") or p.stem) for p in workspace_files()}
+        self.assertTrue(MODULELESS_HUBS.issubset(names))
+
+
+class TestTeamHubsAreGated(unittest.TestCase):
+    """The hubs exist to be per-role home grids. An ungated one is just another page.
+
+    `roles: []` reads as "public" and is not -- it means "no restriction beyond the
+    module gate", and these hubs have no module, so their gate is empty. For them,
+    and only for them, an empty roles table means genuinely everybody.
+    """
+
+    def _hub(self, name):
+        for path in workspace_files():
+            doc = load(path)
+            if (doc.get("name") or path.stem) == name:
+                return doc
+        raise AssertionError(f"{name} not found")
+
+    def test_each_hub_is_gated_on_its_team_role(self):
+        for name, role in TEAM_ROLE_FOR_HUB.items():
+            with self.subTest(hub=name):
+                roles = {r["role"] for r in self._hub(name).get("roles") or []}
+                self.assertIn(role, roles)
+                self.assertIn("System Manager", roles, "somebody must always be able to open it")
+
+    def test_no_hub_renders_empty(self):
+        """The defect being fixed. All six carried content "[]" -- a grid with nothing
+        in it, which reads as a broken page rather than an unfinished one."""
+        for name in TEAM_ROLE_FOR_HUB:
+            with self.subTest(hub=name):
+                doc = self._hub(name)
+                self.assertTrue(json.loads(doc.get("content") or "[]"))
+                self.assertTrue(doc.get("links") or doc.get("shortcuts"))
+
+    def test_every_content_block_has_a_backing_row(self):
+        """v1.146.0 shipped seven widgets whose blocks had no child rows: each drew an
+        empty div that still consumed its grid columns."""
+        for name in TEAM_ROLE_FOR_HUB:
+            with self.subTest(hub=name):
+                doc = self._hub(name)
+                cards = {c["label"] for c in doc.get("links") or [] if c.get("type") == "Card Break"}
+                shortcuts = {s["label"] for s in doc.get("shortcuts") or []}
+                for block in json.loads(doc.get("content") or "[]"):
+                    data = block.get("data") or {}
+                    if block.get("type") == "card":
+                        self.assertIn(data.get("card_name"), cards)
+                    elif block.get("type") == "shortcut":
+                        self.assertIn(data.get("shortcut_name"), shortcuts)
+
+
 if __name__ == "__main__":
     unittest.main()

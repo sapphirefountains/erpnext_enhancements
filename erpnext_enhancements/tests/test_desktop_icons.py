@@ -21,6 +21,7 @@ Pure filesystem + xml, no frappe/bench needed.
 Run: python -m unittest erpnext_enhancements.tests.test_desktop_icons
 """
 
+import ast
 import unittest
 from pathlib import Path
 from xml.etree import ElementTree
@@ -95,6 +96,70 @@ class TestDesktopIconArtwork(unittest.TestCase):
 				# contract between the reconciler and the committed artwork.
 				tail = url.split("/assets/erpnext_enhancements/", 1)[1]
 				self.assertTrue((APP_DIR / "public" / tail).is_file(), url)
+
+
+class TestTileRolesAreDerivedNotKept(unittest.TestCase):
+	"""WI-074. `Desktop Icon.roles` and `Workspace.roles` are two separate gates in
+	v16, and keeping them as two hand-maintained lists guarantees silent drift in
+	both directions: a tile that opens a refusal, or a page nobody can find.
+
+	So the tile's roles are derived from the workspace's at every migrate, and the
+	decision is recorded once -- in the workspace JSON that ships in this repo.
+	"""
+
+	SETUP = Path(__file__).resolve().parents[1] / "setup/desktop_icons.py"
+
+	def _src(self):
+		return self.SETUP.read_text(encoding="utf-8")
+
+	def test_the_reconciler_exists_and_runs_in_the_sync(self):
+		src = self._src()
+		self.assertIn("def _sync_roles(", src)
+		self.assertIn("if _sync_roles():", src)
+
+	def test_it_reads_the_workspace_as_the_source_of_truth(self):
+		src = self._src()
+		at = src.index("def _sync_roles(")
+		body = src[at : at + 2600]
+		self.assertIn('"parenttype": "Workspace"', body)
+		self.assertIn('"parenttype": "Desktop Icon"', body)
+
+	def test_it_never_calls_get_desktop_icons(self):
+		"""Without `bootinfo` that returns [] and CACHES the empty list per user,
+		which would blank the home grid for everybody until the cache expired.
+
+		Asserted on the parsed CALL nodes, not on the text: the docstring that warns
+		against this call necessarily names it, and a substring check matches the
+		warning. Sixth time that has bitten in this repo -- so stop text-matching.
+		"""
+		tree = ast.parse(self._src())
+		called = {
+			node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+			for node in ast.walk(tree)
+			if isinstance(node, ast.Call) and isinstance(node.func, (ast.Name, ast.Attribute))
+		}
+		self.assertNotIn("get_desktop_icons", called)
+
+	def test_the_map_carries_no_roles(self):
+		"""If roles appeared in TILES they would be a second list to keep in step,
+		which is the thing this design exists to avoid. TILES stays (slug, glyph,
+		colour)."""
+		for label, value in TILES.items():
+			with self.subTest(tile=label):
+				self.assertEqual(len(value), 3)
+
+	def test_every_team_hub_has_a_tile(self):
+		for hub in (
+			"HR Hub",
+			"Design Hub",
+			"Marketing Hub",
+			"Sales Hub",
+			"Operations Hub",
+			"Production Hub",
+			"Support Hub",
+		):
+			with self.subTest(hub=hub):
+				self.assertIn(hub, TILES)
 
 
 if __name__ == "__main__":
