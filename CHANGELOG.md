@@ -56,6 +56,38 @@ BambooHR.
   is the most performance-shaped data this module holds, and **your own is motivating where a
   colleague's is a ranking**.
 
+- **`Tier Review` — a promotion with a stated basis.** Because a tier *is* the sign-off
+  authority, moving somebody from Junior to Senior Technician hands them standing to attest
+  that other people can work alone. That makes a promotion a **permission grant**, and until
+  now it was a free-text edit to one field on an Employee record with no stated reason and
+  nothing to look back at.
+
+  So this is not a performance review, and what it lacks follows from that: no score, no
+  rating out of five, no weighting — the output is binary — and **no pay field, ever**, because
+  the moment it has one it stops being evidence for an authority grant and becomes a salary
+  negotiation. No cycle, no template, no KRA tree, no 360: that machinery is what the HR
+  category sells and it earns its keep somewhere above a hundred people.
+
+  Three things are load-bearing. **The lines are a snapshot**, derived once from the target
+  rung and frozen, so a review still says what *it* was measured against after somebody
+  changes the rung next March — evidence that silently re-bases is not evidence. **It refuses
+  to open against a rung nobody has configured**, because a review with no lines is an empty
+  checklist everybody signs, and the promotion it authorises would have a paper trail proving
+  nothing. And **the decision and the act are separate**: `Promote` records what was decided,
+  somebody then presses Apply, and that writes the position through the document so core
+  `Version` captures it. The system proposes, a human promotes.
+
+  The reviewer must outrank them on the same ladder — the same predicate as sign-off
+  authority, read from the same place. When nobody does, the picker **says so** rather than
+  failing quietly: on prod a Junior Technician has exactly one eligible reviewer, and that is
+  the most useful thing this screen can tell anybody.
+
+  Row-scoped tighter than time off. A Time Off Request says somebody is away on Thursday; a
+  Tier Review is a list of what they cannot yet do, in their own words. There is no
+  `reports_to` arm — a manager sees one by being named on it, not by where they sit on the
+  tree — and there is a document-level twin, because a query condition filters lists and says
+  nothing about `frappe.get_doc()`.
+
 - **A third sign-off outcome: `Supervised Only`.** Two outcomes forced a supervisor to choose
   between "I would send them alone" and "come back to me" for somebody who had just done the
   whole job correctly *with help*. Faced with that choice supervisors pick **Competent** — and

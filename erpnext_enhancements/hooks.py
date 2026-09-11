@@ -1919,6 +1919,11 @@ permission_query_conditions = {
 	# of. No position-tier arm on either: time off is "who plans your week", which
 	# is what reports_to means and what a competence ladder does not.
 	"Time Off Request": "erpnext_enhancements.hr_enhancements.permissions.timeoff_query_conditions",
+	# Tighter than time off, deliberately: a Tier Review is a list of what somebody
+	# cannot yet do, in their own words. Own reviews and ones you are named reviewer
+	# on -- no reports_to arm, because being somebody's manager is not a reason to
+	# read their self-assessment.
+	"Tier Review": "erpnext_enhancements.hr_enhancements.permissions.tier_review_query_conditions",
 	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_query_conditions",
 	# Chat (ADR 0009 §F.18): row-level scoping is MEMBERSHIP, not role. Chat Room is
 	# the only chat doctype carrying a DocPerm at all (`read` for "Chat User"), so it is
@@ -1973,6 +1978,10 @@ has_permission = {
 	"Training Profile Preference": "erpnext_enhancements.training.permissions.profile_preference_has_permission",
 	"Employee Credential": "erpnext_enhancements.hr_enhancements.permissions.credential_has_permission",
 	"Time Off Request": "erpnext_enhancements.hr_enhancements.permissions.timeoff_has_permission",
+	# The document-level twin. A query condition filters lists and says nothing
+	# about frappe.get_doc(), which is exactly the gap that left three Training
+	# doctypes readable by customers until v1.386.0.
+	"Tier Review": "erpnext_enhancements.hr_enhancements.permissions.tier_review_has_permission",
 	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_has_permission",
 	# Chat: the twin of every query condition above, and parity here is the house
 	# doctrine -- ten and ten before this block, four and four after it.

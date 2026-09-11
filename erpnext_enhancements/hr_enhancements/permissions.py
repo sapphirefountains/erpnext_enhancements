@@ -174,3 +174,48 @@ def credential_has_permission(doc, ptype=None, user=None):
 	if _is_unscoped(resolved):
 		return True
 	return doc.get("user") in _visible_users(resolved)
+
+
+def tier_review_query_conditions(user=None):
+	"""Your own review, and reviews you are the named reviewer on. Nothing else.
+
+	**Tighter than time off, on purpose.** A Time Off Request says somebody is
+	away on Thursday; a Tier Review is a list of what somebody cannot yet do, in
+	their own words and their reviewer's. It is the most performance-shaped record
+	in the module, and a colleague reading it is reading a ranking.
+
+	So there is no reports_to arm here either: a manager sees a review because
+	they are named on it, not because of where they sit on the tree. HR Manager and
+	System Manager are unscoped, as everywhere in this module — deliberately,
+	because somebody has to be able to answer "why was this person promoted" a year
+	later.
+	"""
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return ""
+	own = frappe.db.escape(resolved)
+	table = "`tabTier Review`"
+	return f"({table}.`user` = {own} or {table}.`reviewer_user` = {own})"
+
+
+def tier_review_has_permission(doc, ptype=None, user=None):
+	"""The document-level twin.
+
+	A query condition filters lists and says nothing about ``frappe.get_doc()``, so
+	without this a colleague could read any review by name through
+	``/api/resource`` — exactly the gap that made three Training doctypes readable
+	by customers in v1.386.0.
+	"""
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return True
+	if doc.get("user") == resolved or doc.get("reviewer_user") == resolved:
+		return True
+	# `user` and `reviewer_user` are both derived in validate(), so both are empty
+	# when the permission check runs on a NEW document. Fall back to the Employee
+	# named on the form, or nobody could open a review for somebody else -- the
+	# same defect the WI-072 branch review found in time off and onboarding.
+	for field in ("employee", "reviewer"):
+		if doc.get(field) and frappe.db.get_value("Employee", doc.get(field), "user_id") == resolved:
+			return True
+	return False

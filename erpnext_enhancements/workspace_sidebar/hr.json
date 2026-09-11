@@ -198,6 +198,17 @@
   {
    "child": 1,
    "collapsible": 1,
+   "icon": "trending-up",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Tier reviews",
+   "link_to": "Tier Review",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
    "icon": "check",
    "indent": 0,
    "keep_closed": 0,
@@ -232,7 +243,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-11 12:00:00.000000",
+ "modified": "2026-09-11 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "HR Enhancements",
  "name": "HR",

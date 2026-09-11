@@ -372,5 +372,244 @@ class TestTheThirdSignoffOutcome(unittest.TestCase):
         self.assertIn("NOT_YET_SOLO = (SUPERVISED_ONLY, NEEDS_PRACTICE)", src)
 
 
+class TestATierReviewIsEvidenceForAPermissionGrant(unittest.TestCase):
+    """Not a performance review — WI-073 A.
+
+    A `Position` tier IS the sign-off authority, so moving somebody up hands them
+    standing to attest that other people can work alone. Everything this record
+    does not have follows from that.
+    """
+
+    TR_JSON = MODULE / "doctype/tier_review/tier_review.json"
+    TR_PY = MODULE / "doctype/tier_review/tier_review.py"
+    TR_JS = MODULE / "doctype/tier_review/tier_review.js"
+    LINE_JSON = MODULE / "doctype/tier_review_line/tier_review_line.json"
+    ENDPOINTS = MODULE / "tier_review.py"
+    PERMISSIONS = MODULE / "permissions.py"
+    EMPLOYEE_JS = APP / "public/js/employee.js"
+
+    def test_there_is_no_pay_field_anywhere(self):
+        """Compensation is QuickBooks' world. The moment this grows one it stops
+        being evidence for an authority grant and becomes a salary negotiation,
+        and the two must not share a document."""
+        names = {f["fieldname"] for f in json.loads(_text(self.TR_JSON))["fields"]}
+        names |= {f["fieldname"] for f in json.loads(_text(self.LINE_JSON))["fields"]}
+        for absent in ("salary", "pay", "rate", "compensation", "increase", "bonus", "wage"):
+            with self.subTest(field=absent):
+                self.assertFalse(
+                    any(absent in n for n in names), f"a field matching {absent!r} exists"
+                )
+
+    def test_there_is_no_score(self):
+        """The output is binary -- they stand on the rung or they do not. A number
+        invites a threshold, and a threshold invites gaming."""
+        names = {f["fieldname"] for f in json.loads(_text(self.TR_JSON))["fields"]}
+        for absent in ("score", "rating_total", "percent", "weight", "points"):
+            with self.subTest(field=absent):
+                self.assertFalse(any(absent in n for n in names))
+
+    def test_the_lines_are_a_frozen_snapshot(self):
+        fields = {f["fieldname"]: f for f in json.loads(_text(self.LINE_JSON))["fields"]}
+        for name in ("requirement_kind", "requirement_label", "held_at_open"):
+            with self.subTest(field=name):
+                self.assertEqual(fields[name].get("read_only"), 1)
+        # And nothing recomputes them after the open.
+        src = _src(self.ENDPOINTS)
+        self.assertIn("held_at_open", _fn("open_review", self.ENDPOINTS))
+        for fn in ("decide", "apply_promotion", "send_to_reviewer"):
+            with self.subTest(fn=fn):
+                self.assertNotIn("held_at_open", _fn(fn, self.ENDPOINTS))
+
+    def test_it_refuses_to_open_against_an_unconfigured_rung(self):
+        """The guardrail. A review with no lines is an empty checklist everybody
+        signs, and the promotion it authorises would have a paper trail proving
+        nothing -- a laundered permission grant."""
+        body = _fn("open_review", self.ENDPOINTS)
+        at = body.index('readiness.get("configured")')
+        self.assertIn("frappe.throw", body[at : at + 400])
+        # And the refusal must come BEFORE any document is created.
+        self.assertLess(at, body.index("frappe.new_doc"))
+
+    def test_opening_one_is_not_open_to_everybody(self):
+        """The form button is drawn for HR only, but a client check decides what to
+        DRAW and never what is allowed."""
+        body = _fn("open_review", self.ENDPOINTS)
+        self.assertIn("eligible_reviewers", body)
+        self.assertIn("DECIDER_ROLES", body)
+        self.assertIn("PermissionError", body)
+
+    def test_self_review_is_refused_first_and_unconditionally(self):
+        """The sentence an auditor reads out. A promotion somebody granted
+        themselves is not evidence of anything."""
+        controller = _fn("_reject_self_review", self.TR_PY)
+        self.assertIn("PermissionError", controller)
+        for fn in ("decide", "apply_promotion"):
+            with self.subTest(fn=fn):
+                body = _fn(fn, self.ENDPOINTS)
+                self.assertIn("doc.user == me", body)
+
+    def test_status_and_decision_cannot_be_edited_directly(self):
+        """`Employee` holds write here -- it has to, somebody fills in their own
+        self-assessment -- so an editable decision field would let any of the
+        sixteen authorise their own promotion. read_only is not enough: Frappe does
+        not enforce it against the API. Exactly the hole the WI-072 review found in
+        Time Off Request, avoided here by writing the guard with the field."""
+        fields = {f["fieldname"]: f for f in json.loads(_text(self.TR_JSON))["fields"]}
+        for name in ("status", "decision", "decision_note"):
+            with self.subTest(field=name):
+                self.assertEqual(fields[name].get("read_only"), 1)
+        for guard in ("_guard_status", "_guard_decision"):
+            with self.subTest(guard=guard):
+                body = _fn(guard, self.TR_PY)
+                self.assertIn("get_doc_before_save", body)
+                self.assertIn("frappe.throw", body)
+        # And every endpoint that writes the document must flag its own
+        # transition, or the guard refuses the legitimate path too. Derived from
+        # the source rather than counted against a magic number: the count was
+        # wrong on the first run, and a number in a test is a thing that goes
+        # stale silently the next time a transition is added.
+        import ast
+
+        tree = ast.parse(_text(self.ENDPOINTS))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            writes = any(
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and n.func.attr in ("save", "insert")
+                and getattr(n.func.value, "id", None) == "doc"
+                for n in ast.walk(node)
+            )
+            if not writes:
+                continue
+            flags = any(
+                isinstance(n, ast.Attribute) and n.attr == "tier_transition"
+                for n in ast.walk(node)
+            )
+            with self.subTest(fn=node.name):
+                self.assertTrue(
+                    flags,
+                    f"{node.name} writes the document without flagging its transition, "
+                    "so _guard_status will refuse it",
+                )
+
+    def test_deciding_and_promoting_are_separate_acts(self):
+        """The system proposes, a human promotes -- WI-072 decision 6. The position
+        carries authority over other people, so granting it should be somebody
+        pressing a button, not a side effect of saving a form."""
+        decide = _fn("decide", self.ENDPOINTS)
+        self.assertNotIn("custom_position", decide)
+        apply_ = _fn("apply_promotion", self.ENDPOINTS)
+        self.assertIn("custom_position", apply_)
+        self.assertIn("applied_on", apply_)
+
+    def test_the_promotion_is_written_through_the_document(self):
+        """So core `Version` records it and the audit trail is the framework's --
+        and so the fetched tier is populated, which db.set_value would not do."""
+        body = _fn("apply_promotion", self.ENDPOINTS)
+        self.assertIn("employee.save(", body)
+        self.assertNotIn("db.set_value", body)
+        self.assertIn("custom_position_tier", body)
+
+    def test_not_yet_requires_a_reason(self):
+        """A refusal with no reason leaves somebody nothing to work on. Same rule
+        as a declined time-off request and a non-competent sign-off."""
+        body = _fn("decide", self.ENDPOINTS)
+        at = body.index("decision == NOT_YET")
+        self.assertIn("frappe.throw", body[at : at + 200])
+
+    def test_the_reviewer_must_outrank_them_on_the_same_ladder(self):
+        """The same predicate as sign-off authority, read from the same place, so
+        the two cannot come to disagree about who has standing."""
+        body = _fn("send_to_reviewer", self.ENDPOINTS)
+        self.assertIn("eligible_reviewers", body)
+        self.assertIn("PermissionError", body)
+
+    def test_an_applied_promotion_cannot_be_cancelled_away(self):
+        body = _fn("cancel_review", self.ENDPOINTS)
+        self.assertIn("applied_on", body)
+
+
+class TestTheTierReviewIsReachable(unittest.TestCase):
+    """Three correct server sides have shipped here with nothing calling them.
+    This suite exists so that cannot be four.
+    """
+
+    ENDPOINTS = MODULE / "tier_review.py"
+    TR_JS = MODULE / "doctype/tier_review/tier_review.js"
+    EMPLOYEE_JS = APP / "public/js/employee.js"
+
+    def test_every_whitelisted_endpoint_has_a_caller(self):
+        import ast
+
+        tree = ast.parse(_text(self.ENDPOINTS))
+        whitelisted = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for dec in node.decorator_list:
+                target = dec.func if isinstance(dec, ast.Call) else dec
+                if getattr(target, "attr", None) == "whitelist":
+                    whitelisted.add(node.name)
+        self.assertGreaterEqual(len(whitelisted), 5)
+
+        callers = _js(self.TR_JS) + _js(self.EMPLOYEE_JS)
+        for name in sorted(whitelisted):
+            with self.subTest(endpoint=name):
+                self.assertIn(f"tier_review.{name}", callers)
+
+    def test_the_entry_point_is_on_the_person_not_only_its_own_list(self):
+        """"Is this person ready for the next rung" is a question somebody asks
+        while looking at the person, and a feature reachable only from its own
+        list view is one nobody finds."""
+        self.assertIn("open_review", _js(self.EMPLOYEE_JS))
+
+    def test_the_picker_says_so_when_nobody_can_review(self):
+        """On prod a Junior Technician has exactly one eligible reviewer. An empty
+        list is the most useful thing this screen can show -- it is the fact the
+        deliverable exists to surface -- so it must not fail silently."""
+        body = _js(self.TR_JS)
+        at = body.index("reviewers_for")
+        block = body[at : at + 1200]
+        self.assertIn("if (!people.length)", block)
+        self.assertIn("msgprint", block)
+
+
+class TestATierReviewIsNotReadableByColleagues(unittest.TestCase):
+    """A list of what somebody cannot yet do, in their own words. Tighter than
+    time off, which only says they are away on Thursday.
+    """
+
+    PERMISSIONS = MODULE / "permissions.py"
+
+    def test_the_row_filter_has_no_reports_to_arm(self):
+        """Being somebody's manager is not a reason to read their
+        self-assessment -- they see it by being named on it."""
+        body = _fn("tier_review_query_conditions", self.PERMISSIONS)
+        self.assertNotIn("reports_to", body)
+        self.assertIn("reviewer_user", body)
+
+    def test_there_is_a_document_level_twin(self):
+        """A query condition filters lists and says nothing about get_doc(), which
+        is exactly the gap that left three Training doctypes readable by customers
+        until v1.386.0."""
+        self.assertIn("def tier_review_has_permission", _text(self.PERMISSIONS))
+
+    def test_both_are_registered_in_hooks(self):
+        hooks = _text(APP / "hooks.py")
+        for fn in ("tier_review_query_conditions", "tier_review_has_permission"):
+            with self.subTest(fn=fn):
+                self.assertIn(fn, hooks)
+
+    def test_creating_one_for_somebody_else_is_not_refused(self):
+        """`user` and `reviewer_user` are both derived in validate(), so both are
+        empty when the permission check runs on a NEW row -- the same defect the
+        WI-072 review found in time off and onboarding."""
+        body = _fn("tier_review_has_permission", self.PERMISSIONS)
+        self.assertIn('"employee"', body)
+        self.assertIn('"reviewer"', body)
+
+
 if __name__ == "__main__":
     unittest.main()
