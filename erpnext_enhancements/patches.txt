@@ -901,3 +901,9 @@ erpnext_enhancements.patches.backfill_certificate_revocation_dates
 # this repo, carrying its Home Dashboard Tasks block across and dropping its shortcut to a Page
 # that does not exist on this site. Safe twice.
 erpnext_enhancements.patches.flesh_out_hub_workspaces
+# v1.402.0 -- re-imports the AI Governance workspace now that it carries a Call Routing
+# shortcut and link card. force=True because the ordinary sync is age-gated against the ROW's
+# timestamp: this workspace's JSON had sat at its 2026-06-15 write date, so file and row read
+# as the same age on every migrate and the edit would never have landed. Same failure that
+# left the Training workspace on its install default. Safe twice.
+erpnext_enhancements.patches.resync_ai_governance_workspace

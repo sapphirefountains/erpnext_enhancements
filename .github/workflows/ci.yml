@@ -1620,6 +1620,30 @@ jobs:
       # silently on production only.
       - name: Triton chat attachments (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_triton_attachments.py -q
+      # Call routing (v1.402.0). The rules are configured here and matched in Triton --
+      # Triton owns the Twilio webhook and already caches this app's get_telephony_routing,
+      # so making ERPNext decide per call would put a blocking HTTP request inside a live
+      # call. The cost of that split is the same matcher living in two repos that deploy
+      # independently, and two copies of an algorithm drift.
+      #
+      # Hence tests/data/call_routing_vectors.json, committed byte-identical here and in
+      # triton/backend/tests/data/. Both suites read it, so a change on one side reddens the
+      # other. The failure it exists to catch has no other alarm: the symptom of a
+      # disagreement is a phone that does not ring, for one caller in ten, noticed weeks
+      # later by someone who assumes they missed the call.
+      #
+      # Two specifics worth the step surviving a future cleanup. An after-hours window like
+      # 17:00-08:00 ends earlier than it starts, and a naive `start <= now < end` makes the
+      # most obvious rule anyone would type match at no time of day at all. And every
+      # failure path -- unparseable rule, payload from a newer ERPNext, garbage -- must fall
+      # back to ringing everyone, because the mistake people can live with is the wrong
+      # phone ringing, not silence.
+      #
+      # Needs no frappe stub: call_routing_match imports nothing but the standard library,
+      # which is exactly what makes it portable to Triton. If it ever needs one, something
+      # frappe-shaped has leaked into the matcher.
+      - name: Call routing matcher (shared vectors, midnight wrap, fail-open)
+        run: python -m unittest erpnext_enhancements.tests.test_call_routing -v
       # The repo's first JavaScript test, and it needs no runner beyond the node
       # already on the GitHub image — deliberately not a new framework.
       #

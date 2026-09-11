@@ -1,0 +1,194 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:rule_name",
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "rule_name",
+  "enabled",
+  "column_break_head",
+  "priority",
+  "conditions_section",
+  "applies_to_intent",
+  "caller_scope",
+  "column_break_conditions",
+  "caller_numbers",
+  "schedule_section",
+  "schedule",
+  "custom_days",
+  "column_break_schedule",
+  "from_time",
+  "to_time",
+  "skip_on_holidays",
+  "ring_section",
+  "also_ring_softphones",
+  "ring_seconds",
+  "targets"
+ ],
+ "fields": [
+  {
+   "description": "A short name for this rule. It is written into the Triton call log when the rule fires, so name it the way you would describe it out loud: \"After hours\", \"Service calls to Rich\", \"Weekend on-call\".",
+   "fieldname": "rule_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Rule Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "1",
+   "description": "Untick to park a rule without deleting it. Disabled rules are never sent to the gateway.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "10",
+   "description": "Lower numbers are checked first, and the FIRST rule that matches wins — nothing after it is considered. Leave gaps (10, 20, 30) so a rule can be slotted in between later without renumbering everything.",
+   "fieldname": "priority",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Priority"
+  },
+  {
+   "description": "All of the conditions in this section and the next must be true for the rule to fire.",
+   "fieldname": "conditions_section",
+   "fieldtype": "Section Break",
+   "label": "Which calls"
+  },
+  {
+   "default": "Any",
+   "description": "Which option the caller pressed in the phone menu. \"General\" is what they get for pressing nothing.",
+   "fieldname": "applies_to_intent",
+   "fieldtype": "Select",
+   "label": "Menu Selection",
+   "options": "Any\nRental\nDesign\nBuild\nService\nGeneral"
+  },
+  {
+   "default": "Any caller",
+   "description": "\"Known customer\" means the calling number is already on a Customer or Contact record.",
+   "fieldname": "caller_scope",
+   "fieldtype": "Select",
+   "label": "Who Is Calling",
+   "options": "Any caller\nKnown customer\nUnknown caller\nMatching numbers"
+  },
+  {
+   "fieldname": "column_break_conditions",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.caller_scope == \"Matching numbers\"",
+   "description": "One number per line. A partial number is a prefix, so 801 matches every 801 number and 8015551234 matches exactly one. Leaving this empty makes the rule match nothing rather than everything.",
+   "fieldname": "caller_numbers",
+   "fieldtype": "Small Text",
+   "label": "Calling From"
+  },
+  {
+   "fieldname": "schedule_section",
+   "fieldtype": "Section Break",
+   "label": "When"
+  },
+  {
+   "default": "Any time",
+   "description": "Days this rule covers. \"Any time\" ignores the clock entirely.",
+   "fieldname": "schedule",
+   "fieldtype": "Select",
+   "label": "Days",
+   "options": "Any time\nEvery day\nWeekdays\nWeekends\nCustom days"
+  },
+  {
+   "depends_on": "eval:doc.schedule == \"Custom days\"",
+   "description": "Free text, e.g. \"Mon, Wed, Fri\" or \"Tue & Thu\".",
+   "fieldname": "custom_days",
+   "fieldtype": "Data",
+   "label": "Which Days"
+  },
+  {
+   "fieldname": "column_break_schedule",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.schedule != \"Any time\"",
+   "description": "Start of the window, in office time. A window that ends EARLIER than it starts wraps past midnight: 17:00 to 08:00 means evenings and early mornings. Note that the day filter above still applies to the day the call arrives, so a Weekdays 17:00-08:00 rule covers Monday-Friday evenings and Monday-Friday early mornings — it does not stretch Friday evening into Saturday.",
+   "fieldname": "from_time",
+   "fieldtype": "Time",
+   "label": "From"
+  },
+  {
+   "depends_on": "eval:doc.schedule != \"Any time\"",
+   "description": "End of the window. Leave both times blank to cover the whole of the selected days.",
+   "fieldname": "to_time",
+   "fieldtype": "Time",
+   "label": "Until"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.schedule != \"Any time\"",
+   "description": "Skip this rule on dates in the Holiday List chosen in Call Routing Settings. Tick it on your normal office-hours rule so holidays fall through to the after-hours rule below it.",
+   "fieldname": "skip_on_holidays",
+   "fieldtype": "Check",
+   "label": "Skip On Holidays"
+  },
+  {
+   "description": "Everything listed here rings at the same time.",
+   "fieldname": "ring_section",
+   "fieldtype": "Section Break",
+   "label": "Ring"
+  },
+  {
+   "default": "1",
+   "description": "Also ring the desk and browser softphones as usual, in addition to the targets below. Leave this on unless you specifically want ONLY the people listed to be reachable — a rule with this off and a bad target list is how a call reaches nobody.",
+   "fieldname": "also_ring_softphones",
+   "fieldtype": "Check",
+   "label": "Also Ring Softphones"
+  },
+  {
+   "default": "0",
+   "description": "Seconds to ring before taking a message. Leave at 0 to use the default in Call Routing Settings.",
+   "fieldname": "ring_seconds",
+   "fieldtype": "Int",
+   "label": "Ring For (Seconds)"
+  },
+  {
+   "description": "Twilio rings at most 10 endpoints on one call, softphones included. Anything past the tenth is not dialed.",
+   "fieldname": "targets",
+   "fieldtype": "Table",
+   "label": "Targets",
+   "options": "Call Routing Target"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "AI Governance",
+ "name": "Call Routing Rule",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "priority",
+ "sort_order": "ASC",
+ "states": [],
+ "track_changes": 1
+}

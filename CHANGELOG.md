@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.402.0] - 2026-09-11
+
+### Added
+
+- **Inbound call routing is now configuration, not a constant.** Where the phone rings has
+  until now been a literal in the Triton gateway's `config.py` — not in `.env.base`, not in
+  `secrets.manifest`, so changing it meant a code change and a deploy, and it had been
+  pointing at a dead number. Three new DocTypes replace it, all System Manager, all in
+  **AI Governance** beside `Triton Settings`:
+  **`Call Routing Settings`** (Single — the default forward number, ring duration, an
+  optional Holiday List, voicemail wording), **`Call Routing Rule`** (ordered by `priority`,
+  **first match wins**, matching on phone-menu selection, known/unknown/specific caller, and
+  days plus times), and **`Call Routing Target`** (a child row: an Employee, a softphone
+  user, the caller's account manager, or voicemail).
+- **`erpnext_enhancements.api.telephony.get_telephony_routing` now carries a `routing`
+  block** with the compiled rules. Deliberately that endpoint rather than a new one: Triton
+  already fetches it on a 60-second cache and *prefetches* it while the caller is listening
+  to the phone menu, precisely so the dial decision never waits on us. Making ERPNext decide
+  per call would put a blocking HTTP request inside a live Twilio webhook, which is the
+  failure Triton's own CLAUDE.md records as having frozen its event loop. The two original
+  keys are built first and the routing block is wrapped, so a broken rule set cannot take
+  down the softphone identities Triton has depended on since 1.23.0.
+- **`preview_call_routing` and a "Test Routing" button** on the settings form, answering who
+  would ring for a hypothetical call, at a hypothetical time, *and why the other rules did
+  not*. An ordered first-match table whose decisions you cannot interrogate is one nobody
+  trusts, and "why did that call not reach me" should not be answered by reading TwiML out
+  of a Cloud Run log. System Manager only — the answer contains staff mobile numbers — and
+  it resolves the caller with `create_if_missing=False`, because a preview that quietly
+  creates a Customer and Contact for every number somebody types would be its own bug.
+
+### Changed
+
+- The `routing` payload resolves Employees to **E.164** numbers before sending them. This is
+  not decoration: production stores `Employee.cell_number` as bare digits (`"7025214969"`),
+  which Twilio will not reliably accept on a `<Number>`. Compiling here also means an
+  unreachable target is reported while somebody is *editing the rule* rather than being
+  discovered as a phone that did not ring — which matters more than it sounds, because on
+  2026-09-11 only **2 of 20** Employee records had a cell number at all. Every dropped
+  target is surfaced in the payload, on the form (as a warning, never a refusal — an
+  18-in-20 throw rate would make the form unusable), and in the preview.
+
+### Notes for the next reader
+
+- **This ships dormant.** Nothing in ERPNext acts on these rules; the gateway does, and the
+  gateway does not read the new block until its own release lands. Until then the payload is
+  written and ignored, and call handling is exactly what it was.
+- **The matcher lives in two repos on purpose**, and that is a drift hazard with a real
+  defence. `ai_governance/call_routing_match.py` is dependency-free — standard library only,
+  no `frappe` — and is copied into Triton verbatim; both are pinned by
+  `tests/data/call_routing_vectors.json`, committed byte-identical in each repo, so a
+  behaviour change on one side reddens the other side's CI. Keep that module pure: the
+  moment it imports `frappe` the Triton copy becomes hand-maintained and the vectors stop
+  proving anything. The bug this guards has no other alarm — its only symptom is a phone
+  that does not ring, for one caller in ten, noticed weeks later.
+- **Three behaviours that will otherwise surprise somebody.** A matching rule is
+  *authoritative* about who rings, because an additive rule could never narrow anything and
+  "send Saturday calls to Brian only" would be inexpressible — the safety valve is per-rule
+  (`also_ring_softphones` defaults on). No match means *today's* behaviour, not silence:
+  every softphone plus the default forward number, and the same for `paused`, an empty rule
+  set, a payload from a newer ERPNext, or anything that raises, because the mistake people
+  can live with is the wrong phone ringing rather than none. And a time window whose end is
+  *earlier* than its start wraps past midnight — a naive `start <= now < end` makes
+  `17:00`–`08:00`, the most obvious after-hours window anybody would type, match at no time
+  of day whatsoever.
+- `patches/resync_ai_governance_workspace.py` re-imports the AI Governance workspace for the
+  new Call Routing shortcut and card. Its JSON `modified` is bumped too, and both halves are
+  needed: `import_file` is age-gated against the stored row, so an unbumped file is skipped
+  every migrate, and `force=True` covers the case where somebody has hand-edited the
+  workspace in the Desk and moved the row's timestamp past the file's for good.
+
 ## [1.401.0] - 2026-09-11
 
 ### Added

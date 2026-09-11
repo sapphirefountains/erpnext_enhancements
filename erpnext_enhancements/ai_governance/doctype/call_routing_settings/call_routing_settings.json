@@ -1,0 +1,91 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "switch_section",
+  "paused",
+  "default_forward_number",
+  "column_break_switch",
+  "default_ring_seconds",
+  "holiday_list",
+  "voicemail_section",
+  "voicemail_message"
+ ],
+ "fields": [
+  {
+   "fieldname": "switch_section",
+   "fieldtype": "Section Break",
+   "label": "Fallback"
+  },
+  {
+   "default": "0",
+   "description": "Ignore every Call Routing Rule and fall back to the default below plus the usual softphones. Named for the OFF state on purpose: a Single that has never been saved has no row in the database at all, so an \"enabled\" field would read as false and ship this feature dead (CLAUDE.md). Naming it \"paused\" makes the never-saved state the running state.",
+   "fieldname": "paused",
+   "fieldtype": "Check",
+   "label": "Pause Rules"
+  },
+  {
+   "description": "The number that rings when no rule matches — evenings, weekends, anything not covered. This is the plain forwarding number the phone system used before rules existed, and leaving it blank falls back to the gateway's own configured number rather than to silence.",
+   "fieldname": "default_forward_number",
+   "fieldtype": "Data",
+   "label": "Default Forward Number",
+   "options": "Phone"
+  },
+  {
+   "fieldname": "column_break_switch",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "30",
+   "description": "How long to ring before taking a message, unless a rule overrides it. Capped at 120 — a caller listening to a ringing tone for longer than that has already hung up.",
+   "fieldname": "default_ring_seconds",
+   "fieldtype": "Int",
+   "label": "Ring For (Seconds)"
+  },
+  {
+   "description": "Optional. Rules with \"Skip On Holidays\" ticked do not fire on dates in this list, so an office-hours rule falls through to the after-hours rule on Thanksgiving instead of ringing an empty office. Leave blank and holidays are treated as ordinary days.",
+   "fieldname": "holiday_list",
+   "fieldtype": "Link",
+   "label": "Holiday List",
+   "options": "Holiday List"
+  },
+  {
+   "fieldname": "voicemail_section",
+   "fieldtype": "Section Break",
+   "label": "Voicemail"
+  },
+  {
+   "description": "Played before the beep when a call goes to voicemail — either because a rule sent it there or because nobody answered in time. Leave blank to keep the gateway's own wording.",
+   "fieldname": "voicemail_message",
+   "fieldtype": "Small Text",
+   "label": "Voicemail Message"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "AI Governance",
+ "name": "Call Routing Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
