@@ -901,3 +901,13 @@ erpnext_enhancements.patches.backfill_certificate_revocation_dates
 # this repo, carrying its Home Dashboard Tasks block across and dropping its shortcut to a Page
 # that does not exist on this site. Safe twice.
 erpnext_enhancements.patches.flesh_out_hub_workspaces
+# v1.402.0 -- retires the three Opportunity statuses that stopped being options: `Closed`
+# (144 rows), `Prospecting` (3) and `Value Proposition` (1), all to `Lost`. These were not
+# untidy, they were FROZEN -- _validate_selects hard-throws on an off-vocabulary Select and
+# no ignore_* flag bypasses it, so every save of these rows had been refused since the July
+# 2025 Zoho import (Error Log 2026-06-19 is a QuickBooks import dying on it). Raw UPDATE that
+# does NOT name `modified`: snapshots.py keys win_rate_90's lost leg on it, so bumping it
+# would take the reported win rate from 36.9% to 16.1% as a pure artefact. Also repoints four
+# Dashboard Charts, one of which ("Opportunities Won") plots exactly the 144 rows being
+# retired -- remapping without it turns a wrong chart into an empty one. Safe twice.
+erpnext_enhancements.patches.remap_orphan_opportunity_statuses
