@@ -95,12 +95,11 @@
    "label": "Question"
   },
   {
-   "description": "Asked over the paused video. Keep it short — the learner is mid-lesson.",
+   "description": "Empty while the pin is being placed. Completeness is refused at PUBLISH rather than on every save -- see TrainingCheckpoint.incomplete_reasons. A reqd here meant the pin could not be written at all until the question was typed, so placing one was impossible.",
    "fieldname": "question_text",
    "fieldtype": "Small Text",
    "in_list_view": 1,
-   "label": "Question",
-   "reqd": 1
+   "label": "Question"
   },
   {
    "description": "Tick the correct option. It is never sent to the browser.",
@@ -173,7 +172,7 @@
   }
  ],
  "links": [],
- "modified": "2026-08-01 12:00:00.000000",
+ "modified": "2026-09-11 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Training",
  "name": "Training Checkpoint",

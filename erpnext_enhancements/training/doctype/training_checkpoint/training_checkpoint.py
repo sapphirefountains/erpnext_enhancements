@@ -60,15 +60,26 @@ class TrainingCheckpoint(Document):
 			))
 
 	def _validate_options(self):
+		"""Only CONTRADICTIONS throw here. Incompleteness is a publish-time refusal.
+
+		The distinction is the whole of this change. A checkpoint with one option is
+		*unfinished* -- which is what every checkpoint is for the first few seconds of
+		its life, while somebody is still typing. A Single Choice with two correct
+		answers, or one where every option is correct, is *self-contradictory*: no
+		amount of further typing makes it coherent, and it can never become valid by
+		accident, so refusing it immediately costs nothing.
+
+		Same shape, and the same reasoning, as ``TrainingLesson.incomplete_blocks``:
+		the check MOVED rather than being relaxed. Relaxing alone would let a
+		half-built checkpoint reach ``_split_lesson``, which writes an answer key of
+		``"correct": []`` -- a checkpoint nobody can pass, holding the lesson open
+		forever through ``grading._unanswered_checkpoints``, with nothing raising.
+		"""
 		rows = self.options or []
-		if len(rows) < 2:
-			frappe.throw(_("Give the checkpoint at least two options."))
 		correct = [row for row in rows if row.is_correct]
-		if not correct:
-			frappe.throw(_("Tick the correct option — otherwise the checkpoint can never be passed."))
 		if self.question_type in ("Single Choice", "True-False") and len(correct) > 1:
 			frappe.throw(_("{0} allows exactly one correct option.").format(self.question_type))
-		if len(correct) == len(rows):
+		if rows and len(correct) == len(rows):
 			frappe.throw(_("Every option is ticked correct, so the checkpoint cannot be got wrong."))
 
 		used = set()
@@ -78,6 +89,26 @@ class TrainingCheckpoint(Document):
 				key = frappe.generate_hash(length=8)
 			row.option_key = key
 			used.add(key)
+
+	def incomplete_reasons(self):
+		"""Why this checkpoint is not ready to publish, as a list of sentences.
+
+		The one implementation of "this checkpoint is half-built", read twice: while
+		the version is a **draft** it is advisory, and at **publish** it is a hard
+		refusal. Exactly the contract ``TrainingLesson.incomplete_blocks`` already has.
+
+		Empty list means ready. Never throws -- a caller asking what is missing must
+		be able to ask about a checkpoint that is missing everything.
+		"""
+		why = []
+		if not (self.question_text or "").strip():
+			why.append(_("no question has been typed"))
+		rows = self.options or []
+		if len(rows) < 2:
+			why.append(_("fewer than two options"))
+		elif not [row for row in rows if row.is_correct]:
+			why.append(_("no option is ticked correct, so it can never be passed"))
+		return why
 
 	def _validate_position(self):
 		at = cint(self.at_seconds)

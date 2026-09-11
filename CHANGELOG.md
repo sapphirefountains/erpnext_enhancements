@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.400.0] - 2026-09-11
+
+### Changed
+
+- **Checkpoint completeness moved from `validate` to publish** — and the two halves ship
+  together, because either alone is worse than neither.
+
+  **Why relax.** The classic builder's pin flow has never worked. `add_pin` seeds an empty
+  `question_text` against a `reqd: 1` field and two options with `is_correct: 0`, while
+  `_validate_options` threw *"Give the checkpoint at least two options"* and *"Tick the correct
+  option"*. So the insert was refused — and on a four-second autosave that is a red dialog every
+  four seconds until the author has typed a question **and** ticked a correct option. Placing a
+  pin was, in practice, impossible. Porting that faithfully onto the canvas would have moved a
+  day-one defect onto the surface authors live in.
+
+  **Why the gate is not garnish.** Relaxing `validate` alone lets a half-built checkpoint reach
+  `_split_lesson`, which writes an answer key of `"correct": []` — **a checkpoint nobody can ever
+  pass.** `grading._unanswered_checkpoints` then holds the lesson open forever, and nothing raises
+  anywhere: the learner is stuck on a video with no way forward and no error to report.
+  `TrainingCourseVersion.before_submit` now refuses it, naming the lesson and the timestamp,
+  because "a checkpoint is unfinished somewhere in a forty-lesson course" is a scavenger hunt
+  rather than a message.
+
+  **The line between the two.** *Incompleteness* is what every checkpoint has for the first few
+  seconds of its life while somebody is typing. A *contradiction* — a Single Choice with two
+  correct answers, or one where every option is correct — can never become coherent through
+  further typing, so refusing it immediately costs nothing. Contradictions still throw at save;
+  incompleteness waits for publish.
+
+  Same shape and the same reasoning as `TrainingLesson.incomplete_blocks`, which this repo already
+  moved for the same reason: the check had to *move* rather than simply be relaxed, because
+  `_materialize_lessons` writes with `db.set_value` and never re-runs validation.
+
+  `tests/test_training_checkpoint_model.py` asserts **both halves in one suite**, deliberately —
+  a suite checking only the relaxation would go green on the dangerous half. The DocType's
+  `modified` is bumped, because DocType import is timestamp-gated and an unbumped one would land
+  the relaxation in the repo and nowhere else, while the publish gate *did* land — refusing
+  publishes for a reason the author could not act on.
+
 ## [1.399.0] - 2026-09-11
 
 ### Added

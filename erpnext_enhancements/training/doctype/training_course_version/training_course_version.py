@@ -68,6 +68,7 @@ class TrainingCourseVersion(Document):
 		self._require_change_type()
 		self._require_content()
 		self._require_finished_blocks()
+		self._require_finished_checkpoints()
 		self._require_materialized_content()
 
 	def on_submit(self):
@@ -164,6 +165,52 @@ class TrainingCourseVersion(Document):
 			return
 		frappe.throw(
 			_("These blocks are not finished, so a learner would see a blank space where they are:")
+			+ "<br><br>"
+			+ "<br>".join(frappe.utils.escape_html(p) for p in problems)
+		)
+
+	def _require_finished_checkpoints(self):
+		"""No half-built checkpoint reaches a learner.
+
+		The other half of relaxing ``TrainingCheckpoint.validate``, and it is not
+		garnish. Without it a checkpoint with no question, or with no correct option,
+		reaches ``_split_lesson``, which writes an answer key of ``"correct": []`` --
+		a checkpoint **nobody can ever pass**. ``grading._unanswered_checkpoints`` then
+		holds the lesson open forever, and nothing raises anywhere. The learner is
+		stuck on a video with no way forward and no error to report.
+
+		So the relaxation and this gate are one change. A release that shipped only
+		the relaxation would be strictly worse than shipping neither.
+
+		Named per lesson and per timestamp, because "a checkpoint is unfinished
+		somewhere in a forty-lesson course" is a scavenger hunt, not a message.
+		"""
+		problems = []
+		for name in frappe.get_all(
+			"Training Lesson", filters={"course_version": self.name}, pluck="name", order_by="idx asc"
+		):
+			title = frappe.db.get_value("Training Lesson", name, "lesson_title") or name
+			for row in frappe.get_all(
+				"Training Checkpoint",
+				filters={"lesson": name},
+				fields=["name", "at_seconds"],
+				order_by="at_seconds asc",
+			):
+				checkpoint = frappe.get_doc("Training Checkpoint", row.name)
+				why = checkpoint.incomplete_reasons()
+				if not why:
+					continue
+				seconds = cint(row.at_seconds)
+				stamp = "{0}:{1:02d}".format(seconds // 60, seconds % 60)
+				problems.append(
+					_("{0} — checkpoint at {1} ({2})").format(title, stamp, ", ".join(why))
+				)
+		if not problems:
+			return
+		frappe.throw(
+			_("These checkpoints are not finished. A checkpoint with no question, or with no "
+			  "correct option, can never be passed — it would hold every learner on that video "
+			  "with no way forward:")
 			+ "<br><br>"
 			+ "<br>".join(frappe.utils.escape_html(p) for p in problems)
 		)

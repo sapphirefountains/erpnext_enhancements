@@ -383,6 +383,13 @@ jobs:
       # insurer that silently restates today over a past date is worse than no sheet.
       - name: HR audit roster (dates not statuses; leavers included)
         run: python -m unittest erpnext_enhancements.tests.test_hr_qualification_roster -v
+      # Checkpoint completeness moved from validate to publish. BOTH halves are
+      # asserted in that one suite on purpose: shipping the relaxation without the
+      # publish gate lets a checkpoint with no correct option reach _split_lesson,
+      # which writes an answer key of "correct": [] -- a checkpoint nobody can pass,
+      # holding the lesson open forever with nothing raising anywhere.
+      - name: Checkpoint model (relaxed at save, refused at publish)
+        run: python -m unittest erpnext_enhancements.tests.test_training_checkpoint_model -v
       # Guards the silent workspace failure mode: `content` (the layout) and the
       # child tables (the data) are joined by label and nothing keeps them in sync,
       # so a block with no row renders an empty div and a row with no block never
