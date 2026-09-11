@@ -94,6 +94,7 @@ TILES = {
 	"Process Documentation": ("process_documentation", "file-text", INTEGRATION),
 	"QuickBooks Time": ("quickbooks_time", "clock", INTEGRATION),
 	# People
+	"HR": ("hr", "id-card", PEOPLE),
 	"Workforce": ("workforce", "users-round", PEOPLE),
 	"Training": ("training", "graduation-cap", PEOPLE),
 }

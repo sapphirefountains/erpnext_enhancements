@@ -34,7 +34,17 @@ from erpnext_enhancements.training.doctype.training_settings.training_settings i
 
 # The Employee fields a rule can key off. A save that touches none of them cannot
 # change what anybody owes, so it is not worth a sweep.
-EMPLOYEE_TRIGGER_FIELDS = ("department", "designation", "grade", "employment_type", "status")
+EMPLOYEE_TRIGGER_FIELDS = (
+	"department",
+	"designation",
+	"grade",
+	"employment_type",
+	"status",
+	# A promotion changes what you owe. custom_position is the ladder rung
+	# (WI-072), and moving somebody up it is exactly the moment their required
+	# training should be re-evaluated.
+	"custom_position",
+)
 
 # Rule targets that resolve against a field on Employee.
 EMPLOYEE_FIELD_FOR_RULE = {
@@ -42,6 +52,13 @@ EMPLOYEE_FIELD_FOR_RULE = {
 	"Designation": "designation",
 	"Employee Grade": "grade",
 	"Employment Type": "employment_type",
+	# The ladder rung, which is usually what "everyone who does this job at this
+	# level" actually means -- "every Junior Technician" is a rule about
+	# competence, where "every Designation" is a rule about job titles that happen
+	# to line up today. The `has_column` guard below covers a site that has not
+	# migrated the custom field yet: the rule simply never matches rather than
+	# erroring.
+	"Position": "custom_position",
 }
 
 
@@ -208,6 +225,31 @@ def _candidate_users():
 	)
 
 
+def _employee_rule_fields():
+	"""Employee columns the rule engine reads, minus any that have not migrated.
+
+	`custom_position` is a **fixture** Custom Field, and `sync_fixtures()` runs in
+	`post_schema_updates()` — *after* the post-model-sync patches. So there is a
+	real window, on the very migrate that introduces it, where the DocType exists
+	and the column does not. Naming it unconditionally in the field list made the
+	SELECT itself raise, which is the opposite of the fail-soft behaviour the guard
+	further down promises.
+
+	Checked with the doctype name, not the table name: `frappe.db.has_column`
+	prefixes `tab` itself and **raises** `TableMissingError` on an unknown table
+	rather than returning False, so `has_column("tabEmployee", ...)` throws
+	unconditionally. Five call sites on this branch got that wrong and the branch
+	review caught them.
+	"""
+	fields = ["name", "department", "designation", "grade", "employment_type"]
+	try:
+		if frappe.db.has_column("Employee", "custom_position"):
+			fields.append("custom_position")
+	except Exception:
+		pass
+	return fields
+
+
 def _matching_rule(course, user):
 	"""The first enabled rule on ``course`` that matches ``user``, or None.
 
@@ -218,7 +260,7 @@ def _matching_rule(course, user):
 	employee = frappe.db.get_value(
 		"Employee",
 		{"user_id": user, "status": "Active"},
-		["name", "department", "designation", "grade", "employment_type"],
+		_employee_rule_fields(),
 		as_dict=True,
 	)
 	roles = None

@@ -7,6 +7,722 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.386.0] - 2026-09-10
+
+The first instalment of **WI-072** — the HR module and Training redesign. This release is
+the *defects* half: everything below was already broken on production, and most of it was
+broken in the direction that does not announce itself.
+
+### Security
+
+- **Three Training doctypes were readable by customers.** `Training Badge Award`,
+  `Training Learner Stat` and `Training Question Thread` each grant `read` to
+  `Training Learner` in their doctype JSON, and none was registered in
+  `permission_query_conditions` or `has_permission`. `Training Learner` is held by customer
+  Website Users. So a client contact could enumerate every staff member's points, streaks
+  and badge awards through `/api/resource`, and read every learner's unanswered private
+  question to the author. **DocPerms with no scoping hook is the one combination that
+  leaks**, and it is invisible until somebody looks — the endpoints were all correct, so
+  nothing in the product misbehaved.
+
+  The thread scoping mirrors what `qa.list_lesson_threads` already returned: your own rows,
+  plus rows that are `is_public` **and** `Answered`. Both halves matter — an author sets
+  `is_public` while a thread is still `Open`, and an unanswered question published to the
+  whole company is the thing that flag exists to avoid.
+
+  `Training Badge` is deliberately left unscoped and there is a test pinning that: it is a
+  catalogue of definitions with no `user` column, and the player shows learners what there
+  is to earn.
+
+### Fixed
+
+- **Recording a sign-off finished nothing.** `Training Signoff` had no `on_submit` at all —
+  the controller held `validate`, `before_submit` and five private helpers, and
+  `record_signoff` submitted the document, emailed the learner and returned. A supervisor
+  recording *Competent* therefore moved nothing: no completion was minted and the
+  assignment stayed parked at `Awaiting Sign-off` indefinitely. The only route to a
+  completion was the learner going back to `/training` and pressing finish a second time,
+  which — having been told they were done and were waiting on somebody else — nobody does.
+
+  `on_submit` now re-drives the attempt through `api.training.resume_after_signoff`, which
+  re-evaluates **every** gate rather than writing a completion directly: the sign-off
+  unblocks one gate, it does not grant a pass, so a learner with a lesson still outstanding
+  stays outstanding. *Needs More Practice* takes the assignment back out of `Awaiting
+  Sign-off`, because left there it reads as "waiting on somebody else" for ever when the
+  ball is in fact back with the learner. `on_cancel` re-opens the gate. Both handlers are
+  contractually incapable of raising — the attestation is the evidence and must record even
+  if the bookkeeping behind it fails.
+
+  This also removes a false claim from the controller docstring, which said
+  `training/grading.py` re-opened the assignment on a cancel. `grading.py` contains no
+  reference to sign-off and never did.
+
+- **A hands-on sign-off never expired, so a recertification check passed when it should
+  have failed.** `competent_signoff_name` filtered on course + user + outcome + docstatus
+  with **no date clause**. "Draining a Fountain Basin Safely" recertifies every 24 months:
+  at month 25 the completion expired, the assignment was raised again, the learner
+  re-watched the video, and the sign-off gate re-opened against the *original two-year-old
+  signature* — with nobody watching them do it the second time. **Note the failure
+  direction. It passes.** Same family as the PAD SPACE trailing-space checks and the
+  emptiness-keyed backfill: an acceptance criterion written the obvious way reports clean
+  for ever and nobody goes looking.
+
+  An attestation is now valid for the course's own `recertify_months` window; no window
+  means no expiry, which is the honest reading of a course that never recertifies. The
+  comparison is done **in Python, not in the filter** — a datetime pushed into
+  `frappe.db.get_value` filters is coalesced, so a row with a NULL `signed_on` (every
+  sign-off written before `_stamp_signed_on` existed) lands on whichever side of the
+  comparison the sentinel falls, and it is not the side you assumed. A NULL now fails
+  closed.
+
+- **The first Callout an author created on the canvas broke saving.**
+  `training_canvas.js` declared its tones in lowercase and invented an `"info"` the Select
+  did not have, then stamped it on every new Callout. `callout_tone` is a Select on
+  `Training Content Block`; `_validate_selects` runs on child rows and `save_draft_version`
+  performs a full `lesson.save()` — so the value did not degrade to a default, it **threw**,
+  and it took the whole lesson autosave with it.
+
+  `Info` is now a real option (the player CSS already rendered it — the base
+  `.tr-block-callout` accent look was documented as the info/none case), the canvas writes
+  the DocType's vocabulary verbatim, and a cross-file test asserts the two lists are equal
+  so neither side can gain a tone without the other. Worth knowing for the next one of
+  these: **a DocType JSON is hash-gated, not timestamp-gated** (`import_file.py` has an
+  explicit `doctype != "DocType"` escape on the age check), so a Select change lands on
+  migrate with no `modified` bump — unlike a Workspace, which still needs one.
+
+- **Learners could not see author-uploaded images or PDFs, ever.** Both authoring surfaces
+  upload with `is_private = 1` attached to `Training Lesson`; no learner role holds a
+  DocPerm on `Training Lesson`; and `get_media_url` signed only Video and External Embed.
+  So `blocks.js` fell back to the raw `/private/files/…` path that publish serialises into
+  the payload, and every author-uploaded image rendered as a broken icon from the day the
+  module shipped. The author never saw it, because in the builder they are the owner.
+
+  Answered with a gated endpoint rather than by making the files public — course content is
+  not world-readable and customer contacts share this runtime. `download_lesson_file` is
+  **the one GET in `api/training.py`**, because an `<img src>` and a PDF frame cannot send a
+  POST or a CSRF token. The POST-only rule is kept rather than bent: the query string
+  carries one opaque nonce minted by `get_media_url` (which is POST and does the real
+  authorisation), the learner, attempt and block it stands for never travel, the session is
+  re-checked on redemption, and it expires on the same setting as a signed video URL. The
+  exemption is recorded in `test_training_endpoint_surface` with a reason, and guarded by a
+  new assertion that an exempt endpoint may not take a domain identifier as a parameter.
+
+- **Adding a block red-modalled the author every four seconds.**
+  `TrainingLesson._validate_blocks` threw on a media block with nothing attached and on a
+  Rich Text block with no text — which is exactly the shape both `add_block`
+  implementations create — and autosave then fired seconds later. Frappe's `request.js`
+  msgprints `_server_messages` regardless of any `.catch`, so nothing was lost and the
+  editor was simply unusable. This is the single loudest complaint about the WYSIWYG.
+
+  The rule had to **move**, not merely relax: `_materialize_lessons` writes with
+  `db.set_value` and never re-runs lesson validation, so that throw was the only thing
+  standing between an empty block and a learner. There is now one predicate,
+  `TrainingLesson.incomplete_blocks()`, read twice — ignored while the version is a draft,
+  and a refusal in `TrainingCourseVersion.before_submit` that names every offending lesson
+  and block. Deliberately **no** `msgprint` on validate either, not even an `alert`: a
+  msgprint queues onto `_server_messages` and rides out on the response whatever the client
+  does with it, so a warning there is a toast on every autosave — the same defect in a
+  friendlier colour.
+
+- **The one person actually holding HR Manager could not see a single training record.**
+  `HR Manager` appeared in zero of the 32 Training doctype JSONs. It is worse than a missing
+  list view: `Workspace.__init__` raises `PermissionError` when the workspace's module is not
+  in `allow_modules`, `get_workspace_sidebar_items` swallows that exception, and
+  `allow_modules` is built **only** from DocPerms on non-child doctypes. So the Training
+  workspace was silently absent from her sidebar and the Training desk tile — which exists
+  and renders — routed her into a permission error. `roles: []` on a Workspace JSON does not
+  mean "everyone"; it means "no extra restriction *on top of* the module gate".
+
+  HR Manager now holds DocPerms on the thirteen compliance and catalogue doctypes, and joins
+  the blanket sign-off set. Deliberately **not** on Course Version, Lesson, Content Block,
+  Chapter, Checkpoint, Question, Answer Option or Quiz Question — that is authoring, and
+  `Training Answer Option` holds `is_correct`. Known and accepted: `triton@` holds HR
+  Manager, so the assistant identity gains attestation authority too; Nik declined trimming
+  those roles when asked.
+
+### Added
+
+- **A new `HR Enhancements` module, labelled `HR`.** One desk area an employee opens to find
+  their own record, the company ladder and the people tree, without knowing where anything
+  lives. Not named `HR`: hrms ships a module by exactly that name, and claiming it is the
+  Plaid Settings collision again (v1.361.0). The label users see is set on the workspace.
+
+  The load-bearing part is not the workspace, it is `Position` granting `read` to `Employee`.
+  A Frappe workspace whose module is not in the viewer's `allow_modules` **silently is not
+  there** — `desktop.py` raises `PermissionError` and the sidebar builder swallows it — and
+  `allow_modules` is built only from DocPerms on non-child doctypes. `Workspace Manager`
+  bypasses the gate entirely, so whoever builds a module cannot see this failure. Drop that
+  one DocPerm and the whole area disappears for every non-manager with nothing reported
+  anywhere, which is why `test_hr_module` asserts it rather than assuming it.
+
+- **Tiered sign-off authority.** `training/authority.py` decides who may attest for whom, and
+  returns *why* rather than a bool — `Observed Supervisor`, `Position Tier`, `Manager Delegate`,
+  or nothing. The learner is refused first and unconditionally, whatever roles or position they
+  hold. Tier authority is strictly higher tier **inside the same job family**, never a same-tier
+  peer, because two Junior Technicians signing each other's basin course is an attestation about
+  nothing.
+
+  **It is read from five places, and the one that matters is not the endpoint.** `record_signoff`
+  sets `ignore_permissions = True` and calls `submit()`; the Desk form's own Submit button calls
+  `submit()` directly and never touches the endpoint at all. A rule living only in
+  `_assert_may_sign` would therefore be a suggestion that one of the two doors happens to make —
+  the same shape as the six sign-off endpoints that shipped in v1.215.0 with no caller of any
+  kind. So `TrainingSignoff.before_submit` asks it too, and `test_training_authority` walks the
+  AST of all five sites rather than grepping, because a comment naming the predicate is not a
+  call to it.
+
+  The three visibility sites are not decoration either. Authority you cannot see a queue for is
+  authority nobody exercises: on this site not one of the four Junior Technicians reports to the
+  one Senior Technician, so without the tier arm on `signoff_query_conditions`,
+  `signoff_has_permission` and `get_signoff_queue` he would be granted the power and shown an
+  empty list.
+
+  The submitted document now **snapshots** the basis and both positions. A Position link resolves
+  to today; what an audit asks in 2029 is what was true when the attestation was made — the same
+  doctrine as the completion's course-title and content-hash snapshots. The addressee stays
+  frozen at routing time (a reporting-line change must not move who may sign) while tier
+  eligibility is evaluated live.
+
+  Fails closed throughout: no Employee record, no Position, an unknown ladder or a retired rung
+  all return nothing, and nothing means refused. A customer contact has a User and no Employee,
+  which is exactly why they can never acquire authority over staff.
+
+- **Recording a training that already happened — the half of "anyone can build a training" that
+  is not about the editor.** Most training here is not a course: it is a ten-minute tailgate talk
+  before a basin drain, a manufacturer's rep walking three people through a filter, a ride-along.
+  It has already happened, in the yard. Nothing in this module could produce a record of it —
+  `Training Completion` is only ever minted off a finished attempt, and `Training Live Class` has
+  no attendance path out of it at all — so a safety talk left no trace, because recording one
+  meant authoring a course first.
+
+  `Training Session` takes a free-text title, a date, who led it, who was there, what was covered,
+  and a photo of the signed sheet. **No course is required**: requiring one puts a
+  content-authoring project between somebody and a five-minute record, which is precisely the
+  barrier this removes.
+
+  Linking a course turns attendance into **certification** — every attendee gets a real
+  `Training Completion` against the published version. That is legitimate (`attempt` is not a
+  required field, and somebody taught the material in person by a competent person has met the
+  course's substance) and it stays auditable because of provenance: the completion carries a new
+  read-only `source_session`, the session names who led it and carries the roster photo, an
+  absentee is never certified, and cancelling the session withdraws the completions — a session
+  that did not happen must not leave certifications behind.
+
+- **Time off — request, approve, calendar, and nothing else.** No balances, no accrual, no
+  carryover. That scope is a decision: balances are where the real complexity and every payroll
+  argument live, and they are only worth carrying if PTO is tracked as a liability. `total_days`
+  counts **calendar** days and says so, because there is no holiday calendar here to subtract and
+  a number quietly pretending otherwise would be wrong in the direction that shortens somebody's
+  leave.
+
+  **Approval routes through `reports_to`, not the Position ladder** — the one place in this whole
+  release where those deliberately come apart. Time off is "who plans your week", which is what
+  the reporting line means and what a competence tier does not: a Senior Technician outranks a
+  Junior on whether they can drain a basin and has no standing over their Thursday. The rest of
+  WI-072 uses the ladder *because* the reporting tree could not express competence; borrowing it
+  back here would grant it something nobody gave it.
+
+  The overlap check warns and never refuses — two people off the same week is a scheduling
+  conversation, and blocking would mean somebody who needs the day simply not asking. `who_is_out`
+  gives dispatch names and dates and **not** the type or reason: a sick day is not something to
+  publish to the crew. The calendar colours only `Approved` green, because a Requested day is not
+  a day off yet and showing it as one would have people scheduling around a request that later
+  gets declined. `Canceled`, one l.
+
+- **A new-hire checklist**, raised automatically on Employee insert — joining the existing
+  `after_insert` hook rather than adding a second one whose ordering nobody declared, and
+  contractually incapable of raising, because an Employee failing to save over a checklist would
+  be the tail wagging the dog. Owners are plain words rather than Links: half of a first week is
+  done by whoever is free that morning, and a required assignee is exactly how a checklist stops
+  getting filled in.
+
+- **A team feed, on a record that structurally cannot carry a score.** The obvious design is to
+  let colleagues react to a `Training Completion`. That is the compliance artefact — its own
+  controller calls it "the only record in the module that anybody outside it will ever be asked to
+  produce: to a client, to an insurer" — and it carries `score_percent`,
+  `video_coverage_percent`, `attempt`, `status` and `revoked_reason`. Both plausible reuse routes
+  for reactions begin with a read check on the referenced document (`api/comments.py`, and
+  frappe's own `desk/like.py`), so "let colleagues react to a completion" reduces **exactly** to
+  "publish second-attempt scores and revocations company-wide".
+
+  So `Training Achievement` is a separate, deliberately public row: a snapshot title, a kind, a
+  date, and no numbers at all. There is no field a future change could widen into performance
+  data, because there is no field that holds any. Two consequences follow and both are the point:
+  a **failed** attempt never mints one, so the feed cannot become a record of who struggled; and a
+  **revoked** completion has its achievement deleted, so the feed stops congratulating somebody
+  for a certification the company has since pulled — while the completion, which is evidence,
+  stays exactly where it is. Deleted rather than tombstoned, because a tombstone would publish the
+  withdrawal, which is the one part of this that is genuinely nobody else's business.
+
+- **`Training Kudos` — reaction and comment as one record**, which collapses the moderation
+  surface with them. Not Frappe's `Comment`, for two concrete reasons: `public/js/comments.js` is
+  Vue and needs the desk bundle that `www/training.py` forbids, and the player is contractually
+  `innerHTML`-free while `Comment.content` is HTML-editor output. The reactions are **words, not
+  emoji** — a thumbs-up is encouragement to one person and sarcasm to another; "Nice work" cannot
+  be. One per person per achievement: a second is somebody changing their mind, not a second
+  cheer.
+
+- **The leaderboard was the entire staff list.** `LEADERBOARD_LIMIT` is 20 against sixteen active
+  employees, so the board named everybody in rank order — including last place, with no way off
+  it, and publishing streaks to the whole company. It is now top five plus your own line, it says
+  *"Top 5 of 16. You are #11."* out loud so a trimmed board does not read as the whole company,
+  and **streaks are self-only**: how many days in a row somebody has studied, published to their
+  colleagues, is a stick, and the person it beats hardest is whoever had a week off.
+
+  Rank is computed over everybody and only then trimmed — otherwise leaving the board would
+  silently promote everyone below you, which is both wrong and a way to work out who opted out.
+
+- **A real opt-out**, in `Training Profile Preference` and deliberately **not** on
+  `Training Learner Stat` — that row says of itself that nothing in it is evidence and it can be
+  thrown away and rebuilt, and `rebuild_learner_stat` does exactly that, so a preference stored
+  there would be silently reset by a routine recalculation and the person would find out by being
+  back on a leaderboard they had left. Both settings default to **on**; an opt-in feed in a
+  sixteen-person company is an empty feed, and empty reads as broken rather than as private.
+  Changing it re-sweeps what is already posted, because an opt-out that only applied to the future
+  is not what anybody means by it. The control sits on the feed itself rather than in a settings
+  page nobody opens.
+
+- The feed is backfilled from history so it does not open empty — three completions, four badge
+  awards and one sign-off would have read as broken rather than new. Work anniversaries are seeded
+  too and are the only entries with no source document: they give the feed a spine on day one, and
+  an anniversary is the one thing worth celebrating that nobody had to *do* anything to earn,
+  which matters in a feed whose whole risk is becoming a scoreboard.
+
+- **The visual editor had no entry point at all.** `training-canvas` shipped in v1.364.0 and,
+  until now, grepping for it outside its own directory returned two CHANGELOG lines and its own
+  test file. Nothing linked to it. The surface built specifically for authors who are not
+  developers was reachable only by knowing the URL and typing it — which is a fair part of why
+  "the WYSIWYG needs to be more robust" and "nobody can build a course" turned out to be the same
+  complaint. There is now an **Edit Visually** button on the Training Course form, and on a draft
+  it is the primary action rather than the second one. The classic builder stays: roughly 2,600
+  of its 3,842 lines have no canvas equivalent (chapters, the quiz pool, checkpoint placement,
+  video registration, preview), and it remains the power tool until each of those lands.
+
+- **Starter courses — "New" gives you an empty form, and that is where authoring stops.** Most of
+  what prevents somebody writing a course is not a missing toolbar button; it is being asked to
+  invent the content and the shape at the same time. Four starters give away the shape: **Safety
+  Talk** (the ten-minute tailgate briefing), **Equipment Walkthrough**, **SOP Walkthrough** and
+  **New Hire Orientation**. Creating one lands you straight in the visual editor, because the next
+  thing you do is replace the words.
+
+  Every starter is skeletal and its prose is *instructions to the author* — "replace this with the
+  one thing most likely to hurt somebody on this job" — never filler pretending to be content.
+  Filler is worse than an empty page, because filler gets published.
+
+  **A starter is a Course Spec and nothing else**: the same dict the AI drafting path produces,
+  through the same `validate_course_spec` and the same `author_course_from_spec`. No second
+  scaffolder, no second validator, no second block vocabulary. That constraint is enforced by
+  tests, and it is also why a starter that wants a photo says so in an Info callout rather than
+  carrying an empty Image block — uploaded media is deliberately outside what a spec may express.
+
+- The Training Course **list view** now offers three ways in side by side: start from a shape,
+  draft one with AI, or the plain New form for somebody who knows exactly what they want. The AI
+  button appears only where the Triton widget actually loaded — a button that opens nothing is
+  worse than no button, which this module already learned when an "Open Builder" placeholder
+  outlived its feature by three releases and told everyone the builder did not exist.
+
+- `Callout` gained an **Info** tone across all three places that vocabulary lives (the DocType
+  Select, the Course Spec validator, the player CSS, which already rendered it).
+
+- **The profile, and browsable colleague profiles.** `/training` now opens on a real record:
+  badges, what you have completed, what you are qualified for, what is still to do, what is
+  running out, and the HR facts that make it a profile rather than a transcript — position,
+  department, who you report to, tenure, next work anniversary, kit signed out to you. Almost all
+  of that already existed on prod (16/16 have a department, 14/16 a manager, `device_management`
+  already injects an Assigned Devices panel on the Employee form) and none of it reached a page
+  anybody opened.
+
+  **The colleague view is built additively, and that is the whole design.**
+  `colleague_profile` *selects* `PUBLIC_FIELDS` out of the shared dict; it never deletes private
+  keys from the full one. With a subtractive filter, every field added to the profile in future
+  is public until somebody remembers to exclude it — and the person adding a field is never
+  thinking about the directory. Same reasoning `gamification.py` wrote down for the leaderboard:
+  *"an optional privacy filter is a privacy filter somebody eventually leaves out."*
+
+  So a colleague sees badges, completed course **titles**, and which qualifications somebody
+  currently holds. Never a score, an attempt, a failure, a due date, a certificate number, an
+  issuing body, or a course somebody is part-way through. The player does not branch on whose
+  profile it is drawing — a colleague payload simply has nothing to draw for the private panels,
+  so the boundary lives in the data rather than in an `if` somebody later inverts.
+
+  **Customers are kept out by employment, not by role.** `Training Learner` is on every customer
+  contact, so every entry point requires an `Employee` record instead of checking a role — a role
+  can be granted by accident, whether somebody works here cannot. The directory link is not even
+  offered to them.
+
+- **The dispatch advisory has never fired once, and now can.** `training/compliance.py` warns
+  when somebody is scheduled onto a `Task` or a `Sapphire Maintenance Record` they are not
+  certified for. It has been wired up since v1.215.0 and on this site has produced **zero**
+  findings — not because everybody is certified, but because `_uncertified` drew from three
+  sources (an open assignment, a revoked or expired completion, a completion past its date) and
+  **every one requires the person to have already been assigned the course**. With no assignment
+  rules on the site, it described nobody and reported all-clear doing it.
+
+  **Note the failure direction: it passes.** Same family as the PAD SPACE trailing-space queries
+  and the emptiness-keyed backfill — a check written the obvious way reports clean forever and
+  nobody goes looking, because green is what you were hoping for.
+
+  There is now a fourth source — a Required course this person's rules say they owe, with nothing
+  to show for it — narrowed by the **assignment engine's own targeting** rather than by a second
+  rule. Without that narrowing every technician would be warned about "Accounting in ERPNext",
+  and an advisory that cries wolf goes from useless to ignored, which is worse.
+
+  It stays **warn-only**, asserted through the AST so a `frappe.throw` cannot arrive later
+  disguised as a helper call: a hard gate does not stop the visit, it moves the visit off the
+  books and into somebody's truck where nobody can see it. `warn_on_uncertified_dispatch` is
+  switched on by patch, over `0`/absent only and never over a deliberate `1` — enabling it before
+  now would have changed nothing at all.
+
+- **External credentials — the largest gap in the module, and one no proposal had.**
+  `Employee Credential` holds a qualification somebody *else* issued: OSHA 10 and 30, forklift,
+  aerial lift, CDL and its DOT medical card, first aid/CPR, respirator fit test, electrical,
+  confined space, lockout/tagout, pool operator. Every one of those was **structurally
+  unrecordable** — `Training Certificate.completion` is `reqd: 1`, so the app could only ever
+  hold a certificate that originated in one of its own courses, and a forklift ticket lived in a
+  filing cabinet. These are the things a GC asks for at the gate and an insurer asks for after an
+  incident.
+
+  Deliberately **not** a variant of `Training Certificate`. A completion is evidence this system
+  produced and can re-derive; a credential is evidence somebody outside produced, which this app
+  can only hold. Merging them would mean weakening the completion's guarantees or inventing an
+  attempt for a forklift ticket. A test asserts `completion` is still required, so if that ever
+  changes the question is re-opened rather than forgotten.
+
+  Status is **derived and never typed** — it is arithmetic on a date, so a typed value is wrong
+  the day after somebody types it, and the record's whole worth is being true on the morning of
+  the job. Revocation beats the calendar. `Expiring` is `Valid` inside the ninety-day horizon and
+  **still counts as qualified**: a horizon that reads as a refusal does the opposite of its job.
+
+  The `Employee` DocPerm and its scoping hook ship together, not one release apart. The grant is
+  what puts a technician's own card on their own profile and what keeps the module inside
+  `allow_modules`; without the hook it would put everybody's license number and medical card in
+  front of everybody.
+
+- **A forward view, which this app has never had.** A nightly sweep re-derives status (05:20) and
+  a Monday digest (07:30) names everything lapsing inside the horizon — one email to the holder,
+  a roll-up to their supervisor. Until now nothing warned about anything *before* the fact:
+  `certificates.expire_and_recertify` reacts after a certificate lapses, and
+  `fixtures/notification.json` holds nineteen alerts across a dozen doctypes and **zero** HR or
+  training ones. An expiry model with no horizon tells you about a problem on the morning of the
+  job.
+
+- **The Skills Matrix** — people down the side, qualifications across the top, four words per
+  cell. It answers *"who can I send?"*, which nothing here could: `Training Completion Matrix`
+  reports what already happened one course at a time, and `compliance.py` warns about one person
+  at the moment of dispatch. One grid over **both** internal courses and external credentials,
+  because a manager scheduling a basin drain does not care which system a ticket came out of.
+  Readable by Projects Manager and Maintenance Manager as well as HR — whoever schedules the work
+  needs it most. Column keys are namespaced by source, because a Credential Type and a Training
+  Course may share a title and a collision would merge two columns into one, which reads as
+  everybody suddenly being qualified.
+
+- **Distribution, which is the precondition for everything else and had never happened.** Prod
+  reached v1.385.0 with **zero** `Training Assignment Rule` rows, `auto_assign = 0` on all six
+  courses, five `Training Assignment` records in total ever, and **two of sixteen active
+  employees holding any training record at all**. The engine in `training/assignment.py` has
+  been complete since v1.207.0 and had simply never been aimed at anything. Three fixes:
+
+  **An "Assign to…" that can name a group.** Department, Designation, Position, Role Profile or
+  everybody — and it *previews* first, naming who it will assign before the button is pressed,
+  because "assign to Production" reads identically whether Production holds four people or none.
+  It is a wrapper over the existing `assign_course`, not a second assignment path:
+  `run_bulk_assign` is where the already-open check, the per-target isolation and the
+  notification live.
+
+  **A daily sweep** (`sweep_auto_assignments`, 06:40, before the 07:15 digest). `sync_course` had
+  exactly one caller — `publish_version` — and it fires only if `auto_assign` was *already* set at
+  the moment of publishing. So turning auto-assign on for a course that is already live did
+  nothing, and neither did adding a rule to one. The sweep also makes the publish-time fan-out
+  **re-drivable**, which matters specifically here: the prod deploy `FLUSHDB`s the queue redis
+  and destroys every pending background job, so publishing shortly before a merge loses its
+  sweep silently — the same failure that lost a batch of Drive folders.
+
+  **`Position` as a rule target.** "Every Junior Technician" is a rule about competence; "every
+  Designation" is a rule about job titles that happen to line up today. A promotion now
+  re-evaluates what somebody owes, because `custom_position` joined `EMPLOYEE_TRIGGER_FIELDS`.
+
+  Two default rules are seeded for review — *Using the Training Module* to everybody, *Draining a
+  Fountain Basin Safely* to Production — matched by slug rather than docname, skipping any course
+  that already has rules. The patch assigns nobody itself: `_active()` refuses during a patch,
+  and enqueuing would be worse than useless with the deploy `FLUSHDB` immediately after.
+
+- **Sign-off from the field.** There was no non-desk sign-off surface of any kind —
+  `training_signoff.js` is a Desk form button and `get_signoff_queue` was dialled only from the
+  Desk list script. Granting a Senior Technician authority he can exercise only from a desk he
+  does not sit at is granting nothing, so `/training` now has a queue: what is waiting, the
+  course's own "what to verify" text, a note box, and two buttons sized for somebody wearing
+  work gloves.
+
+  No signature capture, deliberately. An Attach Image on a phone means an upload round trip
+  before the attestation is recorded at all, and what makes a sign-off evidence is the named
+  supervisor and the timestamp, not a picture of a squiggle.
+
+  The entry point is drawn only when there is something behind it — the boot payload carries
+  the count — so fourteen of sixteen people never see a button that opens an empty list.
+
+- **`Position` — the company ladder, and the thing sign-off authority will be read from.**
+  A nested-set tree: groups are job families (Technician, Designer), the leaves under them
+  are rungs, and `tier` decides authority — higher outranks lower, **only inside the same
+  family**, and never a same-tier peer. `outranks()` / `positions_outranked_by()` are the
+  single expression of that rule.
+
+  Three things it deliberately is not. Not `Designation`, which stays the HR job title —
+  it is core, flat, and already consumed by the auto-assignment engine and payroll
+  reporting, so **changing a Designation changes no authority**. Not a `tier` field on
+  `Employee`, which would put rank on the person rather than the position and give the
+  org-chart ask nothing. And not `Employee.reports_to` — on this site the reporting tree
+  says the *opposite* of the ladder: Jesse Griffin is the one Senior Technician and has
+  **zero direct reports**, while all four Junior Technicians report to the Project Manager,
+  as does he. Routing sign-off through `reports_to` cannot reach the one person who has
+  actually watched them work. `Employee` is already a nested set on `reports_to` in v16
+  core, so `/app/employee/view/tree` works today and is linked beside the position tree.
+
+- `Employee.custom_position` and a read-only fetched `custom_position_tier`, under a
+  `Position & Competency` section. The fetched tier is display only; every authority check
+  reads the Position itself, because a fetched value is a copy and a copy can be stale.
+- `patches/seed_positions_from_designations.py` — seeds the ladder and places every Employee
+  on it. **Only one ladder is asserted**, the Technician Junior/Senior/Master one that was
+  actually specified; every other Designation becomes a single-rung family that outranks
+  nobody, because "Electrical Designer" is a specialty and giving it a rank would silently
+  assert authority over somebody that nobody granted. Not a fixture: `Position` is a nested
+  set and fixture import is delete-and-reinsert, which rebuilds `lft`/`rgt` from whatever
+  `parent_position` happens to resolve at the time.
+- An `HR` desk tile (`id-card`, teal alongside Workforce and Training) and a sidebar whose
+  **first row is the workspace itself** — the tile routes to the sidebar's first Link, so
+  that row order is a product decision, not a detail. The sidebar file is stamped newer than
+  the orphaned `standard = 0` "HR" sidebar sitting on prod since 2026-02-08, because
+  Workspace Sidebar is timestamp-gated on import even though a DocType is not.
+- **`test_training_boundary_contract` now sees three modules it was blind to.** Adding the
+  lazy-panel binder `data` to `RESPONSE_BINDERS` immediately exposed that `completions` had been
+  sitting in the sent-but-not-read allowlist with the reason "the transcript view, not the lesson
+  player" — which was simply false; `renderRecord` reads `data.completions`, the scan could not
+  see it, and a real read had been filed as a deliberate asymmetry. Exactly what that file's own
+  comment warns an allowlist becomes. Removing it then surfaced `mine`, `public` and `rows` as
+  "read but never sent", because the scan followed `grading` and `progress` but not `qa`,
+  `gamification` or `signoff` — the three other modules `api/training.py` re-exports rather than
+  implements. All three are now followed, and the six keys that shook out carry real reasons.
+- `erpnext_enhancements/tests/test_hr_module.py`, wired into CI: the reachability tripwire
+  above, the tier predicate (peer, cross-family, group and retired-rung cases), and a check
+  that the workspace has no dead card or shortcut references — those render as blank space
+  with no error at all.
+- `erpnext_enhancements/tests/test_training_signoff_loop.py`, wired into CI. Beyond pinning
+  the three fixes above, it carries the generalisation that would have caught the leak:
+  **any** Training doctype granting `Training Learner` read on rows with a `user` column,
+  and not registered in `permission_query_conditions`, fails the build. That assertion found
+  `Training Question Thread`, which nobody had noticed.
+- **`test_training_canvas.py` into `ci.yml`.** The suite existed from the day the canvas
+  shipped and was never wired in, so the one Training surface an author spends all day in
+  had zero CI coverage — and held the Callout defect above.
+- `work-items/WI-072-hr-module-and-training-redesign.md`, the plan of record for the rest:
+  the `HR Enhancements` module, the `Position` tier tree, tiered sign-off, the profile and
+  colleague pages, credentials and expiry, the social layer, the editor, PTO, and the
+  assignment UI. Tracked on PRJ-00616 as TASK-2026-01938 with a task per deliverable.
+
+### Fixed before shipping — the adversarial review of this branch
+
+Everything above was then reviewed by 83 agents across five dimensions, each finding
+independently checked by three verifiers prompted to **refute** it. Sixteen findings
+survived. They are recorded here rather than quietly squashed, because the shape of them
+is the useful part: none was a typo, and the two worst were both *invisible* — one aborted
+`bench migrate`, and one published staff data to customers while every endpoint stayed
+correct.
+
+- **`frappe.db.has_column("tabEmployee", …)` in five places would have aborted the deploy.**
+  v16's `has_column(doctype, column)` prefixes `tab` **itself** and **raises**
+  `TableMissingError` on an unknown table rather than returning False
+  (`frappe origin/version-16:frappe/database/database.py:1365-1374`). So every one of these
+  guards — written to make the code fail *soft* while a fixture field is mid-migrate —
+  threw unconditionally instead. The blast radius was the migrate itself plus sign-off
+  submit, every profile page, the Skills Matrix and the assign-to-group dialog. The test
+  stub in `test_training_authority.py` had **reproduced the same mistake**, keying its fake
+  on `"tabEmployee"`, so CI agreed with the bug; that stub now raises on a `tab`-prefixed
+  argument, and a repo-wide tokenised scan fails the build on any new occurrence.
+- **The team feed was readable by customers.** `achievement_query_conditions` filtered on
+  the **row's** `learner_type`, so a customer Website User holding `Training Learner` failed
+  the "own rows" clause and sailed through `visibility = 'Team' and learner_type = 'Staff'`
+  — the whole staff feed. The gate belongs on the **viewer**: a new `_is_staff()` tests
+  employment, not a role, because `Training Learner` is on every customer contact and
+  whether somebody works here cannot be granted by accident. Applied to all four entry
+  points, since a query condition filters lists and says nothing about `frappe.get_doc()`.
+- **Anybody could approve their own time off.** `status` was an ordinary editable Select and
+  the `Employee` role holds write on the doctype, which made the entire approval flow
+  decorative. `read_only` is not the fix on its own — Frappe does not enforce read-only
+  against the API — so `_guard_status()` refuses any status change that did not come through
+  `hr_enhancements/timeoff.py`, which flags its own transitions.
+- **`who_is_out` was authenticated-only**, so a customer contact with a login could
+  enumerate every staff member's absences — a rough map of the company's week. Staff only
+  now, again by employment.
+- **Colleague profiles leaked points past the leaderboard opt-out.** Somebody who took
+  themselves off the board and then found their score on their own profile card, visible to
+  every colleague, would reasonably conclude the setting did nothing. `_points` now takes
+  the viewer and returns nothing to a colleague who opted out; their own view is unchanged.
+- **The seed patch would have mapped nobody, then recorded itself as successful.**
+  `Employee.custom_position` is a **fixture** Custom Field and `sync_fixtures()` runs in
+  `post_schema_updates()` — *after* the post-model-sync patches (`migrate.py:143` then
+  `:171`). On the very migrate that introduces the field, the column does not exist when the
+  patch runs. The mapping moved to an `after_migrate` hook, which runs after fixtures and is
+  idempotent. Same root cause as the `Chat Relay Job` backfill in v1.280.3, from the other
+  direction.
+- **The Position tree never showed a tier** — the entire reason that tree exists.
+  `frappe.desk.treeview.get_children` selects exactly three columns (`value`, `title`,
+  `expandable`), so `node.data.tier` was undefined and `onrender` drew nothing, silently.
+  Replaced with a whitelisted `get_position_children` returning core's shape plus the two
+  columns.
+- **The time-off calendar's `style_map` is dead config in v16.** `prepare_colors()` branches
+  only on `get_css_class`; `style_map` is declared in two places in `origin/version-16` and
+  consumed in none. Shipping it would have coloured every status identically while the
+  comment above it claimed only Approved was green.
+- **The dispatch advisory reported Waived and Cancelled assignments as "Never assigned".** A
+  waiver is a manager saying out loud that this person does not need the course; re-raising
+  it as a gap would have made the advisory argue with a decision somebody already took,
+  permanently and with no way to silence it.
+- **`timeoff_has_permission` refused ordinary staff permission to create their own request.**
+  `user` is derived in `validate()`, so it is still empty when the permission check runs on a
+  new document. Falls back to the `Employee` they named. Same fix in `onboarding_has_permission`.
+- **`_matching_rule` named `custom_position` unconditionally in its field list**, so the
+  SELECT itself raised during the fixture window — the opposite of the fail-soft behaviour
+  the guard below it promised.
+- Two player defects: posting kudos removed the buttons but left the text input orphaned
+  with nothing to submit it, and finishing the last sign-off in the queue called `clear(main)`
+  — a shared container — from a callback that can outlive a navigation, so it could wipe
+  whichever screen the supervisor had moved on to.
+- Three **docstrings that described code that does not exist**: an `Onboarding Checklist
+  Template` doctype that was never built, an `incomplete_blocks` key on the builder bootstrap
+  payload that is not sent, and a `_public_profile` function that had been refactored away.
+  A comment asserting a safety property that isn't there is worse than no comment, because
+  the next reader stops checking.
+
+Each of these is pinned by a regression test written to fail on the original code. Five of
+those tests had to be rewritten first: an absence assertion like
+`assertNotIn("msgprint", source)` matches the **docstring explaining why there is no
+msgprint**, so it passed on code that had the defect. They now parse the AST, strip
+docstrings and `//` comments, and assert on imports and calls rather than on substrings.
+That failure mode — a contract test that passes because the forbidden word appears in the
+prose forbidding it — is the same one `test_training_boundary_contract` warns about, and it
+turned up five times in one afternoon.
+
+
+### Fixed before shipping — the migrate-safety audit
+
+A second pass, aimed only at `bench migrate` and `bench install-app`: 64 agents over six
+dimensions, every finding checked by three verifiers prompted to refute it. The deploy runs
+migrate unattended and `FLUSHDB`s both redis instances, so a migrate that dies leaves the
+site in maintenance mode — and this release is the most migrate-heavy thing this app has
+shipped: a new module, 26 doctype JSONs, three fixture Custom Fields on `Employee`, six
+patches and two `after_migrate` hooks.
+
+Nine defects survived. Every one of them **ran without error and did nothing** — or did
+something nobody asked for on a later deploy.
+
+- **The team feed's backfill could never have run, and would have recorded itself as
+  successful.** `social.record()` is dormant whenever `frappe.flags.in_migrate`,
+  `in_install` or `in_patch` is set — the app-wide convention that stops a schema change
+  firing business side effects — and a patch runs with two of those three True. So all four
+  helpers returned `None`, `created` stayed 0, nothing printed, nothing raised, the
+  transaction committed, and `tabPatch Log` got its row. The feed would have opened empty on
+  prod, which is the exact failure the patch exists to prevent, and it could never have been
+  retried. `record()` now takes `force`, which waives the dormancy half of the check and
+  never the "does the table exist" half. **Third instance of the Patch Log trap in this app**
+  (after v1.280.3 and the Position seeding earlier on this branch). Note that relocating it
+  to `after_migrate` would not have helped: v16 runs those inside `post_schema_updates()`
+  while `in_migrate` is still True.
+- **The feed opt-out was unreachable, so every achievement was published to the team —
+  including those of people who had opted out.** `_apply_visibility` guarded on
+  `if self.visibility: return`, and the field ships `"default": "Team"`. v16 applies defaults
+  in `_set_defaults()` (`document.py:474`) *twelve lines before* `validate` runs at `:486`,
+  so the guard was already true on every insert and the branch never executed. Deleting the
+  JSON default would not have fixed it either — `create_new.py:117-118` falls back to the
+  first option of a Select, which is also `Team`. The guard is now `is_new()`-shaped.
+- **A patch that saves a Single would abort a fresh install.** `enable_uncertified_dispatch_warning`
+  called `get_single().save()`, and `TrainingSettings.validate` rejects a heartbeat under 5s,
+  a flush shorter than the heartbeat, fewer than ten intervals and a sub-minute URL TTL. A
+  Single stores one row per field and `bench migrate` adds none, so on a site that has never
+  saved Training Settings every one of those reads 0 and the save throws — taking the migrate,
+  and therefore the deploy, with it. Prod happens to be safe because all 31 field rows exist,
+  and that is luck rather than design. Now `frappe.db.set_single_value`, which does not go
+  near the controller. Same shape as the Chat Settings breakage in v1.277.3.
+- **Every standalone Designation shared one job family, one tier edit away from company-wide
+  sign-off authority.** `Position` is a nested set, so it needs a root container, and the
+  seeding hangs all sixteen non-ladder Designations straight off it — giving them
+  `job_family = "All Positions"`. Nobody outranked anybody only because they all seed at tier
+  1 and `outranks` demands *strictly* greater. The moment one person edited one rung to tier
+  2, that position would silently have acquired sign-off authority over every unrelated
+  specialty in the company: Sales Representative, Electrical Designer, the CEO. The seeding
+  patch's own docstring claims each "outranks nobody"; **the tree's root group is now not a
+  job family**, which makes that true by construction rather than by coincidence.
+- **The employee-to-ladder mapping would re-grant a position a human deliberately cleared, on
+  every deploy.** Clearing `custom_position` is how somebody says "this person is on no ladder
+  and holds no tier authority"; an `after_migrate` hook keyed on "the field is empty" read that
+  as a gap and filled it in again. It now stamps itself and afterwards only places employees
+  created since, so new hires are still placed automatically and nobody's decision is
+  overruled. It also writes `custom_position_tier`, a `fetch_from` field that `db.set_value`
+  does not populate — every backfilled employee would have read Tier 0 against a ladder saying
+  otherwise.
+- **The HR sidebar's force-resync threw on every migrate and the `except` swallowed it.**
+  `reload_doc`'s first argument is a **module**, and it builds
+  `<module>/<dt>/<dn>/<dn>.json`. `erpnext_enhancements` is an app, not one of the 32 names in
+  `modules.txt`, so `get_module_app` raised `DoesNotExistError`; and app-level
+  `workspace_sidebar` JSONs are flat files anyway. The patch's stated safety net had never
+  existed. Now `import_file_by_path`, which is what `model/sync.py` itself calls for these.
+  The two workspace reloads beside it were correct and are unchanged.
+- **Six seeding patches would never have run on a fresh site.** `bench install-app` writes the
+  whole of `patches.txt` to Patch Log as already-executed and never calls `after_migrate`, so a
+  new site would get the `Position` and `Credential Type` doctypes with no rows in either — an
+  empty ladder that looks deliberately configured. Both seeds are now on `after_install`. The
+  employee mapping is on a new **`after_sync`** hook instead, because v16's install order is
+  `sync_for → after_install → sync_jobs → sync_fixtures → after_sync` and `custom_position` is
+  a fixture field that does not exist at `after_install` time.
+- **A skipped assignment-rule seed said nothing.** The patch records itself in Patch Log either
+  way, so a silent skip is permanent — and the same deploy switches the dispatch advisory on,
+  which then has nothing to read. It now prints the reason, and resolves its Department target
+  by field rather than assuming the bare name: ERPNext autonames `Department` as
+  `"<name> - <abbr>"` when a company is set, and prod carries a mixture (`Production` bare,
+  `Finance - SF` abbreviated), so the bare name works here **by accident**.
+- **One sidebar icon named nothing.** `sitemap` is in neither of v16's icon sets; a missing
+  icon renders as blank space with no error, the same failure mode as a dead card reference.
+  Now `folder-tree`, which is in `lucide.svg`.
+
+Two findings were **refuted** on verification and are recorded because the reasoning is worth
+keeping: a 172-character `frappe.log_error` title does *not* abort — `ErrorLog.validate()`
+truncates `method` to 140 and moves the full text into `error` — and the `Department`
+targeting does resolve on this site, for the accidental reason above.
+
+Pinned by regression tests in `test_hr_module` and `test_training_social`. One of those had to
+be rewritten first, for the sixth time this release: counting `force=True` with `src.count()`
+matched the **comment explaining why the waiver is needed** and passed at 5 against 4 real
+call sites. It parses the AST now.
+
+### Fixed before shipping — two features that had no way in
+
+Both found by the HR feature survey, and both the same shape the branch review kept turning
+up: a server side that is complete and correct, and nothing anywhere that reaches it.
+
+- **Time off could be requested and then never approved, by anyone.** `timeoff.py` whitelists
+  `submit_request`, `decide`, `cancel_request` and `who_is_out`; every one is right — they
+  check ownership, refuse a self-decision first and unconditionally, require a reason on a
+  decline, notify the other side. **Nothing called any of them.** There was no client script
+  on the doctype and no caller anywhere else, so a request sat at Draft forever in the Desk,
+  on a phone and for HR alike. Now there is a form: *Send to approver*, *Approve*, *Decline*
+  (which asks for the reason before the server refuses), and *Cancel request* — and the
+  decision buttons are drawn only for somebody who may actually use them, never on your own
+  request. Note this had to ship with the review's status guard, not after it: making
+  `status` read-only removed the one accidental workaround, which was editing the Select by
+  hand, so the two apart would have left time off **more** broken.
+  `who_is_out` was uncalled too, and is now wired where the question is actually asked — an
+  approver looking at a request sees who else is already off those dates.
+  Third time in this app: `record_signoff` had no caller until v1.334.0, and the visual
+  editor had no entry point from any page until this release. The endpoint is the easy half.
+- **Work anniversaries appeared once and then never again.** `Training Achievement` has
+  carried the kind since the social layer shipped and `player.js` renders it, but the only
+  thing that ever minted one was the one-shot backfill patch. The feed would have opened with
+  sixteen and produced not one more — ever. Now a daily job at 06:10, exact-date, idempotent
+  on `(user, kind, title)`, and deliberately **not** passing `force`: unlike the backfill this
+  is an ordinary scheduled job and should stay dormant during a migrate. The 29 February rule
+  is duplicated from the backfill on purpose so the two cannot disagree about somebody's date.
+
+A generalised test now fails the build on **any** whitelisted function in `timeoff.py` that
+nothing calls — the assertion that found the second one.
+
 ## [1.385.0] - 2026-09-10
 
 ### Added

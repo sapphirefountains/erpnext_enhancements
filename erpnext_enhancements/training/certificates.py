@@ -101,6 +101,35 @@ def after_completion(doc, method=None):
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), f"Training pass email ({doc.name})")
 
+	# The team feed (WI-072). Joins this list on the same terms as everything
+	# above: caught on its own, and last, because it is the one step here that
+	# nobody outside the company will ever ask to see. `social.record` is itself
+	# incapable of raising, so this except is belt and braces.
+	#
+	# What is minted is a Training Achievement -- a separate, deliberately public
+	# row carrying a snapshot title and nothing else. The completion right here in
+	# `doc` holds score_percent, video_coverage_percent, attempt and
+	# revoked_reason, and reactions hung on it would have meant widening read on
+	# all of that to the whole company.
+	try:
+		from erpnext_enhancements.training import social
+
+		social.on_completion(doc)
+		for badge in badges or []:
+			award = frappe.db.get_value(
+				"Training Badge Award", {"user": doc.user, "badge": badge}, ["name", "awarded_on"], as_dict=True
+			)
+			if award:
+				social.record(
+					doc.user,
+					"Badge Earned",
+					badge,
+					occurred_on=award.awarded_on,
+					source_badge_award=award.name,
+				)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), f"Training feed ({doc.name})")
+
 
 def on_revoke(doc, method=None):
 	"""``Training Completion`` ``on_cancel`` — withdraw the certificate and put
@@ -123,6 +152,19 @@ def on_revoke(doc, method=None):
 		_reopen_assignment(doc)
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), f"Training assignment reopen ({doc.name})")
+
+	# Withdrawal has to reach the feed too. The completion stays exactly where it
+	# is -- it is evidence, and it still carries its revoked_reason -- but a feed
+	# that goes on congratulating somebody for a certification the company has
+	# since pulled is worse than no feed. Deleted rather than tombstoned: a
+	# tombstone would publish the withdrawal, which is the one thing about this
+	# that is genuinely nobody else's business.
+	try:
+		from erpnext_enhancements.training import social
+
+		social.withdraw_for_completion(doc.name)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), f"Training feed withdraw ({doc.name})")
 
 
 # ----------------------------------------------------------------- issuance

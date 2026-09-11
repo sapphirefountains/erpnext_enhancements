@@ -1,0 +1,184 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "allow_rename": 1,
+ "autoname": "field:position_name",
+ "creation": "2026-09-10 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "position_name",
+  "parent_position",
+  "is_group",
+  "is_active",
+  "column_break_head",
+  "job_family",
+  "tier",
+  "tier_label",
+  "department",
+  "detail_section",
+  "description",
+  "lft",
+  "rgt",
+  "old_parent"
+ ],
+ "fields": [
+  {
+   "bold": 1,
+   "fieldname": "position_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Position",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "parent_position",
+   "fieldtype": "Link",
+   "ignore_user_permissions": 1,
+   "label": "Parent Position",
+   "options": "Position",
+   "search_index": 1
+  },
+  {
+   "bold": 1,
+   "default": "0",
+   "fieldname": "is_group",
+   "fieldtype": "Check",
+   "label": "Is Group"
+  },
+  {
+   "default": "1",
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "label": "Active"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The ladder this position belongs to, derived from the tree. Sign-off authority only ever compares positions inside the same family.",
+   "fieldname": "job_family",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Job Family",
+   "options": "Position",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "default": "0",
+   "description": "Higher outranks lower. Junior 1, Senior 2, Master 3. A group has no tier.",
+   "fieldname": "tier",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Tier"
+  },
+  {
+   "description": "What this rung is called out loud - Junior, Senior, Master. Display only; authority reads Tier.",
+   "fieldname": "tier_label",
+   "fieldtype": "Data",
+   "label": "Tier Label"
+  },
+  {
+   "fieldname": "department",
+   "fieldtype": "Link",
+   "label": "Department",
+   "options": "Department"
+  },
+  {
+   "fieldname": "detail_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "What this position does"
+  },
+  {
+   "fieldname": "lft",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "lft",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "rgt",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "rgt",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "old_parent",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Old Parent",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "icon": "fa fa-sitemap",
+ "index_web_pages_for_search": 1,
+ "is_tree": 1,
+ "links": [],
+ "modified": "2026-09-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Position",
+ "naming_rule": "By fieldname",
+ "nsm_parent_field": "parent_position",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR User"
+  },
+  {
+   "read": 1,
+   "role": "Employee"
+  }
+ ],
+ "search_fields": "job_family,tier_label,department",
+ "show_title_field_in_link": 1,
+ "sort_field": "lft",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "position_name",
+ "track_changes": 1
+}

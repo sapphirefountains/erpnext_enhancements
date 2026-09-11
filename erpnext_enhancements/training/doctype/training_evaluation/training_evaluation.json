@@ -146,6 +146,11 @@
   {
    "read": 1,
    "role": "Training Author"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager"
   }
  ],
  "search_fields": "course,learner,evaluator,status",

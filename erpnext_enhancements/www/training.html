@@ -121,7 +121,29 @@
 		// The board. gamification.py has computed points, badges and streaks since
 		// v1.215.0 and its one endpoint had no caller, so every number existed and
 		// none was ever shown to the person who earned it.
-		leaderboard: "leaderboard"
+		leaderboard: "leaderboard",
+		// Sign-off from the field (WI-072). Tiered authority is only worth having if
+		// the person holding the tier can act on it, and here that is a technician
+		// standing beside a basin -- there was no non-desk sign-off surface at all
+		// before this, so a Senior Technician had the power and nowhere to use it.
+		signoffQueue: "my_signoff_queue",
+		recordSignoff: "record_field_signoff",
+		// The profile and the directory (WI-072). `profile` with no argument is your
+		// own working record; with a user it is a colleague's directory entry, which
+		// the server builds as a DIFFERENT, smaller payload rather than a filtered
+		// one -- so a field added later is invisible to colleagues until somebody
+		// deliberately lists it.
+		profile: "get_profile",
+		directory: "get_directory",
+		// The team feed (WI-072). Reactions hang on Training Achievement, a
+		// deliberately public row carrying a snapshot title and nothing else --
+		// never on Training Completion, which holds scores, attempt counts and
+		// revocation reasons, and which reacting to would have meant publishing all
+		// of that to the whole company.
+		feed: "get_feed",
+		sendKudos: "send_kudos",
+		feedPrefs: "get_feed_preferences",
+		setFeedPrefs: "set_feed_preferences"
 	};
 	var PREFIX = "/api/method/erpnext_enhancements.api.training.";
 

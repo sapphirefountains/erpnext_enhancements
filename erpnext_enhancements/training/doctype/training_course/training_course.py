@@ -41,6 +41,7 @@ RULE_TARGET_DOCTYPES = {
 	"Designation": "Designation",
 	"Role Profile": "Role Profile",
 	"Role": "Role",
+	"Position": "Position",
 	"Employee Grade": "Employee Grade",
 	"Employment Type": "Employment Type",
 }

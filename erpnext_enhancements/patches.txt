@@ -821,3 +821,49 @@ erpnext_enhancements.patches.resync_training_workspace
 # fresh site and nothing else (v1.277.3). Writes only over the value this app used to ship, or
 # over no row at all -- never over an operator's own number. Safe twice.
 erpnext_enhancements.patches.retune_offsite_backup_settings_for_nightly_full
+# v1.386.0 (WI-072) -- seeds the Position ladder and places every Employee on it. Asserts ONE
+# ladder, the Technician Junior/Senior/Master one Nik specified; every other Designation
+# becomes a single-rung family that outranks nobody, because "Electrical Designer" is a
+# specialty and giving it a rank would silently assert authority over somebody. Not a fixture:
+# Position is a nested set, and fixture import is delete-and-reinsert, which rebuilds lft/rgt
+# from whatever parent happens to resolve at the time. Insert-only; never overwrites a
+# custom_position already set. Safe twice.
+erpnext_enhancements.patches.seed_positions_from_designations
+# v1.386.0 (WI-072) -- seeds two assignment rules and turns auto-assign on for the two published
+# Required courses. Prod reached v1.385.0 with ZERO assignment rules, five assignments ever, and
+# two of sixteen employees holding any training record: the engine has been complete since
+# v1.207.0 and was never aimed at anything. Matched by slug rather than docname, skips any course
+# that already has rules, and assigns nobody itself -- _active() refuses during a patch and the
+# deploy FLUSHDB would destroy an enqueued job anyway, so the new 06:40 sweep does the work.
+# Safe twice.
+erpnext_enhancements.patches.seed_training_assignment_rules
+# v1.386.0 (WI-072) -- seeds the credential catalogue: the tickets a fountain crew is actually
+# asked for at a gate (OSHA, forklift, CDL + DOT medical card, first aid, respirator fit test,
+# electrical, confined space, pool operator). Every one was previously unrecordable, because
+# Training Certificate.completion is reqd:1 and the app could only hold a certificate that came
+# out of one of its own courses. Validity months are a HINT the controller uses to fill an empty
+# expiry, never to overwrite one typed off the card. Insert-only. Safe twice.
+erpnext_enhancements.patches.seed_credential_types
+# v1.386.0 (WI-072) -- turns the uncertified-dispatch advisory ON, now that it can fire. All
+# three of its previous finding sources required the person to have ALREADY been assigned the
+# course, so on a site with zero assignment rules it fired for nobody, ever, and reported clean
+# doing it. It gains a fourth source this release (a Required course the person's rules say they
+# owe, never assigned) and the site gains rules. Nik chose "warn only, but make it fire"; a
+# switch left off is the check not firing. WARN, never block -- a hard gate does not stop the
+# visit, it moves it off the books. Writes only over 0/absent, never over a 1. Safe twice.
+erpnext_enhancements.patches.enable_uncertified_dispatch_warning
+# v1.386.0 (WI-072) -- backfills the team feed from history so it does not open empty. Prod holds
+# three completions, four badge awards and one sign-off; a feed with three items reads as broken
+# rather than new, and gets judged on that. Nothing is invented: every row points at a real
+# record with its own date. Work anniversaries are the one exception and are deliberate -- they
+# give the feed a spine on day one, and an anniversary is the only thing worth celebrating that
+# nobody had to DO anything to earn, which matters in a feed whose whole risk is becoming a
+# scoreboard. Idempotent (social.record refuses duplicates); never raises. Safe twice.
+erpnext_enhancements.patches.backfill_training_achievements
+# v1.386.0 (WI-072) -- forces the Training + HR workspaces and the HR sidebar to re-sync. Workspace
+# and Workspace Sidebar are TIMESTAMP-gated on import (unlike a DocType, which is hash-gated), so a
+# file that is not newer than the stored row is skipped in silence -- the same check that stranded
+# the Training workspace's extra cards for five weeks. Both stamps are bumped; reload_doc(force=True)
+# is the belt to that suspenders. Also replaces an orphaned standard=0 "HR" sidebar sitting on prod
+# since 2026-02-08 pointing at a workspace that does not exist. Never aborts a migrate. Safe twice.
+erpnext_enhancements.patches.resync_hr_and_training_workspaces

@@ -729,6 +729,82 @@ def assign_course(course, users=None, employees=None, due_date=None):
     return {"created": run_bulk_assign(course, targets, due_date, frappe.session.user)}
 
 
+@frappe.whitelist()
+def resolve_assignment_group(target_type, target_value=None):
+    """Who a group target currently resolves to. Read-only; Training Manager only.
+
+    Exists so the assign dialog can say *"this will assign 4 people"* and name
+    them before anybody presses the button. Assigning fifteen people is not the
+    kind of thing anyone should do blind, and "assign to Production" reads
+    identically whether Production has four people in it or none.
+
+    Resolution goes through ``assignment.EMPLOYEE_FIELD_FOR_RULE`` rather than a
+    second mapping of its own, so a preview and the auto-assign engine cannot come
+    to disagree about what "every Junior Technician" means.
+    """
+    _require_manager()
+    return {"users": _group_users(target_type, target_value)}
+
+
+@frappe.whitelist()
+def assign_course_to_group(course, target_type, target_value=None, due_date=None):
+    """Assign a course to everybody in a department, designation, position or role.
+
+    A wrapper over :func:`assign_course` rather than a second assignment path.
+    That matters more than it looks: ``run_bulk_assign`` is where the
+    already-open check, the per-target isolation and the notification live, and a
+    group assigner that inserted its own rows would be a second place for all
+    three to be got wrong.
+
+    This is the whole reason distribution never happened. The engine in
+    ``training/assignment.py`` has been complete since v1.207.0 and had never been
+    pointed at anything: zero ``Training Assignment Rule`` rows on prod, five
+    assignments in total, ever, and two of sixteen employees with any training
+    record at all. The only way to assign a group was to hand-add a rule to a
+    child table on the Course form and wait for a scheduled sweep — so nobody did.
+    """
+    _require_manager()
+    users = _group_users(target_type, target_value)
+    if not users:
+        frappe.throw(
+            _("Nobody is in {0} right now, so there is nobody to assign this to.").format(
+                target_value or target_type
+            )
+        )
+    return assign_course(course=course, users=users, due_date=due_date)
+
+
+def _group_users(target_type, target_value=None):
+    """Active employees with a login who match a group target.
+
+    Active and with a login, both deliberately: an assignment against somebody who
+    cannot sign in is a permanently overdue row that nobody can clear, and it is
+    the sort of thing that makes a compliance report useless by degrees.
+    """
+    from erpnext_enhancements.training.assignment import EMPLOYEE_FIELD_FOR_RULE
+
+    filters = {"status": "Active"}
+    if target_type != "All Employees":
+        field = EMPLOYEE_FIELD_FOR_RULE.get(target_type)
+        if not field:
+            frappe.throw(_("{0} is not a group this app can assign to.").format(target_type))
+        if not frappe.db.has_column("Employee", field):
+            # The column has not migrated yet. Empty rather than an exception: the
+            # dialog says "nobody" and the author picks a different group.
+            return []
+        if not target_value:
+            frappe.throw(_("Pick which {0}.").format(_(target_type)))
+        filters[field] = target_value
+
+    return sorted(
+        {
+            user
+            for user in frappe.get_all("Employee", filters=filters, pluck="user_id")
+            if user
+        }
+    )
+
+
 def run_bulk_assign(course, targets, due_date=None, assigned_by=None):
     """Create one assignment per target, skipping anyone who already has one open.
 

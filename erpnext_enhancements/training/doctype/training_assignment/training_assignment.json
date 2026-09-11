@@ -246,6 +246,15 @@
   {
    "read": 1,
    "role": "Training Learner"
+  },
+  {
+   "create": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
   }
  ],
  "search_fields": "course,user,status",

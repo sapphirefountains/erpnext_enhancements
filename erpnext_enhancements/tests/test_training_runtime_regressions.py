@@ -139,14 +139,16 @@ class TestPayloadFieldNamesExist(unittest.TestCase):
         """``db_set`` is filtered through ``meta.has_field`` in the same way, so it
         swallows a typo just as quietly."""
         declared = _fields("Training Attempt")
-        body = _fn("finish_attempt")
+        body = _fn("_evaluate_attempt")
         written = set(re.findall(r'"(\w+)":\s', body))
         # Only the keys that are plausibly field writes, not dict payload keys the
         # function returns to the caller.
         response_keys = {"passed", "attempt", "status", "score", "outstanding", "completion",
                          "lesson_key", "title", "reasons"}
         unknown = sorted(k for k in written - response_keys if k not in declared)
-        self.assertEqual(unknown, [], f"finish_attempt db_sets {unknown} which Training Attempt lacks")
+        self.assertEqual(
+            unknown, [], f"_evaluate_attempt db_sets {unknown} which Training Attempt lacks"
+        )
 
 
 class TestSignoffGateIsEnforced(unittest.TestCase):
@@ -159,7 +161,7 @@ class TestSignoffGateIsEnforced(unittest.TestCase):
     """
 
     def test_finish_attempt_consults_the_requirement(self):
-        self.assertIn("_signoff_outstanding", _fn("finish_attempt"))
+        self.assertIn("_signoff_outstanding", _fn("_evaluate_attempt"))
 
     def test_the_helper_reads_the_course_flag(self):
         self.assertIn("require_supervisor_signoff", _sfn("signoff_outstanding"))
@@ -320,12 +322,12 @@ class TestCoverageReachesTheRecord(unittest.TestCase):
         self.assertIn('"gated"', _gfn("evaluate_gates"))
 
     def test_completion_takes_coverage_from_the_gate(self):
-        body = _fn("finish_attempt")
+        body = _fn("_evaluate_attempt")
         self.assertIn('verdict.get("gated")', body)
         self.assertIn("_issue_completion(doc, score, coverage)", body)
 
     def test_no_video_writes_no_coverage_rather_than_zero(self):
-        self.assertIn("if coverages else None", _fn("finish_attempt"))
+        self.assertIn("if coverages else None", _fn("_evaluate_attempt"))
 
     def test_the_stale_attempt_field_is_no_longer_the_source(self):
         """The bug itself: `flt(getattr(doc, "video_coverage_percent", 0))`."""
@@ -334,7 +336,7 @@ class TestCoverageReachesTheRecord(unittest.TestCase):
         )
 
     def test_the_summary_counters_are_written(self):
-        self.assertIn("_refresh_attempt_summary", _fn("finish_attempt"))
+        self.assertIn("_refresh_attempt_summary", _fn("_evaluate_attempt"))
         body = _fn("_refresh_attempt_summary")
         for field in ("quiz_runs", "checkpoints_answered", "checkpoints_correct"):
             self.assertIn(field, body)
@@ -661,3 +663,148 @@ class TestLazyPanelsCanReRender(unittest.TestCase):
         src = _player_js()
         self.assertIn("boardWrap = wrap", src, "the leaderboard panel is not captured for render()")
         self.assertIn("qaWrap = wrap", src, "the Q&A panel is not captured for render()")
+
+
+# --------------------------------------------------- author media a learner cannot see
+#
+# The defect that made the WYSIWYG feel broken and was never about the WYSIWYG.
+# Both authoring surfaces upload with `is_private = 1` attached to Training
+# Lesson; no learner role holds a DocPerm on Training Lesson; and `get_media_url`
+# signed only Video and External Embed. So `blocks.js` fell back to the raw
+# `/private/files/...` path that publish serialises into the payload, and every
+# author-uploaded image and PDF 403'd for every learner, from the day the module
+# shipped. The author never saw it, because in the builder they are the owner.
+
+
+class TestAuthorMediaReachesTheLearner(unittest.TestCase):
+    def test_file_blocks_are_recognised(self):
+        src = _src()
+        self.assertIn("FILE_BLOCK_FIELD", src)
+        for block_type in ("Image", "PDF", "Downloadable File"):
+            with self.subTest(block_type=block_type):
+                self.assertIn(f'"{block_type}"', _fn("get_media_url") + src[: src.index("def _learner")])
+
+    def test_get_media_url_answers_for_them(self):
+        """It used to fall through to the video signer, which returns None for a
+        block with no video_asset -- so the endpoint said `not_available` and the
+        player quietly used the unreachable raw path instead."""
+        body = _fn("get_media_url")
+        self.assertIn("FILE_BLOCK_FIELD", body)
+        self.assertIn("_lesson_file_url", body)
+
+    def test_the_membership_gate_is_shared_with_video(self):
+        """One predicate for 'part of this course', or the file path and the video
+        path drift into disagreeing about it."""
+        self.assertIn("def _block_in_attempt(", _src())
+        for fn in ("get_media_url", "download_lesson_file"):
+            with self.subTest(fn=fn):
+                self.assertIn("_block_in_attempt(", _fn(fn))
+
+    def test_the_download_url_carries_no_domain_identifiers(self):
+        """The POST-only rule keeps attempt and block keys out of access logs. The
+        one GET in the module honours it with an opaque nonce."""
+        body = _fn("_lesson_file_url")
+        self.assertIn("generate_hash", body)
+        self.assertIn("token=", body)
+        self.assertNotIn("attempt=", body)
+        self.assertNotIn("block_key=", body)
+
+    def test_the_token_is_bound_to_the_session_and_expires(self):
+        mint = _fn("_lesson_file_url")
+        self.assertIn("expires_in_sec", mint)
+        self.assertIn("signed_url_ttl_minutes", mint)
+        self.assertIn('"user": frappe.session.user', mint)
+        redeem = _fn("download_lesson_file")
+        self.assertIn('payload.get("user") != frappe.session.user', redeem)
+
+    def test_it_serves_inline_so_the_page_can_render_it(self):
+        """`as_raw` defaults to Content-Disposition: attachment, which is the wrong
+        answer for something whose whole job is to appear in an <img>."""
+        body = _fn("download_lesson_file")
+        self.assertIn('display_content_as = "inline"', body)
+
+
+# ---------------------------------------------------- the red modal every four seconds
+#
+# TrainingLesson.validate threw on a media block with nothing attached and on a
+# Rich Text block with no text -- which is exactly what both `add_block`
+# implementations create. Autosave then fired seconds later, and frappe's
+# request.js msgprints `_server_messages` whatever the caller does with the
+# promise. Nothing was lost; the editor was simply unusable.
+
+
+class TestUnfinishedBlocksDoNotFightTheAuthor(unittest.TestCase):
+    LESSON = DOCTYPES / "training_lesson/training_lesson.py"
+    VERSION = DOCTYPES / "training_course_version/training_course_version.py"
+
+    def _lesson(self):
+        return self.LESSON.read_text(encoding="utf-8")
+
+    def _executable(self, path, cls, method):
+        """A method's source with its DOCSTRING REMOVED.
+
+        Every assertion below is about what the code does, and the docstrings in
+        these controllers quote the very strings being asserted absent — the
+        account of why ``msgprint`` was rejected names ``msgprint`` four times. A
+        raw substring scan reads the explanation as the defect, which is the same
+        mistake as a contract test that passes because the word is in a comment.
+        """
+        src = path.read_text(encoding="utf-8")
+        lines = src.splitlines()
+        for node in ast.parse(src).body:
+            if not (isinstance(node, ast.ClassDef) and node.name == cls):
+                continue
+            for item in node.body:
+                if not (isinstance(item, ast.FunctionDef) and item.name == method):
+                    continue
+                stmts = item.body
+                if (
+                    stmts
+                    and isinstance(stmts[0], ast.Expr)
+                    and isinstance(stmts[0].value, ast.Constant)
+                    and isinstance(stmts[0].value.value, str)
+                ):
+                    stmts = stmts[1:]
+                if not stmts:
+                    return ""
+                return "\n".join(lines[stmts[0].lineno - 1 : item.end_lineno])
+        raise AssertionError(f"{cls}.{method} not found in {path.name}")
+
+    def test_saving_an_unfinished_block_is_allowed(self):
+        body = self._executable(self.LESSON, "TrainingLesson", "_validate_blocks")
+        self.assertNotIn("nothing attached", body)
+        self.assertNotIn("with no text", body)
+
+    def test_it_does_not_toast_on_every_autosave_either(self):
+        """A warning on validate is a msgprint, and a msgprint rides out on
+        `_server_messages` regardless of the client -- the same defect in a
+        friendlier colour."""
+        body = self._executable(self.LESSON, "TrainingLesson", "_validate_blocks")
+        self.assertNotIn("msgprint", body)
+
+    def test_there_is_one_predicate_for_unfinished(self):
+        self.assertIn("def incomplete_blocks(self)", self._lesson())
+
+    def test_publish_is_where_it_is_enforced(self):
+        """It had to MOVE, not merely relax. `_materialize_lessons` writes with
+        db.set_value and never re-runs lesson validation, so nothing else in the
+        publish path looks at block content at all."""
+        version = self.VERSION.read_text(encoding="utf-8")
+        self.assertIn("def _require_finished_blocks(self)", version)
+        self.assertIn("incomplete_blocks()", version)
+        start = version.index("def before_submit")
+        self.assertIn("_require_finished_blocks", version[start : start + 400])
+
+    def test_the_refusal_names_the_lesson_and_the_block(self):
+        """'Something is empty somewhere in a forty-lesson course' is a scavenger
+        hunt, not an error message."""
+        body = self._executable(self.VERSION, "TrainingCourseVersion", "_require_finished_blocks")
+        self.assertIn("lesson_title", body)
+        self.assertIn("block {1}", body)
+
+    def test_the_structural_rules_still_throw(self):
+        """Relaxing emptiness must not relax the rules that hold mid-edit -- a
+        coverage percentage outside 0-100 is incoherent whenever it is written."""
+        body = self._executable(self.LESSON, "TrainingLesson", "_validate_blocks")
+        self.assertIn("min_coverage_percent", body)
+        self.assertIn("frappe.throw", body)

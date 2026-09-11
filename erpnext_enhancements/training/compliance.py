@@ -204,7 +204,13 @@ def _check(doc, users):
 
 
 def _required_courses():
-	"""Published required-weight courses. Optional courses are never a finding."""
+	"""Published required-weight courses. Optional courses are never a finding.
+
+	Course-global on purpose: this is the *candidate* set, and
+	:func:`_courses_owed_by` narrows it to one person. Both halves are needed — a
+	global set alone would flag every technician for "Accounting in ERPNext", and a
+	per-person set alone would have nothing to narrow.
+	"""
 	return set(
 		frappe.get_all(
 			"Training Course",
@@ -214,14 +220,58 @@ def _required_courses():
 	)
 
 
+def _courses_owed_by(user, required):
+	"""Which of the required courses *this* person's assignment rules say they owe.
+
+	**This is what made the advisory fire at all.** Until v1.386.0 ``_uncertified``
+	drew findings from exactly three sources — an open assignment, a revoked or
+	expired completion, and a completion past its date — and every one of them
+	needs the person to have *already been assigned* the course. A Required course
+	somebody was never assigned produced nothing. On a site with zero assignment
+	rules and five assignments in total, that meant the check fired for nobody,
+	ever, while reporting clean. Same failure direction as the PAD SPACE
+	whitespace queries: **it passes**.
+
+	Answered by asking the assignment engine rather than by a second rule of its
+	own. ``_matching_rule`` is where "who owes this course" is decided, and a
+	parallel implementation here would drift from it — quietly, since the two are
+	only ever compared by somebody wondering why a warning did or did not appear.
+
+	Returns the global set unchanged when the engine cannot be consulted. A
+	compliance check that silently narrows to nothing because an import failed is
+	worse than one that is briefly noisy.
+	"""
+	try:
+		from erpnext_enhancements.training import assignment
+	except Exception:
+		return set(required)
+
+	owed = set()
+	for name in required:
+		try:
+			course = frappe.get_cached_doc("Training Course", name)
+			if assignment._matching_rule(course, user):
+				owed.add(name)
+		except Exception:
+			# One unreadable course must not silence the advisory for the rest.
+			owed.add(name)
+	return owed
+
+
 def _uncertified(user, required):
 	"""Required courses this learner is not currently certified in.
 
-	Three sources, merged by course and in this priority order: an open assignment,
-	a completion that has been expired or revoked, and a completion whose
-	``expires_on`` has passed but which the nightly sweep has not restatused yet.
+	**Four** sources, merged by course and in this priority order: an open
+	assignment; a completion that has been expired or revoked; a completion whose
+	``expires_on`` has passed but which the nightly sweep has not restatused yet;
+	and a Required course this person's rules say they owe and which they have
+	nothing to show for.
+
 	The third exists because the advisory is read at dispatch time and must not
-	depend on a scheduler run having happened this morning.
+	depend on a scheduler run having happened this morning. The fourth is what made
+	the whole check capable of firing at all — every one of the first three needs
+	the person to have *already been assigned* the course, so on a site with no
+	assignment rules this described nobody and reported all-clear doing it.
 	"""
 	valid = _currently_valid_courses(user)
 	learner_name = frappe.db.get_value("User", user, "full_name") or user
@@ -271,6 +321,36 @@ def _uncertified(user, required):
 		fields=["course", "course_title_snapshot"],
 	):
 		add(row.get("course"), row.get("course_title_snapshot"), _("Certification lapsed"))
+
+	# The fourth source, and the one that makes the other three reachable. Each of
+	# them requires the person to have ALREADY been assigned the course, so a
+	# Required course nobody was ever assigned produced no finding at all — and on
+	# a site with no assignment rules that is every course, for everybody. The
+	# advisory reported clean because it had nothing to look at, which is the worst
+	# way for a safety check to be wrong.
+	#
+	# Scoped by the assignment engine's own targeting, so this asks "does this
+	# person owe it?" rather than "does the course exist?". Without that narrowing
+	# every technician would be flagged for "Accounting in ERPNext".
+	# Anything deliberately closed is not a gap. A **Waived** assignment is somebody
+	# saying out loud "this person does not need this course", and a **Cancelled**
+	# one usually means the course was retired out from under them — reporting
+	# either as "Never assigned" would make the advisory argue with a decision a
+	# manager already took, permanently, with no way to silence it. Found by the
+	# branch review; the first version of this reported both.
+	excused = {
+		row.course
+		for row in frappe.get_all(
+			"Training Assignment",
+			filters={"user": user, "status": ["in", ("Waived", "Cancelled")]},
+			fields=["course"],
+		)
+	}
+	for course in _courses_owed_by(user, required):
+		if course in excused:
+			continue
+		title = frappe.db.get_value("Training Course", course, "course_title")
+		add(course, title, _("Never assigned"))
 
 	return list(found.values())
 

@@ -53,9 +53,9 @@ the Desk -- on a course requiring hands-on attestation -- was issued without one
 
 import frappe
 from frappe import _
-from frappe.utils import cint, get_url
+from frappe.utils import add_months, cint, get_datetime, get_url, now_datetime
 
-from erpnext_enhancements.training import notifications
+from erpnext_enhancements.training import authority, notifications
 from erpnext_enhancements.training.doctype.training_settings.training_settings import is_enabled
 from erpnext_enhancements.training.doctype.training_signoff.training_signoff import (
 	COMPETENT,
@@ -65,7 +65,21 @@ from erpnext_enhancements.training.doctype.training_signoff.training_signoff imp
 SIGNOFF_DOCTYPE = "Training Signoff"
 SIGNOFF_ROUTE = "training-signoff"
 
-MANAGER_ROLES = {"Training Manager", "System Manager"}
+# Blanket authority: may record any sign-off without being the named supervisor.
+# HR Manager joined in v1.386.0 (WI-072 decision 10). It had been absent from every
+# authority set in this module, from DELEGATE_ROLES on the controller, and from a
+# DocPerm row on any of the 32 Training doctypes — which meant the one person on
+# this site holding HR Manager without System Manager could not see a single
+# training record, let alone sign one. Frappe hides a workspace whose module is not
+# in `allow_modules`, and `allow_modules` is built from DocPerms, so the Training
+# area was not merely hard for her to find: it was absent, and the desk tile routed
+# into a PermissionError.
+#
+# Known and accepted (Nik, 2026-09-10): `triton@`, the assistant's service account,
+# holds HR Manager, so widening this set widens it to the AI identity too. He
+# declined trimming those roles. If that is ever revisited, this is the line that
+# makes it matter.
+MANAGER_ROLES = {"Training Manager", "System Manager", "HR Manager"}
 
 OUTCOMES = (COMPETENT, NEEDS_PRACTICE)
 
@@ -75,6 +89,11 @@ AWAITING = "Awaiting Sign-off"
 
 # Assignment states a sign-off request should not disturb.
 CLOSED_ASSIGNMENT_STATUSES = ("Completed", "Cancelled", "Waived")
+
+#: Columns the supervisor queue reads. Named once because it is now fetched from
+#: two branches, and a field present in one and not the other is the kind of
+#: difference that only shows up for whoever hits the second branch.
+QUEUE_FIELDS = ["name", "course", "course_version", "user", "supervisor_user", "creation"]
 
 
 def _in_maintenance_context():
@@ -320,21 +339,109 @@ def record_signoff(signoff, outcome, competency_notes=None, signature_image=None
 	return {"signoff": doc.name, "outcome": outcome, "notified": notified}
 
 
-def _assert_may_sign(doc, caller):
-	"""Never the learner. Then: the named supervisor, or a Training Manager.
+def after_signoff_submitted(doc):
+	"""Move whatever the attestation was blocking. Never raises.
 
-	The learner check is first and unconditional, and it is stricter than
-	``TrainingSignoff.before_submit`` on purpose — see the module docstring.
+	Called from ``TrainingSignoff.on_submit``. The two outcomes go opposite ways
+	and both matter:
+
+	* **Competent** — re-drive the learner's attempt through
+	  ``api.training.resume_after_signoff``, which re-evaluates *every* gate. The
+	  sign-off unblocks one of them; it does not grant a pass, so a learner with a
+	  lesson still outstanding stays outstanding and the assignment stays open.
+	* **Needs More Practice** — take the assignment back out of ``Awaiting
+	  Sign-off``. Left there it reads as "waiting on somebody else" for ever, when
+	  in fact the ball is back with the learner.
+
+	Wrapped because it runs inside a submit: an attestation must not fail to
+	record because the bookkeeping behind it hit a problem. The sign-off is the
+	evidence; everything here can be re-driven.
+	"""
+	try:
+		if doc.outcome == COMPETENT:
+			from erpnext_enhancements.api import training as training_api
+			from erpnext_enhancements.training import social
+
+			# A hands-on sign-off is the achievement people are proudest of, and the
+			# one the old system had no way to show anybody. Minted before the
+			# re-drive, so it lands even if the completion path has a problem.
+			social.on_signoff(doc)
+
+			training_api.resume_after_signoff(
+				attempt=doc.get("attempt"), course=doc.get("course"), user=doc.get("user")
+			)
+			return
+		_set_assignment_status(doc, "In Progress")
+	except Exception:
+		frappe.log_error(
+			f"Sign-off {doc.name} was recorded but the assignment behind it could not be advanced.",
+			"Training sign-off",
+		)
+
+
+def after_signoff_cancelled(doc):
+	"""A withdrawn attestation re-opens the gate it satisfied. Never raises.
+
+	Only the completion is *not* touched here. A submitted ``Training Completion``
+	is an audit artefact and un-issuing one is ``certificates.revoke``'s job, with
+	a reason attached — quietly deleting the evidence because somebody cancelled
+	the sign-off behind it is exactly the silent history rewrite the submittable
+	model exists to prevent. What this does is put the assignment back into
+	``Awaiting Sign-off`` so the outstanding work is visible again.
+	"""
+	try:
+		_set_assignment_status(doc, AWAITING)
+	except Exception:
+		frappe.log_error(
+			f"Sign-off {doc.name} was cancelled but its assignment could not be re-opened.",
+			"Training sign-off",
+		)
+
+
+def _set_assignment_status(doc, status):
+	"""Write *status* onto the learner's open assignment for this course.
+
+	Silent when there is no open assignment: a sign-off can be recorded for an
+	Optional course nobody was ever assigned, and that is not an error.
+	"""
+	name = frappe.db.get_value(
+		"Training Assignment",
+		{
+			"course": doc.get("course"),
+			"user": doc.get("user"),
+			"status": ["not in", CLOSED_ASSIGNMENT_STATUSES],
+		},
+		"name",
+		order_by="creation desc",
+	)
+	if not name:
+		return
+	frappe.db.set_value("Training Assignment", name, "status", status, update_modified=False)
+
+
+def _assert_may_sign(doc, caller):
+	"""Never the learner. Then whichever authority basis applies.
+
+	The decision itself lives in ``training/authority.py`` and is read from five
+	places, this being one — see that module for why one of the other four is the
+	load-bearing one. What stays here is the *message*, because a refusal has to
+	tell somebody what to do next and the predicate has no idea.
+
+	The learner check is repeated rather than delegated even though
+	``authority_basis`` also refuses them: it is first, it is unconditional, and it
+	earns its own sentence. "You cannot sign off your own training" is a different
+	thing to be told than "you are not senior enough".
 	"""
 	if doc.user == caller:
 		frappe.throw(
 			_("You cannot sign off your own training. Ask your supervisor or a Training Manager."),
 			frappe.PermissionError,
 		)
-	if doc.supervisor_user == caller or _is_manager(caller):
+	if authority.may_sign(doc, caller):
 		return
 	frappe.throw(
-		_("Only {0} or a Training Manager can record this sign-off.").format(
+		_("You cannot record this sign-off. It needs {0}, somebody senior to them on the same "
+		  "ladder, or a Training Manager.").format(
 			doc.supervisor_user or _("the named supervisor")
 		),
 		frappe.PermissionError,
@@ -345,16 +452,37 @@ def _assert_may_sign(doc, caller):
 
 
 def competent_signoff_name(course, learner_user):
-	"""The submitted ``Competent`` sign-off backing this learner, if any.
+	"""The submitted ``Competent`` sign-off currently backing this learner, if any.
 
 	The single expression of what "signed off" means, because every caller wants
-	the same four-clause filter and previously three of them wrote it out
-	separately. ``docstatus 1`` rather than "not 2": a draft sign-off is a request,
-	not an attestation, and a cancelled one is a withdrawal.
+	the same filter and previously three of them wrote it out separately.
+	``docstatus 1`` rather than "not 2": a draft sign-off is a request, not an
+	attestation, and a cancelled one is a withdrawal.
+
+	**"Currently" is the word that was missing until v1.386.0.** The filter had no
+	date clause, so an attestation was good for ever — while the course it backed
+	recertified on a schedule. ``TRN-CRS-00001`` ("Draining a Fountain Basin
+	Safely") recertifies every 24 months: at month 25 the completion expired, the
+	assignment was raised again, the learner re-watched the video, and the sign-off
+	gate re-opened against the *original two-year-old signature*. Nobody watched
+	them do it the second time. A compliance check that passes when it should fail
+	is worse than not having one, because nobody goes looking.
+
+	So an attestation is valid for the course's own ``recertify_months`` window.
+	No window on the course means no expiry, which is the honest reading of a
+	course that never recertifies.
+
+	The window is compared **in Python, not in the filter**. A datetime comparison
+	pushed into ``frappe.db.get_value`` filters is coalesced, so a row with a NULL
+	``signed_on`` — every sign-off written before ``_stamp_signed_on`` existed —
+	silently lands on whichever side of the comparison the sentinel falls, and it
+	is not the side you assumed. Here a NULL is treated as "cannot prove it is
+	current", which fails closed.
 	"""
 	if not frappe.db.exists("DocType", SIGNOFF_DOCTYPE):
 		return None
-	return frappe.db.get_value(
+
+	row = frappe.db.get_value(
 		SIGNOFF_DOCTYPE,
 		{
 			"course": course,
@@ -362,8 +490,19 @@ def competent_signoff_name(course, learner_user):
 			"outcome": COMPETENT,
 			"docstatus": 1,
 		},
-		"name",
+		["name", "signed_on"],
+		order_by="signed_on desc, creation desc",
+		as_dict=True,
 	)
+	if not row:
+		return None
+
+	months = cint(frappe.db.get_value("Training Course", course, "recertify_months"))
+	if months <= 0:
+		return row.name
+	if not row.signed_on:
+		return None
+	return row.name if get_datetime(row.signed_on) >= add_months(now_datetime(), -months) else None
 
 
 def has_competent_signoff(course, learner_user):
@@ -406,16 +545,35 @@ def signoff_outstanding(course, learner_user):
 def get_signoff_queue():
 	"""Outstanding requests this person may act on, for a supervisor's dashboard."""
 	caller = _session_user()
-	filters = {"docstatus": 0}
-	if not _is_manager(caller):
-		filters["supervisor_user"] = caller
-
-	rows = frappe.get_all(
-		SIGNOFF_DOCTYPE,
-		filters=filters,
-		fields=["name", "course", "course_version", "user", "supervisor_user", "creation"],
-		order_by="creation asc",
-	)
+	if _is_manager(caller):
+		rows = frappe.get_all(
+			SIGNOFF_DOCTYPE,
+			filters={"docstatus": 0},
+			fields=QUEUE_FIELDS,
+			order_by="creation asc",
+		)
+	else:
+		# Two arms, not one, and the second is why the tier rule is worth having.
+		# Filtering on `supervisor_user` alone showed a Senior Technician nothing:
+		# on this site none of the four Junior Technicians reports to him — they
+		# all report to the Project Manager, and so does he — so every request he
+		# is now allowed to sign was routed to somebody else. Authority you cannot
+		# see a queue for is authority nobody exercises.
+		#
+		# `or_filters` rather than two queries: `filters` AND together, and a row
+		# has to satisfy either arm. Deduplicated by construction because a single
+		# row is returned once however many arms it matches.
+		signable = authority.signable_learner_users(caller)
+		or_filters = {"supervisor_user": caller}
+		if signable:
+			or_filters["user"] = ["in", signable]
+		rows = frappe.get_all(
+			SIGNOFF_DOCTYPE,
+			filters={"docstatus": 0},
+			or_filters=or_filters,
+			fields=QUEUE_FIELDS,
+			order_by="creation asc",
+		)
 	courses = {}
 	for row in rows:
 		detail = courses.get(row.course)

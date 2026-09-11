@@ -21,6 +21,10 @@
   "evidence_section",
   "competency_notes",
   "signature_image",
+  "authority_section",
+  "authority_basis",
+  "supervisor_position",
+  "learner_position",
   "amended_from"
  ],
  "fields": [
@@ -137,6 +141,36 @@
    "label": "Signature"
   },
   {
+   "collapsible": 1,
+   "fieldname": "authority_section",
+   "fieldtype": "Section Break",
+   "label": "Authority"
+  },
+  {
+   "description": "Why this person was allowed to attest, decided at submit by training/authority.py. Snapshotted rather than recomputed: a link resolves to today, and what an audit asks in 2029 is what was true when the attestation was made.",
+   "fieldname": "authority_basis",
+   "fieldtype": "Select",
+   "label": "Authority Basis",
+   "options": "\nObserved Supervisor\nPosition Tier\nManager Delegate",
+   "read_only": 1
+  },
+  {
+   "description": "The attesting person's position at the moment they signed.",
+   "fieldname": "supervisor_position",
+   "fieldtype": "Link",
+   "label": "Supervisor Position",
+   "options": "Position",
+   "read_only": 1
+  },
+  {
+   "description": "The learner's position at the moment they were signed off.",
+   "fieldname": "learner_position",
+   "fieldtype": "Link",
+   "label": "Learner Position",
+   "options": "Position",
+   "read_only": 1
+  },
+  {
    "fieldname": "amended_from",
    "fieldtype": "Link",
    "hidden": 1,
@@ -190,6 +224,18 @@
    "print": 1,
    "read": 1,
    "role": "Training Learner"
+  },
+  {
+   "cancel": 1,
+   "create": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
   }
  ],
  "search_fields": "course,user,supervisor",

@@ -317,6 +317,12 @@ doctype_list_js = {
 		"public/js/global_enhancements/supplier_list.js",
 	],
 	"Task": "public/js/project_enhancements/task_gantt.js",
+	# training (WI-072) — the moment somebody decides to build a course. "New" gives
+	# an empty form and asks the author to invent the content and the shape at the
+	# same time, which is where authoring stops for most people. This adds two ways
+	# in beside it: start from a shape, or draft it with AI. Both land on the same
+	# unpublished Draft behind the same review gate.
+	"Training Course": "public/js/training/training_course_list.js",
 	"File": "public/js/global_enhancements/file_list.js",
 	"Item": "public/js/item_list.js",
 	# procurement — the Order Stage pill: a real colour per stage (frappe's
@@ -634,7 +640,14 @@ doc_events = {
 		# course their department/designation owes, on day one. No-ops when user_id
 		# is not set yet (employees are routinely created before a login exists) —
 		# the on_update handler catches it when one appears.
-		"after_insert": "erpnext_enhancements.training.assignment.on_employee_insert",
+		"after_insert": [
+			"erpnext_enhancements.training.assignment.on_employee_insert",
+			# hr_enhancements (WI-072): raise the first-week checklist. Contractually
+			# cannot raise -- an Employee record failing to save because a checklist
+			# could not be built would be the tail wagging the dog, and the training
+			# handler above has the same contract for the same reason.
+			"erpnext_enhancements.hr_enhancements.onboarding.on_employee_insert",
+		],
 		"on_update": [
 			# Cell Number -> linked User.phone (Call via Triton dials it)
 			"erpnext_enhancements.sync_contact.sync_employee_phone_to_user",
@@ -762,6 +775,40 @@ scheduler_events = {
 		# digest per learner covering every course they owe, not one per assignment.
 		# Gated by Training Settings -> Send Notifications.
 		"15 7 * * *": ["erpnext_enhancements.training.tasks.send_due_reminders"],
+		# Raise whatever the assignment rules currently say is missing. 06:40, before
+		# the reminder digest above, so anything raised today is in that morning's
+		# email rather than tomorrow's.
+		#
+		# This is the job that was never there. `assignment.sync_course` had ONE
+		# caller -- publish_version -- and it fires only if `auto_assign` was already
+		# set at the moment of publishing, so turning auto-assign on for a live
+		# course did nothing, and neither did adding a rule to one. The engine has
+		# been complete since v1.207.0 and prod reached v1.385.0 with zero assignment
+		# rules and five assignments in total, ever.
+		#
+		# It also makes the publish-time fan-out re-drivable, which this app has a
+		# specific reason to want: the prod deploy FLUSHDBs the queue redis and
+		# destroys every pending background job, so publishing shortly before a merge
+		# loses its sweep silently. Idempotent -- `_assign` skips anybody who already
+		# has an open assignment. Gated by Training Settings -> Auto Assign.
+		"40 6 * * *": ["erpnext_enhancements.training.tasks.sweep_auto_assignments"],
+		# ---- HR Enhancements (WI-072) ---------------------------------------------------
+		# A credential's status is arithmetic on a date: correct the day it is saved and
+		# wrong every day after. Re-derived nightly at 05:20, well before anybody looks.
+		"20 5 * * *": ["erpnext_enhancements.hr_enhancements.tasks.refresh_credential_status"],
+		# The forward view, Mondays at 07:30. Nothing in this app warned about anything
+		# BEFORE the fact until now -- certificates.expire_and_recertify reacts after a
+		# training certificate lapses, and fixtures/notification.json holds nineteen alerts
+		# and not one HR or training one. An expiry model with no horizon tells you about a
+		# problem on the morning of the job. One email per person, plus a roll-up to each
+		# supervisor; gated by Training Settings -> Notifications, same as every other mail.
+		"30 7 * * 1": ["erpnext_enhancements.hr_enhancements.tasks.send_expiry_digest"],
+		# Work anniversaries into the team feed, 06:10. The feed has always known how to
+		# RENDER these -- `Training Achievement` carries the kind and player.js draws it --
+		# and the only thing that ever minted one was the one-shot backfill patch. So the
+		# feed would have opened with sixteen and produced not one more, ever. Idempotent
+		# on (user, kind, title), so a re-run the same day mints nothing twice.
+		"10 6 * * *": ["erpnext_enhancements.hr_enhancements.tasks.mint_work_anniversaries"],
 		# ---- Chat sync engine (ADR 0009 Phase 2, v1.262.0) -------------------------------
 		# EVERY job below no-ops while `Chat Settings.enabled` is 0, which is how it ships.
 		# They are registered dormant on purpose: a scheduler entry added later, by hand, on
@@ -1277,6 +1324,30 @@ after_install = [
 	# for the usual reason: after_migrate does NOT run during `bench install-app`, so a
 	# fresh site would show grey letter avatars until somebody happened to run a migrate.
 	"erpnext_enhancements.setup.desktop_icons.sync_desktop_icons",
+	# hr_enhancements (WI-072). Same reason as everything above: install-app writes the
+	# whole of patches.txt to Patch Log as already-executed, so a fresh site would get the
+	# Position DocType and the Credential Type DocType with no rows in either -- an empty
+	# ladder and an empty credential register that both look deliberately configured.
+	# Both are insert-only and safe to run twice. They need only doctypes, which exist by
+	# `sync_for` (frappe v16 `installer.py`: sync_for, then after_install).
+	"erpnext_enhancements.patches.seed_positions_from_designations.execute",
+	"erpnext_enhancements.patches.seed_credential_types.execute",
+]
+
+# Run at the END of `bench install-app`, after fixtures have synced.
+#
+# The distinction from after_install is not cosmetic. v16's `installer.install_app`
+# runs: sync_for -> add_to_installed_apps -> **after_install** -> sync_jobs ->
+# **sync_fixtures** -> sync_customizations -> **after_sync**. So a callable that needs
+# a FIXTURE Custom Field must hang here and not on after_install, where the column does
+# not exist yet. Exactly the same ordering trap as the migrate path, where
+# sync_fixtures runs after the post-model-sync patches.
+after_sync = [
+	# Places every Employee on the Position ladder. Writes `Employee.custom_position`,
+	# which is a fixture Custom Field -- hence here rather than in after_install.
+	# One-shot: it stamps itself and afterwards only touches employees created since,
+	# so clearing somebody's position by hand is never overruled on the next deploy.
+	"erpnext_enhancements.patches.seed_positions_from_designations.map_employees_to_positions",
 ]
 
 # Run after each `bench migrate` (from global_enhancements)
@@ -1299,6 +1370,13 @@ after_migrate = [
 	# Projects-module dashboard widgets (Custom HTML Blocks) — repo is the source
 	# of truth; upserts the blocks from "Custom HTML Block/" and places them on Home
 	"erpnext_enhancements.setup.custom_html_blocks.sync_custom_html_blocks",
+	# hr_enhancements (WI-072): place every Employee on the Position ladder. NOT in
+	# the seeding patch, because the column it writes is `Employee.custom_position`
+	# -- a FIXTURE Custom Field, and `sync_fixtures()` runs in post_schema_updates,
+	# after the post-model-sync patches. A patch doing this would map nobody on the
+	# migrate that introduces the field, then record itself in Patch Log and never
+	# run again. Idempotent: writes only where custom_position is empty.
+	"erpnext_enhancements.patches.seed_positions_from_designations.map_employees_to_positions",
 	# device_management (MDM/EMM): Employee "Assigned Devices" panel field
 	"erpnext_enhancements.device_management.setup.create_device_employee_fields",
 	# accounting_intake: Supplier Drive folder id (document filing)
@@ -1805,6 +1883,43 @@ permission_query_conditions = {
 	"Training Certificate": "erpnext_enhancements.training.permissions.certificate_query_conditions",
 	"Training Signoff": "erpnext_enhancements.training.permissions.signoff_query_conditions",
 	"Training Submission": "erpnext_enhancements.training.permissions.submission_query_conditions",
+	# Gamification (WI-072 §0). Both of these grant `read` to "Training Learner" in
+	# their doctype JSON, and Training Learner is held by CUSTOMER Website Users as
+	# well as staff -- so until v1.386.0 a client contact could enumerate every staff
+	# member's points, streaks and badge awards through /api/resource. They shipped
+	# with DocPerms and no scoping hook, which is the one combination that leaks.
+	# `Training Badge` itself stays unscoped on purpose: it is a catalogue of badge
+	# definitions with no `user` column, and the player shows learners what there is
+	# to earn.
+	"Training Badge Award": "erpnext_enhancements.training.permissions.badge_award_query_conditions",
+	"Training Learner Stat": "erpnext_enhancements.training.permissions.learner_stat_query_conditions",
+	# Ask-the-author (WI-072 §0, same leak). The endpoint returns own rows plus
+	# public+Answered ones; the DocPerm returned EVERY thread on the site to
+	# anybody holding Training Learner, unanswered private questions included.
+	"Training Question Thread": "erpnext_enhancements.training.permissions.question_thread_query_conditions",
+	# The team feed (WI-072). Same shape as the three above and found the same way:
+	# the generalised assertion in test_training_signoff_loop caught these before
+	# they shipped. Achievement is staff-only and honours the opt-out stamped on the
+	# row; Kudos is scoped by the achievement it hangs on, not by its sender, since
+	# a reaction is a public act on a public row; a Preference is nobody's business
+	# but its owner's -- knowing who has opted out of a feed is itself information
+	# about them.
+	"Training Achievement": "erpnext_enhancements.training.permissions.achievement_query_conditions",
+	"Training Kudos": "erpnext_enhancements.training.permissions.kudos_query_conditions",
+	"Training Profile Preference": "erpnext_enhancements.training.permissions.profile_preference_query_conditions",
+	# A licence number, a medical card and a certificate number are personal. The
+	# `Employee` DocPerm on Employee Credential is deliberate -- it is what puts a
+	# technician's own forklift ticket on their own profile, and what keeps the HR
+	# module inside allow_modules -- so the scoping hook ships in the same commit,
+	# not after it. Own rows, direct reports, and the people you outrank.
+	"Employee Credential": "erpnext_enhancements.hr_enhancements.permissions.credential_query_conditions",
+	# Time off and onboarding (WI-072). Both grant the `Employee` role, which every
+	# staff account holds, so both need scoping in the same release -- own rows,
+	# your direct reports, and (for time off) anything you are the named approver
+	# of. No position-tier arm on either: time off is "who plans your week", which
+	# is what reports_to means and what a competence ladder does not.
+	"Time Off Request": "erpnext_enhancements.hr_enhancements.permissions.timeoff_query_conditions",
+	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_query_conditions",
 	# Chat (ADR 0009 §F.18): row-level scoping is MEMBERSHIP, not role. Chat Room is
 	# the only chat doctype carrying a DocPerm at all (`read` for "Chat User"), so it is
 	# the only one where this hook is the live gate -- the other three ship with an
@@ -1847,6 +1962,18 @@ has_permission = {
 	"Training Certificate": "erpnext_enhancements.training.permissions.certificate_has_permission",
 	"Training Signoff": "erpnext_enhancements.training.permissions.signoff_has_permission",
 	"Training Submission": "erpnext_enhancements.training.permissions.submission_has_permission",
+	# The single-document twins of the two gamification query conditions above. A
+	# query condition filters lists and says nothing about frappe.get_doc(), so
+	# shipping one without the other leaves the hole in whichever half you skipped.
+	"Training Badge Award": "erpnext_enhancements.training.permissions.badge_award_has_permission",
+	"Training Learner Stat": "erpnext_enhancements.training.permissions.learner_stat_has_permission",
+	"Training Question Thread": "erpnext_enhancements.training.permissions.question_thread_has_permission",
+	"Training Achievement": "erpnext_enhancements.training.permissions.achievement_has_permission",
+	"Training Kudos": "erpnext_enhancements.training.permissions.kudos_has_permission",
+	"Training Profile Preference": "erpnext_enhancements.training.permissions.profile_preference_has_permission",
+	"Employee Credential": "erpnext_enhancements.hr_enhancements.permissions.credential_has_permission",
+	"Time Off Request": "erpnext_enhancements.hr_enhancements.permissions.timeoff_has_permission",
+	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_has_permission",
 	# Chat: the twin of every query condition above, and parity here is the house
 	# doctrine -- ten and ten before this block, four and four after it.
 	# "Chat Room" is not just the single-document gate: it IS the realtime security

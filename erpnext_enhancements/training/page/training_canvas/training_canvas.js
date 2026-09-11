@@ -112,7 +112,16 @@ const TC_ADDABLE = [
 	"Image Hotspots",
 	"Divider",
 ];
-const TC_CALLOUT_TONES = [["info", __("Info")], ["tip", __("Tip")], ["warning", __("Warning")], ["danger", __("Danger")]];
+// The DocType's own Select vocabulary, verbatim and capitalised. It has to be:
+// `callout_tone` is a Select on Training Content Block, `_validate_selects` runs
+// on child rows, and `save_draft_version` performs a full `lesson.save()` -- so a
+// value outside this list does not degrade, it throws, and it takes the WHOLE
+// lesson autosave with it. This list was lowercase and carried a phantom "info"
+// that the Select did not declare, and line ~1075 stamped it on every new
+// Callout, so the first Callout an author created on this page broke saving until
+// v1.386.0. The learner-side lowercasing happens on the server
+// (`training_author._augment_interactive_block`), not here.
+const TC_CALLOUT_TONES = [["Info", __("Info")], ["Tip", __("Tip")], ["Warning", __("Warning")], ["Danger", __("Danger")]];
 
 // The full change_type strings the DocType stores; publish_version rejects anything else.
 const TC_MINOR = "Minor Edit (keep completions)";
@@ -1023,7 +1032,7 @@ class TrainingCanvas {
 		if (block.block_type === "Callout") {
 			const $seg = $('<div class="tc-seg"></div>');
 			TC_CALLOUT_TONES.forEach(([val, label]) => {
-				const on = (block.callout_tone || "info").toLowerCase() === val;
+				const on = (block.callout_tone || "Info").toLowerCase() === val.toLowerCase();
 				$(`<button class="${on ? "is-on" : ""}"></button>`).text(label).on("click", () => {
 					block.callout_tone = val;
 					this.dirty_blocks(lesson);
@@ -1072,7 +1081,7 @@ class TrainingCanvas {
 		if (!this.editable()) return;
 		const block = { block_key: "blk-" + Math.random().toString(36).slice(2, 10), block_type: type };
 		if (type === "Rich Text") block.content = "<p></p>";
-		else if (type === "Callout") { block.content = "<p></p>"; block.callout_tone = "info"; }
+		else if (type === "Callout") { block.content = "<p></p>"; block.callout_tone = "Info"; }
 		else if (type === "Checklist") block.data = JSON.stringify({ items: [""] });
 		else if (type === "Flashcards") block.data = JSON.stringify({ cards: [{ front: "", back: "" }] });
 		else if (type === "Accordion") block.data = JSON.stringify({ panels: [{ title: "", body: "<p></p>" }] });

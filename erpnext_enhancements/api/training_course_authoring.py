@@ -111,6 +111,39 @@ def pop_spec(token):
 
 
 @frappe.whitelist()
+def list_starters():
+    """The starter gallery. Read-only; an author sees what shapes exist."""
+    from erpnext_enhancements.training import templates_gallery
+
+    _require_author()
+    return {"starters": templates_gallery.list_templates()}
+
+
+@frappe.whitelist()
+def create_from_starter(starter, course_title=None):
+    """Build a draft course from a starter shape.
+
+    **The whole point is that this is not a second scaffolder.** A starter is a
+    Course Spec, so it goes through ``validate_course_spec`` and
+    ``author_course_from_spec`` exactly as an AI-drafted course does — same
+    validator, same builder, same block vocabulary, same review gate. If a starter
+    could express something the AI path cannot, one of the two would be wrong, and
+    the drift would only surface when a template produced a course the builder
+    could not render.
+
+    Answers the half of "anyone can build a training" that is not about the
+    editor: most of what stops people is opening a blank course and having to
+    invent the content and the shape at once. The starter gives away the shape and
+    leaves prose that says *replace this with…* — never filler, because filler is
+    worse than an empty page. Filler gets published.
+    """
+    from erpnext_enhancements.training import templates_gallery
+
+    _require_author()
+    return author_course_from_spec(templates_gallery.spec_for(starter, course_title))
+
+
+@frappe.whitelist()
 def author_course_from_spec(spec):
     """Create a Training Course and an unpublished draft from a Course Spec.
 

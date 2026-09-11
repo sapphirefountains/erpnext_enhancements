@@ -117,7 +117,7 @@
    "fieldname": "callout_tone",
    "fieldtype": "Select",
    "label": "Tone",
-   "options": "\nTip\nWarning\nDanger"
+   "options": "\nInfo\nTip\nWarning\nDanger"
   },
   {
    "depends_on": "eval:[\"Checklist\",\"Flashcards\",\"Image Hotspots\",\"Accordion\"].includes(doc.block_type)",

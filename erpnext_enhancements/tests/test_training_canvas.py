@@ -244,7 +244,65 @@ class TestCanvasPageIsRegistered(unittest.TestCase):
         leak into other desk pages."""
         code = _canvas()
         self.assertIn("training-canvas-fullbleed", code)
+class TestCanvasWritesLegalSelectValues(unittest.TestCase):
+    """The defect that made this suite's absence from CI expensive.
 
+    ``callout_tone`` is a Select on ``Training Content Block``. Frappe runs
+    ``_validate_selects`` on child rows, and ``save_draft_version`` performs a
+    full ``lesson.save()`` — so a value outside the declared options does not
+    degrade to a default, it **throws**, and it takes the whole lesson autosave
+    down with it. The canvas declared its tones in lowercase and invented an
+    ``"info"`` the Select did not have, then stamped it on every new Callout. The
+    first Callout an author created on this page therefore broke saving, silently
+    from the code's point of view and very loudly from the author's.
+
+    The general rule this pins: **a client that writes a Select field must write
+    the DocType's own vocabulary, verbatim.** Asserted as a cross-file equality
+    rather than a spot-check, so adding a tone to either side without the other
+    fails here.
+    """
+
+    CONTENT_BLOCK = APP / "training/doctype/training_content_block/training_content_block.json"
+
+    def _select_options(self, fieldname):
+        import json
+
+        data = json.loads(self.CONTENT_BLOCK.read_text(encoding="utf-8"))
+        for field in data["fields"]:
+            if field["fieldname"] == fieldname:
+                # A leading blank means "no tone", which is legal and is not an option.
+                return [o for o in (field.get("options") or "").split("\n") if o]
+        raise AssertionError(f"Training Content Block has no {fieldname} field")
+
+    def _canvas_tones(self):
+        """The value half of every ``TC_CALLOUT_TONES`` entry."""
+        line = re.search(r"const TC_CALLOUT_TONES = \[(.*?)\];", _canvas(), re.S)
+        self.assertIsNotNone(line, "TC_CALLOUT_TONES is not declared as a flat array any more")
+        return re.findall(r'\[\s*"([^"]+)"', line.group(1))
+
+    def test_the_canvas_offers_exactly_the_declared_tones(self):
+        self.assertEqual(self._canvas_tones(), self._select_options("callout_tone"))
+
+    def test_a_new_callout_is_seeded_with_a_declared_tone(self):
+        seeded = re.search(r'type === "Callout"\) \{[^}]*callout_tone = "([^"]+)"', _canvas())
+        self.assertIsNotNone(seeded, "new Callouts no longer seed a tone")
+        self.assertIn(seeded.group(1), self._select_options("callout_tone"))
+
+    def test_no_lowercase_tone_is_written_to_the_field(self):
+        """The specific shape of the bug: assignment of a lowercased literal."""
+        for tone in self._select_options("callout_tone"):
+            with self.subTest(tone=tone):
+                self.assertNotIn(f'callout_tone = "{tone.lower()}"', _canvas())
+
+    def test_the_block_type_seeds_are_declared_types(self):
+        """Same rule, the other Select on the same child table. ``block_type`` is
+        seeded by the canvas on every new block and has twelve legal values."""
+        declared = set(self._select_options("block_type"))
+        seeded = set(re.findall(r'type === "([A-Z][A-Za-z ]+)"', _canvas()))
+        unknown = sorted(seeded - declared)
+        self.assertEqual(
+            unknown, [], f"canvas branches on block types {unknown} which the DocType does not declare"
+        )
 
 if __name__ == "__main__":
     unittest.main()

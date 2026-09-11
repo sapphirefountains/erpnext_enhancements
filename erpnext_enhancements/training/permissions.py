@@ -108,15 +108,221 @@ def certificate_query_conditions(user=None):
 
 
 def signoff_query_conditions(user=None):
-	"""A sign-off is scoped to the learner it is about.
+	"""A sign-off is scoped to the learner it is about, plus the people you may sign.
 
-	The supervisor reaches it through the direct-reports arm of
-	``_own_rows_condition`` — which is exactly what makes the sign-off queue a
-	plain filtered list view rather than a bespoke endpoint.
+	Three arms, and the third is new in v1.386.0. Your own rows and your direct
+	reports come from ``_own_rows_condition`` — that is what makes the sign-off
+	queue a plain filtered list view rather than a bespoke endpoint. The third arm
+	is **position tier**: the learners you outrank on your own ladder.
+
+	Without it the tier rule is half-built in the way that reads as working. A
+	Senior Technician would be *allowed* to sign the four Junior Technicians and
+	would see none of their requests, because on this site none of them reports to
+	him — they all report to the Project Manager, and so does he. Authority you
+	cannot see the queue for is authority nobody exercises.
+
+	The observed-supervisor arm is already covered: ``signoff_has_permission``
+	handles the single-document read, and the queue filters on ``supervisor_user``
+	directly. Folding it in here too would double-count.
 	"""
 	if _is_unscoped(user):
 		return ""
-	return _own_rows_condition("Training Signoff", _resolve(user))
+
+	resolved = _resolve(user)
+	base = _own_rows_condition("Training Signoff", resolved)
+
+	from erpnext_enhancements.training import authority
+
+	signable = authority.signable_learner_users(resolved)
+	if not signable:
+		return base
+	joined = ", ".join(frappe.db.escape(u) for u in signable)
+	return f"({base} or `tabTraining Signoff`.`user` in ({joined}))"
+
+
+def achievement_query_conditions(user=None):
+	"""The team feed is staff-only, and only what people have left visible.
+
+	Three clauses, and every one of them is load-bearing:
+
+	* **your own**, whatever you have chosen — an opt-out hides you from other
+	  people, not from yourself;
+	* rows marked ``Team`` — the opt-out is stamped on the row at creation and
+	  re-swept when somebody changes their mind, so it is one indexed read here
+	  rather than a join a future caller could forget;
+	* ``learner_type = Staff`` — customer Website Users hold ``Training Learner``
+	  and must never see a staff feed. The endpoint already refuses them by
+	  construction; this is the ``/api/resource`` door.
+
+	This was caught by the generalised assertion in
+	``tests/test_training_signoff_loop.py`` rather than by me, which is exactly what
+	it was written for: three doctypes leaked this way before v1.386.0 and the
+	fourth was about to.
+	"""
+	if _is_unscoped(user):
+		return ""
+	resolved = _resolve(user)
+	table = "`tabTraining Achievement`"
+	own = frappe.db.escape(resolved)
+
+	# The Team clause is gated on the VIEWER, not only on the row. Filtering on the
+	# row's `learner_type` alone was the bug: a customer contact holds Training
+	# Learner, would fail the first clause and pass the second, and would be served
+	# the entire staff feed through /api/resource. The rule is about who is asking,
+	# and "is this person staff" is a fact about them, not about the row.
+	if not _is_staff(resolved):
+		return f"{table}.`user` = {own}"
+
+	return (
+		f"({table}.`user` = {own}"
+		f" or ({table}.`visibility` = 'Team' and {table}.`learner_type` = 'Staff'))"
+	)
+
+
+def _is_staff(user):
+	"""Employment, not a role — the same predicate `hr_enhancements.profile` uses.
+
+	A role can be granted by accident and `Training Learner` is on every customer
+	contact; whether somebody works here cannot be.
+	"""
+	return bool(frappe.db.exists("Employee", {"user_id": user, "status": "Active"}))
+
+
+def achievement_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	resolved = _resolve(user)
+	if doc.get("user") == resolved:
+		return True
+	# Same viewer gate as the query condition. A query condition filters lists and
+	# says nothing about frappe.get_doc(), so without this a customer could still
+	# read any staff achievement by name.
+	if not _is_staff(resolved):
+		return False
+	return doc.get("visibility") == "Team" and doc.get("learner_type") == "Staff"
+
+
+def kudos_query_conditions(user=None):
+	"""Kudos are readable exactly where the achievement behind them is.
+
+	Scoped on the parent rather than on ``from_user``: a reaction is a public act
+	on a public row, and scoping it to its sender would mean somebody could see the
+	item and not the congratulations under it.
+
+	Worth noting why this needed writing at all — the generalised leak assertion
+	looks for a ``user`` column and this doctype's is called ``from_user``, so it
+	sailed through. The assertion has been widened; the lesson is that a naming
+	convention is only a safety net where it is actually followed.
+	"""
+	if _is_unscoped(user):
+		return ""
+	resolved = _resolve(user)
+	own = frappe.db.escape(resolved)
+	if not _is_staff(resolved):
+		# Same viewer gate as the achievement itself -- otherwise a customer could
+		# not read the staff feed but could read every reaction posted to it, which
+		# names the people and what they finished.
+		return (
+			"`tabTraining Kudos`.`achievement` in ("
+			f"select `name` from `tabTraining Achievement` where `user` = {own})"
+		)
+	return (
+		"`tabTraining Kudos`.`achievement` in ("
+		"select `name` from `tabTraining Achievement` where "
+		f"`user` = {own} or (`visibility` = 'Team' and `learner_type` = 'Staff'))"
+	)
+
+
+def kudos_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	resolved = _resolve(user)
+	target = frappe.db.get_value(
+		"Training Achievement", doc.get("achievement"), ["user", "visibility", "learner_type"], as_dict=True
+	)
+	if not target:
+		return False
+	if target.user == resolved:
+		return True
+	if not _is_staff(resolved):
+		return False
+	return target.visibility == "Team" and target.learner_type == "Staff"
+
+
+def profile_preference_query_conditions(user=None):
+	"""Your own settings and nobody else's. There is no reason to read another
+	person's opt-out, and knowing who has opted out of a feed is itself a small
+	piece of information about them."""
+	if _is_unscoped(user):
+		return ""
+	return f"`tabTraining Profile Preference`.`user` = {frappe.db.escape(_resolve(user))}"
+
+
+def profile_preference_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	return doc.get("user") == _resolve(user)
+
+
+def badge_award_query_conditions(user=None):
+	"""A badge award is scoped to the learner who earned it.
+
+	``Training Badge Award`` grants ``read`` to ``Training Learner`` in its
+	doctype JSON, and ``Training Learner`` is held by **customer** Website Users
+	as well as staff — so without this, ``/api/resource/Training Badge Award``
+	enumerated every staff member's badges to any client contact. The leaderboard
+	is unaffected: ``gamification._stat_rows`` and ``_award_missing_badges`` read
+	through ``frappe.get_all``, which does not check permissions at all.
+
+	Note the sibling that is deliberately *not* scoped: ``Training Badge`` itself
+	is a catalogue of badge definitions with no ``user`` column, and the player
+	shows learners what there is to earn. Leaving it open is the intent, not an
+	oversight.
+	"""
+	if _is_unscoped(user):
+		return ""
+	return _own_rows_condition("Training Badge Award", _resolve(user))
+
+
+def learner_stat_query_conditions(user=None):
+	"""A learner stat row is scoped to the learner it describes.
+
+	Same leak, same shape as ``badge_award_query_conditions`` — this table holds
+	points, streaks and completion counts, and ``current_streak_days`` /
+	``longest_streak_days`` are nobody else's business. The leaderboard's own
+	two-population separation (``gamification._stat_rows``, which takes
+	``learner_type`` as a mandatory positional) is the surface that *is* meant to
+	publish a ranking; a raw REST read is not.
+	"""
+	if _is_unscoped(user):
+		return ""
+	return _own_rows_condition("Training Learner Stat", _resolve(user))
+
+
+def question_thread_query_conditions(user=None):
+	"""Your own questions, plus the ones an author chose to publish.
+
+	This mirrors what ``qa.list_lesson_threads`` already returns — own rows, and
+	rows that are ``is_public`` **and** ``Answered`` — and it exists because the
+	endpoint was the only thing enforcing that. ``Training Question Thread``
+	grants ``read`` to ``Training Learner`` with no scoping hook, so
+	``/api/resource/Training Question Thread`` returned every thread on the site:
+	other people's unanswered questions, on courses the reader was never given,
+	to customer Website Users included. "I don't understand how to drain the
+	basin" is exactly the kind of thing somebody asks precisely because it is not
+	going on a noticeboard.
+
+	Both halves matter. ``is_public`` alone is not enough: an author sets it while
+	the thread is still ``Open``, and an unanswered question published to the
+	whole company is the thing the flag exists to avoid.
+	"""
+	if _is_unscoped(user):
+		return ""
+	table = "`tabTraining Question Thread`"
+	return (
+		f"({_own_rows_condition('Training Question Thread', _resolve(user))}"
+		f" or ({table}.`is_public` = 1 and {table}.`status` = 'Answered'))"
+	)
 
 
 def submission_query_conditions(user=None):
@@ -168,10 +374,39 @@ def certificate_has_permission(doc, ptype=None, user=None):
 def signoff_has_permission(doc, ptype=None, user=None):
 	if _is_unscoped(user):
 		return True
+	resolved = _resolve(user)
 	# The supervisor named on the sign-off can always see it, even when the
 	# learner is not one of their Employee.reports_to (a Named Supervisor or a
 	# stand-in Training Manager) — otherwise they cannot action their own queue.
-	if doc.get("supervisor_user") == _resolve(user):
+	if doc.get("supervisor_user") == resolved:
+		return True
+	if _own_row(doc, resolved):
+		return True
+
+	# The twin of the tier arm on the query condition. A query condition filters
+	# lists and says nothing about frappe.get_doc(), so a supervisor who could see
+	# a request in the list would hit a permission error opening it.
+	from erpnext_enhancements.training import authority
+
+	return authority.authority_basis(doc, resolved) == authority.TIER
+
+
+def question_thread_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	if _own_row(doc, _resolve(user)):
+		return True
+	return bool(doc.get("is_public")) and doc.get("status") == "Answered"
+
+
+def badge_award_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	return _own_row(doc, _resolve(user))
+
+
+def learner_stat_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
 		return True
 	return _own_row(doc, _resolve(user))
 

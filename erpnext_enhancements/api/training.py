@@ -44,6 +44,7 @@ Indentation is 4 spaces, matching the majority of ``api/``.
 """
 
 import statistics
+from urllib.parse import quote
 
 import frappe
 from frappe import _
@@ -68,6 +69,16 @@ CHECKPOINT_TOLERANCE_SECONDS = 2
 
 # Block types that carry no measurable playback, so no signed URL and no coverage.
 EMBED_BLOCK_TYPE = "External Embed"
+
+# Block types whose media is a plain Frappe File attached to the lesson, and the
+# field each keeps it in. These are uploaded `is_private = 1` and no learner role
+# holds a DocPerm on Training Lesson, so they are unreachable by their raw
+# `/private/files/...` path and go through `download_lesson_file` instead.
+FILE_BLOCK_FIELD = {
+    "Image": "image",
+    "PDF": "file",
+    "Downloadable File": "file",
+}
 
 
 # --------------------------------------------------------------------- guards
@@ -489,6 +500,19 @@ def get_learner_bootstrap():
         # player both lists these and indexes them by lesson_key for the lesson-view
         # submit box's "already submitted / graded" state.
         "submissions": _learner_submissions(user),
+        # Additive: how many sign-offs this person may record right now (WI-072).
+        # 0 for almost everybody, which is the point — the field sign-off entry
+        # point is drawn only when there is something behind it, so fourteen of
+        # sixteen people never see a button that opens an empty list.
+        "signoffs_to_record": _signoff_queue_count(user),
+        # Additive: whether this learner works here. Decides whether the staff
+        # directory is offered at all — a customer contact holds Training Learner
+        # too, and should never be shown a link to a colleague list, even one that
+        # would come back empty. Employment rather than a role, because a role can
+        # be granted by accident and "does this person work here" cannot.
+        "is_staff": bool(
+            frappe.db.exists("Employee", {"user_id": user, "status": "Active"})
+        ),
         # Every key here is read by the player, and every setting the player reads
         # is here. Both halves of that sentence were false: `max_playback_rate` and
         # `doc_min_dwell_seconds` were read by video.js and blocks.js and sent by
@@ -1260,6 +1284,18 @@ def finish_attempt(attempt):
     _learner()
     _require_runtime()
     doc = _attempt(attempt)
+    return _evaluate_attempt(doc)
+
+
+def _evaluate_attempt(doc):
+    """Every gate on *doc*, and the completion when they all pass.
+
+    Split out of :func:`finish_attempt` in v1.386.0 so the supervisor's sign-off
+    can re-drive it. The learner's own path reaches this after ``_learner()`` and
+    ``_attempt()``; :func:`resume_after_signoff` reaches it from a doc_event with
+    no session learner at all, which is why the identity checks stay in the
+    caller and none of them are repeated here.
+    """
     if doc.status != "In Progress":
         # Re-opening something already finished. The score comes off the record
         # rather than being recomputed: it is what the learner was graded on, and
@@ -1374,6 +1410,56 @@ def finish_attempt(attempt):
         completion=completion,
         reward=_completion_reward(doc, completion),
     )
+
+
+def resume_after_signoff(attempt=None, course=None, user=None):
+    """Re-run the gates for a learner whose sign-off has just landed.
+
+    **This is what closed the sign-off loop.** Until v1.386.0 nothing called
+    anything when a supervisor submitted a ``Competent`` attestation:
+    ``Training Signoff`` had no ``on_submit``, ``record_signoff`` notified the
+    learner and returned, and the assignment stayed parked in ``Awaiting
+    Sign-off`` for ever. The completion was only ever minted by the learner
+    pressing "finish" a second time — which, having already been told they were
+    done and waiting on somebody else, nobody does.
+
+    Not whitelisted, and it takes no verdict of its own: it re-evaluates *every*
+    gate through :func:`_evaluate_attempt`, so a learner whose sign-off arrives
+    while a lesson is still outstanding stays outstanding. The sign-off unblocks
+    one gate; it does not grant a pass.
+
+    Contractually cannot raise. It runs inside ``TrainingSignoff.on_submit``, and
+    an attestation must not fail to record because the completion behind it hit a
+    problem — the sign-off is the evidence, the completion is bookkeeping that can
+    be re-driven. Returns the completion docname, or ``None``.
+    """
+    if not _runtime_ready():
+        return None
+
+    name = attempt
+    if not name and course and user:
+        # A sign-off raised from the Desk need not name an attempt. Fall back to
+        # the learner's live attempt on that course; `creation desc` because a
+        # retake is the one that matters.
+        name = frappe.db.get_value(
+            "Training Attempt",
+            {"course": course, "user": user, "status": "In Progress"},
+            "name",
+            order_by="creation desc",
+        )
+    if not name:
+        return None
+
+    try:
+        doc = frappe.get_doc("Training Attempt", name)
+        result = _evaluate_attempt(doc) or {}
+        return result.get("completion")
+    except Exception:
+        frappe.log_error(
+            f"Could not finish attempt {name} after its sign-off was recorded.",
+            "Training sign-off resume",
+        )
+        return None
 
 
 def _recorded_score(doc):
@@ -2110,6 +2196,139 @@ def leaderboard(scope=None):
 
 
 @frappe.whitelist(methods=["POST"])
+def get_feed(before=None):
+    """The team feed. Delegates to :mod:`training.social`.
+
+    Empty for a customer contact by construction rather than by a filter here —
+    ``social._rows`` takes ``learner_type`` as a mandatory positional and returns
+    nothing for ``Customer``. A guard in this function would be a second place for
+    the rule to live, and the second place is the one that gets forgotten.
+    """
+    from erpnext_enhancements.training import social
+
+    user = _learner()
+    _require_runtime()
+    return social.feed(user, before=before)
+
+
+@frappe.whitelist(methods=["POST"])
+def send_kudos(achievement, reaction, note=None):
+    """Congratulate a colleague. One per person per achievement; re-sending edits."""
+    from erpnext_enhancements.training import social
+
+    user = _learner()
+    _require_runtime()
+    return social.add_kudos(user, achievement, reaction, note)
+
+
+@frappe.whitelist(methods=["POST"])
+def get_feed_preferences():
+    """What this person has chosen to show. Both settings default to on."""
+    from erpnext_enhancements.training import social
+
+    user = _learner()
+    _require_runtime()
+    return social.get_preferences(user)
+
+
+@frappe.whitelist(methods=["POST"])
+def set_feed_preferences(show_on_feed=None, show_on_leaderboard=None):
+    """Change them. Also re-sweeps rows already posted — an opt-out that only
+    applied to the future would leave everything already up there, which is not
+    what anybody means by it."""
+    from erpnext_enhancements.training import social
+
+    user = _learner()
+    _require_runtime()
+    return social.set_preferences(user, show_on_feed, show_on_leaderboard)
+
+
+@frappe.whitelist(methods=["POST"])
+def get_profile(user=None):
+    """One person's profile. Delegates to :mod:`hr_enhancements.profile`.
+
+    ``user`` omitted is your own; ``user`` given is a colleague, and the module
+    builds a **different, smaller** payload for that case rather than filtering
+    the full one — so a field added to the profile later is invisible to
+    colleagues until somebody deliberately lists it.
+
+    No authority decision is made here. ``colleague_profile`` refuses anybody
+    without an Employee record at both ends, which is how customer Website Users
+    holding ``Training Learner`` are kept out of the staff directory: by requiring
+    employment rather than by checking a role, since a role can be granted by
+    accident.
+    """
+    from erpnext_enhancements.hr_enhancements import profile
+
+    me = _learner()
+    _require_runtime()
+    if user and user != me:
+        return profile.colleague_profile(me, user)
+    return profile.my_profile(me)
+
+
+@frappe.whitelist(methods=["POST"])
+def get_directory():
+    """Colleagues this person may browse. Staff only; empty for a customer."""
+    from erpnext_enhancements.hr_enhancements import profile
+
+    me = _learner()
+    _require_runtime()
+    return {"people": profile.directory(me)}
+
+
+@frappe.whitelist(methods=["POST"])
+def my_signoff_queue():
+    """Sign-offs this person may record, for the field surface. Delegates to
+    :mod:`training.signoff`.
+
+    A thin re-export, same reason as :func:`ask_lesson_question` below: the
+    player's transport has one ``PREFIX`` and one gate, and a second prefix in the
+    client is a second place for a rename to break silently.
+
+    **Why this exists at all.** Tiered sign-off is only worth having if the person
+    who holds the tier can act on it, and the person who holds it here is a field
+    technician. Until now there was no non-desk sign-off surface of any kind:
+    ``training_signoff.js`` is a Desk form button and ``get_signoff_queue`` was
+    dialled only from the Desk list script. Granting a Senior Technician authority
+    he can exercise only from a desk he does not sit at is granting nothing.
+
+    No authority decision is made here — ``get_signoff_queue`` already applies the
+    two arms (named supervisor, and the learners this caller outranks), so a
+    filter here would be a second copy of a rule that has one home.
+    """
+    from erpnext_enhancements.training import signoff
+
+    _learner()
+    _require_runtime()
+    return {"queue": signoff.get_signoff_queue()}
+
+
+@frappe.whitelist(methods=["POST"])
+def record_field_signoff(signoff, outcome, competency_notes=None):
+    """Record a verdict from the field surface. Delegates to :mod:`training.signoff`.
+
+    ``signature_image`` is deliberately not accepted here. The desk form takes one
+    and this does not, because an Attach Image on a phone means an upload round
+    trip before the attestation is recorded at all — and the thing that makes a
+    sign-off evidence is the named supervisor and the timestamp, not a picture of
+    a signature. Somebody standing beside a basin should be able to finish this in
+    two taps.
+
+    Every rule still applies: ``record_signoff`` refuses the learner outright, and
+    ``TrainingSignoff.before_submit`` re-checks authority on the way through
+    regardless of which door called it.
+    """
+    from erpnext_enhancements.training import signoff as signoff_module
+
+    _learner()
+    _require_runtime()
+    return signoff_module.record_signoff(
+        signoff=signoff, outcome=outcome, competency_notes=competency_notes
+    )
+
+
+@frappe.whitelist(methods=["POST"])
 def ask_lesson_question(course, lesson_key, question, at_seconds=None):
     """File a learner's question against a lesson. Delegates to :mod:`training.qa`.
 
@@ -2173,17 +2392,30 @@ def get_media_url(attempt, block_key):
     _require_runtime()
     doc = _attempt(attempt)
 
-    lessons = [row.name for row in _version_lessons(doc.course_version)]
-    block = None
-    if lessons:
-        block = frappe.db.get_value(
-            "Training Content Block",
-            {"parent": ["in", lessons], "parenttype": "Training Lesson", "block_key": block_key},
-            ["block_type", "video_asset", "embed_url", "poster_image", "video_duration_seconds"],
-            as_dict=True,
-        )
+    block = _block_in_attempt(doc, block_key)
     if not block:
-        frappe.throw(_("That video is not part of this course."))
+        frappe.throw(_("That media is not part of this course."))
+
+    if block.block_type in FILE_BLOCK_FIELD:
+        # An author-uploaded image or PDF. These are attached to Training Lesson
+        # with `is_private = 1`, and no learner role holds a DocPerm on Training
+        # Lesson -- so the raw `/private/files/...` path that publish serialises
+        # into the payload 403s for every learner. blocks.js falls back to that
+        # raw path when the transport returns nothing, which is why an image an
+        # author could see in the builder rendered as a broken icon in the player,
+        # from the day the module shipped until v1.386.0.
+        #
+        # Answered with a gated endpoint rather than by making the files public:
+        # course content is not world-readable, and customer contacts share this
+        # runtime. The gate is the one already proven here -- the block has to
+        # belong to a version this attempt is on.
+        return {
+            "url": _lesson_file_url(attempt, block_key),
+            "embed_url": "",
+            "reason": None if block.get(FILE_BLOCK_FIELD[block.block_type]) else "not_available",
+            "poster": "",
+            "duration_seconds": 0,
+        }
 
     if block.block_type == EMBED_BLOCK_TYPE:
         # Embeds are cross-origin and carry no coverage gate; the player renders
@@ -2207,7 +2439,132 @@ def get_media_url(attempt, block_key):
     }
 
 
+@frappe.whitelist(methods=["GET"])
+def download_lesson_file(token):
+    """Serve one author-uploaded image or PDF to a learner who is entitled to it.
+
+    **The one GET in this module, and the only one that can be.** A browser
+    fetches this as an ``<img src>`` and as a PDF frame; neither can send a POST
+    or a CSRF token. Everything else here is POST-only precisely so that attempt
+    ids, lesson keys and checkpoint keys never reach an access log, and that rule
+    is kept rather than bent: **the query string carries one opaque nonce and
+    nothing else.** Which learner, which attempt and which block it stands for
+    are held server-side in the cache and never travel.
+
+    The token is minted by :func:`get_media_url`, which is POST and does the real
+    authorisation — the block has to belong to a lesson on the version of an
+    attempt that belongs to the caller. This is the same short-lived-URL shape
+    ``gcs_media.signed_url_for_asset`` already uses for video, for the same
+    reason; only the signer differs, because a Frappe File has no bucket to sign
+    against.
+
+    The session is re-checked on redemption, so a token pasted into another
+    person's browser is refused even inside its window.
+
+    Served inline rather than as an attachment (``display_content_as``), because
+    the whole point is that it renders in the page.
+    """
+    _learner()
+    _require_runtime()
+
+    payload = frappe.cache().get_value(_media_token_key(token)) or {}
+    if not payload or payload.get("user") != frappe.session.user:
+        # Expired, forged, or someone else's. One message for all three: telling
+        # them apart tells an attacker which tokens exist.
+        frappe.throw(_("That link has expired. Reload the lesson."), frappe.PermissionError)
+
+    doc = _attempt(payload.get("attempt"))
+    block = _block_in_attempt(doc, payload.get("block_key"))
+    if not block or block.block_type not in FILE_BLOCK_FIELD:
+        frappe.throw(_("That file is not part of this course."))
+
+    file_url = block.get(FILE_BLOCK_FIELD[block.block_type])
+    if not file_url:
+        frappe.throw(_("That block has no file attached."))
+
+    name = frappe.db.get_value("File", {"file_url": file_url}, "name")
+    if not name:
+        # The block still points at a path but the File row is gone -- a deleted
+        # attachment, or a restore that missed it. Say so rather than 500ing.
+        frappe.throw(_("That file is no longer on the site."))
+
+    file_doc = frappe.get_doc("File", name)
+    frappe.local.response.filename = file_doc.file_name or "attachment"
+    frappe.local.response.filecontent = file_doc.get_content()
+    frappe.local.response.type = "download"
+    frappe.local.response.display_content_as = "inline"
+
+
 # -------------------------------------------------------------------- helpers
+
+
+def _signoff_queue_count(user):
+    """How many outstanding sign-offs *user* may record. Never raises.
+
+    Counted through ``signoff.get_signoff_queue`` rather than by a filter of its
+    own, so the number on the button and the list behind it cannot disagree —
+    which they would the first time the authority rule gained an arm and only one
+    of the two places learned about it.
+
+    Best-effort: this runs inside the boot payload, and a learner must be able to
+    open ``/training`` even if the sign-off machinery is unavailable.
+    """
+    try:
+        from erpnext_enhancements.training import signoff
+
+        return len(signoff.get_signoff_queue() or [])
+    except Exception:
+        return 0
+
+
+def _media_token_key(token):
+    return f"training:media-token:{token}"
+
+
+def _lesson_file_url(attempt, block_key):
+    """Mint a short-lived opaque URL for :func:`download_lesson_file`.
+
+    TTL rides on the same setting as a signed video URL, so an administrator
+    tightening one tightens both and the two cannot drift into telling a learner
+    different things about how long a page stays good for.
+    """
+    token = frappe.generate_hash(length=32)
+    minutes = cint(get_settings().signed_url_ttl_minutes) or 15
+    frappe.cache().set_value(
+        _media_token_key(token),
+        {"user": frappe.session.user, "attempt": attempt, "block_key": block_key},
+        expires_in_sec=minutes * 60,
+    )
+    return (
+        "/api/method/erpnext_enhancements.api.training.download_lesson_file"
+        f"?token={quote(token)}"
+    )
+
+
+def _block_in_attempt(doc, block_key):
+    """One content block, if it belongs to a lesson on this attempt's version.
+
+    The membership half of every media gate here. Shared by
+    :func:`get_media_url` and :func:`download_lesson_file` so the video path and
+    the file path cannot come to disagree about what "part of this course" means.
+    """
+    lessons = [row.name for row in _version_lessons(doc.course_version)]
+    if not lessons:
+        return None
+    return frappe.db.get_value(
+        "Training Content Block",
+        {"parent": ["in", lessons], "parenttype": "Training Lesson", "block_key": block_key},
+        [
+            "block_type",
+            "image",
+            "file",
+            "video_asset",
+            "embed_url",
+            "poster_image",
+            "video_duration_seconds",
+        ],
+        as_dict=True,
+    )
 
 
 def _as_list(value):

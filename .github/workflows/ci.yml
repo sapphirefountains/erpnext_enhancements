@@ -660,6 +660,111 @@ jobs:
       # reads of the desk JS, which never runs in CI and has no bench here.
       - name: Training builder entry path (routing, guards, change_type)
         run: python -m unittest erpnext_enhancements.tests.test_training_builder_entry -v
+      # The WYSIWYG canvas. This suite existed from the day the canvas shipped and
+      # was never wired here, so the one Training surface with no CI coverage was
+      # the one an author spends all day in -- and it held a live defect
+      # (`callout_tone: "info"` against a Select declaring Tip/Warning/Danger)
+      # that killed the whole lesson autosave on the first Callout anyone created.
+      - name: Training canvas (WYSIWYG authoring surface)
+        run: python -m unittest erpnext_enhancements.tests.test_training_canvas -v
+      # Does recording a sign-off actually finish anything? It did not: Training
+      # Signoff had no on_submit at all, so `Competent` moved nothing and the
+      # assignment stayed at "Awaiting Sign-off" for ever. Same suite pins the
+      # recertification window on the attestation (a check that PASSED when it
+      # should have failed) and the row-scoping on the three doctypes that grant
+      # Training Learner read -- a role customer Website Users hold.
+      - name: Training sign-off loop (on_submit, expiry, row scoping)
+        run: python -m unittest erpnext_enhancements.tests.test_training_signoff_loop -v
+      # The HR module, and mostly one question: can the people it is for actually
+      # SEE it? A Frappe workspace whose module is not in the user's allow_modules
+      # does not 403, it silently is not there -- desktop.py raises PermissionError
+      # and the sidebar builder swallows it -- and allow_modules is built only from
+      # DocPerms. `Position` granting read to `Employee` is what holds that door
+      # open for ordinary staff, so it is asserted rather than assumed. Also pins
+      # the tier predicate (never a peer, never across job families, never a
+      # retired rung) and checks the workspace has no dead card/shortcut references,
+      # which render as blank space with no error.
+      - name: HR module (reachability, position ladder, workspace wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_module -v
+      # External credentials -- OSHA, forklift, CDL, first aid, fit tests. Pins the
+      # thing that leaks if you get it wrong: Employee Credential grants read to the
+      # `Employee` role (deliberately -- it is what puts a technician's own card on
+      # their own profile and what keeps the module inside allow_modules), so the
+      # scoping hook has to ship in the same release, not after it. Also pins that
+      # status is derived rather than typed, that revocation beats the calendar, and
+      # that "Expiring" still reads as qualified -- a horizon that reads as a refusal
+      # does the opposite of its job.
+      - name: HR credentials (scoping, expiry, skills matrix)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_credentials -v
+      # The safety check that reported clean because it had nothing to look at.
+      # compliance.py warns when somebody is scheduled onto work they are not
+      # certified for -- and on this site it has never produced a single finding,
+      # because all three of its sources required the person to have ALREADY been
+      # assigned the course, and there were no assignment rules. Note the failure
+      # direction: it PASSES. Same family as the PAD SPACE whitespace queries.
+      - name: Training dispatch advisory (it fires, and it only ever warns)
+        run: python -m unittest erpnext_enhancements.tests.test_training_dispatch_advisory -v
+      # The profile, and the line between "my record" and "a colleague's entry".
+      # The construction is what is pinned, not the field list: the colleague
+      # payload is built by SELECTING public fields, never by deleting private
+      # ones -- with a subtractive filter every field added later is public until
+      # somebody remembers to exclude it, and the person adding a field is never
+      # thinking about the directory. Also pins that customers are kept out by
+      # requiring EMPLOYMENT rather than by checking a role, since Training
+      # Learner is held by every customer contact and a role can be granted by
+      # accident.
+      - name: HR profile (what a colleague may see, and what a customer may not)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_profile -v
+      # Can somebody who is not a developer start a course? The visual editor
+      # shipped in v1.364.0 with NO entry point anywhere -- grepping for
+      # "training-canvas" outside its own directory returned two CHANGELOG lines
+      # and its own test file, so the surface built for non-technical authors was
+      # reachable only by typing the URL. Also pins that a starter is a Course Spec
+      # and nothing else: same validator, same builder, same block and tone
+      # vocabulary as the AI path, because a second scaffolder is a second thing to
+      # drift.
+      - name: Training authoring entry (the editor is reachable, starters are specs)
+        run: python -m unittest erpnext_enhancements.tests.test_training_authoring_entry -v
+      # The team feed, and the one rule it exists to obey: it never carries a
+      # number somebody could be judged by. Reactions hang on Training Achievement,
+      # a record with NO performance fields at all -- because both reuse routes for
+      # reactions begin with a read check on the referenced document, so reacting
+      # to a Training Completion would have meant publishing second-attempt scores
+      # and revocation reasons company-wide. Also pins the audience filter (a
+      # mandatory positional, never a default), the opt-out, and the row scoping on
+      # all three new doctypes.
+      - name: Training social (the feed carries no numbers, and customers see none of it)
+        run: python -m unittest erpnext_enhancements.tests.test_training_social -v
+      # Time off and onboarding. The scope decisions are what is pinned: no
+      # balances (that is where the payroll arguments live, and PTO is not tracked
+      # as a liability here), calendar days counted honestly since there is no
+      # holiday calendar to subtract, and approval routed through reports_to rather
+      # than the Position ladder -- the ONE place in WI-072 where those deliberately
+      # come apart, because a Senior Technician outranks a Junior on competence and
+      # has no standing over their Thursday. Asserted through the AST, since the
+      # prose explaining that necessarily names the thing being excluded.
+      - name: HR time off + onboarding (scope, authority, and the scoping hooks)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_timeoff_onboarding -v
+      # Recording a training that already happened -- the tailgate talk, the
+      # manufacturer walkthrough, the ride-along. Nothing here could produce one:
+      # Training Completion was only ever minted off a finished attempt, and
+      # Training Live Class has no attendance path out of it. Pins that no course
+      # is required (requiring one puts a content-authoring project between
+      # somebody and a five-minute record) and that linking one keeps the resulting
+      # certification auditable -- the completion names the session, the session
+      # names who led it and carries the signed sheet, and cancelling withdraws it.
+      - name: Training sessions (record what already happened, auditably)
+        run: python -m unittest erpnext_enhancements.tests.test_training_sessions -v
+      # Tiered sign-off authority. The behavioural half is the Junior/Senior/Master
+      # rule; the STRUCTURAL half is the point. A sign-off can be submitted through
+      # two doors -- record_signoff sets ignore_permissions and the Desk Submit
+      # button never touches the endpoint -- so a rule living only in the endpoint
+      # is a suggestion that one of the two doors happens to make. This walks the
+      # AST of all five call sites, because a comment naming the predicate is not a
+      # call to it, and that exact confusion is how the Phase-4 contract passed on a
+      # gate that did not gate.
+      - name: Training sign-off authority (tiers, and every door that asks)
+        run: python -m unittest erpnext_enhancements.tests.test_training_authority -v
       # Does the learner page's stylesheet style the page the scripts build? It
       # did not: 130 of the 138 classes the player emits had no rule, because the
       # CSS was written against an earlier vocabulary and never followed the

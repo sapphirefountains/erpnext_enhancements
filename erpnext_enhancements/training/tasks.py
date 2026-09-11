@@ -144,3 +144,46 @@ def _reminded_recently(last_reminder_on):
 	if not last_reminder_on:
 		return False
 	return getdate(last_reminder_on) > getdate(add_days(nowdate(), -REMINDER_COOLDOWN_DAYS))
+
+
+def sweep_auto_assignments():
+	"""Raise whatever the assignment rules currently say is missing.
+
+	**The job that was never there, and the reason nobody was ever assigned
+	anything.** ``assignment.sync_course`` had exactly one caller —
+	``publish_version`` — and it fires only when ``auto_assign`` is already set at
+	the moment of publishing. So turning auto-assign on for a course that is
+	already live did nothing at all; so did adding a rule to one. The engine has
+	been complete since v1.207.0 and prod reached v1.385.0 with zero
+	``Training Assignment Rule`` rows, five assignments in total, and two of
+	sixteen employees holding any training record.
+
+	It also makes the publish-time fan-out **re-drivable**, which this app has a
+	specific reason to care about: the prod deploy ``FLUSHDB``s the queue redis and
+	silently destroys every pending background job. Publishing a course shortly
+	before a merge therefore loses its assignment sweep with no error anywhere —
+	the same failure that lost a batch of Drive folders. A daily sweep means the
+	worst case is a day late rather than never.
+
+	Idempotent by construction: ``_assign`` skips anybody who already has an open
+	assignment for the course, so running this every day costs one pass and creates
+	nothing on a steady state.
+	"""
+	from erpnext_enhancements.training import assignment
+
+	if not is_enabled("training_enabled") or not is_enabled("auto_assign_enabled"):
+		return
+
+	created = 0
+	for course in assignment._auto_assign_courses():
+		try:
+			created += assignment.sync_course(course.name) or 0
+		except Exception:
+			# One bad course must not cost the others their sweep. Logged rather
+			# than swallowed: an assignment that silently never happens is the
+			# whole defect this job exists to fix.
+			frappe.log_error(
+				f"Auto-assign sweep failed for {course.name}\n{frappe.get_traceback()}",
+				"Training assignment",
+			)
+	return created

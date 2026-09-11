@@ -81,7 +81,7 @@ SPEC_BLOCK_TYPES = ("Rich Text", "Callout", "Divider", "Checklist", "Flashcards"
 
 #: Callout tones, matching Training Content Block ``callout_tone`` (stored
 #: title-cased on the block; the learner payload lower-cases them).
-CALLOUT_TONES = ("Tip", "Warning", "Danger")
+CALLOUT_TONES = ("Info", "Tip", "Warning", "Danger")
 
 #: Course-level knobs a spec may set. Everything else on Training Course
 #: (gates, recertification, sign-off, certificate) is left to the author to tune

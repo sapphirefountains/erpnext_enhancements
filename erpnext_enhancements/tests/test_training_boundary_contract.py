@@ -76,6 +76,19 @@ SOURCES = {
     "api.training": RUNTIME,
     "grading": APP / "training/grading.py",
     "progress": APP / "training/progress.py",
+    # The other three modules api/training.py re-exports rather than implements.
+    # `lesson_questions` returns qa's `mine`/`public`, `leaderboard` returns
+    # gamification's `rows`, and `my_signoff_queue` wraps signoff's queue -- all of
+    # them on the wire just as surely as a key written in the endpoint itself.
+    #
+    # Their absence was invisible until v1.386.0 added `data` to RESPONSE_BINDERS
+    # and the scan could suddenly see the reads: three keys the player has been
+    # reading all along turned up as "read but never sent". Neither half of the
+    # diff was wrong about its own side; the scan simply could not see either.
+    "qa": APP / "training/qa.py",
+    "gamification": APP / "training/gamification.py",
+    "signoff": APP / "training/signoff.py",
+    "social": APP / "training/social.py",
 }
 
 JS_FILES = [JS_DIR / name for name in ("player.js", "video.js", "quiz.js", "blocks.js")] + [
@@ -123,6 +136,21 @@ RESPONSE_BINDERS = (
     # home strip that first surfaced the gamification backend (v1.363.0).
     "reward",
     "stats",
+    # The binder the lazy panel views use -- `.then(function (data) { ... })` in
+    # renderRecord and renderQueue. Its absence was not harmless: `completions` was
+    # sitting in SENT_BUT_NOT_READ with the reason "the transcript view, not the
+    # lesson player", and that reason was simply false. renderRecord reads
+    # `data.completions`; the scan could not see it, so a real read was filed as a
+    # deliberate asymmetry. Exactly what this file's own comment warns an allowlist
+    # becomes. Adding the binder can only find MORE reads, never hide an orphan.
+    "data",
+    # The feed-preferences reply. A genuine top-level reply binder --
+    # `call("feedPrefs").then(function (prefs) {...})` -- not a nested row.
+    "prefs",
+    # The leaderboard reply, read off the lazy panel's cached state
+    # (`var board = boardState.data || {}`) rather than straight out of a .then.
+    # Same kind of thing: it holds a server reply and nothing else.
+    "board",
 )
 
 # ---------------------------------------------------------------------------
@@ -147,13 +175,29 @@ SENT_BUT_NOT_READ = {
     "version_number": "course metadata; covered by TestCourseCardFields",
     "weight": "outline row metadata; covered by TestOutlineRowFields",
     "course_version": "identity, echoed for the desk and the transcript",
+    # Keys the three re-exported modules (qa, gamification, signoff) return for
+    # their CALLER rather than for the screen. Each is a real reply field with a
+    # real consumer; none of them is a thing the player draws.
+    "notified": "whether an email actually went out; the caller's business, never shown - saying 'we told them' when notifications are off would be a lie",
+    "thread": "the new Training Question Thread's docname, returned so a caller can address it; the panel re-fetches the list instead",
+    "signoff": "the Training Signoff docname, returned for the desk and for logs; the queue removes the row it already holds",
+    "scope": "which leaderboard the server decided to serve; _resolve_scope already refuses a scope the caller may not have, so echoing it is a receipt, not a control",
+    "lesson_title": "qa echoes the lesson a thread belongs to; the panel is already inside that lesson and would only be repeating its own heading",
+    # Keys on the kudos rows NESTED inside a feed item. Nested content is out of
+    # this module's scope by design (see the docstring: course cards, outline rows
+    # and lesson blocks are all excluded for the same reason) -- adding `item` and
+    # `k` as binders would be worse than the gap, because `item` is also a DOM
+    # element name throughout the player and would manufacture dozens of false
+    # reads in the other direction. Both are covered by name in
+    # tests/test_training_social.py instead.
+    "kudos": "nested feed-item rows; covered by TestTheFeedCarriesNoNumbers in test_training_social",
+    "reaction": "nested kudos rows; covered by TestKudosAreOnePerPerson in test_training_social",
     "min_video_coverage": "read as state.gates.min_video_coverage; object identity pinned by TestGateThresholdBinding",
     "questions": "read as ctx.quiz.questions when TR.Quiz is mounted",
     "type": "read as question.type off the question rows, which are content, not envelope",
     # Sent for consumers that are not the four player files.
     "learner": "the host page renders the learner's own name from it",
     "today": "the host page stamps the date; the player uses server_time-free logic",
-    "completions": "the transcript view, not the lesson player",
     "attempt_idle_timeout_minutes": "informational; the server enforces the timeout",
     "progress_flush_seconds": "informational; the server owns the flush cadence",
     # Media metadata the player has no use for. Kept because the reply is also
@@ -189,6 +233,10 @@ READ_BUT_NOT_SENT = {
     "answer": "local UI state on the review card",
     "rewound": "computed locally from the server's rewind_applied for the hint text",
     "matches": "a local predicate result, not a wire field",
+    # Frappe's own error envelope, read off a rejected reply rather than a reply
+    # this app builds. `fail()` uses it to tell a PermissionError apart from a
+    # network failure, which are two different things to say to somebody.
+    "exc_type": "frappe's error envelope, not a field api/training.py builds",
     # Answer-key fields the server deliberately never sends. The player reads them
     # only in the builder-preview shape, where the author is allowed to see them.
     "correct_options": "answer key; served to authors in preview, never to learners",

@@ -67,6 +67,7 @@ class TrainingCourseVersion(Document):
 	def before_submit(self):
 		self._require_change_type()
 		self._require_content()
+		self._require_finished_blocks()
 		self._require_materialized_content()
 
 	def on_submit(self):
@@ -134,6 +135,38 @@ class TrainingCourseVersion(Document):
 	def _require_content(self):
 		if not frappe.db.exists("Training Lesson", {"course_version": self.name}):
 			frappe.throw(_("This version has no lessons yet, so there is nothing for a learner to do."))
+
+	def _require_finished_blocks(self):
+		"""No empty blocks reach a learner.
+
+		This is the other half of a rule that used to live entirely on
+		``TrainingLesson.validate``, where it threw on every autosave and made the
+		editor painful to use (see that controller for the full account). The check
+		had to move rather than simply be relaxed, because ``_materialize_lessons``
+		writes with ``db.set_value`` and never re-runs lesson validation — so
+		nothing else in the publish path looks at block content at all.
+
+		Named per lesson and per block. "Something is empty somewhere in a
+		forty-lesson course" is not an error message, it is a scavenger hunt.
+		"""
+		problems = []
+		for name in frappe.get_all(
+			"Training Lesson", filters={"course_version": self.name}, pluck="name", order_by="idx asc"
+		):
+			lesson = frappe.get_doc("Training Lesson", name)
+			for idx, block_type, why in lesson.incomplete_blocks():
+				problems.append(
+					_("{0} — block {1} ({2}: {3})").format(
+						lesson.lesson_title or name, idx, block_type, why
+					)
+				)
+		if not problems:
+			return
+		frappe.throw(
+			_("These blocks are not finished, so a learner would see a blank space where they are:")
+			+ "<br><br>"
+			+ "<br>".join(frappe.utils.escape_html(p) for p in problems)
+		)
 
 	def _require_materialized_content(self):
 		"""Refuse a submit that has not been through ``publish_version``.
