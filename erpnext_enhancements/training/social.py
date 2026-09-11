@@ -60,24 +60,54 @@ LEARNER_TYPES = (STAFF, CUSTOMER)
 FEED_LIMIT = 30
 
 
-def _enabled():
-	return frappe.db.exists("DocType", ACHIEVEMENT) and not (
-		frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_patch
-	)
+def _enabled(force=False):
+	"""Whether minting should happen at all.
+
+	Two independent halves, and the difference between them is why ``force``
+	exists:
+
+	* **the table is there** — a hard precondition, never bypassable;
+	* **we are not inside a migrate, install or patch** — the module-wide dormancy
+	  convention this app uses everywhere (``assignment.py``, ``gamification.py``,
+	  ``notifications.py``, ``signoff.py``), so a schema change never fires
+	  business side effects.
+
+	``force`` waives only the second. The backfill patch is the one caller that is
+	*supposed* to run during a migrate, and without this it was a guaranteed
+	no-op: every helper returned ``None``, ``created`` stayed 0, nothing raised,
+	the transaction committed, and ``tabPatch Log`` recorded a successful run — so
+	the feed would have opened empty on prod and the patch could never be retried.
+	Third instance of that trap in this app; found by the migrate-safety audit.
+
+	Note that relocating the backfill to an ``after_migrate`` hook does **not**
+	substitute for this: v16 runs those inside ``post_schema_updates()`` while
+	``frappe.flags.in_migrate`` is still True (it is cleared in ``tearDown()``,
+	``frappe/migrate.py:116`` called at ``:282``).
+	"""
+	if not frappe.db.exists("DocType", ACHIEVEMENT):
+		return False
+	if force:
+		return True
+	return not (frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_patch)
 
 
 # ------------------------------------------------------------------- minting
 
 
-def record(user, kind, title, occurred_on=None, **sources):
+def record(user, kind, title, occurred_on=None, force=False, **sources):
 	"""Mint one achievement, unless an identical one is already there.
 
 	Idempotent on ``(user, kind, title, source)`` so a re-run of the backfill, or a
 	completion submitted twice, cannot double the feed. Returns the docname or
 	``None``; **never raises**, because every caller is a side-effect path hanging
 	off something that matters more than this does.
+
+	``force=True`` waives only the migrate/install/patch dormancy check, never the
+	"does the table exist" one — see :func:`_enabled`. The backfill patch is the
+	only caller that passes it, and it passes it because it runs *inside* a
+	migrate by definition.
 	"""
-	if not _enabled() or not user or not title:
+	if not _enabled(force=force) or not user or not title:
 		return None
 	try:
 		filters = {"user": user, "kind": kind, "title": title}

@@ -39,9 +39,17 @@ def execute():
 	if current not in (None, "", "0", 0):
 		return
 
-	settings = frappe.get_single("Training Settings")
-	settings.warn_on_uncertified_dispatch = 1
-	settings.save(ignore_permissions=True)
+	# `db.set_single_value`, NOT `get_single().save()`. Saving a Single runs its
+	# controller, and `TrainingSettings.validate` rejects a heartbeat under 5s, a
+	# flush shorter than the heartbeat, fewer than 10 intervals and a sub-minute
+	# signed-URL TTL. A Single stores one row per field and `bench migrate` adds
+	# none, so on a site where Training Settings has never been saved every one of
+	# those reads 0 and `save()` throws -- aborting the migrate, which on this repo
+	# means aborting the deploy. Prod happens to be safe (all 31 field rows exist),
+	# and that is luck rather than design: a fresh install is not. Same shape as
+	# the Chat Settings breakage in v1.277.3.
+	frappe.db.set_single_value("Training Settings", "warn_on_uncertified_dispatch", 1)
+	frappe.clear_document_cache("Training Settings", "Training Settings")
 	print(
 		"[erpnext_enhancements] uncertified-dispatch advisory enabled "
 		"(warn only; it never blocks a dispatch)"

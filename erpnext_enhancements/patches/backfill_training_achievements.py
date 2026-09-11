@@ -35,6 +35,14 @@ def execute():
 
 	from erpnext_enhancements.training import social
 
+	# Every call below passes `force=True`, and it is not optional. `social.record`
+	# is dormant whenever `frappe.flags.in_migrate`, `in_install` or `in_patch` is
+	# set -- the module-wide convention that stops a schema change firing business
+	# side effects -- and a patch runs with two of those three True. Without the
+	# waiver this function was a guaranteed no-op that still recorded itself in
+	# `tabPatch Log` as a successful run, so the feed opened empty and could never
+	# be retried. Found by the migrate-safety audit; `force` waives the dormancy
+	# half of the check only, never the "does the table exist" half.
 	created = 0
 	created += _completions(social)
 	created += _badges(social)
@@ -66,6 +74,7 @@ def _completions(social):
 			row.course_title_snapshot or row.course,
 			occurred_on=row.completed_on,
 			source_completion=row.name,
+			force=True,
 		):
 			made += 1
 	return made
@@ -86,6 +95,7 @@ def _badges(social):
 			row.badge,
 			occurred_on=row.awarded_on,
 			source_badge_award=row.name,
+			force=True,
 		):
 			made += 1
 	return made
@@ -103,7 +113,12 @@ def _signoffs(social):
 	):
 		title = frappe.db.get_value("Training Course", row.course, "course_title") or row.course
 		if social.record(
-			row.user, "Signed Off", title, occurred_on=row.signed_on, source_signoff=row.name
+			row.user,
+			"Signed Off",
+			title,
+			occurred_on=row.signed_on,
+			source_signoff=row.name,
+			force=True,
 		):
 			made += 1
 	return made
@@ -135,6 +150,8 @@ def _anniversaries(social):
 			# 29 February. The 28th rather than skipping three years in four.
 			occurred = joined.replace(year=joined.year + years, day=28)
 		label = "1 year at Sapphire Fountains" if years == 1 else f"{years} years at Sapphire Fountains"
-		if social.record(row.user_id, "Work Anniversary", label, occurred_on=occurred):
+		if social.record(
+			row.user_id, "Work Anniversary", label, occurred_on=occurred, force=True
+		):
 			made += 1
 	return made

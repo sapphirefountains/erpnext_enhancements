@@ -55,22 +55,33 @@ def execute():
 			as_dict=True,
 		)
 		if not course:
+			print(f"[erpnext_enhancements] no Training Course with slug {slug!r}; no rule seeded")
 			continue
 		if course.status != "Published" or course.weight != "Required":
 			# Seeding a rule onto a draft or an optional course would assign nobody
-			# and leave a rule nobody remembers adding.
+			# and leave a rule nobody remembers adding. Printed rather than skipped
+			# in silence: this patch records itself in Patch Log either way, so a
+			# quiet skip is permanent and indistinguishable from a successful seed
+			# -- and the same deploy switches the dispatch advisory on, which then
+			# has nothing to read. Found by the migrate-safety audit.
+			print(
+				f"[erpnext_enhancements] {course.name} is {course.status}/{course.weight}, "
+				f"not Published/Required; no rule seeded"
+			)
 			continue
 
 		doc = frappe.get_doc("Training Course", course.name)
 		if doc.get("assign_rules"):
 			continue
 
-		if target_value and not frappe.db.exists(target_doctype, target_value):
+		if target_value:
+			target_value = _resolve_target(target_doctype, target_value)
+		if target_doctype and not target_value:
 			# The department was renamed, or this is another site. Say so rather
 			# than seeding a rule that can never match anybody.
 			print(
-				f"[erpnext_enhancements] no {target_doctype} named {target_value!r}; "
-				f"left {course.name} without a seeded rule"
+				f"[erpnext_enhancements] no {target_doctype} resolves for "
+				f"{course.name}; left without a seeded rule"
 			)
 			continue
 
@@ -90,3 +101,30 @@ def execute():
 			f"[erpnext_enhancements] {course.name}: auto-assign on, "
 			f"targeting {target_value or applies_to}"
 		)
+
+
+def _resolve_target(doctype, value):
+	"""The docname for *value*, tolerating ERPNext's abbreviated naming.
+
+	`Department` autonames as ``"<department_name> - <abbr>"`` when a company is
+	set (erpnext ``origin/version-16:erpnext/setup/doctype/department/department.py``
+	``autoname`` -> ``get_abbreviated_name``), so a rule seeded against the bare
+	word ``"Production"`` matches nothing on a site where the row is
+	``"Production - SF"``.
+
+	On this site it happens to work -- prod carries a mixture, with ``Production``,
+	``Marketing`` and ``Operations`` un-abbreviated and ``Finance - SF``,
+	``Design - SF`` and the rest abbreviated -- which is precisely why it is worth
+	resolving rather than trusting: the bare name is true here by accident, and the
+	patch records itself in Patch Log so a miss would be permanent and silent.
+
+	Exact name first, then the human-readable field, then nothing.
+	"""
+	if frappe.db.exists(doctype, value):
+		return value
+	field = {"Department": "department_name", "Designation": "designation_name"}.get(doctype)
+	if field and frappe.db.has_column(doctype, field):
+		resolved = frappe.db.get_value(doctype, {field: value}, "name")
+		if resolved:
+			return resolved
+	return None

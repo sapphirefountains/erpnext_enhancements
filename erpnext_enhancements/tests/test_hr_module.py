@@ -571,5 +571,193 @@ class TestAssignmentCanActuallyReachPeople(unittest.TestCase):
                 )
 
 
+class TestTheMigrateSafetyAuditFindings(unittest.TestCase):
+    """The HR-side defects the migrate-safety audit confirmed.
+
+    Every one of them ran without error and did nothing, or did something nobody
+    asked for on a later deploy. That is the shape worth pinning.
+    """
+
+    HOOKS = APP / "hooks.py"
+    SEED = APP / "patches/seed_positions_from_designations.py"
+    RESYNC = APP / "patches/resync_hr_and_training_workspaces.py"
+    DISPATCH = APP / "patches/enable_uncertified_dispatch_warning.py"
+    RULES = APP / "patches/seed_training_assignment_rules.py"
+    POSITION_PY = MODULE_DIR / "doctype/position/position.py"
+
+    @staticmethod
+    def _src(path):
+        """Source with comments and docstrings stripped.
+
+        Every assertion below is about what the code DOES, and the comments here
+        necessarily name the thing being excluded -- the comment explaining why
+        `reload_doc` is wrong says `reload_doc`. Reading those as code is how five
+        assertions in this release passed on broken code.
+        """
+        import ast
+        import io
+        import tokenize
+
+        text = path.read_text(encoding="utf-8")
+        kept = [t for t in tokenize.generate_tokens(io.StringIO(text).readline)
+                if t.type != tokenize.COMMENT]
+        tree = ast.parse(tokenize.untokenize(kept))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
+                body = node.body
+                if (
+                    body
+                    and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)
+                ):
+                    body[0].value.value = ""
+        return ast.unparse(tree)
+
+    # --------------------------------------------------- the fresh-install path
+
+    def test_the_seeding_runs_on_a_fresh_install_too(self):
+        """`bench install-app` writes the WHOLE of patches.txt to Patch Log as
+        already-executed and never calls after_migrate, so a patch alone leaves a
+        new site with the Position DocType and no rows in it -- an empty ladder
+        that looks deliberately configured."""
+        src = self._src(self.HOOKS)
+        self.assertIn("seed_positions_from_designations.execute", src)
+        self.assertIn("seed_credential_types.execute", src)
+
+    def test_the_employee_mapping_hangs_off_after_sync_not_after_install(self):
+        """v16 `installer.install_app` order is sync_for -> after_install ->
+        sync_jobs -> sync_fixtures -> after_sync. `Employee.custom_position` is a
+        FIXTURE Custom Field, so on after_install the column does not exist yet
+        and the mapping would place nobody."""
+        import ast
+
+        tree = ast.parse(self.HOOKS.read_text(encoding="utf-8"))
+        hooks = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+                try:
+                    hooks[node.targets[0].id] = ast.literal_eval(node.value)
+                except Exception:
+                    pass
+        target = (
+            "erpnext_enhancements.patches.seed_positions_from_designations"
+            ".map_employees_to_positions"
+        )
+        self.assertIn(target, hooks.get("after_sync", []))
+        self.assertNotIn(target, hooks.get("after_install", []))
+        # after_migrate keeps it too: that is the existing-site path.
+        self.assertIn(target, hooks.get("after_migrate", []))
+
+    # ------------------------------------------------- not overruling a human
+
+    def test_the_mapping_is_one_shot_and_stamps_itself(self):
+        """It runs on every migrate forever. Clearing somebody's position by hand
+        is how you say "this person holds no tier authority"; re-deriving it from
+        their Designation next deploy would hand that authority back silently."""
+        body = self._src(self.SEED)
+        self.assertIn("MAPPED_STAMP", body)
+        self.assertIn("get_global", body)
+        self.assertIn("set_global", body)
+        self.assertIn("creation", body)
+
+    def test_the_mapping_writes_the_fetched_tier_as_well(self):
+        """`custom_position_tier` is a fetch_from field, and `db.set_value` does
+        not go through the document, so writing only the Link leaves every
+        backfilled Employee reading Tier 0 against a ladder that says otherwise."""
+        self.assertIn("custom_position_tier", self._src(self.SEED))
+
+    # -------------------------------------------- the root is not a job family
+
+    def test_the_tree_root_is_not_a_job_family(self):
+        """The seed hangs every standalone Designation straight off `All
+        Positions`. Without this carve-out they all share one job_family, and the
+        instant anybody edits one rung to tier 2 it outranks every unrelated
+        specialty in the company -- Sales Representative, CEO, everyone."""
+        body = self._src(self.POSITION_PY)
+        family = body[body.index("def _derive_job_family") :]
+        family = family[: family.index("def _validate_tier")]
+        self.assertIn("if not row.parent_position:", family)
+
+    def test_two_standalone_designations_do_not_outrank_each_other(self):
+        """The behavioural twin of the test above, through the real predicate."""
+        _place("Sales Representative", "Sales Representative", 1)
+        _place("Chief Executive Officer", "Chief Executive Officer", 1)
+        self.assertFalse(position.outranks("Sales Representative", "Chief Executive Officer"))
+        self.assertFalse(position.outranks("Chief Executive Officer", "Sales Representative"))
+
+    def test_a_promoted_standalone_still_outranks_nobody_outside_its_family(self):
+        """The actual trap: one innocuous tier edit must not become company-wide
+        sign-off authority."""
+        _place("Electrical Designer", "Electrical Designer", 2)
+        _place("Sales Representative", "Sales Representative", 1)
+        self.assertFalse(position.outranks("Electrical Designer", "Sales Representative"))
+
+    # ---------------------------------------------------------- the other three
+
+    def test_the_sidebar_resync_does_not_use_reload_doc(self):
+        """`reload_doc`'s first argument is a MODULE and it builds
+        `<module>/<dt>/<dn>/<dn>.json`. The app name is not a module, and
+        app-level sidebars are flat files -- so the call threw every migrate and
+        the except swallowed it. The safety net had never existed."""
+        body = self._src(self.RESYNC)
+        sidebars = body[body.index("for name in SIDEBARS") :]
+        self.assertIn("import_file_by_path", sidebars)
+        self.assertNotIn("reload_doc", sidebars)
+
+    def test_the_workspace_resync_still_uses_reload_doc(self):
+        """Those two ARE real module names, and the call is correct there."""
+        body = self._src(self.RESYNC)
+        start = body.index("for module, name in WORKSPACES")
+        workspaces = body[start : body.index("for name in SIDEBARS")]
+        self.assertIn("reload_doc", workspaces)
+
+    def test_the_single_is_written_without_its_controller(self):
+        """`TrainingSettings.validate` rejects a heartbeat under 5s and three more
+        floors. A Single stores one row per field and migrate adds none, so on a
+        site that never saved it every one reads 0 and `save()` aborts the
+        migrate. Prod is safe by luck; a fresh install is not."""
+        body = self._src(self.DISPATCH)
+        self.assertIn("set_single_value", body)
+        self.assertNotIn("get_single", body)
+        self.assertNotIn(".save(", body)
+
+    def test_a_skipped_rule_seed_says_so(self):
+        """The patch records itself in Patch Log either way, so a silent skip is
+        permanent -- and the same deploy turns the dispatch advisory on, which
+        then has nothing to read."""
+        body = self._src(self.RULES)
+        head = body[: body.index("doc = frappe.get_doc")]
+        self.assertGreaterEqual(head.count("print("), 2)
+
+    def test_the_rule_target_is_resolved_not_assumed(self):
+        """ERPNext autonames Department as "<name> - <abbr>" when a company is
+        set. Prod carries a mixture, so the bare name works here by accident."""
+        body = self._src(self.RULES)
+        self.assertIn("_resolve_target", body)
+        self.assertIn("department_name", body)
+
+
+class TestTheSidebarIconsAllExist(unittest.TestCase):
+    """A workspace-sidebar icon naming nothing renders as blank space with no
+    error at all -- the same failure mode as a dead card reference.
+    """
+
+    #: Kept as a denylist rather than a mirror of the framework's icon sets: the
+    #: audit found exactly one bad name, and a hard-coded inventory here would rot
+    #: against frappe's own `lucide.svg` on every upgrade.
+    KNOWN_MISSING = {"sitemap"}
+
+    def test_no_item_uses_an_icon_that_v16_does_not_ship(self):
+        for item in _read(SIDEBAR).get("items", []):
+            with self.subTest(item=item.get("label")):
+                self.assertNotIn(item.get("icon"), self.KNOWN_MISSING)
+
+    def test_the_sidebar_is_stamped_newer_than_the_row_on_prod(self):
+        """Workspace Sidebar is TIMESTAMP-gated on import, unlike a DocType which
+        is hash-gated. The row on prod is dated 2026-02-08."""
+        self.assertGreater(_read(SIDEBAR)["modified"], "2026-02-08 10:52:20.227777")
+
+
 if __name__ == "__main__":
     unittest.main()

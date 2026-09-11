@@ -73,8 +73,23 @@ class TrainingAchievement(Document):
 		one indexed read and an opt-out cannot be forgotten by a future caller that
 		writes its own filter. ``notifications.resweep_visibility`` keeps it true
 		when somebody changes their mind.
+
+		**Gated on ``is_new()``, not on the field being empty**, and that is the
+		whole correctness of it. The field carries ``"default": "Team"`` in the
+		JSON, and v16 applies defaults in ``_set_defaults()``
+		(``frappe/model/document.py:474``) *twelve lines before* ``validate`` runs
+		at ``:486`` — so an ``if self.visibility: return`` guard was already true on
+		every insert and this branch never executed. Every achievement was published
+		to the team feed, including those of people who had opted out, and the
+		preference silently did nothing. Found by the migrate-safety audit.
+
+		Deleting the JSON default would not have fixed it either:
+		``frappe/model/create_new.py:117-118`` falls back to the first option of a
+		Select with options, which is also ``"Team"``.
 		"""
-		if self.visibility:
+		if not self.is_new():
+			# An existing row keeps what it has: `resweep_visibility` owns changes
+			# after creation, and re-deriving here would fight it.
 			return
 		self.visibility = "Team" if wants_feed(self.user) else "Private"
 

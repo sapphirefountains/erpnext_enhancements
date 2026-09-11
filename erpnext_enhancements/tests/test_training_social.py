@@ -472,6 +472,121 @@ class TestTheFeedIsGatedOnTheVIEWER(unittest.TestCase):
         self.assertNotIn("get_roles", body)
 
 
+class TestTheMigrateSafetyAuditFindings(unittest.TestCase):
+    """Three defects the migrate-safety audit confirmed, each pinned so it cannot
+    come back. All three shared a shape: the code read as correct, ran without
+    error, and did nothing.
+    """
+
+    BACKFILL = APP / "patches/backfill_training_achievements.py"
+
+    def test_record_can_be_forced_past_the_dormancy_check(self):
+        """`social.record` is dormant during migrate/install/patch -- the app-wide
+        convention that stops a schema change firing side effects. The backfill
+        patch runs inside a migrate BY DEFINITION, so without a waiver it was a
+        guaranteed no-op that still wrote a Patch Log row saying it had worked."""
+        body = _fn("_enabled")
+        self.assertIn("force", body)
+        self.assertIn("in_migrate", body)
+        sig = _text(SOCIAL)
+        self.assertIn("def record(user, kind, title, occurred_on=None, force=False", sig)
+
+    def test_force_never_waives_the_table_check(self):
+        """Only the dormancy half is waivable. Minting into a table that does not
+        exist is not a thing anyone should be able to ask for."""
+        body = _fn("_enabled")
+        early = body[: body.index("if force")]
+        self.assertIn('frappe.db.exists("DocType", ACHIEVEMENT)', early)
+        self.assertIn("return False", early)
+
+    def test_every_backfill_call_passes_force(self):
+        """One missed call is one silently empty section of the feed.
+
+        Counted through the AST, not with `src.count("force=True")`. The comment
+        in that patch explaining why the waiver is needed contains the string, so
+        a substring count reads the prose as a call site and passes while a real
+        call is missing it -- the same absence-assertion trap this release hit
+        five times already.
+        """
+        import ast
+
+        tree = ast.parse(_text(self.BACKFILL))
+        calls = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "record"
+        ]
+        self.assertEqual(len(calls), 4, "expected four minting calls")
+        for call in calls:
+            forced = [
+                k
+                for k in call.keywords
+                if k.arg == "force" and getattr(k.value, "value", None) is True
+            ]
+            self.assertTrue(forced, f"social.record at line {call.lineno} does not pass force=True")
+
+    def test_the_visibility_opt_out_is_reachable(self):
+        """The field carries `default: "Team"` and v16 applies defaults twelve
+        lines BEFORE validate (`document.py:474` vs `:486`), so a guard of
+        `if self.visibility: return` was already true on every insert -- the
+        opt-out branch never ran and every achievement went to the team feed.
+
+        Asserted on the guard being `is_new`-shaped rather than emptiness-shaped,
+        because that is the actual defect.
+        """
+        body = _fn("_apply_visibility", ACHIEVEMENT_PY)
+        self.assertIn("if not self.is_new():", body)
+        self.assertNotIn("if self.visibility:", _code(body))
+        self.assertIn("wants_feed", body)
+
+    def test_dropping_the_json_default_would_not_have_been_enough(self):
+        """Kept deliberately: `create_new.py` falls back to the first option of a
+        Select with options, which is also "Team". The JSON default staying put is
+        the evidence that the controller is the fix."""
+        fields = {f["fieldname"]: f for f in json.loads(_text(ACHIEVEMENT_JSON))["fields"]}
+        self.assertEqual(fields["visibility"]["options"].splitlines()[0], "Team")
+
+
+class TestTheFeedIsGatedOnTheVIEWER(unittest.TestCase):
+    """A customer contact holds `Training Learner`. Gating the Team clause on the
+    ROW's learner_type let them fail the "own rows" arm and pass the Team arm --
+    the entire staff feed, through /api/resource.
+    """
+
+    def test_a_non_staff_viewer_gets_only_their_own_rows(self):
+        """Sliced to the guard's own `return`, not a fixed window -- the Team clause
+        lives on the very next statement, so a generous slice reads it and the
+        assertion fails on correct code."""
+        body = _fn("achievement_query_conditions", PERMISSIONS)
+        at = body.index("if not _is_staff(resolved):")
+        branch = body[at : body.index(chr(10), body.index("return", at))]
+        self.assertIn("`user` = {own}", branch)
+        self.assertNotIn("Team", branch)
+
+    def test_staff_is_employment_not_a_role(self):
+        """A role can be granted by accident, and on this site every one of the 16
+        staff logins holds `Customer`. Employment cannot be granted by accident."""
+        body = _fn("_is_staff", PERMISSIONS)
+        self.assertIn('frappe.db.exists("Employee"', body)
+        self.assertIn('"status": "Active"', body)
+        self.assertNotIn("has_role", body)
+        self.assertNotIn("get_roles", body)
+
+    def test_all_four_entry_points_gate_on_the_viewer(self):
+        """A query condition filters lists and says nothing about get_doc(), so the
+        has_permission twins need the same gate or the leak stays open by name."""
+        for fn in (
+            "achievement_query_conditions",
+            "achievement_has_permission",
+            "kudos_query_conditions",
+            "kudos_has_permission",
+        ):
+            with self.subTest(fn=fn):
+                self.assertIn("_is_staff", _fn(fn, PERMISSIONS))
+
+
 
 if __name__ == "__main__":
     unittest.main()

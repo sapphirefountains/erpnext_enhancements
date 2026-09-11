@@ -601,6 +601,97 @@ That failure mode — a contract test that passes because the forbidden word app
 prose forbidding it — is the same one `test_training_boundary_contract` warns about, and it
 turned up five times in one afternoon.
 
+
+### Fixed before shipping — the migrate-safety audit
+
+A second pass, aimed only at `bench migrate` and `bench install-app`: 64 agents over six
+dimensions, every finding checked by three verifiers prompted to refute it. The deploy runs
+migrate unattended and `FLUSHDB`s both redis instances, so a migrate that dies leaves the
+site in maintenance mode — and this release is the most migrate-heavy thing this app has
+shipped: a new module, 26 doctype JSONs, three fixture Custom Fields on `Employee`, six
+patches and two `after_migrate` hooks.
+
+Nine defects survived. Every one of them **ran without error and did nothing** — or did
+something nobody asked for on a later deploy.
+
+- **The team feed's backfill could never have run, and would have recorded itself as
+  successful.** `social.record()` is dormant whenever `frappe.flags.in_migrate`,
+  `in_install` or `in_patch` is set — the app-wide convention that stops a schema change
+  firing business side effects — and a patch runs with two of those three True. So all four
+  helpers returned `None`, `created` stayed 0, nothing printed, nothing raised, the
+  transaction committed, and `tabPatch Log` got its row. The feed would have opened empty on
+  prod, which is the exact failure the patch exists to prevent, and it could never have been
+  retried. `record()` now takes `force`, which waives the dormancy half of the check and
+  never the "does the table exist" half. **Third instance of the Patch Log trap in this app**
+  (after v1.280.3 and the Position seeding earlier on this branch). Note that relocating it
+  to `after_migrate` would not have helped: v16 runs those inside `post_schema_updates()`
+  while `in_migrate` is still True.
+- **The feed opt-out was unreachable, so every achievement was published to the team —
+  including those of people who had opted out.** `_apply_visibility` guarded on
+  `if self.visibility: return`, and the field ships `"default": "Team"`. v16 applies defaults
+  in `_set_defaults()` (`document.py:474`) *twelve lines before* `validate` runs at `:486`,
+  so the guard was already true on every insert and the branch never executed. Deleting the
+  JSON default would not have fixed it either — `create_new.py:117-118` falls back to the
+  first option of a Select, which is also `Team`. The guard is now `is_new()`-shaped.
+- **A patch that saves a Single would abort a fresh install.** `enable_uncertified_dispatch_warning`
+  called `get_single().save()`, and `TrainingSettings.validate` rejects a heartbeat under 5s,
+  a flush shorter than the heartbeat, fewer than ten intervals and a sub-minute URL TTL. A
+  Single stores one row per field and `bench migrate` adds none, so on a site that has never
+  saved Training Settings every one of those reads 0 and the save throws — taking the migrate,
+  and therefore the deploy, with it. Prod happens to be safe because all 31 field rows exist,
+  and that is luck rather than design. Now `frappe.db.set_single_value`, which does not go
+  near the controller. Same shape as the Chat Settings breakage in v1.277.3.
+- **Every standalone Designation shared one job family, one tier edit away from company-wide
+  sign-off authority.** `Position` is a nested set, so it needs a root container, and the
+  seeding hangs all sixteen non-ladder Designations straight off it — giving them
+  `job_family = "All Positions"`. Nobody outranked anybody only because they all seed at tier
+  1 and `outranks` demands *strictly* greater. The moment one person edited one rung to tier
+  2, that position would silently have acquired sign-off authority over every unrelated
+  specialty in the company: Sales Representative, Electrical Designer, the CEO. The seeding
+  patch's own docstring claims each "outranks nobody"; **the tree's root group is now not a
+  job family**, which makes that true by construction rather than by coincidence.
+- **The employee-to-ladder mapping would re-grant a position a human deliberately cleared, on
+  every deploy.** Clearing `custom_position` is how somebody says "this person is on no ladder
+  and holds no tier authority"; an `after_migrate` hook keyed on "the field is empty" read that
+  as a gap and filled it in again. It now stamps itself and afterwards only places employees
+  created since, so new hires are still placed automatically and nobody's decision is
+  overruled. It also writes `custom_position_tier`, a `fetch_from` field that `db.set_value`
+  does not populate — every backfilled employee would have read Tier 0 against a ladder saying
+  otherwise.
+- **The HR sidebar's force-resync threw on every migrate and the `except` swallowed it.**
+  `reload_doc`'s first argument is a **module**, and it builds
+  `<module>/<dt>/<dn>/<dn>.json`. `erpnext_enhancements` is an app, not one of the 32 names in
+  `modules.txt`, so `get_module_app` raised `DoesNotExistError`; and app-level
+  `workspace_sidebar` JSONs are flat files anyway. The patch's stated safety net had never
+  existed. Now `import_file_by_path`, which is what `model/sync.py` itself calls for these.
+  The two workspace reloads beside it were correct and are unchanged.
+- **Six seeding patches would never have run on a fresh site.** `bench install-app` writes the
+  whole of `patches.txt` to Patch Log as already-executed and never calls `after_migrate`, so a
+  new site would get the `Position` and `Credential Type` doctypes with no rows in either — an
+  empty ladder that looks deliberately configured. Both seeds are now on `after_install`. The
+  employee mapping is on a new **`after_sync`** hook instead, because v16's install order is
+  `sync_for → after_install → sync_jobs → sync_fixtures → after_sync` and `custom_position` is
+  a fixture field that does not exist at `after_install` time.
+- **A skipped assignment-rule seed said nothing.** The patch records itself in Patch Log either
+  way, so a silent skip is permanent — and the same deploy switches the dispatch advisory on,
+  which then has nothing to read. It now prints the reason, and resolves its Department target
+  by field rather than assuming the bare name: ERPNext autonames `Department` as
+  `"<name> - <abbr>"` when a company is set, and prod carries a mixture (`Production` bare,
+  `Finance - SF` abbreviated), so the bare name works here **by accident**.
+- **One sidebar icon named nothing.** `sitemap` is in neither of v16's icon sets; a missing
+  icon renders as blank space with no error, the same failure mode as a dead card reference.
+  Now `folder-tree`, which is in `lucide.svg`.
+
+Two findings were **refuted** on verification and are recorded because the reasoning is worth
+keeping: a 172-character `frappe.log_error` title does *not* abort — `ErrorLog.validate()`
+truncates `method` to 140 and moves the full text into `error` — and the `Department`
+targeting does resolve on this site, for the accidental reason above.
+
+Pinned by regression tests in `test_hr_module` and `test_training_social`. One of those had to
+be rewritten first, for the sixth time this release: counting `force=True` with `src.count()`
+matched the **comment explaining why the waiver is needed** and passed at 5 against 4 real
+call sites. It parses the AST now.
+
 ## [1.385.0] - 2026-09-10
 
 ### Added

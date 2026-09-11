@@ -28,8 +28,14 @@ thereafter, is the shape that survives.
 """
 
 import frappe
+from frappe.utils import now_datetime
 
 ROOT = "All Positions"
+
+#: Marks that the one-shot Employee backfill has run. Stored as a global default
+#: rather than in Patch Log, because the mapping is an ``after_migrate`` hook and
+#: has no Patch Log row of its own to key on.
+MAPPED_STAMP = "ee_positions_mapped_on"
 
 # (name, parent, is_group, tier, tier_label)
 LADDER = (
@@ -125,9 +131,25 @@ def map_employees_to_positions():
 		# has_column raises rather than returning False when the table is missing.
 		return
 
+	# The backfill is ONE-SHOT, and the stamp is what makes it so. This runs on
+	# every migrate forever, and "custom_position is empty" is not a durable
+	# predicate for it: clearing the field is how somebody says "this person is on
+	# no ladder, and holds no tier authority over anyone". Re-deriving it from
+	# their Designation on the next deploy would silently overrule that decision
+	# and hand back sign-off authority a human deliberately took away -- the exact
+	# inverse of the safe direction. Found by the migrate-safety audit.
+	#
+	# After the stamp, only employees created SINCE it are placed, so new hires
+	# still land on the ladder automatically and nobody's manual clearing is ever
+	# second-guessed.
+	stamp = frappe.db.get_global(MAPPED_STAMP)
+	filters = {"designation": ["is", "set"]}
+	if stamp:
+		filters["creation"] = [">", stamp]
+
 	rows = frappe.get_all(
 		"Employee",
-		filters={"designation": ["is", "set"]},
+		filters=filters,
 		fields=["name", "designation", "custom_position"],
 	)
 	mapped = 0
@@ -136,10 +158,27 @@ def map_employees_to_positions():
 			continue
 		if not frappe.db.exists("Position", row.designation):
 			continue
-		frappe.db.set_value(
-			"Employee", row.name, "custom_position", row.designation, update_modified=False
-		)
+		# Both columns in one write. `custom_position_tier` is a `fetch_from` field
+		# (`custom_position.tier`), and fetch_from is resolved by
+		# `Document.set_fetch_from_value()` during a save -- `db.set_value` does not
+		# go through the document, so writing only the Link would leave the Tier
+		# column reading 0 on every backfilled Employee while the ladder said
+		# otherwise. The tier shown on a person is display only (authority is always
+		# read from the Position itself), but a display that contradicts the record
+		# is worse than no display. Found by the migrate-safety audit.
+		update = {"custom_position": row.designation}
+		try:
+			if frappe.db.has_column("Employee", "custom_position_tier"):
+				update["custom_position_tier"] = (
+					frappe.db.get_value("Position", row.designation, "tier") or 0
+				)
+		except Exception:
+			pass
+		frappe.db.set_value("Employee", row.name, update, update_modified=False)
 		mapped += 1
+
+	if not stamp:
+		frappe.db.set_global(MAPPED_STAMP, now_datetime())
 
 	if mapped:
 		print(f"[erpnext_enhancements] placed {mapped} employee(s) on the Position ladder")

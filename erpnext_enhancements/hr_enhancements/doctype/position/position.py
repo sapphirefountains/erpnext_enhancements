@@ -80,6 +80,22 @@ class Position(NestedSet):
 
 		A group is its own family, which is what makes ``Technician`` and every
 		rung beneath it compare equal.
+
+		**The tree's root group is not a family**, and that exception is
+		load-bearing. ``Position`` is a nested set, so it needs one container at the
+		top (``All Positions``), and the seeding hangs every standalone Designation
+		straight off it. Without this carve-out all sixteen of those — Sales
+		Representative, Electrical Designer, Chief Executive Officer — would share
+		``job_family = "All Positions"``. Nobody outranks anybody today only because
+		the seed gives them all tier 1 and :func:`outranks` demands *strictly*
+		greater; the moment one person edits one rung to tier 2, that position
+		silently acquires sign-off authority over every unrelated specialty in the
+		company. The patch that seeds them claims each "outranks nobody", and this
+		is what makes that true by construction rather than by coincidence. Found by
+		the migrate-safety audit.
+
+		A root group is one with no ``parent_position``. A deliberate sub-grouping
+		like ``Technician`` has a parent and stays a real family.
 		"""
 		if cint(self.is_group):
 			self.job_family = self.name
@@ -95,6 +111,9 @@ class Position(NestedSet):
 			if not row:
 				break
 			if cint(row.is_group):
+				if not row.parent_position:
+					# The tree's root container, not a job family -- see above.
+					break
 				self.job_family = row.name
 				return
 			parent = row.parent_position

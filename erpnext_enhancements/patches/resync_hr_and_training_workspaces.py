@@ -60,10 +60,23 @@ def execute():
 
 	for name in SIDEBARS:
 		try:
-			# App-level folder, not a module one -- frappe/model/sync.py walks
-			# `<app>/workspace_sidebar/` separately from the module tree, so
-			# reload_doc's module argument is the app itself.
-			frappe.reload_doc("erpnext_enhancements", "workspace_sidebar", name, force=True)
+			# NOT reload_doc. Its first argument is a MODULE, and it resolves the
+			# path as `get_module_path(module)/<dt>/<dn>/<dn>.json`. Two things break
+			# there: "erpnext_enhancements" is an app, not one of the 32 names in
+			# modules.txt, so `get_module_app` throws DoesNotExistError; and even if
+			# it resolved, app-level workspace_sidebar JSONs are FLAT files
+			# (`<app>/workspace_sidebar/hr.json`), not `<module>/.../hr/hr.json`.
+			# The except below swallowed it, so this patch's stated safety net had
+			# never existed. Found by the migrate-safety audit.
+			#
+			# `import_file_by_path` is what `frappe/model/sync.py` itself calls for
+			# these, so this is the same code path, just addressed correctly.
+			from frappe.modules.import_file import import_file_by_path
+
+			import_file_by_path(
+				frappe.get_app_path("erpnext_enhancements", "workspace_sidebar", f"{name}.json"),
+				force=True,
+			)
 		except Exception:
 			frappe.log_error(
 				f"Could not re-sync the {name} sidebar\n{frappe.get_traceback()}",

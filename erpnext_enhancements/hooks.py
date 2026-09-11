@@ -1318,6 +1318,30 @@ after_install = [
 	# for the usual reason: after_migrate does NOT run during `bench install-app`, so a
 	# fresh site would show grey letter avatars until somebody happened to run a migrate.
 	"erpnext_enhancements.setup.desktop_icons.sync_desktop_icons",
+	# hr_enhancements (WI-072). Same reason as everything above: install-app writes the
+	# whole of patches.txt to Patch Log as already-executed, so a fresh site would get the
+	# Position DocType and the Credential Type DocType with no rows in either -- an empty
+	# ladder and an empty credential register that both look deliberately configured.
+	# Both are insert-only and safe to run twice. They need only doctypes, which exist by
+	# `sync_for` (frappe v16 `installer.py`: sync_for, then after_install).
+	"erpnext_enhancements.patches.seed_positions_from_designations.execute",
+	"erpnext_enhancements.patches.seed_credential_types.execute",
+]
+
+# Run at the END of `bench install-app`, after fixtures have synced.
+#
+# The distinction from after_install is not cosmetic. v16's `installer.install_app`
+# runs: sync_for -> add_to_installed_apps -> **after_install** -> sync_jobs ->
+# **sync_fixtures** -> sync_customizations -> **after_sync**. So a callable that needs
+# a FIXTURE Custom Field must hang here and not on after_install, where the column does
+# not exist yet. Exactly the same ordering trap as the migrate path, where
+# sync_fixtures runs after the post-model-sync patches.
+after_sync = [
+	# Places every Employee on the Position ladder. Writes `Employee.custom_position`,
+	# which is a fixture Custom Field -- hence here rather than in after_install.
+	# One-shot: it stamps itself and afterwards only touches employees created since,
+	# so clearing somebody's position by hand is never overruled on the next deploy.
+	"erpnext_enhancements.patches.seed_positions_from_designations.map_employees_to_positions",
 ]
 
 # Run after each `bench migrate` (from global_enhancements)
