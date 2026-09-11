@@ -7,12 +7,26 @@ The matrix answers *"who can I send?"* — one row per person. This answers the
 question underneath it, which nothing in the app could ask: **"how many of us can
 do this at all?"**
 
-That number is the shop's real exposure, and on this site it is already biting.
-Sign-off authority is strictly-higher tier within the same job family, and prod
-has four Junior Technicians and one Senior — so **one man is the only person in
-the company who can attest that any of the other four may work alone.** He is also
-one holiday away from nobody being able to. Nothing surfaced that, because every
-existing view is per-person and a per-person view cannot show you a count of one.
+That number is the shop's real exposure. Sign-off authority is strictly-higher tier
+within the same job family, so the count that matters is how many people sit ABOVE
+a rung, not on it.
+
+Measured on prod 2026-09-11: three Junior Technicians (tier 1) and **two** Senior
+Technicians (tier 2), no Master. So two people can attest that a junior may work
+alone. That still trips the `THIN` threshold of 2 and still renders — which is the
+point of the threshold — but it is no longer the single point of failure this
+docstring described until v1.404.0, when it read "four Junior Technicians and one
+Senior". It was true when written and quietly stopped being true. Restated with a
+date because the next reader will otherwise take it as current ground truth, which
+is exactly how WI-072's three deferred items acquired their wrong reasons.
+
+The deeper gap the numbers hide: `tabPosition Requirement` holds **zero** rows
+across all twenty Positions, and `tabEmployee Credential` holds zero, against a
+seeded taxonomy of fifteen Credential Types. So the credential and course halves of
+this grid are correctly reporting that nobody holds anything, because nothing has
+ever said what a position requires. Nothing surfaced any of this before, because
+every existing view is per-person and a per-person view cannot show you a count of
+one — or of none.
 
 Three sources, deliberately in one grid rather than three reports: an internal
 course, an external credential, and **sign-off authority itself**, which is the

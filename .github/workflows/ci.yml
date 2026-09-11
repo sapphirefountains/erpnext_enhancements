@@ -396,6 +396,13 @@ jobs:
       # appears. v1.146.0 shipped exactly that across seven widgets.
       - name: Workspace structure (content <-> child rows, WI-018)
         run: python -m unittest erpnext_enhancements.tests.test_workspaces -v
+      # The four draft courses' stale content. Asserts the REPLACEMENT TABLE, because the
+      # content itself lives only in tabTraining Content Block on prod. The Expense Claim
+      # assertion is deliberately not 'must not appear' -- the correction names it in order to
+      # deny it -- and the Plaid one is INVERTED: `Plaid Settings` must survive, because
+      # v1.361.0 handed that name back to ERPNext and a rename would describe a missing card.
+      - name: Training content fix (what the corrections must say)
+        run: python -m unittest erpnext_enhancements.tests.test_training_content_fix -v
       # The v1.402.0 Opportunity status cleanup. Guards the MECHANICS, not the mapping:
       # naming `modified` in that UPDATE would drag 144 rows into the 90-day window
       # snapshots.py uses for win_rate_90 and take the reported win rate from 36.9% to
