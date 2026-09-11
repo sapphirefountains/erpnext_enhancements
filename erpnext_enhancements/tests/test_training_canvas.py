@@ -541,5 +541,81 @@ class TestTheTranscriptLoaderRefusesUntimedText(unittest.TestCase):
         self.assertNotIn("upload_file", block)
 
 
+class TestTurnIntoKeepsTheKeyAndDuplicateMintsOne(unittest.TestCase):
+    """`block_key` is a relational identity, not a detail. Learner watch intervals
+    and in-video checkpoints are filed under it, and `_apply_blocks` replaces the
+    child table wholesale by position, minting a key only where one is blank or
+    duplicated. So the rule is exact and opposite for the two verbs, and it can only
+    be asserted client-side — the server cannot tell the two apart.
+    """
+
+    def _fn(self, name):
+        """One class method, bounded at its own closing brace.
+
+        Keyed on the DEFINITION. A bare name + '(lesson, block' matches the first
+        CALL SITE instead, and a fixed-size window then runs past the end of the
+        method into the next one. Both of those bit this file already, which is why
+        the slice is anchored to the line start and ended at the brace.
+        """
+        src = _canvas()
+        opener = "\n\t" + name + '(lesson, block'
+        at = src.index(opener) + 1
+        end = src.index("\n\t}", at)
+        return src[at:end]
+
+    def test_turn_into_never_assigns_a_key(self):
+        """Delete-and-re-add would mint a new one and strand every learner
+        mid-video, which is what an author would do by hand without this."""
+        body = self._fn("turn_into")
+        self.assertNotIn("block.block_key =", body)
+        self.assertNotIn("block_key:", body)
+
+    def test_turn_into_changes_the_type_in_place(self):
+        self.assertIn("block.block_type = target;", self._fn("turn_into"))
+
+    def test_duplicate_mints_a_fresh_key(self):
+        """Two rows sharing a key is the one case the server rewrites, silently,
+        and the author would never see it."""
+        body = self._fn("duplicate_block")
+        self.assertIn("block_key:", body)
+        self.assertIn("Math.random()", body)
+
+    def test_duplicate_does_not_carry_checkpoints(self):
+        """They are separate documents filed under the original key. A duplicate
+        that silently acquired somebody else's questions is worse than one that
+        acquired none."""
+        body = self._fn("duplicate_block")
+        self.assertNotIn("checkpoints", body)
+
+    def test_both_go_through_dirty_blocks(self):
+        for fn in ("turn_into", "duplicate_block"):
+            with self.subTest(fn=fn):
+                self.assertIn("this.dirty_blocks(lesson)", self._fn(fn))
+
+
+class TestTurnIntoSaysWhatItWillCost(unittest.TestCase):
+    def test_it_warns_before_discarding_anything(self):
+        body = _canvas()
+        at = body.index("turn_into(lesson, block, target) {")
+        block = body[at : at + 2200]
+        self.assertIn("frappe.confirm(", block)
+        self.assertIn("if (!losses.length) return apply();", block)
+
+    def test_it_names_the_checkpoints_by_timestamp(self):
+        """The canvas has had `lesson.checkpoints` on the bootstrap all along and
+        thrown it away. Naming them by timestamp is the difference between a warning
+        and a surprise."""
+        body = _canvas()
+        at = body.index("turn_losses(lesson, block, target) {")
+        block = body[at : at + 1800]
+        self.assertIn("lesson.checkpoints", block)
+        self.assertIn("this.mmss(", block)
+
+    def test_it_reassures_that_progress_survives(self):
+        """The key is kept, so watched time stays counted -- and an author who is
+        not told that will avoid the feature."""
+        self.assertIn("stays counted", _canvas())
+
+
 if __name__ == "__main__":
     unittest.main()

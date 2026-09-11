@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.399.0] - 2026-09-11
+
+### Added
+
+- **Turn Into and Duplicate on the canvas**, and the reason they are one change is that
+  `block_key` is a **relational identity**, not a detail: learner watch intervals and in-video
+  checkpoints are filed under it, and `_apply_blocks` replaces the block table wholesale by
+  position, minting a key only where one is blank or duplicated.
+
+  So the rule is exact and opposite for the two verbs. **Turn Into keeps the key** — which is
+  precisely what an author doing it by hand cannot do, because delete-and-re-add mints a new one
+  and strands every learner mid-video. **Duplicate mints a fresh one**, because two rows sharing
+  a key is the one case the server silently rewrites, where the author would never see it. The
+  server cannot tell the two apart, so the invariant is asserted client-side or nowhere, and it
+  now is.
+
+  Turn Into says what it will cost before anything moves, and names in-video checkpoints **by
+  timestamp** — `lesson.checkpoints` has been on the bootstrap all along and the canvas threw it
+  away, which is the difference between a warning and a surprise. It also says what *survives*:
+  the block keeps its place and its identity, so anything already watched stays counted. An
+  author who is not told that will avoid the feature.
+
+  Duplicate deliberately does **not** copy checkpoints. They are separate documents filed under
+  the original key, and a duplicate that silently acquired somebody else's questions would be
+  worse than one that acquired none.
+
 ## [1.398.0] - 2026-09-11
 
 ### Added

@@ -827,6 +827,8 @@ class TrainingCanvas {
 				<div class="tc-blocktools">
 					<button class="tc-tool" data-act="up" title="${__("Move up")}" aria-label="${__("Move up")}">↑</button>
 					<button class="tc-tool" data-act="down" title="${__("Move down")}" aria-label="${__("Move down")}">↓</button>
+					<button class="tc-tool" data-act="turn" title="${__("Turn into…")}" aria-label="${__("Turn into")}">⇄</button>
+					<button class="tc-tool" data-act="dup" title="${__("Duplicate")}" aria-label="${__("Duplicate")}">⧉</button>
 					<button class="tc-tool" data-act="settings" title="${__("Block settings")}" aria-label="${__("Block settings")}">⚙</button>
 					<button class="tc-tool tc-tool-danger" data-act="remove" title="${__("Remove block")}" aria-label="${__("Remove block")}">🗑</button>
 				</div>
@@ -838,6 +840,8 @@ class TrainingCanvas {
 		$wrap.find('[data-act="up"]').on("click", () => this.move_block(lesson, block, -1));
 		$wrap.find('[data-act="down"]').on("click", () => this.move_block(lesson, block, 1));
 		$wrap.find('[data-act="remove"]').on("click", () => this.remove_block(lesson, block));
+		$wrap.find('[data-act="turn"]').on("click", (e) => this.open_turn_menu(lesson, block, $(e.currentTarget)));
+		$wrap.find('[data-act="dup"]').on("click", () => this.duplicate_block(lesson, block));
 		$wrap.find('[data-act="settings"]').on("click", () => this.toggle_settings(lesson, block, $wrap));
 		if (!this.editable()) $wrap.find(".tc-blocktools").attr("hidden", "hidden");
 		return $wrap;
@@ -1270,6 +1274,147 @@ class TrainingCanvas {
 		const $new = this.$blocks.find(`.tc-blockwrap[data-block-key="${block.block_key}"]`);
 		const el = $new.find('[contenteditable="true"], input, textarea')[0];
 		if (el) el.focus();
+	}
+
+	// ------------------------------------------------- turn into / duplicate
+	//
+	// The whole point of both, and the reason they are one commit: `block_key` is
+	// a RELATIONAL IDENTITY, not a detail. Learner watch intervals and in-video
+	// checkpoints are filed under it, and `_apply_blocks` replaces the child table
+	// wholesale by position, minting a key only where one is blank or duplicated.
+	// So the rule is exact and opposite for the two verbs:
+	//
+	//   Turn into -> KEEP the key. Delete-and-re-add would mint a new one and strand
+	//                every learner mid-video, which is what an author would do by
+	//                hand without this.
+	//   Duplicate -> MINT a fresh one. Two rows sharing a key is the one case the
+	//                server rewrites, silently, and the author would never see it.
+
+	//: Where the body of each type lives. `content` is sanitised HTML; `data` is a
+	//: JSON blob whose shape differs per type, which is why data->data is a loss.
+	block_family(type) {
+		if (type === "Rich Text" || type === "Callout") return "content";
+		if (["Checklist", "Flashcards", "Accordion", "Image Hotspots"].indexOf(type) >= 0) return "data";
+		if (["Image", "Video", "PDF", "Downloadable File", "External Embed"].indexOf(type) >= 0) return "media";
+		return "none";
+	}
+
+	turn_losses(lesson, block, target) {
+		"use strict";
+		// Say exactly what goes, in the author's terms, before anything moves.
+		const from = this.block_family(block.block_type);
+		const to = this.block_family(target);
+		const losses = [];
+
+		if (from === "content" && to !== "content" && (block.content || "").trim()) {
+			losses.push(__("the written text"));
+		}
+		if (from === "data" && to !== "data" && (block.data || "").trim()) {
+			losses.push(__("the items you have entered"));
+		}
+		if (from === "data" && to === "data") {
+			losses.push(__("the items you have entered (the two types store them differently)"));
+		}
+		if (from === "media" && to !== "media") {
+			losses.push(__("the attached file or link"));
+		}
+
+		// Checkpoints hang off `block_key` and are reaped server-side when their
+		// block stops being a Video. The canvas has had them on the bootstrap all
+		// along and thrown them away; naming them by timestamp is the difference
+		// between a warning and a surprise.
+		if (block.block_type === "Video" && target !== "Video") {
+			const pins = (lesson.checkpoints || []).filter((c) => c && c.block_key === block.block_key);
+			if (pins.length) {
+				const at = pins
+					.map((c) => this.mmss(c.at_seconds))
+					.join(', ');
+				losses.push(
+					__("{0} in-video checkpoint(s), at {1}").format([pins.length, at])
+				);
+			}
+		}
+		return losses;
+	}
+
+	mmss(seconds) {
+		const n = Math.max(0, Math.floor(Number(seconds) || 0));
+		return Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0");
+	}
+
+	open_turn_menu(lesson, block, $anchor) {
+		if (!this.editable()) return;
+		this.$app.find(".tc-menu").remove();
+		const $menu = $('<div class="tc-menu"></div>');
+		TC_ADDABLE.filter((t) => t !== block.block_type).forEach((type) => {
+			$("<button></button>")
+				.text(type)
+				.on("click", () => {
+					$menu.remove();
+					this.turn_into(lesson, block, type);
+				})
+				.appendTo($menu);
+		});
+		$("body").append($menu);
+		const r = $anchor[0].getBoundingClientRect();
+		$menu.css({ top: r.bottom + 6 + "px", left: Math.min(r.left, window.innerWidth - 200) + "px" });
+		setTimeout(() => $(document).one("click.tcturn", () => $menu.remove()), 0);
+	}
+
+	turn_into(lesson, block, target) {
+		if (!this.editable() || target === block.block_type) return;
+		const losses = this.turn_losses(lesson, block, target);
+		const apply = () => {
+			const from = this.block_family(block.block_type);
+			const to = this.block_family(target);
+			// The key is NOT touched. That is the entire contract.
+			block.block_type = target;
+			if (!(from === "content" && to === "content")) block.content = "";
+			if (!(from === "data" && to === "data")) block.data = "";
+			if (to === "data") block.data = "";
+			if (from === "media" && to !== "media") {
+				block.image = "";
+				block.file = "";
+				block.embed_url = "";
+			}
+			if (target === "Callout" && !block.callout_tone) block.callout_tone = "Info";
+			if (target === "Rich Text" && !(block.content || "").trim()) block.content = "<p></p>";
+			if (target === "Checklist") block.data = JSON.stringify({ items: [""] });
+			if (target === "Flashcards") block.data = JSON.stringify({ cards: [{ front: "", back: "" }] });
+			if (target === "Accordion") block.data = JSON.stringify({ panels: [{ title: "", body: "<p></p>" }] });
+			if (target === "Image Hotspots") block.data = JSON.stringify({ hotspots: [] });
+			this.dirty_blocks(lesson);
+			this.mark_dirty();
+			this.render_sheet();
+		};
+
+		if (!losses.length) return apply();
+		frappe.confirm(
+			__("Turning this into {0} discards {1}. The block keeps its place and its identity, so anything already watched stays counted.").format([
+				target,
+				losses.join(__(", and ")),
+			]),
+			apply
+		);
+	}
+
+	duplicate_block(lesson, block) {
+		if (!this.editable()) return;
+		const i = lesson.blocks.indexOf(block);
+		if (i < 0) return;
+		// A FRESH key, minted here rather than left blank. Leaving it blank works --
+		// the controller mints one -- but then the new row has no identity until the
+		// save returns, and anything addressing it in between addresses the original.
+		const copy = Object.assign({}, block, {
+			block_key: "blk-" + Math.random().toString(36).slice(2, 10),
+		});
+		// Checkpoints are NOT copied. They are separate documents filed under the
+		// original key, and a duplicate that silently acquired somebody else's
+		// questions would be worse than one that acquired none.
+		lesson.blocks.splice(i + 1, 0, copy);
+		this.dirty_blocks(lesson);
+		this.mark_dirty();
+		this.render_sheet();
 	}
 
 	move_block(lesson, block, dir) {
