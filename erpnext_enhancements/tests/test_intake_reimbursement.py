@@ -37,6 +37,7 @@ PATCH = APP / "patches/link_reimbursement_suppliers.py"
 FIXTURES = APP / "fixtures/custom_field.json"
 HOOKS = APP / "hooks.py"
 TRAVEL = APP / "travel_management/api.py"
+REVIEW = INTAKE / "review.py"
 
 
 def _text(path):
@@ -69,6 +70,25 @@ def _src(path):
             ):
                 body[0].value.value = ""
     return ast.unparse(tree)
+
+
+def _matcher():
+    """The patch's real `_normalise` and `_NOISE`, behind a minimal frappe stub.
+
+    Imported rather than reimplemented -- a copy of the matcher in the test is a
+    test of the copy. The module needs only `import frappe` at import time; nothing
+    it does at module scope touches the database.
+    """
+    import sys
+    import types
+
+    if "frappe" not in sys.modules:
+        stub = types.ModuleType("frappe")
+        stub.db = types.SimpleNamespace()
+        sys.modules["frappe"] = stub
+    from erpnext_enhancements.patches import link_reimbursement_suppliers as mod
+
+    return mod._normalise, mod._NOISE
 
 
 def _fn(name, path):
@@ -237,15 +257,77 @@ class TestTheSupplierIsNeverMatchedByName(unittest.TestCase):
         body = _fn("link_reimbursement_suppliers", PATCH)
         self.assertIn("if employee.get(FIELD):", body)
 
-    def test_the_patch_normaliser_is_not_fuzzy(self):
-        """Casefold and punctuation only. No edit distance, no prefix match, no
-        token subset -- every one of those would match `Lian Silva` onto `Lian
-        Jentz Da Silva`, which is right, and onto something else, which is a
-        payment to the wrong company."""
-        body = _src(PATCH)
-        for token in ("difflib", "SequenceMatcher", "startswith", "levenshtein", "fuzz"):
-            with self.subTest(token=token):
-                self.assertNotIn(token, body)
+    def test_the_matcher_links_exactly_the_five_it_should(self):
+        """**Behavioural, not a token blacklist.**
+
+        This was `assertNotIn("difflib", ...)` and four more names, which the
+        adversarial review correctly called a five-name denylist that any
+        hand-rolled matcher walks straight past -- a token-subset check written
+        inline would have passed it while linking `Lian Silva` to somebody else.
+
+        So it drives the real `_normalise` and `_NOISE` against the seven Supplier
+        names and sixteen Employee names that are actually on prod, and pins the
+        pairing. They are pure functions over strings; only the module's
+        `import frappe` stands between them and a bench-free test, and that import
+        is satisfied by the stub below.
+        """
+        normalise, noise = _matcher()
+
+        suppliers = [
+            "Jesse Griffin Reimbursement",
+            "Danny Rosser Reimbursement",
+            "Employee Clegg Mabey Reimbursement",
+            "Nathan Cox Reimbursement",
+            "Lisa Symanski Reimbursement",
+            "Lian Silva Reimbursement",
+            "Logan Penrod Employee Reimbursement",
+        ]
+        employees = [
+            "Cedrik Del Rosario", "Logan Penrod", "Korben Jessop", "Lian Jentz Da Silva",
+            "Nathan Cox", "Daniel Rosser", "Lisa Symanski", "Clegg Mabey", "Parker Bailey",
+            "Jesse Griffin", "Brian Morisseau", "Austin Healey", "Daniel Blass",
+            "Richard Hansen", "Nikolas Bradshaw", "James Harris",
+        ]
+        by_name = {}
+        for e in employees:
+            by_name.setdefault(normalise(e), []).append(e)
+
+        linked = {}
+        for supplier in suppliers:
+            candidates = by_name.get(normalise(noise.sub(" ", supplier))) or []
+            if len(candidates) == 1:
+                linked[supplier] = candidates[0]
+
+        self.assertEqual(
+            linked,
+            {
+                "Jesse Griffin Reimbursement": "Jesse Griffin",
+                "Employee Clegg Mabey Reimbursement": "Clegg Mabey",
+                "Nathan Cox Reimbursement": "Nathan Cox",
+                "Lisa Symanski Reimbursement": "Lisa Symanski",
+                "Logan Penrod Employee Reimbursement": "Logan Penrod",
+            },
+        )
+
+    def test_the_two_nicknames_are_left_for_a_human(self):
+        """`Danny Rosser` is Employee *Daniel Rosser* and `Lian Silva` is *Lian
+        Jentz Da Silva*. Both are obvious to a person and neither is safe for a
+        matcher: the same leniency that catches them reaches other names too, and
+        there are 1,180 Suppliers to reach."""
+        normalise, noise = _matcher()
+        employees = {normalise(e) for e in ("Daniel Rosser", "Lian Jentz Da Silva")}
+        for supplier in ("Danny Rosser Reimbursement", "Lian Silva Reimbursement"):
+            with self.subTest(supplier=supplier):
+                self.assertNotIn(normalise(noise.sub(" ", supplier)), employees)
+
+    def test_the_matcher_does_not_collapse_two_different_people(self):
+        """The failure that matters is not a miss, it is a wrong hit."""
+        normalise, noise = _matcher()
+        keys = [normalise(noise.sub(" ", s)) for s in (
+            "Daniel Blass Reimbursement", "Daniel Rosser Reimbursement",
+            "James Harris Reimbursement", "Jesse Griffin Reimbursement",
+        )]
+        self.assertEqual(len(set(keys)), len(keys), "two different people share a key")
 
 
 class TestTheBillGoesToThePersonNotTheShop(unittest.TestCase):
@@ -275,19 +357,71 @@ class TestTheBillGoesToThePersonNotTheShop(unittest.TestCase):
 class TestNobodyElseGetsReimbursedByAccident(unittest.TestCase):
     """The second latent bug, found while reading the first."""
 
-    def test_there_is_no_fallback_to_an_arbitrary_employee(self):
-        """It used to end with `get_value("Employee", {"status": "Active"}, "name")`
-        -- whichever row the database handed back first. A reviewer with no
-        Employee record would have filed the claim, and now the bill, against an
-        arbitrary colleague. A reimbursement raised to the wrong person is a
-        payment to the wrong person, and it looks entirely ordinary on the way
-        through."""
+    def test_the_payer_is_read_from_the_record_and_inferred_from_nothing(self):
+        """**The defect the adversarial review found in this very change.**
+
+        `_employee_for` resolved `doc.reviewed_by or frappe.session.user`, and
+        `reviewed_by` is stamped by `approve_document`, which is gated on
+        Accounts Manager / System Manager. The approver is by role design NOT the
+        claimant — so a technician's receipt, approved by the accountant, produced
+        a draft Purchase Invoice payable to the *accountant's* reimbursement
+        Supplier, with remarks naming them as the person owed the money. On every
+        receipt, not as an edge case.
+
+        The payer now comes from an explicit field and nowhere else.
+        """
         body = _src(RECEIPT)
-        at = body.index("def _employee_for")
+        at = body.index("def payer")
         block = body[at : body.index("def _default_expense_claim_type")]
-        self.assertIn("user_id", block)
-        self.assertNotIn("{'status': 'Active'}", block.replace('"', "'"))
-        self.assertEqual(block.count("get_value"), 1)
+        self.assertIn("paid_by_employee", block)
+        for inferred in ("reviewed_by", "session.user", "owner"):
+            with self.subTest(token=inferred):
+                self.assertNotIn(inferred, block)
+
+    def test_no_handler_infers_a_payer_either(self):
+        """The generalisation: nothing in this module may reach for the session
+        user or the reviewer when deciding who gets the money."""
+        body = _src(RECEIPT)
+        for inferred in ("reviewed_by", "frappe.session.user"):
+            with self.subTest(token=inferred):
+                self.assertNotIn(inferred, body)
+
+    def test_an_inactive_employee_is_not_a_payer(self):
+        """A link can outlive its target, and reimbursing somebody who has left
+        through this route is at best a surprise."""
+        self.assertIn("status", _fn("payer", RECEIPT))
+
+    def test_approval_refuses_a_reimbursement_with_no_payer(self):
+        """Checked at the gate, not only in the handler. The handler runs in a
+        BACKGROUND job, so a problem it finds surfaces as a Failed document with a
+        traceback rather than as a sentence beside the button somebody just
+        pressed -- and burns a retry attempt on the way."""
+        body = _fn("_reimbursement_issues", REVIEW)
+        self.assertIn("Create Reimbursement Bill", body)
+        self.assertIn("payer(doc)", body)
+        self.assertIn("reimbursement_supplier", body)
+        self.assertIn("_reimbursement_issues(doc)", _fn("_validate_for_approval", REVIEW))
+
+    def test_the_field_is_mandatory_on_the_form_as_well(self):
+        """`mandatory_depends_on` is the human-facing half; the gate above is the
+        API-side twin, because Frappe does not enforce it against a direct write
+        and Document Intake is writable by Accounts User."""
+        fields = {f["fieldname"]: f for f in json.loads(_text(INTAKE_JSON))["fields"]}
+        paid_by = fields["paid_by_employee"]
+        self.assertEqual(paid_by["options"], "Employee")
+        self.assertIn("Create Reimbursement Bill", paid_by["mandatory_depends_on"])
+
+    def test_the_email_sender_is_a_suggestion_not_a_decision(self):
+        """Filled into a field the reviewer can see and change. The handler still
+        refuses to post without it, so a wrong suggestion is corrected in front of
+        somebody rather than discovered in the ledger."""
+        body = _fn("_suggest_payer", EXTRACTION)
+        self.assertIn('doc.source_channel != "Email"', body)
+        self.assertIn("source_reference", body)
+        # Only Email carries a person. Guessing on the other three is the bug this
+        # replaced: Upload and Mobile are role-gated to accounting staff, and
+        # Drive rows are owned by the scheduler.
+        self.assertNotIn("doc.owner", body)
 
     def test_both_handlers_refuse_when_there_is_nobody(self):
         for fn in ("post_reimbursement_bill", "post_expense_claim"):

@@ -81,7 +81,46 @@ def _validate_for_approval(doc):
 		issues.append(_("{0} proposed Item(s) still need inventory-clerk review.").format(len(pending)))
 	if (doc.proposed_action or "") in _PARTY_ACTIONS and not doc.party:
 		issues.append(_("Set the Party before approving."))
+	issues.extend(_reimbursement_issues(doc))
 	return issues
+
+
+def _reimbursement_issues(doc):
+	"""Refuse a reimbursement that cannot say who is being reimbursed.
+
+	Checked here rather than only in the handler, for the same reason the party
+	gate above exists: the handler runs in a **background job**, so a problem it
+	finds surfaces as a `Failed` document with a traceback rather than as a
+	sentence next to the button somebody just pressed. It also burns a retry
+	attempt against `retry_limit` on the way.
+
+	`Paid By` is mandatory on the form, and this is the API-side twin -- Frappe
+	does not enforce `mandatory_depends_on` against a direct write, and `Document
+	Intake` is writable by `Accounts User`.
+	"""
+	if (doc.proposed_action or "") != "Create Reimbursement Bill":
+		return []
+
+	from erpnext_enhancements.accounting_intake.actions import receipt_expense
+
+	employee = receipt_expense.payer(doc)
+	if not employee:
+		return [
+			_(
+				"Set <b>Paid By</b> before approving — a reimbursement has to name the person who "
+				"paid, and it must be an active Employee."
+			)
+		]
+	if not receipt_expense.reimbursement_supplier(employee):
+		name = frappe.db.get_value("Employee", employee, "employee_name") or employee
+		return [
+			_(
+				"{0} has no <b>Reimbursement Supplier</b> on their Employee record, so there is "
+				"nothing to bill this to. Set one, or use <b>Create Purchase Invoice</b> if this "
+				"went on a company card."
+			).format(name)
+		]
+	return []
 
 
 @frappe.whitelist()

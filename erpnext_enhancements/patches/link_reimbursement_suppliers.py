@@ -97,10 +97,25 @@ def link_reimbursement_suppliers():
 		if key:
 			by_name.setdefault(key, []).append(row)
 
-	linked = 0
+	# Grouped by key FIRST, so ambiguity is refused from both directions. Two
+	# Suppliers that normalise to the same key -- "Clegg Mabey Reimbursement" and
+	# "Employee Clegg Mabey Reimbursement", say, which is exactly the kind of
+	# duplicate a hand-maintained vendor list accumulates -- would otherwise both
+	# pass the per-Supplier check and write in turn. The second write does not even
+	# hit the never-overwrite guard, because `by_name` holds the row as it was READ
+	# and its FIELD is still empty in memory. Last one wins, silently, and which one
+	# is last depends on row order. Found by the adversarial review of this change.
+	by_key = {}
 	for supplier in suppliers:
 		key = _normalise(_NOISE.sub(" ", supplier.supplier_name or ""))
-		if not key:
+		if key:
+			by_key.setdefault(key, []).append(supplier)
+
+	linked = 0
+	for key, matched_suppliers in by_key.items():
+		if len(matched_suppliers) != 1:
+			# Two vendor rows for one person is the same ambiguity as two people for
+			# one vendor row, seen from the other end.
 			continue
 		candidates = by_name.get(key) or []
 		if len(candidates) != 1:
@@ -111,7 +126,12 @@ def link_reimbursement_suppliers():
 		employee = candidates[0]
 		if employee.get(FIELD):
 			continue
-		frappe.db.set_value("Employee", employee.name, FIELD, supplier.name, update_modified=False)
+		frappe.db.set_value(
+			"Employee", employee.name, FIELD, matched_suppliers[0].name, update_modified=False
+		)
+		# Stamped in memory too, so a later key that resolves to the same Employee
+		# sees it -- `by_name` rows are the ones read at the top of this function.
+		employee[FIELD] = matched_suppliers[0].name
 		linked += 1
 
 	if linked:

@@ -98,13 +98,13 @@ def post_reimbursement_bill(doc):
 	swapped deliberately and the merchant is preserved in the remarks.
 	"""
 	company = get_company()
-	employee = _employee_for(doc)
+	employee = payer(doc)
 	if not employee:
 		frappe.throw(
 			_(
-				"No Employee is linked to whoever reviewed this, so there is nobody to reimburse. "
-				"Link a User to their Employee record, or use <b>Create Purchase Invoice</b> if "
-				"this was paid on a company card."
+				"Set <b>Paid By</b> on this document before approving it — there is no way to "
+				"tell who paid for this out of their own pocket, and guessing bills the wrong "
+				"person. Use <b>Create Purchase Invoice</b> instead if it went on a company card."
 			),
 			title=_("Nobody to reimburse"),
 		)
@@ -182,12 +182,12 @@ def post_expense_claim(doc):
 	_require_expense_claims()
 
 	company = get_company()
-	employee = _employee_for(doc)
+	employee = payer(doc)
 	if not employee:
 		frappe.throw(
 			_(
-				"No Employee is linked to whoever reviewed this — map one, or use "
-				"<b>Create Purchase Invoice</b> for this receipt."
+				"Set <b>Paid By</b> on this document before approving it — a claim filed against "
+				"the wrong employee is a payment to the wrong employee."
 			),
 			title=_("Nobody to reimburse"),
 		)
@@ -242,23 +242,42 @@ def post_expense_claim(doc):
 # --------------------------------------------------------------------- shared
 
 
-def _employee_for(doc):
-	"""The Employee behind whoever reviewed this intake, or None.
+def payer(doc):
+	"""The Employee who paid, read from the document and **inferred from nothing**.
 
-	**No fallback to "any active Employee".** It used to end with
-	``frappe.db.get_value("Employee", {"status": "Active"}, "name")``, which
-	returns whichever row the database hands back first — so a reviewer with no
-	Employee record would have filed the claim, or now the bill, against an
-	arbitrary colleague. A reimbursement raised to the wrong person is a payment to
-	the wrong person, and it looks entirely ordinary on the way through.
+	This used to be ``doc.reviewed_by or frappe.session.user`` resolved to an
+	Employee, and that is wrong in a way worth spelling out, because it looked
+	entirely reasonable and the adversarial review of this change is what caught
+	it.
 
-	None is the honest answer, and both callers turn it into a message that says
-	what to do.
+	``reviewed_by`` is stamped by ``review.approve_document``, which is gated on
+	``Accounts Manager``/``System Manager``. **The approver is by role design not
+	the claimant.** So a technician's receipt, approved by the accountant, produced
+	a draft Purchase Invoice payable to *the accountant's* reimbursement Supplier,
+	with remarks confidently naming them as the person owed the money — on every
+	receipt, not as an edge case. The technician who actually paid would never have
+	been reimbursed, and nothing about the invoice looks unusual.
+
+	There is no signal on the record that means "who paid" except the one now asked
+	for. ``doc.owner`` is not it: Upload and Mobile are role-gated to accounting
+	staff so a technician cannot use them, and Email and Drive rows are inserted by
+	the mail hook and a scheduler job, so their owner is Administrator. Hence an
+	explicit field, required at the approval gate the same way ``party`` already is
+	for the three party actions.
+
+	``extraction`` *suggests* a value on the Email channel, where the sender is
+	recorded. A suggestion the reviewer can see and change is a different thing
+	from a silent inference, and it is the only automation that is safe here.
 	"""
-	user = doc.reviewed_by or frappe.session.user
-	if not user or user == "Guest":
+	employee = doc.get("paid_by_employee")
+	if not employee:
 		return None
-	return frappe.db.get_value("Employee", {"user_id": user, "status": "Active"}, "name")
+	# A link can outlive its target, and an inactive Employee is somebody who has
+	# left -- reimbursing them through this route is at best a surprise.
+	row = frappe.db.get_value("Employee", employee, ["name", "status"], as_dict=True)
+	if not row or row.status != "Active":
+		return None
+	return row.name
 
 
 def _default_expense_claim_type():

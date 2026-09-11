@@ -92,6 +92,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handler. An unhandled option is the quiet version of the same bug: the dispatcher logs
   *"No handler for X"* and the document sits `Approved` for ever.
 
+### Fixed before shipping — the review of this change
+
+The reimbursement path above was then reviewed adversarially, because it creates financial
+documents: 53 agents over five dimensions, every finding checked by three verifiers prompted
+to refute it. **It found a critical defect in the fix itself**, which is recorded here because
+the mistake is more instructive than the feature.
+
+- **The bill was raised against whoever APPROVED the receipt, not whoever paid for it.**
+  `_employee_for` resolved `doc.reviewed_by or frappe.session.user`, and `reviewed_by` is
+  stamped by `approve_document`, which is gated on `Accounts Manager` / `System Manager`.
+  **The approver is by role design not the claimant.** So a technician's $340 receipt,
+  approved by the accountant, would have produced a draft Purchase Invoice payable to *the
+  accountant's* reimbursement Supplier, with remarks confidently naming them as the person
+  owed the money — on every receipt, not as an edge case — while the technician who actually
+  paid was never reimbursed. Nothing about the invoice looks unusual.
+
+  That inference was inherited from the Expense Claim handler, where it was equally wrong and
+  simply never ran. Carrying it into a path that *does* run is what made it dangerous, and
+  the commit message for the previous change claimed to have removed exactly this class of
+  bug while leaving a systematic version of it in place.
+
+  There is **no signal on a Document Intake that means "who paid"** — `doc.owner` is not it,
+  because Upload and Mobile are role-gated to accounting staff so a technician cannot use
+  them, and Email and Drive rows are inserted by the mail hook and a scheduler job. So the
+  record now carries an explicit **Paid By**, mandatory for a reimbursement on the form *and*
+  at the approval gate (the API-side twin, because Frappe does not enforce
+  `mandatory_depends_on` against a direct write and `Document Intake` is writable by
+  `Accounts User`). Extraction *suggests* a value on the Email channel, where the sender is
+  recorded — a suggestion the reviewer sees and can change is a different thing from an
+  inference they never learn about.
+
+  Gating at approval rather than only in the handler matters for a second reason: the handler
+  runs in a **background job**, so a problem it finds surfaces as a `Failed` document with a
+  traceback rather than as a sentence beside the button somebody just pressed.
+
+- **Receipt lines priced only as a total posted at zero.** `build_standalone_pi` read
+  `line.rate` alone, and a receipt line very often has no unit price — there is no rate on a
+  hardware-store line, only an amount. The result is a draft invoice that looks complete and
+  is worth nothing. The old Expense Claim handler had this right and the Purchase Invoice path
+  never did; routing reimbursements through it made the gap newly reachable.
+
+- **Two Suppliers normalising to one key both wrote, and the last one won.** The seeding
+  patch's never-overwrite guard reads the Employee row as it was *loaded*, so a second write
+  for the same person did not see the first. `Clegg Mabey Reimbursement` beside
+  `Employee Clegg Mabey Reimbursement` — exactly the duplicate a hand-maintained vendor list
+  accumulates — would have resolved by row order. It now groups by key first and refuses
+  ambiguity **from both directions**: two vendors for one person is the same problem as two
+  people for one vendor.
+
+- **The "no fuzzy matching" test was a five-name denylist** (`difflib`, `SequenceMatcher`,
+  `startswith`, …) that any hand-rolled matcher walks straight past. It is now behavioural:
+  it drives the real `_normalise` and `_NOISE` against the seven Supplier names and sixteen
+  Employee names actually on prod and pins the exact pairing. Verified by mutation — replacing
+  the matcher with a surname-only one fails three of its assertions, where the old version
+  passed.
+
+Findings against `vendor_bill.py` that **pre-date this change** are recorded and not fixed
+here, because they affect every vendor bill and deserve their own change with their own
+testing: the intake's `tax_total` / `net_total` are never posted as tax, `currency` is
+discarded so a foreign-currency document is booked at parity, and the expense account falls
+back to the company default regardless of what was bought.
+
 ## [1.387.0] - 2026-09-11
 
 The first instalment of **WI-073**, which came out of asking what else the HR module should

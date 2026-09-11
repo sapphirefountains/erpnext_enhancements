@@ -97,9 +97,18 @@ def build_standalone_pi(doc, company, supplier=None):
 	expense_account = frappe.db.get_value("Company", company, "default_expense_account") or _any_expense_account(company)
 
 	for line in doc.line_items:
+		qty = flt(line.qty) or 1
+		# `rate` first, then `amount / qty`. A receipt line very often carries only a
+		# total -- there is no unit price on a hardware-store line -- and taking
+		# `rate` alone posted those at **zero**, which is a draft invoice that looks
+		# complete and is worth nothing. The old Expense Claim handler had this right
+		# (`flt(line.amount) or flt(line.rate) * qty`) and the Purchase Invoice path
+		# never did; routing reimbursements through here made it newly reachable.
+		# Found by the adversarial review.
+		rate = flt(line.rate) or (flt(line.amount) / qty if flt(line.amount) else 0)
 		row = {
-			"qty": flt(line.qty) or 1,
-			"rate": flt(line.rate),
+			"qty": qty,
+			"rate": rate,
 			"description": line.description or line.proposed_item_name or "Item",
 			"expense_account": expense_account,
 		}

@@ -55,6 +55,32 @@ def _action_for(document_type):
 	return "Create Reimbursement Bill"
 
 
+def _suggest_payer(doc):
+	"""Who probably paid, on the one channel that records a person.
+
+	A **suggestion**, filled into a field the reviewer can see and change, which is
+	a different thing from an inference the reviewer never learns about. The
+	handler refuses to post without this field set, so a wrong suggestion is
+	corrected in front of somebody rather than discovered in the ledger.
+
+	Only the Email channel carries a person: `channels.py` writes
+	``source_reference`` as ``"<sender>: <subject>"``. Upload and Mobile are
+	role-gated to accounting staff, so their ``owner`` is never the technician who
+	paid; Google Drive rows are inserted by a scheduler job and owned by
+	Administrator. So there is nothing to suggest from on the other three, and
+	guessing anyway is precisely the bug this replaced.
+	"""
+	if doc.source_channel != "Email":
+		return None
+	ref = (doc.source_reference or "").strip()
+	if not ref:
+		return None
+	sender = ref.split(":", 1)[0].strip()
+	if "@" not in sender:
+		return None
+	return frappe.db.get_value("Employee", {"user_id": sender, "status": "Active"}, "name")
+
+
 # Extracted entity keys we look for, in priority order, per target field.
 _PARTY_KEYS = ["supplier_name", "customer_name", "vendor_name", "merchant_name", "receiver_name", "remitter_name"]
 _NUMBER_KEYS = ["invoice_id", "invoice_number", "document_number", "receipt_id", "payment_reference", "reference_number"]
@@ -122,6 +148,8 @@ def apply_extraction(doc, result):
 	doc.proposed_party_type = _PARTY_TYPE_BY_DOC.get(doc.document_type)
 	if not doc.proposed_action:
 		doc.proposed_action = _action_for(doc.document_type)
+	if doc.proposed_action == "Create Reimbursement Bill" and not doc.get("paid_by_employee"):
+		doc.paid_by_employee = _suggest_payer(doc)
 
 	# Line items + Item resolution
 	doc.set("line_items", [])
