@@ -109,10 +109,11 @@
    "options": "Gasoline\nDiesel\nHybrid\nElectric\nOther"
   },
   {
-   "description": "Primary driver / who is responsible for this vehicle's upkeep.",
+   "description": "Primary driver / who is responsible for this vehicle's upkeep. A Link rather than a typed-in name since v1.389.0: a name in a text field cannot be joined to the licence expiry the credential register already tracks, so nothing could answer “may this person still drive this truck”. Zero Fleet Vehicles existed when it was converted, so no data had to be migrated.",
    "fieldname": "assigned_driver",
-   "fieldtype": "Data",
-   "label": "Assigned Driver"
+   "fieldtype": "Link",
+   "label": "Assigned Driver",
+   "options": "Employee"
   },
   {
    "description": "Last recorded odometer reading (miles). Updated automatically from submitted maintenance logs; you can also set a starting value here.",

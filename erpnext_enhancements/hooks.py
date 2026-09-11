@@ -441,6 +441,14 @@ doc_events = {
 		# handler's per-file guard makes the email's later saves a no-op.
 		"on_update": "erpnext_enhancements.accounting_intake.channels.email_from_communication",
 	},
+	"Fleet Vehicle": {
+		# hr_enhancements (WI-073): `assigned_driver` became a Link to Employee, so the
+		# licence expiry the credential register already tracks can finally be joined to
+		# the truck. Warn only, and absence of a licence record is NOT a refusal -- it
+		# means nobody has filed one, which is a gap to chase rather than a statement
+		# that this person cannot drive.
+		"validate": "erpnext_enhancements.hr_enhancements.availability.warn_driver_cannot_drive",
+	},
 	"Sapphire Maintenance Record": {
 		"on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_next_visit_dates",
 		# training: WARN-ONLY certification check on the assigned technician. It NEVER
@@ -450,7 +458,17 @@ doc_events = {
 		# orange msgprint and notifies the supervisor. Gated by Training Settings ->
 		# warn_on_uncertified_dispatch. On validate, not before_submit: before_submit would
 		# read as a gate.
-		"validate": "erpnext_enhancements.training.compliance.warn_uncertified_technician",
+		"validate": [
+			"erpnext_enhancements.training.compliance.warn_uncertified_technician",
+			# hr_enhancements (WI-073): is this person actually free that day? Approved
+			# time off and restricted duty were both already recorded and nothing read
+			# them when a visit was scheduled, so a visit could be booked for somebody
+			# with an approved day off and nobody found out until the morning. Warn
+			# only, and a SEPARATE hook from the certification check above: the two ask
+			# different questions (may they, versus can they be there) and a site may
+			# want one without the other.
+			"erpnext_enhancements.hr_enhancements.availability.warn_unavailable_technician",
+		],
 	},
 	"Project Contract": {
 		# When a Maintenance Services Agreement is Signed, draft the operational
@@ -1932,6 +1950,11 @@ permission_query_conditions = {
 	# on -- no reports_to arm, because being somebody's manager is not a reason to
 	# read their self-assessment.
 	"Tier Review": "erpnext_enhancements.hr_enhancements.permissions.tier_review_query_conditions",
+	# A restriction carries no medical reason, but "no lifting, no ladders, until the
+	# 14th" still says something about somebody's health with the why left out. Scoped
+	# like time off -- yourself and the people whose week you plan. The dispatch
+	# advisory does not read through this; it runs server-side and is told the summary.
+	"Work Restriction": "erpnext_enhancements.hr_enhancements.permissions.restriction_query_conditions",
 	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_query_conditions",
 	# Chat (ADR 0009 §F.18): row-level scoping is MEMBERSHIP, not role. Chat Room is
 	# the only chat doctype carrying a DocPerm at all (`read` for "Chat User"), so it is
@@ -1990,6 +2013,7 @@ has_permission = {
 	# about frappe.get_doc(), which is exactly the gap that left three Training
 	# doctypes readable by customers until v1.386.0.
 	"Tier Review": "erpnext_enhancements.hr_enhancements.permissions.tier_review_has_permission",
+	"Work Restriction": "erpnext_enhancements.hr_enhancements.permissions.restriction_has_permission",
 	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_has_permission",
 	# Chat: the twin of every query condition above, and parity here is the house
 	# doctrine -- ten and ten before this block, four and four after it.

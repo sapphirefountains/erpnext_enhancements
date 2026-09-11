@@ -219,3 +219,52 @@ def tier_review_has_permission(doc, ptype=None, user=None):
 		if doc.get(field) and frappe.db.get_value("Employee", doc.get(field), "user_id") == resolved:
 			return True
 	return False
+
+
+def restriction_query_conditions(user=None):
+	"""Your own restrictions, and your reports'. Nothing else.
+
+	A `Work Restriction` deliberately carries no medical reason, but it is still
+	the most personal thing in the module by inference: "no lifting, no ladders,
+	until the 14th" says something about somebody's health even with the why left
+	out. So it is scoped the way time off is -- yourself and the people whose week
+	you plan -- rather than being readable by every colleague the way a Position is.
+
+	The dispatch advisory does not read through this. It runs server-side inside a
+	`validate` hook and calls `availability.reasons_unavailable` directly, which is
+	correct: the scheduler needs to be told the technician is restricted even when
+	they are not that technician's manager. What they are told is the SUMMARY, and
+	the record has nowhere to hold anything more.
+	"""
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return ""
+	allowed = {resolved}
+	manager = frappe.db.get_value("Employee", {"user_id": resolved}, "name")
+	if manager:
+		allowed.update(
+			u
+			for u in frappe.get_all("Employee", filters={"reports_to": manager}, pluck="user_id")
+			if u
+		)
+	joined = ", ".join(frappe.db.escape(u) for u in sorted(a for a in allowed if a))
+	return f"`tabWork Restriction`.`user` in ({joined})"
+
+
+def restriction_has_permission(doc, ptype=None, user=None):
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return True
+	if doc.get("user") == resolved:
+		return True
+	# `user` is derived in validate(), so it is empty on a NEW row -- the same
+	# defect the WI-072 review found in time off and onboarding.
+	if doc.get("employee") and frappe.db.get_value(
+		"Employee", doc.get("employee"), "user_id"
+	) == resolved:
+		return True
+	manager = frappe.db.get_value("Employee", {"user_id": resolved}, "name")
+	if not manager:
+		return False
+	subject = frappe.db.get_value("Employee", {"user_id": doc.get("user")}, "reports_to")
+	return subject == manager

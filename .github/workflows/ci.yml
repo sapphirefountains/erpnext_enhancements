@@ -735,6 +735,15 @@ jobs:
       # bills somebody's receipt to a real vendor and looks ordinary until it is paid.
       - name: Intake reimbursement (the dead Expense Claim path, and why no name matching)
         run: python -m unittest erpnext_enhancements.tests.test_intake_reimbursement -v
+      # Two reasons not to send somebody -- approved time off and restricted duty --
+      # were both already recorded and nothing read them when a visit was scheduled.
+      # This pins three decisions: warn NEVER block (a hard gate moves the work off the
+      # books); a restriction records WHAT and never WHY (a diagnosis is not the
+      # company's business, and the pull toward a free-text reason field needs a test
+      # holding it shut); and absence is not refusal (no licence on file means nobody
+      # filed one, and reading that as "cannot drive" flags 15 of 16 people on day one).
+      - name: HR availability (who can I send, and who cannot go)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_availability -v
       # Can somebody who is not a developer start a course? The visual editor
       # shipped in v1.364.0 with NO entry point anywhere -- grepping for
       # "training-canvas" outside its own directory returned two CHANGELOG lines

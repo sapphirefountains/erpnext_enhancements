@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.389.0] - 2026-09-11
+
+**WI-073 B — who can I send, and who cannot go.**
+
+### Added
+
+- **Dispatch now knows who is off.** Approved time off and restricted duty were both already
+  recorded and **nothing read either of them at the moment a visit was scheduled**, so a visit
+  could be booked for a technician with an approved day off and nobody found out until the
+  morning. `hr_enhancements/availability.py` answers it on `Sapphire Maintenance Record`
+  validate, checking the **scheduled** date before the actual visit date — a warning that only
+  appears once the truck has arrived is a warning nobody can act on.
+
+  It is a **separate hook** from the certification advisory that already runs there, not an
+  extra clause inside it: the two ask different questions about the same person — *may* they
+  do the work, versus *can* they be there — and a site may well want one without the other.
+  Warn, never block, copied from `training/compliance.py` rather than re-argued: by the time
+  a maintenance record is being saved there is often a truck already moving, and refusing the
+  form does not stop the work, it moves the work off the books where nobody can see it.
+
+  Only **Approved** time off counts. A `Requested` day is not a day off yet, and warning about
+  one would train people to ignore the warning — which costs more than the case it catches.
+
+- **`Work Restriction` — what somebody temporarily may not do, and until when.** No lifting,
+  no ladders, no vault entry, no driving, until the 14th.
+
+  **There is nowhere on the record to write why, and that is the design.** A restriction is a
+  scheduling fact and the scheduler needs exactly that; the diagnosis behind it is between
+  them and their doctor. The pull toward a free-text *reason* field is real and worth naming
+  so nobody re-adds it: it feels helpful, and it would immediately fill with medical
+  information sitting in a doctype the `Employee` role can read — inherited from then on by
+  every feature that joins the table. A test holds it shut.
+
+  Open-ended is allowed, because a restriction usually has no end date when it is first
+  written down. `covers()` reads a missing end date as *still running*, and the query filters
+  it in **Python** rather than in `filters` — a `>=` on a nullable date silently matches NULLs
+  in Frappe, which would be right by accident here and wrong the next time somebody copies it.
+
+- **`Qualification Coverage` — the Skills Matrix turned sideways.** The matrix answers "who
+  can I send?", one row per person. This answers the question underneath it, which nothing in
+  the app could ask: **"how many of us can do this at all?"**
+
+  That number is already biting here. Sign-off authority is strictly-higher tier within the
+  same job family, and prod has four Junior Technicians and one Senior — so **one man is the
+  only person in the company who can attest that any of the other four may work alone**, and
+  he is one holiday away from nobody being able to. Nothing surfaced it, because every
+  existing view is per-person and a per-person view cannot show you a count of one.
+
+  Three sources in one grid: courses, credentials, and **sign-off authority itself** — the one
+  nobody would think to look at and the one with the smallest number against it. It opens on
+  rows where two or fewer people hold something, because a report opening on forty rows of
+  "eight people hold this" buries the three that matter. Credentials are counted **per person**
+  rather than per row: somebody who renewed keeps both, and counting both reports cover of two
+  where there is one.
+
+- **`Fleet Vehicle.assigned_driver` is a Link to Employee** rather than a typed-in name, so
+  the licence expiry the credential register already tracks can finally be joined to the
+  truck. Zero Fleet Vehicles existed when it was converted, so nothing had to be migrated.
+
+  **Absence is not refusal**, and that default is load-bearing: no licence on file means
+  nobody filed one, which is a gap to chase, not a statement that the person cannot drive.
+  Reading it the other way would have flagged fifteen of sixteen people on the day it shipped
+  and been muted by the end of the week. What *does* stop somebody is an expired or revoked
+  licence that is on file, or an active `no_driving` restriction. The credential name is
+  matched **whole**, never as a substring — a substring match on "licence" also catches a
+  contractor licence and a pesticide applicator licence, and reporting a technician as unable
+  to drive because their pesticide ticket lapsed is the kind of wrong that gets the whole
+  warning switched off.
+
+### Notes
+
+- `Work Restriction` is row-scoped like time off — yourself and the people whose week you
+  plan — rather than readable by every colleague the way a Position is. "No lifting, no
+  ladders, until the 14th" still says something about somebody's health with the *why* left
+  out. The dispatch advisory does not read through that scoping: it runs server-side inside
+  the `validate` hook, because a scheduler needs to be told even when they are not that
+  person's manager. What they are told is the summary, and the record has nothing more to give.
+
 ## [1.388.0] - 2026-09-11
 
 ### Fixed

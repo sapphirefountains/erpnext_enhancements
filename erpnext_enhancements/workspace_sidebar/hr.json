@@ -139,6 +139,17 @@
   {
    "child": 1,
    "collapsible": 1,
+   "icon": "ban",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Restricted duty",
+   "link_to": "Work Restriction",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
    "icon": "list-checks",
    "indent": 0,
    "keep_closed": 0,
@@ -182,6 +193,18 @@
    "link_type": "Report",
    "show_arrow": 0,
    "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "users",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Coverage",
+   "link_to": "Qualification Coverage",
+   "link_type": "Report",
+   "type": "Link",
+   "report_ref_doctype": "Employee"
   },
   {
    "child": 1,
@@ -243,7 +266,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-11 13:00:00.000000",
+ "modified": "2026-09-11 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "HR Enhancements",
  "name": "HR",
