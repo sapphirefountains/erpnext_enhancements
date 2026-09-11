@@ -176,6 +176,18 @@ class TrainingSession(Document):
 			try:
 				doc = frappe.get_doc("Training Completion", row.completion)
 				if doc.docstatus == 1:
+					# `before_cancel` refuses a withdrawal with no reason on it, and until
+					# v1.396.0 nothing set one -- so every cancel() here threw, the bare
+					# except swallowed it into an Error Log, and the session read Canceled
+					# while every attendee kept a Valid certification for a talk the company
+					# had formally withdrawn. Write the reason the gate asks for rather than
+					# bypassing the gate: the reason is what somebody reads later, and it is
+					# the whole point of the check.
+					if not (doc.revoked_reason or "").strip():
+						doc.revoked_reason = _(
+							"Training session {0} was canceled, so the attendance it recorded "
+							"was withdrawn."
+						).format(self.name)
 					doc.cancel()
 			except Exception:
 				frappe.log_error(

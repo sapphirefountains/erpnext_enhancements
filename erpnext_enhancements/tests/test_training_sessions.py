@@ -206,5 +206,34 @@ class TestItIsReachable(unittest.TestCase):
                 self.assertTrue((APP / f"workspace_sidebar/{name}.json").exists())
 
 
+class TestCancellingASessionActuallyWithdrawsIt(unittest.TestCase):
+    """v1.396.0. `TrainingCompletion.before_cancel` refuses a withdrawal carrying no
+    reason, and nothing set one -- so every cancel() threw, the bare except swallowed
+    it into an Error Log, and the session read Canceled while every attendee kept a
+    Valid certification for a talk the company had formally withdrawn.
+    """
+
+    def test_a_reason_is_written_before_the_cancel_is_attempted(self):
+        body = _fn("_withdraw_completions")
+        self.assertIn("revoked_reason", body)
+        self.assertLess(
+            body.index("revoked_reason"),
+            body.index("doc.cancel()"),
+            "the reason must exist before cancel() runs, or before_cancel throws again",
+        )
+
+    def test_it_writes_the_reason_rather_than_bypassing_the_gate(self):
+        """The gate asks for a reason because somebody reads it later. Satisfying it
+        is correct; `ignore_validate` or a direct docstatus write would not be."""
+        body = _fn("_withdraw_completions")
+        for bypass in ("ignore_validate", "db_set(\"docstatus\"", "flags.ignore_permissions = True"):
+            with self.subTest(bypass=bypass):
+                self.assertNotIn(bypass, body)
+
+    def test_an_existing_reason_is_never_overwritten(self):
+        """Somebody else's stated reason outranks ours."""
+        self.assertIn("if not (doc.revoked_reason", _fn("_withdraw_completions"))
+
+
 if __name__ == "__main__":
     unittest.main()
