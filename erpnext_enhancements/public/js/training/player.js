@@ -666,8 +666,13 @@
 			// things nobody has to do.
 			var assigned = b.assigned || [];
 			var library = b.library || [];
+			// Courses this learner has finished. Until v1.406.0 there was no such list:
+			// `Completed` is not in TrainingAssignment.OPEN_STATUSES, so a finished
+			// course was neither assigned nor (if Required) in the library, and fell out
+			// of the catalogue for the one person entitled to look at it.
+			var finished = b.completed || [];
 
-			if (!assigned.length && !library.length) {
+			if (!assigned.length && !library.length && !finished.length) {
 				main.appendChild(
 					el("p", "tr-empty", t("Nothing is assigned to you right now, and nothing is overdue."))
 				);
@@ -693,6 +698,19 @@
 					shelf.appendChild(courseCard(course));
 				});
 				main.appendChild(shelf);
+			}
+
+			// Last, because it is the only shelf that owes the learner nothing. It is
+			// also what makes courseCard's "Review" verb reachable: that branch keys on
+			// assignment_status === "Completed", which nothing could set while the
+			// assignment had already left OPEN_STATUSES.
+			if (finished.length) {
+				main.appendChild(el("h2", "tr-section-title", t("Finished")));
+				var done = el("div", "tr-cards");
+				finished.forEach(function (course) {
+					done.appendChild(courseCard(course));
+				});
+				main.appendChild(done);
 			}
 
 			main.appendChild(recordOpen());
@@ -969,6 +987,10 @@
 					state.gates = payload.gates || {};
 					state.assignment = payload.assignment || null;
 					state.version = payload.version || null;
+					// Review mode: this course is already finished, and get_course has
+					// resolved the outline against the version the learner was actually
+					// graded on rather than whatever is live now.
+					state.readOnly = !!payload.read_only;
 					return payload.attempt || null;
 				})
 				.then(function (attempt) {
@@ -978,6 +1000,12 @@
 					// somebody who only glanced at it.
 					if (attempt) return attempt;
 					if (!lessonKey && !state.lessonKey) return null;
+					// A finished course must never mint a fresh attempt. The server refuses
+					// anyway -- start_attempt throws for a Required course with no OPEN
+					// assignment -- but letting the call go out turns a quiet read into a red
+					// error dialog on a course the learner has every right to re-read. One
+					// production completion carries no attempt at all, so this is reachable.
+					if (state.readOnly) return null;
 					return call("startAttempt", { course: courseName });
 				})
 				.then(function (attempt) {
@@ -1547,6 +1575,10 @@
 
 		function renderBottomBar() {
 			if (state.view !== "lesson") return;
+			// Nothing to do on a lesson you have already been graded on. The bar's only
+			// contents are the quiz entry and Finish, and both would write progress
+			// against a submitted completion.
+			if (state.readOnly) return;
 			clear(foot);
 			var lesson = state.lesson || {};
 			var gates = localGates();

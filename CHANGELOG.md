@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.406.0] - 2026-09-11
+
+### Fixed
+
+- **Every course a learner had finished was invisible to them** (WI-074 E2/E3, the second
+  half of P7). `TrainingAssignment.OPEN_STATUSES` does not contain `Completed`, so the moment
+  a sign-off landed the assignment stopped being found by `_open_assignments` — and
+  `get_learner_bootstrap`'s `if name in assignments: … elif course.weight == "Optional":`
+  filed a completed **Required** course in neither list. It dropped out of the catalogue
+  entirely, for the one person entitled to look at it. `courseCard` has carried a `"Review"`
+  verb keyed on `assignment_status === "Completed"` all along; nothing could ever set it, so
+  it was unreachable dead code.
+
+  There is now a `completed` shelf, fed by a new `_completed_courses(user)`, and a finished
+  course opens **read-only**.
+
+### Notes
+
+**The version in review mode comes from the completion, not from `doc.current_version`.** This
+is the one line in the change that could not be got wrong quietly. `get_lesson` resolves a
+lesson key against the *attempt's* `course_version` via `_lesson_name`; build the review
+outline from a newer version and every row is a key `get_lesson` then refuses — a page of dead
+links, and a throw the learner reads as a broken course. Every completion on production today
+happens to sit on its course's current version, so the wrong version would have looked correct
+right up until the first republish. The test asserts it on the **parsed call node**, not on
+text, for the same reason.
+
+**A completion can have no attempt.** One production row does. `read_only` is therefore set by
+the presence of the completion, not by whether there is progress to show, and the client is
+guarded against calling `startAttempt` in review mode — the server refuses anyway
+(`start_attempt` throws for a Required course with no open assignment), but letting the call
+go out turns a quiet read into a red dialog on a course the learner has every right to
+re-read.
+
+**Widening visibility did not make a finished course re-startable.** `_require_visible` gates
+`start_attempt` too, so this needed checking rather than assuming: `start_attempt` carries its
+own independent gate on an *open* assignment, and a test now pins it.
+
+**The server half could not ship alone, and a test said so.** `test_training_boundary_contract`
+asserts the direction the boot-wire contract does not — every key the server sends must have a
+reader — and it failed on `completed` and `read_only` until the client consumed them. That is
+the contract working: a `completed` shelf nobody renders is dead weight on the wire.
+
+### Known limitation
+
+`_visible_course_names` still filters on `status == "Published"`, so a **Retired** course you
+completed remains unreviewable. Deliberately out of scope: retirement is a statement about who
+should be *taking* a course, and untangling it from who may re-read their own record is its own
+change.
+
 ## [1.405.0] - 2026-09-11
 
 ### Fixed

@@ -186,6 +186,45 @@ def _open_assignments(user):
     return {row.course: row for row in rows}
 
 
+def _completed_courses(user):
+    """``{course: completion row}`` for everything this person has FINISHED.
+
+    The counterpart to ``_open_assignments``, and the thing whose absence made a
+    finished course vanish. ``Training Assignment.OPEN_STATUSES`` does not contain
+    ``Completed``, so the moment a sign-off lands the assignment stops being found
+    by every lookup in this module -- and a completed **Required** course then
+    matched neither arm of the bootstrap's ``if name in assignments: ... elif
+    course.weight == "Optional":``. It disappeared from the catalogue entirely, for
+    the one person entitled to look at it.
+
+    Newest first, so the row that wins is the most recent completion. A superseded
+    or expired one is still returned rather than filtered: it is the record of what
+    that person actually did, and hiding it is the bug being fixed rather than a
+    tidier version of it. The client decides how to label it.
+
+    ``attempt`` can be NULL -- one row on production has no attempt at all, because
+    a completion can be recorded without one. Callers must not assume it.
+    """
+    rows = frappe.get_all(
+        "Training Completion",
+        filters={"user": user, "docstatus": 1},
+        fields=[
+            "name",
+            "course",
+            "course_version",
+            "attempt",
+            "completed_on",
+            "status",
+            "expires_on",
+        ],
+        order_by="completed_on desc",
+    )
+    out = {}
+    for row in rows:
+        out.setdefault(row.course, row)
+    return out
+
+
 def _visible_course_names(user, profile=None):
     """Every published course this user may open, as a set of course names.
 
@@ -202,6 +241,13 @@ def _visible_course_names(user, profile=None):
     profile = profile or _learner_profile(user)
     roles = set(frappe.get_roles(user))
     assigned = set(_open_assignments(user))
+    # A course you have finished stays openable for the same reason an assigned one
+    # does: the audience rules can change under somebody after the fact, and being
+    # locked out of your own record is worse than seeing a course you no longer
+    # need. Note this set is still intersected with `status == "Published"` in the
+    # query below, so a RETIRED course you completed is still not reviewable --
+    # deliberately out of scope here, and recorded in the changelog.
+    finished = set(_completed_courses(user))
 
     visible = set()
     for course in frappe.get_all(
@@ -211,7 +257,7 @@ def _visible_course_names(user, profile=None):
     ):
         if not course.current_version:
             continue
-        if course.name in assigned:
+        if course.name in assigned or course.name in finished:
             visible.add(course.name)
             continue
         if not _audience_matches(course, profile):
@@ -456,14 +502,21 @@ def get_learner_bootstrap():
         }
     attempts = _attempts_by_course(user, names)
 
-    assigned_cards, library = [], []
+    completions = _completed_courses(user)
+
+    assigned_cards, library, finished = [], [], []
     for name in names:
         course = courses.get(name)
         if not course:
             continue
-        card = _course_card(course, assignments.get(name), attempts.get(name))
+        card = _course_card(course, assignments.get(name), attempts.get(name), completions.get(name))
         if name in assignments:
             assigned_cards.append(card)
+        elif name in completions:
+            # The arm that was missing. Without it a completed REQUIRED course matched
+            # neither branch -- not assigned any more, and not Optional -- so it fell
+            # out of the catalogue for the one person entitled to look at it.
+            finished.append(card)
         elif course.weight == "Optional":
             library.append(card)
 
@@ -471,6 +524,8 @@ def get_learner_bootstrap():
     # last rather than first — an empty due date is not an urgent one.
     assigned_cards.sort(key=lambda card: (card["due_date"] is None, card["due_date"] or "", card["title"]))
     library.sort(key=lambda card: card["title"])
+    # Most recently finished first: a review is nearly always of the last thing done.
+    finished.sort(key=lambda card: (card["completed_on"] or "", card["title"]), reverse=True)
 
     settings = get_settings()
     return {
@@ -478,6 +533,7 @@ def get_learner_bootstrap():
         "learner": profile,
         "assigned": assigned_cards,
         "library": library,
+        "completed": finished,
         "resume": _resume(user),
         "today": today(),
         # Additive: the learner's own points / streak / badges for the home strip.
@@ -538,7 +594,7 @@ def get_learner_bootstrap():
     }
 
 
-def _course_card(course, assignment, attempt):
+def _course_card(course, assignment, attempt, completion=None):
     total_lessons = cint(
         frappe.db.get_value("Training Course Version", course.current_version, "total_lessons")
     )
@@ -555,7 +611,16 @@ def _course_card(course, assignment, attempt):
         "lessons": total_lessons,
         "self_enrol": bool(cint(course.allow_self_enrollment)),
         "assignment": assignment.name if assignment else None,
-        "assignment_status": assignment.status if assignment else None,
+        # Falls back to the completion so the card can say "Completed" once the
+        # assignment has left OPEN_STATUSES and stopped being found. `courseCard`
+        # already had a "Review" verb keyed on exactly this value; it was unreachable
+        # dead code until now because nothing could ever set it.
+        "assignment_status": (
+            assignment.status if assignment else ("Completed" if completion else None)
+        ),
+        "completion": completion.name if completion else None,
+        "completed_on": str(completion.completed_on) if completion and completion.completed_on else None,
+        "completion_status": completion.status if completion else None,
         "signoff_with": _signoff_supervisor_name(course.name, _learner()),
         "due_date": assignment.due_date if assignment else None,
         "attempt": attempt.name if attempt else None,
@@ -610,9 +675,25 @@ def get_course(course):
     _require_visible(course, profile)
 
     doc = frappe.get_doc("Training Course", course)
+    assignment = _open_assignments(user).get(course)
+
+    # REVIEW MODE. No open assignment, but a submitted completion: the learner is
+    # coming back to something they already finished.
+    #
+    # The version MUST come from the completion, not from `doc.current_version`, and
+    # this is the one line in the step that cannot be got wrong quietly. `get_lesson`
+    # resolves a lesson key against the ATTEMPT's course_version via `_lesson_name`.
+    # Build the outline from a newer version and every row is a key that
+    # `get_lesson` then refuses -- a page of dead links, and a throw the learner
+    # reads as a broken course. Today every completion on production happens to sit
+    # on its course's current version, so this would look correct right up until the
+    # first republish.
+    completion = None if assignment else _completed_courses(user).get(course)
+    version_name = (completion.course_version if completion else None) or doc.current_version
+
     version = frappe.db.get_value(
         "Training Course Version",
-        doc.current_version,
+        version_name,
         ["name", "version_number", "total_lessons", "estimated_minutes", "toc_json", "release_notes"],
         as_dict=True,
     )
@@ -626,8 +707,14 @@ def get_course(course):
         order_by="idx asc",
     )
 
-    assignment = _open_assignments(user).get(course)
     attempt_name = _current_attempt(user, course, version.name)
+    read_only = False
+    if not attempt_name and completion:
+        # May be None: a completion can be recorded without an attempt, and one row
+        # on production is. `read_only` is set either way, because what makes this a
+        # review is the completion, not whether there is progress to show.
+        attempt_name = completion.attempt
+        read_only = True
     attempt = None
     if attempt_name:
         attempt = {
@@ -639,6 +726,10 @@ def get_course(course):
 
     return {
         "enabled": True,
+        # Review mode. Additive and inert until a client reads it: the boot-wire
+        # contract only checks that what the player reads is a subset of what the
+        # server sends, so a new key nothing consumes yet is safe.
+        "read_only": read_only,
         "course": {
             "course": doc.name,
             "title": doc.course_title,
