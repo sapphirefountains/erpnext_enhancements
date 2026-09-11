@@ -917,3 +917,14 @@ erpnext_enhancements.patches.remap_orphan_opportunity_statuses
 # as the same age on every migrate and the edit would never have landed. Same failure that
 # left the Training workspace on its install default. Safe twice.
 erpnext_enhancements.patches.resync_ai_governance_workspace
+# v1.404.0 (WI-074 F) -- corrects five stale strings in the four DRAFT training courses before
+# they publish. "Expense Claim" is named as something Document Intake creates; that DocType does
+# not exist on this site (HRMS is not installed) and the real output is a Reimbursement Bill.
+# Two statements the date-stamped titles were hiding have gone false: "the general ledger holds
+# four rows" (4 before 2026-08-05, 31,452 now) and "Fiscal Year 2027 does not exist" (it does).
+# "Plaid Settings" is deliberately NOT renamed -- v1.361.0 handed that name back to ERPNext's
+# native integration and the Invoicing workspace card still uses it; the lesson disambiguates
+# instead. Python substring matching, never SQL LIKE (PAD SPACE). Guards docstatus itself because
+# _reject_edits_to_published_version returns early under frappe.flags.in_patch. Never throws.
+# Safe twice.
+erpnext_enhancements.patches.fix_stale_training_course_content
