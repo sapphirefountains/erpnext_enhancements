@@ -692,6 +692,37 @@ be rewritten first, for the sixth time this release: counting `force=True` with 
 matched the **comment explaining why the waiver is needed** and passed at 5 against 4 real
 call sites. It parses the AST now.
 
+### Fixed before shipping — two features that had no way in
+
+Both found by the HR feature survey, and both the same shape the branch review kept turning
+up: a server side that is complete and correct, and nothing anywhere that reaches it.
+
+- **Time off could be requested and then never approved, by anyone.** `timeoff.py` whitelists
+  `submit_request`, `decide`, `cancel_request` and `who_is_out`; every one is right — they
+  check ownership, refuse a self-decision first and unconditionally, require a reason on a
+  decline, notify the other side. **Nothing called any of them.** There was no client script
+  on the doctype and no caller anywhere else, so a request sat at Draft forever in the Desk,
+  on a phone and for HR alike. Now there is a form: *Send to approver*, *Approve*, *Decline*
+  (which asks for the reason before the server refuses), and *Cancel request* — and the
+  decision buttons are drawn only for somebody who may actually use them, never on your own
+  request. Note this had to ship with the review's status guard, not after it: making
+  `status` read-only removed the one accidental workaround, which was editing the Select by
+  hand, so the two apart would have left time off **more** broken.
+  `who_is_out` was uncalled too, and is now wired where the question is actually asked — an
+  approver looking at a request sees who else is already off those dates.
+  Third time in this app: `record_signoff` had no caller until v1.334.0, and the visual
+  editor had no entry point from any page until this release. The endpoint is the easy half.
+- **Work anniversaries appeared once and then never again.** `Training Achievement` has
+  carried the kind since the social layer shipped and `player.js` renders it, but the only
+  thing that ever minted one was the one-shot backfill patch. The feed would have opened with
+  sixteen and produced not one more — ever. Now a daily job at 06:10, exact-date, idempotent
+  on `(user, kind, title)`, and deliberately **not** passing `force`: unlike the backfill this
+  is an ordinary scheduled job and should stay dormant during a migrate. The 29 February rule
+  is duplicated from the backfill on purpose so the two cannot disagree about somebody's date.
+
+A generalised test now fails the build on **any** whitelisted function in `timeoff.py` that
+nothing calls — the assertion that found the second one.
+
 ## [1.385.0] - 2026-09-10
 
 ### Added

@@ -803,6 +803,12 @@ scheduler_events = {
 		# problem on the morning of the job. One email per person, plus a roll-up to each
 		# supervisor; gated by Training Settings -> Notifications, same as every other mail.
 		"30 7 * * 1": ["erpnext_enhancements.hr_enhancements.tasks.send_expiry_digest"],
+		# Work anniversaries into the team feed, 06:10. The feed has always known how to
+		# RENDER these -- `Training Achievement` carries the kind and player.js draws it --
+		# and the only thing that ever minted one was the one-shot backfill patch. So the
+		# feed would have opened with sixteen and produced not one more, ever. Idempotent
+		# on (user, kind, title), so a re-run the same day mints nothing twice.
+		"10 6 * * *": ["erpnext_enhancements.hr_enhancements.tasks.mint_work_anniversaries"],
 		# ---- Chat sync engine (ADR 0009 Phase 2, v1.262.0) -------------------------------
 		# EVERY job below no-ops while `Chat Settings.enabled` is 0, which is how it ships.
 		# They are registered dormant on purpose: a scheduler entry added later, by hand, on

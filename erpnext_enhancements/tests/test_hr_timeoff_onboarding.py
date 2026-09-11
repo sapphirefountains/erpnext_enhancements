@@ -61,6 +61,14 @@ def _fields(path):
     return {f["fieldname"]: f for f in json.loads(_text(path))["fields"]}
 
 
+def _strip_comments(text):
+    """Python source minus `#` comments -- an absence assertion must not read the
+    comment explaining the absence."""
+    import re
+
+    return re.sub(r"#.*$", "", text, flags=re.M)
+
+
 def _fn(name, path):
     src = _text(path)
     lines = src.splitlines()
@@ -381,6 +389,123 @@ class TestTheStatusCannotBeSelfApproved(unittest.TestCase):
                 body = _fn(fn, PERMISSIONS)
                 self.assertIn('doc.get("employee")', body)
 
+
+
+class TestTheApprovalFlowIsActuallyReachable(unittest.TestCase):
+    """The defect the HR feature survey found, and it made the whole feature
+    decorative.
+
+    `timeoff.py` whitelists four correct endpoints and NOTHING called any of
+    them: no client script on the doctype, no caller anywhere in the app. A Time
+    Off Request could be created and then never move -- not in the Desk, not on a
+    phone, not by HR.
+
+    Third time this repo has shipped that exact shape: `record_signoff` had no
+    caller until v1.334.0, and the visual editor had no entry point from any page
+    until this release. The endpoint is the easy half; reachable is the half that
+    gets forgotten.
+
+    Note the interaction with the branch review's status guard -- making `status`
+    read-only removed the one accidental workaround (editing the Select by hand),
+    so the guard and this form have to ship together or time off gets *more*
+    broken, not less.
+    """
+
+    FORM = MODULE / "doctype/time_off_request/time_off_request.js"
+
+    def test_the_form_script_exists(self):
+        self.assertTrue(self.FORM.exists(), "no client script -- the buttons do not exist")
+
+    def test_every_endpoint_has_a_caller(self):
+        """The generalisation, not just the three buttons: a whitelisted function
+        in timeoff.py that nothing reaches is the bug itself."""
+        import ast
+
+        src = _text(TIMEOFF)
+        tree = ast.parse(src)
+        whitelisted = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for dec in node.decorator_list:
+                target = dec.func if isinstance(dec, ast.Call) else dec
+                if getattr(target, "attr", None) == "whitelist":
+                    whitelisted.add(node.name)
+        self.assertTrue(whitelisted, "expected whitelisted endpoints")
+
+        callers = _code(_text(self.FORM))
+        for extra in (MODULE / "doctype/time_off_request/time_off_request_calendar.js",):
+            if extra.exists():
+                callers += _code(_text(extra))
+        player = APP / "public/js/training/player.js"
+        if player.exists():
+            callers += _code(_text(player))
+
+        for name in sorted(whitelisted):
+            with self.subTest(endpoint=name):
+                self.assertIn(
+                    f"timeoff.{name}",
+                    callers,
+                    f"{name} is whitelisted and nothing calls it",
+                )
+
+    def test_the_decision_buttons_are_drawn_only_for_a_decider(self):
+        """A button that can only fail is worse than no button."""
+        body = _code(_text(self.FORM))
+        at = body.index('doc.status === "Requested"')
+        branch = body[at : at + 200]
+        self.assertIn("decider", branch)
+        self.assertIn("!mine", branch)
+
+    def test_declining_asks_for_the_reason_before_the_server_refuses(self):
+        """The server requires it. Finding that out from a red modal after typing
+        nothing is a worse way to learn it."""
+        body = _code(_text(self.FORM))
+        decline = body[body.index("ee_decline(frm)") :]
+        decline = decline[: decline.index("ee_cancel(frm)")]
+        self.assertIn("reqd: 1", decline)
+
+
+class TestWorkAnniversariesRecur(unittest.TestCase):
+    """The feed has always known how to RENDER a work anniversary, and the only
+    thing that ever minted one was the one-shot backfill patch -- so the feed
+    would have opened with sixteen and produced not one more, ever.
+    """
+
+    TASKS = MODULE / "tasks.py"
+    HOOKS = APP / "hooks.py"
+
+    def test_there_is_a_recurring_producer(self):
+        self.assertIn("def mint_work_anniversaries", _text(self.TASKS))
+
+    def test_it_is_scheduled_daily(self):
+        import ast
+
+        tree = ast.parse(_text(self.HOOKS))
+        found = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "scheduler_events":
+                events = ast.literal_eval(node.value)
+                for cron, jobs in (events.get("cron") or {}).items():
+                    if any("mint_work_anniversaries" in j for j in jobs):
+                        found = True
+                        # Daily, not weekly or monthly: an anniversary is one day.
+                        self.assertEqual(cron.split()[2:], ["*", "*", "*"])
+        self.assertTrue(found, "mint_work_anniversaries is not on the scheduler")
+
+    def test_it_does_not_force_past_the_dormancy_guard(self):
+        """The backfill passes `force=True` because it runs inside a migrate. An
+        ordinary scheduled job must NOT: staying dormant during a migrate is the
+        point of that guard."""
+        body = _fn("mint_work_anniversaries", self.TASKS)
+        self.assertIn("social.record(", body)
+        self.assertNotIn("force=True", _strip_comments(body))
+
+    def test_the_leap_day_rule_matches_the_backfill(self):
+        """Both mark 29 February joiners on the 28th rather than skipping three
+        years in four. Kept identical so the two cannot disagree about somebody."""
+        self.assertIn("28", _fn("_is_the_day", self.TASKS))
+        self.assertIn("(2, 29)", _fn("_is_the_day", self.TASKS))
 
 
 if __name__ == "__main__":

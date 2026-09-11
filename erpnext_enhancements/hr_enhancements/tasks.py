@@ -177,3 +177,62 @@ def _notify(user, subject, body_html):
 			"HR credentials",
 		)
 		return False
+
+
+def mint_work_anniversaries():
+	"""Today's work anniversaries, into the team feed.
+
+	**The feed knew how to show these and nothing kept writing them.**
+	`Training Achievement` has carried a `Work Anniversary` kind since the social
+	layer shipped, and `player.js` renders it — but the only thing that ever minted
+	one was `patches/backfill_training_achievements.py`, which runs once. So the
+	feed would have opened with sixteen anniversaries and then produced not one
+	more, ever: on somebody's next anniversary the feed says nothing, and the
+	record that says "5 years at Sapphire Fountains" stays frozen at whatever it
+	was on install day. Found by the HR feature survey.
+
+	Daily and exact-date, unlike the backfill, which had to catch up on history and
+	so took each person's most recent completed year. Here the question is only
+	"is today the day", so there is no catching up to do and no risk of a feed that
+	opens with sixty rows.
+
+	`social.record` is idempotent on ``(user, kind, title)``, so a double run in one
+	day mints nothing twice. No `force` here and that is deliberate: this is an
+	ordinary scheduled job, not a migrate, and it *should* stay dormant during one.
+	"""
+	from erpnext_enhancements.training import social
+
+	now = getdate(today())
+	made = 0
+	for row in frappe.get_all(
+		"Employee",
+		filters={"status": "Active", "user_id": ["is", "set"], "date_of_joining": ["is", "set"]},
+		fields=["user_id", "date_of_joining"],
+	):
+		joined = getdate(row.date_of_joining)
+		if not _is_the_day(joined, now):
+			continue
+		years = now.year - joined.year
+		if years < 1:
+			continue
+		label = (
+			"1 year at Sapphire Fountains"
+			if years == 1
+			else f"{years} years at Sapphire Fountains"
+		)
+		if social.record(row.user_id, "Work Anniversary", label, occurred_on=now):
+			made += 1
+	return made
+
+
+def _is_the_day(joined, now):
+	"""Whether *now* is the anniversary of *joined*.
+
+	29 February joiners are marked on the 28th in a non-leap year rather than
+	skipping three years in four -- the same choice the backfill made, kept
+	identical so the two cannot disagree about somebody's date.
+	"""
+	if (joined.month, joined.day) == (2, 29):
+		is_leap = now.year % 4 == 0 and (now.year % 100 != 0 or now.year % 400 == 0)
+		return (now.month, now.day) == ((2, 29) if is_leap else (2, 28))
+	return (now.month, now.day) == (joined.month, joined.day)
