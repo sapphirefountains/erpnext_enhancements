@@ -268,3 +268,57 @@ def restriction_has_permission(doc, ptype=None, user=None):
 		return False
 	subject = frappe.db.get_value("Employee", {"user_id": doc.get("user")}, "reports_to")
 	return subject == manager
+
+
+def incident_query_conditions(user=None):
+	"""Your own incidents, and your reports'. HR and System Manager see everything.
+
+	**Deliberately not readable by every colleague**, even though everyone can
+	create one. An injury record carries a body part, a treatment and, on a privacy
+	case, a category from a list of six that includes sexual assault and mental
+	illness. That is the most sensitive data in this app.
+
+	Near misses and property damage with no named employee fall through to nobody,
+	which is correct for a row-level filter and is why the reports exist: somebody
+	keeping the log reads it through `OSHA 300 Log`, which is role-gated, rather
+	than by browsing the list.
+	"""
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return ""
+	own = frappe.db.escape(resolved)
+	table = "`tabSafety Incident`"
+	mine = frappe.db.get_value("Employee", {"user_id": resolved}, "name")
+	employees = {mine} if mine else set()
+	if mine:
+		employees.update(
+			frappe.get_all("Employee", filters={"reports_to": mine}, pluck="name") or []
+		)
+	if employees:
+		joined = ", ".join(frappe.db.escape(e) for e in sorted(e for e in employees if e))
+		return f"({table}.`employee` in ({joined}) or {table}.`reported_by` = {own})"
+	return f"{table}.`reported_by` = {own}"
+
+
+def incident_has_permission(doc, ptype=None, user=None):
+	"""The document-level twin.
+
+	A query condition filters lists and says nothing about ``frappe.get_doc()`` —
+	the gap that left three Training doctypes readable by customers until v1.386.0.
+	"""
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return True
+	if doc.get("reported_by") == resolved:
+		return True
+	if not doc.get("employee"):
+		# A near miss with nobody named. Whoever filed it can see it; the rest is
+		# the log, which is read through a role-gated report.
+		return False
+	subject_user = frappe.db.get_value("Employee", doc.get("employee"), "user_id")
+	if subject_user == resolved:
+		return True
+	manager = frappe.db.get_value("Employee", {"user_id": resolved}, "name")
+	if not manager:
+		return False
+	return frappe.db.get_value("Employee", doc.get("employee"), "reports_to") == manager

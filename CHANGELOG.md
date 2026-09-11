@@ -7,6 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.390.0] - 2026-09-11
+
+**WI-073 C — the injury and illness log.** Technicians work with water, chemicals, pumps and
+live electrical, and this is the record OSHA asks for first and almost nobody has. It is
+shaped by the regulation rather than by what would be tidy.
+
+### Added
+
+- **`Safety Incident`** — an injury, illness, near miss or property damage, in the shape of
+  OSHA Forms 300 and 301. Four things about it are decisions rather than details.
+
+  **The record exists the moment it is filed**, whether or not anybody agrees with it. The
+  `Employee` role can create one, there is no approval state, no countersignature and nothing
+  submittable. A log a worker cannot open is a log that gets a phone call instead, and a
+  phone call is not a record — and a log a manager can suppress at intake is not a log at all.
+  Whether a case is *recordable* is a separate question, answered by a rule rather than by
+  whoever received it.
+
+  **Recordability is derived, never typed.** `29 CFR 1904.7` is mechanical, and the one
+  distinction that decides most cases is **first aid only** versus **medical treatment beyond
+  first aid** — exactly the one people get wrong under pressure. A tick box labelled
+  "recordable" invites a judgement call at the worst possible moment; a computed field invites
+  an argument with the rule, which is the argument worth having. A near miss is never
+  recordable, and that is not a technicality to bury: it is the most useful row in the log
+  precisely because it cost nothing.
+
+  **The reporting clock is on the form at the moment of filing.** Utah gives **8 hours** for a
+  fatality and **24** for an in-patient hospitalisation, an amputation or the loss of an eye,
+  counted from when the company *learns* of it and not from when it happened. A deadline that
+  surfaces in a report next week is a deadline already missed, so it is computed on insert,
+  drawn as a red banner with the hours remaining in it — "by 14:20" needs arithmetic done in
+  somebody's head at the worst moment; "about 3 hours left" does not — and a reportable case
+  sets the evidence hold, because the moment somebody is deciding whether to move the pump is
+  the moment nobody is reading a policy document.
+
+  **Privacy cases are built in from the start**, not retrofitted, which is how a name ends up
+  printed. Six categories, listed by the rule and nowhere widened. Every name on the posted log
+  comes from a single `log_name()` — one function, so there is one place to get it right
+  instead of one per report — and a private case prints "Privacy Case".
+
+- **`OSHA 300 Log`, `OSHA 300A Summary` and `OSHA Privacy Case List`.** A case belongs to the
+  year of the **injury**, not of the record: one opened in January for a December injury sits
+  on the previous year's form, and getting that backwards moves a case between two forms that
+  have both already been posted.
+
+  The 300A renders its zeros rather than an empty table, because an empty summary still has to
+  be signed and posted from 1 February to 30 April and is the commonest one to forget. It does
+  **not invent Total hours worked** — payroll runs through QuickBooks and an outside bureau, so
+  the number is not here, and a plausible figure from headcount × 2,080 would be wrong by
+  exactly the overtime this crew works. It is the denominator of every incidence rate an
+  insurer computes.
+
+  The privacy list is the one report in the app with a shorter role list than its siblings —
+  `System Manager` and `HR Manager`, not `HR User`, who can keep the posted log without ever
+  needing the names. It carries the case number, the name and which of the six categories
+  applies, and **deliberately not the injury description**: the point of a privacy case is that
+  the *nature* of it stays off the list people read, and a helpful-looking description column
+  would undo the rule in the one report that exists to honour it.
+
+- **Filing from where it happened.** `safety.report_incident` takes the five things somebody
+  can answer standing up and writes the record immediately; everything else — treatment,
+  classification, body part, root cause — is a judgement made later by whoever picks it up. An
+  incomplete record filed today beats a complete one filed never, and it beats a phone call
+  that leaves nothing at all.
+
+  It hangs off the **visit wizard's safety step**, the screen technicians already have open on
+  a phone, because incidents happen on visits and a feature reachable only from its own Desk
+  list is one nobody finds when they are hurt. Quiet rather than prominent — a line of text
+  under the acknowledgement, not a button competing with the checklist.
+
+- **A corrective action can become real work** — a Task, or a Training Assignment. One that
+  stays a sentence on a form is one nobody does, and "retrain him on confined space" written in
+  a box next to an injury is the exact sentence that gets read once at the review meeting and
+  never again. Raising a Training Assignment **refuses to guess which course was meant**: that
+  is the same class of mistake as matching a reimbursement Supplier by name — it succeeds
+  confidently and assigns the wrong thing, and a wrongly assigned safety course is worse than
+  none because it reads as done.
+
+### Notes
+
+- An incident is row-scoped to your own and your reports', even though anybody can create one.
+  It carries a body part, a treatment and, on a privacy case, a category from a list that
+  includes sexual assault and mental illness — the most sensitive data in this app. Whoever
+  keeps the log reads it through the role-gated reports rather than by browsing the list.
+- Three assertions in the new suite failed on correct code on the first run and were the tests'
+  fault, not the code's: `FIRST_AID` is a substring of `BEYOND_FIRST_AID`, so an `assertNotIn`
+  on raw text fails on a correct tuple; and `ast.unparse` normalises double quotes to single,
+  so asserting on the source spelling of a string fails too. Both are the absence-assertion
+  trap one level down.
+
 ## [1.389.0] - 2026-09-11
 
 **WI-073 B — who can I send, and who cannot go.**

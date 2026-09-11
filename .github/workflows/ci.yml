@@ -744,6 +744,16 @@ jobs:
       # filed one, and reading that as "cannot drive" flags 15 of 16 people on day one).
       - name: HR availability (who can I send, and who cannot go)
         run: python -m unittest erpnext_enhancements.tests.test_hr_availability -v
+      # The OSHA injury log. Shaped by the regulation rather than by what would be
+      # tidy, so most of this suite is really "does the code still match the rule":
+      # the record exists the moment it is filed (a log a manager can suppress at
+      # intake is not a log); recordability is DERIVED, and first-aid-only versus
+      # medical-treatment-beyond-first-aid is the distinction that decides most
+      # cases; Utah's 8- and 24-hour clocks are shown at filing time, not next week;
+      # and a privacy case carries no name on the posted log, enforced in ONE
+      # function so there is one place to get it right.
+      - name: HR safety (the OSHA log, and the privacy rule)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_safety -v
       # Can somebody who is not a developer start a course? The visual editor
       # shipped in v1.364.0 with NO entry point anywhere -- grepping for
       # "training-canvas" outside its own directory returned two CHANGELOG lines

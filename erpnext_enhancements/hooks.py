@@ -1955,6 +1955,12 @@ permission_query_conditions = {
 	# like time off -- yourself and the people whose week you plan. The dispatch
 	# advisory does not read through this; it runs server-side and is told the summary.
 	"Work Restriction": "erpnext_enhancements.hr_enhancements.permissions.restriction_query_conditions",
+	# Everybody can FILE an incident -- a log a worker cannot open is a log that gets
+	# a phone call instead -- but an injury record carries a body part, a treatment
+	# and, on a privacy case, a category from a list that includes sexual assault and
+	# mental illness. Own and reports' only; the log itself is read through the
+	# role-gated OSHA reports.
+	"Safety Incident": "erpnext_enhancements.hr_enhancements.permissions.incident_query_conditions",
 	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_query_conditions",
 	# Chat (ADR 0009 §F.18): row-level scoping is MEMBERSHIP, not role. Chat Room is
 	# the only chat doctype carrying a DocPerm at all (`read` for "Chat User"), so it is
@@ -2014,6 +2020,7 @@ has_permission = {
 	# doctypes readable by customers until v1.386.0.
 	"Tier Review": "erpnext_enhancements.hr_enhancements.permissions.tier_review_has_permission",
 	"Work Restriction": "erpnext_enhancements.hr_enhancements.permissions.restriction_has_permission",
+	"Safety Incident": "erpnext_enhancements.hr_enhancements.permissions.incident_has_permission",
 	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_has_permission",
 	# Chat: the twin of every query condition above, and parity here is the house
 	# doctrine -- ten and ten before this block, four and four after it.
