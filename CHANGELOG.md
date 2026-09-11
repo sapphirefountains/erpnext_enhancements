@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.404.1] - 2026-09-11
+## [1.405.1] - 2026-09-11
 
 ### Fixed
 
@@ -41,6 +41,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Corrected a stale `v1.402.0` reference in the call-routing CI comment, left behind when
   that work renumbered to 1.403.0 after #963 took the version.
+## [1.405.0] - 2026-09-11
+
+### Fixed
+
+- **A learner waiting on a supervisor could not open their own course, at all** (WI-074 E1).
+  `renderCourse` ran `go("signoff"); return;` *before* it built the outline, and it was a
+  closed loop rather than a detour: `renderSignoff`'s only exit was "Back to your courses",
+  whose card calls `openCourse` → `renderCourse` → straight back to sign-off. There was no
+  route to the lessons from anywhere in the app — so the one question that state raises,
+  *"what did I actually agree to?"*, was the one thing the learner could not answer.
+
+  The same three sentences now ride **above** the outline as a banner, and the sign-off view
+  gains a second exit, "Review the course". Waiting on somebody else is a thing to be told,
+  not a reason to lock the door.
+
+### Notes
+
+The panel is built once, by a shared `signoffBox(course)`, and rendered in both places. Two
+copies would be two answers to the same question about the learner's own record.
+
+Three details that are load-bearing rather than cosmetic:
+
+- The banner is appended to **`main`**, not `head`. `go()` calls `clear(head)` on every view
+  change, so a banner in `head` survives exactly until the next navigation and then vanishes
+  with no trace — which reads as an intermittent bug rather than a missing line.
+- It is styled as a **modifier on the base class** (`classList.add("is-banner")` onto an
+  element already carrying `tr-signoff`, so `.tr-signoff.is-banner`).
+  `tests/test_training_player_css_contract.py` fails in *both* directions — a class the
+  scripts emit with no rule, and a rule nothing emits — and a modifier sidesteps both.
+- The regression tests strip JS comments before asserting the redirect is gone, because the
+  comment explaining the removal necessarily quotes the call it removed. Seventh occurrence of
+  that trap here, so the test borrows `test_training_canvas._strip_js_comments` rather than
+  adding a third copy.
+
+**This is half of P7.** The other half is server-side and is not in this release: once sign-off
+lands the assignment becomes `Completed`, which is not in `TrainingAssignment.OPEN_STATUSES`,
+so `_open_assignments` drops it and `get_learner_bootstrap` files a completed **Required**
+course in neither the assigned list nor the library — it disappears from the catalogue
+entirely. All five completed assignments on production today are on Required courses, so
+**every finished course is currently invisible to the person who finished it**, and
+`courseCard`'s `"Review"` verb is unreachable dead code.
 
 ## [1.404.0] - 2026-09-11
 
