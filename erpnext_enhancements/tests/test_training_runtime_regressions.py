@@ -808,3 +808,70 @@ class TestUnfinishedBlocksDoNotFightTheAuthor(unittest.TestCase):
         body = self._executable(self.LESSON, "TrainingLesson", "_validate_blocks")
         self.assertIn("min_coverage_percent", body)
         self.assertIn("frappe.throw", body)
+
+
+class TestSignOffDoesNotEvictTheLearner(unittest.TestCase):
+    """P7, half 1 (v1.404.x). A learner waiting on a supervisor could not open the
+    course at all — and it was a closed loop, not a detour.
+
+    `renderCourse` ran `go("signoff"); return;` *before* it built the outline, and
+    `renderSignoff`'s only exit was "Back to your courses" — whose card calls
+    `openCourse` -> `renderCourse` -> straight back to sign-off. There was no route
+    to the lessons from anywhere in the app, so the one question that state raises
+    ("what did I actually agree to?") was the one thing the learner could not answer.
+
+    Every absence assertion below strips JS comments first: the comment explaining
+    the removal necessarily quotes the call it removed. Seventh occurrence of that
+    trap in this project, hence the borrowed helper rather than a third copy.
+    """
+
+    def _stripped(self):
+        from erpnext_enhancements.tests.test_training_canvas import _strip_js_comments
+
+        return _strip_js_comments(_player_js())
+
+    def test_render_course_no_longer_redirects_to_signoff(self):
+        body = _fn_body(self._stripped(), "function renderCourse()")
+        self.assertNotIn('go("signoff")', body)
+
+    def test_render_course_still_tells_the_learner_they_are_waiting(self):
+        """Removing the redirect without saying anything would be worse than the bug:
+        the learner would see a finished-looking course and no reason it is not."""
+        body = _fn_body(self._stripped(), "function renderCourse()")
+        self.assertIn('state.assignmentStatus === "Awaiting Sign-off"', body)
+        self.assertIn("signoffBox(course)", body)
+
+    def test_the_banner_goes_into_main_not_head(self):
+        """`go()` calls `clear(head)` on every view change, so a banner appended to
+        `head` survives exactly until the next navigation and then vanishes with no
+        trace — which looks like an intermittent bug rather than a missing line."""
+        body = _fn_body(self._stripped(), "function renderCourse()")
+        banner = body[body.index("signoffBox(course)") :]
+        self.assertIn("main.appendChild(waiting)", banner)
+        self.assertNotIn("head.appendChild(waiting)", banner)
+
+    def test_the_signoff_view_has_a_route_back_to_the_course(self):
+        """The other half of the loop. Without this, the dedicated view is still a
+        dead end even though the outline is now reachable from the catalog."""
+        body = _fn_body(self._stripped(), "function renderSignoff()")
+        self.assertIn('go("course")', body)
+        self.assertIn('go("catalog")', body)
+
+    def test_both_places_render_the_same_box(self):
+        """Shared, not duplicated. A learner who reads the banner and then the view is
+        reading about their own record twice; two copies is two answers."""
+        src = self._stripped()
+        self.assertIn("function signoffBox(course)", src)
+        for fn in ("function renderCourse()", "function renderSignoff()"):
+            with self.subTest(fn=fn):
+                self.assertIn("signoffBox(course)", _fn_body(src, fn))
+
+    def test_the_banner_is_a_modifier_on_the_base_class(self):
+        """`tests/test_training_player_css_contract.py` fails in BOTH directions — a
+        class the scripts emit with no rule, and a rule nothing emits. Applying
+        `is-banner` with classList.add onto an element that already carries
+        `tr-signoff` styles it as `.tr-signoff.is-banner` and keeps that contract."""
+        body = _fn_body(self._stripped(), "function renderCourse()")
+        self.assertIn('classList.add("is-banner")', body)
+        css = (APP / "public/css/training/player.css").read_text(encoding="utf-8")
+        self.assertIn(".tr-signoff.is-banner", css)
