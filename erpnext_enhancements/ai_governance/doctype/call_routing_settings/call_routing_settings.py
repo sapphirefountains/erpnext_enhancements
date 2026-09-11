@@ -47,3 +47,14 @@ class CallRoutingSettings(Document):
 					title=_("Check the default forward number"),
 					indicator="orange",
 				)
+
+	def on_update(self) -> None:
+		"""Tell the gateway to re-read the routing config.
+
+		Function-level import: this module deliberately imports only the dependency-free
+		matcher, while ``call_routing`` reaches api.telephony (and through it the Twilio
+		SDK). Keeping that off the controller's import path keeps loading the DocType cheap.
+		"""
+		from erpnext_enhancements.ai_governance.call_routing import notify_gateway
+
+		notify_gateway()

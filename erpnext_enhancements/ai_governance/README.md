@@ -52,6 +52,7 @@ matches each incoming call against them and builds the `<Dial>`.
 | [`call_routing.py`](call_routing.py) | The Frappe binding: read the records, compile them into dial legs, explain the result |
 | [`../api/telephony.py`](../api/README.md) | `get_telephony_routing` carries the compiled payload; `preview_call_routing` backs the "Test Routing" button |
 | [`../tests/data/call_routing_vectors.json`](../tests/data/call_routing_vectors.json) | Shared test vectors, committed identically in Triton |
+| `doctype/*/…py` | `on_update` / `on_trash` ping the gateway so an edit lands now, not within 60s |
 
 **Why the decision is made over there.** Triton owns the Twilio webhook, and it already
 fetches `get_telephony_routing` on a 60-second cache with a prefetch that fires while the
@@ -66,6 +67,16 @@ while somebody is editing the rule instead of being discovered as a phone that d
 That matters more than it sounds: on 2026-09-11, **2 of 20** Employee records had a
 `cell_number` at all, and those stored it as bare digits. `compile_rules` surfaces every
 dropped target in the payload, the form, and the preview.
+
+**Edits reach the gateway twice over.** Saving `Call Routing Settings` or a
+`Call Routing Rule` (or deleting one) enqueues a ping to Triton's `/refresh-settings`, which
+drops its cached payload so the change takes effect immediately rather than within the
+60-second TTL. It reuses `Triton Settings`' own `trigger_refresh_webhook` — one
+implementation of "ping the gateway" — but reads the secret inside the worker rather than
+passing it as a `frappe.enqueue` kwarg, because those are serialised into redis. The ping is
+best-effort: it is suppressed during migrate/install/patch/import/test, and if it is lost
+(worker down, or a deploy's `FLUSHDB` eating the queued job) the cache expiry is the backstop.
+A settings page must never refuse to save because a gateway is unreachable.
 
 **The cost, and the defence.** The matcher exists in two repos that deploy independently, so
 both load the same vectors file. Change behaviour on one side without the other and the
@@ -104,9 +115,13 @@ python -m unittest \
 keep it green and keep it in the CI list.
 
 ```bash
-python -m unittest erpnext_enhancements.tests.test_call_routing -v
+python -m unittest \
+  erpnext_enhancements.tests.test_call_routing \
+  erpnext_enhancements.tests.test_call_routing_gateway_notify -v
 ```
 
-Bench-free and **stub-free**, because `call_routing_match` imports nothing but the standard
-library. If that suite ever needs a `frappe` stub, something frappe-shaped has leaked into
-the matcher and belongs in `call_routing.py` instead.
+`test_call_routing` is bench-free **and stub-free**, because `call_routing_match` imports
+nothing but the standard library. If it ever needs a `frappe` stub, something frappe-shaped
+has leaked into the matcher and belongs in `call_routing.py` instead.
+`test_call_routing_gateway_notify` does stub `frappe` — which is why the two have separate
+CI steps, and why the first one can stay clean.

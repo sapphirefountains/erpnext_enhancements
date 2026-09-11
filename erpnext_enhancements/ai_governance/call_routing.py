@@ -317,3 +317,64 @@ def _current_softphone_identities() -> list[str]:
 		return [_softphone_identity(u) for u in users] if users else [LEGACY_SOFTPHONE_IDENTITY]
 	except Exception:
 		return []
+
+
+# ---------------------------------------------------------------------------
+# Telling the gateway a rule changed
+# ---------------------------------------------------------------------------
+
+#: Frappe flags that mean "this save is not a human editing a rule". A migrate, an
+#: install, a patch, a fixture import and the test bootstrap all save documents, and
+#: none of them should reach out to an external service — a `bench migrate` that POSTs
+#: to the gateway is slower, noisier, and on a fresh site is talking about routing rules
+#: that do not exist yet.
+_SUPPRESS_FLAGS = ("in_migrate", "in_install", "in_patch", "in_import", "in_test")
+
+
+def notify_gateway() -> None:
+	"""Ask the Triton gateway to drop its cached routing payload.
+
+	Triton caches ``get_telephony_routing`` for 60 seconds, so without this a rule edit
+	takes up to a minute to take effect. That is survivable in operation and bewildering
+	for somebody sitting in the Desk testing a change, watching a call ignore what they
+	just saved.
+
+	Enqueued rather than called inline, and after commit: the save must not wait on an
+	HTTP round trip to an external service, and must not be rolled back by one. Mirrors
+	``Triton Settings.on_update``, which has pinged the same endpoint since 0.23.
+
+	Best-effort by design. If the ping is lost — the worker is down, or a deploy's
+	``FLUSHDB`` eats the queued job, which it will — the 60-second cache expiry is the
+	backstop and the edit still lands, just later. Never raises: a settings page that
+	refuses to save because a gateway is unreachable would be a far worse failure than a
+	stale cache.
+	"""
+	try:
+		if any(getattr(frappe.flags, flag, False) for flag in _SUPPRESS_FLAGS):
+			return
+		frappe.enqueue(
+			"erpnext_enhancements.ai_governance.call_routing.push_refresh",
+			enqueue_after_commit=True,
+			timeout=30,
+		)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Call routing gateway notify failed")
+
+
+def push_refresh() -> None:
+	"""Background worker: POST the refresh signal to the Triton gateway.
+
+	Reads the gateway URL and secret *here* rather than accepting them as job arguments,
+	so the shared secret never passes through the redis job payload. The HTTP itself is
+	``Triton Settings``' own ``trigger_refresh_webhook`` — one implementation of "ping the
+	gateway", which also means one place to fix if the endpoint or its auth ever moves.
+	"""
+	from erpnext_enhancements.ai_governance.doctype.triton_settings.triton_settings import (
+		trigger_refresh_webhook,
+	)
+
+	settings = frappe.get_doc("Triton Settings")
+	trigger_refresh_webhook(
+		settings.gateway_url,
+		settings.get_password("admin_webhook_secret", raise_exception=False),
+	)
