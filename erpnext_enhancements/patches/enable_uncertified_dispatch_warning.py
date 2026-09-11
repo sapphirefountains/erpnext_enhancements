@@ -29,9 +29,14 @@ def execute():
 	if not frappe.db.exists("DocType", "Training Settings"):
 		return
 
-	current = frappe.db.get_value(
-		"Singles", {"doctype": "Training Settings", "field": "warn_on_uncertified_dispatch"}, "value"
-	)
+	# `get_single_value`, NOT `db.get_value("Singles", ...)`. `tabSingles` has exactly
+	# three columns -- doctype, field, value -- and `db.get_value` defaults to ordering
+	# by `creation`, so reaching that table through it raises `Unknown column
+	# 'creation' in 'ORDER BY'` on every site, every time. It is not a read that can
+	# fail, it is one that cannot succeed. A patch that raises aborts `bench migrate`,
+	# so this took the whole v1.395.0 deploy down -- three lines above the comment
+	# explaining how to avoid aborting the migrate (v1.395.1).
+	current = frappe.db.get_single_value("Training Settings", "warn_on_uncertified_dispatch")
 	# A Single stores one row per field, and a field that has never been saved has
 	# NO row at all -- `bench migrate` adds none and load_from_db applies no
 	# defaults. So "0" and "missing" both mean off, and both are what this writes

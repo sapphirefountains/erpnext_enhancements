@@ -81,6 +81,20 @@ Verified, and all of them expensive to rediscover:
   one you assume.** Check which you are on before choosing the predicate, and prefer a
   backfill keyed on the *rule the writer applies* over one keyed on emptiness: emptiness is a
   fact about the schema migration, not about the data.
+- **And the table those rows live in is not a doctype table, so reading it through
+  `db.get_value` cannot work.** `tabSingles` has exactly three columns — `doctype`, `field`,
+  `value`. No `name`, no `creation`. But `frappe.db.get_value` and its siblings default to
+  `order_by="creation"`, so `get_value("Singles", {...}, "value")` compiles to a query ending
+  `ORDER BY creation` and raises `OperationalError (1054, "Unknown column 'creation' in 'ORDER
+  BY'")` on every site, every time — a read that *cannot succeed*, not one that might fail. Use
+  `get_single_value`/`set_single_value`, or pass `order_by=None`. What makes it worth a rule is
+  that reaching into `tabSingles` directly is the **careful** move: it is the only way to tell
+  "never saved" (no row) from "deliberately 0", which is precisely the distinction the two
+  bullets above make matter. v1.395.0 shipped one in a patch — and **a patch that raises aborts
+  `bench migrate`, which on this repo is the deploy.** Prod ended up schema-synced with 29 new
+  doctypes, 3 of 8 patches applied, no fixtures, no Property Setters, no `after_migrate` hooks
+  and a day-old asset bundle, while `__version__` reported the new release, so every cheap
+  check said it had installed. `tests/test_singles_table_access.py` fails the build on it now.
 - **A trailing-space check written in SQL is always false, so the query reports clean on data
   that is genuinely broken.** MariaDB's default collation is PAD SPACE: non-binary string
   comparison ignores trailing spaces, so `WHERE item_name <> TRIM(item_name)` returns **0** on

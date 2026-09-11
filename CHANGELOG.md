@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.395.1] - 2026-09-11
+
+### Fixed
+
+- **`enable_uncertified_dispatch_warning` could never run, and it aborted the v1.395.0
+  production deploy.** The patch read the current setting with
+  `frappe.db.get_value("Singles", {...}, "value")`. `tabSingles` has exactly three columns —
+  `doctype`, `field`, `value` — and `db.get_value` defaults to `order_by="creation"`, so that
+  call compiles to a query ending `ORDER BY creation` and raises `OperationalError (1054,
+  "Unknown column 'creation' in 'ORDER BY'")` on every site, every time. It is not a read that
+  can fail; it is a read that *cannot succeed*. Now `frappe.db.get_single_value`, which reads
+  `tabSingles` by its own shape.
+
+  **A patch that raises aborts `bench migrate`, and on this repo `bench migrate` is the
+  deploy.** Both Cloud Builds fired by merging #954 and #955 died on this one line. That left
+  production with its schema synced and 29 new doctypes present, three of eight patches
+  applied, **no fixtures, no Property Setters, no `after_migrate` hooks and a day-old asset
+  bundle** — while `__version__` read `1.395.0`, so every cheap check said the release was
+  installed. The expensive part was not the bug, it was that the half-state looks like success.
+
+  Note the shape of it: the comment three lines *below* the offending call explains, at
+  length, why the patch uses `db.set_single_value` instead of `get_single().save()` —
+  precisely because a controller `validate` could throw and abort the deploy. The reasoning
+  was correct, and the line above it did the thing anyway. Reaching into `tabSingles` directly
+  is what you do when you are being careful: it is the only way to tell "this field has never
+  been saved" (no row) from "somebody set it to 0", a distinction this app has been bitten by
+  before. The instinct was right and only the API was wrong.
+
+### Added
+
+- `tests/test_singles_table_access.py` — fails the build if any ordering ORM helper
+  (`get_value`, `get_values`, `get_all`, `get_list`, `exists`) is pointed at `"Singles"`
+  without an explicit `order_by`. Bench-free, and wired into CI. It also asserts its own
+  corpus is non-empty, because an absence rule that scans nothing passes forever — and no
+  exercise-based test could have caught the original: the bench-free suites stub `frappe`, so
+  a stubbed `get_value` returns whatever the stub returns and the query is never built.
+
+- `test_hr_module` banned the substring `get_single` to keep the patch from calling
+  `get_single().save()` — and `get_single_value` **contains** `get_single`, so the correct API
+  was banned too and the fix above failed CI. Now pinned to `get_single(`, with the paren. Third
+  time this repo has been bitten by an absence assertion matching more than it meant
+  (`FIRST_AID` inside `BEYOND_FIRST_AID` was the last); the rule is to assert the *behaviour*,
+  not the spelling that currently expresses it.
+
 ## [1.395.0] - 2026-09-11
 
 **WI-073 H — chemicals, PPE and site hazards.** All three land on the visit wizard's
