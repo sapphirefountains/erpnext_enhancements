@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.403.1] - 2026-09-11
+
+### Added
+
+- **`.gitattributes`, pinning every text file in the repo to LF.** Nothing about the stored
+  content changes — `git add --renormalize .` across all 2,927 tracked text files stages
+  nothing, because they were already LF. What was missing was anything *declaring* it, and
+  the gap surfaced as merge conflicts rather than as bad bytes.
+
+  Without a policy in the repo, git falls back to each machine's `core.autocrlf`. On Windows
+  that is normally `true`, which checks files out as CRLF and converts back to LF on
+  commit — but it deliberately does **not** renormalise a file that is already stored with
+  CRLF, so one file committed the wrong way stays wrong indefinitely and nothing complains.
+  `CHANGELOG.md` was exactly that file: stored CRLF for most of this repo's life until
+  v1.402.0 happened to rewrite it whole. The next branch to touch it conflicted on all
+  **24,931 lines** — two whole-file rewrites with no common ground — over a change that added
+  seventy. Two open branches is all that takes, and `CHANGELOG.md` is a file that *every*
+  change edits, by policy. That is the failure this prevents recurring.
+
+  `eol=lf` rather than a bare `text=auto`: `text=auto` alone fixes the stored bytes and leaves
+  Windows working trees on CRLF, so the working tree and the index keep disagreeing — and that
+  disagreement is what makes a byte-level edit round-trip differently depending on who ran it.
+  Everything here deploys to Linux and no reader needs CRLF, so matching the working tree to
+  the index makes what you see the thing that is committed. Side benefit: the "LF will be
+  replaced by CRLF" warning stops appearing on every `git add`.
+
+  `infra/configs/startup_script.sh` and the Cloud Build YAML are listed explicitly on top of
+  the blanket rule. For those a CRLF is not cosmetic — a shell script with CRLF endings dies
+  on Linux with `bad interpreter: /bin/bash^M`, and that one is the VM startup script. The
+  sibling `triton` repo carries a narrower version of this file for the same reason; this one
+  covers that case as well as the storage-consistency one.
+
+  Existing Windows working trees rewrite their text files to LF on the next checkout. That is
+  a no-op as far as git is concerned, but it is why a `git status` immediately after pulling
+  this may take a moment to settle.
+
 ## [1.403.0] - 2026-09-11
 
 ### Added
