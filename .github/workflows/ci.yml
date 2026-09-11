@@ -754,6 +754,17 @@ jobs:
       # function so there is one place to get it right.
       - name: HR safety (the OSHA log, and the privacy rule)
         run: python -m unittest erpnext_enhancements.tests.test_hr_safety -v
+      # Confined space, lockout/tagout and working alone -- the highest legal
+      # exposure in the company. Fountain vaults and pump pits are the textbook
+      # permit-required case. Four properties: permit-required is the DEFAULT (a
+      # space wrongly needing a permit costs twenty minutes, one wrongly not needing
+      # one is how people die in pits); the ATMOSPHERE REFUSES, the one check in this
+      # app that blocks rather than warns, and it cannot be overridden; the attendant
+      # is never the entrant, because most confined-space fatalities are would-be
+      # rescuers; and the LOTO inspector is never the person being observed, which is
+      # the half of the annual inspection everybody gets wrong.
+      - name: HR confined space (the permit, the lockout, the lone worker)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_confined_space -v
       # Can somebody who is not a developer start a course? The visual editor
       # shipped in v1.364.0 with NO entry point anywhere -- grepping for
       # "training-canvas" outside its own directory returned two CHANGELOG lines

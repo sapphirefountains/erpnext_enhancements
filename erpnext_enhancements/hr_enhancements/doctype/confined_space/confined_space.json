@@ -1,0 +1,229 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "allow_rename": 0,
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "index_web_pages_for_search": 0,
+ "field_order": [
+  "space_name",
+  "customer",
+  "project",
+  "serial_no",
+  "column_break_head",
+  "classification",
+  "is_active",
+  "last_reviewed_on",
+  "reviewed_by",
+  "hazards_section",
+  "hazard_atmosphere",
+  "hazard_engulfment",
+  "column_break_hazards",
+  "hazard_configuration",
+  "hazard_other",
+  "hazard_notes",
+  "entry_section",
+  "access_description",
+  "depth_feet",
+  "column_break_entry",
+  "isolation_points",
+  "rescue_plan"
+ ],
+ "fields": [
+  {
+   "fieldname": "space_name",
+   "fieldtype": "Data",
+   "label": "Name",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "What the crew calls it — “north basin pump vault”. The name on the radio, not a code."
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project"
+  },
+  {
+   "fieldname": "serial_no",
+   "fieldtype": "Link",
+   "label": "Feature",
+   "options": "Serial No",
+   "description": "The fountain or feature it serves, when it is one of ours."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "classification",
+   "fieldtype": "Select",
+   "label": "Classification",
+   "options": "Permit-required\nNon-permit confined space\nNot a confined space",
+   "default": "Permit-required",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Default is PERMIT-REQUIRED, and that default is the safe direction: a space wrongly classified as needing a permit costs twenty minutes, and one wrongly classified as not needing one is how people die in pits. Downgrading is a decision somebody makes and signs for."
+  },
+  {
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "label": "Active",
+   "default": "1"
+  },
+  {
+   "fieldname": "last_reviewed_on",
+   "fieldtype": "Date",
+   "label": "Classification reviewed",
+   "description": "A space changes. New chemical dosing, a failed vent, standing water that was not there last year."
+  },
+  {
+   "fieldname": "reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed by",
+   "options": "User"
+  },
+  {
+   "fieldname": "hazards_section",
+   "fieldtype": "Section Break",
+   "label": "Why it is one",
+   "description": "The four tests. A space is permit-required if it has ANY of them."
+  },
+  {
+   "fieldname": "hazard_atmosphere",
+   "fieldtype": "Check",
+   "label": "Hazardous atmosphere",
+   "default": "1",
+   "description": "Oxygen deficiency from decomposition or displacement, chlorine or other dosing chemicals, engine exhaust. The usual one in a fountain pit, and the one you cannot see."
+  },
+  {
+   "fieldname": "hazard_engulfment",
+   "fieldtype": "Check",
+   "label": "Engulfment risk",
+   "default": "0",
+   "description": "Water that can rise, or loose material that can bury."
+  },
+  {
+   "fieldname": "column_break_hazards",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "hazard_configuration",
+   "fieldtype": "Check",
+   "label": "Converging walls or sloping floor",
+   "default": "0"
+  },
+  {
+   "fieldname": "hazard_other",
+   "fieldtype": "Check",
+   "label": "Other recognised hazard",
+   "default": "0",
+   "description": "Live electrical, moving pumps, heat."
+  },
+  {
+   "fieldname": "hazard_notes",
+   "fieldtype": "Small Text",
+   "label": "Hazard notes"
+  },
+  {
+   "fieldname": "entry_section",
+   "fieldtype": "Section Break",
+   "label": "Getting in and out"
+  },
+  {
+   "fieldname": "access_description",
+   "fieldtype": "Small Text",
+   "label": "How you get in",
+   "description": "Hatch size, ladder, how far down. What the rescue team would need to know before they arrive."
+  },
+  {
+   "fieldname": "depth_feet",
+   "fieldtype": "Float",
+   "label": "Depth (ft)"
+  },
+  {
+   "fieldname": "column_break_entry",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "isolation_points",
+   "fieldtype": "Small Text",
+   "label": "What has to be isolated",
+   "description": "Pumps, valves, chemical feed, electrical. Cross-check against the lockout procedure for this feature."
+  },
+  {
+   "fieldname": "rescue_plan",
+   "fieldtype": "Small Text",
+   "label": "Rescue plan",
+   "description": "“Call 911” is not a rescue plan — most confined-space deaths are would-be rescuers. Say who retrieves, with what, from outside."
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Confined Space",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "print": 1,
+   "role": "Employee"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "autoname": "field:space_name",
+ "naming_rule": "By fieldname",
+ "title_field": "space_name",
+ "show_title_field_in_link": 1,
+ "icon": "fa fa-arrow-down",
+ "search_fields": "customer,classification"
+}

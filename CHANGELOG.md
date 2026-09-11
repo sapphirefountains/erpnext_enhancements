@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.391.0] - 2026-09-11
+
+**WI-073 D — confined space, lockout/tagout, and working alone.** The highest legal exposure
+in the company, and three requirements OSHA asks for first that almost nobody has.
+
+### Added
+
+- **`Confined Space` — a register of every below-grade space the crew works in.** Fountain
+  vaults, wet wells and pump pits are the textbook permit-required case and almost nobody
+  writes them down: an atmospheric hazard from decomposing organic matter and chlorine dosing,
+  an engulfment risk from water that can rise, and egress through a hatch.
+
+  **The default is permit-required, and the default is the whole safety margin.** A space
+  wrongly classified as needing a permit costs twenty minutes; one wrongly classified as not
+  needing one is how people die in pits. Downgrading requires a name and a date — not an
+  approval workflow, just an answer to "who said this pit was safe", because that is the first
+  question after an incident. A space with a hazard still ticked cannot be downgraded at all.
+
+  A permit-required space must carry a real rescue plan. **"Call 911" is not one**: most
+  confined-space deaths are the people who went in after somebody, and the minutes that matter
+  are the ones before anybody arrives.
+
+- **`Confined Space Entry Permit`, completed at the hatch.** A permit signed at the office the
+  morning before is the failure mode this is designed against, so the atmosphere limits are
+  checked by the machine rather than by the person filling it in, the permit expires with the
+  shift, and closing out is a separate act from opening.
+
+  **The atmosphere refuses, and it is the only check in this app that blocks rather than
+  warns.** Everywhere else the doctrine is written down in `training/compliance.py`: by the
+  time a record is being saved the truck is already moving, and refusing the form moves the
+  work off the books. That reasoning does not transfer here. A permit is not a record *of*
+  work happening, it is the thing that decides whether it starts, and the gas reading is the
+  one number the whole document exists to check. Oxygen 19.5–23.5% — the **ceiling** matters
+  too, since an enriched atmosphere is a fire risk and people forget that half — LEL under
+  10%, H₂S under 10 ppm, CO under 25 ppm. The human ticks (ventilation, isolation, rescue
+  plan) are listed back for confirmation rather than refused, because those are judgements and
+  a form that argues with a supervisor about them gets filled in dishonestly. **There is no
+  override for the gas**, and the form deliberately does not draw a button that looks like
+  there might be.
+
+  **The attendant is mandatory and cannot be the entrant.** It is the field that gets skipped
+  and the one that matters most: most confined-space fatalities are would-be rescuers. One
+  person in a hurry filling their own name into every Link is the likeliest shortcut on a
+  phone at a hatch, so it is refused outright.
+
+  Closing out asks exactly one question — is everybody out — because an attendant who cannot
+  close it in ten seconds will close it in the truck on the way home, and a permit nobody
+  closed reads exactly like a person still down a hole. The list view says so on open.
+
+- **`Lockout Tagout Procedure` and `Lockout Periodic Inspection`.** One procedure per piece of
+  equipment, listing every energy source, where it is, how to isolate it, and — the column
+  everybody leaves out — **how to verify it is actually dead**. Locking a breaker is not the
+  same as confirming the pump will not start, and the difference is somebody's hand. A row
+  without a verification method is refused.
+
+  The annual inspection is the requirement almost nobody has, and the half everybody gets
+  wrong is **who does it**: the inspector must not be the person whose use is being observed.
+  Somebody checking their own habits finds nothing, which is precisely why the rule names a
+  second person. `last_inspected_on` and the due date are derived from the inspection records
+  rather than typed, because a self-reported date is exactly how this stays undone — and an
+  unwritten procedure reads as **due now** rather than never, since a blank date reads as
+  "nothing to do".
+
+- **`Lone Work Session` — a check-in that notices when somebody does not come back.** Three
+  stages fifteen minutes apart: chase the worker, then their supervisor, then the executives.
+  Most overdue sessions are somebody who finished and forgot, so the first nudge clears the
+  great majority without troubling anybody.
+
+  **It escalates once per stage and then stops** — a sweep that re-sends every ten minutes
+  trains people to filter it, and the filtered version of this alert is worth nothing. **It
+  never closes a session by itself**, because "the sweep decided they were probably fine" is
+  the judgement nobody should be making at 7pm. A missing supervisor escalates **up** rather
+  than nowhere: silence is the one outcome this must never produce. Checking out tells whoever
+  was alarmed, since an escalation with no resolution is how the next one gets ignored.
+
+  Both the permit and the check-in hang off the **visit wizard's safety step**, the screen
+  technicians already have open on a phone. A check-in that lives anywhere else is a check-in
+  that does not happen.
+
+### Fixed
+
+- **A duplicate scheduler key would have silently stopped all four chat sweeps.** The
+  lone-worker sweep wants `*/10 * * * *`, which already exists, and a repeated key in a dict
+  literal **replaces** the earlier one — so registering it as its own entry would have
+  disabled chat provisioning, attachments, chunk indexing and embedding with no error
+  anywhere. `tests/test_hooks_integrity.py` caught it on the first run; the job is merged into
+  the existing list, and the test that pins it now parses `hooks.py` rather than matching a
+  string, so it cannot pass on the broken shape.
+
 ## [1.390.0] - 2026-09-11
 
 **WI-073 C — the injury and illness log.** Technicians work with water, chemicals, pumps and

@@ -892,6 +892,18 @@ scheduler_events = {
 			"erpnext_enhancements.chat.sync.attachments.sweep_pending_attachments",
 			"erpnext_enhancements.chat.indexing.indexer.sweep_chunks",
 			"erpnext_enhancements.chat.indexing.indexer.sweep_embeddings",
+			# hr_enhancements (WI-073): lone-worker check-in. Three stages fifteen
+			# minutes apart -- chase the worker, then their supervisor, then the
+			# executives. It escalates ONCE per stage, because a sweep that re-sends
+			# every ten minutes trains people to filter it, and it never closes a
+			# session by itself: "the sweep decided they were probably fine" is the
+			# judgement nobody should be making at 7pm.
+			#
+			# Added to this list rather than as a second "*/10 * * * *" key. A repeated
+			# key in a dict literal silently REPLACES the earlier one, so a new entry
+			# would have stopped all four chat sweeps above with no error anywhere.
+			# test_hooks_integrity caught exactly that.
+			"erpnext_enhancements.hr_enhancements.lonework.sweep_overdue_sessions",
 		],
 		# Subscription renewal. An expired Workspace Events subscription is DELETED and cannot
 		# be renewed -- only recreated -- and the failure is completely silent, so this is the

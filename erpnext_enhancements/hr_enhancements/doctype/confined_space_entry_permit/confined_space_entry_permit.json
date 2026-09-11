@@ -1,0 +1,324 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "allow_rename": 0,
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "index_web_pages_for_search": 0,
+ "field_order": [
+  "naming_series",
+  "confined_space",
+  "maintenance_record",
+  "status",
+  "column_break_head",
+  "opened_on",
+  "expires_on",
+  "closed_on",
+  "people_section",
+  "entrant",
+  "entrant_name",
+  "column_break_people",
+  "attendant",
+  "supervisor",
+  "atmosphere_section",
+  "oxygen_pct",
+  "lel_pct",
+  "column_break_atmos",
+  "h2s_ppm",
+  "co_ppm",
+  "tested_with",
+  "atmosphere_ok",
+  "controls_section",
+  "isolation_confirmed",
+  "lockout_procedure",
+  "ventilation",
+  "column_break_controls",
+  "rescue_plan_confirmed",
+  "communication_method",
+  "ppe_notes",
+  "close_section",
+  "everyone_out",
+  "closed_by",
+  "close_notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Permit",
+   "options": "CSP-.YYYY.-.####",
+   "reqd": 1,
+   "default": "CSP-.YYYY.-.####",
+   "print_hide": 1
+  },
+  {
+   "fieldname": "confined_space",
+   "fieldtype": "Link",
+   "label": "Space",
+   "options": "Confined Space",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "maintenance_record",
+   "fieldtype": "Link",
+   "label": "Visit",
+   "options": "Sapphire Maintenance Record"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nOpen\nClosed\nCanceled",
+   "default": "Draft",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Moves only through the buttons. Canceled with one l, house style."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "opened_on",
+   "fieldtype": "Datetime",
+   "label": "Opened",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "expires_on",
+   "fieldtype": "Datetime",
+   "label": "Expires",
+   "read_only": 1,
+   "description": "A permit is for THIS entry, not for the day. It expires after the shift so nobody works under yesterday's."
+  },
+  {
+   "fieldname": "closed_on",
+   "fieldtype": "Datetime",
+   "label": "Closed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "people_section",
+   "fieldtype": "Section Break",
+   "label": "Who",
+   "description": "Three roles, and the attendant is the one that gets skipped. Nobody goes in without somebody outside."
+  },
+  {
+   "fieldname": "entrant",
+   "fieldtype": "Link",
+   "label": "Entrant",
+   "options": "Employee",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "entrant_name",
+   "fieldtype": "Data",
+   "label": "Entrant name",
+   "read_only": 1,
+   "fetch_from": "entrant.employee_name"
+  },
+  {
+   "fieldname": "column_break_people",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "attendant",
+   "fieldtype": "Link",
+   "label": "Attendant (stays outside)",
+   "options": "Employee",
+   "reqd": 1,
+   "description": "Stays outside for the whole entry and never enters to rescue. Most confined-space fatalities are would-be rescuers."
+  },
+  {
+   "fieldname": "supervisor",
+   "fieldtype": "Link",
+   "label": "Entry supervisor",
+   "options": "Employee",
+   "reqd": 1
+  },
+  {
+   "fieldname": "atmosphere_section",
+   "fieldtype": "Section Break",
+   "label": "Atmosphere",
+   "description": "Tested BEFORE the hatch opens and before anybody goes down. A reading taken after entry is a reading taken too late."
+  },
+  {
+   "fieldname": "oxygen_pct",
+   "fieldtype": "Float",
+   "label": "Oxygen %",
+   "reqd": 1,
+   "precision": "1",
+   "description": "19.5% to 23.5%. Below is deficient, above is an enrichment fire risk. Pre-entry reading. Re-test periodically — the atmosphere in a pit is not a constant."
+  },
+  {
+   "fieldname": "lel_pct",
+   "fieldtype": "Float",
+   "label": "LEL %",
+   "precision": "1",
+   "description": "Under 10%. Pre-entry reading. Re-test periodically — the atmosphere in a pit is not a constant."
+  },
+  {
+   "fieldname": "column_break_atmos",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "h2s_ppm",
+   "fieldtype": "Float",
+   "label": "H₂S ppm",
+   "precision": "1",
+   "description": "Under 10 ppm. Decomposing organic matter in a wet basin makes it. Pre-entry reading. Re-test periodically — the atmosphere in a pit is not a constant."
+  },
+  {
+   "fieldname": "co_ppm",
+   "fieldtype": "Float",
+   "label": "CO ppm",
+   "precision": "1",
+   "description": "Under 25 ppm. Pre-entry reading. Re-test periodically — the atmosphere in a pit is not a constant."
+  },
+  {
+   "fieldname": "tested_with",
+   "fieldtype": "Data",
+   "label": "Meter used",
+   "description": "Which meter, so a bad calibration can be traced to every entry it cleared."
+  },
+  {
+   "fieldname": "atmosphere_ok",
+   "fieldtype": "Check",
+   "label": "Atmosphere within limits",
+   "read_only": 1,
+   "description": "DERIVED from the readings above. Never typed."
+  },
+  {
+   "fieldname": "controls_section",
+   "fieldtype": "Section Break",
+   "label": "Before anybody goes in"
+  },
+  {
+   "fieldname": "isolation_confirmed",
+   "fieldtype": "Check",
+   "label": "Energy isolated and locked",
+   "default": "0"
+  },
+  {
+   "fieldname": "lockout_procedure",
+   "fieldtype": "Link",
+   "label": "Lockout procedure",
+   "options": "Lockout Tagout Procedure"
+  },
+  {
+   "fieldname": "ventilation",
+   "fieldtype": "Check",
+   "label": "Ventilation running",
+   "default": "0"
+  },
+  {
+   "fieldname": "column_break_controls",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "rescue_plan_confirmed",
+   "fieldtype": "Check",
+   "label": "Rescue plan in place",
+   "default": "0"
+  },
+  {
+   "fieldname": "communication_method",
+   "fieldtype": "Data",
+   "label": "How you stay in contact",
+   "description": "Radio, voice, rope signal. The attendant has to know the entrant is still all right without going in."
+  },
+  {
+   "fieldname": "ppe_notes",
+   "fieldtype": "Small Text",
+   "label": "PPE"
+  },
+  {
+   "fieldname": "close_section",
+   "fieldtype": "Section Break",
+   "label": "Closing out"
+  },
+  {
+   "fieldname": "everyone_out",
+   "fieldtype": "Check",
+   "label": "Everybody out and accounted for",
+   "default": "0"
+  },
+  {
+   "fieldname": "closed_by",
+   "fieldtype": "Link",
+   "label": "Closed by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "close_notes",
+   "fieldtype": "Small Text",
+   "label": "Anything that happened"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Confined Space Entry Permit",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "write": 1,
+   "print": 1,
+   "role": "Employee"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "autoname": "naming_series:",
+ "naming_rule": "By \"Naming Series\" field",
+ "icon": "fa fa-clipboard",
+ "title_field": "entrant_name",
+ "search_fields": "confined_space,entrant_name,opened_on"
+}

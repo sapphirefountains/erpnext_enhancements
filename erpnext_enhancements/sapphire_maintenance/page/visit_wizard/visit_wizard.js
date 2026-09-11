@@ -1023,6 +1023,69 @@ class VisitWizard {
 			this.open_incident_dialog();
 		});
 		this.$wrap.append($link);
+		this.render_lone_work();
+	}
+
+	// Going to this one alone.
+	//
+	// Same screen and the same reasoning as reporting an incident: this is where a
+	// technician is standing with a phone before they start, and a check-in that
+	// lives anywhere else is a check-in that does not happen. Four fields, one of
+	// which is prefilled from the visit.
+	render_lone_work() {
+		const $link = $(`
+			<div class="vz-report-incident">
+				<a href="#" data-lone="1">${__("I am here on my own")}</a>
+			</div>
+		`).on("click", "a", (e) => {
+			e.preventDefault();
+			this.open_lone_work_dialog();
+		});
+		this.$wrap.append($link);
+	}
+
+	open_lone_work_dialog() {
+		const dialog = new frappe.ui.Dialog({
+			title: __("Working alone"),
+			fields: [
+				{
+					fieldtype: "Data",
+					fieldname: "where",
+					label: __("Where"),
+					reqd: 1,
+					default: (this.doc && this.doc.customer) || "",
+					description: __("Enough for somebody to drive to."),
+				},
+				{
+					fieldtype: "Datetime",
+					fieldname: "expected_out_by",
+					label: __("Out by"),
+					reqd: 1,
+					default: frappe.datetime.add_minutes(frappe.datetime.now_datetime(), 90),
+					description: __("If this passes without a check-out we chase you, then your supervisor, then the office."),
+				},
+			],
+			primary_action_label: __("Start"),
+			primary_action: (values) => {
+				dialog.hide();
+				frappe.call({
+					method: "erpnext_enhancements.hr_enhancements.lonework.start_session",
+					args: Object.assign({}, values, {
+						customer: this.doc && this.doc.customer,
+						maintenance_record: this.doc && this.doc.name,
+					}),
+					freeze: true,
+					callback: (r) => {
+						if (!r || !r.message) return;
+						frappe.show_alert({
+							message: __("Checked in. Remember to check out."),
+							indicator: "green",
+						});
+					},
+				});
+			},
+		});
+		dialog.show();
 	}
 
 	open_incident_dialog() {

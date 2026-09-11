@@ -1,0 +1,201 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "allow_rename": 0,
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "index_web_pages_for_search": 0,
+ "field_order": [
+  "naming_series",
+  "employee",
+  "employee_name",
+  "user",
+  "status",
+  "column_break_head",
+  "where",
+  "customer",
+  "maintenance_record",
+  "time_section",
+  "started_on",
+  "expected_out_by",
+  "column_break_time",
+  "closed_on",
+  "escalated_on",
+  "escalation_stage",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "options": "LONE-.YYYY.-.####",
+   "reqd": 1,
+   "default": "LONE-.YYYY.-.####",
+   "print_hide": 1
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Who",
+   "options": "Employee",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "label": "Name",
+   "read_only": 1,
+   "fetch_from": "employee.employee_name",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Open\nClosed\nOverdue\nEscalated",
+   "default": "Open",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "where",
+   "fieldtype": "Data",
+   "label": "Where",
+   "reqd": 1,
+   "description": "Enough for somebody to drive to. Not a customer code."
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "maintenance_record",
+   "fieldtype": "Link",
+   "label": "Visit",
+   "options": "Sapphire Maintenance Record"
+  },
+  {
+   "fieldname": "time_section",
+   "fieldtype": "Section Break",
+   "label": "The clock"
+  },
+  {
+   "fieldname": "started_on",
+   "fieldtype": "Datetime",
+   "label": "Started",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "expected_out_by",
+   "fieldtype": "Datetime",
+   "label": "Expected out by",
+   "reqd": 1,
+   "description": "The whole mechanism. If this passes without a check-out, the app chases them, then their supervisor, then the CEO."
+  },
+  {
+   "fieldname": "column_break_time",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "closed_on",
+   "fieldtype": "Datetime",
+   "label": "Checked out",
+   "read_only": 1
+  },
+  {
+   "fieldname": "escalated_on",
+   "fieldtype": "Datetime",
+   "label": "Escalated",
+   "read_only": 1
+  },
+  {
+   "fieldname": "escalation_stage",
+   "fieldtype": "Int",
+   "label": "Escalation stage",
+   "read_only": 1,
+   "description": "0 none, 1 chased them, 2 told the supervisor, 3 told the CEO."
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Lone Work Session",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "write": 1,
+   "role": "Employee"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "autoname": "naming_series:",
+ "naming_rule": "By \"Naming Series\" field",
+ "icon": "fa fa-user",
+ "title_field": "employee_name",
+ "search_fields": "employee_name,where,expected_out_by"
+}

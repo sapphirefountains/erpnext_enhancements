@@ -204,6 +204,50 @@
    "report_ref_doctype": "Safety Incident"
   },
   {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "arrow-down",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Confined spaces",
+   "link_to": "Confined Space",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "clipboard-check",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Entry permits",
+   "link_to": "Confined Space Entry Permit",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "lock",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Lockout procedures",
+   "link_to": "Lockout Tagout Procedure",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "user",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Working alone",
+   "link_to": "Lone Work Session",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
    "child": 0,
    "collapsible": 1,
    "icon": "badge-check",
@@ -310,7 +354,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-11 15:00:00.000000",
+ "modified": "2026-09-11 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "HR Enhancements",
  "name": "HR",
