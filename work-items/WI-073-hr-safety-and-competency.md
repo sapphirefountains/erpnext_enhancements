@@ -1,6 +1,6 @@
 # WI-073 — Safety records, and making the competency ladder do something
 
-**Status:** in progress
+**Status:** complete — A through H shipped, v1.387.0 → v1.395.0
 **Branch:** `claude/hr-safety-and-ladder` (stacked on WI-072 / PR #954)
 **Tracked:** PRJ-00616, TASK-2026-01953 with a child per deliverable (A–H)
 **Follows:** [WI-072](WI-072-hr-module-and-training-redesign.md), which built the module this sits in
@@ -57,16 +57,16 @@ Senior, and nothing produces evidence for the promotion. Deliverable A is that r
 
 ## Deliverables
 
-| | | Task |
-|---|---|---|
-| **A** | Rung requirements, tier review, supervised-only sign-off | TASK-2026-01954 |
-| **B** | Who can I send: time off vs dispatch, restricted duty, coverage, truck licences | TASK-2026-01955 |
-| **C** | Injury and incident log (OSHA 300 / 301 / 300A) | TASK-2026-01956 |
-| **D** | Confined space register + entry permit, lockout/tagout, lone-worker check-in | TASK-2026-01957 |
-| **E** | Lock down the Employee record, HR Case Record, signed policy acknowledgement | TASK-2026-01958 |
-| **F** | Offboarding checklist, 30/60/90 check-ins | TASK-2026-01959 |
-| **G** | Issued kit register, company obligations register, subcontractor COIs | TASK-2026-01960 |
-| **H** | SDS register on the visit safety gate, PPE assessment, field hazard report | TASK-2026-01961 |
+| | | Task | |
+|---|---|---|---|
+| **A** | Rung requirements, tier review, supervised-only sign-off | TASK-2026-01954 | ✅ v1.387.0 |
+| **B** | Who can I send: time off vs dispatch, restricted duty, coverage, truck licences | TASK-2026-01955 | ✅ v1.389.0 |
+| **C** | Injury and incident log (OSHA 300 / 301 / 300A) | TASK-2026-01956 | ✅ v1.390.0 |
+| **D** | Confined space register + entry permit, lockout/tagout, lone-worker check-in | TASK-2026-01957 | ✅ v1.391.0 |
+| **E** | Lock down the Employee record, HR Case Record, signed policy acknowledgement | TASK-2026-01958 | ✅ v1.392.0 |
+| **F** | Offboarding checklist, 30/60/90 check-ins | TASK-2026-01959 | ✅ v1.393.0 |
+| **G** | Company obligations register + subcontractor COIs (issued kit **not built**) | TASK-2026-01960 | ✅ v1.394.0 |
+| **H** | SDS on the visit safety gate, PPE assessment, field hazard report | TASK-2026-01961 | ✅ v1.395.0 |
 
 Sequenced A → B → C → D → E → F → G → H. A is first because it is foundational (B's coverage
 view and D's entry authority both read its requirements) and because it fixes a live bug. C
@@ -101,3 +101,41 @@ sibling `develop` checkouts:
 - **Absence assertions must strip comments and docstrings first.** Six occurrences in WI-072.
 - `frappe.db.has_column` takes a **doctype** and **raises** on an unknown table.
 - Fixtures sync *after* post-model-sync patches, and *after* `after_install` on a fresh site.
+
+
+## What the work changed about the plan
+
+Three things came out differently from the brief, and each is worth reading before the next
+work item repeats them.
+
+**Two findings that prompted deliverables turned out to be wrong, and checking first was the
+whole value.** The brief for E said any of the sixteen could read a colleague's Employee
+record; 19 `User Permission` rows say otherwise, and the real issue was narrower — no field
+carried a permlevel at all, so the protection rested entirely on those rows. The brief for the
+reimbursement work (the separate accounting fix, v1.388.0) said to match a Supplier by name;
+the seven on prod use three naming shapes and two do not contain their Employee's name, so
+matching would have billed somebody's receipt to a real vendor. **Both briefs said "confirm
+against prod first", and both times the confirmation is what changed the design.**
+
+**One deliverable was refused on native-first grounds, and that was the right answer.** G asked
+for an issued-kit register; core ERPNext `Asset` already carries `custodian` and `location`,
+and `Asset Movement` records the handover. The gap was never a missing doctype — it was that
+nobody had put a flow meter into `Asset`, and nothing read the custodian where it mattered. A
+test now fails the build if an `Issued Kit`-shaped doctype appears.
+
+**The same class of bug appeared three times in one day, twice in my own new code.** A repeated
+key in a Python dict literal silently replaces the earlier value: once in `hooks.py` (where it
+would have disabled four chat sweeps, caught by `test_hooks_integrity`), and once in an
+`or_filters` in `hazards.py` an hour later. Python warns about neither. Where a dict is built
+from a list of similar-shaped entries — scheduler crons, query filters — assume the duplicate
+is there and check for it.
+
+## Deliberately not built
+
+- **An issued-kit register** — see above. Core `Asset` is the register.
+- **A "reason" field on `Work Restriction`** — a restriction is a scheduling fact and a
+  diagnosis is not the company's business. A test holds it shut.
+- **Any record behind the 30/60/90 check-ins** — the value is the prompt, and a form attached
+  to it turns a two-minute conversation into an admin task.
+- **An atmosphere override on the confined-space permit** — there is no argument to have with
+  a gas reading, and a button that looks like there might be is a button somebody presses.
