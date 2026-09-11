@@ -675,6 +675,13 @@ doc_events = {
 			# appearing) — without that comparison EVERY Employee save enqueues a
 			# full rule sweep, and Employee is saved often.
 			"erpnext_enhancements.training.assignment.on_employee_update",
+			# hr_enhancements (WI-073): raise the LEAVING checklist when status flips
+			# to Left. Gated on the transition rather than the current value, because
+			# Employee is saved often. ERPNext disables the login by itself and does
+			# nothing else -- the device in their van, the four jobs assigned to them
+			# and the two people who report to them are all invisible the day after,
+			# so the list is GENERATED from what they hold rather than fixed.
+			"erpnext_enhancements.hr_enhancements.onboarding.on_employee_update",
 		],
 	},
 	"Training Completion": {
@@ -834,7 +841,14 @@ scheduler_events = {
 		# and the only thing that ever minted one was the one-shot backfill patch. So the
 		# feed would have opened with sixteen and produced not one more, ever. Idempotent
 		# on (user, kind, title), so a re-run the same day mints nothing twice.
-		"10 6 * * *": ["erpnext_enhancements.hr_enhancements.tasks.mint_work_anniversaries"],
+		"10 6 * * *": [
+			"erpnext_enhancements.hr_enhancements.tasks.mint_work_anniversaries",
+			# 30 / 60 / 90-day check-ins to a new hire's supervisor. NO record and
+			# nothing to fill in -- the value is the prompt, and a form attached to it
+			# turns a two-minute conversation into an admin task, which is how the
+			# conversation stops happening. Fires only on the exact day.
+			"erpnext_enhancements.hr_enhancements.onboarding.nudge_new_hire_check_ins",
+		],
 		# ---- Chat sync engine (ADR 0009 Phase 2, v1.262.0) -------------------------------
 		# EVERY job below no-ops while `Chat Settings.enabled` is 0, which is how it ships.
 		# They are registered dormant on purpose: a scheduler entry added later, by hand, on

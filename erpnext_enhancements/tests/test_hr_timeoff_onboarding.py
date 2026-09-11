@@ -261,8 +261,16 @@ class TestOnboardingRaisesItself(unittest.TestCase):
         self.assertIn("log_error", body)
 
     def test_it_is_idempotent(self):
-        """Reachable from a doc_event, a patch and a button."""
-        self.assertIn('frappe.db.exists(CHECKLIST, {"employee": employee})', _fn("ensure_checklist", ONBOARDING))
+        """Reachable from a doc_event, a patch and a button.
+
+        Keyed on ``(employee, kind)`` since WI-073 added the leaving checklist: a
+        person joins once and leaves once, and the joining record must not stop
+        the leaving one being raised.
+        """
+        self.assertIn(
+            'frappe.db.exists(CHECKLIST, {"employee": employee, "kind": kind})',
+            _fn("ensure_checklist", ONBOARDING),
+        )
 
     def test_owners_are_words_not_links(self):
         """Half of a first week is done by whoever is free, and a required assignee
@@ -290,8 +298,17 @@ class TestOnboardingRaisesItself(unittest.TestCase):
         body = _fn("_stamp_ticks", CHECKLIST_PY)
         self.assertIn("row.done_on = None", body)
 
-    def test_one_checklist_per_employee(self):
-        self.assertEqual(_fields(CHECKLIST_JSON)["employee"].get("unique"), 1)
+    def test_one_checklist_per_employee_per_kind(self):
+        """The DocField `unique` came OFF `employee` when leaving was added, and
+        that is the correct direction: uniqueness is (employee, kind), which a
+        single-column unique index cannot express. It is enforced in
+        `ensure_checklist` instead, and the test moved with it rather than being
+        deleted — an unenforced invariant with no test is how the second checklist
+        silently stops appearing."""
+        self.assertNotEqual(_fields(CHECKLIST_JSON)["employee"].get("unique"), 1)
+        body = _fn("ensure_checklist", ONBOARDING)
+        self.assertIn('"kind": kind', body)
+        self.assertIn("return existing", body)
 
     def test_the_default_list_covers_a_real_first_week(self):
         src = _text(ONBOARDING)
@@ -506,6 +523,125 @@ class TestWorkAnniversariesRecur(unittest.TestCase):
         years in four. Kept identical so the two cannot disagree about somebody."""
         self.assertIn("28", _fn("_is_the_day", self.TASKS))
         self.assertIn("(2, 29)", _fn("_is_the_day", self.TASKS))
+
+class TestTheLeavingChecklistIsGenerated(unittest.TestCase):
+    """WI-073 F. ERPNext disables a departing employee's login by itself and does
+    nothing else — the device in their van, the credential the insurer asked
+    about, the four jobs assigned to them and the two people who report to them
+    are all invisible the day after.
+    """
+
+    ONBOARDING_JSON = MODULE / "doctype/onboarding_checklist/onboarding_checklist.json"
+
+    def test_one_record_shape_serves_both_ends(self):
+        fields = _fields(self.ONBOARDING_JSON)
+        self.assertEqual(fields["kind"]["options"].splitlines(), ["Joining", "Leaving"])
+
+    def test_employee_is_no_longer_singly_unique(self):
+        """A person joins once and leaves once, so uniqueness is (employee, kind)
+        — which a single-column DocField `unique` cannot express."""
+        fields = _fields(self.ONBOARDING_JSON)
+        self.assertNotEqual(fields["employee"].get("unique"), 1)
+        body = _fn("ensure_checklist", ONBOARDING)
+        self.assertIn('{"employee": employee, "kind": kind}', body)
+
+    def test_the_list_is_derived_from_what_they_hold(self):
+        """A fixed checklist cannot know any of it, so it gets filled in from
+        memory — the failure this exists to remove."""
+        body = _fn("_derived_leaving_rows", ONBOARDING)
+        for source in ("_devices_held", "_credentials_held", "_open_work", "_direct_reports", "_vehicles_held"):
+            with self.subTest(source=source):
+                self.assertIn(source, body)
+
+    def test_direct_reports_are_re_pointed(self):
+        """Somebody whose manager has left has no manager, and nothing says so:
+        time-off requests route to an empty approver and never move."""
+        body = _fn("_direct_reports", ONBOARDING)
+        self.assertIn("reports_to", body)
+
+    def test_open_training_is_closed_or_reassigned(self):
+        """An assignment against somebody who has left sits in the compliance
+        figures for ever and quietly makes the numbers wrong."""
+        self.assertIn("Training Assignment", _fn("_open_work", ONBOARDING))
+
+    def test_every_derived_lookup_is_best_effort(self):
+        """A missing module means fewer rows, never an exception — the fixed list
+        alone is still worth raising."""
+        src = _text(ONBOARDING)
+        for fn in ("_devices_held", "_credentials_held", "_open_work", "_direct_reports", "_vehicles_held"):
+            with self.subTest(fn=fn):
+                self.assertIn("except Exception", _fn(fn, ONBOARDING))
+
+    def test_it_fires_on_the_transition_not_the_value(self):
+        """Employee is saved often, and an unguarded check would try on every
+        save."""
+        body = _fn("on_employee_update", ONBOARDING)
+        self.assertIn("get_doc_before_save", body)
+        self.assertIn('before.status or "") == "Left"', body)
+
+    def test_it_cannot_fail_an_employee_save(self):
+        body = _fn("on_employee_update", ONBOARDING)
+        self.assertIn("except Exception", body)
+        self.assertIn("log_error", body)
+
+    def test_owners_are_still_plain_words(self):
+        """Half of a last week is done by whoever is free that morning, and a
+        required assignee is how a checklist stops getting filled in."""
+        import ast as _ast
+
+        # Parsed, not sliced. `src.index(")", at)` stops at the close of the FIRST
+        # inner tuple, so the assertion was reading one row and reporting on seven.
+        owners = set()
+        for node in _ast.parse(_text(ONBOARDING)).body:
+            if isinstance(node, _ast.Assign) and getattr(node.targets[0], "id", "") == "LEAVING_ITEMS":
+                owners = {row[1] for row in _ast.literal_eval(node.value)}
+        self.assertTrue(owners, "LEAVING_ITEMS not found")
+        self.assertEqual(owners, {"Shop", "Supervisor", "HR", "Finance"})
+        # And they are strings, not Links.
+        self.assertEqual(_fields(ITEM_JSON)["owner_role"]["fieldtype"], "Data")
+
+
+class TestTheCheckInsAreAPromptNotAForm(unittest.TestCase):
+    """The value is "go and ask them how it is going". A form attached to it turns
+    a two-minute conversation into an admin task, which is how the conversation
+    stops happening.
+    """
+
+    def test_it_stores_nothing(self):
+        body = _fn("nudge_new_hire_check_ins", ONBOARDING)
+        self.assertNotIn("insert(", body)
+        self.assertNotIn("new_doc", body)
+        self.assertNotIn("db_set", body)
+
+    def test_it_fires_on_the_three_days(self):
+        self.assertIn("CHECK_IN_DAYS = (30, 60, 90)", _text(ONBOARDING))
+        self.assertIn("days not in CHECK_IN_DAYS", _fn("nudge_new_hire_check_ins", ONBOARDING))
+
+    def test_it_goes_to_the_supervisor(self):
+        body = _fn("nudge_new_hire_check_ins", ONBOARDING)
+        self.assertIn("reports_to", body)
+
+    def test_it_says_there_is_nothing_to_fill_in(self):
+        self.assertIn("nothing to fill in", _fn("nudge_new_hire_check_ins", ONBOARDING))
+
+    def test_it_never_takes_the_scheduler_down(self):
+        body = _fn("nudge_new_hire_check_ins", ONBOARDING)
+        self.assertIn("except Exception", body)
+
+    def test_both_daily_jobs_share_their_slot_safely(self):
+        """Parsed, not string-matched: a repeated cron key REPLACES the earlier
+        one, which silently disabled four chat sweeps earlier in this release."""
+        import ast as _ast
+
+        tree = _ast.parse(_text(HOOKS))
+        events = {}
+        for node in tree.body:
+            if isinstance(node, _ast.Assign) and getattr(node.targets[0], "id", "") == "scheduler_events":
+                events = _ast.literal_eval(node.value)
+        jobs = (events.get("cron") or {}).get("10 6 * * *") or []
+        self.assertIn("erpnext_enhancements.hr_enhancements.onboarding.nudge_new_hire_check_ins", jobs)
+        self.assertIn("erpnext_enhancements.hr_enhancements.tasks.mint_work_anniversaries", jobs)
+
 
 
 if __name__ == "__main__":

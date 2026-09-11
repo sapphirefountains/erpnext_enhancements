@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.393.0] - 2026-09-11
+
+**WI-073 F — joining and leaving.**
+
+### Added
+
+- **A leaving checklist, generated from what that person actually holds.** ERPNext disables a
+  departing employee's login by itself and does **nothing else** — the device in their van,
+  the credential the insurer asked about, the four training assignments against their name and
+  the two people who report to them are all invisible the day after they go. A fixed checklist
+  cannot know any of it, so it gets filled in from memory, which is the failure this removes.
+
+  The derived rows are: every Managed Device signed out to them, every valid credential (file
+  a copy *before* access goes), a count of open training assignments to close or reassign,
+  every Fleet Vehicle they drive, and — the one that is easiest to forget and hardest to
+  notice — **their direct reports**, because somebody whose manager has left has no manager
+  and nothing says so: time-off requests route to an empty approver and simply never move.
+
+  Every derived lookup is best-effort. A missing module means fewer rows, never an exception;
+  the fixed list alone is still worth raising.
+
+  It is the **same record shape** as onboarding with a `kind` of Joining or Leaving, rather
+  than a second near-identical doctype. That moved uniqueness from `employee` alone to
+  `(employee, kind)` — a person joins once and leaves once, and a single-column DocField
+  `unique` cannot say that — so the constraint came off the field and moved into
+  `ensure_checklist`. The test moved with it rather than being deleted: an unenforced
+  invariant with no test is how the second checklist silently stops appearing.
+
+  Raised on the **transition** to `Left`, not on the current value, because Employee is saved
+  often and an unguarded check would try on every save. It can never fail an Employee save —
+  same contract as the joining handler.
+
+- **30 / 60 / 90-day check-ins to a new hire's supervisor, with no record at all.** That is
+  the design rather than an omission: the value is the prompt — go and ask them how it is
+  going — and a form attached to it turns a two-minute conversation into an admin task, which
+  is how the conversation stops happening. Nothing is stored, nothing is ticked, nobody is
+  chased, and the email says so.
+
+  Idempotent by arithmetic rather than by a flag: it fires only on the exact day, so a sweep
+  running twice in a day sends twice and one that misses a day misses it. Both are fine for a
+  nudge, and neither needs a table.
+
 ## [1.392.0] - 2026-09-11
 
 **WI-073 E — the private half of an HR file.**
