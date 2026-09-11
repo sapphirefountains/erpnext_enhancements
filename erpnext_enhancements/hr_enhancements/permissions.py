@@ -322,3 +322,30 @@ def incident_has_permission(doc, ptype=None, user=None):
 	if not manager:
 		return False
 	return frappe.db.get_value("Employee", doc.get("employee"), "reports_to") == manager
+
+
+def acknowledgement_query_conditions(user=None):
+	"""Your own acknowledgements. HR sees all of them.
+
+	No reports_to arm: whether a colleague has signed the handbook is HR's
+	business, not their manager's, and the register's value comes from being
+	complete rather than from being widely readable.
+	"""
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return ""
+	return f"`tabPolicy Acknowledgement`.`user` = {frappe.db.escape(resolved)}"
+
+
+def acknowledgement_has_permission(doc, ptype=None, user=None):
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return True
+	if doc.get("user") == resolved:
+		return True
+	# `user` is derived in validate(), so it is empty on a NEW row.
+	if doc.get("employee") and frappe.db.get_value(
+		"Employee", doc.get("employee"), "user_id"
+	) == resolved:
+		return True
+	return False

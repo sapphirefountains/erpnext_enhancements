@@ -820,7 +820,15 @@ scheduler_events = {
 		# and not one HR or training one. An expiry model with no horizon tells you about a
 		# problem on the morning of the job. One email per person, plus a roll-up to each
 		# supervisor; gated by Training Settings -> Notifications, same as every other mail.
-		"30 7 * * 1": ["erpnext_enhancements.hr_enhancements.tasks.send_expiry_digest"],
+		"30 7 * * 1": [
+			"erpnext_enhancements.hr_enhancements.tasks.send_expiry_digest",
+			# Nobody on this site had an emergency contact when WI-073 looked -- all
+			# sixteen blank, on a field that had existed the whole time. Nothing had
+			# ever asked. It asks THEM rather than reporting a number to HR, because
+			# the only person who can fill it in is the person whose contact it is,
+			# and it only writes to the people who are missing one.
+			"erpnext_enhancements.hr_enhancements.policies.nudge_missing_emergency_contacts",
+		],
 		# Work anniversaries into the team feed, 06:10. The feed has always known how to
 		# RENDER these -- `Training Achievement` carries the kind and player.js draws it --
 		# and the only thing that ever minted one was the one-shot backfill patch. So the
@@ -1415,6 +1423,13 @@ after_migrate = [
 	# records itself in Patch Log and never runs again. Idempotent -- writes only
 	# where the field is empty, so a human's correction is never overwritten.
 	"erpnext_enhancements.patches.link_reimbursement_suppliers.link_reimbursement_suppliers",
+	# Ten Employee fields (cost to company, bank details, passport, health) move to
+	# permlevel 1 via Property Setter fixtures, and on its own that hides them from
+	# EVERYBODY -- no role on this site holds any permission at level 1. This grants
+	# it to HR Manager and System Manager. Here as well as in patches.txt because
+	# the Property Setters are fixtures and sync_fixtures() runs after the
+	# post-model-sync patches. Idempotent; never raises.
+	"erpnext_enhancements.patches.protect_employee_compensation_fields.grant_employee_field_permissions",
 	# device_management (MDM/EMM): Employee "Assigned Devices" panel field
 	"erpnext_enhancements.device_management.setup.create_device_employee_fields",
 	# accounting_intake: Supplier Drive folder id (document filing)
@@ -1973,6 +1988,13 @@ permission_query_conditions = {
 	# mental illness. Own and reports' only; the log itself is read through the
 	# role-gated OSHA reports.
 	"Safety Incident": "erpnext_enhancements.hr_enhancements.permissions.incident_query_conditions",
+	# Your own only. Whether a colleague has signed the handbook is HR's business
+	# rather than their manager's, so there is no reports_to arm here.
+	#
+	# `HR Case Record` is deliberately NOT in this list: it has no Employee DocPerm
+	# at all, so there is nothing for a row filter to narrow. HR Manager and System
+	# Manager, and nobody else.
+	"Policy Acknowledgement": "erpnext_enhancements.hr_enhancements.permissions.acknowledgement_query_conditions",
 	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_query_conditions",
 	# Chat (ADR 0009 §F.18): row-level scoping is MEMBERSHIP, not role. Chat Room is
 	# the only chat doctype carrying a DocPerm at all (`read` for "Chat User"), so it is
@@ -2033,6 +2055,7 @@ has_permission = {
 	"Tier Review": "erpnext_enhancements.hr_enhancements.permissions.tier_review_has_permission",
 	"Work Restriction": "erpnext_enhancements.hr_enhancements.permissions.restriction_has_permission",
 	"Safety Incident": "erpnext_enhancements.hr_enhancements.permissions.incident_has_permission",
+	"Policy Acknowledgement": "erpnext_enhancements.hr_enhancements.permissions.acknowledgement_has_permission",
 	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_has_permission",
 	# Chat: the twin of every query condition above, and parity here is the house
 	# doctrine -- ten and ten before this block, four and four after it.

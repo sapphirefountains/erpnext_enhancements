@@ -160,6 +160,28 @@
    "type": "Link"
   },
   {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "file-check",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Policy sign-offs",
+   "link_to": "Policy Acknowledgement",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "folder-lock",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Case records",
+   "link_to": "HR Case Record",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
    "child": 0,
    "collapsible": 1,
    "icon": "shield",
@@ -354,7 +376,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-11 16:00:00.000000",
+ "modified": "2026-09-11 17:00:00.000000",
  "modified_by": "Administrator",
  "module": "HR Enhancements",
  "name": "HR",

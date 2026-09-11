@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.392.0] - 2026-09-11
+
+**WI-073 E — the private half of an HR file.**
+
+### Notes
+
+- **The finding that prompted this was half wrong, and the correction is the useful part.**
+  The survey reported that any of the sixteen could open a colleague's Employee record and
+  read who is salaried. Checked against prod before writing anything: all 119 Employee fields
+  did sit at **permlevel 0** with no field-level protection of any kind, and `Custom DocPerm`
+  does grant the `Employee` role read **and write** at that level — but **19 `User Permission`
+  rows scope each person to their own Employee record**, so a colleague cannot open anybody
+  else's. The claim is refuted.
+
+  What is true is narrower and still worth fixing: the entire protection rested on those
+  nineteen rows being correct and complete — one deleted row away from being gone — and an
+  employee could edit their **own** cost-to-company, because self-service write sat at level 0
+  with nothing above it. And **no field in that group holds data today**, which is exactly the
+  right moment to put a level above it: before somebody types a bank account into a field with
+  no protection.
+
+### Added
+
+- **Ten Employee fields moved to permlevel 1** — cost to company, salary currency and mode,
+  the healthcare stipend, bank name, account number and IBAN, passport number, health details
+  and blood group — with `HR Manager` and `System Manager` granted that level. Not `HR User`:
+  all sixteen staff hold it, so granting it there is granting it to everybody.
+
+  The grant is a **patch calling `frappe.permissions.add_permission`, not a fixture**.
+  `Custom DocPerm` is the one table where this repo's fixture habit is dangerous —
+  `setup_custom_perms` copies the standard permission set wholesale the first time a doctype
+  is customised, and the six rows already on prod are not in this repo's fixture file.
+  Managing two new rows through a file that does not know about the other six is how the other
+  six get lost. `add_permission` is the framework's own API, calls `setup_custom_perms`
+  itself, and is a no-op when the rule exists.
+
+  `date_of_birth` is deliberately left at level 0: it is the one field in the group with real
+  data (16 of 16), its sensitivity is far below a bank account's, and raising it would hide it
+  from the person themselves.
+
+- **`HR Case Record` — the narrowest doctype in the app.** A dated note of a conversation, a
+  warning or a grievance. `HR Manager` and `System Manager` only, no export, no share, no web
+  view, no copy.
+
+  **"Conversation" is the first option and a first-class one.** Most of what belongs in a
+  personnel file is a conversation somebody wanted a dated note of, and a form offering only
+  *written warning* and *final warning* is one people avoid until things are already bad — at
+  which point there is no earlier record showing anybody tried.
+
+  The summary field's own description sets the standard: **written for the person it is about
+  to read back**. Anything you would not say to their face does not belong in a record they
+  can be shown in a tribunal — and notes written to be defensible are notes that say nothing.
+  Their response is recorded verbatim if they give one, because a file with only one side of
+  it is worth less, not more. Nobody can file their own: the two people holding `HR Manager`
+  are also employees, so that is reachable rather than theoretical.
+
+- **`Policy Acknowledgement` — "I have read it and I agree", with a name and a date on it.**
+  The training module can already push the handbook out as a document lesson and records that
+  each person **opened and read** it. That is a page-view, and it is materially weaker than an
+  agreement: the evidentiary value is the person saying yes, which a scroll position cannot
+  show. It is an HR record rather than a lesson block, which also means a policy that lives in
+  Drive — where the handbook actually is — can be acknowledged without first being rebuilt as
+  a course.
+
+  The typed name is **compared against their own**. Not as a security control, since anybody
+  logged in as them could type it, but because the failure it catches is *somebody else's*
+  name being typed — a manager helpfully signing on their behalf. That is real, common, the
+  one thing that makes the register worthless, and invisible afterwards. The match is exact
+  after casefolding and punctuation-stripping: every leniency that lets "J Griffin" through
+  also lets a colleague's surname through. The name is **not prefilled on the form**, because
+  a prefilled name is a name nobody typed and typing it is the act being recorded.
+
+  **Declining is offered as plainly as signing, and recorded.** A register that only accepts
+  yes is a register that gets a yes, and a refusal with a reason is far more use to whoever
+  has to deal with it than a row that simply never got filled in. Declines go to HR
+  immediately. Version is part of the identity, because "he signed the handbook" says nothing
+  about which handbook and the version people argue about is the one that changed.
+
+- **A weekly nudge for the emergency contact nobody has.** Verified on prod:
+  `emergency_phone_number` is empty for **all sixteen** active employees, on a field that has
+  existed the whole time. Nothing had ever asked — which is this release's shape in miniature.
+  It asks **them** rather than reporting a number to HR, because the only person who can fill
+  it in is the person whose contact it is, and it writes only to the people who are missing
+  one.
+
 ## [1.391.0] - 2026-09-11
 
 **WI-073 D — confined space, lockout/tagout, and working alone.** The highest legal exposure

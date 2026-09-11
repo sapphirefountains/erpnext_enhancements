@@ -1,0 +1,200 @@
+{
+ "actions": [],
+ "allow_import": 0,
+ "allow_rename": 0,
+ "autoname": "naming_series:",
+ "naming_rule": "By \"Naming Series\" field",
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "icon": "fa fa-folder",
+ "index_web_pages_for_search": 0,
+ "field_order": [
+  "naming_series",
+  "employee",
+  "employee_name",
+  "case_type",
+  "column_break_head",
+  "occurred_on",
+  "raised_by",
+  "status",
+  "what_section",
+  "present",
+  "summary",
+  "column_break_what",
+  "agreed",
+  "follow_up_on",
+  "evidence_section",
+  "attachment",
+  "employee_acknowledged",
+  "acknowledged_on",
+  "employee_comment"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Case",
+   "options": "HR-CASE-.YYYY.-.####",
+   "reqd": 1,
+   "default": "HR-CASE-.YYYY.-.####",
+   "print_hide": 1
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "About",
+   "options": "Employee",
+   "reqd": 1,
+   "in_list_view": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "label": "Name",
+   "read_only": 1,
+   "fetch_from": "employee.employee_name",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "case_type",
+   "fieldtype": "Select",
+   "label": "Kind",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "options": "Conversation\nWritten warning\nFinal warning\nGrievance raised\nInvestigation\nOther",
+   "description": "“Conversation” is a real and useful entry, not a lesser one. Most of what belongs here is a conversation somebody wants a dated note of."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "occurred_on",
+   "fieldtype": "Date",
+   "label": "When",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "raised_by",
+   "fieldtype": "Link",
+   "label": "Raised by",
+   "options": "User",
+   "read_only": 1,
+   "description": "Who filed it. Stamped on insert and never editable — a dated record whose author can be changed is not a record."
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Open\nClosed",
+   "default": "Open",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "what_section",
+   "fieldtype": "Section Break",
+   "label": "What was said"
+  },
+  {
+   "fieldname": "present",
+   "fieldtype": "Small Text",
+   "label": "Who was present",
+   "description": "Names, plainly. The first thing anybody asks about a warning is who else was in the room."
+  },
+  {
+   "fieldname": "summary",
+   "fieldtype": "Text",
+   "label": "What was said",
+   "reqd": 1,
+   "description": "Written for the person it is about to read back. Anything you would not say to their face does not belong in a record they can be shown in a tribunal."
+  },
+  {
+   "fieldname": "column_break_what",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "agreed",
+   "fieldtype": "Text",
+   "label": "What was agreed",
+   "description": "The half that makes the record useful later. A warning with no agreed next step is a warning nobody can follow up."
+  },
+  {
+   "fieldname": "follow_up_on",
+   "fieldtype": "Date",
+   "label": "Follow up on"
+  },
+  {
+   "fieldname": "evidence_section",
+   "fieldtype": "Section Break",
+   "label": "Attachments"
+  },
+  {
+   "fieldname": "attachment",
+   "fieldtype": "Attach",
+   "label": "Document"
+  },
+  {
+   "fieldname": "employee_acknowledged",
+   "fieldtype": "Check",
+   "label": "They have seen it",
+   "default": "0"
+  },
+  {
+   "fieldname": "acknowledged_on",
+   "fieldtype": "Date",
+   "label": "Seen on"
+  },
+  {
+   "fieldname": "employee_comment",
+   "fieldtype": "Small Text",
+   "label": "Their response",
+   "description": "Recorded verbatim if they give one. A file with only one side of it is worth less, not more."
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "HR Case Record",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 0,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 0,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 0,
+   "email": 1,
+   "export": 0,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 0,
+   "write": 1
+  }
+ ],
+ "search_fields": "employee_name,case_type,occurred_on",
+ "sort_field": "occurred_on",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "employee_name",
+ "track_changes": 1,
+ "track_seen": 1,
+ "allow_copy": 0,
+ "max_attachments": 5
+}

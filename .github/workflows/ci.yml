@@ -765,6 +765,17 @@ jobs:
       # the half of the annual inspection everybody gets wrong.
       - name: HR confined space (the permit, the lockout, the lone worker)
         run: python -m unittest erpnext_enhancements.tests.test_hr_confined_space -v
+      # The private half of an HR file. The finding that prompted it was HALF WRONG
+      # and the correction is the useful part: all 119 Employee fields sat at
+      # permlevel 0 with the Employee role holding read AND write, but 19 User
+      # Permission rows scope each person to their own record -- so a colleague
+      # cannot read anybody else's. What was true is that the whole protection rested
+      # on those nineteen rows, and somebody could edit their OWN cost-to-company.
+      # Also pins that the HR Case Record is the narrowest doctype in the app (two
+      # roles, no export, no share) and that a policy signature is something the
+      # person actually did.
+      - name: HR personnel file (permlevels, case records, policy signatures)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_personnel_file -v
       # Can somebody who is not a developer start a course? The visual editor
       # shipped in v1.364.0 with NO entry point anywhere -- grepping for
       # "training-canvas" outside its own directory returned two CHANGELOG lines
