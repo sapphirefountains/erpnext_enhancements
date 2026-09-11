@@ -44,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   renumbers only what it was given. It now waits for the flush, after which every lesson has a
   real name.
 
+- **`_strip_js_comments` in the canvas test suite only dropped lines that *started* with a line
+  comment**, so a trailing one kept the very token it was warning about — and every absence
+  assertion built on it was weaker than it looked. Now quote-aware and drops trailing comments,
+  with a meta-test of its own. Seventh occurrence of that trap class in this project.
 - **A tab closed within the autosave debounce lost the work, with no prompt.** The debounce is
   1200 ms and the canvas had no `beforeunload` guard at all. It now attempts a save and warns.
 

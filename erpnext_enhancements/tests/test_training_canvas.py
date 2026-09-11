@@ -36,19 +36,55 @@ CANVAS_JSON = APP / "training/page/training_canvas/training_canvas.json"
 
 
 def _strip_js_comments(src):
+    """Strip block comments AND line comments, including TRAILING ones.
+
+    The previous version only dropped lines whose stripped text STARTED with a line
+    comment, so a trailing one kept the very word it was warning about -- and every
+    absence assertion built on this helper was weaker than it looked. That is the
+    seventh time this repo has been bitten by an assertion matching its own
+    explanation.
+
+    Quote-aware, so a comment marker inside a string or a URL survives. Not a full
+    JS parser (it does not model regex literals), but this file contains none and the
+    failure direction is safe: an unstripped comment can only make an absence
+    assertion stricter, never looser.
+    """
     out, in_block = [], False
     for line in src.splitlines():
-        stripped = line.strip()
         if in_block:
-            if "*/" in stripped:
+            if '*/' in line:
                 in_block = False
-            continue
-        if stripped.startswith("/*"):
-            in_block = "*/" not in stripped
-            continue
-        if stripped.startswith("//"):
-            continue
-        out.append(line)
+                line = line.split('*/', 1)[1]
+            else:
+                continue
+        kept, quote, i = [], None, 0
+        while i < len(line):
+            ch = line[i]
+            if quote:
+                kept.append(ch)
+                if ch == "\\" and i + 1 < len(line):
+                    kept.append(line[i + 1])
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = None
+            elif ch in "\"'`":
+                quote = ch
+                kept.append(ch)
+            elif ch == '/' and i + 1 < len(line) and line[i + 1] == '/':
+                break
+            elif ch == '/' and i + 1 < len(line) and line[i + 1] == '*':
+                rest = line[i + 2:]
+                if '*/' in rest:
+                    line = rest.split('*/', 1)[1]
+                    i = -1
+                else:
+                    in_block = True
+                    break
+            else:
+                kept.append(ch)
+            i += 1
+        out.append(''.join(kept))
     return "\n".join(out)
 
 
@@ -421,6 +457,88 @@ class TestTranscriptIsNoLongerUnreachable(unittest.TestCase):
     def test_there_is_somewhere_to_type_it(self):
         """An allowlist entry with no control is still unreachable."""
         self.assertIn('set_lesson_field(lesson, "transcript"', _canvas())
+
+
+class TestTheCommentStripperItself(unittest.TestCase):
+    """A meta-test, and it earns its place: every absence assertion in this file
+    depends on the stripper, and the previous version only dropped lines that
+    STARTED with a line comment. A trailing one kept the very token it warned about.
+    """
+
+    def test_a_trailing_comment_is_dropped(self):
+        self.assertNotIn("bar", _strip_js_comments("foo(); // never call bar()"))
+
+    def test_a_url_inside_a_string_survives(self):
+        kept = _strip_js_comments('const u = "https://example.com/x"; // note')
+        self.assertIn("https://example.com/x", kept)
+        self.assertNotIn("note", kept)
+
+    def test_an_inline_block_comment_is_dropped(self):
+        self.assertNotIn("gone", _strip_js_comments("a /* gone */ b"))
+
+
+class TestTheFlushDrainsTheQueue(unittest.TestCase):
+    """`_inflight` must settle only once the queue has DRAINED. Keystrokes typed
+    during an in-flight save land in `this.dirty`, and handing them to `mark_dirty()`
+    puts them behind the 1200 ms debounce while the promise resolves — so a caller
+    awaiting the flush is told the work is stored while the last keystrokes sit in a
+    timer. The pin writer and the preview both depend on this being honest.
+    """
+
+    def test_the_success_path_chains_rather_than_rearming(self):
+        src = _canvas()
+        at = src.index("this._inflight = frappe")
+        block = src[at : at + 1600]
+        self.assertIn("return this.save().then(", block)
+
+    def test_it_does_not_rearm_the_debounce_on_success(self):
+        src = _canvas()
+        at = src.index("this._inflight = frappe")
+        block = src[at : src.index(".catch(", at)]
+        self.assertNotIn("this.mark_dirty()", block)
+
+
+class TestTheChapterControlIsAlwaysOffered(unittest.TestCase):
+    def test_it_is_not_gated_on_having_chapters(self):
+        """Gating it on `this.chapters.length` is what made chapters unreachable:
+        no chapters meant no control, and the control was the only place they were
+        mentioned."""
+        src = _canvas()
+        at = src.index("render_lesson_settings()")
+        block = src[at : at + 3000]
+        self.assertNotIn("if (this.chapters.length) {", block)
+
+    def test_there_is_an_escape_hatch_when_there_are_none(self):
+        self.assertIn("tc-add-chapter", _canvas())
+
+
+class TestTheTabletCase(unittest.TestCase):
+    def test_backgrounding_saves_rather_than_prompts(self):
+        """A tablet locking mid-edit on site fires visibilitychange, not
+        beforeunload — and a prompt on a backgrounding tab is one nobody sees."""
+        src = _canvas()
+        self.assertIn("visibilitychange", src)
+        at = src.index("visibilitychange")
+        self.assertIn("this.save()", src[at : at + 300])
+
+
+class TestTheTranscriptLoaderRefusesUntimedText(unittest.TestCase):
+    def test_it_checks_for_cue_timings(self):
+        """Without them, AI checkpoint drafting has nothing to place a question
+        against and refuses later with no clue why."""
+        src = _canvas()
+        self.assertIn("load_vtt(lesson)", src)
+        at = src.index("load_vtt(lesson) {")
+        self.assertIn("-->", src[at : at + 1600])
+
+    def test_it_reads_locally_rather_than_uploading(self):
+        """A round trip through File storage leaves a second copy nobody maintains
+        beside the one that is actually read."""
+        src = _canvas()
+        at = src.index("load_vtt(lesson) {")
+        block = src[at : at + 1600]
+        self.assertIn("FileReader", block)
+        self.assertNotIn("upload_file", block)
 
 
 if __name__ == "__main__":

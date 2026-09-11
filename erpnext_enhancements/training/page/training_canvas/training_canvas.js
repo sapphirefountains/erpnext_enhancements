@@ -160,6 +160,12 @@ class TrainingCanvas {
 			return "";
 		};
 		$(window).on("beforeunload.training_canvas", this._unload);
+		// A tablet locking mid-edit on site is the common case here, and it fires
+		// visibilitychange rather than beforeunload. Save, never prompt -- a prompt on
+		// a backgrounding tab is one nobody sees.
+		$(document).on("visibilitychange.training_canvas", () => {
+			if (document.visibilityState === "hidden" && this.has_dirty()) this.save();
+		});
 	}
 
 	reset() {
@@ -463,6 +469,40 @@ class TrainingCanvas {
 		});
 	}
 
+	load_vtt(lesson) {
+		// Read LOCALLY, never uploaded. The transcript is a lesson field; a round trip
+		// through File storage would leave a second copy nobody maintains beside the one
+		// that is actually read. Same reasoning as the classic builder.
+		const input = document.createElement("input");
+		input.type = "file";
+		input.accept = ".vtt,text/vtt";
+		input.onchange = () => {
+			const file = (input.files && input.files[0]) || null;
+			if (!file) return;
+			const reader = new FileReader();
+			reader.onload = () => {
+				const text = String(reader.result || "");
+				if (!/-->/.test(text)) {
+					// Refuse rather than accept it silently: without cue timings AI
+					// checkpoint drafting has nothing to place a question against, and it
+					// would refuse later with no clue why.
+					frappe.msgprint({
+						title: __("That is not a timed transcript"),
+						indicator: "red",
+						message: __(
+							"A .vtt carries cue timings (00:01:02.000 --> 00:01:06.000). Without them checkpoint drafting has nothing to place a question against and will refuse."
+						),
+					});
+					return;
+				}
+				this.set_lesson_field(lesson, "transcript", text);
+				this.render_lesson_settings();
+			};
+			reader.readAsText(file);
+		};
+		input.click();
+	}
+
 	// -------------------------------------------------------------- chapters
 	open_chapters() {
 		"use strict";
@@ -556,13 +596,22 @@ class TrainingCanvas {
 		$summary.on("input", () => this.set_lesson_field(lesson, "summary", $summary.val()));
 		field(__("Summary"), $summary);
 
-		if (this.chapters.length) {
+		// Rendered ALWAYS. Gating it on `this.chapters.length` is what made chapters
+		// unreachable: no chapters meant no control, and the control was the only place
+		// they were mentioned, so a canvas-authored course could never leave Unfiled.
+		{
 			const $ch = $('<select class="form-control"></select>');
 			$('<option value=""></option>').text(__("Unfiled")).appendTo($ch);
 			this.chapters.forEach((c) => $("<option></option>").attr("value", c.chapter_key).text(c.chapter_title).appendTo($ch));
 			$ch.val(lesson.chapter_key || "");
 			$ch.on("change", () => { this.set_lesson_field(lesson, "chapter_key", $ch.val()); this.render_rail(); });
 			field(__("Chapter"), $ch);
+			if (!this.chapters.length && ed) {
+				$('<button class="btn btn-xs btn-default tc-add-chapter"></button>')
+					.text(__("Add a chapter"))
+					.on("click", () => this.open_chapters())
+					.appendTo(this.$lessonset);
+			}
 		}
 
 		// Reachable at last -- see TC_LESSON_FIELDS. The server has allowlisted and
@@ -574,6 +623,12 @@ class TrainingCanvas {
 			.attr("placeholder", __("Plain text, or WebVTT cues if you have them."));
 		$tr.on("input", () => this.set_lesson_field(lesson, "transcript", $tr.val()));
 		field(__("Transcript"), $tr);
+		if (ed) {
+			$('<button class="btn btn-xs btn-default tc-vtt"></button>')
+				.text(__("Load a .vtt"))
+				.on("click", () => this.load_vtt(lesson))
+				.appendTo(this.$lessonset);
+		}
 
 		const $min = $('<input type="number" min="0" class="form-control" />').val(num(lesson.estimated_minutes));
 		$min.on("input", () => this.set_lesson_field(lesson, "estimated_minutes", num($min.val())));
@@ -1303,7 +1358,14 @@ class TrainingCanvas {
 				this.adopt_created(state.created_lessons);
 				this.report_rejected(state.rejected);
 				this.paint_status(this.has_dirty() ? "dirty" : "saved");
-				if (this.has_dirty()) this.mark_dirty();
+				// CHAIN, do not re-arm. Keystrokes typed during an in-flight save land in
+				// `this.dirty`, and handing them to `mark_dirty()` puts them behind the
+				// 1200ms debounce while this promise resolves -- so a caller awaiting
+				// flush_save() is told the work is stored when the last keystrokes are
+				// still sitting in a timer. `_inflight` must settle only once the queue
+				// has DRAINED, which is the whole contract the pin writer and the preview
+				// depend on.
+				if (this.has_dirty()) return this.save().then(() => state);
 				return state;
 			})
 			.catch((error) => {

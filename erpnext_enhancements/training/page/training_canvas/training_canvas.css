@@ -790,3 +790,11 @@
 .tc-chapter-row input {
 	flex: 1 1 auto;
 }
+
+/* Two small affordances in the lesson settings panel (WI-074 S1): the escape hatch
+   when a course has no chapters yet, and the .vtt loader beside the transcript. */
+.tc-add-chapter,
+.tc-vtt {
+	align-self: flex-start;
+	margin: 2px 0 8px 0;
+}
