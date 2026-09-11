@@ -170,6 +170,45 @@ def create_draft_version(course, change_type=None):
     return draft.name
 
 
+def _reap_orphan_checkpoints(lesson):
+    """Delete checkpoints whose block no longer exists on this lesson.
+
+    A checkpoint is a TOP-LEVEL document keyed on `block_key`, so removing a block
+    strands it: `_apply_blocks` replaces the child table wholesale and
+    `Training Lesson.on_trash` cascades only when the whole LESSON goes. The classic
+    builder deleted them client-side; the canvas does not, and cannot -- it does not
+    model checkpoints at all. Doing it server-side fixes both editors and any direct
+    API call at once.
+
+    Called after `lesson.save()` so the block table has been through validate and any
+    key minted by `_assign_block_keys` is already present -- reading it before the save
+    would reap a block that was about to get a key.
+
+    Filtered in Python, not with a `["not in", ...]` SQL filter: db_query coalesces the
+    column, so an empty key set compiles to `NOT IN ('')` and matches everything. The
+    row count here is a handful.
+
+    Deletes WITHOUT force. A checkpoint still referenced by an answered attempt is
+    exactly the one that must not vanish, so a LinkExistsError is logged and skipped
+    rather than overridden.
+    """
+    live = {(row.block_key or "").strip() for row in lesson.blocks or []}
+    live.discard("")
+    rows = frappe.get_all(
+        "Training Checkpoint", filters={"lesson": lesson.name}, fields=["name", "block_key"]
+    )
+    for row in rows:
+        if (row.block_key or "").strip() in live:
+            continue
+        try:
+            frappe.delete_doc("Training Checkpoint", row.name, ignore_permissions=True)
+        except frappe.LinkExistsError:
+            frappe.log_error(
+                f"Checkpoint {row.name} is orphaned on lesson {lesson.name} but is still"
+                " referenced, so it was kept. Its block was removed from the lesson.",
+                "Training checkpoint reap",
+            )
+
 def _clone_lessons(from_version, to_version):
     """Deep-copy lessons, blocks and checkpoints, keeping every stable key."""
     for name in frappe.get_all("Training Lesson", filters={"course_version": from_version}, pluck="name"):
@@ -191,8 +230,19 @@ def _clone_lessons(from_version, to_version):
             target.block_key = origin.block_key
         clone.insert(ignore_permissions=True)
 
+        # Checkpoints hang off `block_key`, and a checkpoint whose block is gone is
+        # an orphan. Carrying it into the clone is how one stranded row breeds across
+        # every later version: `_split_lesson` then emits a checkpoint_count and an
+        # ANSWER KEY entry for a block no payload contains. This is the only function
+        # that touches a PUBLISHED version's checkpoints, so the guard has to be here
+        # as well as on the draft save path -- save_draft_version refuses anything that
+        # is not docstatus 0 and can never reach them.
+        live_keys = {(row.block_key or "").strip() for row in clone.blocks or []}
+        live_keys.discard("")
         for cp_name in frappe.get_all("Training Checkpoint", filters={"lesson": name}, pluck="name"):
             cp_source = frappe.get_doc("Training Checkpoint", cp_name)
+            if (cp_source.block_key or "").strip() not in live_keys:
+                continue
             cp = frappe.copy_doc(cp_source, ignore_no_copy=False)
             cp.lesson = clone.name
             cp.checkpoint_key = cp_source.checkpoint_key
@@ -1484,6 +1534,7 @@ def save_draft_version(course_version, payload, modified=None):
         lesson, is_new = _load_or_new_lesson(doc, patch)
         _apply_lesson(lesson, patch, rejected)
         lesson.save(ignore_permissions=True)
+        _reap_orphan_checkpoints(lesson)
         saved.append(lesson.name)
         if is_new:
             created.append({"temp_id": patch.get("temp_id") or "", "name": lesson.name})

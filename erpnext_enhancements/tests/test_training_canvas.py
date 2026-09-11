@@ -304,5 +304,40 @@ class TestCanvasWritesLegalSelectValues(unittest.TestCase):
             unknown, [], f"canvas branches on block types {unknown} which the DocType does not declare"
         )
 
+class TestTheEditorDoesNotTransformOnTheRenderPath(unittest.TestCase):
+    """v1.396.0. The canvas is an edit-in-place surface, so the render path IS the
+    write path: blocks.js assigns `html` to innerHTML, wire_inline_edit makes that
+    node contenteditable, and its input handler writes `body.innerHTML` back to
+    `block.content`. `frappe.utils.xss_sanitise` escapes rather than sanitises, so
+    running it on the way out persisted `&lt;p&gt;` into the lesson on the first
+    keystroke and compounded on every later edit.
+
+    Comment-stripped, because the comment explaining the absence names the token --
+    the trap this repo has now hit four times.
+    """
+
+    def test_rich_text_is_handed_to_the_renderer_untransformed(self):
+        src = _canvas()
+        self.assertIn('html: block.content || ""', src)
+        self.assertNotIn("xss_sanitise(block.content", src)
+
+    def test_the_accordion_escape_is_deliberately_kept(self):
+        """NOT the same call site. Accordion bodies live in `data`, fieldtype Code,
+        and frappe's `_sanitize_content` explicitly skips Code -- so there the escape
+        is the only protection there is, and nothing writes back to it. Removing it
+        as tidy-up would be a real security regression, so it is pinned."""
+        self.assertIn("xss_sanitise(String(p.body", _canvas())
+
+    def test_no_other_transform_crept_onto_the_render_path(self):
+        """sanitize_html, DOMParser and remove_script_and_style would each be lossy
+        in their own way. Identity is the only non-lossy option on this path."""
+        src = _canvas()
+        at = src.index("to_render_block(block)")
+        block = src[at : at + 900]
+        for banned in ("sanitize_html", "DOMParser", "remove_script_and_style"):
+            with self.subTest(transform=banned):
+                self.assertNotIn(banned, block)
+
+
 if __name__ == "__main__":
     unittest.main()

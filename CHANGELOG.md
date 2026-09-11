@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.395.2] - 2026-09-11
+
+### Fixed
+
+- **The visual canvas corrupted a lesson's rich text on every edit.** `to_render_block` ran stored
+  HTML through `frappe.utils.xss_sanitise` — which *escapes* rather than sanitises — and the result
+  was handed to `blocks.js`, assigned to `innerHTML`, made `contenteditable`, and written straight
+  back to `block.content` by the input handler. **On an edit-in-place surface the render path is the
+  write path**, so one keystroke persisted `&lt;p&gt;` into the lesson and the damage compounded on
+  every later edit. Now handed to the renderer untransformed.
+
+  Safety is not lost and was never resting here: `content` is a Text Editor field, so the server
+  runs nh3 on every save, and `_split_lesson` sanitises again at publish. `blocks.js` already stated
+  the contract — sanitising is a server responsibility precisely because a client cannot be trusted
+  to have done it, and a second client-side definition of "safe" is a weaker one. The identical fix,
+  with the identical reasoning, is already in `visit_wizard.js`.
+
+  It was invisible from every direction: `_sanitize_content` short-circuits when a value contains no
+  literal `<` or `>` (entity soup contains neither), `sanitize_html` returns early when BeautifulSoup
+  finds no element, and none of the 27 canvas tests did a rich-text round trip. **Verified against
+  production before shipping: 430 content blocks, none corrupted.** Three contain `&lt;` and all
+  three are correct — a `<code>` sample showing a `/app/<name>` placeholder, authored that way. So
+  no repair patch ships, deliberately: un-escaping those three would turn a documented placeholder
+  into a live tag, which is the damage the repair was meant to undo. The sibling escape on Accordion
+  panel bodies is **kept** and now pinned by a test — those live in `data`, fieldtype Code, which
+  `_sanitize_content` explicitly skips, so there it is the only protection there is.
+
+- **Removing a block on the canvas stranded its checkpoints, and they bred across versions.** A
+  `Training Checkpoint` is a top-level document keyed on `block_key`; `_apply_blocks` replaces the
+  child table wholesale and `Training Lesson.on_trash` cascades only when the whole lesson goes. The
+  classic builder deleted them client-side, the canvas did not — and cannot, since it does not model
+  checkpoints at all. Now reaped server-side after `lesson.save()`, which fixes both editors and any
+  direct API call at once. Reaped in `_clone_lessons` too: `save_draft_version` refuses anything that
+  is not `docstatus 0`, so it can never reach a published version's checkpoints, and without that
+  second guard one stranded row propagated into every later version — where `_split_lesson` then
+  emitted a checkpoint count *and an answer-key entry* for a block no payload contained.
+
+  Filtered in Python rather than with a `["not in", ...]` SQL filter, because `db_query` coalesces
+  the column and an empty key set compiles to `NOT IN ('')`, matching everything — the same shape as
+  the PAD SPACE traps. Deleted **without** `force`: a checkpoint still referenced by an answered
+  attempt is exactly the one that must not vanish, so a `LinkExistsError` is logged and skipped.
+
+- **Cancelling a `Training Session` left every attendee holding a Valid certification.**
+  `TrainingCompletion.before_cancel` refuses a withdrawal that carries no reason, and nothing set
+  one — so `cancel()` threw, the surrounding `except` swallowed it into an Error Log, and the
+  session read Canceled while the certifications it minted stayed `docstatus 1`, `status Valid`, for
+  a talk the company had formally said did not happen. The reason the gate asks for is now written
+  rather than the gate bypassed, since that reason is the thing somebody reads later. An existing
+  reason is never overwritten.
+
 ## [1.395.1] - 2026-09-11
 
 ### Fixed

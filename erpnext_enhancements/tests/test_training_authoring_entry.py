@@ -225,5 +225,78 @@ class TestTheGalleryIsReachable(unittest.TestCase):
         self.assertIn(".text(starter.blurb)", body)
 
 
+class TestOrphanedCheckpointsAreReaped(unittest.TestCase):
+    """v1.396.0. A Training Checkpoint is a TOP-LEVEL document keyed on `block_key`,
+    so removing a block strands it: `_apply_blocks` replaces the child table wholesale
+    and `Training Lesson.on_trash` cascades only when the whole lesson goes. The
+    classic builder deleted them client-side; the canvas does not and cannot, since it
+    does not model checkpoints at all.
+    """
+
+    AUTHOR_PY = Path(__file__).resolve().parents[1] / "api/training_author.py"
+
+    def _src(self):
+        return self.AUTHOR_PY.read_text(encoding="utf-8")
+
+    def _fn_src(self, name):
+        """Source of one function, DOCSTRING STRIPPED.
+
+        Every assertion below that checks a token is ABSENT would otherwise match
+        the docstring explaining why it is absent -- the trap this repo has now hit
+        five times. Strip the prose, assert on the code.
+        """
+        src = self._src()
+        lines = src.splitlines()
+        for node in ast.walk(ast.parse(src)):
+            if isinstance(node, ast.FunctionDef) and node.name == name:
+                body = node.body
+                if (
+                    body
+                    and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)
+                ):
+                    body = body[1:]
+                if not body:
+                    return ""
+                return "\n".join(lines[body[0].lineno - 1 : node.end_lineno])
+        raise AssertionError(f"{name} not found")
+
+    def test_the_reaper_exists_and_runs_after_the_save(self):
+        """After, not before: `_assign_block_keys` can mint a key during validate, so
+        reading the table before the save would reap a block about to get one."""
+        body = self._fn_src("save_draft_version")
+        self.assertIn("_reap_orphan_checkpoints(lesson)", body)
+        self.assertLess(
+            body.index("lesson.save(ignore_permissions=True)"),
+            body.index("_reap_orphan_checkpoints(lesson)"),
+        )
+
+    def test_it_filters_in_python_not_in_sql(self):
+        """db_query coalesces the column, so an empty key set compiles to
+        `NOT IN ('')` and matches every row -- the same shape as the PAD SPACE traps."""
+        body = self._fn_src("_reap_orphan_checkpoints")
+        self.assertNotIn('"not in"', body)
+        self.assertIn("block_key", body)
+
+    def test_it_does_not_force_the_delete(self):
+        """A checkpoint still referenced by an answered attempt is exactly the one
+        that must not vanish. LinkExistsError is logged and skipped, not overridden."""
+        body = self._fn_src("_reap_orphan_checkpoints")
+        self.assertNotIn("force=1", body)
+        self.assertNotIn("force=True", body)
+        self.assertIn("LinkExistsError", body)
+
+    def test_the_clone_path_refuses_to_carry_an_orphan_forward(self):
+        """`save_draft_version` refuses anything that is not docstatus 0, so it can
+        never reach a published version's checkpoints. `_clone_lessons` is the only
+        function that touches them, and without a guard one stranded row breeds into
+        every later version."""
+        body = self._fn_src("_clone_lessons")
+        self.assertIn("live_keys", body)
+        at = body.index("Training Checkpoint")
+        self.assertIn("continue", body[at : at + 600])
+
+
 if __name__ == "__main__":
     unittest.main()

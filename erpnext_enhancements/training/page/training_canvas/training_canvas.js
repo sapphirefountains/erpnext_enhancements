@@ -599,7 +599,22 @@ class TrainingCanvas {
 				block_key: block.block_key,
 				type: block.block_type,
 				heading: block.heading || "",
-				html: frappe.utils.xss_sanitise(block.content || ""),
+				// NOT sanitised here, deliberately. This is an EDITING surface, and on an
+				// edit-in-place surface the render path IS the write path: blocks.js assigns
+				// this string to innerHTML, wire_inline_edit makes that node contenteditable,
+				// and its input handler writes `body.innerHTML` straight back to `block.content`.
+				// `frappe.utils.xss_sanitise` ESCAPES rather than sanitises, so running it here
+				// meant one keystroke persisted `&lt;p&gt;` into the lesson, compounding on every
+				// later edit. Invisible downstream twice over: `_sanitize_content` short-circuits
+				// when a value holds no literal < or >, and `sanitize_html` returns early when
+				// BeautifulSoup finds no element. Safety is not lost -- `content` is a Text Editor
+				// field, so the server runs nh3 on every save and `_split_lesson` sanitises again
+				// at publish. A third client-side copy is not a second line of defence, it is the
+				// corruption; same fix and same reasoning as visit_wizard.js. The sibling call in
+				// interactive_keys() STAYS: Accordion bodies live in `data`, fieldtype Code, which
+				// `_sanitize_content` explicitly skips -- there the escape is the only protection,
+				// and nothing ever writes back to it.
+				html: block.content || "",
 				caption: block.caption || "",
 				image: block.image || "",
 				file: block.file || "",
