@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.388.0] - 2026-09-11
+
+### Fixed
+
+- **The Receipt / Expense posting path could never have run.** `extraction.py` proposed
+  `Create Expense Claim` for every `Receipt / Expense`, and `Expense Claim` is an **hrms**
+  doctype. hrms is not installed on this site and cannot simply be installed — it collides
+  with this app's `HR` module label and six `Training *` doctype names — so
+  `frappe.new_doc("Expense Claim")` raised a bare `DoesNotExistError`, the dispatcher's broad
+  `except` turned it into a generic **Failed** with a truncated traceback, and **each pass
+  burned a retry attempt against `retry_limit`**. The reviewer saw a failure that named
+  nothing.
+
+  It had never actually fired. Verified against prod 2026-09-11: `tabDocument Intake` is
+  empty, and both `Expense Claim` and `Expense Claim Type` are absent. The first person to
+  push a receipt through would have been the one to find it.
+
+  `travel_management/api.py::_require_hrms` has guarded this exact situation for releases —
+  its docstring says outright that it exists so `frappe.new_doc("Expense Claim")` does not
+  raise a raw `DoesNotExistError` — and the intake handler simply never got the same
+  treatment. It has it now, **and the proposal moved to where it can be understood**:
+  extraction no longer offers an action this site cannot post, so the problem surfaces at the
+  point of choice rather than at the point of Approve.
+
+- **A receipt now becomes a draft Purchase Invoice against the employee's reimbursement
+  Supplier**, which is how this company already records the transaction. QuickBooks models
+  employee reimbursement as a vendor bill, prod carries seven Suppliers for it, and
+  `accounting_intake/actions/vendor_bill.py` already knew how to build that shape — its
+  standalone builder is now shared rather than copied, with an explicit `supplier` override.
+
+  **The override is the point, not a convenience.** On a reimbursement the intake's party is
+  the *merchant* — the hardware store on the receipt — while the bill is raised against the
+  *employee's* reimbursement Supplier. Defaulting to `doc.party` and trusting the caller to
+  remember is how a receipt becomes a bill payable to the shop instead of to the person who
+  paid for it out of their own pocket. The merchant is preserved in `remarks`.
+
+- **The Supplier is resolved from an explicit link, never from its name — and that is the
+  decision this change turns on.** The seven on prod are `Jesse Griffin Reimbursement`,
+  `Danny Rosser Reimbursement`, `Employee Clegg Mabey Reimbursement`,
+  `Nathan Cox Reimbursement`, `Lisa Symanski Reimbursement`, `Lian Silva Reimbursement` and
+  `Logan Penrod Employee Reimbursement`: **three different naming shapes**, and two that do
+  not contain their Employee's name as stored — `Danny Rosser` is Employee *Daniel Rosser*,
+  `Lian Silva` is Employee *Lian Jentz Da Silva*. Nine of the sixteen staff have none at all.
+
+  Matching on the name was the obvious route and it is the wrong one, for a reason worth
+  keeping: there are **1,180 Suppliers** on this site. A near-match that lands on a real
+  vendor does not fail — it quietly makes that vendor the destination for somebody's
+  out-of-pocket receipts, and the resulting Purchase Invoice looks entirely ordinary right up
+  until it is paid to the wrong company. A gap a human fills in costs a minute; a wrong link
+  is a payment. So `Employee.custom_reimbursement_supplier` holds the answer, and
+  `patches/link_reimbursement_suppliers.py` seeds only exact, unambiguous matches — **five of
+  the seven**, leaving the two nicknames for a person. It writes only where the field is
+  empty, so a correction is never overwritten on a later deploy.
+
+- **`_employee_for` could have reimbursed the wrong person.** It ended with
+  `frappe.db.get_value("Employee", {"status": "Active"}, "name")` — whichever row the
+  database handed back first — so a reviewer with no Employee record would have had the claim,
+  and now the bill, filed against an arbitrary colleague. A reimbursement raised to the wrong
+  person is a payment to the wrong person, and nothing about it looks unusual on the way
+  through. It returns `None` now, and both handlers turn that into a message saying what to
+  do.
+
+### Removed
+
+- **`enhancements_core/doctype/expense_claim_type/`**, a controller stub for a doctype that
+  does not exist here. `load_doctype_module` resolves through the DocType's own `module` field
+  (`frappe origin/version-16:frappe/modules/utils.py:291-299`), so this file was only ever
+  loadable if a DocType named `Expense Claim Type` declared module `Enhancements Core` —
+  nothing did, there was no JSON beside it, and hrms's own copy declares module `HR`.
+  `MODULE_PLAN.md` recorded exactly that in v1.47.0 and left the folder in place; it is now
+  gone, along with its line in `enhancements_core/README.md`. No data patch is needed, because
+  there is no record to delete.
+
+### Notes
+
+- The seeding runs as **both** a patch and an `after_migrate` hook. `custom_reimbursement_supplier`
+  is a fixture Custom Field and `sync_fixtures()` runs in `post_schema_updates()` — *after* the
+  post-model-sync patches — so on the migrate that introduces it the column does not exist when
+  the patch runs, and a patch that returns having done nothing still records itself in
+  `tabPatch Log` and never runs again. That trap has now bitten this app three times; the hook
+  runs after fixtures, is idempotent, and self-heals on every later deploy.
+- A new test fails the build on **any** selectable `proposed_action` with no registered
+  handler. An unhandled option is the quiet version of the same bug: the dispatcher logs
+  *"No handler for X"* and the document sits `Approved` for ever.
+
 ## [1.387.0] - 2026-09-11
 
 The first instalment of **WI-073**, which came out of asking what else the HR module should

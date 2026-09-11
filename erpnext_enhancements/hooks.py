@@ -1377,6 +1377,14 @@ after_migrate = [
 	# migrate that introduces the field, then record itself in Patch Log and never
 	# run again. Idempotent: writes only where custom_position is empty.
 	"erpnext_enhancements.patches.seed_positions_from_designations.map_employees_to_positions",
+	# accounting_intake: link each Employee to their reimbursement Supplier, which is
+	# how an out-of-pocket receipt becomes a draft Purchase Invoice on a site with no
+	# hrms. Here as well as in patches.txt for the same ordering reason as the line
+	# above: the column is a FIXTURE Custom Field, sync_fixtures() runs after the
+	# post-model-sync patches, and a patch that returns having done nothing still
+	# records itself in Patch Log and never runs again. Idempotent -- writes only
+	# where the field is empty, so a human's correction is never overwritten.
+	"erpnext_enhancements.patches.link_reimbursement_suppliers.link_reimbursement_suppliers",
 	# device_management (MDM/EMM): Employee "Assigned Devices" panel field
 	"erpnext_enhancements.device_management.setup.create_device_employee_fields",
 	# accounting_intake: Supplier Drive folder id (document filing)

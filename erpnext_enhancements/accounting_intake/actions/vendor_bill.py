@@ -25,7 +25,7 @@ def post_vendor_bill(doc):
 			doc.add_comment("Comment", f"Draft Purchase Receipt {pr_name} created from PO {po} (3-way match).")
 		pi_name = _make_pi_from_po(po, doc)
 	else:
-		pi_name = _standalone_pi(doc, company)
+		pi_name = build_standalone_pi(doc, company)
 	return "Purchase Invoice", pi_name
 
 
@@ -69,10 +69,24 @@ def _make_pi_from_po(po, doc):
 	return pi.name
 
 
-def _standalone_pi(doc, company):
+def build_standalone_pi(doc, company, supplier=None):
+	"""A draft Purchase Invoice built straight from the intake's own lines.
+
+	Public because ``receipt_expense`` builds the same shape for an employee
+	reimbursement -- QuickBooks records those as vendor bills, so the output really
+	is a Purchase Invoice and duplicating this builder would mean two places to fix
+	the next time the expense-account fallback or the no-lines case changes.
+
+	``supplier`` overrides ``doc.party`` for exactly that case, and the override is
+	the whole point rather than a convenience: on a reimbursement the intake's party
+	is the **merchant** -- the hardware store on the receipt -- while the bill is
+	raised against the **employee's reimbursement Supplier**. Defaulting to
+	``doc.party`` here and letting the caller forget is how a receipt becomes a bill
+	payable to the shop instead of to the person who paid for it.
+	"""
 	pi = frappe.new_doc("Purchase Invoice")
 	pi.company = company
-	pi.supplier = doc.party
+	pi.supplier = supplier or doc.party
 	pi.set_posting_time = 1
 	pi.posting_date = doc.document_date or today()
 	if doc.document_number:

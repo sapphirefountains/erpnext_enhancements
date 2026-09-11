@@ -26,6 +26,35 @@ _ACTION_BY_DOC = {
 	"Packing Slip": "Create Purchase Receipt",
 }
 
+
+def _action_for(document_type):
+	"""The action to propose, given what this site can actually post.
+
+	Only ``Receipt / Expense`` is conditional, and the condition is not cosmetic.
+	It used to propose ``Create Expense Claim`` unconditionally, and ``Expense
+	Claim`` is an **hrms** doctype that is not installed here — so the proposal was
+	selected by default, sat in the queue looking normal, and then failed at the
+	moment somebody pressed Approve, with a generic *Failed* and a truncated
+	traceback. It also burned a retry attempt against ``retry_limit`` each pass.
+
+	Proposing the reachable action instead moves the problem to where it can be
+	understood: **the point of choice, not the point of posting.** An accountant
+	looking at the queue sees what will actually happen.
+
+	Checked live rather than cached in a module constant, because a site can gain
+	hrms between two extractions and a constant resolved at import would keep
+	proposing the wrong one until the workers were restarted.
+	"""
+	if document_type != "Receipt / Expense":
+		return _ACTION_BY_DOC.get(document_type)
+
+	from erpnext_enhancements.accounting_intake.actions import receipt_expense
+
+	if receipt_expense.expense_claims_available():
+		return "Create Expense Claim"
+	return "Create Reimbursement Bill"
+
+
 # Extracted entity keys we look for, in priority order, per target field.
 _PARTY_KEYS = ["supplier_name", "customer_name", "vendor_name", "merchant_name", "receiver_name", "remitter_name"]
 _NUMBER_KEYS = ["invoice_id", "invoice_number", "document_number", "receipt_id", "payment_reference", "reference_number"]
@@ -92,7 +121,7 @@ def apply_extraction(doc, result):
 
 	doc.proposed_party_type = _PARTY_TYPE_BY_DOC.get(doc.document_type)
 	if not doc.proposed_action:
-		doc.proposed_action = _ACTION_BY_DOC.get(doc.document_type)
+		doc.proposed_action = _action_for(doc.document_type)
 
 	# Line items + Item resolution
 	doc.set("line_items", [])

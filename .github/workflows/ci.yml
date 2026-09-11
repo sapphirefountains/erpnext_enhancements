@@ -724,6 +724,17 @@ jobs:
       # never fire and the whitespace queries that passed vacuously.
       - name: HR progression (the route up the ladder, and the empty case)
         run: python -m unittest erpnext_enhancements.tests.test_hr_progression -v
+      # The Receipt / Expense posting path could never run: it proposed "Create
+      # Expense Claim" unconditionally, and Expense Claim is an hrms doctype that is
+      # not installed here, so approving one raised a bare DoesNotExistError that the
+      # dispatcher turned into a generic Failed -- burning a retry attempt each pass.
+      # Most of this suite pins the OTHER half: the employee's reimbursement Supplier
+      # is resolved from an explicit link and never matched by name. Prod has three
+      # naming shapes across seven of them, two that do not contain their Employee's
+      # name, and 1,180 Suppliers to collide with -- a near-match does not fail, it
+      # bills somebody's receipt to a real vendor and looks ordinary until it is paid.
+      - name: Intake reimbursement (the dead Expense Claim path, and why no name matching)
+        run: python -m unittest erpnext_enhancements.tests.test_intake_reimbursement -v
       # Can somebody who is not a developer start a course? The visual editor
       # shipped in v1.364.0 with NO entry point anywhere -- grepping for
       # "training-canvas" outside its own directory returned two CHANGELOG lines

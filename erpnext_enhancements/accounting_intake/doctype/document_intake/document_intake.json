@@ -274,7 +274,8 @@
    "fieldname": "proposed_action",
    "fieldtype": "Select",
    "label": "Proposed Action",
-   "options": "\nCreate Purchase Invoice\nCreate Purchase Receipt\nCreate Payment Entry\nCreate Expense Claim\nStandalone (no match)\nIgnore"
+   "options": "\nCreate Purchase Invoice\nCreate Purchase Receipt\nCreate Payment Entry\nCreate Expense Claim\nCreate Reimbursement Bill\nStandalone (no match)\nIgnore",
+   "description": "What approving this will create. Create Expense Claim needs the HR module (hrms), which is not installed here — extraction proposes Create Reimbursement Bill instead, which bills the receipt to the employee's reimbursement Supplier the way QuickBooks already records it."
   },
   {
    "fieldname": "selected_match_doctype",
