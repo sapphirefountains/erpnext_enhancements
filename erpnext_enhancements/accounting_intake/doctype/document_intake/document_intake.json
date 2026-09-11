@@ -42,6 +42,7 @@
   "party_match_confidence",
   "column_break_prop",
   "proposed_action",
+  "paid_by_employee",
   "selected_match_doctype",
   "selected_match_name",
   "matches_section",
@@ -274,7 +275,18 @@
    "fieldname": "proposed_action",
    "fieldtype": "Select",
    "label": "Proposed Action",
-   "options": "\nCreate Purchase Invoice\nCreate Purchase Receipt\nCreate Payment Entry\nCreate Expense Claim\nStandalone (no match)\nIgnore"
+   "options": "\nCreate Purchase Invoice\nCreate Purchase Receipt\nCreate Payment Entry\nCreate Expense Claim\nCreate Reimbursement Bill\nStandalone (no match)\nIgnore",
+   "description": "What approving this will create. Create Expense Claim needs the HR module (hrms), which is not installed here — extraction proposes Create Reimbursement Bill instead, which bills the receipt to the employee's reimbursement Supplier the way QuickBooks already records it."
+  },
+  {
+   "fieldname": "paid_by_employee",
+   "fieldtype": "Link",
+   "label": "Paid By",
+   "options": "Employee",
+   "depends_on": "eval:doc.proposed_action == 'Create Reimbursement Bill'",
+   "mandatory_depends_on": "eval:doc.proposed_action == 'Create Reimbursement Bill'",
+   "in_standard_filter": 1,
+   "description": "Who paid for this out of their own pocket. Required for a reimbursement, and asked for EXPLICITLY rather than inferred: the person who approves an intake is by design not the person who paid, so resolving the payer from the reviewer bills the accountant every time. Suggested from the sender on the Email channel; otherwise the reviewer sets it."
   },
   {
    "fieldname": "selected_match_doctype",

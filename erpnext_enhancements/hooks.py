@@ -441,6 +441,14 @@ doc_events = {
 		# handler's per-file guard makes the email's later saves a no-op.
 		"on_update": "erpnext_enhancements.accounting_intake.channels.email_from_communication",
 	},
+	"Fleet Vehicle": {
+		# hr_enhancements (WI-073): `assigned_driver` became a Link to Employee, so the
+		# licence expiry the credential register already tracks can finally be joined to
+		# the truck. Warn only, and absence of a licence record is NOT a refusal -- it
+		# means nobody has filed one, which is a gap to chase rather than a statement
+		# that this person cannot drive.
+		"validate": "erpnext_enhancements.hr_enhancements.availability.warn_driver_cannot_drive",
+	},
 	"Sapphire Maintenance Record": {
 		"on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_next_visit_dates",
 		# training: WARN-ONLY certification check on the assigned technician. It NEVER
@@ -450,7 +458,17 @@ doc_events = {
 		# orange msgprint and notifies the supervisor. Gated by Training Settings ->
 		# warn_on_uncertified_dispatch. On validate, not before_submit: before_submit would
 		# read as a gate.
-		"validate": "erpnext_enhancements.training.compliance.warn_uncertified_technician",
+		"validate": [
+			"erpnext_enhancements.training.compliance.warn_uncertified_technician",
+			# hr_enhancements (WI-073): is this person actually free that day? Approved
+			# time off and restricted duty were both already recorded and nothing read
+			# them when a visit was scheduled, so a visit could be booked for somebody
+			# with an approved day off and nobody found out until the morning. Warn
+			# only, and a SEPARATE hook from the certification check above: the two ask
+			# different questions (may they, versus can they be there) and a site may
+			# want one without the other.
+			"erpnext_enhancements.hr_enhancements.availability.warn_unavailable_technician",
+		],
 	},
 	"Project Contract": {
 		# When a Maintenance Services Agreement is Signed, draft the operational
@@ -657,6 +675,13 @@ doc_events = {
 			# appearing) — without that comparison EVERY Employee save enqueues a
 			# full rule sweep, and Employee is saved often.
 			"erpnext_enhancements.training.assignment.on_employee_update",
+			# hr_enhancements (WI-073): raise the LEAVING checklist when status flips
+			# to Left. Gated on the transition rather than the current value, because
+			# Employee is saved often. ERPNext disables the login by itself and does
+			# nothing else -- the device in their van, the four jobs assigned to them
+			# and the two people who report to them are all invisible the day after,
+			# so the list is GENERATED from what they hold rather than fixed.
+			"erpnext_enhancements.hr_enhancements.onboarding.on_employee_update",
 		],
 	},
 	"Training Completion": {
@@ -795,20 +820,50 @@ scheduler_events = {
 		# ---- HR Enhancements (WI-072) ---------------------------------------------------
 		# A credential's status is arithmetic on a date: correct the day it is saved and
 		# wrong every day after. Re-derived nightly at 05:20, well before anybody looks.
-		"20 5 * * *": ["erpnext_enhancements.hr_enhancements.tasks.refresh_credential_status"],
+		"20 5 * * *": [
+			"erpnext_enhancements.hr_enhancements.tasks.refresh_credential_status",
+			# The COMPANY half of the same question. Nothing in this app tracked the
+			# contractor licence, the workers' comp policy and its premium audit, the
+			# COIs customers ask for, or a subcontractor's certificate -- verified
+			# before building: no doctype carried an expiry field for any of them.
+			# Separate function from the credential sweep because the two answer
+			# different questions about different subjects and a site could want one
+			# without the other.
+			"erpnext_enhancements.hr_enhancements.tasks.refresh_obligation_status",
+		],
 		# The forward view, Mondays at 07:30. Nothing in this app warned about anything
 		# BEFORE the fact until now -- certificates.expire_and_recertify reacts after a
 		# training certificate lapses, and fixtures/notification.json holds nineteen alerts
 		# and not one HR or training one. An expiry model with no horizon tells you about a
 		# problem on the morning of the job. One email per person, plus a roll-up to each
 		# supervisor; gated by Training Settings -> Notifications, same as every other mail.
-		"30 7 * * 1": ["erpnext_enhancements.hr_enhancements.tasks.send_expiry_digest"],
+		"30 7 * * 1": [
+			"erpnext_enhancements.hr_enhancements.tasks.send_expiry_digest",
+			# Nobody on this site had an emergency contact when WI-073 looked -- all
+			# sixteen blank, on a field that had existed the whole time. Nothing had
+			# ever asked. It asks THEM rather than reporting a number to HR, because
+			# the only person who can fill it in is the person whose contact it is,
+			# and it only writes to the people who are missing one.
+			"erpnext_enhancements.hr_enhancements.policies.nudge_missing_emergency_contacts",
+			# Company renewals, weekly. A lapsed SUBCONTRACTOR certificate is called
+			# out separately: their lapse is our exposure -- a claim on an uninsured
+			# sub becomes ours -- and it reads differently from our own renewal
+			# falling due.
+			"erpnext_enhancements.hr_enhancements.tasks.send_obligation_digest",
+		],
 		# Work anniversaries into the team feed, 06:10. The feed has always known how to
 		# RENDER these -- `Training Achievement` carries the kind and player.js draws it --
 		# and the only thing that ever minted one was the one-shot backfill patch. So the
 		# feed would have opened with sixteen and produced not one more, ever. Idempotent
 		# on (user, kind, title), so a re-run the same day mints nothing twice.
-		"10 6 * * *": ["erpnext_enhancements.hr_enhancements.tasks.mint_work_anniversaries"],
+		"10 6 * * *": [
+			"erpnext_enhancements.hr_enhancements.tasks.mint_work_anniversaries",
+			# 30 / 60 / 90-day check-ins to a new hire's supervisor. NO record and
+			# nothing to fill in -- the value is the prompt, and a form attached to it
+			# turns a two-minute conversation into an admin task, which is how the
+			# conversation stops happening. Fires only on the exact day.
+			"erpnext_enhancements.hr_enhancements.onboarding.nudge_new_hire_check_ins",
+		],
 		# ---- Chat sync engine (ADR 0009 Phase 2, v1.262.0) -------------------------------
 		# EVERY job below no-ops while `Chat Settings.enabled` is 0, which is how it ships.
 		# They are registered dormant on purpose: a scheduler entry added later, by hand, on
@@ -874,6 +929,18 @@ scheduler_events = {
 			"erpnext_enhancements.chat.sync.attachments.sweep_pending_attachments",
 			"erpnext_enhancements.chat.indexing.indexer.sweep_chunks",
 			"erpnext_enhancements.chat.indexing.indexer.sweep_embeddings",
+			# hr_enhancements (WI-073): lone-worker check-in. Three stages fifteen
+			# minutes apart -- chase the worker, then their supervisor, then the
+			# executives. It escalates ONCE per stage, because a sweep that re-sends
+			# every ten minutes trains people to filter it, and it never closes a
+			# session by itself: "the sweep decided they were probably fine" is the
+			# judgement nobody should be making at 7pm.
+			#
+			# Added to this list rather than as a second "*/10 * * * *" key. A repeated
+			# key in a dict literal silently REPLACES the earlier one, so a new entry
+			# would have stopped all four chat sweeps above with no error anywhere.
+			# test_hooks_integrity caught exactly that.
+			"erpnext_enhancements.hr_enhancements.lonework.sweep_overdue_sessions",
 		],
 		# Subscription renewal. An expired Workspace Events subscription is DELETED and cannot
 		# be renewed -- only recreated -- and the failure is completely silent, so this is the
@@ -1377,6 +1444,21 @@ after_migrate = [
 	# migrate that introduces the field, then record itself in Patch Log and never
 	# run again. Idempotent: writes only where custom_position is empty.
 	"erpnext_enhancements.patches.seed_positions_from_designations.map_employees_to_positions",
+	# accounting_intake: link each Employee to their reimbursement Supplier, which is
+	# how an out-of-pocket receipt becomes a draft Purchase Invoice on a site with no
+	# hrms. Here as well as in patches.txt for the same ordering reason as the line
+	# above: the column is a FIXTURE Custom Field, sync_fixtures() runs after the
+	# post-model-sync patches, and a patch that returns having done nothing still
+	# records itself in Patch Log and never runs again. Idempotent -- writes only
+	# where the field is empty, so a human's correction is never overwritten.
+	"erpnext_enhancements.patches.link_reimbursement_suppliers.link_reimbursement_suppliers",
+	# Ten Employee fields (cost to company, bank details, passport, health) move to
+	# permlevel 1 via Property Setter fixtures, and on its own that hides them from
+	# EVERYBODY -- no role on this site holds any permission at level 1. This grants
+	# it to HR Manager and System Manager. Here as well as in patches.txt because
+	# the Property Setters are fixtures and sync_fixtures() runs after the
+	# post-model-sync patches. Idempotent; never raises.
+	"erpnext_enhancements.patches.protect_employee_compensation_fields.grant_employee_field_permissions",
 	# device_management (MDM/EMM): Employee "Assigned Devices" panel field
 	"erpnext_enhancements.device_management.setup.create_device_employee_fields",
 	# accounting_intake: Supplier Drive folder id (document filing)
@@ -1919,6 +2001,29 @@ permission_query_conditions = {
 	# of. No position-tier arm on either: time off is "who plans your week", which
 	# is what reports_to means and what a competence ladder does not.
 	"Time Off Request": "erpnext_enhancements.hr_enhancements.permissions.timeoff_query_conditions",
+	# Tighter than time off, deliberately: a Tier Review is a list of what somebody
+	# cannot yet do, in their own words. Own reviews and ones you are named reviewer
+	# on -- no reports_to arm, because being somebody's manager is not a reason to
+	# read their self-assessment.
+	"Tier Review": "erpnext_enhancements.hr_enhancements.permissions.tier_review_query_conditions",
+	# A restriction carries no medical reason, but "no lifting, no ladders, until the
+	# 14th" still says something about somebody's health with the why left out. Scoped
+	# like time off -- yourself and the people whose week you plan. The dispatch
+	# advisory does not read through this; it runs server-side and is told the summary.
+	"Work Restriction": "erpnext_enhancements.hr_enhancements.permissions.restriction_query_conditions",
+	# Everybody can FILE an incident -- a log a worker cannot open is a log that gets
+	# a phone call instead -- but an injury record carries a body part, a treatment
+	# and, on a privacy case, a category from a list that includes sexual assault and
+	# mental illness. Own and reports' only; the log itself is read through the
+	# role-gated OSHA reports.
+	"Safety Incident": "erpnext_enhancements.hr_enhancements.permissions.incident_query_conditions",
+	# Your own only. Whether a colleague has signed the handbook is HR's business
+	# rather than their manager's, so there is no reports_to arm here.
+	#
+	# `HR Case Record` is deliberately NOT in this list: it has no Employee DocPerm
+	# at all, so there is nothing for a row filter to narrow. HR Manager and System
+	# Manager, and nobody else.
+	"Policy Acknowledgement": "erpnext_enhancements.hr_enhancements.permissions.acknowledgement_query_conditions",
 	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_query_conditions",
 	# Chat (ADR 0009 §F.18): row-level scoping is MEMBERSHIP, not role. Chat Room is
 	# the only chat doctype carrying a DocPerm at all (`read` for "Chat User"), so it is
@@ -1973,6 +2078,13 @@ has_permission = {
 	"Training Profile Preference": "erpnext_enhancements.training.permissions.profile_preference_has_permission",
 	"Employee Credential": "erpnext_enhancements.hr_enhancements.permissions.credential_has_permission",
 	"Time Off Request": "erpnext_enhancements.hr_enhancements.permissions.timeoff_has_permission",
+	# The document-level twin. A query condition filters lists and says nothing
+	# about frappe.get_doc(), which is exactly the gap that left three Training
+	# doctypes readable by customers until v1.386.0.
+	"Tier Review": "erpnext_enhancements.hr_enhancements.permissions.tier_review_has_permission",
+	"Work Restriction": "erpnext_enhancements.hr_enhancements.permissions.restriction_has_permission",
+	"Safety Incident": "erpnext_enhancements.hr_enhancements.permissions.incident_has_permission",
+	"Policy Acknowledgement": "erpnext_enhancements.hr_enhancements.permissions.acknowledgement_has_permission",
 	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_has_permission",
 	# Chat: the twin of every query condition above, and parity here is the house
 	# doctrine -- ten and ten before this block, four and four after it.

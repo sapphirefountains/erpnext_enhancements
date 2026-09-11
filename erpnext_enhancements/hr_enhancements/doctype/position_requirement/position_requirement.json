@@ -1,0 +1,78 @@
+{
+ "actions": [],
+ "allow_import": 0,
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "istable": 1,
+ "field_order": [
+  "requirement_type",
+  "training_course",
+  "credential_type",
+  "column_break_head",
+  "is_mandatory",
+  "note"
+ ],
+ "fields": [
+  {
+   "fieldname": "requirement_type",
+   "fieldtype": "Select",
+   "label": "Type",
+   "options": "Training Course\nCredential\nSign-off",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "What kind of evidence this rung asks for. Sign-off means a competency attested by somebody senior rather than a course or a ticket."
+  },
+  {
+   "fieldname": "training_course",
+   "fieldtype": "Link",
+   "label": "Course",
+   "options": "Training Course",
+   "in_list_view": 1,
+   "columns": 3,
+   "depends_on": "eval:doc.requirement_type != 'Credential'",
+   "description": "The course, or the course whose sign-off is being asked for."
+  },
+  {
+   "fieldname": "credential_type",
+   "fieldtype": "Link",
+   "label": "Credential",
+   "options": "Credential Type",
+   "in_list_view": 1,
+   "columns": 3,
+   "depends_on": "eval:doc.requirement_type == 'Credential'",
+   "description": "An external ticket -- a licence, a card, a medical."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "is_mandatory",
+   "fieldtype": "Check",
+   "label": "Required",
+   "default": "1",
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Unticked means it counts toward readiness but does not block. Most things here are required; a few are 'would be good'."
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note",
+   "description": "Why this rung asks for it. Read by whoever is deciding a promotion, so write it for them."
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Position Requirement",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "idx",
+ "sort_order": "ASC",
+ "states": []
+}

@@ -1,0 +1,83 @@
+{
+ "actions": [],
+ "allow_import": 0,
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "istable": 1,
+ "field_order": [
+  "requirement_kind",
+  "requirement_label",
+  "column_break_head",
+  "held_at_open",
+  "self_rating",
+  "reviewer_rating",
+  "line_note"
+ ],
+ "fields": [
+  {
+   "fieldname": "requirement_kind",
+   "fieldtype": "Data",
+   "label": "Kind",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Course, Credential or Sign-off. A snapshot -- see the parent on why these rows are frozen."
+  },
+  {
+   "fieldname": "requirement_label",
+   "fieldtype": "Data",
+   "label": "Requirement",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "held_at_open",
+   "fieldtype": "Data",
+   "label": "On record",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "What the system could see when the review was opened. Held, Expiring or Missing."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "self_rating",
+   "fieldtype": "Select",
+   "label": "Them",
+   "options": "\nNot yet\nWith help\nOn my own",
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "How the person rates themselves. Filled in before the reviewer sees it."
+  },
+  {
+   "fieldname": "reviewer_rating",
+   "fieldtype": "Select",
+   "label": "Reviewer",
+   "options": "\nNot yet\nWith help\nOn their own",
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "The reviewer's own answer to the same question. The GAP between the two columns is the conversation; agreement is not the goal."
+  },
+  {
+   "fieldname": "line_note",
+   "fieldtype": "Small Text",
+   "label": "Note"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Tier Review Line",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "idx",
+ "sort_order": "ASC",
+ "states": []
+}

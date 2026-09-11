@@ -7,6 +7,7 @@
  "engine": "InnoDB",
  "field_order": [
   "naming_series",
+  "kind",
   "employee",
   "employee_name",
   "column_break_head",
@@ -25,10 +26,21 @@
    "fieldname": "naming_series",
    "fieldtype": "Select",
    "label": "Series",
-   "options": "HR-ONB-.#####",
+   "options": "HR-ONB-.#####\nHR-OFF-.#####",
    "hidden": 1,
    "no_copy": 1,
    "print_hide": 1
+  },
+  {
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "label": "Kind",
+   "options": "Joining\nLeaving",
+   "default": "Joining",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "The same record shape serves both ends. A leaving checklist is generated from what that person actually holds -- their device, their credentials, their open work, their direct reports -- because a fixed list cannot know any of it."
   },
   {
    "fieldname": "employee",
@@ -36,9 +48,9 @@
    "label": "Employee",
    "options": "Employee",
    "reqd": 1,
-   "unique": 1,
    "in_list_view": 1,
-   "search_index": 1
+   "search_index": 1,
+   "description": "One checklist per person per kind. Enforced in the controller, since uniqueness here is (employee, kind) and a DocField `unique` can only express one column."
   },
   {
    "fieldname": "employee_name",

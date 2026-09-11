@@ -26,6 +26,61 @@ _ACTION_BY_DOC = {
 	"Packing Slip": "Create Purchase Receipt",
 }
 
+
+def _action_for(document_type):
+	"""The action to propose, given what this site can actually post.
+
+	Only ``Receipt / Expense`` is conditional, and the condition is not cosmetic.
+	It used to propose ``Create Expense Claim`` unconditionally, and ``Expense
+	Claim`` is an **hrms** doctype that is not installed here — so the proposal was
+	selected by default, sat in the queue looking normal, and then failed at the
+	moment somebody pressed Approve, with a generic *Failed* and a truncated
+	traceback. It also burned a retry attempt against ``retry_limit`` each pass.
+
+	Proposing the reachable action instead moves the problem to where it can be
+	understood: **the point of choice, not the point of posting.** An accountant
+	looking at the queue sees what will actually happen.
+
+	Checked live rather than cached in a module constant, because a site can gain
+	hrms between two extractions and a constant resolved at import would keep
+	proposing the wrong one until the workers were restarted.
+	"""
+	if document_type != "Receipt / Expense":
+		return _ACTION_BY_DOC.get(document_type)
+
+	from erpnext_enhancements.accounting_intake.actions import receipt_expense
+
+	if receipt_expense.expense_claims_available():
+		return "Create Expense Claim"
+	return "Create Reimbursement Bill"
+
+
+def _suggest_payer(doc):
+	"""Who probably paid, on the one channel that records a person.
+
+	A **suggestion**, filled into a field the reviewer can see and change, which is
+	a different thing from an inference the reviewer never learns about. The
+	handler refuses to post without this field set, so a wrong suggestion is
+	corrected in front of somebody rather than discovered in the ledger.
+
+	Only the Email channel carries a person: `channels.py` writes
+	``source_reference`` as ``"<sender>: <subject>"``. Upload and Mobile are
+	role-gated to accounting staff, so their ``owner`` is never the technician who
+	paid; Google Drive rows are inserted by a scheduler job and owned by
+	Administrator. So there is nothing to suggest from on the other three, and
+	guessing anyway is precisely the bug this replaced.
+	"""
+	if doc.source_channel != "Email":
+		return None
+	ref = (doc.source_reference or "").strip()
+	if not ref:
+		return None
+	sender = ref.split(":", 1)[0].strip()
+	if "@" not in sender:
+		return None
+	return frappe.db.get_value("Employee", {"user_id": sender, "status": "Active"}, "name")
+
+
 # Extracted entity keys we look for, in priority order, per target field.
 _PARTY_KEYS = ["supplier_name", "customer_name", "vendor_name", "merchant_name", "receiver_name", "remitter_name"]
 _NUMBER_KEYS = ["invoice_id", "invoice_number", "document_number", "receipt_id", "payment_reference", "reference_number"]
@@ -92,7 +147,9 @@ def apply_extraction(doc, result):
 
 	doc.proposed_party_type = _PARTY_TYPE_BY_DOC.get(doc.document_type)
 	if not doc.proposed_action:
-		doc.proposed_action = _ACTION_BY_DOC.get(doc.document_type)
+		doc.proposed_action = _action_for(doc.document_type)
+	if doc.proposed_action == "Create Reimbursement Bill" and not doc.get("paid_by_employee"):
+		doc.paid_by_employee = _suggest_payer(doc)
 
 	# Line items + Item resolution
 	doc.set("line_items", [])

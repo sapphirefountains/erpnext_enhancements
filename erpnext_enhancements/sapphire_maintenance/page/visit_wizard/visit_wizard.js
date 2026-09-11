@@ -80,6 +80,9 @@ const VZ_STYLE = `
 .vz-banner-red{background:#fde8e8;color:#b91c1c;}
 .vz-banner-blue{background:rgba(36,144,239,.1);color:var(--text-color);}
 .vz-banner-green{background:#e7f7ed;color:#15803d;}
+.vz-brief{margin-top:10px;}
+.vz-report-incident{margin-top:14px;text-align:center;font-size:14px;}
+.vz-report-incident a{color:#b91c1c;text-decoration:underline;}
 .vz-banner h6{margin:0 0 4px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;}
 .vz-help{border:1px solid var(--border-color);border-radius:10px;margin-bottom:10px;overflow:hidden;background:var(--card-bg);}
 .vz-help-head{display:flex;align-items:center;gap:8px;width:100%;padding:12px 14px;background:none;border:none;color:var(--text-color);font-size:15px;font-weight:600;cursor:pointer;text-align:left;}
@@ -997,6 +1000,312 @@ class VisitWizard {
 			this.$wrap.find(".vz-nav .vz-primary").prop("disabled", !this.safety_ok);
 		});
 		this.$wrap.append($ack);
+		this.render_safety_brief();
+		this.render_report_incident();
+	}
+
+	// The brief, assembled at the moment: the SDS for the chemicals actually on
+	// this visit, the PPE for this kind of work, and anything a previous
+	// technician found here.
+	//
+	// It lands on the EXISTING safety step rather than a new screen. That step is
+	// already there, nobody can proceed past it, and a second safety screen is one
+	// people learn to click through twice as fast.
+	//
+	// Rendered async and appended when it arrives: the step must draw immediately
+	// with the red banner, and the brief is an addition to it rather than a
+	// precondition for it.
+	render_safety_brief() {
+		const $slot = $('<div class="vz-brief"></div>');
+		this.$wrap.append($slot);
+		frappe
+			.call({
+				method: "erpnext_enhancements.hr_enhancements.hazards.safety_brief",
+				args: {
+					maintenance_record: this.doc && this.doc.name,
+					customer: this.doc && this.doc.customer,
+					work_type: (this.template_meta && this.template_meta.work_type) || null,
+				},
+			})
+			.then((r) => this.paint_safety_brief($slot, (r && r.message) || {}))
+			.catch(() => {
+				// A brief that cannot be assembled must not break the step. The red
+				// banner and the tick are the load-bearing part and are already drawn.
+			});
+	}
+
+	paint_safety_brief($slot, brief) {
+		const esc = (v) => frappe.utils.escape_html(v || "");
+
+		// Hazards first. Somebody already found these here, and that is the most
+		// perishable thing on the screen.
+		const hazards = brief.hazards || [];
+		if (hazards.length) {
+			$slot.append(`
+				<div class="vz-banner vz-banner-red">
+					<h6>${__("Found here before")}</h6>
+					${hazards
+						.map(
+							(h) =>
+								`${esc(h.category)}${h.where_exactly ? ` — ${esc(h.where_exactly)}` : ""}: ${esc(h.what)}${
+									h.status === "Accepted risk" ? ` <i>(${__("known, not being fixed")})</i>` : ""
+								}`
+						)
+						.join("<br>")}
+				</div>
+			`);
+		}
+
+		const ppe = brief.ppe || [];
+		if (ppe.length) {
+			$slot.append(`
+				<div class="vz-banner vz-banner-blue">
+					<h6>${__("PPE for this work")}</h6>
+					${ppe.map((p) => `${esc(p.protection)}${p.because ? ` — ${esc(p.because)}` : ""}`).join("<br>")}
+				</div>
+			`);
+		}
+
+		const sheets = brief.sheets || [];
+		if (sheets.length) {
+			$slot.append(`
+				<div class="vz-banner vz-banner-blue">
+					<h6>${__("Chemicals on this visit")}</h6>
+					${sheets
+						.map(
+							(c) =>
+								`<b>${esc(c.label)}</b>${c.summary ? ` — ${esc(c.summary)}` : ""} ${
+									c.document
+										? `<a href="${esc(c.document)}" target="_blank">${__("safety sheet")}</a>`
+										: `<i>${__("no safety sheet on file")}</i>`
+								}`
+						)
+						.join("<br>")}
+				</div>
+			`);
+		}
+
+		// Reporting one, from the same screen. Thirty seconds standing at the thing.
+		const $link = $(`
+			<div class="vz-report-incident">
+				<a href="#" data-hazard="1">${__("Report a hazard you found")}</a>
+			</div>
+		`).on("click", "a", (e) => {
+			e.preventDefault();
+			this.open_hazard_dialog();
+		});
+		$slot.append($link);
+	}
+
+	open_hazard_dialog() {
+		const dialog = new frappe.ui.Dialog({
+			title: __("What did you find?"),
+			fields: [
+				{
+					fieldtype: "Select",
+					fieldname: "category",
+					label: __("Kind"),
+					reqd: 1,
+					options: [
+						"Electrical",
+						"Chemical",
+						"Slip, trip or fall",
+						"Confined space",
+						"Structural",
+						"Equipment",
+						"Other",
+					].join("\n"),
+				},
+				{ fieldtype: "Small Text", fieldname: "what", label: __("What it is"), reqd: 1 },
+				{
+					fieldtype: "Data",
+					fieldname: "where_exactly",
+					label: __("Where exactly"),
+					description: __("The next person sent here sees this before they start."),
+				},
+			],
+			primary_action_label: __("Send it"),
+			primary_action: (values) => {
+				dialog.hide();
+				frappe.call({
+					method: "erpnext_enhancements.hr_enhancements.hazards.report_hazard",
+					args: Object.assign({}, values, {
+						customer: this.doc && this.doc.customer,
+						maintenance_record: this.doc && this.doc.name,
+					}),
+					freeze: true,
+					callback: () => {
+						frappe.show_alert({
+							message: __("Logged. The next person here will see it."),
+							indicator: "green",
+						});
+					},
+				});
+			},
+		});
+		dialog.show();
+	}
+
+	// Reporting an injury from where it happened.
+	//
+	// On the safety step, because that is the screen a technician is already on
+	// with a phone in their hand, and because a feature reachable only from its own
+	// Desk list is a feature nobody finds when they are hurt. If filing is
+	// expensive it does not happen, and a log that looks clean because nobody could
+	// face filling it in is worse than no log.
+	//
+	// Quiet, not prominent: it sits under the acknowledgement as a line of text
+	// rather than a button competing with the checklist. The people who need it
+	// will look for it.
+	render_report_incident() {
+		const $link = $(`
+			<div class="vz-report-incident">
+				<a href="#">${__("Report an injury or a near miss")}</a>
+			</div>
+		`).on("click", "a", (e) => {
+			e.preventDefault();
+			this.open_incident_dialog();
+		});
+		this.$wrap.append($link);
+		this.render_lone_work();
+	}
+
+	// Going to this one alone.
+	//
+	// Same screen and the same reasoning as reporting an incident: this is where a
+	// technician is standing with a phone before they start, and a check-in that
+	// lives anywhere else is a check-in that does not happen. Four fields, one of
+	// which is prefilled from the visit.
+	render_lone_work() {
+		const $link = $(`
+			<div class="vz-report-incident">
+				<a href="#" data-lone="1">${__("I am here on my own")}</a>
+			</div>
+		`).on("click", "a", (e) => {
+			e.preventDefault();
+			this.open_lone_work_dialog();
+		});
+		this.$wrap.append($link);
+	}
+
+	open_lone_work_dialog() {
+		const dialog = new frappe.ui.Dialog({
+			title: __("Working alone"),
+			fields: [
+				{
+					fieldtype: "Data",
+					fieldname: "where",
+					label: __("Where"),
+					reqd: 1,
+					default: (this.doc && this.doc.customer) || "",
+					description: __("Enough for somebody to drive to."),
+				},
+				{
+					fieldtype: "Datetime",
+					fieldname: "expected_out_by",
+					label: __("Out by"),
+					reqd: 1,
+					default: frappe.datetime.add_minutes(frappe.datetime.now_datetime(), 90),
+					description: __("If this passes without a check-out we chase you, then your supervisor, then the office."),
+				},
+			],
+			primary_action_label: __("Start"),
+			primary_action: (values) => {
+				dialog.hide();
+				frappe.call({
+					method: "erpnext_enhancements.hr_enhancements.lonework.start_session",
+					args: Object.assign({}, values, {
+						customer: this.doc && this.doc.customer,
+						maintenance_record: this.doc && this.doc.name,
+					}),
+					freeze: true,
+					callback: (r) => {
+						if (!r || !r.message) return;
+						frappe.show_alert({
+							message: __("Checked in. Remember to check out."),
+							indicator: "green",
+						});
+					},
+				});
+			},
+		});
+		dialog.show();
+	}
+
+	open_incident_dialog() {
+		// Five fields. Everything else on the record -- treatment, classification,
+		// body part, root cause -- is a judgement somebody makes later, and asking
+		// for it here is asking a person in pain to classify their own injury.
+		const dialog = new frappe.ui.Dialog({
+			title: __("Report it"),
+			fields: [
+				{
+					fieldtype: "Select",
+					fieldname: "incident_type",
+					label: __("What kind"),
+					options: ["Injury", "Near Miss", "Illness", "Property Damage"].join("\n"),
+					default: "Injury",
+					reqd: 1,
+				},
+				{
+					fieldtype: "Small Text",
+					fieldname: "what_happened",
+					label: __("What happened"),
+					reqd: 1,
+				},
+				{
+					fieldtype: "Data",
+					fieldname: "location_text",
+					label: __("Where exactly"),
+					reqd: 1,
+					default: __("On site"),
+					description: __("“Pump vault, north basin” — the part of the site, not just the address."),
+				},
+				{
+					fieldtype: "Small Text",
+					fieldname: "doing_before",
+					label: __("What you were doing just before"),
+					description: __("If you can. It can be filled in later."),
+				},
+			],
+			primary_action_label: __("Send it"),
+			primary_action: (values) => {
+				dialog.hide();
+				frappe.call({
+					method: "erpnext_enhancements.hr_enhancements.safety.report_incident",
+					args: Object.assign({}, values, {
+						// `this.doc.name`, not `this.docname` -- the wizard holds the
+						// loaded record on `this.doc` (see line ~491) and has no
+						// `docname`. An undefined here would silently file the incident
+						// with no link back to the visit it happened on.
+						maintenance_record: this.doc && this.doc.name,
+					}),
+					freeze: true,
+					freeze_message: __("Sending…"),
+					callback: (r) => {
+						if (!r || !r.message) return;
+						// The reportable case says so immediately. The clock starts when the
+						// company learns of it, and that is now.
+						if (r.message.reportable && r.message.reportable !== __("No")) {
+							frappe.msgprint({
+								title: __("This one has to be reported"),
+								indicator: "red",
+								message: __(
+									"<b>{0}</b>. Somebody must call UOSH by <b>{1}</b>, and the equipment must not be moved until they release the scene. HR has been emailed.",
+									[r.message.reportable, r.message.due_by || ""]
+								),
+							});
+							return;
+						}
+						frappe.show_alert({
+							message: __("Reported. {0} has it.", [r.message.name]),
+							indicator: "green",
+						});
+					},
+				});
+			},
+		});
+		dialog.show();
 	}
 
 	// ----- step: water chemistry --------------------------------------------

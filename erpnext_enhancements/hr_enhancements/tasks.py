@@ -22,6 +22,7 @@ and a reminder people filter.
 """
 
 import frappe
+from frappe import _
 from frappe.utils import add_days, get_url, getdate, today
 
 from erpnext_enhancements.hr_enhancements.doctype.employee_credential.employee_credential import (
@@ -236,3 +237,104 @@ def _is_the_day(joined, now):
 		is_leap = now.year % 4 == 0 and (now.year % 100 != 0 or now.year % 400 == 0)
 		return (now.month, now.day) == ((2, 29) if is_leap else (2, 28))
 	return (now.month, now.day) == (joined.month, joined.day)
+
+
+# ------------------------------------------------------- company obligations
+
+
+OBLIGATION = "Company Obligation"
+
+#: Spelled out rather than imported from the controller: this module is loaded by
+#: the scheduler, and a scheduled job that fails to import because a doctype
+#: module moved is a job that stops running silently.
+EXPIRING_STATUS = "Expiring"
+EXPIRED_STATUS = "Expired"
+
+
+def refresh_obligation_status():
+	"""Re-derive every obligation's status. The company half of the nightly sweep.
+
+	Separate from `refresh_credential_status` because the two answer different
+	questions about different subjects — is this person still qualified, versus is
+	the company still licensed — and a site could reasonably want one without the
+	other. They share a shape and nothing else.
+	"""
+	if not frappe.db.exists("DocType", OBLIGATION):
+		return 0
+	changed = 0
+	for name in frappe.get_all(OBLIGATION, filters={"is_active": 1}, pluck="name"):
+		doc = frappe.get_doc(OBLIGATION, name)
+		before = doc.status
+		doc._derive_status()
+		if doc.status != before:
+			doc.db_set("status", doc.status, update_modified=False)
+			changed += 1
+	return changed
+
+
+def send_obligation_digest():
+	"""One email to whoever owns each lapsing obligation, weekly.
+
+	**Sent to a role name rather than a Link**, which means it cannot be addressed
+	automatically — so it goes to HR and the accounts managers with the owner's
+	name *in the row*. That is deliberate: the alternative is a required Link
+	field, and a register that will not save without naming an owner is a register
+	nobody fills in. The name in the text does the routing a human actually needs.
+
+	A lapsed **subcontractor** certificate is called out separately, because their
+	lapse is our exposure and it reads differently from our own renewal being due.
+	"""
+	if not frappe.db.exists("DocType", OBLIGATION):
+		return 0
+	rows = frappe.get_all(
+		OBLIGATION,
+		filters={"is_active": 1, "status": ["in", (EXPIRING_STATUS, EXPIRED_STATUS)]},
+		fields=["name", "obligation_name", "category", "expires_on", "status", "owner_role", "supplier"],
+		order_by="expires_on asc",
+	)
+	if not rows:
+		return 0
+
+	ours = [r for r in rows if not r.supplier]
+	theirs = [r for r in rows if r.supplier]
+
+	body = ""
+	if ours:
+		body += "<h4>" + _("Ours") + "</h4><ul>" + "".join(
+			_("<li><b>{0}</b> ({1}) — {2} on {3}{4}</li>").format(
+				frappe.utils.escape_html(r.obligation_name or r.name),
+				r.category,
+				r.status.lower(),
+				r.expires_on,
+				_(" — {0}").format(frappe.utils.escape_html(r.owner_role)) if r.owner_role else "",
+			)
+			for r in ours
+		) + "</ul>"
+	if theirs:
+		body += "<h4>" + _("Subcontractors") + "</h4><p>" + _(
+			"Their lapse is our exposure — a claim on an uninsured sub becomes ours."
+		) + "</p><ul>" + "".join(
+			_("<li><b>{0}</b> — {1} {2} on {3}</li>").format(
+				frappe.utils.escape_html(r.supplier or ""),
+				frappe.utils.escape_html(r.obligation_name or ""),
+				r.status.lower(),
+				r.expires_on,
+			)
+			for r in theirs
+		) + "</ul>"
+
+	sent = 0
+	for user in _obligation_recipients():
+		if _notify(user, _("Company renewals: {0} due or lapsed").format(len(rows)), body):
+			sent += 1
+	return sent
+
+
+def _obligation_recipients():
+	users = set()
+	for role in ("HR Manager", "System Manager", "Accounts Manager"):
+		users.update(
+			frappe.get_all("Has Role", filters={"parenttype": "User", "role": role}, pluck="parent")
+			or []
+		)
+	return [u for u in users if u and u not in ("Administrator", "Guest")]

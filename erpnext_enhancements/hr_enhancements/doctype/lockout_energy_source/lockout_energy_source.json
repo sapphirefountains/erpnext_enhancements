@@ -1,0 +1,60 @@
+{
+ "actions": [],
+ "allow_import": 0,
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "istable": 1,
+ "field_order": [
+  "energy_type",
+  "source_location",
+  "isolation_method",
+  "verification_method"
+ ],
+ "fields": [
+  {
+   "fieldname": "energy_type",
+   "fieldtype": "Select",
+   "label": "Type",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2,
+   "options": "Electrical\nHydraulic\nPneumatic\nChemical\nMechanical\nThermal\nStored / gravity"
+  },
+  {
+   "fieldname": "source_location",
+   "fieldtype": "Data",
+   "label": "Where",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 3,
+   "description": "“Panel B, breaker 14” — findable by somebody who has not been here before."
+  },
+  {
+   "fieldname": "isolation_method",
+   "fieldtype": "Data",
+   "label": "How to isolate",
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "verification_method",
+   "fieldtype": "Data",
+   "label": "How to VERIFY it is dead",
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "The step that gets skipped. Locking a breaker is not the same as confirming the pump will not start."
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Lockout Energy Source",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "idx",
+ "sort_order": "ASC",
+ "states": []
+}

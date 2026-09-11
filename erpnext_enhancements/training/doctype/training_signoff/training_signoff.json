@@ -114,13 +114,13 @@
   },
   {
    "default": "Competent",
-   "description": "Needs More Practice is a real, useful outcome, not a failure to record one — it is how a supervisor says \"come back to me\" without the learner losing their attempt.",
+   "description": "Three outcomes, and the middle one exists because forcing a choice between the other two makes supervisors overstate. Competent means “I would send them alone”. Supervised Only means “they did the whole job, with me there” — real, recorded progress that does NOT complete the course or satisfy a rung requirement, because the system must stop reporting them as ready to go out alone. Needs More Practice is how a supervisor says “come back to me” without the learner losing their attempt.",
    "fieldname": "outcome",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Outcome",
-   "options": "Competent\nNeeds More Practice",
+   "options": "Competent\nSupervised Only\nNeeds More Practice",
    "reqd": 1
   },
   {
@@ -183,7 +183,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-08-02 12:00:00.000000",
+ "modified": "2026-09-11 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Training",
  "name": "Training Signoff",

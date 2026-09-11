@@ -174,3 +174,178 @@ def credential_has_permission(doc, ptype=None, user=None):
 	if _is_unscoped(resolved):
 		return True
 	return doc.get("user") in _visible_users(resolved)
+
+
+def tier_review_query_conditions(user=None):
+	"""Your own review, and reviews you are the named reviewer on. Nothing else.
+
+	**Tighter than time off, on purpose.** A Time Off Request says somebody is
+	away on Thursday; a Tier Review is a list of what somebody cannot yet do, in
+	their own words and their reviewer's. It is the most performance-shaped record
+	in the module, and a colleague reading it is reading a ranking.
+
+	So there is no reports_to arm here either: a manager sees a review because
+	they are named on it, not because of where they sit on the tree. HR Manager and
+	System Manager are unscoped, as everywhere in this module — deliberately,
+	because somebody has to be able to answer "why was this person promoted" a year
+	later.
+	"""
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return ""
+	own = frappe.db.escape(resolved)
+	table = "`tabTier Review`"
+	return f"({table}.`user` = {own} or {table}.`reviewer_user` = {own})"
+
+
+def tier_review_has_permission(doc, ptype=None, user=None):
+	"""The document-level twin.
+
+	A query condition filters lists and says nothing about ``frappe.get_doc()``, so
+	without this a colleague could read any review by name through
+	``/api/resource`` — exactly the gap that made three Training doctypes readable
+	by customers in v1.386.0.
+	"""
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return True
+	if doc.get("user") == resolved or doc.get("reviewer_user") == resolved:
+		return True
+	# `user` and `reviewer_user` are both derived in validate(), so both are empty
+	# when the permission check runs on a NEW document. Fall back to the Employee
+	# named on the form, or nobody could open a review for somebody else -- the
+	# same defect the WI-072 branch review found in time off and onboarding.
+	for field in ("employee", "reviewer"):
+		if doc.get(field) and frappe.db.get_value("Employee", doc.get(field), "user_id") == resolved:
+			return True
+	return False
+
+
+def restriction_query_conditions(user=None):
+	"""Your own restrictions, and your reports'. Nothing else.
+
+	A `Work Restriction` deliberately carries no medical reason, but it is still
+	the most personal thing in the module by inference: "no lifting, no ladders,
+	until the 14th" says something about somebody's health even with the why left
+	out. So it is scoped the way time off is -- yourself and the people whose week
+	you plan -- rather than being readable by every colleague the way a Position is.
+
+	The dispatch advisory does not read through this. It runs server-side inside a
+	`validate` hook and calls `availability.reasons_unavailable` directly, which is
+	correct: the scheduler needs to be told the technician is restricted even when
+	they are not that technician's manager. What they are told is the SUMMARY, and
+	the record has nowhere to hold anything more.
+	"""
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return ""
+	allowed = {resolved}
+	manager = frappe.db.get_value("Employee", {"user_id": resolved}, "name")
+	if manager:
+		allowed.update(
+			u
+			for u in frappe.get_all("Employee", filters={"reports_to": manager}, pluck="user_id")
+			if u
+		)
+	joined = ", ".join(frappe.db.escape(u) for u in sorted(a for a in allowed if a))
+	return f"`tabWork Restriction`.`user` in ({joined})"
+
+
+def restriction_has_permission(doc, ptype=None, user=None):
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return True
+	if doc.get("user") == resolved:
+		return True
+	# `user` is derived in validate(), so it is empty on a NEW row -- the same
+	# defect the WI-072 review found in time off and onboarding.
+	if doc.get("employee") and frappe.db.get_value(
+		"Employee", doc.get("employee"), "user_id"
+	) == resolved:
+		return True
+	manager = frappe.db.get_value("Employee", {"user_id": resolved}, "name")
+	if not manager:
+		return False
+	subject = frappe.db.get_value("Employee", {"user_id": doc.get("user")}, "reports_to")
+	return subject == manager
+
+
+def incident_query_conditions(user=None):
+	"""Your own incidents, and your reports'. HR and System Manager see everything.
+
+	**Deliberately not readable by every colleague**, even though everyone can
+	create one. An injury record carries a body part, a treatment and, on a privacy
+	case, a category from a list of six that includes sexual assault and mental
+	illness. That is the most sensitive data in this app.
+
+	Near misses and property damage with no named employee fall through to nobody,
+	which is correct for a row-level filter and is why the reports exist: somebody
+	keeping the log reads it through `OSHA 300 Log`, which is role-gated, rather
+	than by browsing the list.
+	"""
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return ""
+	own = frappe.db.escape(resolved)
+	table = "`tabSafety Incident`"
+	mine = frappe.db.get_value("Employee", {"user_id": resolved}, "name")
+	employees = {mine} if mine else set()
+	if mine:
+		employees.update(
+			frappe.get_all("Employee", filters={"reports_to": mine}, pluck="name") or []
+		)
+	if employees:
+		joined = ", ".join(frappe.db.escape(e) for e in sorted(e for e in employees if e))
+		return f"({table}.`employee` in ({joined}) or {table}.`reported_by` = {own})"
+	return f"{table}.`reported_by` = {own}"
+
+
+def incident_has_permission(doc, ptype=None, user=None):
+	"""The document-level twin.
+
+	A query condition filters lists and says nothing about ``frappe.get_doc()`` —
+	the gap that left three Training doctypes readable by customers until v1.386.0.
+	"""
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return True
+	if doc.get("reported_by") == resolved:
+		return True
+	if not doc.get("employee"):
+		# A near miss with nobody named. Whoever filed it can see it; the rest is
+		# the log, which is read through a role-gated report.
+		return False
+	subject_user = frappe.db.get_value("Employee", doc.get("employee"), "user_id")
+	if subject_user == resolved:
+		return True
+	manager = frappe.db.get_value("Employee", {"user_id": resolved}, "name")
+	if not manager:
+		return False
+	return frappe.db.get_value("Employee", doc.get("employee"), "reports_to") == manager
+
+
+def acknowledgement_query_conditions(user=None):
+	"""Your own acknowledgements. HR sees all of them.
+
+	No reports_to arm: whether a colleague has signed the handbook is HR's
+	business, not their manager's, and the register's value comes from being
+	complete rather than from being widely readable.
+	"""
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return ""
+	return f"`tabPolicy Acknowledgement`.`user` = {frappe.db.escape(resolved)}"
+
+
+def acknowledgement_has_permission(doc, ptype=None, user=None):
+	resolved = _resolve(user)
+	if _is_unscoped(resolved):
+		return True
+	if doc.get("user") == resolved:
+		return True
+	# `user` is derived in validate(), so it is empty on a NEW row.
+	if doc.get("employee") and frappe.db.get_value(
+		"Employee", doc.get("employee"), "user_id"
+	) == resolved:
+		return True
+	return False

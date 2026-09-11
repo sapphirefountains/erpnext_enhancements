@@ -1,0 +1,135 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "allow_rename": 0,
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "index_web_pages_for_search": 0,
+ "field_order": [
+  "procedure",
+  "inspected_on",
+  "column_break_head",
+  "inspector",
+  "authorised_employee",
+  "findings_section",
+  "procedure_adequate",
+  "deviations",
+  "corrections"
+ ],
+ "fields": [
+  {
+   "fieldname": "procedure",
+   "fieldtype": "Link",
+   "label": "Procedure",
+   "options": "Lockout Tagout Procedure",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "inspected_on",
+   "fieldtype": "Date",
+   "label": "Date",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "inspector",
+   "fieldtype": "Link",
+   "label": "Inspector",
+   "options": "Employee",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "Must NOT be somebody who uses this procedure. That is the whole point of the annual inspection, and it is the half everybody gets wrong."
+  },
+  {
+   "fieldname": "authorised_employee",
+   "fieldtype": "Link",
+   "label": "Whose use was observed",
+   "options": "Employee",
+   "description": "The person whose use of the procedure was watched."
+  },
+  {
+   "fieldname": "findings_section",
+   "fieldtype": "Section Break",
+   "label": "Findings"
+  },
+  {
+   "fieldname": "procedure_adequate",
+   "fieldtype": "Check",
+   "label": "Procedure still adequate",
+   "default": "1"
+  },
+  {
+   "fieldname": "deviations",
+   "fieldtype": "Small Text",
+   "label": "Deviations seen"
+  },
+  {
+   "fieldname": "corrections",
+   "fieldtype": "Small Text",
+   "label": "What was corrected"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Lockout Periodic Inspection",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "print": 1,
+   "role": "Employee"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "autoname": "format:LOTO-INSP-{####}",
+ "naming_rule": "Expression",
+ "icon": "fa fa-search",
+ "search_fields": "procedure,inspected_on"
+}

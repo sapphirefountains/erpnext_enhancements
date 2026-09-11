@@ -42,14 +42,14 @@ function record_outcome(frm) {
 				reqd: 1,
 				options: ["Competent", "Needs More Practice"].join("\n"),
 				description: __(
-					"Competent files the sign-off and lets the course complete. Needs More Practice records that they were watched and are not there yet."
+					"Competent files the sign-off and lets the course complete — it means you would send them alone. Supervised Only records that they did the whole job with you there, which is real progress and does not complete the course. Needs More Practice is \"come back to me\"."
 				),
 			},
 			{
 				fieldname: "competency_notes",
 				fieldtype: "Small Text",
 				label: __("Competency notes"),
-				description: __("What was actually observed. Required for Needs More Practice."),
+				description: __("What was actually observed. Required for anything but Competent."),
 			},
 		],
 		(values) => {

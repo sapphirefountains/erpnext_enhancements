@@ -45,13 +45,14 @@ def execute(filters=None):
 	filters = frappe._dict(filters or {})
 	employees = _employees(filters)
 	if not employees:
-		return _columns([]), []
+		return _columns([]), [], None
 
 	qualifications = _qualifications(filters)
 	held = _held(employees, qualifications)
 
 	columns = _columns(qualifications)
 	rows = []
+	scoped = 0
 	for employee in employees:
 		row = {
 			"employee": employee.name,
@@ -59,19 +60,62 @@ def execute(filters=None):
 			"position": employee.get("custom_position") or employee.get("designation") or "",
 			"department": employee.department or "",
 		}
+		# Counted against what this person's RUNG asks for, not against every
+		# qualification in the company. Every column is still drawn -- the grid is
+		# the point -- but a cell outside their requirements is not a gap.
+		#
+		# Before WI-073 this counted all of them, so a Junior Technician's gap
+		# number included the Finance & Accounting Manager's courses and every
+		# credential any role has ever needed. The number was roughly "how many
+		# qualifications exist", which is nearly the same for everybody, so the
+		# "who needs the most work" ordering below was noise wearing the shape of a
+		# priority list. Nobody would have noticed: it sorted, it just sorted on
+		# nothing.
+		required = required_keys(employee.get("custom_position"))
 		gaps = 0
 		for key, _label in qualifications:
 			state = held.get((employee.name, key), NEVER)
 			row[_fieldname(key)] = state
-			if state in (LAPSED, NEVER):
+			if state in (LAPSED, NEVER) and (required is None or key in required):
 				gaps += 1
 		# Sorted on later, so a manager opens this already looking at whoever needs
 		# the most work rather than at whoever is alphabetically first.
 		row["gaps"] = gaps
+		if required is not None:
+			scoped += 1
 		rows.append(row)
 
 	rows.sort(key=lambda r: (-r["gaps"], r["employee_name"] or ""))
-	return columns, rows
+	return columns, rows, _scope_message(scoped, len(rows))
+
+
+def _scope_message(scoped, total):
+	"""Say out loud when the gap column is not scoped to anybody's rung.
+
+	Without this the report looks identical either way: a priority order computed
+	from what each rung asks for, and one computed from "how many qualifications
+	exist in the company", draw the same screen. The second is noise, and silent
+	noise that sorts is worse than an empty table — somebody plans a week on it.
+
+	Reported rather than refused, because the grid itself is still true and useful
+	with no requirements configured; it is only the ordering that is meaningless.
+	"""
+	if not total:
+		return None
+	if scoped == 0:
+		return _(
+			"<b>Gap counts are company-wide.</b> No Position on this site lists what it "
+			"requires, so the <i>Gaps</i> column counts every qualification in the company "
+			"for everybody and the row order means little. Fill in <i>What this rung asks "
+			"for</i> on a Position to scope it."
+		)
+	if scoped < total:
+		return _(
+			"Gap counts are scoped to each person's rung for {0} of {1} people. The rest "
+			"have no Position, or their Position lists no requirements, so their gaps are "
+			"counted company-wide."
+		).format(scoped, total)
+	return None
 
 
 # ---------------------------------------------------------------------- pieces
@@ -207,3 +251,41 @@ def _columns(qualifications):
 			}
 		)
 	return columns
+
+
+def required_keys(position):
+	"""The column keys this rung actually asks for, or None for "not configured".
+
+	**None and empty-set mean opposite things and the distinction is the whole
+	point.** None is "nobody has written down what this rung requires", and the
+	honest response to that is to count every column as before rather than to
+	report the person as having no gaps -- which is what an empty set would do, and
+	which would turn an unconfigured ladder into a clean bill of health for the
+	entire company.
+
+	That is the failure this release keeps meeting: a check that reports all-clear
+	because it is looking at nothing. Here it fails the other way on purpose.
+
+	Keys are namespaced exactly as ``_qualifications`` builds them, so a Credential
+	Type and a Training Course that share a title cannot collide.
+	"""
+	if not position:
+		return None
+	try:
+		rows = frappe.get_cached_doc("Position", position).get("requirements") or []
+	except frappe.DoesNotExistError:
+		return None
+	if not rows:
+		return None
+
+	keys = set()
+	for row in rows:
+		if row.requirement_type == "Credential":
+			if row.credential_type:
+				keys.add(f"cred:{row.credential_type}")
+		elif row.training_course:
+			# A Sign-off requirement names a course too, and the matrix has one
+			# column per course -- so both kinds land on the same key rather than
+			# inventing a column the grid does not draw.
+			keys.add(f"course:{row.training_course}")
+	return keys or None

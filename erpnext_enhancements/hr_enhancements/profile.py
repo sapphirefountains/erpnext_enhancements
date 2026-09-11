@@ -100,9 +100,44 @@ def my_profile(user):
 			"expiring": _expiring(user, employee),
 			"devices": _devices(employee),
 			"work_anniversary": _anniversary(employee),
+			"rung": _rung(user),
 		}
 	)
 	return profile
+
+
+def _rung(user):
+	"""What this person's rung asks for, and what the next one does.
+
+	**Self-only, and deliberately not in PUBLIC_FIELDS.** It is added here, after
+	`_shared` returns, so it cannot reach a colleague payload by any route — the
+	same construction as `expiring` and `devices`, and for a sharper reason. A list
+	of what somebody is short of for a promotion is the most performance-shaped
+	data in this module: it is a gap list with their name on it. Reading your own
+	is motivating; reading a colleague's is a ranking.
+
+	Returns None when the ladder is not configured for them, which the caller shows
+	as nothing at all rather than as an empty checklist — see
+	`hr_enhancements/progression.py` on why the empty case must not render.
+	"""
+	try:
+		from erpnext_enhancements.hr_enhancements import progression
+	except Exception:
+		return None
+	try:
+		here = progression.readiness(user)
+		route = progression.route_to_next(user)
+	except Exception:
+		# A profile is somebody's home page. A ladder that cannot be computed is
+		# not a reason to fail the whole screen.
+		return None
+	if not here.get("configured") and not (route.get("readiness") or {}).get("configured"):
+		return None
+	return {
+		"here": here if here.get("configured") else None,
+		"next_position": route.get("next_position"),
+		"next": route.get("readiness"),
+	}
 
 
 def colleague_profile(viewer, user):

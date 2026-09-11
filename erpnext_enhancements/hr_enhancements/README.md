@@ -209,7 +209,35 @@ under a `Position & Competency` section after `designation`, and ship in
 only — every authority check reads the `Position` itself, because a fetched value is a
 copy and a copy is a thing that can be stale.
 
+## The route up the ladder (WI-073)
+
+v1.386.0 shipped a ladder whose tier **is** the sign-off authority and nothing that
+says how anybody climbs it. On prod that is a single point of failure rather than an
+HR nicety: four Junior Technicians, one Senior, so one person is the only human in the
+company who can attest for any of them.
+
+- `doctype/position_requirement/` — a child table on `Position`: what a rung asks for.
+  Three kinds. A **course** is content and a **credential** is a ticket somebody else
+  issues, and both are things you can hold without anybody watching you work. A
+  **sign-off** is the competency itself — the machinery for it shipped in v1.386.0 with
+  nothing saying which competencies a rung demands.
+- `progression.py` — "what am I short of for this job, and for the one above it".
+  **Nothing it returns is stored.** Held-or-not is recomputed against live records every
+  time it is asked: a stored *85% ready* is wrong the day after a credential lapses, and
+  wrong in the optimistic direction is the number somebody acts on. `Expiring` counts as
+  **held**, on the same ninety-day horizon `report/skills_matrix/` uses.
+
+**The empty case refuses rather than renders**, everywhere in this feature. A rung with
+no requirements returns `configured = False` and every caller says so out loud, because
+an empty checklist reads as *ready*. In the Skills Matrix the same distinction is carried
+by `None` versus an empty set: `None` means "count everything as before", and an empty
+set would have reported the whole company as having no gaps the moment nobody had filled
+the ladder in. Most of `tests/test_hr_progression.py` is about that case, not the happy
+path.
+
 ## Plan of record
 
-[`work-items/WI-072`](../../work-items/WI-072-hr-module-and-training-redesign.md).
-Tracked on ERPNext prod under **PRJ-00616**, `TASK-2026-01938`.
+[`work-items/WI-072`](../../work-items/WI-072-hr-module-and-training-redesign.md) built
+the module; [`work-items/WI-073`](../../work-items/WI-073-hr-safety-and-competency.md) is
+the safety and competency work on top of it. Tracked on ERPNext prod under **PRJ-00616**
+(`TASK-2026-01938` and `TASK-2026-01953`).

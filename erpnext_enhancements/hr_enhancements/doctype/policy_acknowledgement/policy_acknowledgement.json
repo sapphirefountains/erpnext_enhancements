@@ -1,0 +1,197 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "allow_rename": 0,
+ "autoname": "naming_series:",
+ "naming_rule": "By \"Naming Series\" field",
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "icon": "fa fa-check-square-o",
+ "index_web_pages_for_search": 0,
+ "field_order": [
+  "naming_series",
+  "policy",
+  "version_label",
+  "document_url",
+  "column_break_head",
+  "employee",
+  "employee_name",
+  "user",
+  "status",
+  "sign_section",
+  "signed_name",
+  "signature",
+  "column_break_sign",
+  "signed_on",
+  "signed_from_ip",
+  "declined_reason"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "options": "HR-ACK-.YYYY.-.####",
+   "reqd": 1,
+   "default": "HR-ACK-.YYYY.-.####",
+   "print_hide": 1
+  },
+  {
+   "fieldname": "policy",
+   "fieldtype": "Data",
+   "label": "Policy",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "The handbook, the vehicle policy, the safety rules. Plain text rather than a Link, because the document itself lives in Drive and a register that can only name documents already in ERPNext is a register nobody uses."
+  },
+  {
+   "fieldname": "version_label",
+   "fieldtype": "Data",
+   "label": "Version",
+   "in_list_view": 1,
+   "description": "Which revision they agreed to. Without it, “he signed the handbook” says nothing about which handbook."
+  },
+  {
+   "fieldname": "document_url",
+   "fieldtype": "Data",
+   "label": "Where it is"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Employee",
+   "options": "Employee",
+   "reqd": 1,
+   "in_list_view": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "label": "Name",
+   "read_only": 1,
+   "fetch_from": "employee.employee_name",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Requested\nSigned\nDeclined",
+   "default": "Requested",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "sign_section",
+   "fieldtype": "Section Break",
+   "label": "Their agreement",
+   "description": "The difference between “the page was open” and “they agreed”, which is the whole evidentiary value. The training module already records that somebody opened and read a document; this records that they said yes to it."
+  },
+  {
+   "fieldname": "signed_name",
+   "fieldtype": "Data",
+   "label": "Typed name",
+   "read_only": 1,
+   "description": "Typed by them, at the moment of signing. Compared against their own name by the endpoint — a signature that does not match the signer is not one."
+  },
+  {
+   "fieldname": "signature",
+   "fieldtype": "Signature",
+   "label": "Signature",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_sign",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "signed_on",
+   "fieldtype": "Datetime",
+   "label": "Signed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "signed_from_ip",
+   "fieldtype": "Data",
+   "label": "From",
+   "read_only": 1,
+   "description": "Recorded because an acknowledgement with no trace of where it came from is easy to dispute and hard to defend."
+  },
+  {
+   "fieldname": "declined_reason",
+   "fieldtype": "Small Text",
+   "label": "If they declined",
+   "description": "Declining is allowed and recorded. A register that only accepts yes is a register that gets a yes."
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Policy Acknowledgement",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR User",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "write": 1,
+   "print": 1,
+   "role": "Employee"
+  }
+ ],
+ "search_fields": "employee_name,policy,status",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "employee_name",
+ "track_changes": 1
+}

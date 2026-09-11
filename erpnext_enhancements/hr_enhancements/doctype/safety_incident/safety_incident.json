@@ -1,0 +1,465 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "allow_rename": 0,
+ "autoname": "naming_series:",
+ "naming_rule": "By \"Naming Series\" field",
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "icon": "fa fa-exclamation-triangle",
+ "index_web_pages_for_search": 0,
+ "field_order": [
+  "naming_series",
+  "incident_type",
+  "employee",
+  "employee_name",
+  "job_title_at_time",
+  "column_break_who",
+  "occurred_on",
+  "reported_on",
+  "reported_by",
+  "status",
+  "where_section",
+  "location_text",
+  "customer",
+  "column_break_where",
+  "project",
+  "maintenance_record",
+  "on_company_premises",
+  "what_section",
+  "doing_before",
+  "what_happened",
+  "column_break_what",
+  "injury_description",
+  "harmed_by",
+  "body_part",
+  "classify_section",
+  "outcome",
+  "days_away",
+  "days_restricted",
+  "column_break_classify",
+  "illness_type",
+  "treatment",
+  "lost_consciousness",
+  "is_recordable",
+  "privacy_section",
+  "is_privacy_case",
+  "privacy_basis",
+  "report_section",
+  "reportable_to_uosh",
+  "uosh_due_by",
+  "uosh_reported_on",
+  "column_break_report",
+  "uosh_reference",
+  "evidence_hold",
+  "hold_released_on",
+  "investigation_section",
+  "root_cause",
+  "actions",
+  "evidence_section",
+  "photo",
+  "witness_names",
+  "column_break_evidence",
+  "physician",
+  "facility",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Case number",
+   "options": "INC-.YYYY.-.####",
+   "reqd": 1,
+   "default": "INC-.YYYY.-.####",
+   "print_hide": 1,
+   "description": "OSHA Form 300 column (A). Year-scoped, because the 300 log is kept per calendar year."
+  },
+  {
+   "fieldname": "incident_type",
+   "fieldtype": "Select",
+   "label": "What kind",
+   "options": "Injury\nIllness\nNear Miss\nProperty Damage",
+   "reqd": 1,
+   "default": "Injury",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "A Near Miss is not recordable and is the most useful row on this list — it is the one you get for free."
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Who was hurt",
+   "options": "Employee",
+   "in_list_view": 1,
+   "search_index": 1,
+   "depends_on": "eval:doc.incident_type == 'Injury' || doc.incident_type == 'Illness'",
+   "description": "OSHA 300 column (B). Left empty for a near miss or property damage."
+  },
+  {
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "label": "Name",
+   "read_only": 1,
+   "fetch_from": "employee.employee_name",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "job_title_at_time",
+   "fieldtype": "Data",
+   "label": "Job title at the time",
+   "read_only": 1,
+   "description": "OSHA 300 column (C). A SNAPSHOT, stamped when the case opens and never re-read. A log that quietly re-titles somebody after a promotion is not the record that was made."
+  },
+  {
+   "fieldname": "column_break_who",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "occurred_on",
+   "fieldtype": "Datetime",
+   "label": "When it happened",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "OSHA 300 column (D). For an illness, the date of onset."
+  },
+  {
+   "fieldname": "reported_on",
+   "fieldtype": "Datetime",
+   "label": "Reported",
+   "read_only": 1,
+   "description": "Stamped on insert and never editable. The gap between this and the line above is the thing an inspector looks at."
+  },
+  {
+   "fieldname": "reported_by",
+   "fieldtype": "Link",
+   "label": "Reported by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Open\nUnder investigation\nClosed",
+   "default": "Open",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "where_section",
+   "fieldtype": "Section Break",
+   "label": "Where"
+  },
+  {
+   "fieldname": "location_text",
+   "fieldtype": "Data",
+   "label": "Where it happened",
+   "reqd": 1,
+   "description": "OSHA 300 column (E). Plain words — “pump vault, north basin”. A site Link cannot say which part of it."
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer site",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "column_break_where",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project"
+  },
+  {
+   "fieldname": "maintenance_record",
+   "fieldtype": "Link",
+   "label": "Visit",
+   "options": "Sapphire Maintenance Record",
+   "description": "The visit it happened on, when it happened on one."
+  },
+  {
+   "fieldname": "on_company_premises",
+   "fieldtype": "Check",
+   "label": "On our premises",
+   "default": "0"
+  },
+  {
+   "fieldname": "what_section",
+   "fieldtype": "Section Break",
+   "label": "What happened",
+   "description": "OSHA Form 301 asks these as four separate questions, and it is right to — collapsing them into one box is how a report ends up saying “hurt his back” and nothing an investigation can use."
+  },
+  {
+   "fieldname": "doing_before",
+   "fieldtype": "Small Text",
+   "label": "What they were doing just before",
+   "reqd": 1
+  },
+  {
+   "fieldname": "what_happened",
+   "fieldtype": "Small Text",
+   "label": "What happened",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_what",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "injury_description",
+   "fieldtype": "Small Text",
+   "label": "What the injury or illness was",
+   "description": "OSHA 300 column (F), with the body part."
+  },
+  {
+   "fieldname": "harmed_by",
+   "fieldtype": "Data",
+   "label": "What directly harmed them",
+   "description": "The object or substance — “chlorine solution”, “ladder”, “pump housing”."
+  },
+  {
+   "fieldname": "body_part",
+   "fieldtype": "Data",
+   "label": "Body part"
+  },
+  {
+   "fieldname": "classify_section",
+   "fieldtype": "Section Break",
+   "label": "How it classifies",
+   "description": "OSHA Form 300 columns (G) to (M). Pick the MOST SERIOUS outcome only — the four are mutually exclusive and ticking two overstates the log."
+  },
+  {
+   "fieldname": "outcome",
+   "fieldtype": "Select",
+   "label": "Outcome",
+   "options": "\nDeath\nDays away from work\nJob transfer or restriction\nOther recordable case\nNot recordable",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "(G) death, (H) days away, (I) transfer or restriction, (J) other recordable."
+  },
+  {
+   "fieldname": "days_away",
+   "fieldtype": "Int",
+   "label": "Days away from work",
+   "description": "OSHA 300 column (K). Calendar days, capped at 180 by the rule."
+  },
+  {
+   "fieldname": "days_restricted",
+   "fieldtype": "Int",
+   "label": "Days on transfer or restriction",
+   "description": "OSHA 300 column (L). Capped at 180."
+  },
+  {
+   "fieldname": "column_break_classify",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "illness_type",
+   "fieldtype": "Select",
+   "label": "Injury or illness",
+   "options": "Injury\nSkin disorder\nRespiratory condition\nPoisoning\nHearing loss\nAll other illnesses",
+   "default": "Injury",
+   "description": "OSHA 300 columns (M1) to (M6). Exactly one."
+  },
+  {
+   "fieldname": "treatment",
+   "fieldtype": "Select",
+   "label": "Treatment",
+   "options": "\nNone\nFirst aid only\nMedical treatment beyond first aid\nEmergency room\nHospitalised overnight",
+   "description": "First aid ONLY is not recordable; medical treatment beyond it is. That single distinction decides most cases, and it is the one people get wrong."
+  },
+  {
+   "fieldname": "lost_consciousness",
+   "fieldtype": "Check",
+   "label": "Lost consciousness",
+   "default": "0",
+   "description": "Recordable on its own, whatever the treatment was."
+  },
+  {
+   "fieldname": "is_recordable",
+   "fieldtype": "Check",
+   "label": "Recordable",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "DERIVED, never typed. See hr_enhancements/safety.py for the rule and for why it is computed rather than judged case by case."
+  },
+  {
+   "fieldname": "privacy_section",
+   "fieldtype": "Section Break",
+   "label": "Privacy"
+  },
+  {
+   "fieldname": "is_privacy_case",
+   "fieldtype": "Check",
+   "label": "Privacy case",
+   "default": "0",
+   "description": "One of the six categories the rule says must not carry a name on the posted log. Ticking it replaces the name with “Privacy Case” on the 300 log; the name stays on this record and on the separate confidential list."
+  },
+  {
+   "fieldname": "privacy_basis",
+   "fieldtype": "Select",
+   "label": "Which category",
+   "depends_on": "is_privacy_case",
+   "options": "\nIntimate body part or reproductive system\nResulting from a sexual assault\nMental illness\nHIV, hepatitis or tuberculosis\nNeedlestick or sharps contaminated with blood\nEmployee asked for their name to be left off",
+   "description": "The rule lists six and only six. Recorded because “why is this one anonymous” is the first question anybody asks."
+  },
+  {
+   "fieldname": "report_section",
+   "fieldtype": "Section Break",
+   "label": "Reporting to UOSH"
+  },
+  {
+   "fieldname": "reportable_to_uosh",
+   "fieldtype": "Select",
+   "label": "Reportable",
+   "options": "\nNo\nFatality — 8 hours\nHospitalisation, amputation or eye loss — 24 hours",
+   "read_only": 1,
+   "description": "DERIVED. Utah gives 8 hours for a fatality and 24 for an in-patient hospitalisation, an amputation or the loss of an eye. The clock starts when the company learns of it, not when it happened."
+  },
+  {
+   "fieldname": "uosh_due_by",
+   "fieldtype": "Datetime",
+   "label": "Call by",
+   "read_only": 1,
+   "description": "Computed from `reported_on`. Shown on the form the moment it is filed, which is the only moment it is useful."
+  },
+  {
+   "fieldname": "uosh_reported_on",
+   "fieldtype": "Datetime",
+   "label": "Called on"
+  },
+  {
+   "fieldname": "column_break_report",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "uosh_reference",
+   "fieldtype": "Data",
+   "label": "Reference given"
+  },
+  {
+   "fieldname": "evidence_hold",
+   "fieldtype": "Check",
+   "label": "Equipment must not be touched",
+   "default": "0",
+   "description": "For a reportable incident the scene stays as it is until UOSH releases it. Ticked automatically when the case is reportable; a human clears it once released."
+  },
+  {
+   "fieldname": "hold_released_on",
+   "fieldtype": "Datetime",
+   "label": "Released on",
+   "depends_on": "evidence_hold"
+  },
+  {
+   "fieldname": "investigation_section",
+   "fieldtype": "Section Break",
+   "label": "Why it happened"
+  },
+  {
+   "fieldname": "root_cause",
+   "fieldtype": "Small Text",
+   "label": "Why it happened",
+   "description": "Not who. A root cause naming a person is a root cause that changes nothing."
+  },
+  {
+   "fieldname": "actions",
+   "fieldtype": "Table",
+   "label": "What we are changing",
+   "options": "Safety Incident Action"
+  },
+  {
+   "fieldname": "evidence_section",
+   "fieldtype": "Section Break",
+   "label": "Evidence"
+  },
+  {
+   "fieldname": "photo",
+   "fieldtype": "Attach Image",
+   "label": "Photo"
+  },
+  {
+   "fieldname": "witness_names",
+   "fieldtype": "Small Text",
+   "label": "Witnesses"
+  },
+  {
+   "fieldname": "column_break_evidence",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "physician",
+   "fieldtype": "Data",
+   "label": "Physician or clinician"
+  },
+  {
+   "fieldname": "facility",
+   "fieldtype": "Data",
+   "label": "Facility"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Text",
+   "label": "Notes"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Safety Incident",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR User",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Employee"
+  }
+ ],
+ "search_fields": "employee_name,occurred_on,location_text",
+ "sort_field": "occurred_on",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "employee_name",
+ "track_changes": 1,
+ "track_seen": 1
+}

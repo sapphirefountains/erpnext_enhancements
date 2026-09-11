@@ -51,7 +51,7 @@ frappe.ui.form.on("Training Signoff", {
 					fieldname: "outcome",
 					label: __("Outcome"),
 					reqd: 1,
-					options: ["Competent", "Needs More Practice"],
+					options: ["Competent", "Supervised Only", "Needs More Practice"],
 					default: frm.doc.outcome || "Competent",
 				},
 				{

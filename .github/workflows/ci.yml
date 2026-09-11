@@ -715,6 +715,75 @@ jobs:
       # accident.
       - name: HR profile (what a colleague may see, and what a customer may not)
         run: python -m unittest erpnext_enhancements.tests.test_hr_profile -v
+      # WI-072 shipped a ladder whose tier IS the sign-off authority, and no route
+      # up it -- prod has four Junior Technicians and ONE Senior, so one person is
+      # the only one in the company who can attest for any of them. This pins the
+      # route, and most of it is about the EMPTY case: a rung nobody has configured
+      # must say so rather than draw an empty checklist, because an empty checklist
+      # reads as "ready". Same failure shape as the dispatch advisory that could
+      # never fire and the whitespace queries that passed vacuously.
+      - name: HR progression (the route up the ladder, and the empty case)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_progression -v
+      # The Receipt / Expense posting path could never run: it proposed "Create
+      # Expense Claim" unconditionally, and Expense Claim is an hrms doctype that is
+      # not installed here, so approving one raised a bare DoesNotExistError that the
+      # dispatcher turned into a generic Failed -- burning a retry attempt each pass.
+      # Most of this suite pins the OTHER half: the employee's reimbursement Supplier
+      # is resolved from an explicit link and never matched by name. Prod has three
+      # naming shapes across seven of them, two that do not contain their Employee's
+      # name, and 1,180 Suppliers to collide with -- a near-match does not fail, it
+      # bills somebody's receipt to a real vendor and looks ordinary until it is paid.
+      - name: Intake reimbursement (the dead Expense Claim path, and why no name matching)
+        run: python -m unittest erpnext_enhancements.tests.test_intake_reimbursement -v
+      # Two reasons not to send somebody -- approved time off and restricted duty --
+      # were both already recorded and nothing read them when a visit was scheduled.
+      # This pins three decisions: warn NEVER block (a hard gate moves the work off the
+      # books); a restriction records WHAT and never WHY (a diagnosis is not the
+      # company's business, and the pull toward a free-text reason field needs a test
+      # holding it shut); and absence is not refusal (no licence on file means nobody
+      # filed one, and reading that as "cannot drive" flags 15 of 16 people on day one).
+      - name: HR availability (who can I send, and who cannot go)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_availability -v
+      # The OSHA injury log. Shaped by the regulation rather than by what would be
+      # tidy, so most of this suite is really "does the code still match the rule":
+      # the record exists the moment it is filed (a log a manager can suppress at
+      # intake is not a log); recordability is DERIVED, and first-aid-only versus
+      # medical-treatment-beyond-first-aid is the distinction that decides most
+      # cases; Utah's 8- and 24-hour clocks are shown at filing time, not next week;
+      # and a privacy case carries no name on the posted log, enforced in ONE
+      # function so there is one place to get it right.
+      - name: HR safety (the OSHA log, and the privacy rule)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_safety -v
+      # Confined space, lockout/tagout and working alone -- the highest legal
+      # exposure in the company. Fountain vaults and pump pits are the textbook
+      # permit-required case. Four properties: permit-required is the DEFAULT (a
+      # space wrongly needing a permit costs twenty minutes, one wrongly not needing
+      # one is how people die in pits); the ATMOSPHERE REFUSES, the one check in this
+      # app that blocks rather than warns, and it cannot be overridden; the attendant
+      # is never the entrant, because most confined-space fatalities are would-be
+      # rescuers; and the LOTO inspector is never the person being observed, which is
+      # the half of the annual inspection everybody gets wrong.
+      - name: HR confined space (the permit, the lockout, the lone worker)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_confined_space -v
+      # The private half of an HR file. The finding that prompted it was HALF WRONG
+      # and the correction is the useful part: all 119 Employee fields sat at
+      # permlevel 0 with the Employee role holding read AND write, but 19 User
+      # Permission rows scope each person to their own record -- so a colleague
+      # cannot read anybody else's. What was true is that the whole protection rested
+      # on those nineteen rows, and somebody could edit their OWN cost-to-company.
+      # Also pins that the HR Case Record is the narrowest doctype in the app (two
+      # roles, no export, no share) and that a policy signature is something the
+      # person actually did.
+      - name: HR personnel file (permlevels, case records, policy signatures)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_personnel_file -v
+      # Chemicals, PPE and site hazards, all on the visit wizard's EXISTING safety
+      # step -- a second safety screen is one people learn to click through twice as
+      # fast. Two properties: everything is derived from a record rather than typed
+      # (a hand-kept chemical list is wrong within a month, and a wrong SDS list is
+      # worse than none because it reads as authoritative), and reporting a hazard
+      # WARNS THE NEXT PERSON, which is the half that makes it worth thirty seconds.
+      - name: HR hazards (SDS, PPE, and warning the next technician)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_hazards -v
       # Can somebody who is not a developer start a course? The visual editor
       # shipped in v1.364.0 with NO entry point anywhere -- grepping for
       # "training-canvas" outside its own directory returned two CHANGELOG lines

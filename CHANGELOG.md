@@ -7,6 +7,776 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.395.0] - 2026-09-11
+
+**WI-073 H — chemicals, PPE and site hazards.** All three land on the visit wizard's
+**existing** safety step rather than a new screen: that step is already there, technicians
+already cannot proceed past it, and a second safety screen is one people learn to click
+through twice as fast.
+
+### Added
+
+- **Safety data sheets for the chemicals on *this visit*, derived from the visit's own
+  consumables.** Never from a hand-kept "what is at this site" list, and the reason is worth
+  keeping: such a list is wrong within a month, and **a wrong SDS list is worse than none**
+  because it reads as authoritative — somebody checks it, finds the product in their hand is
+  not on it, and concludes the product is harmless. The consumables table is maintained because
+  the stock has to balance, which is the only kind of list that stays accurate: one kept up for
+  a reason other than safety.
+
+  A chemical with no sheet attached **says so** rather than being omitted. That is the common
+  case at first, and hiding it makes the whole panel untrustworthy. The hazard summary is one
+  line, because nobody reads sixteen pages of SDS standing in the sun.
+
+- **`PPE Hazard Assessment` — the written certification OSHA asks for and almost nobody has.**
+  One per **kind of work**, not per site: draining a basin is the same job at every fountain,
+  and a per-site copy is sixteen documents that drift. It names who assessed and when, because
+  a certification with nobody's name on it certifies nothing, and it refuses to save hazards
+  with no PPE against them — half a document, and the half that reads as complete.
+
+  Each PPE row states the hazard it is for, and names the protection specifically: *"chemical
+  splash goggles"*, not *"eye protection"*. A generic word is one everybody satisfies with
+  whatever they already have, and PPE with no stated hazard is PPE somebody talks themselves
+  out of on a hot afternoon. It is worth keeping because the list is read **before every
+  visit** rather than filed.
+
+- **`Site Hazard` — thirty seconds standing at the thing, and the next person is warned.**
+  That second half is the point: a hazard report that only files a ticket protects nobody
+  standing at that hatch tomorrow. An open hazard is drawn **first** on the safety step, above
+  the PPE and the chemicals, because it is the most perishable thing on the screen. Anybody can
+  report one and everybody can read them — a hazard report only managers can see cannot warn
+  the next technician, which is the entire purpose.
+
+  **`Accepted risk` is a real status.** Some hazards are not going to be fixed — an awkward
+  hatch, a permanent step — and a row that stays *Open* for ever is one people stop reading. It
+  still shows in the banner, because dropping it is how "accepted" quietly becomes "forgotten".
+
+### Fixed
+
+- **A duplicate dict key in `or_filters`, written and caught within the same hour as the
+  scheduler one.** `{"serial_no": a, "serial_no": b}` is a dict literal with a repeated key:
+  the second silently replaces the first, so only the site-wide arm would have matched and a
+  hazard recorded against a specific feature would never have appeared in the banner. Python
+  warns about this no more than it did in `hooks.py`. It is a list of triples now, and a test
+  pins the shape.
+
+## [1.394.0] - 2026-09-11
+
+**WI-073 G — registers.** One of the two asked for was **not built**, and the refusal is the
+more useful half.
+
+### Not built, on purpose
+
+- **The issued-kit register.** The native-first check refused it. Core ERPNext `Asset` already
+  carries `custodian` (a Link to Employee) and `location`, and `Asset Movement` already records
+  the handover with `from_employee` / `to_employee` — which is exactly *"who has it, and when
+  did they take it?"*. A parallel `Issued Kit` doctype would have been the duplication ADR-0002
+  exists to prevent, and it would have split the answer across two tables.
+
+  **The real gap was never a missing doctype.** It was that nobody has put a flow meter into
+  `Asset` — zero rows on prod — and that nothing read the custodian at the moment it matters.
+  So the custodian is now read where it does: a leaving checklist lists every Asset that person
+  holds, beside their devices and vehicles. The register stays core's. A test fails the build
+  if an `Issued Kit`-shaped doctype ever appears.
+
+### Added
+
+- **`Company Obligation` — the company's own renewal dates, and the subcontractor certificates
+  we hold.** Everything else in this module tracks what a *person* holds; nothing tracked what
+  the **company** does. Verified before building: no doctype in this app carried an expiry
+  field for a contractor licence, a workers' comp policy, general liability, a COI, a vehicle
+  registration or a business licence.
+
+  **`Audit` is a category**, because the workers' comp premium audit is a deadline with no
+  certificate behind it — and a register that only holds documents misses exactly that kind,
+  which is the kind that arrives as a surprise bill.
+
+  **The warning horizon is per row.** A contractor licence renewal takes weeks; a vehicle
+  registration takes a morning. One horizon for both would be wrong for one of them, and being
+  wrong in the short direction is how a licence lapses.
+
+  **A subcontractor's certificate lives here too**, pointed at their Supplier, and the weekly
+  digest calls those out separately: their lapse is *our* exposure — a claim on an uninsured
+  sub becomes ours — and it reads differently from our own renewal falling due. It is the one
+  nobody is watching, because it is somebody else's paperwork sitting in somebody's inbox.
+
+  Everybody can **read** it. "Are we still licensed?" and "has their COI lapsed?" are questions
+  a project manager asks on a call, and a register only two people can open is one that gets
+  asked by email instead. The four status words are copied from the credential register
+  deliberately — two expiry models that disagree about what *Expiring* means is worse than
+  either alone — and it rides the **existing** nightly sweep and weekly digest rather than
+  growing a second pair.
+
+## [1.393.0] - 2026-09-11
+
+**WI-073 F — joining and leaving.**
+
+### Added
+
+- **A leaving checklist, generated from what that person actually holds.** ERPNext disables a
+  departing employee's login by itself and does **nothing else** — the device in their van,
+  the credential the insurer asked about, the four training assignments against their name and
+  the two people who report to them are all invisible the day after they go. A fixed checklist
+  cannot know any of it, so it gets filled in from memory, which is the failure this removes.
+
+  The derived rows are: every Managed Device signed out to them, every valid credential (file
+  a copy *before* access goes), a count of open training assignments to close or reassign,
+  every Fleet Vehicle they drive, and — the one that is easiest to forget and hardest to
+  notice — **their direct reports**, because somebody whose manager has left has no manager
+  and nothing says so: time-off requests route to an empty approver and simply never move.
+
+  Every derived lookup is best-effort. A missing module means fewer rows, never an exception;
+  the fixed list alone is still worth raising.
+
+  It is the **same record shape** as onboarding with a `kind` of Joining or Leaving, rather
+  than a second near-identical doctype. That moved uniqueness from `employee` alone to
+  `(employee, kind)` — a person joins once and leaves once, and a single-column DocField
+  `unique` cannot say that — so the constraint came off the field and moved into
+  `ensure_checklist`. The test moved with it rather than being deleted: an unenforced
+  invariant with no test is how the second checklist silently stops appearing.
+
+  Raised on the **transition** to `Left`, not on the current value, because Employee is saved
+  often and an unguarded check would try on every save. It can never fail an Employee save —
+  same contract as the joining handler.
+
+- **30 / 60 / 90-day check-ins to a new hire's supervisor, with no record at all.** That is
+  the design rather than an omission: the value is the prompt — go and ask them how it is
+  going — and a form attached to it turns a two-minute conversation into an admin task, which
+  is how the conversation stops happening. Nothing is stored, nothing is ticked, nobody is
+  chased, and the email says so.
+
+  Idempotent by arithmetic rather than by a flag: it fires only on the exact day, so a sweep
+  running twice in a day sends twice and one that misses a day misses it. Both are fine for a
+  nudge, and neither needs a table.
+
+## [1.392.0] - 2026-09-11
+
+**WI-073 E — the private half of an HR file.**
+
+### Notes
+
+- **The finding that prompted this was half wrong, and the correction is the useful part.**
+  The survey reported that any of the sixteen could open a colleague's Employee record and
+  read who is salaried. Checked against prod before writing anything: all 119 Employee fields
+  did sit at **permlevel 0** with no field-level protection of any kind, and `Custom DocPerm`
+  does grant the `Employee` role read **and write** at that level — but **19 `User Permission`
+  rows scope each person to their own Employee record**, so a colleague cannot open anybody
+  else's. The claim is refuted.
+
+  What is true is narrower and still worth fixing: the entire protection rested on those
+  nineteen rows being correct and complete — one deleted row away from being gone — and an
+  employee could edit their **own** cost-to-company, because self-service write sat at level 0
+  with nothing above it. And **no field in that group holds data today**, which is exactly the
+  right moment to put a level above it: before somebody types a bank account into a field with
+  no protection.
+
+### Added
+
+- **Ten Employee fields moved to permlevel 1** — cost to company, salary currency and mode,
+  the healthcare stipend, bank name, account number and IBAN, passport number, health details
+  and blood group — with `HR Manager` and `System Manager` granted that level. Not `HR User`:
+  all sixteen staff hold it, so granting it there is granting it to everybody.
+
+  The grant is a **patch calling `frappe.permissions.add_permission`, not a fixture**.
+  `Custom DocPerm` is the one table where this repo's fixture habit is dangerous —
+  `setup_custom_perms` copies the standard permission set wholesale the first time a doctype
+  is customised, and the six rows already on prod are not in this repo's fixture file.
+  Managing two new rows through a file that does not know about the other six is how the other
+  six get lost. `add_permission` is the framework's own API, calls `setup_custom_perms`
+  itself, and is a no-op when the rule exists.
+
+  `date_of_birth` is deliberately left at level 0: it is the one field in the group with real
+  data (16 of 16), its sensitivity is far below a bank account's, and raising it would hide it
+  from the person themselves.
+
+- **`HR Case Record` — the narrowest doctype in the app.** A dated note of a conversation, a
+  warning or a grievance. `HR Manager` and `System Manager` only, no export, no share, no web
+  view, no copy.
+
+  **"Conversation" is the first option and a first-class one.** Most of what belongs in a
+  personnel file is a conversation somebody wanted a dated note of, and a form offering only
+  *written warning* and *final warning* is one people avoid until things are already bad — at
+  which point there is no earlier record showing anybody tried.
+
+  The summary field's own description sets the standard: **written for the person it is about
+  to read back**. Anything you would not say to their face does not belong in a record they
+  can be shown in a tribunal — and notes written to be defensible are notes that say nothing.
+  Their response is recorded verbatim if they give one, because a file with only one side of
+  it is worth less, not more. Nobody can file their own: the two people holding `HR Manager`
+  are also employees, so that is reachable rather than theoretical.
+
+- **`Policy Acknowledgement` — "I have read it and I agree", with a name and a date on it.**
+  The training module can already push the handbook out as a document lesson and records that
+  each person **opened and read** it. That is a page-view, and it is materially weaker than an
+  agreement: the evidentiary value is the person saying yes, which a scroll position cannot
+  show. It is an HR record rather than a lesson block, which also means a policy that lives in
+  Drive — where the handbook actually is — can be acknowledged without first being rebuilt as
+  a course.
+
+  The typed name is **compared against their own**. Not as a security control, since anybody
+  logged in as them could type it, but because the failure it catches is *somebody else's*
+  name being typed — a manager helpfully signing on their behalf. That is real, common, the
+  one thing that makes the register worthless, and invisible afterwards. The match is exact
+  after casefolding and punctuation-stripping: every leniency that lets "J Griffin" through
+  also lets a colleague's surname through. The name is **not prefilled on the form**, because
+  a prefilled name is a name nobody typed and typing it is the act being recorded.
+
+  **Declining is offered as plainly as signing, and recorded.** A register that only accepts
+  yes is a register that gets a yes, and a refusal with a reason is far more use to whoever
+  has to deal with it than a row that simply never got filled in. Declines go to HR
+  immediately. Version is part of the identity, because "he signed the handbook" says nothing
+  about which handbook and the version people argue about is the one that changed.
+
+- **A weekly nudge for the emergency contact nobody has.** Verified on prod:
+  `emergency_phone_number` is empty for **all sixteen** active employees, on a field that has
+  existed the whole time. Nothing had ever asked — which is this release's shape in miniature.
+  It asks **them** rather than reporting a number to HR, because the only person who can fill
+  it in is the person whose contact it is, and it writes only to the people who are missing
+  one.
+
+## [1.391.0] - 2026-09-11
+
+**WI-073 D — confined space, lockout/tagout, and working alone.** The highest legal exposure
+in the company, and three requirements OSHA asks for first that almost nobody has.
+
+### Added
+
+- **`Confined Space` — a register of every below-grade space the crew works in.** Fountain
+  vaults, wet wells and pump pits are the textbook permit-required case and almost nobody
+  writes them down: an atmospheric hazard from decomposing organic matter and chlorine dosing,
+  an engulfment risk from water that can rise, and egress through a hatch.
+
+  **The default is permit-required, and the default is the whole safety margin.** A space
+  wrongly classified as needing a permit costs twenty minutes; one wrongly classified as not
+  needing one is how people die in pits. Downgrading requires a name and a date — not an
+  approval workflow, just an answer to "who said this pit was safe", because that is the first
+  question after an incident. A space with a hazard still ticked cannot be downgraded at all.
+
+  A permit-required space must carry a real rescue plan. **"Call 911" is not one**: most
+  confined-space deaths are the people who went in after somebody, and the minutes that matter
+  are the ones before anybody arrives.
+
+- **`Confined Space Entry Permit`, completed at the hatch.** A permit signed at the office the
+  morning before is the failure mode this is designed against, so the atmosphere limits are
+  checked by the machine rather than by the person filling it in, the permit expires with the
+  shift, and closing out is a separate act from opening.
+
+  **The atmosphere refuses, and it is the only check in this app that blocks rather than
+  warns.** Everywhere else the doctrine is written down in `training/compliance.py`: by the
+  time a record is being saved the truck is already moving, and refusing the form moves the
+  work off the books. That reasoning does not transfer here. A permit is not a record *of*
+  work happening, it is the thing that decides whether it starts, and the gas reading is the
+  one number the whole document exists to check. Oxygen 19.5–23.5% — the **ceiling** matters
+  too, since an enriched atmosphere is a fire risk and people forget that half — LEL under
+  10%, H₂S under 10 ppm, CO under 25 ppm. The human ticks (ventilation, isolation, rescue
+  plan) are listed back for confirmation rather than refused, because those are judgements and
+  a form that argues with a supervisor about them gets filled in dishonestly. **There is no
+  override for the gas**, and the form deliberately does not draw a button that looks like
+  there might be.
+
+  **The attendant is mandatory and cannot be the entrant.** It is the field that gets skipped
+  and the one that matters most: most confined-space fatalities are would-be rescuers. One
+  person in a hurry filling their own name into every Link is the likeliest shortcut on a
+  phone at a hatch, so it is refused outright.
+
+  Closing out asks exactly one question — is everybody out — because an attendant who cannot
+  close it in ten seconds will close it in the truck on the way home, and a permit nobody
+  closed reads exactly like a person still down a hole. The list view says so on open.
+
+- **`Lockout Tagout Procedure` and `Lockout Periodic Inspection`.** One procedure per piece of
+  equipment, listing every energy source, where it is, how to isolate it, and — the column
+  everybody leaves out — **how to verify it is actually dead**. Locking a breaker is not the
+  same as confirming the pump will not start, and the difference is somebody's hand. A row
+  without a verification method is refused.
+
+  The annual inspection is the requirement almost nobody has, and the half everybody gets
+  wrong is **who does it**: the inspector must not be the person whose use is being observed.
+  Somebody checking their own habits finds nothing, which is precisely why the rule names a
+  second person. `last_inspected_on` and the due date are derived from the inspection records
+  rather than typed, because a self-reported date is exactly how this stays undone — and an
+  unwritten procedure reads as **due now** rather than never, since a blank date reads as
+  "nothing to do".
+
+- **`Lone Work Session` — a check-in that notices when somebody does not come back.** Three
+  stages fifteen minutes apart: chase the worker, then their supervisor, then the executives.
+  Most overdue sessions are somebody who finished and forgot, so the first nudge clears the
+  great majority without troubling anybody.
+
+  **It escalates once per stage and then stops** — a sweep that re-sends every ten minutes
+  trains people to filter it, and the filtered version of this alert is worth nothing. **It
+  never closes a session by itself**, because "the sweep decided they were probably fine" is
+  the judgement nobody should be making at 7pm. A missing supervisor escalates **up** rather
+  than nowhere: silence is the one outcome this must never produce. Checking out tells whoever
+  was alarmed, since an escalation with no resolution is how the next one gets ignored.
+
+  Both the permit and the check-in hang off the **visit wizard's safety step**, the screen
+  technicians already have open on a phone. A check-in that lives anywhere else is a check-in
+  that does not happen.
+
+### Fixed
+
+- **A duplicate scheduler key would have silently stopped all four chat sweeps.** The
+  lone-worker sweep wants `*/10 * * * *`, which already exists, and a repeated key in a dict
+  literal **replaces** the earlier one — so registering it as its own entry would have
+  disabled chat provisioning, attachments, chunk indexing and embedding with no error
+  anywhere. `tests/test_hooks_integrity.py` caught it on the first run; the job is merged into
+  the existing list, and the test that pins it now parses `hooks.py` rather than matching a
+  string, so it cannot pass on the broken shape.
+
+## [1.390.0] - 2026-09-11
+
+**WI-073 C — the injury and illness log.** Technicians work with water, chemicals, pumps and
+live electrical, and this is the record OSHA asks for first and almost nobody has. It is
+shaped by the regulation rather than by what would be tidy.
+
+### Added
+
+- **`Safety Incident`** — an injury, illness, near miss or property damage, in the shape of
+  OSHA Forms 300 and 301. Four things about it are decisions rather than details.
+
+  **The record exists the moment it is filed**, whether or not anybody agrees with it. The
+  `Employee` role can create one, there is no approval state, no countersignature and nothing
+  submittable. A log a worker cannot open is a log that gets a phone call instead, and a
+  phone call is not a record — and a log a manager can suppress at intake is not a log at all.
+  Whether a case is *recordable* is a separate question, answered by a rule rather than by
+  whoever received it.
+
+  **Recordability is derived, never typed.** `29 CFR 1904.7` is mechanical, and the one
+  distinction that decides most cases is **first aid only** versus **medical treatment beyond
+  first aid** — exactly the one people get wrong under pressure. A tick box labelled
+  "recordable" invites a judgement call at the worst possible moment; a computed field invites
+  an argument with the rule, which is the argument worth having. A near miss is never
+  recordable, and that is not a technicality to bury: it is the most useful row in the log
+  precisely because it cost nothing.
+
+  **The reporting clock is on the form at the moment of filing.** Utah gives **8 hours** for a
+  fatality and **24** for an in-patient hospitalisation, an amputation or the loss of an eye,
+  counted from when the company *learns* of it and not from when it happened. A deadline that
+  surfaces in a report next week is a deadline already missed, so it is computed on insert,
+  drawn as a red banner with the hours remaining in it — "by 14:20" needs arithmetic done in
+  somebody's head at the worst moment; "about 3 hours left" does not — and a reportable case
+  sets the evidence hold, because the moment somebody is deciding whether to move the pump is
+  the moment nobody is reading a policy document.
+
+  **Privacy cases are built in from the start**, not retrofitted, which is how a name ends up
+  printed. Six categories, listed by the rule and nowhere widened. Every name on the posted log
+  comes from a single `log_name()` — one function, so there is one place to get it right
+  instead of one per report — and a private case prints "Privacy Case".
+
+- **`OSHA 300 Log`, `OSHA 300A Summary` and `OSHA Privacy Case List`.** A case belongs to the
+  year of the **injury**, not of the record: one opened in January for a December injury sits
+  on the previous year's form, and getting that backwards moves a case between two forms that
+  have both already been posted.
+
+  The 300A renders its zeros rather than an empty table, because an empty summary still has to
+  be signed and posted from 1 February to 30 April and is the commonest one to forget. It does
+  **not invent Total hours worked** — payroll runs through QuickBooks and an outside bureau, so
+  the number is not here, and a plausible figure from headcount × 2,080 would be wrong by
+  exactly the overtime this crew works. It is the denominator of every incidence rate an
+  insurer computes.
+
+  The privacy list is the one report in the app with a shorter role list than its siblings —
+  `System Manager` and `HR Manager`, not `HR User`, who can keep the posted log without ever
+  needing the names. It carries the case number, the name and which of the six categories
+  applies, and **deliberately not the injury description**: the point of a privacy case is that
+  the *nature* of it stays off the list people read, and a helpful-looking description column
+  would undo the rule in the one report that exists to honour it.
+
+- **Filing from where it happened.** `safety.report_incident` takes the five things somebody
+  can answer standing up and writes the record immediately; everything else — treatment,
+  classification, body part, root cause — is a judgement made later by whoever picks it up. An
+  incomplete record filed today beats a complete one filed never, and it beats a phone call
+  that leaves nothing at all.
+
+  It hangs off the **visit wizard's safety step**, the screen technicians already have open on
+  a phone, because incidents happen on visits and a feature reachable only from its own Desk
+  list is one nobody finds when they are hurt. Quiet rather than prominent — a line of text
+  under the acknowledgement, not a button competing with the checklist.
+
+- **A corrective action can become real work** — a Task, or a Training Assignment. One that
+  stays a sentence on a form is one nobody does, and "retrain him on confined space" written in
+  a box next to an injury is the exact sentence that gets read once at the review meeting and
+  never again. Raising a Training Assignment **refuses to guess which course was meant**: that
+  is the same class of mistake as matching a reimbursement Supplier by name — it succeeds
+  confidently and assigns the wrong thing, and a wrongly assigned safety course is worse than
+  none because it reads as done.
+
+### Notes
+
+- An incident is row-scoped to your own and your reports', even though anybody can create one.
+  It carries a body part, a treatment and, on a privacy case, a category from a list that
+  includes sexual assault and mental illness — the most sensitive data in this app. Whoever
+  keeps the log reads it through the role-gated reports rather than by browsing the list.
+- Three assertions in the new suite failed on correct code on the first run and were the tests'
+  fault, not the code's: `FIRST_AID` is a substring of `BEYOND_FIRST_AID`, so an `assertNotIn`
+  on raw text fails on a correct tuple; and `ast.unparse` normalises double quotes to single,
+  so asserting on the source spelling of a string fails too. Both are the absence-assertion
+  trap one level down.
+
+## [1.389.0] - 2026-09-11
+
+**WI-073 B — who can I send, and who cannot go.**
+
+### Added
+
+- **Dispatch now knows who is off.** Approved time off and restricted duty were both already
+  recorded and **nothing read either of them at the moment a visit was scheduled**, so a visit
+  could be booked for a technician with an approved day off and nobody found out until the
+  morning. `hr_enhancements/availability.py` answers it on `Sapphire Maintenance Record`
+  validate, checking the **scheduled** date before the actual visit date — a warning that only
+  appears once the truck has arrived is a warning nobody can act on.
+
+  It is a **separate hook** from the certification advisory that already runs there, not an
+  extra clause inside it: the two ask different questions about the same person — *may* they
+  do the work, versus *can* they be there — and a site may well want one without the other.
+  Warn, never block, copied from `training/compliance.py` rather than re-argued: by the time
+  a maintenance record is being saved there is often a truck already moving, and refusing the
+  form does not stop the work, it moves the work off the books where nobody can see it.
+
+  Only **Approved** time off counts. A `Requested` day is not a day off yet, and warning about
+  one would train people to ignore the warning — which costs more than the case it catches.
+
+- **`Work Restriction` — what somebody temporarily may not do, and until when.** No lifting,
+  no ladders, no vault entry, no driving, until the 14th.
+
+  **There is nowhere on the record to write why, and that is the design.** A restriction is a
+  scheduling fact and the scheduler needs exactly that; the diagnosis behind it is between
+  them and their doctor. The pull toward a free-text *reason* field is real and worth naming
+  so nobody re-adds it: it feels helpful, and it would immediately fill with medical
+  information sitting in a doctype the `Employee` role can read — inherited from then on by
+  every feature that joins the table. A test holds it shut.
+
+  Open-ended is allowed, because a restriction usually has no end date when it is first
+  written down. `covers()` reads a missing end date as *still running*, and the query filters
+  it in **Python** rather than in `filters` — a `>=` on a nullable date silently matches NULLs
+  in Frappe, which would be right by accident here and wrong the next time somebody copies it.
+
+- **`Qualification Coverage` — the Skills Matrix turned sideways.** The matrix answers "who
+  can I send?", one row per person. This answers the question underneath it, which nothing in
+  the app could ask: **"how many of us can do this at all?"**
+
+  That number is already biting here. Sign-off authority is strictly-higher tier within the
+  same job family, and prod has four Junior Technicians and one Senior — so **one man is the
+  only person in the company who can attest that any of the other four may work alone**, and
+  he is one holiday away from nobody being able to. Nothing surfaced it, because every
+  existing view is per-person and a per-person view cannot show you a count of one.
+
+  Three sources in one grid: courses, credentials, and **sign-off authority itself** — the one
+  nobody would think to look at and the one with the smallest number against it. It opens on
+  rows where two or fewer people hold something, because a report opening on forty rows of
+  "eight people hold this" buries the three that matter. Credentials are counted **per person**
+  rather than per row: somebody who renewed keeps both, and counting both reports cover of two
+  where there is one.
+
+- **`Fleet Vehicle.assigned_driver` is a Link to Employee** rather than a typed-in name, so
+  the licence expiry the credential register already tracks can finally be joined to the
+  truck. Zero Fleet Vehicles existed when it was converted, so nothing had to be migrated.
+
+  **Absence is not refusal**, and that default is load-bearing: no licence on file means
+  nobody filed one, which is a gap to chase, not a statement that the person cannot drive.
+  Reading it the other way would have flagged fifteen of sixteen people on the day it shipped
+  and been muted by the end of the week. What *does* stop somebody is an expired or revoked
+  licence that is on file, or an active `no_driving` restriction. The credential name is
+  matched **whole**, never as a substring — a substring match on "licence" also catches a
+  contractor licence and a pesticide applicator licence, and reporting a technician as unable
+  to drive because their pesticide ticket lapsed is the kind of wrong that gets the whole
+  warning switched off.
+
+### Notes
+
+- `Work Restriction` is row-scoped like time off — yourself and the people whose week you
+  plan — rather than readable by every colleague the way a Position is. "No lifting, no
+  ladders, until the 14th" still says something about somebody's health with the *why* left
+  out. The dispatch advisory does not read through that scoping: it runs server-side inside
+  the `validate` hook, because a scheduler needs to be told even when they are not that
+  person's manager. What they are told is the summary, and the record has nothing more to give.
+
+## [1.388.0] - 2026-09-11
+
+### Fixed
+
+- **The Receipt / Expense posting path could never have run.** `extraction.py` proposed
+  `Create Expense Claim` for every `Receipt / Expense`, and `Expense Claim` is an **hrms**
+  doctype. hrms is not installed on this site and cannot simply be installed — it collides
+  with this app's `HR` module label and six `Training *` doctype names — so
+  `frappe.new_doc("Expense Claim")` raised a bare `DoesNotExistError`, the dispatcher's broad
+  `except` turned it into a generic **Failed** with a truncated traceback, and **each pass
+  burned a retry attempt against `retry_limit`**. The reviewer saw a failure that named
+  nothing.
+
+  It had never actually fired. Verified against prod 2026-09-11: `tabDocument Intake` is
+  empty, and both `Expense Claim` and `Expense Claim Type` are absent. The first person to
+  push a receipt through would have been the one to find it.
+
+  `travel_management/api.py::_require_hrms` has guarded this exact situation for releases —
+  its docstring says outright that it exists so `frappe.new_doc("Expense Claim")` does not
+  raise a raw `DoesNotExistError` — and the intake handler simply never got the same
+  treatment. It has it now, **and the proposal moved to where it can be understood**:
+  extraction no longer offers an action this site cannot post, so the problem surfaces at the
+  point of choice rather than at the point of Approve.
+
+- **A receipt now becomes a draft Purchase Invoice against the employee's reimbursement
+  Supplier**, which is how this company already records the transaction. QuickBooks models
+  employee reimbursement as a vendor bill, prod carries seven Suppliers for it, and
+  `accounting_intake/actions/vendor_bill.py` already knew how to build that shape — its
+  standalone builder is now shared rather than copied, with an explicit `supplier` override.
+
+  **The override is the point, not a convenience.** On a reimbursement the intake's party is
+  the *merchant* — the hardware store on the receipt — while the bill is raised against the
+  *employee's* reimbursement Supplier. Defaulting to `doc.party` and trusting the caller to
+  remember is how a receipt becomes a bill payable to the shop instead of to the person who
+  paid for it out of their own pocket. The merchant is preserved in `remarks`.
+
+- **The Supplier is resolved from an explicit link, never from its name — and that is the
+  decision this change turns on.** The seven on prod are `Jesse Griffin Reimbursement`,
+  `Danny Rosser Reimbursement`, `Employee Clegg Mabey Reimbursement`,
+  `Nathan Cox Reimbursement`, `Lisa Symanski Reimbursement`, `Lian Silva Reimbursement` and
+  `Logan Penrod Employee Reimbursement`: **three different naming shapes**, and two that do
+  not contain their Employee's name as stored — `Danny Rosser` is Employee *Daniel Rosser*,
+  `Lian Silva` is Employee *Lian Jentz Da Silva*. Nine of the sixteen staff have none at all.
+
+  Matching on the name was the obvious route and it is the wrong one, for a reason worth
+  keeping: there are **1,180 Suppliers** on this site. A near-match that lands on a real
+  vendor does not fail — it quietly makes that vendor the destination for somebody's
+  out-of-pocket receipts, and the resulting Purchase Invoice looks entirely ordinary right up
+  until it is paid to the wrong company. A gap a human fills in costs a minute; a wrong link
+  is a payment. So `Employee.custom_reimbursement_supplier` holds the answer, and
+  `patches/link_reimbursement_suppliers.py` seeds only exact, unambiguous matches — **five of
+  the seven**, leaving the two nicknames for a person. It writes only where the field is
+  empty, so a correction is never overwritten on a later deploy.
+
+- **`_employee_for` could have reimbursed the wrong person.** It ended with
+  `frappe.db.get_value("Employee", {"status": "Active"}, "name")` — whichever row the
+  database handed back first — so a reviewer with no Employee record would have had the claim,
+  and now the bill, filed against an arbitrary colleague. A reimbursement raised to the wrong
+  person is a payment to the wrong person, and nothing about it looks unusual on the way
+  through. It returns `None` now, and both handlers turn that into a message saying what to
+  do.
+
+### Removed
+
+- **`enhancements_core/doctype/expense_claim_type/`**, a controller stub for a doctype that
+  does not exist here. `load_doctype_module` resolves through the DocType's own `module` field
+  (`frappe origin/version-16:frappe/modules/utils.py:291-299`), so this file was only ever
+  loadable if a DocType named `Expense Claim Type` declared module `Enhancements Core` —
+  nothing did, there was no JSON beside it, and hrms's own copy declares module `HR`.
+  `MODULE_PLAN.md` recorded exactly that in v1.47.0 and left the folder in place; it is now
+  gone, along with its line in `enhancements_core/README.md`. No data patch is needed, because
+  there is no record to delete.
+
+### Notes
+
+- The seeding runs as **both** a patch and an `after_migrate` hook. `custom_reimbursement_supplier`
+  is a fixture Custom Field and `sync_fixtures()` runs in `post_schema_updates()` — *after* the
+  post-model-sync patches — so on the migrate that introduces it the column does not exist when
+  the patch runs, and a patch that returns having done nothing still records itself in
+  `tabPatch Log` and never runs again. That trap has now bitten this app three times; the hook
+  runs after fixtures, is idempotent, and self-heals on every later deploy.
+- A new test fails the build on **any** selectable `proposed_action` with no registered
+  handler. An unhandled option is the quiet version of the same bug: the dispatcher logs
+  *"No handler for X"* and the document sits `Approved` for ever.
+
+### Fixed before shipping — the review of this change
+
+The reimbursement path above was then reviewed adversarially, because it creates financial
+documents: 53 agents over five dimensions, every finding checked by three verifiers prompted
+to refute it. **It found a critical defect in the fix itself**, which is recorded here because
+the mistake is more instructive than the feature.
+
+- **The bill was raised against whoever APPROVED the receipt, not whoever paid for it.**
+  `_employee_for` resolved `doc.reviewed_by or frappe.session.user`, and `reviewed_by` is
+  stamped by `approve_document`, which is gated on `Accounts Manager` / `System Manager`.
+  **The approver is by role design not the claimant.** So a technician's $340 receipt,
+  approved by the accountant, would have produced a draft Purchase Invoice payable to *the
+  accountant's* reimbursement Supplier, with remarks confidently naming them as the person
+  owed the money — on every receipt, not as an edge case — while the technician who actually
+  paid was never reimbursed. Nothing about the invoice looks unusual.
+
+  That inference was inherited from the Expense Claim handler, where it was equally wrong and
+  simply never ran. Carrying it into a path that *does* run is what made it dangerous, and
+  the commit message for the previous change claimed to have removed exactly this class of
+  bug while leaving a systematic version of it in place.
+
+  There is **no signal on a Document Intake that means "who paid"** — `doc.owner` is not it,
+  because Upload and Mobile are role-gated to accounting staff so a technician cannot use
+  them, and Email and Drive rows are inserted by the mail hook and a scheduler job. So the
+  record now carries an explicit **Paid By**, mandatory for a reimbursement on the form *and*
+  at the approval gate (the API-side twin, because Frappe does not enforce
+  `mandatory_depends_on` against a direct write and `Document Intake` is writable by
+  `Accounts User`). Extraction *suggests* a value on the Email channel, where the sender is
+  recorded — a suggestion the reviewer sees and can change is a different thing from an
+  inference they never learn about.
+
+  Gating at approval rather than only in the handler matters for a second reason: the handler
+  runs in a **background job**, so a problem it finds surfaces as a `Failed` document with a
+  traceback rather than as a sentence beside the button somebody just pressed.
+
+- **Receipt lines priced only as a total posted at zero.** `build_standalone_pi` read
+  `line.rate` alone, and a receipt line very often has no unit price — there is no rate on a
+  hardware-store line, only an amount. The result is a draft invoice that looks complete and
+  is worth nothing. The old Expense Claim handler had this right and the Purchase Invoice path
+  never did; routing reimbursements through it made the gap newly reachable.
+
+- **Two Suppliers normalising to one key both wrote, and the last one won.** The seeding
+  patch's never-overwrite guard reads the Employee row as it was *loaded*, so a second write
+  for the same person did not see the first. `Clegg Mabey Reimbursement` beside
+  `Employee Clegg Mabey Reimbursement` — exactly the duplicate a hand-maintained vendor list
+  accumulates — would have resolved by row order. It now groups by key first and refuses
+  ambiguity **from both directions**: two vendors for one person is the same problem as two
+  people for one vendor.
+
+- **The "no fuzzy matching" test was a five-name denylist** (`difflib`, `SequenceMatcher`,
+  `startswith`, …) that any hand-rolled matcher walks straight past. It is now behavioural:
+  it drives the real `_normalise` and `_NOISE` against the seven Supplier names and sixteen
+  Employee names actually on prod and pins the exact pairing. Verified by mutation — replacing
+  the matcher with a surname-only one fails three of its assertions, where the old version
+  passed.
+
+Findings against `vendor_bill.py` that **pre-date this change** are recorded and not fixed
+here, because they affect every vendor bill and deserve their own change with their own
+testing: the intake's `tax_total` / `net_total` are never posted as tax, `currency` is
+discarded so a foreign-currency document is booked at parity, and the expense account falls
+back to the company default regardless of what was bought.
+
+## [1.387.0] - 2026-09-11
+
+The first instalment of **WI-073**, which came out of asking what else the HR module should
+have. We surveyed the top HR SaaS products and the Frappe HRMS source — 230 agents across six
+clusters, then a scoring pass against what already exists here and a completeness critic —
+and **dropped 186 of 227 candidates**. The drops are as informative as the keeps: everything
+payroll, tax, salary structure, pay slip, gratuity and the India/UAE regional packs is out
+because QuickBooks and an outside bureau own pay; the time clock is out because QuickBooks
+Time already does it; travel, appraisal cycles, the org chart, HR dashboards and classic
+training events are already here or worse than what is here.
+
+**The two clusters that paid off were the ones nobody calls HR software** — field-service
+platforms (ServiceTitan, Jobber, Housecall Pro) and EHS (SafetyCulture, KPA, Assignar). The
+generic HRIS category produced almost nothing this company does not already have. That is the
+right answer for a business whose technicians drive to sites and work with water, chemicals,
+pumps and live electrical, and it is worth writing down because the instinct was to start at
+BambooHR.
+
+### Added
+
+- **A route up the ladder, which v1.386.0 shipped without.** That release built a `Position`
+  ladder whose tier **is** the sign-off authority, and nothing that says how anybody climbs
+  it. On prod that is not an HR nicety: there are four Junior Technicians and exactly one
+  Senior, so **one person is the only human in the company who can attest for any of them**,
+  and the only fallback is blanket `HR Manager` authority. The gate was built; the route
+  through it was not.
+
+  `Position Requirement` is a child table on `Position` — what a rung asks for, in three
+  kinds. A **course** is content and a **credential** is a ticket somebody else issues, and
+  both are things you can hold without anybody watching you work. The third kind is a
+  **sign-off**: the competency itself, a supervisor saying they watched this person drain a
+  basin and would send them alone. v1.386.0 built that machinery and nothing said which
+  competencies a rung actually demands, so the gate existed with no stated target.
+
+  `hr_enhancements/progression.py` answers "what am I short of for the job I do now" and
+  "what stands between me and the next rung", and **nothing it returns is stored**. Held-or-
+  not is recomputed against `Training Completion`, `Employee Credential` and `Training
+  Signoff` every time it is asked: a stored "85% ready" is wrong the day after a credential
+  lapses, and readiness that is wrong in the optimistic direction is exactly the number
+  somebody would make a decision on. `Expiring` counts as **held**, on the same ninety-day
+  horizon the Skills Matrix uses and for the same reason — somebody inside the horizon is
+  qualified today.
+
+  Shown on the profile page that already exists, as a self-only panel added *after* `_shared`
+  returns, so it cannot reach a colleague payload by any route. That is the sharpest version
+  of the rule the rest of the profile already follows: a gap list with somebody's name on it
+  is the most performance-shaped data this module holds, and **your own is motivating where a
+  colleague's is a ranking**.
+
+- **`Tier Review` — a promotion with a stated basis.** Because a tier *is* the sign-off
+  authority, moving somebody from Junior to Senior Technician hands them standing to attest
+  that other people can work alone. That makes a promotion a **permission grant**, and until
+  now it was a free-text edit to one field on an Employee record with no stated reason and
+  nothing to look back at.
+
+  So this is not a performance review, and what it lacks follows from that: no score, no
+  rating out of five, no weighting — the output is binary — and **no pay field, ever**, because
+  the moment it has one it stops being evidence for an authority grant and becomes a salary
+  negotiation. No cycle, no template, no KRA tree, no 360: that machinery is what the HR
+  category sells and it earns its keep somewhere above a hundred people.
+
+  Three things are load-bearing. **The lines are a snapshot**, derived once from the target
+  rung and frozen, so a review still says what *it* was measured against after somebody
+  changes the rung next March — evidence that silently re-bases is not evidence. **It refuses
+  to open against a rung nobody has configured**, because a review with no lines is an empty
+  checklist everybody signs, and the promotion it authorises would have a paper trail proving
+  nothing. And **the decision and the act are separate**: `Promote` records what was decided,
+  somebody then presses Apply, and that writes the position through the document so core
+  `Version` captures it. The system proposes, a human promotes.
+
+  The reviewer must outrank them on the same ladder — the same predicate as sign-off
+  authority, read from the same place. When nobody does, the picker **says so** rather than
+  failing quietly: on prod a Junior Technician has exactly one eligible reviewer, and that is
+  the most useful thing this screen can tell anybody.
+
+  Row-scoped tighter than time off. A Time Off Request says somebody is away on Thursday; a
+  Tier Review is a list of what they cannot yet do, in their own words. There is no
+  `reports_to` arm — a manager sees one by being named on it, not by where they sit on the
+  tree — and there is a document-level twin, because a query condition filters lists and says
+  nothing about `frappe.get_doc()`.
+
+- **A third sign-off outcome: `Supervised Only`.** Two outcomes forced a supervisor to choose
+  between "I would send them alone" and "come back to me" for somebody who had just done the
+  whole job correctly *with help*. Faced with that choice supervisors pick **Competent** — and
+  the system then reports a Junior as ready to work unsupervised on the strength of a job they
+  did with someone standing next to them. At a pump vault that is the failure that puts a
+  person at a site alone.
+
+  It is treated as **not competent** everywhere it matters: no completion, no badge, no feed
+  entry, no recertification clock, and it does not satisfy a rung requirement — the ladder
+  panel shows it as *"done with a supervisor, not yet solo"*, which is honest in both
+  directions. Every gate that means "may go out alone" was already written as
+  `outcome == COMPETENT` rather than as "not Needs More Practice", which is the only reason a
+  third outcome could be added without auditing each of them; a test now pins that, asserting
+  through the AST that no outcome comparison anywhere names a not-competent value.
+
+  On the phone, **Competent is deliberately not the one big obvious button**. A supervisor
+  standing in the sun taps the prominent control, and the prominent control must not be the
+  one that attests somebody can work alone. All three are the same weight.
+
+### Fixed
+
+- **The Skills Matrix was sorting on nothing.** Its `Gaps` column counted every Published and
+  Required course plus every active Credential Type **company-wide**, for everybody. So a
+  Junior Technician's gap number included the Finance & Accounting Manager's courses, the
+  number came out roughly as "how many qualifications exist" — nearly the same for all
+  sixteen people — and the "who needs the most work" ordering the report opens on was noise
+  wearing the shape of a priority list. Nobody would have noticed: it sorted, it just sorted
+  on nothing. Gaps are now counted against what that person's **rung** asks for; every column
+  is still drawn, because the grid is the point.
+
+  The unconfigured case fails the safe way, and the distinction is load-bearing: a rung with
+  no requirements returns `None`, meaning "count everything as before", **not** an empty set,
+  which would have reported the entire company as having no gaps the moment nobody had filled
+  the ladder in. An unconfigured system issuing a clean bill of health is the failure this
+  release keeps meeting — the dispatch advisory that could never fire, the whitespace queries
+  that passed vacuously, the backfill that recorded success having written nothing. The
+  report now says out loud when its gap column is not scoped to anybody's rung.
+
+### Guardrails
+
+- Everything in this deliverable **refuses to render rather than rendering blank**. A rung
+  nobody has configured says "nobody has written down what this rung asks for"; it does not
+  draw an empty checklist, because an empty checklist reads as *ready*. Most of
+  `tests/test_hr_progression.py` is about that case rather than the happy path.
+- `eligible_reviewers` deliberately does **not** fall back to "any manager" when it finds
+  nobody. The empty list is the true answer and the useful one: it is exactly the fact this
+  deliverable exists to surface.
+- A sign-off requirement reads the submitted `Training Signoff` rather than re-deriving the
+  signer's authority. Re-checking it would mean a supervisor who has since changed position
+  retroactively un-signs everybody they ever signed, which is not what an attestation means.
+- `tests/test_hr_credentials.py` had pinned an exact source line rather than the behaviour,
+  so a correct change failed the build while the property it guarded was untouched. It now
+  asserts the condition. A contract test should break when the behaviour changes, not when
+  the sentence does.
+- `tests/test_training_player_css_contract.py` caught the new dynamic class prefix on the
+  first run, exactly as designed — an unstyled class is not a runtime error, it just renders
+  wrongly and only a human looking at the page can tell.
+
 ## [1.386.0] - 2026-09-10
 
 The first instalment of **WI-072** — the HR module and Training redesign. This release is

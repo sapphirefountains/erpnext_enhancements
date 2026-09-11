@@ -743,10 +743,11 @@ class TestTheSidebarIconsAllExist(unittest.TestCase):
     error at all -- the same failure mode as a dead card reference.
     """
 
-    #: Kept as a denylist rather than a mirror of the framework's icon sets: the
-    #: audit found exactly one bad name, and a hard-coded inventory here would rot
-    #: against frappe's own `lucide.svg` on every upgrade.
-    KNOWN_MISSING = {"sitemap"}
+    #: Names verified as ABSENT from both of v16's icon sets. Grown rather than
+    #: mirrored: a full inventory of frappe's `lucide.svg` would rot on every
+    #: upgrade, and a denylist of one only ever catches the one. Each entry here
+    #: was tried, found missing, and replaced.
+    KNOWN_MISSING = {"sitemap", "certificate"}
 
     def test_no_item_uses_an_icon_that_v16_does_not_ship(self):
         for item in _read(SIDEBAR).get("items", []):

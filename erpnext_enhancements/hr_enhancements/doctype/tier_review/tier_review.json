@@ -1,0 +1,270 @@
+{
+ "actions": [],
+ "allow_import": 0,
+ "allow_rename": 0,
+ "autoname": "naming_series:",
+ "naming_rule": "By \"Naming Series\" field",
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "icon": "fa fa-signal",
+ "index_web_pages_for_search": 0,
+ "field_order": [
+  "naming_series",
+  "employee",
+  "employee_name",
+  "user",
+  "column_break_head",
+  "from_position",
+  "to_position",
+  "status",
+  "lines_section",
+  "lines",
+  "self_section",
+  "self_summary",
+  "self_submitted_on",
+  "review_section",
+  "reviewer",
+  "reviewer_user",
+  "reviewer_summary",
+  "reviewed_on",
+  "decision_section",
+  "decision",
+  "decision_note",
+  "decided_by",
+  "decided_on",
+  "applied_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "options": "HR-TIER-.#####",
+   "reqd": 1,
+   "default": "HR-TIER-.#####",
+   "print_hide": 1
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Employee",
+   "options": "Employee",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "label": "Name",
+   "read_only": 1,
+   "fetch_from": "employee.employee_name",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "read_only": 1,
+   "description": "Derived from the Employee, never accepted from a caller -- every readiness read is keyed on it."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "from_position",
+   "fieldtype": "Link",
+   "label": "From",
+   "options": "Position",
+   "read_only": 1,
+   "description": "Where they stand today. Stamped when the review opens."
+  },
+  {
+   "fieldname": "to_position",
+   "fieldtype": "Link",
+   "label": "To",
+   "options": "Position",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "The rung being reviewed for. Its requirements become the lines below, once."
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "read_only": 1,
+   "options": "Draft\nWith the reviewer\nDecided\nCanceled",
+   "default": "Draft",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Moves only through hr_enhancements/tier_review.py. Canceled with one l, house style."
+  },
+  {
+   "fieldname": "lines_section",
+   "fieldtype": "Section Break",
+   "label": "What the rung asks for"
+  },
+  {
+   "fieldname": "lines",
+   "fieldtype": "Table",
+   "label": "Requirements",
+   "options": "Tier Review Line",
+   "read_only": 1,
+   "description": "A SNAPSHOT, taken once when the review opens. If the rung's requirements change afterwards this review still says what it was measured against -- a decision is evidence, and evidence that silently re-bases is not evidence."
+  },
+  {
+   "fieldname": "self_section",
+   "fieldtype": "Section Break",
+   "label": "Their own account"
+  },
+  {
+   "fieldname": "self_summary",
+   "fieldtype": "Small Text",
+   "label": "In their words",
+   "description": "What they think they are ready for, and what they are not. Written before the reviewer sees any of it."
+  },
+  {
+   "fieldname": "self_submitted_on",
+   "fieldtype": "Datetime",
+   "label": "Sent on",
+   "read_only": 1
+  },
+  {
+   "fieldname": "review_section",
+   "fieldtype": "Section Break",
+   "label": "The reviewer"
+  },
+  {
+   "fieldname": "reviewer",
+   "fieldtype": "Link",
+   "label": "Reviewer",
+   "options": "Employee",
+   "description": "Somebody whose Position outranks theirs on the same ladder. The same predicate as sign-off authority, read from the same place."
+  },
+  {
+   "fieldname": "reviewer_user",
+   "fieldtype": "Link",
+   "label": "Reviewer User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reviewer_summary",
+   "fieldtype": "Small Text",
+   "label": "Reviewer's account"
+  },
+  {
+   "fieldname": "reviewed_on",
+   "fieldtype": "Datetime",
+   "label": "Reviewed on",
+   "read_only": 1
+  },
+  {
+   "fieldname": "decision_section",
+   "fieldtype": "Section Break",
+   "label": "Decision"
+  },
+  {
+   "fieldname": "decision",
+   "fieldtype": "Select",
+   "label": "Decision",
+   "read_only": 1,
+   "options": "\nPromote\nNot yet",
+   "description": "Read-only and moved only by the endpoint. “Not yet” is a real answer with a date on it, which is the thing somebody can come back to."
+  },
+  {
+   "fieldname": "decision_note",
+   "fieldtype": "Small Text",
+   "label": "Why",
+   "read_only": 1,
+   "description": "Required for “Not yet”. A refusal with no reason leaves somebody nothing to work on -- the same rule as a declined time-off request and a non-competent sign-off."
+  },
+  {
+   "fieldname": "decided_by",
+   "fieldtype": "Link",
+   "label": "Decided by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "decided_on",
+   "fieldtype": "Datetime",
+   "label": "Decided on",
+   "read_only": 1
+  },
+  {
+   "fieldname": "applied_on",
+   "fieldtype": "Datetime",
+   "label": "Position changed on",
+   "read_only": 1,
+   "description": "Set when somebody presses Apply. A decision to promote and the act of promoting are separate on purpose: the system proposes, a human promotes."
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Tier Review",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR User",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager"
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "write": 1,
+   "role": "Employee"
+  }
+ ],
+ "search_fields": "employee_name,to_position,status",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "employee_name",
+ "show_title_field_in_link": 1,
+ "track_changes": 1
+}

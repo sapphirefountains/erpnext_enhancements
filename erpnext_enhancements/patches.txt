@@ -867,3 +867,5 @@ erpnext_enhancements.patches.backfill_training_achievements
 # is the belt to that suspenders. Also replaces an orphaned standard=0 "HR" sidebar sitting on prod
 # since 2026-02-08 pointing at a workspace that does not exist. Never aborts a migrate. Safe twice.
 erpnext_enhancements.patches.resync_hr_and_training_workspaces
+erpnext_enhancements.patches.link_reimbursement_suppliers
+erpnext_enhancements.patches.protect_employee_compensation_fields

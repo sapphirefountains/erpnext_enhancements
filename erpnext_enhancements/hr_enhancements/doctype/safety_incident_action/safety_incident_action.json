@@ -1,0 +1,78 @@
+{
+ "actions": [],
+ "allow_import": 0,
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "istable": 1,
+ "field_order": [
+  "action",
+  "owner_name",
+  "column_break_head",
+  "due_on",
+  "done",
+  "done_on",
+  "raised_reference"
+ ],
+ "fields": [
+  {
+   "fieldname": "action",
+   "fieldtype": "Small Text",
+   "label": "What we are changing",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 4,
+   "description": "The change, not the incident. “Retrain Kyle” is a change; “Kyle slipped” is not."
+  },
+  {
+   "fieldname": "owner_name",
+   "fieldtype": "Data",
+   "label": "Who",
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "A plain name, not a Link — same rule as the onboarding checklist. A required assignee is how a list stops getting filled in."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "due_on",
+   "fieldtype": "Date",
+   "label": "By",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "done",
+   "fieldtype": "Check",
+   "label": "Done",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "done_on",
+   "fieldtype": "Date",
+   "label": "Done on",
+   "read_only": 1
+  },
+  {
+   "fieldname": "raised_reference",
+   "fieldtype": "Data",
+   "label": "Raised",
+   "read_only": 1,
+   "description": "The Training Assignment or Task this became, if it became one. A corrective action that stays a sentence on a form is a corrective action nobody does."
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Safety Incident Action",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "idx",
+ "sort_order": "ASC",
+ "states": []
+}

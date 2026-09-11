@@ -1,0 +1,163 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "allow_rename": 0,
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "index_web_pages_for_search": 0,
+ "field_order": [
+  "procedure_name",
+  "customer",
+  "serial_no",
+  "column_break_head",
+  "is_active",
+  "written_on",
+  "last_inspected_on",
+  "inspection_due_on",
+  "energy_section",
+  "energy_sources",
+  "steps_section",
+  "shutdown_steps",
+  "startup_steps"
+ ],
+ "fields": [
+  {
+   "fieldname": "procedure_name",
+   "fieldtype": "Data",
+   "label": "Procedure",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "The equipment this shuts down — “Lagoon main pump and chemical feed”."
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "serial_no",
+   "fieldtype": "Link",
+   "label": "Feature",
+   "options": "Serial No"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "label": "Active",
+   "default": "1"
+  },
+  {
+   "fieldname": "written_on",
+   "fieldtype": "Date",
+   "label": "Written"
+  },
+  {
+   "fieldname": "last_inspected_on",
+   "fieldtype": "Date",
+   "label": "Last annual inspection",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "DERIVED from the inspections below. The annual check is the requirement almost nobody has, and it must be done by somebody OTHER than the person who uses the procedure."
+  },
+  {
+   "fieldname": "inspection_due_on",
+   "fieldtype": "Date",
+   "label": "Next due",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "energy_section",
+   "fieldtype": "Section Break",
+   "label": "Energy sources",
+   "description": "Every source, where it is, how to isolate it, and how to VERIFY it is dead. The last column is the one that gets skipped."
+  },
+  {
+   "fieldname": "energy_sources",
+   "fieldtype": "Table",
+   "label": "Sources",
+   "options": "Lockout Energy Source"
+  },
+  {
+   "fieldname": "steps_section",
+   "fieldtype": "Section Break",
+   "label": "Steps"
+  },
+  {
+   "fieldname": "shutdown_steps",
+   "fieldtype": "Text",
+   "label": "Shutting down"
+  },
+  {
+   "fieldname": "startup_steps",
+   "fieldtype": "Text",
+   "label": "Bringing it back",
+   "description": "Restart is when people get hurt — somebody is usually still working on it."
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Lockout Tagout Procedure",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "print": 1,
+   "role": "Employee"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "autoname": "field:procedure_name",
+ "naming_rule": "By fieldname",
+ "title_field": "procedure_name",
+ "show_title_field_in_link": 1,
+ "icon": "fa fa-lock",
+ "search_fields": "customer,serial_no"
+}

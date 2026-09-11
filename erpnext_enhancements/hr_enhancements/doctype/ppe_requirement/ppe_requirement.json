@@ -1,0 +1,51 @@
+{
+ "actions": [],
+ "allow_import": 0,
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "istable": 1,
+ "field_order": [
+  "protection",
+  "because",
+  "is_mandatory"
+ ],
+ "fields": [
+  {
+   "fieldname": "protection",
+   "fieldtype": "Data",
+   "label": "PPE",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 4,
+   "description": "What they wear — “chemical splash goggles”, “nitrile gloves”, not “eye protection”. A generic word is one everybody satisfies with whatever they have."
+  },
+  {
+   "fieldname": "because",
+   "fieldtype": "Data",
+   "label": "Against what",
+   "in_list_view": 1,
+   "columns": 5,
+   "description": "The hazard it is for. PPE with no stated hazard is PPE somebody talks themselves out of."
+  },
+  {
+   "fieldname": "is_mandatory",
+   "fieldtype": "Check",
+   "label": "Required",
+   "default": "1",
+   "in_list_view": 1,
+   "columns": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "PPE Requirement",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "idx",
+ "sort_order": "ASC",
+ "states": []
+}

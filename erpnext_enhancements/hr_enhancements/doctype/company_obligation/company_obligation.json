@@ -1,0 +1,190 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "allow_rename": 1,
+ "autoname": "field:obligation_name",
+ "naming_rule": "By fieldname",
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "icon": "fa fa-certificate",
+ "index_web_pages_for_search": 0,
+ "field_order": [
+  "obligation_name",
+  "category",
+  "issuer",
+  "reference",
+  "column_break_head",
+  "owner_role",
+  "issued_on",
+  "expires_on",
+  "status",
+  "detail_section",
+  "lead_days",
+  "document",
+  "column_break_detail",
+  "supplier",
+  "is_active",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "obligation_name",
+   "fieldtype": "Data",
+   "label": "What",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "What it is, in the words somebody would use asking about it — “Utah contractor licence”, “General liability”, “Workers' comp policy”."
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "label": "Kind",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "options": "Licence\nInsurance\nRegistration\nPermit\nAudit\nOther",
+   "description": "“Audit” is here because the workers' comp premium audit is a deadline with no certificate behind it, and a register that only holds documents misses exactly that kind."
+  },
+  {
+   "fieldname": "issuer",
+   "fieldtype": "Data",
+   "label": "Who issues it"
+  },
+  {
+   "fieldname": "reference",
+   "fieldtype": "Data",
+   "label": "Number",
+   "description": "Policy or licence number — the thing a customer asks for."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "owner_role",
+   "fieldtype": "Data",
+   "label": "Whose job",
+   "description": "A plain name or role, not a Link. Same rule as the checklists: a required assignee is how a register stops being kept up."
+  },
+  {
+   "fieldname": "issued_on",
+   "fieldtype": "Date",
+   "label": "Issued"
+  },
+  {
+   "fieldname": "expires_on",
+   "fieldtype": "Date",
+   "label": "Expires",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "The whole point of the record. Required, because a row with no date is a row the sweep cannot warn about and nobody looks at."
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "read_only": 1,
+   "options": "Valid\nExpiring\nExpired\nSuperseded",
+   "default": "Valid",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "DERIVED nightly from the date. The same four words the credential register uses, because two expiry models that disagree about what “Expiring” means is worse than either alone."
+  },
+  {
+   "fieldname": "detail_section",
+   "fieldtype": "Section Break",
+   "label": "Detail"
+  },
+  {
+   "fieldname": "lead_days",
+   "fieldtype": "Int",
+   "label": "Warn this many days ahead",
+   "default": "90",
+   "description": "A contractor licence renewal takes weeks; a vehicle registration takes a morning. One horizon for both would be wrong for one of them."
+  },
+  {
+   "fieldname": "document",
+   "fieldtype": "Attach",
+   "label": "The document",
+   "description": "The certificate a customer asks for. Attached here so the answer to “can you send us your COI” is one click rather than a search of somebody's inbox."
+  },
+  {
+   "fieldname": "column_break_detail",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "Subcontractor",
+   "options": "Supplier",
+   "description": "Set when this is somebody ELSE'S certificate that we hold — a subcontractor's COI. Their lapse is our exposure, and it is the one nobody is watching."
+  },
+  {
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "label": "Still tracked",
+   "default": "1"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Company Obligation",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "print": 1,
+   "role": "Employee"
+  }
+ ],
+ "search_fields": "category,expires_on,reference",
+ "sort_field": "expires_on",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "obligation_name",
+ "show_title_field_in_link": 1,
+ "track_changes": 1
+}

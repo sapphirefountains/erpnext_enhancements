@@ -139,6 +139,17 @@
   {
    "child": 1,
    "collapsible": 1,
+   "icon": "ban",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Restricted duty",
+   "link_to": "Work Restriction",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
    "icon": "list-checks",
    "indent": 0,
    "keep_closed": 0,
@@ -146,6 +157,138 @@
    "link_to": "Onboarding Checklist",
    "link_type": "DocType",
    "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "file-check",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Policy sign-offs",
+   "link_to": "Policy Acknowledgement",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "folder-lock",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Case records",
+   "link_to": "HR Case Record",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "shield",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Safety",
+   "type": "Section Break"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "triangle-alert",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Incidents",
+   "link_to": "Safety Incident",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "clipboard-list",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "OSHA 300 log",
+   "link_to": "OSHA 300 Log",
+   "link_type": "Report",
+   "type": "Link",
+   "report_ref_doctype": "Safety Incident"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "file-text",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "OSHA 300A summary",
+   "link_to": "OSHA 300A Summary",
+   "link_type": "Report",
+   "type": "Link",
+   "report_ref_doctype": "Safety Incident"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "arrow-down",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Confined spaces",
+   "link_to": "Confined Space",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "clipboard-check",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Entry permits",
+   "link_to": "Confined Space Entry Permit",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "lock",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Lockout procedures",
+   "link_to": "Lockout Tagout Procedure",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "user",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Working alone",
+   "link_to": "Lone Work Session",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "triangle-alert",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Site hazards",
+   "link_to": "Site Hazard",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "shield",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "PPE assessments",
+   "link_to": "PPE Hazard Assessment",
+   "link_type": "DocType",
    "type": "Link"
   },
   {
@@ -174,6 +317,17 @@
   {
    "child": 1,
    "collapsible": 1,
+   "icon": "award",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Company renewals",
+   "link_to": "Company Obligation",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
    "icon": "table",
    "indent": 0,
    "keep_closed": 0,
@@ -186,6 +340,18 @@
   {
    "child": 1,
    "collapsible": 1,
+   "icon": "users",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Coverage",
+   "link_to": "Qualification Coverage",
+   "link_type": "Report",
+   "type": "Link",
+   "report_ref_doctype": "Employee"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
    "icon": "list",
    "indent": 0,
    "keep_closed": 0,
@@ -193,6 +359,17 @@
    "link_to": "Training Assignment",
    "link_type": "DocType",
    "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "trending-up",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Tier reviews",
+   "link_to": "Tier Review",
+   "link_type": "DocType",
    "type": "Link"
   },
   {
@@ -232,7 +409,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-11 12:00:00.000000",
+ "modified": "2026-09-11 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "HR Enhancements",
  "name": "HR",

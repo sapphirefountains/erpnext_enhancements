@@ -20,7 +20,9 @@
   "description",
   "lft",
   "rgt",
-  "old_parent"
+  "old_parent",
+  "requirements_section",
+  "requirements"
  ],
  "fields": [
   {
@@ -124,13 +126,25 @@
    "no_copy": 1,
    "print_hide": 1,
    "read_only": 1
+  },
+  {
+   "fieldname": "requirements_section",
+   "fieldtype": "Section Break",
+   "label": "What this rung asks for",
+   "description": "What somebody must hold to stand on this rung. Read by the promotion review and by each person's own profile, so write it for them rather than for a filing cabinet."
+  },
+  {
+   "fieldname": "requirements",
+   "fieldtype": "Table",
+   "label": "Requirements",
+   "options": "Position Requirement"
   }
  ],
  "icon": "fa fa-sitemap",
  "index_web_pages_for_search": 1,
  "is_tree": 1,
  "links": [],
- "modified": "2026-09-10 12:00:00.000000",
+ "modified": "2026-09-11 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "HR Enhancements",
  "name": "Position",
