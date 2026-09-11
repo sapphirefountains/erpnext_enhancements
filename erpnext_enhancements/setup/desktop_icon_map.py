@@ -97,6 +97,19 @@ TILES = {
 	"HR": ("hr", "id-card", PEOPLE),
 	"Workforce": ("workforce", "users-round", PEOPLE),
 	"Training": ("training", "graduation-cap", PEOPLE),
+	# The team hubs (WI-074). One per `* Team` role, which are the only roles on this
+	# site that discriminate -- no role at all is held by every System User, but the
+	# Team roles split the company cleanly. Their `Desktop Icon.roles` is NOT listed
+	# here: it is derived at every migrate from the matching `Workspace.roles`, so a
+	# tile is visible exactly when its page is openable and there is no second list to
+	# keep in step. See `setup/desktop_icons.py`.
+	"HR Hub": ("hr_hub", "user-cog", PEOPLE),
+	"Design Hub": ("design_hub", "palette", PRODUCT),
+	"Production Hub": ("production_hub", "hard-hat", PRODUCT),
+	"Marketing Hub": ("marketing_hub", "target", DELIVERY),
+	"Sales Hub": ("sales_hub", "handshake", DELIVERY),
+	"Operations Hub": ("operations_hub", "route", FIELD),
+	"Support Hub": ("support_hub", "life-buoy", FIELD),
 }
 
 # Where the generated artwork lives, relative to the app package, and the URL it is

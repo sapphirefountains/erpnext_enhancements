@@ -1,0 +1,140 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"ph_head_sc\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"ph_sc_sapphire_maintenance_record\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sapphire Maintenance Record\",\"col\":4}},{\"id\":\"ph_sc_site_hazard\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Site Hazard\",\"col\":4}},{\"id\":\"ph_sc_safety_incident\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Safety Incident\",\"col\":4}},{\"id\":\"ph_head_cards\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports &amp; Masters</b></span>\",\"col\":12}},{\"id\":\"ph_card_permits_and_isolation\",\"type\":\"card\",\"data\":{\"card_name\":\"Permits and isolation\",\"col\":4}},{\"id\":\"ph_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "creation": "2026-09-11 16:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 1,
+ "icon": "tool",
+ "is_hidden": 0,
+ "label": "Production Hub",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Permits and isolation",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Confined Space Entry Permit",
+   "link_count": 0,
+   "link_to": "Confined Space Entry Permit",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Confined Space",
+   "link_count": 0,
+   "link_to": "Confined Space",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Lockout Tagout Procedure",
+   "link_count": 0,
+   "link_to": "Lockout Tagout Procedure",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Lone Work Session",
+   "link_count": 0,
+   "link_to": "Lone Work Session",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Job Photo Compliance",
+   "link_count": 0,
+   "link_to": "Job Photo Compliance",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Qualification Coverage",
+   "link_count": 0,
+   "link_to": "Qualification Coverage",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Supplier Pickup List",
+   "link_count": 0,
+   "link_to": "Supplier Pickup List",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-09-11 16:00:00.000000",
+ "modified_by": "Administrator",
+ "module": null,
+ "name": "Production Hub",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "Production Team"
+  },
+  {
+   "role": "Maintenance Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "sequence_id": 0.0,
+ "shortcuts": [
+  {
+   "label": "Sapphire Maintenance Record",
+   "link_to": "Sapphire Maintenance Record",
+   "type": "DocType"
+  },
+  {
+   "label": "Site Hazard",
+   "link_to": "Site Hazard",
+   "type": "DocType"
+  },
+  {
+   "label": "Safety Incident",
+   "link_to": "Safety Incident",
+   "type": "DocType"
+  }
+ ],
+ "title": "Production Hub",
+ "type": "Workspace"
+}

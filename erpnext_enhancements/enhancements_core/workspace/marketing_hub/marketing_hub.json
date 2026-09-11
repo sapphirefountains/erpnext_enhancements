@@ -1,0 +1,74 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"mh_head_sc\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"mh_sc_ad_campaign\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Ad Campaign\",\"col\":4}},{\"id\":\"mh_sc_ad_account\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Ad Account\",\"col\":4}},{\"id\":\"mh_head_cards\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports &amp; Masters</b></span>\",\"col\":12}},{\"id\":\"mh_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "creation": "2026-09-11 16:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 1,
+ "icon": "crm",
+ "is_hidden": 0,
+ "label": "Marketing Hub",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Marketing Spend Rollup",
+   "link_count": 0,
+   "link_to": "Marketing Spend Rollup",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Attribution Gaps",
+   "link_count": 0,
+   "link_to": "Attribution Gaps",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-09-11 16:00:00.000000",
+ "modified_by": "Administrator",
+ "module": null,
+ "name": "Marketing Hub",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "Marketing Team"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "sequence_id": 0.0,
+ "shortcuts": [
+  {
+   "label": "Ad Campaign",
+   "link_to": "Ad Campaign",
+   "type": "DocType"
+  },
+  {
+   "label": "Ad Account",
+   "link_to": "Ad Account",
+   "type": "DocType"
+  }
+ ],
+ "title": "Marketing Hub",
+ "type": "Workspace"
+}

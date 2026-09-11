@@ -1,0 +1,79 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"sh_head_sc\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"sh_sc_sapphire_maintenance_contract\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sapphire Maintenance Contract\",\"col\":4}},{\"id\":\"sh_sc_sapphire_maintenance_record\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sapphire Maintenance Record\",\"col\":4}},{\"id\":\"sh_sc_sapphire_service_plan\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sapphire Service Plan\",\"col\":4}},{\"id\":\"sh_head_cards\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports &amp; Masters</b></span>\",\"col\":12}},{\"id\":\"sh_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "creation": "2026-09-11 16:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 1,
+ "icon": "service",
+ "is_hidden": 0,
+ "label": "Support Hub",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Job Photo Library",
+   "link_count": 0,
+   "link_to": "Job Photo Library",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Featured Jobs",
+   "link_count": 0,
+   "link_to": "Featured Jobs",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-09-11 16:00:00.000000",
+ "modified_by": "Administrator",
+ "module": null,
+ "name": "Support Hub",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "Support Team"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "sequence_id": 0.0,
+ "shortcuts": [
+  {
+   "label": "Sapphire Maintenance Contract",
+   "link_to": "Sapphire Maintenance Contract",
+   "type": "DocType"
+  },
+  {
+   "label": "Sapphire Maintenance Record",
+   "link_to": "Sapphire Maintenance Record",
+   "type": "DocType"
+  },
+  {
+   "label": "Sapphire Service Plan",
+   "link_to": "Sapphire Service Plan",
+   "type": "DocType"
+  }
+ ],
+ "title": "Support Hub",
+ "type": "Workspace"
+}

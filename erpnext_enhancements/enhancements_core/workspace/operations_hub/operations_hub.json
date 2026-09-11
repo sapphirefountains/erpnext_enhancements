@@ -1,0 +1,99 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"oh_head_sc\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"oh_sc_master_project\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Master Project\",\"col\":4}},{\"id\":\"oh_sc_project_contract\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Contract\",\"col\":4}},{\"id\":\"oh_sc_travel_trip\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Travel Trip\",\"col\":4}},{\"id\":\"oh_head_cards\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports &amp; Masters</b></span>\",\"col\":12}},{\"id\":\"oh_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "creation": "2026-09-11 16:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 1,
+ "icon": "project",
+ "is_hidden": 0,
+ "label": "Operations Hub",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Hand-Off SLA Compliance",
+   "link_count": 0,
+   "link_to": "Hand-Off SLA Compliance",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Pending Items by Project",
+   "link_count": 0,
+   "link_to": "Pending Items by Project",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Supplier Pickup List",
+   "link_count": 0,
+   "link_to": "Supplier Pickup List",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Value Stream Performance",
+   "link_count": 0,
+   "link_to": "Value Stream Performance",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-09-11 16:00:00.000000",
+ "modified_by": "Administrator",
+ "module": null,
+ "name": "Operations Hub",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "Operations Team"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "sequence_id": 0.0,
+ "shortcuts": [
+  {
+   "label": "Master Project",
+   "link_to": "Master Project",
+   "type": "DocType"
+  },
+  {
+   "label": "Project Contract",
+   "link_to": "Project Contract",
+   "type": "DocType"
+  },
+  {
+   "label": "Travel Trip",
+   "link_to": "Travel Trip",
+   "type": "DocType"
+  }
+ ],
+ "title": "Operations Hub",
+ "type": "Workspace"
+}

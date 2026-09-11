@@ -1,0 +1,107 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"dh_head_sc\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"dh_sc_water_feature_design\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Water Feature Design\",\"col\":4}},{\"id\":\"dh_sc_control_panel_design\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Control Panel Design\",\"col\":4}},{\"id\":\"dh_sc_configurable_product\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Configurable Product\",\"col\":4}},{\"id\":\"dh_head_cards\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports &amp; Masters</b></span>\",\"col\":12}},{\"id\":\"dh_card_standards\",\"type\":\"card\",\"data\":{\"card_name\":\"Standards\",\"col\":4}},{\"id\":\"dh_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "creation": "2026-09-11 16:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 1,
+ "icon": "water",
+ "is_hidden": 0,
+ "label": "Design Hub",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Standards",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Standard Detail",
+   "link_count": 0,
+   "link_to": "Standard Detail",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Standard Note",
+   "link_count": 0,
+   "link_to": "Standard Note",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Nozzle Profile",
+   "link_count": 0,
+   "link_to": "Nozzle Profile",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Featured Jobs",
+   "link_count": 0,
+   "link_to": "Featured Jobs",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-09-11 16:00:00.000000",
+ "modified_by": "Administrator",
+ "module": null,
+ "name": "Design Hub",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "Design Team"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "sequence_id": 0.0,
+ "shortcuts": [
+  {
+   "label": "Water Feature Design",
+   "link_to": "Water Feature Design",
+   "type": "DocType"
+  },
+  {
+   "label": "Control Panel Design",
+   "link_to": "Control Panel Design",
+   "type": "DocType"
+  },
+  {
+   "label": "Configurable Product",
+   "link_to": "Configurable Product",
+   "type": "DocType"
+  }
+ ],
+ "title": "Design Hub",
+ "type": "Workspace"
+}
