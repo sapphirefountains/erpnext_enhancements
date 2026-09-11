@@ -405,7 +405,12 @@ def _sales_metrics():
 	)
 	lost_90 = flt(
 		_scalar(
-			"select count(*) from `tabOpportunity` where status in ('Lost','Closed') and modified >= %(d)s",
+			# 'Closed' was in this list until v1.402.0, when the 144 rows carrying it were
+			# retired to 'Lost'. It is now unreachable. Note the leg is keyed on `modified`,
+			# which is why that patch updates the rows WITHOUT touching it -- doing so would
+			# have dropped all 144 into this 90-day window and taken the reported win rate
+			# from 36.9% to 16.1% overnight.
+			"select count(*) from `tabOpportunity` where status = 'Lost' and modified >= %(d)s",
 			{"d": d90},
 		)
 	)

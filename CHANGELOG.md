@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.402.0] - 2026-09-11
+
+### Fixed
+
+- **148 opportunities could not be saved, and had not been saveable for over a year.** Their
+  `status` held a value outside the field's own Select options — `Closed` (144),
+  `Prospecting` (3), `Value Proposition` (1) — and `_validate_selects`
+  (`base_document.py:1101-1129`, `origin/version-16`) hard-throws on exactly that. Neither
+  `ignore_validate` nor `ignore_mandatory` nor `ignore_permissions` bypasses it; only
+  `frappe.flags.in_import` and the no-validation write paths do. This was not theoretical:
+  Error Log `2026-06-19 03:03:55` is a QuickBooks customer import dying on this throw. In the
+  Desk the Status field renders blank — jQuery sets `selectedIndex` to -1 when no option
+  matches — and any edit came back as a modal listing the seven valid options. All 148 are
+  retired to `Lost` and are editable again.
+- **A public Dashboard Chart named "Opportunities Won" was plotting those 144 abandoned rows
+  and nothing else** ($877,388). Repointed to `Closed Won`. Two more charts — "Won
+  Opportunities", on the CRM workspace, and "Territory Wise Sales" — filtered
+  `status = "Converted"`, which zero of the 839 opportunities carry, so they had been
+  rendering empty. A fourth, "Opportunities Won vs. Lost", carried a literal `null` inside
+  its status `IN` list. All four fixed in the same patch, deliberately: repointing
+  "Opportunities Won" in a *later* release would have swapped a wrong chart for an empty one.
+- **The app contradicted itself about what `Closed` meant.**
+  `kpi_dashboards/report/value_stream_performance/value_stream_performance.py` documented it
+  as "neither won nor lost — administratively closed deals"; `kpi_dashboards/snapshots.py`
+  counted it as **lost** in `win_rate_90`. `snapshots.py` was right about the intent and is
+  now simply `status = 'Lost'`; the comment in `value_stream_performance.py` has been
+  rewritten to record the ruling and point at the evidence.
+- The 148 rows also reappear on the Opportunity Kanban board, whose columns are the Select
+  options and which had been silently hiding every one of them.
+
+### Notes
+
+**What `Closed` actually was, from `tabVersion` — because the obvious reading is wrong.**
+Every migrated opportunity landed as `Closed` in the Zoho CRM import of 2025-07-14 (the rows
+carry `custom_zoho_crm_opportunity_id`); customers and their invoices had loaded three days
+earlier. Two "Update Existing Records" spreadsheet re-imports on 2025-08-16 and 2025-08-20
+(596 and 599 rows) then promoted rows out of `Closed` into `Closed Won` and `Lost`. **The 144
+are the ones those passes did not promote** — 31 of a 32-row sample have no `tabVersion` row
+at all. Nik ran those passes and ruled that what was left behind was lost.
+
+That also disposes of the one signal pointing the other way. `Closed` tracks `Closed Won`
+almost exactly on whether the party was ever invoiced — 62.5% against 60.0%, with `Lost` at
+1.0% as a control — which looks like strong evidence that `Closed` meant won. It is circular:
+everything started as `Closed`, and the promoted subset was chosen a month *after* the invoice
+data was already in the system, so the label is downstream of the revenue knowledge rather
+than independent of it. Two further signals that looked decisive are circular for the same
+reason and were discarded: **no `Closed` row has a Project or a won-date**, but project
+creation and the entire hand-off engine are gated on the literal string `"Closed Won"`
+(`crm_enhancements/handoff.py:78`), so a row labelled `Closed` could not have acquired either
+whatever it represented. And `Quotation.opportunity` is populated on **0 of 672** quotations
+site-wide, so the quotation test is unanswerable by construction for every status, not just
+this one.
+
+**The patch is raw SQL that never names `modified`, and that is load-bearing.**
+`snapshots.py` keys the lost leg of `win_rate_90` on `modified`. These rows' `modified` is 13
+months stale, so they contribute nothing today; bumping it drags all 144 into the 90-day
+window and takes the reported win rate from **36.9% to 16.1%** — no error, no failure, and
+nothing in the diff to explain it a year later. `frappe.db.set_value` bumps `modified` by
+default and `doc.save()` always does. `doc.save()` is worse still: it fires ~14 Opportunity
+handlers per row, and `validate_close_reason` would throw on all 148 — which aborts
+`bench migrate`, which on this repo is the deploy.
+
+Because a raw UPDATE writes no `tabVersion` row, the original value would otherwise survive
+nowhere. It is written into `order_lost_reason`, blank on all 148 and gated
+`eval:doc.status==="Lost"`, so it becomes visible on the form at exactly the moment these rows
+become Lost.
+
+**Why the rows are genuinely unfrozen rather than frozen differently.**
+`validate_close_reason` requires a Lost Reason, and none of the 148 has one — but it is gated
+on the *transition* (`previous.status == doc.status` returns early), which is why 216 of the
+313 opportunities already sitting on `Lost` have no Lost Reason and are still saveable.
+`enforce_source` gates on `doc.is_new()`. `validate_ranks_on_won` and `stamp_won_date` fire
+only on `Closed Won`.
+
+**Correction to the v1.402.0 predecessor.** The `### Notes` section of **[1.401.0]** below
+claimed four values were absent from the Select options, including "the un-split
+`Negotiation/Review`". That was wrong and has been corrected in place: two of the seven valid
+options *contain* a forward slash (`Proposal/Price Quote` and `Negotiation/Review`), and
+splitting the option string on `/` reads them as four separate options. `Negotiation/Review`
+is valid and always was. The drift was three values, not four. The 224-vs-80 live-opportunity
+figure in that entry is unaffected — it turned on `Closed` alone.
+
 ## [1.401.0] - 2026-09-11
 
 ### Added
@@ -59,15 +141,17 @@ docs. Two of those checks changed the content, and both would have failed silent
   set. It is `Qualification / Needs Analysis / Proposal / Price Quote / Negotiation / Review /
   Lost / Closed Won / On Hold`. A badge written from the documentation would have counted zero
   forever, and a pipeline tile reading "0 live" looks like a quiet week, not a broken filter.
-- Every filter was then **run against prod** before the file was committed, and three of
-  them came back lying. `Opportunity.status` carries four values that are not in its own
-  Select options — `Closed` (144 rows), `Prospecting`, `Value Proposition`, and the
-  un-split `Negotiation/Review` — legacy ERPNext values that no data patch ever migrated,
-  and excluding only `Lost`/`Closed Won` reported **224 live opportunities where there are
-  80**. All 672 Quotations are `Draft` at docstatus 0 (nobody submits them here), so every
-  status filter was the total wearing a label; that tile now carries the plain count. And
-  15 of the 16 maintenance contracts are `Expired`, so "contracts to renew" is those 15,
-  not Active-plus-Expired.
+- Every filter was then **run against prod** before the file was committed, and three of
+  them came back lying. `Opportunity.status` carries three values that are not in its own
+  Select options — `Closed` (144 rows), `Prospecting` (3) and `Value Proposition` (1) —
+  unmapped remnants of the July 2025 Zoho CRM import. *(Corrected in v1.402.0: this
+  originally said four values and named `Negotiation/Review` as the fourth. It is valid —
+  two of the seven options contain a forward slash, and the option string had been split on
+  it.)* Excluding only `Lost`/`Closed Won` reported **224 live opportunities where there are
+  80**. All 672 Quotations are `Draft` at docstatus 0 (nobody submits them here), so every
+  status filter was the total wearing a label; that tile now carries the plain count. And
+  15 of the 16 maintenance contracts are `Expired`, so "contracts to renew" is those 15,
+  not Active-plus-Expired.
 - Eight of the doctypes worth a shortcut have **no `status` field at all** (`Sapphire
   Maintenance Record`, `Sapphire Service Plan`, `Control Panel Design`, `Configurable Product`,
   `Master Project`, `Ad Campaign`, `Lockout Tagout Procedure`, `Package Dispatch`). Those tiles
