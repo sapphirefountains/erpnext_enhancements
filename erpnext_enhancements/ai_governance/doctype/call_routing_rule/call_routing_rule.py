@@ -44,6 +44,20 @@ class CallRoutingRule(Document):
 		self.ring_seconds = max(0, min(match.MAX_RING_SECONDS, cint(self.get("ring_seconds"))))
 		self._warn_about_unreachable_targets()
 
+	def on_update(self) -> None:
+		"""Tell the gateway a rule changed. Fires on insert as well as on edit."""
+		self._notify_gateway()
+
+	def on_trash(self) -> None:
+		"""Deleting a rule changes who rings just as much as editing one does."""
+		self._notify_gateway()
+
+	def _notify_gateway(self) -> None:
+		"""Function-level import: see the note in ``CallRoutingSettings.on_update``."""
+		from erpnext_enhancements.ai_governance.call_routing import notify_gateway
+
+		notify_gateway()
+
 	def _stamp_target_doctypes(self) -> None:
 		"""Derive ``target_doctype`` and clear the value where it means nothing.
 

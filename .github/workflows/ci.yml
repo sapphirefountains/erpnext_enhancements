@@ -1633,7 +1633,7 @@ jobs:
       # silently on production only.
       - name: Triton chat attachments (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_triton_attachments.py -q
-      # Call routing (v1.402.0). The rules are configured here and matched in Triton --
+      # Call routing (v1.403.0). The rules are configured here and matched in Triton --
       # Triton owns the Twilio webhook and already caches this app's get_telephony_routing,
       # so making ERPNext decide per call would put a blocking HTTP request inside a live
       # call. The cost of that split is the same matcher living in two repos that deploy
@@ -1657,6 +1657,19 @@ jobs:
       # frappe-shaped has leaked into the matcher.
       - name: Call routing matcher (shared vectors, midnight wrap, fail-open)
         run: python -m unittest erpnext_enhancements.tests.test_call_routing -v
+      # The gateway-refresh ping fired when a Call Routing Rule is saved. Its own step
+      # because it stubs frappe, and separate from the matcher suite above precisely so that
+      # one can stay stub-free.
+      #
+      # Two properties, both invisible from the happy path and both a real incident. It must
+      # stay SILENT during migrate/install/patch/import/test -- all of those save documents,
+      # so an unguarded hook POSTs to an external service during a deploy, announces rules
+      # that do not exist yet on a fresh site, and queues jobs the deploy's own FLUSHDB then
+      # destroys. And the shared secret must NOT travel as a frappe.enqueue kwarg, because
+      # those are serialised into redis; the worker reads it itself. That second one is easy
+      # to "simplify" away by matching Triton Settings.on_update, which does pass it.
+      - name: Call routing gateway ping (suppressed on migrate, no secret in the queue)
+        run: python -m unittest erpnext_enhancements.tests.test_call_routing_gateway_notify -v
       # The repo's first JavaScript test, and it needs no runner beyond the node
       # already on the GitHub image — deliberately not a new framework.
       #

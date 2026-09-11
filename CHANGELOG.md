@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.405.1] - 2026-09-11
+
+### Fixed
+
+- **A call-routing edit now reaches the gateway immediately instead of within a minute.**
+  Triton caches `get_telephony_routing` for 60 seconds, and v0.76.0 wired its
+  `POST /refresh-settings` to drop that cache — but nothing on this side ever called it for
+  routing config. `Triton Settings` pings the gateway from its own controller and has since
+  0.23; `Call Routing Settings` and `Call Routing Rule` did not, so a rule saved in the Desk
+  took up to a minute to take effect. Survivable in operation, and thoroughly bewildering for
+  whoever is sitting there testing a change and watching a call ignore what they just saved.
+  Saving either DocType — or deleting a rule, which changes who rings just as much — now
+  enqueues the same ping.
+
+  Three deliberate details. It **reuses** `Triton Settings`' `trigger_refresh_webhook` rather
+  than growing a second copy, so there stays one implementation of "ping the gateway" and one
+  place to fix if the endpoint or its auth ever moves. It reads the shared secret **inside the
+  worker** instead of passing it to `frappe.enqueue`, because enqueue kwargs are serialised
+  into redis and `Triton Settings.on_update` does pass it — the obvious "simplification" here
+  would put `admin_webhook_secret` in the job queue, so a test pins against it. And it is
+  **suppressed during migrate, install, patch, import and test**: all five save documents, so
+  an unguarded hook would POST to an external service mid-deploy, announce rules that do not
+  exist yet on a fresh site, and queue jobs the deploy's own `FLUSHDB` then destroys.
+
+  Best-effort throughout. A lost ping — worker down, or that same `FLUSHDB` — falls back to
+  the 60-second cache expiry, and the edit still lands, just later. `notify_gateway` never
+  raises: a settings page that refuses to save because a gateway is unreachable would be a
+  far worse failure than a stale cache.
+
+  PATCH rather than MINOR deliberately: no new DocType, endpoint, module, patch or
+  integration. This makes an existing capability timely.
+
+- Corrected a stale `v1.402.0` reference in the call-routing CI comment, left behind when
+  that work renumbered to 1.403.0 after #963 took the version.
 ## [1.405.0] - 2026-09-11
 
 ### Fixed
