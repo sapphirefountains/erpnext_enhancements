@@ -4089,3 +4089,42 @@
 	color: var(--tr-muted);
 	font-size: 0.88rem;
 }
+
+/* --- the route up the ladder (WI-073) ------------------------------------- */
+/* Held / Expiring / Missing, and the mark carries it as well as the colour: a
+   colour-only state is one a colour-blind technician reads as "all the same". */
+.tr-rung-count {
+	float: right;
+	font-weight: 400;
+	font-size: 0.85em;
+	color: var(--tr-muted, #6b7280);
+}
+.tr-rung-mark {
+	display: inline-block;
+	width: 1.1em;
+	flex: 0 0 auto;
+}
+.tr-rung-held .tr-rung-mark {
+	color: #15803d;
+}
+.tr-rung-expiring .tr-rung-mark {
+	color: #b45309;
+}
+.tr-rung-missing .tr-rung-mark {
+	color: var(--tr-muted, #6b7280);
+}
+.tr-rung-missing .tr-profile-item-title {
+	font-weight: 600;
+}
+.tr-rung-optional {
+	margin-left: 0.5em;
+	font-size: 0.8em;
+	font-weight: 400;
+	color: var(--tr-muted, #6b7280);
+}
+.tr-rung-why {
+	flex-basis: 100%;
+	font-size: 0.85em;
+	color: var(--tr-muted, #6b7280);
+	margin-left: 1.1em;
+}

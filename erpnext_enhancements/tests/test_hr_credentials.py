@@ -245,7 +245,20 @@ class TestSkillsMatrix(unittest.TestCase):
         self.assertEqual(_read(REPORT_JSON)["ref_doctype"], "Employee")
 
     def test_expiring_is_not_counted_as_a_gap(self):
-        self.assertIn("if state in (LAPSED, NEVER):", _text(REPORT_PY))
+        """Somebody inside the horizon is qualified today; counting them as a gap
+        would make the horizon do the opposite of its job.
+
+        Asserted on the CONDITION, not on the whole line. WI-073 added a second
+        clause to that `if` -- gaps are now scoped to what the person's rung
+        actually asks for -- and pinning the literal line meant a correct change
+        failed the build while the property it was guarding was untouched. A
+        contract test should break when the behaviour changes, not when the
+        sentence does.
+        """
+        src = _text(REPORT_PY)
+        self.assertIn("if state in (LAPSED, NEVER)", src)
+        gap_line = next(line for line in src.splitlines() if "if state in (LAPSED, NEVER)" in line)
+        self.assertNotIn("EXPIRING", gap_line)
 
     def test_lapsed_and_never_are_different_words(self):
         """A lapsed forklift ticket is a renewal; a missing one is a course. Same

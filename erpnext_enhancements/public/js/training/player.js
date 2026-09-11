@@ -2267,6 +2267,7 @@
 
 			// Self-only panels. A colleague payload carries none of these keys, so
 			// they do not draw — there is no is_self branch here to get wrong.
+			if (person.rung) renderRung(card, person.rung);
 			if (person.assigned && person.assigned.length) {
 				card.appendChild(
 					profileList(
@@ -2307,6 +2308,76 @@
 			}
 
 			slot.appendChild(card);
+		}
+
+		// The route up the ladder: what this rung asks for, and what the next one
+		// does. Self-only — the payload key exists on `my_profile` and on no
+		// colleague payload, so like the panels above there is no is_self branch
+		// here to get wrong.
+		//
+		// A gap list with somebody's name on it is the most performance-shaped
+		// thing this module holds. Yours is motivating; a colleague's is a ranking.
+		function renderRung(card, rung) {
+			if (rung.here) {
+				card.appendChild(
+					rungBlock(
+						fmt(t("What {0} asks for"), [rung.here.position_label || t("your position")]),
+						rung.here
+					)
+				);
+			}
+			if (rung.next && rung.next.configured) {
+				card.appendChild(
+					rungBlock(
+						fmt(t("To reach {0}"), [rung.next.position_label || rung.next_position]),
+						rung.next
+					)
+				);
+			} else if (rung.next_position) {
+				// The rung above exists and nobody has said what it wants. Said out
+				// loud rather than drawn as an empty list -- an empty checklist reads
+				// as "you are ready", which is the wrong answer in the dangerous
+				// direction.
+				var wrap = el("div", "tr-profile-block");
+				wrap.appendChild(
+					el("h3", "tr-profile-block-title", fmt(t("To reach {0}"), [rung.next_position]))
+				);
+				wrap.appendChild(
+					el("p", "tr-empty", t("Nobody has written down what this rung asks for yet."))
+				);
+				card.appendChild(wrap);
+			}
+		}
+
+		function rungBlock(title, readiness) {
+			var wrap = el("div", "tr-profile-block");
+			var head = el("h3", "tr-profile-block-title", title);
+			head.appendChild(
+				el(
+					"span",
+					"tr-rung-count",
+					fmt(t("{0} of {1}"), [String(readiness.held), String(readiness.total)])
+				)
+			);
+			wrap.appendChild(head);
+
+			var list = el("ul", "tr-profile-items");
+			(readiness.lines || []).forEach(function (line) {
+				var row = el("li", "tr-profile-item tr-rung-" + String(line.state).toLowerCase());
+				row.appendChild(el("span", "tr-rung-mark", line.state === "Missing" ? "○" : "●"));
+				var title_ = el("span", "tr-profile-item-title", line.label || "");
+				if (!line.mandatory) {
+					// Drawn differently rather than hidden: "would be good" is real
+					// information when you are deciding what to do next.
+					title_.appendChild(el("span", "tr-rung-optional", t("optional")));
+				}
+				row.appendChild(title_);
+				row.appendChild(el("span", "tr-profile-item-note", line.detail || ""));
+				if (line.note) row.appendChild(el("span", "tr-rung-why", line.note));
+				list.appendChild(row);
+			});
+			wrap.appendChild(list);
+			return wrap;
 		}
 
 		function profileList(title, items, emptyText) {

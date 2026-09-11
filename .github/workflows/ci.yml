@@ -715,6 +715,15 @@ jobs:
       # accident.
       - name: HR profile (what a colleague may see, and what a customer may not)
         run: python -m unittest erpnext_enhancements.tests.test_hr_profile -v
+      # WI-072 shipped a ladder whose tier IS the sign-off authority, and no route
+      # up it -- prod has four Junior Technicians and ONE Senior, so one person is
+      # the only one in the company who can attest for any of them. This pins the
+      # route, and most of it is about the EMPTY case: a rung nobody has configured
+      # must say so rather than draw an empty checklist, because an empty checklist
+      # reads as "ready". Same failure shape as the dispatch advisory that could
+      # never fire and the whitespace queries that passed vacuously.
+      - name: HR progression (the route up the ladder, and the empty case)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_progression -v
       # Can somebody who is not a developer start a course? The visual editor
       # shipped in v1.364.0 with NO entry point anywhere -- grepping for
       # "training-canvas" outside its own directory returned two CHANGELOG lines

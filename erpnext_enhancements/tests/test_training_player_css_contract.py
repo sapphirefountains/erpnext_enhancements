@@ -56,6 +56,10 @@ DYNAMIC_PREFIXES = {
         # Phase 4 interactive block types (blocks.js card() modifiers).
         "checklist", "flashcards", "hotspots", "accordion",
     ),
+    # el("li", "tr-profile-item tr-rung-" + line.state.toLowerCase()) — the three
+    # readiness states from hr_enhancements/progression.py. Lowercased at the call
+    # site, so they are listed lowercase here.
+    "tr-rung-": ("held", "expiring", "missing"),
 }
 
 # ``chip(text, tone)`` and ``note(text, tone)`` append their tone to a class, so

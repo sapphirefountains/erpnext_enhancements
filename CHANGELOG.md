@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.387.0] - 2026-09-11
+
+The first instalment of **WI-073**, which came out of asking what else the HR module should
+have. We surveyed the top HR SaaS products and the Frappe HRMS source — 230 agents across six
+clusters, then a scoring pass against what already exists here and a completeness critic —
+and **dropped 186 of 227 candidates**. The drops are as informative as the keeps: everything
+payroll, tax, salary structure, pay slip, gratuity and the India/UAE regional packs is out
+because QuickBooks and an outside bureau own pay; the time clock is out because QuickBooks
+Time already does it; travel, appraisal cycles, the org chart, HR dashboards and classic
+training events are already here or worse than what is here.
+
+**The two clusters that paid off were the ones nobody calls HR software** — field-service
+platforms (ServiceTitan, Jobber, Housecall Pro) and EHS (SafetyCulture, KPA, Assignar). The
+generic HRIS category produced almost nothing this company does not already have. That is the
+right answer for a business whose technicians drive to sites and work with water, chemicals,
+pumps and live electrical, and it is worth writing down because the instinct was to start at
+BambooHR.
+
+### Added
+
+- **A route up the ladder, which v1.386.0 shipped without.** That release built a `Position`
+  ladder whose tier **is** the sign-off authority, and nothing that says how anybody climbs
+  it. On prod that is not an HR nicety: there are four Junior Technicians and exactly one
+  Senior, so **one person is the only human in the company who can attest for any of them**,
+  and the only fallback is blanket `HR Manager` authority. The gate was built; the route
+  through it was not.
+
+  `Position Requirement` is a child table on `Position` — what a rung asks for, in three
+  kinds. A **course** is content and a **credential** is a ticket somebody else issues, and
+  both are things you can hold without anybody watching you work. The third kind is a
+  **sign-off**: the competency itself, a supervisor saying they watched this person drain a
+  basin and would send them alone. v1.386.0 built that machinery and nothing said which
+  competencies a rung actually demands, so the gate existed with no stated target.
+
+  `hr_enhancements/progression.py` answers "what am I short of for the job I do now" and
+  "what stands between me and the next rung", and **nothing it returns is stored**. Held-or-
+  not is recomputed against `Training Completion`, `Employee Credential` and `Training
+  Signoff` every time it is asked: a stored "85% ready" is wrong the day after a credential
+  lapses, and readiness that is wrong in the optimistic direction is exactly the number
+  somebody would make a decision on. `Expiring` counts as **held**, on the same ninety-day
+  horizon the Skills Matrix uses and for the same reason — somebody inside the horizon is
+  qualified today.
+
+  Shown on the profile page that already exists, as a self-only panel added *after* `_shared`
+  returns, so it cannot reach a colleague payload by any route. That is the sharpest version
+  of the rule the rest of the profile already follows: a gap list with somebody's name on it
+  is the most performance-shaped data this module holds, and **your own is motivating where a
+  colleague's is a ranking**.
+
+### Fixed
+
+- **The Skills Matrix was sorting on nothing.** Its `Gaps` column counted every Published and
+  Required course plus every active Credential Type **company-wide**, for everybody. So a
+  Junior Technician's gap number included the Finance & Accounting Manager's courses, the
+  number came out roughly as "how many qualifications exist" — nearly the same for all
+  sixteen people — and the "who needs the most work" ordering the report opens on was noise
+  wearing the shape of a priority list. Nobody would have noticed: it sorted, it just sorted
+  on nothing. Gaps are now counted against what that person's **rung** asks for; every column
+  is still drawn, because the grid is the point.
+
+  The unconfigured case fails the safe way, and the distinction is load-bearing: a rung with
+  no requirements returns `None`, meaning "count everything as before", **not** an empty set,
+  which would have reported the entire company as having no gaps the moment nobody had filled
+  the ladder in. An unconfigured system issuing a clean bill of health is the failure this
+  release keeps meeting — the dispatch advisory that could never fire, the whitespace queries
+  that passed vacuously, the backfill that recorded success having written nothing. The
+  report now says out loud when its gap column is not scoped to anybody's rung.
+
+### Guardrails
+
+- Everything in this deliverable **refuses to render rather than rendering blank**. A rung
+  nobody has configured says "nobody has written down what this rung asks for"; it does not
+  draw an empty checklist, because an empty checklist reads as *ready*. Most of
+  `tests/test_hr_progression.py` is about that case rather than the happy path.
+- `eligible_reviewers` deliberately does **not** fall back to "any manager" when it finds
+  nobody. The empty list is the true answer and the useful one: it is exactly the fact this
+  deliverable exists to surface.
+- A sign-off requirement reads the submitted `Training Signoff` rather than re-deriving the
+  signer's authority. Re-checking it would mean a supervisor who has since changed position
+  retroactively un-signs everybody they ever signed, which is not what an attestation means.
+- `tests/test_hr_credentials.py` had pinned an exact source line rather than the behaviour,
+  so a correct change failed the build while the property it guarded was untouched. It now
+  asserts the condition. A contract test should break when the behaviour changes, not when
+  the sentence does.
+- `tests/test_training_player_css_contract.py` caught the new dynamic class prefix on the
+  first run, exactly as designed — an unstyled class is not a runtime error, it just renders
+  wrongly and only a human looking at the page can tell.
+
 ## [1.386.0] - 2026-09-10
 
 The first instalment of **WI-072** — the HR module and Training redesign. This release is
