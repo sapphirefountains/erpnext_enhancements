@@ -1,0 +1,193 @@
+{
+ "actions": [],
+ "allow_import": 0,
+ "allow_rename": 0,
+ "autoname": "naming_series:",
+ "naming_rule": "By \"Naming Series\" field",
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "icon": "fa fa-warning",
+ "index_web_pages_for_search": 0,
+ "field_order": [
+  "naming_series",
+  "what",
+  "category",
+  "photo",
+  "column_break_head",
+  "customer",
+  "serial_no",
+  "where_exactly",
+  "status",
+  "detail_section",
+  "reported_by",
+  "reported_on",
+  "maintenance_record",
+  "column_break_detail",
+  "resolved_on",
+  "resolution"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "options": "HAZ-.YYYY.-.####",
+   "reqd": 1,
+   "default": "HAZ-.YYYY.-.####",
+   "print_hide": 1
+  },
+  {
+   "fieldname": "what",
+   "fieldtype": "Small Text",
+   "label": "What you found",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "label": "Kind",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "options": "Electrical\nChemical\nSlip, trip or fall\nConfined space\nStructural\nEquipment\nOther"
+  },
+  {
+   "fieldname": "photo",
+   "fieldtype": "Attach Image",
+   "label": "Photo",
+   "description": "Worth more than the description. A photo of a cracked GFCI cover settles in one second what a sentence argues about."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Site",
+   "options": "Customer",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1,
+   "description": "Which site, because the point of this record is warning the NEXT person sent there."
+  },
+  {
+   "fieldname": "serial_no",
+   "fieldtype": "Link",
+   "label": "Feature",
+   "options": "Serial No"
+  },
+  {
+   "fieldname": "where_exactly",
+   "fieldtype": "Data",
+   "label": "Where exactly",
+   "description": "“North basin pump vault”. The banner shows this, and a site name alone does not tell somebody where to be careful."
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Open\nFixed\nAccepted risk",
+   "default": "Open",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "“Accepted risk” exists because some hazards are not going to be fixed, and a permanently Open row is one people stop reading. It still shows in the banner."
+  },
+  {
+   "fieldname": "detail_section",
+   "fieldtype": "Section Break",
+   "label": "Detail"
+  },
+  {
+   "fieldname": "reported_by",
+   "fieldtype": "Link",
+   "label": "Reported by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reported_on",
+   "fieldtype": "Datetime",
+   "label": "Reported",
+   "read_only": 1
+  },
+  {
+   "fieldname": "maintenance_record",
+   "fieldtype": "Link",
+   "label": "Found on visit",
+   "options": "Sapphire Maintenance Record",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_detail",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "resolved_on",
+   "fieldtype": "Date",
+   "label": "Resolved"
+  },
+  {
+   "fieldname": "resolution",
+   "fieldtype": "Small Text",
+   "label": "What was done"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "Site Hazard",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "print": 1,
+   "role": "Employee"
+  }
+ ],
+ "search_fields": "customer,category,where_exactly",
+ "sort_field": "reported_on",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "what",
+ "track_changes": 1
+}

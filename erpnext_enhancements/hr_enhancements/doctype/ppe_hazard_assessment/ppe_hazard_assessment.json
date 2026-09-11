@@ -1,0 +1,136 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "allow_rename": 1,
+ "autoname": "field:work_type",
+ "naming_rule": "By fieldname",
+ "creation": "2026-09-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "icon": "fa fa-shield",
+ "index_web_pages_for_search": 0,
+ "field_order": [
+  "work_type",
+  "is_active",
+  "column_break_head",
+  "assessed_by",
+  "assessed_on",
+  "hazards_section",
+  "hazards",
+  "ppe_section",
+  "requirements"
+ ],
+ "fields": [
+  {
+   "fieldname": "work_type",
+   "fieldtype": "Data",
+   "label": "Kind of work",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "“Vault and pit service”, “chemical handling”, “shop and fabrication”, “electrical”. One assessment per kind of work, not per site — the hazards belong to the task."
+  },
+  {
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "label": "Active",
+   "default": "1"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "assessed_by",
+   "fieldtype": "Link",
+   "label": "Assessed by",
+   "options": "Employee",
+   "reqd": 1,
+   "description": "A name, because the rule asks for a written CERTIFICATION and a certification with nobody's name on it certifies nothing."
+  },
+  {
+   "fieldname": "assessed_on",
+   "fieldtype": "Date",
+   "label": "Assessed on",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "hazards_section",
+   "fieldtype": "Section Break",
+   "label": "The hazards"
+  },
+  {
+   "fieldname": "hazards",
+   "fieldtype": "Text",
+   "label": "What can hurt somebody doing this",
+   "reqd": 1
+  },
+  {
+   "fieldname": "ppe_section",
+   "fieldtype": "Section Break",
+   "label": "What they wear",
+   "description": "Shown on the safety screen a technician taps through before every visit, so the list is read at the moment it is needed rather than filed."
+  },
+  {
+   "fieldname": "requirements",
+   "fieldtype": "Table",
+   "label": "PPE",
+   "options": "PPE Requirement"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR Enhancements",
+ "name": "PPE Hazard Assessment",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "print": 1,
+   "role": "Employee"
+  }
+ ],
+ "search_fields": "work_type,assessed_on",
+ "sort_field": "work_type",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "work_type",
+ "show_title_field_in_link": 1,
+ "track_changes": 1
+}

@@ -270,6 +270,28 @@
    "type": "Link"
   },
   {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "triangle-alert",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Site hazards",
+   "link_to": "Site Hazard",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "shield",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "PPE assessments",
+   "link_to": "PPE Hazard Assessment",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
    "child": 0,
    "collapsible": 1,
    "icon": "badge-check",
@@ -387,7 +409,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-11 18:00:00.000000",
+ "modified": "2026-09-11 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "HR Enhancements",
  "name": "HR",

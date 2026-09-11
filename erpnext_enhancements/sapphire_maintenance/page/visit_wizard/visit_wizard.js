@@ -80,6 +80,7 @@ const VZ_STYLE = `
 .vz-banner-red{background:#fde8e8;color:#b91c1c;}
 .vz-banner-blue{background:rgba(36,144,239,.1);color:var(--text-color);}
 .vz-banner-green{background:#e7f7ed;color:#15803d;}
+.vz-brief{margin-top:10px;}
 .vz-report-incident{margin-top:14px;text-align:center;font-size:14px;}
 .vz-report-incident a{color:#b91c1c;text-decoration:underline;}
 .vz-banner h6{margin:0 0 4px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;}
@@ -999,7 +1000,150 @@ class VisitWizard {
 			this.$wrap.find(".vz-nav .vz-primary").prop("disabled", !this.safety_ok);
 		});
 		this.$wrap.append($ack);
+		this.render_safety_brief();
 		this.render_report_incident();
+	}
+
+	// The brief, assembled at the moment: the SDS for the chemicals actually on
+	// this visit, the PPE for this kind of work, and anything a previous
+	// technician found here.
+	//
+	// It lands on the EXISTING safety step rather than a new screen. That step is
+	// already there, nobody can proceed past it, and a second safety screen is one
+	// people learn to click through twice as fast.
+	//
+	// Rendered async and appended when it arrives: the step must draw immediately
+	// with the red banner, and the brief is an addition to it rather than a
+	// precondition for it.
+	render_safety_brief() {
+		const $slot = $('<div class="vz-brief"></div>');
+		this.$wrap.append($slot);
+		frappe
+			.call({
+				method: "erpnext_enhancements.hr_enhancements.hazards.safety_brief",
+				args: {
+					maintenance_record: this.doc && this.doc.name,
+					customer: this.doc && this.doc.customer,
+					work_type: (this.template_meta && this.template_meta.work_type) || null,
+				},
+			})
+			.then((r) => this.paint_safety_brief($slot, (r && r.message) || {}))
+			.catch(() => {
+				// A brief that cannot be assembled must not break the step. The red
+				// banner and the tick are the load-bearing part and are already drawn.
+			});
+	}
+
+	paint_safety_brief($slot, brief) {
+		const esc = (v) => frappe.utils.escape_html(v || "");
+
+		// Hazards first. Somebody already found these here, and that is the most
+		// perishable thing on the screen.
+		const hazards = brief.hazards || [];
+		if (hazards.length) {
+			$slot.append(`
+				<div class="vz-banner vz-banner-red">
+					<h6>${__("Found here before")}</h6>
+					${hazards
+						.map(
+							(h) =>
+								`${esc(h.category)}${h.where_exactly ? ` — ${esc(h.where_exactly)}` : ""}: ${esc(h.what)}${
+									h.status === "Accepted risk" ? ` <i>(${__("known, not being fixed")})</i>` : ""
+								}`
+						)
+						.join("<br>")}
+				</div>
+			`);
+		}
+
+		const ppe = brief.ppe || [];
+		if (ppe.length) {
+			$slot.append(`
+				<div class="vz-banner vz-banner-blue">
+					<h6>${__("PPE for this work")}</h6>
+					${ppe.map((p) => `${esc(p.protection)}${p.because ? ` — ${esc(p.because)}` : ""}`).join("<br>")}
+				</div>
+			`);
+		}
+
+		const sheets = brief.sheets || [];
+		if (sheets.length) {
+			$slot.append(`
+				<div class="vz-banner vz-banner-blue">
+					<h6>${__("Chemicals on this visit")}</h6>
+					${sheets
+						.map(
+							(c) =>
+								`<b>${esc(c.label)}</b>${c.summary ? ` — ${esc(c.summary)}` : ""} ${
+									c.document
+										? `<a href="${esc(c.document)}" target="_blank">${__("safety sheet")}</a>`
+										: `<i>${__("no safety sheet on file")}</i>`
+								}`
+						)
+						.join("<br>")}
+				</div>
+			`);
+		}
+
+		// Reporting one, from the same screen. Thirty seconds standing at the thing.
+		const $link = $(`
+			<div class="vz-report-incident">
+				<a href="#" data-hazard="1">${__("Report a hazard you found")}</a>
+			</div>
+		`).on("click", "a", (e) => {
+			e.preventDefault();
+			this.open_hazard_dialog();
+		});
+		$slot.append($link);
+	}
+
+	open_hazard_dialog() {
+		const dialog = new frappe.ui.Dialog({
+			title: __("What did you find?"),
+			fields: [
+				{
+					fieldtype: "Select",
+					fieldname: "category",
+					label: __("Kind"),
+					reqd: 1,
+					options: [
+						"Electrical",
+						"Chemical",
+						"Slip, trip or fall",
+						"Confined space",
+						"Structural",
+						"Equipment",
+						"Other",
+					].join("\n"),
+				},
+				{ fieldtype: "Small Text", fieldname: "what", label: __("What it is"), reqd: 1 },
+				{
+					fieldtype: "Data",
+					fieldname: "where_exactly",
+					label: __("Where exactly"),
+					description: __("The next person sent here sees this before they start."),
+				},
+			],
+			primary_action_label: __("Send it"),
+			primary_action: (values) => {
+				dialog.hide();
+				frappe.call({
+					method: "erpnext_enhancements.hr_enhancements.hazards.report_hazard",
+					args: Object.assign({}, values, {
+						customer: this.doc && this.doc.customer,
+						maintenance_record: this.doc && this.doc.name,
+					}),
+					freeze: true,
+					callback: () => {
+						frappe.show_alert({
+							message: __("Logged. The next person here will see it."),
+							indicator: "green",
+						});
+					},
+				});
+			},
+		});
+		dialog.show();
 	}
 
 	// Reporting an injury from where it happened.

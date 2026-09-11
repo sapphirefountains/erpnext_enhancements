@@ -776,6 +776,14 @@ jobs:
       # person actually did.
       - name: HR personnel file (permlevels, case records, policy signatures)
         run: python -m unittest erpnext_enhancements.tests.test_hr_personnel_file -v
+      # Chemicals, PPE and site hazards, all on the visit wizard's EXISTING safety
+      # step -- a second safety screen is one people learn to click through twice as
+      # fast. Two properties: everything is derived from a record rather than typed
+      # (a hand-kept chemical list is wrong within a month, and a wrong SDS list is
+      # worse than none because it reads as authoritative), and reporting a hazard
+      # WARNS THE NEXT PERSON, which is the half that makes it worth thirty seconds.
+      - name: HR hazards (SDS, PPE, and warning the next technician)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_hazards -v
       # Can somebody who is not a developer start a course? The visual editor
       # shipped in v1.364.0 with NO entry point anywhere -- grepping for
       # "training-canvas" outside its own directory returned two CHANGELOG lines

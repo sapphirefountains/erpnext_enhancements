@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.395.0] - 2026-09-11
+
+**WI-073 H — chemicals, PPE and site hazards.** All three land on the visit wizard's
+**existing** safety step rather than a new screen: that step is already there, technicians
+already cannot proceed past it, and a second safety screen is one people learn to click
+through twice as fast.
+
+### Added
+
+- **Safety data sheets for the chemicals on *this visit*, derived from the visit's own
+  consumables.** Never from a hand-kept "what is at this site" list, and the reason is worth
+  keeping: such a list is wrong within a month, and **a wrong SDS list is worse than none**
+  because it reads as authoritative — somebody checks it, finds the product in their hand is
+  not on it, and concludes the product is harmless. The consumables table is maintained because
+  the stock has to balance, which is the only kind of list that stays accurate: one kept up for
+  a reason other than safety.
+
+  A chemical with no sheet attached **says so** rather than being omitted. That is the common
+  case at first, and hiding it makes the whole panel untrustworthy. The hazard summary is one
+  line, because nobody reads sixteen pages of SDS standing in the sun.
+
+- **`PPE Hazard Assessment` — the written certification OSHA asks for and almost nobody has.**
+  One per **kind of work**, not per site: draining a basin is the same job at every fountain,
+  and a per-site copy is sixteen documents that drift. It names who assessed and when, because
+  a certification with nobody's name on it certifies nothing, and it refuses to save hazards
+  with no PPE against them — half a document, and the half that reads as complete.
+
+  Each PPE row states the hazard it is for, and names the protection specifically: *"chemical
+  splash goggles"*, not *"eye protection"*. A generic word is one everybody satisfies with
+  whatever they already have, and PPE with no stated hazard is PPE somebody talks themselves
+  out of on a hot afternoon. It is worth keeping because the list is read **before every
+  visit** rather than filed.
+
+- **`Site Hazard` — thirty seconds standing at the thing, and the next person is warned.**
+  That second half is the point: a hazard report that only files a ticket protects nobody
+  standing at that hatch tomorrow. An open hazard is drawn **first** on the safety step, above
+  the PPE and the chemicals, because it is the most perishable thing on the screen. Anybody can
+  report one and everybody can read them — a hazard report only managers can see cannot warn
+  the next technician, which is the entire purpose.
+
+  **`Accepted risk` is a real status.** Some hazards are not going to be fixed — an awkward
+  hatch, a permanent step — and a row that stays *Open* for ever is one people stop reading. It
+  still shows in the banner, because dropping it is how "accepted" quietly becomes "forgotten".
+
+### Fixed
+
+- **A duplicate dict key in `or_filters`, written and caught within the same hour as the
+  scheduler one.** `{"serial_no": a, "serial_no": b}` is a dict literal with a repeated key:
+  the second silently replaces the first, so only the site-wide arm would have matched and a
+  hazard recorded against a specific feature would never have appeared in the banner. Python
+  warns about this no more than it did in `hooks.py`. It is a list of triples now, and a test
+  pins the shape.
+
 ## [1.394.0] - 2026-09-11
 
 **WI-073 G — registers.** One of the two asked for was **not built**, and the refusal is the
