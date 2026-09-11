@@ -183,6 +183,50 @@ that the reasons are not the ones the ask assumed. These are verified against pr
 - "Assign to…" action (department / designation / position / named people), a real rules editor,
   and seeded default rules for review.
 
+## Status (v1.386.0, 2026-09-10)
+
+Everything below is built, on branch `claude/hr-training-module-redesign-6d052f`, with the
+full CI suite (156 steps) green after every commit.
+
+| | |
+|---|---|
+| **D0** Live defects | done |
+| **D1** Module, workspace, tile, sidebar | done *except per-role home grids — see below* |
+| **D2** `Position` ladder, org tree, seeding | done |
+| **D3** Tiered sign-off + phone surface | done |
+| **D4** Profile + colleague profiles | done |
+| **D5** Credentials, expiry, skills matrix, sessions, dispatch advisory | done *except the audit roster export* |
+| **D6** Achievements, kudos, feed, leaderboard reshape | done |
+| **D7** Editor reachable, starters, AI button | **partial** — see below |
+| **D8** Onboarding checklist + PTO | done |
+| **D9** Assignment UI, group targeting, sweep, seeded rules | done |
+
+### Deliberately not done, and why
+
+**Per-role desk home grids (D1).** The mechanism exists — a `Workspace` carries a `roles`
+child table and `get_links` filters by it — but on this site it would achieve close to
+nothing: every active employee holds roughly thirty roles, including `Stock Manager` and
+`Purchase Master Manager`. Role-gating the grid is only meaningful *after* a role audit,
+which is separate work with its own risk (see [[frappe-role-audit-traps]]: never hand-query
+`tabDocPerm` to decide a role is safe to remove; `Custom DocPerm` replaces wholesale).
+
+The other half — retiring the empty hand-made `HR Hub`, `Operations Hub` and `Production
+Hub` workspaces, which carry `content = "[]"` and no links — means deleting records
+somebody created by hand in the Desk. That is Nik's data and his call, not a thing to do
+unasked. **Needs a decision from him**, with a proposed before/after list.
+
+**The canvas port (D7).** `training_canvas.js` is now reachable and its defects are fixed,
+but roughly 2,600 of the classic builder's 3,842 lines still have no canvas equivalent:
+chapters, the quiz pool, checkpoint placement, Drive video registration, transcripts and
+the learner preview. Porting them is a large, bench-gated piece of product work and the
+right moment for it is when somebody is actually blocked by having to use two pages. Both
+surfaces are linked from the course form in the meantime, with the visual one primary.
+
+**The audit roster export (D5).** One printable per person or per crew — every credential,
+completion and sign-off with dates, expiries and the attesting supervisor. The data all
+exists now and the Skills Matrix answers the live question; this is the version you hand an
+insurer. Small work, not yet done.
+
 ## Guardrails
 
 - Customers (Website Users holding `Training Learner`) see **none** of HR, the feed, profiles or
