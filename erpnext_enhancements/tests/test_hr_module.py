@@ -719,7 +719,12 @@ class TestTheMigrateSafetyAuditFindings(unittest.TestCase):
         migrate. Prod is safe by luck; a fresh install is not."""
         body = self._src(self.DISPATCH)
         self.assertIn("set_single_value", body)
-        self.assertNotIn("get_single", body)
+        # `get_single(` WITH the paren. `get_single_value` contains `get_single`, so
+        # the bare substring also bans the correct API -- it failed the v1.395.1 fix
+        # that replaced an impossible `get_value("Singles", ...)` with exactly that
+        # call. What must not appear is the doc fetch, because that is what runs the
+        # controller; not every name it happens to prefix.
+        self.assertNotIn("get_single(", body)
         self.assertNotIn(".save(", body)
 
     def test_a_skipped_rule_seed_says_so(self):

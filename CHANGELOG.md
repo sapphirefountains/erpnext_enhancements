@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exercise-based test could have caught the original: the bench-free suites stub `frappe`, so
   a stubbed `get_value` returns whatever the stub returns and the query is never built.
 
+- `test_hr_module` banned the substring `get_single` to keep the patch from calling
+  `get_single().save()` — and `get_single_value` **contains** `get_single`, so the correct API
+  was banned too and the fix above failed CI. Now pinned to `get_single(`, with the paren. Third
+  time this repo has been bitten by an absence assertion matching more than it meant
+  (`FIRST_AID` inside `BEYOND_FIRST_AID` was the last); the rule is to assert the *behaviour*,
+  not the spelling that currently expresses it.
+
 ## [1.395.0] - 2026-09-11
 
 **WI-073 H — chemicals, PPE and site hazards.** All three land on the visit wizard's
