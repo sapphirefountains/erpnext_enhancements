@@ -339,5 +339,89 @@ class TestTheEditorDoesNotTransformOnTheRenderPath(unittest.TestCase):
                 self.assertNotIn(banned, block)
 
 
+class TestChaptersAreReachable(unittest.TestCase):
+    """v1.398.0. `this.chapters` was read in four places and written only from the
+    bootstrap; `dirty.chapters` was read in three and written by NOTHING. The picker
+    in lesson settings hides itself when the array is empty, so a course authored
+    start to finish on the canvas had every lesson Unfiled with no way out — and the
+    only thing that could ever populate that array was the classic builder, the tool
+    being retired. Unreachable by construction, exactly like `transcript` was.
+    """
+
+    def test_something_writes_the_dirty_chapters_slot(self):
+        src = _canvas()
+        self.assertIn("this.dirty.chapters = kept.map(", src)
+
+    def test_the_manager_is_reachable_from_the_page(self):
+        self.assertIn("open_chapters()", _canvas())
+
+    def test_an_empty_list_is_still_sent(self):
+        """Deleting the last chapter must reach the server, which refuses it if
+        lessons still point at one. Sending `undefined` would look like success."""
+        src = _canvas()
+        at = src.index("this.dirty.chapters = kept.map(")
+        self.assertNotIn("kept.length ?", src[max(0, at - 200) : at])
+
+
+class TestTheSaveFlushIsHonest(unittest.TestCase):
+    """`save()` returns a bare Promise.resolve() while a save is in flight, so
+    anything chained off it runs against the version before the one just typed.
+    Three later steps depend on this being honest, because a pin and a preview both
+    resolve their target through the DATABASE — where a block that exists only in
+    memory is simply absent.
+    """
+
+    def test_flush_returns_the_in_flight_promise(self):
+        src = _canvas()
+        self.assertIn("flush_save()", src)
+        at = src.index("flush_save() {")
+        block = src[at : at + 700]
+        self.assertIn("this._inflight", block)
+        # The in-flight check must come BEFORE the has_dirty short-circuit, or a
+        # caller chaining off a flush during a save still proceeds early.
+        self.assertLess(block.index("_inflight"), block.index("has_dirty"))
+
+    def test_save_records_the_in_flight_promise(self):
+        src = _canvas()
+        self.assertIn("this._inflight = frappe", src)
+        self.assertIn("return this._inflight;", src)
+
+    def test_the_reorder_waits_for_it(self):
+        """`.filter(Boolean)` drops any lesson created this session, because it has
+        no `name` until the save returns — and reorder_lessons renumbers only what it
+        was given, so dragging a new lesson to the top silently left it put."""
+        src = _canvas()
+        # The DEFINITION, not the first call site -- src.index("commit_lesson_order")
+        # lands on `this.commit_lesson_order($list)` and slices the wrong method.
+        at = src.index("commit_lesson_order($list) {")
+        block = src[at : at + 1400]
+        self.assertIn("this.flush_save().then(", block)
+        self.assertLess(block.index("flush_save"), block.index("reorder_lessons"))
+
+    def test_a_closing_tab_is_warned(self):
+        """The autosave debounce is 1200ms, so a tab closed a second after the last
+        keystroke loses it. The canvas had no guard at all."""
+        src = _canvas()
+        self.assertIn("beforeunload", src)
+        at = src.index("beforeunload")
+        self.assertIn("has_dirty()", src[max(0, at - 500) : at])
+
+
+class TestTranscriptIsNoLongerUnreachable(unittest.TestCase):
+    """The server allowlisted `transcript` and round-tripped it on the bootstrap all
+    along. It was missing from the CLIENT allowlist, and `set_lesson_field` silently
+    returns on a field outside it — so there was no error to notice.
+    """
+
+    def test_it_is_in_the_client_allowlist(self):
+        src = _canvas()
+        at = src.index("TC_LESSON_FIELDS")
+        self.assertIn('"transcript"', src[at : src.index("]", at)])
+
+    def test_there_is_somewhere_to_type_it(self):
+        """An allowlist entry with no control is still unreachable."""
+        self.assertIn('set_lesson_field(lesson, "transcript"', _canvas())
+
+
 if __name__ == "__main__":
     unittest.main()

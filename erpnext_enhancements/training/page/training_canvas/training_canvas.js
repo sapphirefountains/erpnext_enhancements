@@ -69,6 +69,12 @@ const TC_LESSON_FIELDS = [
 	"idx_in_chapter",
 	"estimated_minutes",
 	"summary",
+	// Reachable at last. The server has allowlisted `transcript` and round-tripped it
+	// on the bootstrap all along, but it was absent HERE -- and `set_lesson_field`
+	// silently returns on a field outside this array, so it was unreachable by
+	// construction with no error to notice. It is also the precondition for AI
+	// checkpoint drafting, which refuses without cue timings.
+	"transcript",
 	"allow_questions",
 	"requires_submission",
 	"has_quiz",
@@ -137,10 +143,23 @@ class TrainingCanvas {
 		this.reset();
 		this.build_chrome();
 		this.page.set_secondary_action(__("Reload"), () => this.reload());
+		this.page.add_menu_item(__("Chapters…"), () => this.open_chapters());
 		this.page.add_menu_item(__("New draft version"), () => this.new_draft());
 		this.page.add_menu_item(__("Submit for review"), () => this.submit_for_review());
 		this.page.add_menu_item(__("Publish…"), () => this.publish());
 		this.page.add_menu_item(__("Open classic builder"), () => this.open_classic());
+
+		// The autosave debounce is 1200ms, so a tab closed a second after the last
+		// keystroke loses it. The browser prompt is the only thing between the author
+		// and that, and the canvas had none at all.
+		this._unload = (event) => {
+			if (!this.has_dirty()) return undefined;
+			this.save();
+			event.preventDefault();
+			event.returnValue = "";
+			return "";
+		};
+		$(window).on("beforeunload.training_canvas", this._unload);
 	}
 
 	reset() {
@@ -427,14 +446,92 @@ class TrainingCanvas {
 		// Reorder the in-memory list to match, then persist through the dedicated
 		// endpoint (it renumbers idx_in_chapter without churning the lock token).
 		this.lessons.sort((a, b) => order.indexOf(a.name || a.__temp) - order.indexOf(b.name || b.__temp));
-		const names = this.lessons.map((l) => l.name).filter(Boolean);
-		frappe
-			.call({
-				method: "erpnext_enhancements.api.training_author.reorder_lessons",
-				args: { course_version: this.version.name, order: JSON.stringify(names) },
-			})
-			.then(() => frappe.show_alert({ message: __("Lesson order saved."), indicator: "green" }, 3))
-			.catch(() => this.render_rail());
+		// Flush FIRST. `.filter(Boolean)` drops any lesson created this session, because
+		// it has no `name` until the save comes back -- and reorder_lessons renumbers only
+		// what it was given, so dragging a new lesson to the top silently left it where it
+		// was. After the flush every lesson has a real name.
+		this.flush_save().then(() => {
+			const names = this.lessons.map((l) => l.name).filter(Boolean);
+			if (!names.length) return;
+			return frappe
+				.call({
+					method: "erpnext_enhancements.api.training_author.reorder_lessons",
+					args: { course_version: this.version.name, order: JSON.stringify(names) },
+				})
+				.then(() => frappe.show_alert({ message: __("Lesson order saved."), indicator: "green" }, 3))
+				.catch(() => this.render_rail());
+		});
+	}
+
+	// -------------------------------------------------------------- chapters
+	open_chapters() {
+		"use strict";
+		// Chapters were unreachable from this page by construction: `this.chapters` was
+		// read in four places and written only from the bootstrap, and `dirty.chapters`
+		// was read in three and written by NOTHING. The picker in lesson settings hides
+		// itself when the array is empty, so a course authored start to finish here had
+		// every lesson Unfiled with no way out -- and the only thing that could ever put
+		// a chapter in that array was the classic builder, the tool being retired.
+		//
+		// The server wire was complete the whole time: `_apply_chapters` mints the keys,
+		// refuses to orphan a lesson, and hands the generated keys back in `chapters`,
+		// which `save()` already adopts. This is the missing client half.
+		if (!this.editable()) return;
+		const rows = (this.chapters || []).map((c) => ({
+			chapter_key: c.chapter_key || "",
+			chapter_title: c.chapter_title || "",
+		}));
+
+		const dialog = new frappe.ui.Dialog({
+			title: __("Chapters"),
+			fields: [{ fieldtype: "HTML", fieldname: "list" }],
+			primary_action_label: __("Save chapters"),
+			primary_action: () => {
+				const kept = rows.filter((r) => (r.chapter_title || "").trim());
+				// Sent even when empty: an empty array is how the author deletes the last
+				// chapter, and the server refuses it if lessons still point at one.
+				this.dirty.chapters = kept.map((r) => ({
+					chapter_key: r.chapter_key || undefined,
+					chapter_title: r.chapter_title.trim(),
+				}));
+				this.chapters = kept.slice();
+				this.mark_dirty();
+				dialog.hide();
+				this.render_rail();
+				this.render_lesson_settings();
+			},
+		});
+
+		const $wrap = dialog.fields_dict.list.$wrapper;
+		const paint = () => {
+			$wrap.empty();
+			if (!rows.length) {
+				$("<p class='text-muted'></p>")
+					.text(__("No chapters yet. Every lesson sits under Unfiled until you add one."))
+					.appendTo($wrap);
+			}
+			rows.forEach((row, i) => {
+				const $r = $("<div class='tc-chapter-row'></div>").appendTo($wrap);
+				const $t = $("<input type='text' class='form-control' />")
+					.val(row.chapter_title)
+					.attr("placeholder", __("Chapter title"));
+				$t.on("input", () => { row.chapter_title = $t.val(); });
+				$r.append($t);
+				const btn = (label, title, fn) =>
+					$("<button class='btn btn-xs btn-default'></button>")
+						.text(label).attr("title", title)
+						.on("click", () => { fn(); paint(); }).appendTo($r);
+				btn("↑", __("Move up"), () => { if (i > 0) rows.splice(i - 1, 0, rows.splice(i, 1)[0]); });
+				btn("↓", __("Move down"), () => { if (i < rows.length - 1) rows.splice(i + 1, 0, rows.splice(i, 1)[0]); });
+				btn("✕", __("Remove"), () => { rows.splice(i, 1); });
+			});
+			$("<button class='btn btn-sm btn-default'></button>")
+				.text(__("Add chapter"))
+				.on("click", () => { rows.push({ chapter_key: "", chapter_title: "" }); paint(); })
+				.appendTo($wrap);
+		};
+		paint();
+		dialog.show();
 	}
 
 	// -------------------------------------------------------- lesson settings
@@ -467,6 +564,16 @@ class TrainingCanvas {
 			$ch.on("change", () => { this.set_lesson_field(lesson, "chapter_key", $ch.val()); this.render_rail(); });
 			field(__("Chapter"), $ch);
 		}
+
+		// Reachable at last -- see TC_LESSON_FIELDS. The server has allowlisted and
+		// round-tripped `transcript` all along; it was missing from the client allowlist,
+		// and set_lesson_field silently returns on a field outside it, so there was no
+		// error to notice. It is also what AI checkpoint drafting refuses without.
+		const $tr = $('<textarea class="form-control" rows="4"></textarea>')
+			.val(lesson.transcript || "")
+			.attr("placeholder", __("Plain text, or WebVTT cues if you have them."));
+		$tr.on("input", () => this.set_lesson_field(lesson, "transcript", $tr.val()));
+		field(__("Transcript"), $tr);
 
 		const $min = $('<input type="number" min="0" class="form-control" />').val(num(lesson.estimated_minutes));
 		$min.on("input", () => this.set_lesson_field(lesson, "estimated_minutes", num($min.val())));
@@ -1157,6 +1264,20 @@ class TrainingCanvas {
 		this._save_timer = setTimeout(() => this.save(), TC_SAVE_DEBOUNCE_MS);
 	}
 
+	flush_save() {
+		// Settle whatever is pending and RESOLVE WHEN IT HAS LANDED. `save()` returns a
+		// bare Promise.resolve() while a save is in flight, so anything chained off it
+		// runs against the version before the one just typed. Three callers depend on
+		// this being honest: the lesson reorder below, and -- once they land -- the pin
+		// writer and the preview, both of which resolve their target through the
+		// DATABASE, where a block that exists only in memory is simply absent.
+		// Same contract as the classic builder.
+		clearTimeout(this._save_timer);
+		if (this._saving && this._inflight) return this._inflight.catch(() => {});
+		if (!this.has_dirty()) return Promise.resolve();
+		return this.save().catch(() => {});
+	}
+
 	save() {
 		clearTimeout(this._save_timer);
 		if (!this.editable() || this._saving || !this.has_dirty()) return Promise.resolve();
@@ -1169,7 +1290,7 @@ class TrainingCanvas {
 			deleted_lessons: sent.deleted.slice(),
 			chapters: sent.chapters || undefined,
 		};
-		return frappe
+		this._inflight = frappe
 			.call({
 				method: "erpnext_enhancements.api.training_author.save_draft_version",
 				args: { course_version: this.version.name, payload: JSON.stringify(payload), modified: this.version.modified },
@@ -1198,6 +1319,7 @@ class TrainingCanvas {
 				else this.paint_status("dirty");
 				throw error;
 			});
+		return this._inflight;
 	}
 
 	adopt_created(created) {

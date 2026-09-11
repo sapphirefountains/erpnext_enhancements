@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.398.0] - 2026-09-11
+
+### Added
+
+- **Chapters are reachable from the visual canvas.** They were unreachable *by construction*:
+  `this.chapters` was read in four places and written only from the bootstrap, and
+  `dirty.chapters` was read in three places and **written by nothing**. The chapter picker in
+  lesson settings hides itself when the array is empty, so a course authored start-to-finish on
+  the canvas had every lesson sitting under *Unfiled* with no way out — and the only thing that
+  could ever populate that array was the classic builder, the tool being retired.
+
+  The server wire was complete the whole time: `_apply_chapters` mints the keys, refuses to
+  orphan a lesson whose chapter would vanish, and hands the generated keys back in `chapters`,
+  which `save()` already adopted. This is the missing client half, and nothing server-side
+  changed. An empty list is still sent, because deleting the last chapter has to reach the
+  server — which refuses it if lessons still point at one.
+
+- **The lesson transcript is reachable too**, and for the same reason it was not: the server had
+  allowlisted `transcript` and round-tripped it on the bootstrap all along, but it was absent
+  from the *client* allowlist — and `set_lesson_field` silently returns on a field outside it, so
+  there was no error to notice. It is also the precondition for AI checkpoint drafting, which
+  refuses without cue timings.
+
+### Fixed
+
+- **`save()` returned a bare `Promise.resolve()` while a save was in flight**, so anything
+  chained off it ran against the version *before* the one just typed. `flush_save()` now returns
+  the in-flight promise. This is a prerequisite rather than a nicety: the checkpoint pin writer
+  and the server-backed preview both resolve their target through the **database**, where a
+  block that exists only in the canvas's memory is simply absent.
+
+- **Dragging a newly created lesson to the top of the rail silently left it where it was.**
+  `commit_lesson_order` built its list with `.filter(Boolean)`, which drops any lesson created in
+  this session because it has no `name` until the save comes back — and `reorder_lessons`
+  renumbers only what it was given. It now waits for the flush, after which every lesson has a
+  real name.
+
+- **A tab closed within the autosave debounce lost the work, with no prompt.** The debounce is
+  1200 ms and the canvas had no `beforeunload` guard at all. It now attempts a save and warns.
+
 ## [1.397.0] - 2026-09-11
 
 ### Added
