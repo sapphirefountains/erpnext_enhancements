@@ -110,6 +110,12 @@ TILES = {
 	"Sales Hub": ("sales_hub", "handshake", DELIVERY),
 	"Operations Hub": ("operations_hub", "route", FIELD),
 	"Support Hub": ("support_hub", "life-buoy", FIELD),
+	# Executive Hub was hand-made in the Desk in February and never entered the repo;
+	# v1.401.0 adopted it. DASHBOARD indigo rather than a hub colour because seventeen
+	# of its twenty-one links are reports -- it really is a reporting surface. The
+	# glyph is deliberately NOT `briefcase`: Executive Dashboard already owns that,
+	# and two tiles with one glyph is worse than either having no tile.
+	"Executive Hub": ("executive_hub", "compass", DASHBOARD),
 }
 
 # Where the generated artwork lives, relative to the app package, and the URL it is

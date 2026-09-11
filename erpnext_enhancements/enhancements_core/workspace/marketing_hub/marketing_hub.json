@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"mh_head_sc\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"mh_sc_ad_campaign\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Ad Campaign\",\"col\":4}},{\"id\":\"mh_sc_ad_account\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Ad Account\",\"col\":4}},{\"id\":\"mh_head_cards\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports &amp; Masters</b></span>\",\"col\":12}},{\"id\":\"mh_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "content": "[{\"id\":\"mh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"mh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Lead\",\"col\":4}},{\"id\":\"mh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Ad Campaign\",\"col\":4}},{\"id\":\"mh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Ad Account\",\"col\":4}},{\"id\":\"mh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Marketing Spend\",\"col\":4}},{\"id\":\"mh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"GA4 Dashboard\",\"col\":4}},{\"id\":\"mh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Marketing Dashboard\",\"col\":4}},{\"id\":\"mh_08\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"mh_09\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Leads waiting on us\",\"col\":6}},{\"id\":\"mh_10\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Enquiries off the website\",\"col\":6}},{\"id\":\"mh_11\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"mh_12\",\"type\":\"card\",\"data\":{\"card_name\":\"Campaigns\",\"col\":4}},{\"id\":\"mh_13\",\"type\":\"card\",\"data\":{\"card_name\":\"Demand\",\"col\":4}},{\"id\":\"mh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"mh_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Plumbing\",\"col\":4}}]",
  "creation": "2026-09-11 16:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -13,8 +13,124 @@
   {
    "hidden": 0,
    "is_query_report": 0,
+   "label": "Campaigns",
+   "link_count": 6,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Ad Campaign",
+   "link_count": 0,
+   "link_to": "Ad Campaign",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Ad Account",
+   "link_count": 0,
+   "link_to": "Ad Account",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Ad Daily Metric",
+   "link_count": 0,
+   "link_to": "Ad Daily Metric",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Marketing Spend",
+   "link_count": 0,
+   "link_to": "Marketing Spend",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Marketing Web Snapshot",
+   "link_count": 0,
+   "link_to": "Marketing Web Snapshot",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Campaign",
+   "link_count": 0,
+   "link_to": "Campaign",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Demand",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Lead",
+   "link_count": 0,
+   "link_to": "Lead",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Opportunity",
+   "link_count": 0,
+   "link_to": "Opportunity",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Fountain Move Request",
+   "link_count": 0,
+   "link_to": "Fountain Move Request",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Contact",
+   "link_count": 0,
+   "link_to": "Contact",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "Reports",
-   "link_count": 2,
+   "link_count": 7,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -37,9 +153,97 @@
    "link_type": "Report",
    "onboard": 0,
    "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Campaign Efficiency",
+   "link_count": 0,
+   "link_to": "Campaign Efficiency",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Lead Owner Efficiency",
+   "link_count": 0,
+   "link_to": "Lead Owner Efficiency",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Lead Conversion Time",
+   "link_count": 0,
+   "link_to": "Lead Conversion Time",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Prospects Engaged But Not Converted",
+   "link_count": 0,
+   "link_to": "Prospects Engaged But Not Converted",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Website Analytics",
+   "link_count": 0,
+   "link_to": "Website Analytics",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Plumbing",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Marketing Settings",
+   "link_count": 0,
+   "link_to": "Marketing Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Marketing Sync Log",
+   "link_count": 0,
+   "link_to": "Marketing Sync Log",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "GA4 Settings",
+   "link_count": 0,
+   "link_to": "GA4 Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-09-11 16:00:00.000000",
+ "modified": "2026-09-11 20:00:00.000000",
  "modified_by": "Administrator",
  "module": null,
  "name": "Marketing Hub",
@@ -47,7 +251,18 @@
  "owner": "Administrator",
  "parent_page": "",
  "public": 1,
- "quick_lists": [],
+ "quick_lists": [
+  {
+   "document_type": "Lead",
+   "label": "Leads waiting on us",
+   "quick_list_filter": "[[\"Lead\",\"status\",\"in\",[\"Lead\",\"Open\",\"Replied\",\"Interested\"]]]"
+  },
+  {
+   "document_type": "Fountain Move Request",
+   "label": "Enquiries off the website",
+   "quick_list_filter": "[[\"Fountain Move Request\",\"status\",\"in\",[\"New\",\"Queued\",\"Duplicate Review\"]]]"
+  }
+ ],
  "roles": [
   {
    "role": "Marketing Team"
@@ -59,14 +274,41 @@
  "sequence_id": 0.0,
  "shortcuts": [
   {
+   "color": "Green",
+   "doc_view": "List",
+   "format": "{} working",
+   "label": "Lead",
+   "link_to": "Lead",
+   "stats_filter": "{\"status\":[\"in\",[\"Lead\",\"Open\",\"Replied\",\"Interested\"]]}",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
    "label": "Ad Campaign",
    "link_to": "Ad Campaign",
    "type": "DocType"
   },
   {
+   "doc_view": "List",
    "label": "Ad Account",
    "link_to": "Ad Account",
    "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "Marketing Spend",
+   "link_to": "Marketing Spend",
+   "type": "DocType"
+  },
+  {
+   "label": "GA4 Dashboard",
+   "link_to": "ga4-dashboard",
+   "type": "Page"
+  },
+  {
+   "label": "Marketing Dashboard",
+   "type": "URL",
+   "url": "/app/marketing-dashboard"
   }
  ],
  "title": "Marketing Hub",

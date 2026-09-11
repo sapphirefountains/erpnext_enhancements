@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"hh_head_sc\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"hh_sc_employee\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Employee\",\"col\":4}},{\"id\":\"hh_sc_time_off_request\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Time Off Request\",\"col\":4}},{\"id\":\"hh_sc_onboarding_checklist\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Onboarding Checklist\",\"col\":4}},{\"id\":\"hh_sc_policy_acknowledgement\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Policy Acknowledgement\",\"col\":4}},{\"id\":\"hh_head_cards\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports &amp; Masters</b></span>\",\"col\":12}},{\"id\":\"hh_card_people\",\"type\":\"card\",\"data\":{\"card_name\":\"People\",\"col\":4}},{\"id\":\"hh_card_safety_records\",\"type\":\"card\",\"data\":{\"card_name\":\"Safety records\",\"col\":4}},{\"id\":\"hh_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "content": "[{\"id\":\"hh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"hh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Employee\",\"col\":4}},{\"id\":\"hh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Onboarding Checklist\",\"col\":4}},{\"id\":\"hh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Policy Acknowledgement\",\"col\":4}},{\"id\":\"hh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Time Off Request\",\"col\":4}},{\"id\":\"hh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Training Assignment\",\"col\":4}},{\"id\":\"hh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Safety Incident\",\"col\":4}},{\"id\":\"hh_08\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"HR Dashboard\",\"col\":4}},{\"id\":\"hh_09\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"hh_10\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Onboarding in flight\",\"col\":6}},{\"id\":\"hh_11\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Policies awaiting a signature\",\"col\":6}},{\"id\":\"hh_12\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"hh_13\",\"type\":\"card\",\"data\":{\"card_name\":\"People\",\"col\":4}},{\"id\":\"hh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Policy and compliance\",\"col\":4}},{\"id\":\"hh_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Training\",\"col\":4}},{\"id\":\"hh_16\",\"type\":\"card\",\"data\":{\"card_name\":\"Safety records\",\"col\":4}},{\"id\":\"hh_17\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
  "creation": "2026-09-11 16:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -14,7 +14,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "People",
-   "link_count": 4,
+   "link_count": 5,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -41,9 +41,19 @@
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Employee Credential",
+   "label": "Onboarding Checklist",
    "link_count": 0,
-   "link_to": "Employee Credential",
+   "link_to": "Onboarding Checklist",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Time Off Request",
+   "link_count": 0,
+   "link_to": "Time Off Request",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
@@ -61,8 +71,114 @@
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Safety records",
+   "label": "Policy and compliance",
+   "link_count": 5,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Policy Acknowledgement",
+   "link_count": 0,
+   "link_to": "Policy Acknowledgement",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Company Obligation",
+   "link_count": 0,
+   "link_to": "Company Obligation",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Employee Credential",
+   "link_count": 0,
+   "link_to": "Employee Credential",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Credential Type",
+   "link_count": 0,
+   "link_to": "Credential Type",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "HR Case Record",
+   "link_count": 0,
+   "link_to": "HR Case Record",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training",
    "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Assignment",
+   "link_count": 0,
+   "link_to": "Training Assignment",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Course",
+   "link_count": 0,
+   "link_to": "Training Course",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Completion",
+   "link_count": 0,
+   "link_to": "Training Completion",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Signoff",
+   "link_count": 0,
+   "link_to": "Training Signoff",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Safety records",
+   "link_count": 5,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -99,9 +215,19 @@
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "HR Case Record",
+   "label": "PPE Hazard Assessment",
    "link_count": 0,
-   "link_to": "HR Case Record",
+   "link_to": "PPE Hazard Assessment",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Confined Space Entry Permit",
+   "link_count": 0,
+   "link_to": "Confined Space Entry Permit",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
@@ -110,7 +236,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Reports",
-   "link_count": 5,
+   "link_count": 8,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -120,6 +246,36 @@
    "label": "Crew Qualification Roster",
    "link_count": 0,
    "link_to": "Crew Qualification Roster",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Qualification Coverage",
+   "link_count": 0,
+   "link_to": "Qualification Coverage",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Skills Matrix",
+   "link_count": 0,
+   "link_to": "Skills Matrix",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Training Completion Matrix",
+   "link_count": 0,
+   "link_to": "Training Completion Matrix",
    "link_type": "Report",
    "onboard": 0,
    "type": "Link"
@@ -157,15 +313,15 @@
   {
    "hidden": 0,
    "is_query_report": 1,
-   "label": "Qualification Coverage",
+   "label": "Payroll Hours Export",
    "link_count": 0,
-   "link_to": "Qualification Coverage",
+   "link_to": "Payroll Hours Export",
    "link_type": "Report",
    "onboard": 0,
    "type": "Link"
   }
  ],
- "modified": "2026-09-11 16:00:00.000000",
+ "modified": "2026-09-11 20:00:00.000000",
  "modified_by": "Administrator",
  "module": null,
  "name": "HR Hub",
@@ -173,7 +329,18 @@
  "owner": "Administrator",
  "parent_page": "",
  "public": 1,
- "quick_lists": [],
+ "quick_lists": [
+  {
+   "document_type": "Onboarding Checklist",
+   "label": "Onboarding in flight",
+   "quick_list_filter": "[[\"Onboarding Checklist\",\"status\",\"=\",\"Open\"]]"
+  },
+  {
+   "document_type": "Policy Acknowledgement",
+   "label": "Policies awaiting a signature",
+   "quick_list_filter": "[[\"Policy Acknowledgement\",\"status\",\"=\",\"Requested\"]]"
+  }
+ ],
  "roles": [
   {
    "role": "HR Team"
@@ -188,24 +355,63 @@
  "sequence_id": 0.0,
  "shortcuts": [
   {
+   "color": "Green",
+   "doc_view": "List",
+   "format": "{} active",
    "label": "Employee",
    "link_to": "Employee",
+   "stats_filter": "{\"status\":\"Active\"}",
    "type": "DocType"
   },
   {
-   "label": "Time Off Request",
-   "link_to": "Time Off Request",
-   "type": "DocType"
-  },
-  {
+   "color": "Blue",
+   "doc_view": "List",
+   "format": "{} in flight",
    "label": "Onboarding Checklist",
    "link_to": "Onboarding Checklist",
+   "stats_filter": "{\"status\":\"Open\"}",
    "type": "DocType"
   },
   {
+   "color": "Orange",
+   "doc_view": "List",
+   "format": "{} unsigned",
    "label": "Policy Acknowledgement",
    "link_to": "Policy Acknowledgement",
+   "stats_filter": "{\"status\":\"Requested\"}",
    "type": "DocType"
+  },
+  {
+   "color": "Orange",
+   "doc_view": "List",
+   "format": "{} to approve",
+   "label": "Time Off Request",
+   "link_to": "Time Off Request",
+   "stats_filter": "{\"status\":\"Requested\"}",
+   "type": "DocType"
+  },
+  {
+   "color": "Blue",
+   "doc_view": "List",
+   "format": "{} outstanding",
+   "label": "Training Assignment",
+   "link_to": "Training Assignment",
+   "stats_filter": "{\"status\":[\"in\",[\"Not Started\",\"In Progress\",\"Overdue\"]]}",
+   "type": "DocType"
+  },
+  {
+   "color": "Red",
+   "doc_view": "List",
+   "format": "{} open",
+   "label": "Safety Incident",
+   "link_to": "Safety Incident",
+   "stats_filter": "{\"status\":[\"in\",[\"Open\",\"Under investigation\"]]}",
+   "type": "DocType"
+  },
+  {
+   "label": "HR Dashboard",
+   "type": "URL",
+   "url": "/app/hr-dashboard"
   }
  ],
  "title": "HR Hub",

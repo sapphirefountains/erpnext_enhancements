@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"oh_head_sc\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"oh_sc_master_project\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Master Project\",\"col\":4}},{\"id\":\"oh_sc_project_contract\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Contract\",\"col\":4}},{\"id\":\"oh_sc_travel_trip\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Travel Trip\",\"col\":4}},{\"id\":\"oh_head_cards\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports &amp; Masters</b></span>\",\"col\":12}},{\"id\":\"oh_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "content": "[{\"id\":\"oh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"oh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Master Project\",\"col\":4}},{\"id\":\"oh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project\",\"col\":4}},{\"id\":\"oh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Task\",\"col\":4}},{\"id\":\"oh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Contract\",\"col\":4}},{\"id\":\"oh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Order\",\"col\":4}},{\"id\":\"oh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Operations Dashboard\",\"col\":4}},{\"id\":\"oh_08\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"oh_09\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Projects on the go\",\"col\":6}},{\"id\":\"oh_10\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Tasks running late\",\"col\":6}},{\"id\":\"oh_11\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"oh_12\",\"type\":\"card\",\"data\":{\"card_name\":\"Delivery\",\"col\":4}},{\"id\":\"oh_13\",\"type\":\"card\",\"data\":{\"card_name\":\"Procurement\",\"col\":4}},{\"id\":\"oh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Field and travel\",\"col\":4}},{\"id\":\"oh_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
  "creation": "2026-09-11 16:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -13,8 +13,172 @@
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Reports",
+   "label": "Delivery",
+   "link_count": 6,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Master Project",
+   "link_count": 0,
+   "link_to": "Master Project",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Project",
+   "link_count": 0,
+   "link_to": "Project",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Project Contract",
+   "link_count": 0,
+   "link_to": "Project Contract",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Contract Signature Request",
+   "link_count": 0,
+   "link_to": "Contract Signature Request",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Task",
+   "link_count": 0,
+   "link_to": "Task",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Process Step Template",
+   "link_count": 0,
+   "link_to": "Process Step Template",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Procurement",
    "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Purchase Order",
+   "link_count": 0,
+   "link_to": "Purchase Order",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Material Request",
+   "link_count": 0,
+   "link_to": "Material Request",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Supplier",
+   "link_count": 0,
+   "link_to": "Supplier",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Item",
+   "link_count": 0,
+   "link_to": "Item",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Field and travel",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Travel Trip",
+   "link_count": 0,
+   "link_to": "Travel Trip",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Job Interval",
+   "link_count": 0,
+   "link_to": "Job Interval",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Package Dispatch",
+   "link_count": 0,
+   "link_to": "Package Dispatch",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Fleet Vehicle",
+   "link_count": 0,
+   "link_to": "Fleet Vehicle",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports",
+   "link_count": 8,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -57,9 +221,49 @@
    "link_type": "Report",
    "onboard": 0,
    "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Project Summary",
+   "link_count": 0,
+   "link_to": "Project Summary",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Delayed Tasks Summary",
+   "link_count": 0,
+   "link_to": "Delayed Tasks Summary",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Active Projects w/ TL and PM",
+   "link_count": 0,
+   "link_to": "Active Projects w/ TL and PM",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Purchase Order Analysis",
+   "link_count": 0,
+   "link_to": "Purchase Order Analysis",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-09-11 16:00:00.000000",
+ "modified": "2026-09-11 20:00:00.000000",
  "modified_by": "Administrator",
  "module": null,
  "name": "Operations Hub",
@@ -67,7 +271,18 @@
  "owner": "Administrator",
  "parent_page": "",
  "public": 1,
- "quick_lists": [],
+ "quick_lists": [
+  {
+   "document_type": "Project",
+   "label": "Projects on the go",
+   "quick_list_filter": "[[\"Project\",\"status\",\"in\",[\"Active\",\"Client Hold\"]]]"
+  },
+  {
+   "document_type": "Task",
+   "label": "Tasks running late",
+   "quick_list_filter": "[[\"Task\",\"status\",\"=\",\"Overdue\"]]"
+  }
+ ],
  "roles": [
   {
    "role": "Operations Team"
@@ -79,19 +294,51 @@
  "sequence_id": 0.0,
  "shortcuts": [
   {
+   "doc_view": "List",
    "label": "Master Project",
    "link_to": "Master Project",
    "type": "DocType"
   },
   {
-   "label": "Project Contract",
-   "link_to": "Project Contract",
+   "color": "Blue",
+   "doc_view": "List",
+   "format": "{} active",
+   "label": "Project",
+   "link_to": "Project",
+   "stats_filter": "{\"status\":[\"in\",[\"Active\",\"Client Hold\"]]}",
    "type": "DocType"
   },
   {
-   "label": "Travel Trip",
-   "link_to": "Travel Trip",
+   "color": "Orange",
+   "doc_view": "List",
+   "format": "{} open",
+   "label": "Task",
+   "link_to": "Task",
+   "stats_filter": "{\"status\":[\"in\",[\"Open\",\"Working\",\"Overdue\"]]}",
    "type": "DocType"
+  },
+  {
+   "color": "Orange",
+   "doc_view": "List",
+   "format": "{} unsigned",
+   "label": "Project Contract",
+   "link_to": "Project Contract",
+   "stats_filter": "{\"status\":[\"in\",[\"Draft\",\"Out for Signature\"]]}",
+   "type": "DocType"
+  },
+  {
+   "color": "Orange",
+   "doc_view": "List",
+   "format": "{} outstanding",
+   "label": "Purchase Order",
+   "link_to": "Purchase Order",
+   "stats_filter": "{\"status\":[\"in\",[\"To Receive and Bill\",\"To Receive\",\"To Bill\"]]}",
+   "type": "DocType"
+  },
+  {
+   "label": "Operations Dashboard",
+   "type": "URL",
+   "url": "/app/operations-dashboard"
   }
  ],
  "title": "Operations Hub",

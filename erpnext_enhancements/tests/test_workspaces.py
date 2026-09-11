@@ -43,6 +43,11 @@ BLOCK_SOURCES = {
 # `number_cards` is the real field name; keep the mapping explicit rather than clever.
 BLOCK_SOURCES["number_card"] = ("number_cards", "number_card_name", "number_card_name")
 
+# A quick list is joined on its `label`, not on a `*_name` field -- `Block.make()`
+# looks the row up with `page_data['quick_lists'].items.find(o => o.label == name)`.
+# So two quick lists sharing a label silently render the same one twice.
+BLOCK_SOURCES["quick_list"] = ("quick_lists", "quick_list_name", "label")
+
 # Blocks that carry no child row and need no cross-check.
 SELF_CONTAINED = {"header", "spacer", "paragraph", "onboarding"}
 
@@ -189,8 +194,16 @@ class TestFinanceHub(unittest.TestCase):
         self.assertIn(self.doc["module"], [m.strip() for m in modules])
 
     def test_restricted_to_finance_roles(self):
+        """`Finance Team` was added in v1.401.0. It is the role people are actually
+        granted when they join finance; `Accounts User` is the ERPNext permission that
+        happens to come with it. Every current Finance Team holder was checked on prod
+        for read access to an Accounting Intake doctype, because this workspace DOES
+        carry a module and so is subject to the gate in `Workspace.__init__`."""
         roles = {r["role"] for r in self.doc["roles"]}
-        self.assertEqual(roles, {"Accounts Manager", "Accounts User", "System Manager"})
+        self.assertEqual(
+            roles,
+            {"Accounts Manager", "Accounts User", "Finance Team", "System Manager"},
+        )
 
     def test_custom_cards_suppressed(self):
         # get_links() otherwise auto-appends "Custom Documents"/"Custom Reports".
@@ -217,6 +230,7 @@ class TestFinanceHub(unittest.TestCase):
 #: Workspaces that deliberately ship with no `module`. Keep this list SHORT and
 #: justified -- see TestModulelessWorkspacesAreDeliberate.
 MODULELESS_HUBS = {
+    "Executive Hub",
     "HR Hub",
     "Design Hub",
     "Marketing Hub",
@@ -227,6 +241,7 @@ MODULELESS_HUBS = {
 }
 
 TEAM_ROLE_FOR_HUB = {
+    "Executive Hub": "Executive Team",
     "HR Hub": "HR Team",
     "Design Hub": "Design Team",
     "Marketing Hub": "Marketing Team",
@@ -321,6 +336,118 @@ class TestTeamHubsAreGated(unittest.TestCase):
                     elif block.get("type") == "shortcut":
                         self.assertIn(data.get("shortcut_name"), shortcuts)
 
+
+def hub_files():
+    """Only the `* Hub` workspaces. The module workspaces are a different animal."""
+    out = []
+    for path in workspace_files():
+        doc = load(path)
+        if (doc.get("name") or path.stem).endswith("Hub"):
+            out.append((path, doc))
+    return out
+
+
+class TestHubWidgets(unittest.TestCase):
+    """The live widgets added in v1.401.0: count badges and quick lists.
+
+    Both carry a filter expression in a Code field, and both fail *quietly* when it
+    is wrong -- a badge that counts nothing reads as a healthy queue, and a quick
+    list with a bad filter renders `No Data...`. Neither looks like an error, so
+    the encodings are pinned here.
+    """
+
+    def test_the_scan_reaches_the_hubs(self):
+        self.assertGreaterEqual(len(hub_files()), 9)
+
+    def test_shortcut_labels_are_unique_within_a_workspace(self):
+        """The label IS the join key between `content` and the child row. Two
+        shortcuts sharing one means the second block renders the first row, and the
+        second row never renders at all."""
+        for path, doc in hub_files():
+            with self.subTest(path.name):
+                labels = [s["label"] for s in doc.get("shortcuts") or []]
+                self.assertEqual(sorted(labels), sorted(set(labels)))
+
+    def test_quick_list_labels_are_unique_within_a_workspace(self):
+        for path, doc in hub_files():
+            with self.subTest(path.name):
+                labels = [q["label"] for q in doc.get("quick_lists") or []]
+                self.assertEqual(sorted(labels), sorted(set(labels)))
+
+    def test_url_shortcuts_carry_a_url_and_no_link_to(self):
+        """`link_to` is a Dynamic Link on `type`, and "URL" is not a DocType. An
+        empty value is skipped by `base_document.get_invalid_links`; a non-empty one
+        sends the importer looking for a doctype that does not exist."""
+        for path, doc in hub_files():
+            for row in doc.get("shortcuts") or []:
+                if row.get("type") != "URL":
+                    continue
+                with self.subTest(f"{path.name}:{row['label']}"):
+                    self.assertTrue(row.get("url"))
+                    self.assertIsNone(row.get("link_to"))
+
+    def test_stats_filters_use_the_object_form(self):
+        """`process_filter_expression` evals the string and hands the result to
+        `frappe.db.count`, which takes either form -- but the live Finance Hub has
+        shipped the object form since v1.146.0 and mixing the two in one app makes
+        the next person guess."""
+        seen = 0
+        for path, doc in hub_files():
+            for row in doc.get("shortcuts") or []:
+                raw = row.get("stats_filter")
+                if not raw:
+                    continue
+                seen += 1
+                with self.subTest(f"{path.name}:{row['label']}"):
+                    self.assertIsInstance(json.loads(raw), dict)
+        self.assertGreater(seen, 0)
+
+    def test_quick_list_filters_use_the_array_form(self):
+        """The other half of the asymmetry, and the one with teeth. The quick list's
+        own edit dialog calls `FilterGroup.add_filters_to_filter_group`, which reads
+        4-tuples only. An object renders perfectly and then breaks the dialog the
+        first time somebody clicks the filter icon."""
+        seen = 0
+        for path, doc in hub_files():
+            for row in doc.get("quick_lists") or []:
+                raw = row.get("quick_list_filter")
+                if not raw:
+                    continue
+                seen += 1
+                with self.subTest(f"{path.name}:{row['label']}"):
+                    parsed = json.loads(raw)
+                    self.assertIsInstance(parsed, list)
+                    for clause in parsed:
+                        self.assertIsInstance(clause, list)
+                        self.assertEqual(len(clause), 4)
+        self.assertGreater(seen, 0)
+
+    def test_quick_list_filters_name_their_own_doctype(self):
+        """A 4-tuple leads with the doctype, so a copied clause keeps pointing at the
+        one it was copied from. `reportview.get` then filters Quotations on a column
+        that belongs to Opportunity and returns nothing, forever, with no error."""
+        for path, doc in hub_files():
+            for row in doc.get("quick_lists") or []:
+                raw = row.get("quick_list_filter")
+                if not raw:
+                    continue
+                for clause in json.loads(raw):
+                    with self.subTest(f"{path.name}:{row['label']}:{clause[1]}"):
+                        self.assertEqual(clause[0], row["document_type"])
+
+    def test_report_links_are_flagged_and_doctype_links_are_not(self):
+        """`is_query_report` decides the route. A Report link without it routes to
+        the Report Builder for a `ref_doctype` that a Script Report may not even
+        have."""
+        for path, doc in hub_files():
+            for row in doc.get("links") or []:
+                if row.get("type") != "Link":
+                    continue
+                with self.subTest(f"{path.name}:{row['label']}"):
+                    self.assertEqual(
+                        row.get("is_query_report"),
+                        1 if row.get("link_type") == "Report" else 0,
+                    )
 
 if __name__ == "__main__":
     unittest.main()

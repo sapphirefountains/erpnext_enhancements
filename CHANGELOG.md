@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.401.0] - 2026-09-11
+
+### Added
+
+- **The nine `* Hub` workspaces are now real landing pages** (WI-074 G). They shipped in
+  v1.396.0 with two to four shortcuts and a single card of reports each — enough to prove
+  the role gating worked, not enough to start a day from. Each now carries four or five
+  grouped link cards, a row of shortcuts, and one or two live quick lists: Sales Hub, for
+  instance, runs Lead → Opportunity → Quotation → Accounts → Contact → Address across a
+  *Pipeline* card, then *Won work*, then our eight CRM/Project reports, then eight of
+  ERPNext's own. Across the nine that is 59 shortcuts, 16 quick lists and 203 links.
+- **Count badges on shortcuts, and quick lists** — both are v16 workspace features this app
+  had never used. A shortcut now reads "23 live" or "4 to review" rather than just naming a
+  doctype, and a quick list renders the four most recent matching records inline, so a hub
+  answers "what needs me" before anyone clicks. `Workspace Quick List` rows are new to this
+  repo; `Workspace Shortcut.stats_filter` was previously used only by the hand-built Finance
+  Hub.
+- **`Executive Hub` is in the repo.** It was created by hand in the Desk on 2026-02-25 with
+  `app = "erpnext"` and no module, so no migrate has ever touched it and nothing would have.
+  Its `Home Dashboard Tasks` custom block is carried across verbatim. Its one shortcut is
+  **not**: it pointed at a Page named `project-dashboard` that does not exist on this site,
+  so `is_item_allowed` filtered it and the block drew an empty div across the full row — the
+  v1.146.0 failure mode, still live seven months later.
+- A `Desktop Icon` tile for Executive Hub (`compass`, indigo). Deliberately not `briefcase`:
+  Executive Dashboard already owns that glyph, and two tiles sharing one is worse than either
+  going without. Its roles derive from the workspace as usual, so nothing is listed twice.
+
+### Changed
+
+- **`Finance Hub` is gated on `Finance Team` as well as the accounting roles.** `Finance Team`
+  is the role people are actually granted when they join finance; `Accounts User` is the
+  ERPNext permission that happens to come with it. It keeps `module = "Accounting Intake"`,
+  unlike its eight siblings — `Workspace.__init__` raises **PermissionError**, not a hidden
+  page, when a workspace's module is absent from the user's `allow_modules`, so every current
+  `Finance Team` holder was checked on prod for read access to an Accounting Intake doctype
+  before the role was added.
+
+### Fixed
+
+- Two dead entry points found while surveying: the `project-dashboard` shortcut above, and
+  `Support Hub`'s three-link *Reports* card, which was the whole page.
+
+### Notes
+
+Everything named in these nine files — every DocType, Report and Page, and every value inside
+every filter — was checked against **prod** before it was written, not against the ERPNext
+docs. Two of those checks changed the content, and both would have failed silently:
+
+- `Opportunity.status` on this site is **not** the stock `Open / Quotation / Converted / Lost`
+  set. It is `Qualification / Needs Analysis / Proposal / Price Quote / Negotiation / Review /
+  Lost / Closed Won / On Hold`. A badge written from the documentation would have counted zero
+  forever, and a pipeline tile reading "0 live" looks like a quiet week, not a broken filter.
+- Every filter was then **run against prod** before the file was committed, and three of
+  them came back lying. `Opportunity.status` carries four values that are not in its own
+  Select options — `Closed` (144 rows), `Prospecting`, `Value Proposition`, and the
+  un-split `Negotiation/Review` — legacy ERPNext values that no data patch ever migrated,
+  and excluding only `Lost`/`Closed Won` reported **224 live opportunities where there are
+  80**. All 672 Quotations are `Draft` at docstatus 0 (nobody submits them here), so every
+  status filter was the total wearing a label; that tile now carries the plain count. And
+  15 of the 16 maintenance contracts are `Expired`, so "contracts to renew" is those 15,
+  not Active-plus-Expired.
+- Eight of the doctypes worth a shortcut have **no `status` field at all** (`Sapphire
+  Maintenance Record`, `Sapphire Service Plan`, `Control Panel Design`, `Configurable Product`,
+  `Master Project`, `Ad Campaign`, `Lockout Tagout Procedure`, `Package Dispatch`). Those tiles
+  carry the plain total and no filter.
+
+The two widgets encode their filters **differently**, and the asymmetry is deliberate and now
+test-pinned. `stats_filter` uses the object form — matching the Finance Hub tile that has
+shipped since v1.146.0, and what `frappe.db.count` takes directly. `quick_list_filter` uses the
+array-of-4-tuples form, because the quick list's own edit dialog calls
+`FilterGroup.add_filters_to_filter_group`, which reads arrays only: an object there renders
+perfectly and then breaks the dialog the first time somebody clicks the filter icon.
+
+Over-linking is safe here, which is why the cards are generous. `Workspace.get_links` filters
+every item through `is_item_allowed` and **drops a card entirely when nothing in it survives**,
+so a hub shows each viewer only what they can already open; a link to a doctype that no longer
+exists is filtered rather than fatal (`frappe/desk/desktop.py`, `origin/version-16`). The
+`URL`-type shortcut that points at each hub's matching `* Dashboard` is the one thing that is
+*not* permission-filtered — checked, and the only two people it would refuse hold disabled
+accounts.
+
+`patches/flesh_out_hub_workspaces.py` re-imports all nine with `force=True`. A bumped `modified`
+alone is not enough: the ordinary sync compares the file against the **row's** timestamp, six
+people hold `Workspace Manager`, and one hand-edit makes the file lose silently
+(`frappe/modules/import_file.py`). Force also means `delete_old_doc` runs first, so the child
+tables are replaced rather than merged — which is how the dead Executive Hub shortcut goes away.
+
 ## [1.400.0] - 2026-09-11
 
 ### Changed

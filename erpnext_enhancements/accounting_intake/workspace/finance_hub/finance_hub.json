@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"fh_head_sc\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"fh_sc_purchase_invoice\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Invoice\",\"col\":4}},{\"id\":\"fh_sc_sales_invoice\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Invoice\",\"col\":4}},{\"id\":\"fh_sc_payment_entry\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Payment Entry\",\"col\":4}},{\"id\":\"fh_sc_journal_entry\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Journal Entry\",\"col\":4}},{\"id\":\"fh_sc_bank_reconciliation_tool\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Bank Reconciliation Tool\",\"col\":4}},{\"id\":\"fh_sc_document_intake\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Document Intake\",\"col\":4}},{\"id\":\"fh_sc_invoices_without_project\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Invoices without Project\",\"col\":4}},{\"id\":\"fh_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"fh_head_rp\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports &amp; Period End</b></span>\",\"col\":12}},{\"id\":\"fh_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"fh_card_period_end\",\"type\":\"card\",\"data\":{\"card_name\":\"Period End\",\"col\":4}}]",
+ "content": "[{\"id\":\"fh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"fh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Invoice\",\"col\":4}},{\"id\":\"fh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Invoice\",\"col\":4}},{\"id\":\"fh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Payment Entry\",\"col\":4}},{\"id\":\"fh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Journal Entry\",\"col\":4}},{\"id\":\"fh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Bank Reconciliation Tool\",\"col\":4}},{\"id\":\"fh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Document Intake\",\"col\":4}},{\"id\":\"fh_08\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Invoices without Project\",\"col\":4}},{\"id\":\"fh_09\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Finance Dashboard\",\"col\":4}},{\"id\":\"fh_10\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"fh_11\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Intake needing review\",\"col\":6}},{\"id\":\"fh_12\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Invoices overdue\",\"col\":6}},{\"id\":\"fh_13\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"fh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Daily entry\",\"col\":4}},{\"id\":\"fh_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"fh_16\",\"type\":\"card\",\"data\":{\"card_name\":\"Period end\",\"col\":4}},{\"id\":\"fh_17\",\"type\":\"card\",\"data\":{\"card_name\":\"Analysis\",\"col\":4}}]",
  "creation": "2026-08-03 12:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -13,8 +13,76 @@
   {
    "hidden": 0,
    "is_query_report": 0,
+   "label": "Daily entry",
+   "link_count": 6,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Sales Invoice",
+   "link_count": 0,
+   "link_to": "Sales Invoice",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Purchase Invoice",
+   "link_count": 0,
+   "link_to": "Purchase Invoice",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Payment Entry",
+   "link_count": 0,
+   "link_to": "Payment Entry",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Journal Entry",
+   "link_count": 0,
+   "link_to": "Journal Entry",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Document Intake",
+   "link_count": 0,
+   "link_to": "Document Intake",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Accounting Intake Log",
+   "link_count": 0,
+   "link_to": "Accounting Intake Log",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "Reports",
-   "link_count": 5,
+   "link_count": 6,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -70,9 +138,19 @@
   },
   {
    "hidden": 0,
+   "is_query_report": 1,
+   "label": "Balance Sheet",
+   "link_count": 0,
+   "link_to": "Balance Sheet",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
    "is_query_report": 0,
-   "label": "Period End",
-   "link_count": 3,
+   "label": "Period end",
+   "link_count": 4,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -98,23 +176,113 @@
   },
   {
    "hidden": 0,
-   "is_query_report": 1,
-   "label": "Balance Sheet",
+   "is_query_report": 0,
+   "label": "Month-End Close",
    "link_count": 0,
-   "link_to": "Balance Sheet",
+   "link_to": "Month-End Close",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "QuickBooks Balance Comparison",
+   "link_count": 0,
+   "link_to": "QuickBooks Balance Comparison",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Analysis",
+   "link_count": 6,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Gross Profit",
+   "link_count": 0,
+   "link_to": "Gross Profit",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Sales Register",
+   "link_count": 0,
+   "link_to": "Sales Register",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Purchase Register",
+   "link_count": 0,
+   "link_to": "Purchase Register",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Customer Ledger Summary",
+   "link_count": 0,
+   "link_to": "Customer Ledger Summary",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Supplier Ledger Summary",
+   "link_count": 0,
+   "link_to": "Supplier Ledger Summary",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Cash Flow",
+   "link_count": 0,
+   "link_to": "Cash Flow",
    "link_type": "Report",
    "onboard": 0,
    "type": "Link"
   }
  ],
- "modified": "2026-08-04 09:00:00.000000",
+ "modified": "2026-09-11 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Accounting Intake",
  "name": "Finance Hub",
+ "number_cards": [],
  "owner": "Administrator",
  "parent_page": "",
  "public": 1,
- "quick_lists": [],
+ "quick_lists": [
+  {
+   "document_type": "Document Intake",
+   "label": "Intake needing review",
+   "quick_list_filter": "[[\"Document Intake\",\"status\",\"in\",[\"Needs Review\",\"Needs Item Review\",\"Failed\"]]]"
+  },
+  {
+   "document_type": "Sales Invoice",
+   "label": "Invoices overdue",
+   "quick_list_filter": "[[\"Sales Invoice\",\"status\",\"=\",\"Overdue\"]]"
+  }
+ ],
  "roles": [
   {
    "role": "Accounts Manager"
@@ -123,11 +291,41 @@
    "role": "Accounts User"
   },
   {
+   "role": "Finance Team"
+  },
+  {
    "role": "System Manager"
   }
  ],
  "sequence_id": 0.0,
  "shortcuts": [
+  {
+   "color": "Red",
+   "doc_view": "List",
+   "format": "{} unpaid",
+   "label": "Sales Invoice",
+   "link_to": "Sales Invoice",
+   "stats_filter": "{\"status\":[\"in\",[\"Overdue\",\"Unpaid\",\"Partly Paid\"]]}",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "Purchase Invoice",
+   "link_to": "Purchase Invoice",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "Payment Entry",
+   "link_to": "Payment Entry",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "Journal Entry",
+   "link_to": "Journal Entry",
+   "type": "DocType"
+  },
   {
    "label": "Bank Reconciliation Tool",
    "link_to": "Bank Reconciliation Tool",
@@ -136,9 +334,10 @@
   {
    "color": "Orange",
    "doc_view": "List",
+   "format": "{} to review",
    "label": "Document Intake",
    "link_to": "Document Intake",
-   "stats_filter": "{\"status\":\"Needs Review\"}",
+   "stats_filter": "{\"status\":[\"in\",[\"Needs Review\",\"Needs Item Review\",\"Failed\"]]}",
    "type": "DocType"
   },
   {
@@ -150,28 +349,9 @@
    "type": "DocType"
   },
   {
-   "doc_view": "List",
-   "label": "Journal Entry",
-   "link_to": "Journal Entry",
-   "type": "DocType"
-  },
-  {
-   "doc_view": "List",
-   "label": "Payment Entry",
-   "link_to": "Payment Entry",
-   "type": "DocType"
-  },
-  {
-   "doc_view": "List",
-   "label": "Purchase Invoice",
-   "link_to": "Purchase Invoice",
-   "type": "DocType"
-  },
-  {
-   "doc_view": "List",
-   "label": "Sales Invoice",
-   "link_to": "Sales Invoice",
-   "type": "DocType"
+   "label": "Finance Dashboard",
+   "type": "URL",
+   "url": "/app/finance-dashboard"
   }
  ],
  "title": "Finance Hub",
