@@ -69,6 +69,12 @@ const TC_LESSON_FIELDS = [
 	"idx_in_chapter",
 	"estimated_minutes",
 	"summary",
+	// Reachable at last. The server has allowlisted `transcript` and round-tripped it
+	// on the bootstrap all along, but it was absent HERE -- and `set_lesson_field`
+	// silently returns on a field outside this array, so it was unreachable by
+	// construction with no error to notice. It is also the precondition for AI
+	// checkpoint drafting, which refuses without cue timings.
+	"transcript",
 	"allow_questions",
 	"requires_submission",
 	"has_quiz",
@@ -137,10 +143,29 @@ class TrainingCanvas {
 		this.reset();
 		this.build_chrome();
 		this.page.set_secondary_action(__("Reload"), () => this.reload());
+		this.page.add_menu_item(__("Chapters…"), () => this.open_chapters());
 		this.page.add_menu_item(__("New draft version"), () => this.new_draft());
 		this.page.add_menu_item(__("Submit for review"), () => this.submit_for_review());
 		this.page.add_menu_item(__("Publish…"), () => this.publish());
 		this.page.add_menu_item(__("Open classic builder"), () => this.open_classic());
+
+		// The autosave debounce is 1200ms, so a tab closed a second after the last
+		// keystroke loses it. The browser prompt is the only thing between the author
+		// and that, and the canvas had none at all.
+		this._unload = (event) => {
+			if (!this.has_dirty()) return undefined;
+			this.save();
+			event.preventDefault();
+			event.returnValue = "";
+			return "";
+		};
+		$(window).on("beforeunload.training_canvas", this._unload);
+		// A tablet locking mid-edit on site is the common case here, and it fires
+		// visibilitychange rather than beforeunload. Save, never prompt -- a prompt on
+		// a backgrounding tab is one nobody sees.
+		$(document).on("visibilitychange.training_canvas", () => {
+			if (document.visibilityState === "hidden" && this.has_dirty()) this.save();
+		});
 	}
 
 	reset() {
@@ -427,14 +452,126 @@ class TrainingCanvas {
 		// Reorder the in-memory list to match, then persist through the dedicated
 		// endpoint (it renumbers idx_in_chapter without churning the lock token).
 		this.lessons.sort((a, b) => order.indexOf(a.name || a.__temp) - order.indexOf(b.name || b.__temp));
-		const names = this.lessons.map((l) => l.name).filter(Boolean);
-		frappe
-			.call({
-				method: "erpnext_enhancements.api.training_author.reorder_lessons",
-				args: { course_version: this.version.name, order: JSON.stringify(names) },
-			})
-			.then(() => frappe.show_alert({ message: __("Lesson order saved."), indicator: "green" }, 3))
-			.catch(() => this.render_rail());
+		// Flush FIRST. `.filter(Boolean)` drops any lesson created this session, because
+		// it has no `name` until the save comes back -- and reorder_lessons renumbers only
+		// what it was given, so dragging a new lesson to the top silently left it where it
+		// was. After the flush every lesson has a real name.
+		this.flush_save().then(() => {
+			const names = this.lessons.map((l) => l.name).filter(Boolean);
+			if (!names.length) return;
+			return frappe
+				.call({
+					method: "erpnext_enhancements.api.training_author.reorder_lessons",
+					args: { course_version: this.version.name, order: JSON.stringify(names) },
+				})
+				.then(() => frappe.show_alert({ message: __("Lesson order saved."), indicator: "green" }, 3))
+				.catch(() => this.render_rail());
+		});
+	}
+
+	load_vtt(lesson) {
+		// Read LOCALLY, never uploaded. The transcript is a lesson field; a round trip
+		// through File storage would leave a second copy nobody maintains beside the one
+		// that is actually read. Same reasoning as the classic builder.
+		const input = document.createElement("input");
+		input.type = "file";
+		input.accept = ".vtt,text/vtt";
+		input.onchange = () => {
+			const file = (input.files && input.files[0]) || null;
+			if (!file) return;
+			const reader = new FileReader();
+			reader.onload = () => {
+				const text = String(reader.result || "");
+				if (!/-->/.test(text)) {
+					// Refuse rather than accept it silently: without cue timings AI
+					// checkpoint drafting has nothing to place a question against, and it
+					// would refuse later with no clue why.
+					frappe.msgprint({
+						title: __("That is not a timed transcript"),
+						indicator: "red",
+						message: __(
+							"A .vtt carries cue timings (00:01:02.000 --> 00:01:06.000). Without them checkpoint drafting has nothing to place a question against and will refuse."
+						),
+					});
+					return;
+				}
+				this.set_lesson_field(lesson, "transcript", text);
+				this.render_lesson_settings();
+			};
+			reader.readAsText(file);
+		};
+		input.click();
+	}
+
+	// -------------------------------------------------------------- chapters
+	open_chapters() {
+		"use strict";
+		// Chapters were unreachable from this page by construction: `this.chapters` was
+		// read in four places and written only from the bootstrap, and `dirty.chapters`
+		// was read in three and written by NOTHING. The picker in lesson settings hides
+		// itself when the array is empty, so a course authored start to finish here had
+		// every lesson Unfiled with no way out -- and the only thing that could ever put
+		// a chapter in that array was the classic builder, the tool being retired.
+		//
+		// The server wire was complete the whole time: `_apply_chapters` mints the keys,
+		// refuses to orphan a lesson, and hands the generated keys back in `chapters`,
+		// which `save()` already adopts. This is the missing client half.
+		if (!this.editable()) return;
+		const rows = (this.chapters || []).map((c) => ({
+			chapter_key: c.chapter_key || "",
+			chapter_title: c.chapter_title || "",
+		}));
+
+		const dialog = new frappe.ui.Dialog({
+			title: __("Chapters"),
+			fields: [{ fieldtype: "HTML", fieldname: "list" }],
+			primary_action_label: __("Save chapters"),
+			primary_action: () => {
+				const kept = rows.filter((r) => (r.chapter_title || "").trim());
+				// Sent even when empty: an empty array is how the author deletes the last
+				// chapter, and the server refuses it if lessons still point at one.
+				this.dirty.chapters = kept.map((r) => ({
+					chapter_key: r.chapter_key || undefined,
+					chapter_title: r.chapter_title.trim(),
+				}));
+				this.chapters = kept.slice();
+				this.mark_dirty();
+				dialog.hide();
+				this.render_rail();
+				this.render_lesson_settings();
+			},
+		});
+
+		const $wrap = dialog.fields_dict.list.$wrapper;
+		const paint = () => {
+			$wrap.empty();
+			if (!rows.length) {
+				$("<p class='text-muted'></p>")
+					.text(__("No chapters yet. Every lesson sits under Unfiled until you add one."))
+					.appendTo($wrap);
+			}
+			rows.forEach((row, i) => {
+				const $r = $("<div class='tc-chapter-row'></div>").appendTo($wrap);
+				const $t = $("<input type='text' class='form-control' />")
+					.val(row.chapter_title)
+					.attr("placeholder", __("Chapter title"));
+				$t.on("input", () => { row.chapter_title = $t.val(); });
+				$r.append($t);
+				const btn = (label, title, fn) =>
+					$("<button class='btn btn-xs btn-default'></button>")
+						.text(label).attr("title", title)
+						.on("click", () => { fn(); paint(); }).appendTo($r);
+				btn("↑", __("Move up"), () => { if (i > 0) rows.splice(i - 1, 0, rows.splice(i, 1)[0]); });
+				btn("↓", __("Move down"), () => { if (i < rows.length - 1) rows.splice(i + 1, 0, rows.splice(i, 1)[0]); });
+				btn("✕", __("Remove"), () => { rows.splice(i, 1); });
+			});
+			$("<button class='btn btn-sm btn-default'></button>")
+				.text(__("Add chapter"))
+				.on("click", () => { rows.push({ chapter_key: "", chapter_title: "" }); paint(); })
+				.appendTo($wrap);
+		};
+		paint();
+		dialog.show();
 	}
 
 	// -------------------------------------------------------- lesson settings
@@ -459,13 +596,38 @@ class TrainingCanvas {
 		$summary.on("input", () => this.set_lesson_field(lesson, "summary", $summary.val()));
 		field(__("Summary"), $summary);
 
-		if (this.chapters.length) {
+		// Rendered ALWAYS. Gating it on `this.chapters.length` is what made chapters
+		// unreachable: no chapters meant no control, and the control was the only place
+		// they were mentioned, so a canvas-authored course could never leave Unfiled.
+		{
 			const $ch = $('<select class="form-control"></select>');
 			$('<option value=""></option>').text(__("Unfiled")).appendTo($ch);
 			this.chapters.forEach((c) => $("<option></option>").attr("value", c.chapter_key).text(c.chapter_title).appendTo($ch));
 			$ch.val(lesson.chapter_key || "");
 			$ch.on("change", () => { this.set_lesson_field(lesson, "chapter_key", $ch.val()); this.render_rail(); });
 			field(__("Chapter"), $ch);
+			if (!this.chapters.length && ed) {
+				$('<button class="btn btn-xs btn-default tc-add-chapter"></button>')
+					.text(__("Add a chapter"))
+					.on("click", () => this.open_chapters())
+					.appendTo(this.$lessonset);
+			}
+		}
+
+		// Reachable at last -- see TC_LESSON_FIELDS. The server has allowlisted and
+		// round-tripped `transcript` all along; it was missing from the client allowlist,
+		// and set_lesson_field silently returns on a field outside it, so there was no
+		// error to notice. It is also what AI checkpoint drafting refuses without.
+		const $tr = $('<textarea class="form-control" rows="4"></textarea>')
+			.val(lesson.transcript || "")
+			.attr("placeholder", __("Plain text, or WebVTT cues if you have them."));
+		$tr.on("input", () => this.set_lesson_field(lesson, "transcript", $tr.val()));
+		field(__("Transcript"), $tr);
+		if (ed) {
+			$('<button class="btn btn-xs btn-default tc-vtt"></button>')
+				.text(__("Load a .vtt"))
+				.on("click", () => this.load_vtt(lesson))
+				.appendTo(this.$lessonset);
 		}
 
 		const $min = $('<input type="number" min="0" class="form-control" />').val(num(lesson.estimated_minutes));
@@ -665,6 +827,8 @@ class TrainingCanvas {
 				<div class="tc-blocktools">
 					<button class="tc-tool" data-act="up" title="${__("Move up")}" aria-label="${__("Move up")}">↑</button>
 					<button class="tc-tool" data-act="down" title="${__("Move down")}" aria-label="${__("Move down")}">↓</button>
+					<button class="tc-tool" data-act="turn" title="${__("Turn into…")}" aria-label="${__("Turn into")}">⇄</button>
+					<button class="tc-tool" data-act="dup" title="${__("Duplicate")}" aria-label="${__("Duplicate")}">⧉</button>
 					<button class="tc-tool" data-act="settings" title="${__("Block settings")}" aria-label="${__("Block settings")}">⚙</button>
 					<button class="tc-tool tc-tool-danger" data-act="remove" title="${__("Remove block")}" aria-label="${__("Remove block")}">🗑</button>
 				</div>
@@ -676,6 +840,8 @@ class TrainingCanvas {
 		$wrap.find('[data-act="up"]').on("click", () => this.move_block(lesson, block, -1));
 		$wrap.find('[data-act="down"]').on("click", () => this.move_block(lesson, block, 1));
 		$wrap.find('[data-act="remove"]').on("click", () => this.remove_block(lesson, block));
+		$wrap.find('[data-act="turn"]').on("click", (e) => this.open_turn_menu(lesson, block, $(e.currentTarget)));
+		$wrap.find('[data-act="dup"]').on("click", () => this.duplicate_block(lesson, block));
 		$wrap.find('[data-act="settings"]').on("click", () => this.toggle_settings(lesson, block, $wrap));
 		if (!this.editable()) $wrap.find(".tc-blocktools").attr("hidden", "hidden");
 		return $wrap;
@@ -1110,6 +1276,147 @@ class TrainingCanvas {
 		if (el) el.focus();
 	}
 
+	// ------------------------------------------------- turn into / duplicate
+	//
+	// The whole point of both, and the reason they are one commit: `block_key` is
+	// a RELATIONAL IDENTITY, not a detail. Learner watch intervals and in-video
+	// checkpoints are filed under it, and `_apply_blocks` replaces the child table
+	// wholesale by position, minting a key only where one is blank or duplicated.
+	// So the rule is exact and opposite for the two verbs:
+	//
+	//   Turn into -> KEEP the key. Delete-and-re-add would mint a new one and strand
+	//                every learner mid-video, which is what an author would do by
+	//                hand without this.
+	//   Duplicate -> MINT a fresh one. Two rows sharing a key is the one case the
+	//                server rewrites, silently, and the author would never see it.
+
+	//: Where the body of each type lives. `content` is sanitised HTML; `data` is a
+	//: JSON blob whose shape differs per type, which is why data->data is a loss.
+	block_family(type) {
+		if (type === "Rich Text" || type === "Callout") return "content";
+		if (["Checklist", "Flashcards", "Accordion", "Image Hotspots"].indexOf(type) >= 0) return "data";
+		if (["Image", "Video", "PDF", "Downloadable File", "External Embed"].indexOf(type) >= 0) return "media";
+		return "none";
+	}
+
+	turn_losses(lesson, block, target) {
+		"use strict";
+		// Say exactly what goes, in the author's terms, before anything moves.
+		const from = this.block_family(block.block_type);
+		const to = this.block_family(target);
+		const losses = [];
+
+		if (from === "content" && to !== "content" && (block.content || "").trim()) {
+			losses.push(__("the written text"));
+		}
+		if (from === "data" && to !== "data" && (block.data || "").trim()) {
+			losses.push(__("the items you have entered"));
+		}
+		if (from === "data" && to === "data") {
+			losses.push(__("the items you have entered (the two types store them differently)"));
+		}
+		if (from === "media" && to !== "media") {
+			losses.push(__("the attached file or link"));
+		}
+
+		// Checkpoints hang off `block_key` and are reaped server-side when their
+		// block stops being a Video. The canvas has had them on the bootstrap all
+		// along and thrown them away; naming them by timestamp is the difference
+		// between a warning and a surprise.
+		if (block.block_type === "Video" && target !== "Video") {
+			const pins = (lesson.checkpoints || []).filter((c) => c && c.block_key === block.block_key);
+			if (pins.length) {
+				const at = pins
+					.map((c) => this.mmss(c.at_seconds))
+					.join(', ');
+				losses.push(
+					__("{0} in-video checkpoint(s), at {1}").format([pins.length, at])
+				);
+			}
+		}
+		return losses;
+	}
+
+	mmss(seconds) {
+		const n = Math.max(0, Math.floor(Number(seconds) || 0));
+		return Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0");
+	}
+
+	open_turn_menu(lesson, block, $anchor) {
+		if (!this.editable()) return;
+		this.$app.find(".tc-menu").remove();
+		const $menu = $('<div class="tc-menu"></div>');
+		TC_ADDABLE.filter((t) => t !== block.block_type).forEach((type) => {
+			$("<button></button>")
+				.text(type)
+				.on("click", () => {
+					$menu.remove();
+					this.turn_into(lesson, block, type);
+				})
+				.appendTo($menu);
+		});
+		$("body").append($menu);
+		const r = $anchor[0].getBoundingClientRect();
+		$menu.css({ top: r.bottom + 6 + "px", left: Math.min(r.left, window.innerWidth - 200) + "px" });
+		setTimeout(() => $(document).one("click.tcturn", () => $menu.remove()), 0);
+	}
+
+	turn_into(lesson, block, target) {
+		if (!this.editable() || target === block.block_type) return;
+		const losses = this.turn_losses(lesson, block, target);
+		const apply = () => {
+			const from = this.block_family(block.block_type);
+			const to = this.block_family(target);
+			// The key is NOT touched. That is the entire contract.
+			block.block_type = target;
+			if (!(from === "content" && to === "content")) block.content = "";
+			if (!(from === "data" && to === "data")) block.data = "";
+			if (to === "data") block.data = "";
+			if (from === "media" && to !== "media") {
+				block.image = "";
+				block.file = "";
+				block.embed_url = "";
+			}
+			if (target === "Callout" && !block.callout_tone) block.callout_tone = "Info";
+			if (target === "Rich Text" && !(block.content || "").trim()) block.content = "<p></p>";
+			if (target === "Checklist") block.data = JSON.stringify({ items: [""] });
+			if (target === "Flashcards") block.data = JSON.stringify({ cards: [{ front: "", back: "" }] });
+			if (target === "Accordion") block.data = JSON.stringify({ panels: [{ title: "", body: "<p></p>" }] });
+			if (target === "Image Hotspots") block.data = JSON.stringify({ hotspots: [] });
+			this.dirty_blocks(lesson);
+			this.mark_dirty();
+			this.render_sheet();
+		};
+
+		if (!losses.length) return apply();
+		frappe.confirm(
+			__("Turning this into {0} discards {1}. The block keeps its place and its identity, so anything already watched stays counted.").format([
+				target,
+				losses.join(__(", and ")),
+			]),
+			apply
+		);
+	}
+
+	duplicate_block(lesson, block) {
+		if (!this.editable()) return;
+		const i = lesson.blocks.indexOf(block);
+		if (i < 0) return;
+		// A FRESH key, minted here rather than left blank. Leaving it blank works --
+		// the controller mints one -- but then the new row has no identity until the
+		// save returns, and anything addressing it in between addresses the original.
+		const copy = Object.assign({}, block, {
+			block_key: "blk-" + Math.random().toString(36).slice(2, 10),
+		});
+		// Checkpoints are NOT copied. They are separate documents filed under the
+		// original key, and a duplicate that silently acquired somebody else's
+		// questions would be worse than one that acquired none.
+		lesson.blocks.splice(i + 1, 0, copy);
+		this.dirty_blocks(lesson);
+		this.mark_dirty();
+		this.render_sheet();
+	}
+
 	move_block(lesson, block, dir) {
 		if (!this.editable()) return;
 		const i = lesson.blocks.indexOf(block);
@@ -1157,6 +1464,20 @@ class TrainingCanvas {
 		this._save_timer = setTimeout(() => this.save(), TC_SAVE_DEBOUNCE_MS);
 	}
 
+	flush_save() {
+		// Settle whatever is pending and RESOLVE WHEN IT HAS LANDED. `save()` returns a
+		// bare Promise.resolve() while a save is in flight, so anything chained off it
+		// runs against the version before the one just typed. Three callers depend on
+		// this being honest: the lesson reorder below, and -- once they land -- the pin
+		// writer and the preview, both of which resolve their target through the
+		// DATABASE, where a block that exists only in memory is simply absent.
+		// Same contract as the classic builder.
+		clearTimeout(this._save_timer);
+		if (this._saving && this._inflight) return this._inflight.catch(() => {});
+		if (!this.has_dirty()) return Promise.resolve();
+		return this.save().catch(() => {});
+	}
+
 	save() {
 		clearTimeout(this._save_timer);
 		if (!this.editable() || this._saving || !this.has_dirty()) return Promise.resolve();
@@ -1169,7 +1490,7 @@ class TrainingCanvas {
 			deleted_lessons: sent.deleted.slice(),
 			chapters: sent.chapters || undefined,
 		};
-		return frappe
+		this._inflight = frappe
 			.call({
 				method: "erpnext_enhancements.api.training_author.save_draft_version",
 				args: { course_version: this.version.name, payload: JSON.stringify(payload), modified: this.version.modified },
@@ -1182,7 +1503,14 @@ class TrainingCanvas {
 				this.adopt_created(state.created_lessons);
 				this.report_rejected(state.rejected);
 				this.paint_status(this.has_dirty() ? "dirty" : "saved");
-				if (this.has_dirty()) this.mark_dirty();
+				// CHAIN, do not re-arm. Keystrokes typed during an in-flight save land in
+				// `this.dirty`, and handing them to `mark_dirty()` puts them behind the
+				// 1200ms debounce while this promise resolves -- so a caller awaiting
+				// flush_save() is told the work is stored when the last keystrokes are
+				// still sitting in a timer. `_inflight` must settle only once the queue
+				// has DRAINED, which is the whole contract the pin writer and the preview
+				// depend on.
+				if (this.has_dirty()) return this.save().then(() => state);
 				return state;
 			})
 			.catch((error) => {
@@ -1198,6 +1526,7 @@ class TrainingCanvas {
 				else this.paint_status("dirty");
 				throw error;
 			});
+		return this._inflight;
 	}
 
 	adopt_created(created) {

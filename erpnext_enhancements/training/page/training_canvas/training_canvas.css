@@ -777,3 +777,24 @@
 	font-size: 1.2rem;
 	color: var(--heading-color, #1a1830);
 }
+
+/* Chapter manager rows (WI-074 S1). One title input and three small buttons; the
+   dialog is frappe's, so only the row needs a rule. */
+.tc-chapter-row {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	margin-bottom: 6px;
+}
+
+.tc-chapter-row input {
+	flex: 1 1 auto;
+}
+
+/* Two small affordances in the lesson settings panel (WI-074 S1): the escape hatch
+   when a course has no chapters yet, and the .vtt loader beside the transcript. */
+.tc-add-chapter,
+.tc-vtt {
+	align-self: flex-start;
+	margin: 2px 0 8px 0;
+}

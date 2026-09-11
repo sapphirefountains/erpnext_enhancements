@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.399.0] - 2026-09-11
+
+### Added
+
+- **Turn Into and Duplicate on the canvas**, and the reason they are one change is that
+  `block_key` is a **relational identity**, not a detail: learner watch intervals and in-video
+  checkpoints are filed under it, and `_apply_blocks` replaces the block table wholesale by
+  position, minting a key only where one is blank or duplicated.
+
+  So the rule is exact and opposite for the two verbs. **Turn Into keeps the key** — which is
+  precisely what an author doing it by hand cannot do, because delete-and-re-add mints a new one
+  and strands every learner mid-video. **Duplicate mints a fresh one**, because two rows sharing
+  a key is the one case the server silently rewrites, where the author would never see it. The
+  server cannot tell the two apart, so the invariant is asserted client-side or nowhere, and it
+  now is.
+
+  Turn Into says what it will cost before anything moves, and names in-video checkpoints **by
+  timestamp** — `lesson.checkpoints` has been on the bootstrap all along and the canvas threw it
+  away, which is the difference between a warning and a surprise. It also says what *survives*:
+  the block keeps its place and its identity, so anything already watched stays counted. An
+  author who is not told that will avoid the feature.
+
+  Duplicate deliberately does **not** copy checkpoints. They are separate documents filed under
+  the original key, and a duplicate that silently acquired somebody else's questions would be
+  worse than one that acquired none.
+
+## [1.398.0] - 2026-09-11
+
+### Added
+
+- **Chapters are reachable from the visual canvas.** They were unreachable *by construction*:
+  `this.chapters` was read in four places and written only from the bootstrap, and
+  `dirty.chapters` was read in three places and **written by nothing**. The chapter picker in
+  lesson settings hides itself when the array is empty, so a course authored start-to-finish on
+  the canvas had every lesson sitting under *Unfiled* with no way out — and the only thing that
+  could ever populate that array was the classic builder, the tool being retired.
+
+  The server wire was complete the whole time: `_apply_chapters` mints the keys, refuses to
+  orphan a lesson whose chapter would vanish, and hands the generated keys back in `chapters`,
+  which `save()` already adopted. This is the missing client half, and nothing server-side
+  changed. An empty list is still sent, because deleting the last chapter has to reach the
+  server — which refuses it if lessons still point at one.
+
+- **The lesson transcript is reachable too**, and for the same reason it was not: the server had
+  allowlisted `transcript` and round-tripped it on the bootstrap all along, but it was absent
+  from the *client* allowlist — and `set_lesson_field` silently returns on a field outside it, so
+  there was no error to notice. It is also the precondition for AI checkpoint drafting, which
+  refuses without cue timings.
+
+### Fixed
+
+- **`save()` returned a bare `Promise.resolve()` while a save was in flight**, so anything
+  chained off it ran against the version *before* the one just typed. `flush_save()` now returns
+  the in-flight promise. This is a prerequisite rather than a nicety: the checkpoint pin writer
+  and the server-backed preview both resolve their target through the **database**, where a
+  block that exists only in the canvas's memory is simply absent.
+
+- **Dragging a newly created lesson to the top of the rail silently left it where it was.**
+  `commit_lesson_order` built its list with `.filter(Boolean)`, which drops any lesson created in
+  this session because it has no `name` until the save comes back — and `reorder_lessons`
+  renumbers only what it was given. It now waits for the flush, after which every lesson has a
+  real name.
+
+- **`_strip_js_comments` in the canvas test suite only dropped lines that *started* with a line
+  comment**, so a trailing one kept the very token it was warning about — and every absence
+  assertion built on it was weaker than it looked. Now quote-aware and drops trailing comments,
+  with a meta-test of its own. Seventh occurrence of that trap class in this project.
+- **A tab closed within the autosave debounce lost the work, with no prompt.** The debounce is
+  1200 ms and the canvas had no `beforeunload` guard at all. It now attempts a save and warns.
+
 ## [1.397.0] - 2026-09-11
 
 ### Added

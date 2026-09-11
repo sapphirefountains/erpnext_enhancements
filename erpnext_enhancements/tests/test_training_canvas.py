@@ -36,19 +36,55 @@ CANVAS_JSON = APP / "training/page/training_canvas/training_canvas.json"
 
 
 def _strip_js_comments(src):
+    """Strip block comments AND line comments, including TRAILING ones.
+
+    The previous version only dropped lines whose stripped text STARTED with a line
+    comment, so a trailing one kept the very word it was warning about -- and every
+    absence assertion built on this helper was weaker than it looked. That is the
+    seventh time this repo has been bitten by an assertion matching its own
+    explanation.
+
+    Quote-aware, so a comment marker inside a string or a URL survives. Not a full
+    JS parser (it does not model regex literals), but this file contains none and the
+    failure direction is safe: an unstripped comment can only make an absence
+    assertion stricter, never looser.
+    """
     out, in_block = [], False
     for line in src.splitlines():
-        stripped = line.strip()
         if in_block:
-            if "*/" in stripped:
+            if '*/' in line:
                 in_block = False
-            continue
-        if stripped.startswith("/*"):
-            in_block = "*/" not in stripped
-            continue
-        if stripped.startswith("//"):
-            continue
-        out.append(line)
+                line = line.split('*/', 1)[1]
+            else:
+                continue
+        kept, quote, i = [], None, 0
+        while i < len(line):
+            ch = line[i]
+            if quote:
+                kept.append(ch)
+                if ch == "\\" and i + 1 < len(line):
+                    kept.append(line[i + 1])
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = None
+            elif ch in "\"'`":
+                quote = ch
+                kept.append(ch)
+            elif ch == '/' and i + 1 < len(line) and line[i + 1] == '/':
+                break
+            elif ch == '/' and i + 1 < len(line) and line[i + 1] == '*':
+                rest = line[i + 2:]
+                if '*/' in rest:
+                    line = rest.split('*/', 1)[1]
+                    i = -1
+                else:
+                    in_block = True
+                    break
+            else:
+                kept.append(ch)
+            i += 1
+        out.append(''.join(kept))
     return "\n".join(out)
 
 
@@ -337,6 +373,248 @@ class TestTheEditorDoesNotTransformOnTheRenderPath(unittest.TestCase):
         for banned in ("sanitize_html", "DOMParser", "remove_script_and_style"):
             with self.subTest(transform=banned):
                 self.assertNotIn(banned, block)
+
+
+class TestChaptersAreReachable(unittest.TestCase):
+    """v1.398.0. `this.chapters` was read in four places and written only from the
+    bootstrap; `dirty.chapters` was read in three and written by NOTHING. The picker
+    in lesson settings hides itself when the array is empty, so a course authored
+    start to finish on the canvas had every lesson Unfiled with no way out — and the
+    only thing that could ever populate that array was the classic builder, the tool
+    being retired. Unreachable by construction, exactly like `transcript` was.
+    """
+
+    def test_something_writes_the_dirty_chapters_slot(self):
+        src = _canvas()
+        self.assertIn("this.dirty.chapters = kept.map(", src)
+
+    def test_the_manager_is_reachable_from_the_page(self):
+        self.assertIn("open_chapters()", _canvas())
+
+    def test_an_empty_list_is_still_sent(self):
+        """Deleting the last chapter must reach the server, which refuses it if
+        lessons still point at one. Sending `undefined` would look like success."""
+        src = _canvas()
+        at = src.index("this.dirty.chapters = kept.map(")
+        self.assertNotIn("kept.length ?", src[max(0, at - 200) : at])
+
+
+class TestTheSaveFlushIsHonest(unittest.TestCase):
+    """`save()` returns a bare Promise.resolve() while a save is in flight, so
+    anything chained off it runs against the version before the one just typed.
+    Three later steps depend on this being honest, because a pin and a preview both
+    resolve their target through the DATABASE — where a block that exists only in
+    memory is simply absent.
+    """
+
+    def test_flush_returns_the_in_flight_promise(self):
+        src = _canvas()
+        self.assertIn("flush_save()", src)
+        at = src.index("flush_save() {")
+        block = src[at : at + 700]
+        self.assertIn("this._inflight", block)
+        # The in-flight check must come BEFORE the has_dirty short-circuit, or a
+        # caller chaining off a flush during a save still proceeds early.
+        self.assertLess(block.index("_inflight"), block.index("has_dirty"))
+
+    def test_save_records_the_in_flight_promise(self):
+        src = _canvas()
+        self.assertIn("this._inflight = frappe", src)
+        self.assertIn("return this._inflight;", src)
+
+    def test_the_reorder_waits_for_it(self):
+        """`.filter(Boolean)` drops any lesson created this session, because it has
+        no `name` until the save returns — and reorder_lessons renumbers only what it
+        was given, so dragging a new lesson to the top silently left it put."""
+        src = _canvas()
+        # The DEFINITION, not the first call site -- src.index("commit_lesson_order")
+        # lands on `this.commit_lesson_order($list)` and slices the wrong method.
+        at = src.index("commit_lesson_order($list) {")
+        block = src[at : at + 1400]
+        self.assertIn("this.flush_save().then(", block)
+        self.assertLess(block.index("flush_save"), block.index("reorder_lessons"))
+
+    def test_a_closing_tab_is_warned(self):
+        """The autosave debounce is 1200ms, so a tab closed a second after the last
+        keystroke loses it. The canvas had no guard at all."""
+        src = _canvas()
+        self.assertIn("beforeunload", src)
+        at = src.index("beforeunload")
+        self.assertIn("has_dirty()", src[max(0, at - 500) : at])
+
+
+class TestTranscriptIsNoLongerUnreachable(unittest.TestCase):
+    """The server allowlisted `transcript` and round-tripped it on the bootstrap all
+    along. It was missing from the CLIENT allowlist, and `set_lesson_field` silently
+    returns on a field outside it — so there was no error to notice.
+    """
+
+    def test_it_is_in_the_client_allowlist(self):
+        src = _canvas()
+        at = src.index("TC_LESSON_FIELDS")
+        self.assertIn('"transcript"', src[at : src.index("]", at)])
+
+    def test_there_is_somewhere_to_type_it(self):
+        """An allowlist entry with no control is still unreachable."""
+        self.assertIn('set_lesson_field(lesson, "transcript"', _canvas())
+
+
+class TestTheCommentStripperItself(unittest.TestCase):
+    """A meta-test, and it earns its place: every absence assertion in this file
+    depends on the stripper, and the previous version only dropped lines that
+    STARTED with a line comment. A trailing one kept the very token it warned about.
+    """
+
+    def test_a_trailing_comment_is_dropped(self):
+        self.assertNotIn("bar", _strip_js_comments("foo(); // never call bar()"))
+
+    def test_a_url_inside_a_string_survives(self):
+        kept = _strip_js_comments('const u = "https://example.com/x"; // note')
+        self.assertIn("https://example.com/x", kept)
+        self.assertNotIn("note", kept)
+
+    def test_an_inline_block_comment_is_dropped(self):
+        self.assertNotIn("gone", _strip_js_comments("a /* gone */ b"))
+
+
+class TestTheFlushDrainsTheQueue(unittest.TestCase):
+    """`_inflight` must settle only once the queue has DRAINED. Keystrokes typed
+    during an in-flight save land in `this.dirty`, and handing them to `mark_dirty()`
+    puts them behind the 1200 ms debounce while the promise resolves — so a caller
+    awaiting the flush is told the work is stored while the last keystrokes sit in a
+    timer. The pin writer and the preview both depend on this being honest.
+    """
+
+    def test_the_success_path_chains_rather_than_rearming(self):
+        src = _canvas()
+        at = src.index("this._inflight = frappe")
+        block = src[at : at + 1600]
+        self.assertIn("return this.save().then(", block)
+
+    def test_it_does_not_rearm_the_debounce_on_success(self):
+        src = _canvas()
+        at = src.index("this._inflight = frappe")
+        block = src[at : src.index(".catch(", at)]
+        self.assertNotIn("this.mark_dirty()", block)
+
+
+class TestTheChapterControlIsAlwaysOffered(unittest.TestCase):
+    def test_it_is_not_gated_on_having_chapters(self):
+        """Gating it on `this.chapters.length` is what made chapters unreachable:
+        no chapters meant no control, and the control was the only place they were
+        mentioned."""
+        src = _canvas()
+        at = src.index("render_lesson_settings()")
+        block = src[at : at + 3000]
+        self.assertNotIn("if (this.chapters.length) {", block)
+
+    def test_there_is_an_escape_hatch_when_there_are_none(self):
+        self.assertIn("tc-add-chapter", _canvas())
+
+
+class TestTheTabletCase(unittest.TestCase):
+    def test_backgrounding_saves_rather_than_prompts(self):
+        """A tablet locking mid-edit on site fires visibilitychange, not
+        beforeunload — and a prompt on a backgrounding tab is one nobody sees."""
+        src = _canvas()
+        self.assertIn("visibilitychange", src)
+        at = src.index("visibilitychange")
+        self.assertIn("this.save()", src[at : at + 300])
+
+
+class TestTheTranscriptLoaderRefusesUntimedText(unittest.TestCase):
+    def test_it_checks_for_cue_timings(self):
+        """Without them, AI checkpoint drafting has nothing to place a question
+        against and refuses later with no clue why."""
+        src = _canvas()
+        self.assertIn("load_vtt(lesson)", src)
+        at = src.index("load_vtt(lesson) {")
+        self.assertIn("-->", src[at : at + 1600])
+
+    def test_it_reads_locally_rather_than_uploading(self):
+        """A round trip through File storage leaves a second copy nobody maintains
+        beside the one that is actually read."""
+        src = _canvas()
+        at = src.index("load_vtt(lesson) {")
+        block = src[at : at + 1600]
+        self.assertIn("FileReader", block)
+        self.assertNotIn("upload_file", block)
+
+
+class TestTurnIntoKeepsTheKeyAndDuplicateMintsOne(unittest.TestCase):
+    """`block_key` is a relational identity, not a detail. Learner watch intervals
+    and in-video checkpoints are filed under it, and `_apply_blocks` replaces the
+    child table wholesale by position, minting a key only where one is blank or
+    duplicated. So the rule is exact and opposite for the two verbs, and it can only
+    be asserted client-side — the server cannot tell the two apart.
+    """
+
+    def _fn(self, name):
+        """One class method, bounded at its own closing brace.
+
+        Keyed on the DEFINITION. A bare name + '(lesson, block' matches the first
+        CALL SITE instead, and a fixed-size window then runs past the end of the
+        method into the next one. Both of those bit this file already, which is why
+        the slice is anchored to the line start and ended at the brace.
+        """
+        src = _canvas()
+        opener = "\n\t" + name + '(lesson, block'
+        at = src.index(opener) + 1
+        end = src.index("\n\t}", at)
+        return src[at:end]
+
+    def test_turn_into_never_assigns_a_key(self):
+        """Delete-and-re-add would mint a new one and strand every learner
+        mid-video, which is what an author would do by hand without this."""
+        body = self._fn("turn_into")
+        self.assertNotIn("block.block_key =", body)
+        self.assertNotIn("block_key:", body)
+
+    def test_turn_into_changes_the_type_in_place(self):
+        self.assertIn("block.block_type = target;", self._fn("turn_into"))
+
+    def test_duplicate_mints_a_fresh_key(self):
+        """Two rows sharing a key is the one case the server rewrites, silently,
+        and the author would never see it."""
+        body = self._fn("duplicate_block")
+        self.assertIn("block_key:", body)
+        self.assertIn("Math.random()", body)
+
+    def test_duplicate_does_not_carry_checkpoints(self):
+        """They are separate documents filed under the original key. A duplicate
+        that silently acquired somebody else's questions is worse than one that
+        acquired none."""
+        body = self._fn("duplicate_block")
+        self.assertNotIn("checkpoints", body)
+
+    def test_both_go_through_dirty_blocks(self):
+        for fn in ("turn_into", "duplicate_block"):
+            with self.subTest(fn=fn):
+                self.assertIn("this.dirty_blocks(lesson)", self._fn(fn))
+
+
+class TestTurnIntoSaysWhatItWillCost(unittest.TestCase):
+    def test_it_warns_before_discarding_anything(self):
+        body = _canvas()
+        at = body.index("turn_into(lesson, block, target) {")
+        block = body[at : at + 2200]
+        self.assertIn("frappe.confirm(", block)
+        self.assertIn("if (!losses.length) return apply();", block)
+
+    def test_it_names_the_checkpoints_by_timestamp(self):
+        """The canvas has had `lesson.checkpoints` on the bootstrap all along and
+        thrown it away. Naming them by timestamp is the difference between a warning
+        and a surprise."""
+        body = _canvas()
+        at = body.index("turn_losses(lesson, block, target) {")
+        block = body[at : at + 1800]
+        self.assertIn("lesson.checkpoints", block)
+        self.assertIn("this.mmss(", block)
+
+    def test_it_reassures_that_progress_survives(self):
+        """The key is kept, so watched time stays counted -- and an author who is
+        not told that will avoid the feature."""
+        self.assertIn("stays counted", _canvas())
 
 
 if __name__ == "__main__":
