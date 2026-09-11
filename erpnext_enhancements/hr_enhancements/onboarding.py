@@ -174,11 +174,41 @@ def _derived_leaving_rows(employee):
 	user = frappe.db.get_value("Employee", employee, "user_id")
 
 	rows.extend(_devices_held(employee))
+	rows.extend(_assets_held(employee))
 	rows.extend(_credentials_held(employee))
 	rows.extend(_open_work(user))
 	rows.extend(_direct_reports(employee))
 	rows.extend(_vehicles_held(employee))
 	return rows
+
+
+def _assets_held(employee):
+	"""ERPNext `Asset` rows with this person as custodian.
+
+	**This is where the issued-kit register went.** WI-073 G proposed one, and the
+	native-first check refused it: core `Asset` already carries `custodian` (a Link
+	to Employee) and `location`, and `Asset Movement` already records the handover
+	with `from_employee` / `to_employee` — which is exactly "who has it and when did
+	they take it". Building a parallel register would have been the duplication
+	ADR-0002 exists to prevent.
+
+	The real gap was never a missing doctype. It was that nobody has put a flow
+	meter into `Asset` — zero rows on prod — and that nothing read the custodian at
+	the moment it matters. So this reads it, and the register stays core's.
+	"""
+	if not frappe.db.exists("DocType", "Asset"):
+		return []
+	try:
+		return [
+			(f"Collect {row.asset_name or row.name}", "Shop", 0)
+			for row in frappe.get_all(
+				"Asset",
+				filters={"custodian": employee, "docstatus": ["<", 2]},
+				fields=["name", "asset_name"],
+			)
+		]
+	except Exception:
+		return []
 
 
 def _devices_held(employee):

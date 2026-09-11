@@ -820,7 +820,17 @@ scheduler_events = {
 		# ---- HR Enhancements (WI-072) ---------------------------------------------------
 		# A credential's status is arithmetic on a date: correct the day it is saved and
 		# wrong every day after. Re-derived nightly at 05:20, well before anybody looks.
-		"20 5 * * *": ["erpnext_enhancements.hr_enhancements.tasks.refresh_credential_status"],
+		"20 5 * * *": [
+			"erpnext_enhancements.hr_enhancements.tasks.refresh_credential_status",
+			# The COMPANY half of the same question. Nothing in this app tracked the
+			# contractor licence, the workers' comp policy and its premium audit, the
+			# COIs customers ask for, or a subcontractor's certificate -- verified
+			# before building: no doctype carried an expiry field for any of them.
+			# Separate function from the credential sweep because the two answer
+			# different questions about different subjects and a site could want one
+			# without the other.
+			"erpnext_enhancements.hr_enhancements.tasks.refresh_obligation_status",
+		],
 		# The forward view, Mondays at 07:30. Nothing in this app warned about anything
 		# BEFORE the fact until now -- certificates.expire_and_recertify reacts after a
 		# training certificate lapses, and fixtures/notification.json holds nineteen alerts
@@ -835,6 +845,11 @@ scheduler_events = {
 			# the only person who can fill it in is the person whose contact it is,
 			# and it only writes to the people who are missing one.
 			"erpnext_enhancements.hr_enhancements.policies.nudge_missing_emergency_contacts",
+			# Company renewals, weekly. A lapsed SUBCONTRACTOR certificate is called
+			# out separately: their lapse is our exposure -- a claim on an uninsured
+			# sub becomes ours -- and it reads differently from our own renewal
+			# falling due.
+			"erpnext_enhancements.hr_enhancements.tasks.send_obligation_digest",
 		],
 		# Work anniversaries into the team feed, 06:10. The feed has always known how to
 		# RENDER these -- `Training Achievement` carries the kind and player.js draws it --

@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.394.0] - 2026-09-11
+
+**WI-073 G — registers.** One of the two asked for was **not built**, and the refusal is the
+more useful half.
+
+### Not built, on purpose
+
+- **The issued-kit register.** The native-first check refused it. Core ERPNext `Asset` already
+  carries `custodian` (a Link to Employee) and `location`, and `Asset Movement` already records
+  the handover with `from_employee` / `to_employee` — which is exactly *"who has it, and when
+  did they take it?"*. A parallel `Issued Kit` doctype would have been the duplication ADR-0002
+  exists to prevent, and it would have split the answer across two tables.
+
+  **The real gap was never a missing doctype.** It was that nobody has put a flow meter into
+  `Asset` — zero rows on prod — and that nothing read the custodian at the moment it matters.
+  So the custodian is now read where it does: a leaving checklist lists every Asset that person
+  holds, beside their devices and vehicles. The register stays core's. A test fails the build
+  if an `Issued Kit`-shaped doctype ever appears.
+
+### Added
+
+- **`Company Obligation` — the company's own renewal dates, and the subcontractor certificates
+  we hold.** Everything else in this module tracks what a *person* holds; nothing tracked what
+  the **company** does. Verified before building: no doctype in this app carried an expiry
+  field for a contractor licence, a workers' comp policy, general liability, a COI, a vehicle
+  registration or a business licence.
+
+  **`Audit` is a category**, because the workers' comp premium audit is a deadline with no
+  certificate behind it — and a register that only holds documents misses exactly that kind,
+  which is the kind that arrives as a surprise bill.
+
+  **The warning horizon is per row.** A contractor licence renewal takes weeks; a vehicle
+  registration takes a morning. One horizon for both would be wrong for one of them, and being
+  wrong in the short direction is how a licence lapses.
+
+  **A subcontractor's certificate lives here too**, pointed at their Supplier, and the weekly
+  digest calls those out separately: their lapse is *our* exposure — a claim on an uninsured
+  sub becomes ours — and it reads differently from our own renewal falling due. It is the one
+  nobody is watching, because it is somebody else's paperwork sitting in somebody's inbox.
+
+  Everybody can **read** it. "Are we still licensed?" and "has their COI lapsed?" are questions
+  a project manager asks on a call, and a register only two people can open is one that gets
+  asked by email instead. The four status words are copied from the credential register
+  deliberately — two expiry models that disagree about what *Expiring* means is worse than
+  either alone — and it rides the **existing** nightly sweep and weekly digest rather than
+  growing a second pair.
+
 ## [1.393.0] - 2026-09-11
 
 **WI-073 F — joining and leaving.**

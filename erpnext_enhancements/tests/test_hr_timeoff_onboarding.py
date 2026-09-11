@@ -644,5 +644,128 @@ class TestTheCheckInsAreAPromptNotAForm(unittest.TestCase):
 
 
 
+class TestTheIssuedKitRegisterWasNotBuilt(unittest.TestCase):
+    """WI-073 G asked for one. The native-first check refused it, and that refusal
+    is the deliverable.
+
+    Core ERPNext `Asset` already carries `custodian` (a Link to Employee) and
+    `location`, and `Asset Movement` already records the handover with
+    `from_employee` / `to_employee` — which is exactly "who has it and when did
+    they take it". A parallel register would have been the duplication ADR-0002
+    exists to prevent.
+
+    The real gap was never a missing doctype. It was that nobody has put a flow
+    meter into `Asset` — zero rows on prod — and that nothing read the custodian at
+    the moment it matters.
+    """
+
+    APP_ROOT = APP
+
+    def test_no_parallel_kit_doctype_was_added(self):
+        import glob
+
+        names = set()
+        for path in glob.glob(str(self.APP_ROOT / "hr_enhancements/doctype/*/*.json")):
+            doc = json.loads(Path(path).read_text(encoding="utf-8"))
+            if doc.get("doctype") == "DocType":
+                names.add(doc["name"])
+        for invented in ("Issued Kit", "Kit Issue", "Equipment Issue", "Tool Issue"):
+            with self.subTest(doctype=invented):
+                self.assertNotIn(invented, names)
+
+    def test_the_custodian_is_read_where_it_matters(self):
+        """A register nothing reads is the same as no register."""
+        body = _fn("_assets_held", ONBOARDING)
+        self.assertIn('"custodian": employee', body)
+        self.assertIn("Asset", body)
+
+    def test_it_is_in_the_leaving_list(self):
+        self.assertIn("_assets_held", _fn("_derived_leaving_rows", ONBOARDING))
+
+
+class TestTheCompanyObligationRegister(unittest.TestCase):
+    """What the COMPANY holds. Nothing in the app tracked it — verified before
+    building: no doctype carried an expiry field for a licence, a policy, a COI or
+    a registration.
+    """
+
+    OBLIGATION_JSON = MODULE / "doctype/company_obligation/company_obligation.json"
+    OBLIGATION_PY = MODULE / "doctype/company_obligation/company_obligation.py"
+    TASKS = MODULE / "tasks.py"
+
+    def test_audit_is_a_category(self):
+        """The workers' comp premium audit is a deadline with no certificate behind
+        it, and a register that only holds documents misses exactly that kind —
+        which is the kind that arrives as a surprise bill."""
+        options = _fields(self.OBLIGATION_JSON)["category"]["options"].splitlines()
+        self.assertIn("Audit", options)
+
+    def test_the_expiry_is_required(self):
+        """A row with no date is a row the sweep cannot warn about and nobody looks
+        at."""
+        self.assertEqual(_fields(self.OBLIGATION_JSON)["expires_on"].get("reqd"), 1)
+
+    def test_the_warning_horizon_is_per_row(self):
+        """A contractor licence renewal takes weeks; a vehicle registration takes a
+        morning. One horizon for both is wrong for one of them, and being wrong in
+        the short direction is how a licence lapses."""
+        self.assertIn("lead_days", _fields(self.OBLIGATION_JSON))
+        self.assertIn("cint(self.lead_days)", _fn("_derive_status", self.OBLIGATION_PY))
+
+    def test_a_subcontractor_certificate_lives_here_too(self):
+        """Their lapse is our exposure — a claim on an uninsured sub becomes ours —
+        and it is the one nobody is watching."""
+        field = _fields(self.OBLIGATION_JSON)["supplier"]
+        self.assertEqual(field["options"], "Supplier")
+
+    def test_the_status_words_match_the_credential_register(self):
+        """Two expiry models that disagree about what "Expiring" means is worse
+        than either alone."""
+        options = set(_fields(self.OBLIGATION_JSON)["status"]["options"].splitlines())
+        self.assertTrue({"Valid", "Expiring", "Expired"} <= options)
+
+    def test_the_status_is_derived_not_typed(self):
+        self.assertEqual(_fields(self.OBLIGATION_JSON)["status"].get("read_only"), 1)
+
+    def test_everybody_can_read_it(self):
+        """"Are we still licensed" and "has their COI lapsed" are questions a
+        project manager asks on a call, and a register only two people can open is
+        one that gets asked by email instead."""
+        perms = {p["role"]: p for p in json.loads(_text(self.OBLIGATION_JSON))["permissions"]}
+        self.assertEqual(perms["Employee"].get("read"), 1)
+        self.assertNotEqual(perms["Employee"].get("write"), 1)
+
+    def test_it_reuses_the_existing_sweep_rather_than_a_second_one(self):
+        src = _text(self.TASKS)
+        self.assertIn("def refresh_obligation_status", src)
+        self.assertIn("def send_obligation_digest", src)
+
+    def test_the_digest_separates_ours_from_theirs(self):
+        """Their lapse reads differently from our own renewal falling due."""
+        body = _fn("send_obligation_digest", self.TASKS)
+        self.assertIn("ours", body)
+        self.assertIn("theirs", body)
+        self.assertIn("r.supplier", body)
+
+    def test_both_jobs_share_their_slots_safely(self):
+        """Parsed rather than string-matched: a repeated cron key REPLACES the
+        earlier one, which silently disabled four chat sweeps earlier in this
+        release."""
+        import ast as _ast
+
+        tree = _ast.parse(_text(HOOKS))
+        events = {}
+        for node in tree.body:
+            if isinstance(node, _ast.Assign) and getattr(node.targets[0], "id", "") == "scheduler_events":
+                events = _ast.literal_eval(node.value)
+        cron = events.get("cron") or {}
+        nightly = cron.get("20 5 * * *") or []
+        weekly = cron.get("30 7 * * 1") or []
+        self.assertIn("erpnext_enhancements.hr_enhancements.tasks.refresh_obligation_status", nightly)
+        self.assertIn("erpnext_enhancements.hr_enhancements.tasks.refresh_credential_status", nightly)
+        self.assertIn("erpnext_enhancements.hr_enhancements.tasks.send_obligation_digest", weekly)
+        self.assertIn("erpnext_enhancements.hr_enhancements.tasks.send_expiry_digest", weekly)
+
+
 if __name__ == "__main__":
     unittest.main()

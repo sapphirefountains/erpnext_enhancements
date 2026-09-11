@@ -295,6 +295,17 @@
   {
    "child": 1,
    "collapsible": 1,
+   "icon": "award",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Company renewals",
+   "link_to": "Company Obligation",
+   "link_type": "DocType",
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
    "icon": "table",
    "indent": 0,
    "keep_closed": 0,
@@ -376,7 +387,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-11 17:00:00.000000",
+ "modified": "2026-09-11 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "HR Enhancements",
  "name": "HR",
