@@ -140,11 +140,37 @@ class TestOpenEndedIsNotExpired(unittest.TestCase):
     def test_the_query_filters_the_end_date_in_python(self):
         """Not in the `filters` dict. A `>=` on a nullable date silently matches
         NULLs in Frappe — the coalesce trap — which would be right by accident
-        here and wrong the next time somebody copies the query."""
-        body = _fn("_restrictions", AVAILABILITY)
+        here and wrong the next time somebody copies the query.
+
+        Lives in `restrictions_covering` since v1.396.0: both readers go through
+        one predicate, because they used to disagree and the disagreement was
+        invisible."""
+        body = _fn("restrictions_covering", AVAILABILITY)
         at = body.index("filters={")
         self.assertNotIn("to_date", body[at : body.index("fields=", at)])
         self.assertIn("if row.to_date and getdate(row.to_date) < when:", body)
+
+    def test_it_never_filters_on_status(self):
+        """A status is a fact about TODAY. Filtering `status = "Active"` made a
+        past-date question return "no restrictions" for a day somebody was on
+        no-lifting — and it read as correct only because nothing ever wrote
+        Ended, so the first tidy-up would have retroactively erased history."""
+        body = _fn("restrictions_covering", AVAILABILITY)
+        at = body.index("filters={")
+        self.assertNotIn("status", body[at : body.index("fields=", at)])
+
+    def test_both_readers_go_through_the_one_predicate(self):
+        for fn in ("_restrictions", "restriction_blocks"):
+            with self.subTest(reader=fn):
+                self.assertIn("restrictions_covering(", _fn(fn, AVAILABILITY))
+
+    def test_an_undated_transition_is_reported_not_guessed(self):
+        """A row whose status moved but which carries no transition date cannot be
+        placed relative to a past date. It goes in the second list so the caller
+        can say so, rather than being silently counted in or out."""
+        body = _fn("restrictions_covering", AVAILABILITY)
+        self.assertIn("unknown", body)
+        self.assertIn("return in_force, unknown", body)
 
 
 class TestItWarnsAndNeverBlocks(unittest.TestCase):

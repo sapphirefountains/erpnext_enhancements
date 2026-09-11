@@ -101,13 +101,18 @@ class EmployeeCredential(Document):
 		reached its expiry date is still revoked, and reading it as ``Valid``
 		because the arithmetic says so is the failure this ordering prevents.
 		"""
-		if self.revoked_on:
+		# Compared against `as_of`, not merely truthy. A credential revoked in June
+		# was genuinely held in March, and an as-of-March roster that reports it as
+		# Revoked is restating today over a question about the past -- which is the
+		# whole failure the roster exists to avoid. With `as_of` unset this is
+		# identical to the old behaviour.
+		on = getdate(as_of or today())
+		if self.revoked_on and getdate(self.revoked_on) <= on:
 			return REVOKED
 		if not self.expires_on:
 			# No expiry is a real answer, not missing data — an OSHA 10 card does
 			# not lapse. Valid until somebody revokes it.
 			return VALID
-		on = getdate(as_of or today())
 		expires = getdate(self.expires_on)
 		if expires < on:
 			return EXPIRED

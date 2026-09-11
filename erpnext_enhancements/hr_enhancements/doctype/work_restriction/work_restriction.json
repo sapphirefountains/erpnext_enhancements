@@ -3,12 +3,9 @@
  "allow_import": 1,
  "allow_rename": 0,
  "autoname": "naming_series:",
- "naming_rule": "By \"Naming Series\" field",
  "creation": "2026-09-11 12:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
- "icon": "fa fa-ban",
- "index_web_pages_for_search": 0,
  "field_order": [
   "naming_series",
   "employee",
@@ -30,43 +27,48 @@
   "limits_section",
   "lifting_limit_lbs",
   "note",
-  "recorded_by"
+  "recorded_by",
+  "transition_section",
+  "ended_on",
+  "canceled_on",
+  "column_break_transition",
+  "history_note"
  ],
  "fields": [
   {
+   "default": "HR-REST-.#####",
    "fieldname": "naming_series",
    "fieldtype": "Select",
    "label": "Series",
    "options": "HR-REST-.#####",
-   "reqd": 1,
-   "default": "HR-REST-.#####",
-   "print_hide": 1
+   "print_hide": 1,
+   "reqd": 1
   },
   {
    "fieldname": "employee",
    "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Employee",
    "options": "Employee",
    "reqd": 1,
-   "in_list_view": 1,
-   "in_standard_filter": 1,
    "search_index": 1
   },
   {
+   "fetch_from": "employee.employee_name",
    "fieldname": "employee_name",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Name",
-   "read_only": 1,
-   "fetch_from": "employee.employee_name",
-   "in_list_view": 1
+   "read_only": 1
   },
   {
+   "description": "Derived from the Employee. The dispatch check is keyed on it.",
    "fieldname": "user",
    "fieldtype": "Link",
    "label": "User",
    "options": "User",
-   "read_only": 1,
-   "description": "Derived from the Employee. The dispatch check is keyed on it."
+   "read_only": 1
   },
   {
    "fieldname": "column_break_head",
@@ -75,78 +77,78 @@
   {
    "fieldname": "from_date",
    "fieldtype": "Date",
+   "in_list_view": 1,
    "label": "From",
-   "reqd": 1,
-   "in_list_view": 1
+   "reqd": 1
   },
   {
+   "description": "Leave empty for open-ended. An open-ended restriction is reviewed, not forgotten -- the weekly digest lists it.",
    "fieldname": "to_date",
    "fieldtype": "Date",
-   "label": "Until",
    "in_list_view": 1,
-   "description": "Leave empty for open-ended. An open-ended restriction is reviewed, not forgotten -- the weekly digest lists it."
+   "label": "Until"
   },
   {
+   "default": "Active",
+   "description": "Canceled with one l, house style.",
    "fieldname": "status",
    "fieldtype": "Select",
-   "label": "Status",
-   "options": "Active\nEnded\nCanceled",
-   "default": "Active",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "description": "Canceled with one l, house style."
+   "label": "Status",
+   "options": "Active\nEnded\nCanceled"
   },
   {
+   "description": "Tick what applies. This record says what somebody may NOT do and for how long -- it deliberately has nowhere to write WHY, because a restriction is a scheduling fact and a diagnosis is not the company's business.",
    "fieldname": "what_section",
    "fieldtype": "Section Break",
-   "label": "What they cannot do",
-   "description": "Tick what applies. This record says what somebody may NOT do and for how long -- it deliberately has nowhere to write WHY, because a restriction is a scheduling fact and a diagnosis is not the company's business."
+   "label": "What they cannot do"
   },
   {
+   "description": "Nothing over the weight noted below.",
    "fieldname": "no_lifting",
    "fieldtype": "Check",
-   "label": "No lifting",
-   "description": "Nothing over the weight noted below."
+   "label": "No lifting"
   },
   {
+   "description": "Not on company business, in any vehicle.",
    "fieldname": "no_driving",
    "fieldtype": "Check",
-   "label": "No driving",
-   "description": "Not on company business, in any vehicle."
+   "label": "No driving"
   },
   {
+   "description": "No ladder, no roof, no platform edge.",
    "fieldname": "no_heights",
    "fieldtype": "Check",
-   "label": "No ladders or heights",
-   "description": "No ladder, no roof, no platform edge."
+   "label": "No ladders or heights"
   },
   {
+   "description": "No vault, wet well or pump pit entry.",
    "fieldname": "no_confined_space",
    "fieldtype": "Check",
-   "label": "No confined space",
-   "description": "No vault, wet well or pump pit entry."
+   "label": "No confined space"
   },
   {
    "fieldname": "column_break_rest",
    "fieldtype": "Column Break"
   },
   {
+   "description": "No dosing, decanting or SDS-listed product.",
    "fieldname": "no_chemicals",
    "fieldtype": "Check",
-   "label": "No chemical handling",
-   "description": "No dosing, decanting or SDS-listed product."
+   "label": "No chemical handling"
   },
   {
+   "description": "No basin, no pool, no standing water.",
    "fieldname": "no_water_entry",
    "fieldtype": "Check",
-   "label": "No entering water",
-   "description": "No basin, no pool, no standing water."
+   "label": "No entering water"
   },
   {
+   "description": "Must be with somebody for the whole visit.",
    "fieldname": "no_solo_work",
    "fieldtype": "Check",
-   "label": "No working alone",
-   "description": "Must be with somebody for the whole visit."
+   "label": "No working alone"
   },
   {
    "fieldname": "limits_section",
@@ -154,17 +156,17 @@
    "label": "Limits"
   },
   {
+   "depends_on": "no_lifting",
+   "description": "The number on the note, if there is one.",
    "fieldname": "lifting_limit_lbs",
    "fieldtype": "Int",
-   "label": "Lifting limit (lbs)",
-   "depends_on": "no_lifting",
-   "description": "The number on the note, if there is one."
+   "label": "Lifting limit (lbs)"
   },
   {
+   "description": "Anything a supervisor needs in order to schedule around this. NOT the reason -- see above.",
    "fieldname": "note",
    "fieldtype": "Small Text",
-   "label": "Note",
-   "description": "Anything a supervisor needs in order to schedule around this. NOT the reason -- see above."
+   "label": "Note"
   },
   {
    "fieldname": "recorded_by",
@@ -172,13 +174,48 @@
    "label": "Recorded by",
    "options": "User",
    "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "transition_section",
+   "fieldtype": "Section Break",
+   "label": "How it ended"
+  },
+  {
+   "description": "The day the restriction stopped applying. Stamped when status moves to Ended. Without it a past-date question cannot be answered at all -- `status` is a fact about today, and marking a row Ended would erase the fact that it ever applied.",
+   "fieldname": "ended_on",
+   "fieldtype": "Date",
+   "label": "Ended On",
+   "read_only": 1
+  },
+  {
+   "description": "The day the restriction was withdrawn as never having applied. Distinct from Ended, which means it ran its course.",
+   "fieldname": "canceled_on",
+   "fieldtype": "Date",
+   "label": "Canceled On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_transition",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Set by the backfill when a transition date could not be recovered, saying so plainly rather than inventing one.",
+   "fieldname": "history_note",
+   "fieldtype": "Small Text",
+   "label": "History Note",
+   "print_hide": 1,
+   "read_only": 1
   }
  ],
+ "icon": "fa fa-ban",
+ "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-11 12:00:00.000000",
+ "modified": "2026-09-11 17:00:00.000000",
  "modified_by": "Administrator",
  "module": "HR Enhancements",
  "name": "Work Restriction",
+ "naming_rule": "By \"Naming Series\" field",
  "owner": "Administrator",
  "permissions": [
   {
@@ -222,10 +259,10 @@
   }
  ],
  "search_fields": "employee_name,from_date,to_date",
+ "show_title_field_in_link": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
  "title_field": "employee_name",
- "show_title_field_in_link": 1,
  "track_changes": 1
 }

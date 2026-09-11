@@ -313,6 +313,13 @@ def _install_frappe_stub():
 
 	frappe.generate_hash = _generate_hash
 
+	# The real fields the revocation path asks about. Stubbed because a missing
+	# `get_meta` raises inside `on_revoke`'s swallowing except, which silently
+	# skipped the status write and made the revocation tests fail for a reason
+	# that had nothing to do with revocation.
+	_FIELDS = {"revoked_on", "history_note", "status", "expires_on", "issued_on", "completion"}
+	frappe.get_meta = lambda *a, **k: types.SimpleNamespace(has_field=lambda f: f in _FIELDS)
+
 	def _get_doc(*args, **kwargs):
 		if args and isinstance(args[0], dict):
 			return _Doc(args[0])
@@ -736,13 +743,22 @@ class TestRevocation(_CertificateCase):
 		self.completion = _completion()
 		certificates.after_completion(self.completion)
 		self.certificate = _certificates()[0]["name"]
+		# The window as printed, before anything revokes it.
+		self.issued_expiry = _rows("Training Certificate")[self.certificate].get("expires_on")
 
 	def test_the_certificate_is_cancelled_and_marked_revoked(self):
 		certificates.on_revoke(self.completion)
 		row = _rows("Training Certificate")[self.certificate]
 		self.assertEqual(row["docstatus"], 2)
 		self.assertEqual(row["status"], "Revoked")
-		self.assertEqual(row["expires_on"], TODAY)
+		# `revoked_on`, and `expires_on` LEFT ALONE. Until v1.396.0 this wrote
+		# expires_on = today(), which destroyed the validity window printed on the
+		# document the holder is carrying -- so an as-of-date question answered from
+		# `issued_on <= D <= expires_on` returned a plausible, shorter, wrong window
+		# that disagreed with the paper. This assertion is the one that fails on the
+		# old code; the old one pinned the defect.
+		self.assertEqual(row["revoked_on"], TODAY)
+		self.assertEqual(row["expires_on"], self.issued_expiry)
 
 	def test_a_refused_cancel_still_marks_it_revoked(self):
 		"""The status write is unconditional on purpose: a cancel can fail for

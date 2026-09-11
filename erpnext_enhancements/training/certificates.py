@@ -476,12 +476,20 @@ def _revoke_certificates_for(completion):
 			frappe.get_doc(CERTIFICATE, name).cancel()
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), f"Training certificate cancel ({name})")
-		frappe.db.set_value(
-			CERTIFICATE,
-			name,
-			{"status": REVOKED, "expires_on": today()},
-			update_modified=False,
-		)
+		# `revoked_on`, NOT `expires_on`. Until v1.396.0 this wrote `expires_on =
+		# today()`, which destroyed the validity window PRINTED ON THE DOCUMENT the
+		# holder is carrying -- so an as-of-date question answered from
+		# `issued_on <= D <= expires_on` returned a plausible, shorter, wrong window
+		# that disagreed with the paper, with nothing recording that it had moved.
+		#
+		# That write was also, by accident, the thing stopping a certificate whose
+		# cancel() failed from reading Valid again. `_derive_status` now returns
+		# REVOKED on any dated revocation, which is the deliberate version of the
+		# same protection -- the two changes have to ship together.
+		values = {"status": REVOKED}
+		if frappe.get_meta(CERTIFICATE).has_field("revoked_on"):
+			values["revoked_on"] = today()
+		frappe.db.set_value(CERTIFICATE, name, values, update_modified=False)
 
 
 def _reopen_assignment(completion):

@@ -25,6 +25,12 @@
   "authority_basis",
   "supervisor_position",
   "learner_position",
+  "attested_on",
+  "supervisor_name_at_time",
+  "supervisor_position_title",
+  "supervisor_tier_at_time",
+  "learner_position_title",
+  "learner_tier_at_time",
   "amended_from"
  ],
  "fields": [
@@ -107,9 +113,10 @@
    "fieldtype": "Column Break"
   },
   {
+   "description": "When the learner raised the request. NOT the attestation -- see `attested_on`. Relabelled in v1.396.0; the stored values are unchanged.",
    "fieldname": "signed_on",
    "fieldtype": "Datetime",
-   "label": "Signed On",
+   "label": "Requested On",
    "read_only": 1
   },
   {
@@ -171,6 +178,50 @@
    "read_only": 1
   },
   {
+   "description": "When the supervisor actually attested, stamped at submit. `signed_on` is when the learner RAISED the request, which on rows predating v1.396.0 is the only date there is -- so an as-of-date query must read this field and treat its absence as 'not reconstructible', never fall back to signed_on.",
+   "fieldname": "attested_on",
+   "fieldtype": "Datetime",
+   "label": "Attested On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "supervisor_name_at_time",
+   "fieldtype": "Data",
+   "label": "Supervisor Name At Time",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "The TITLE, frozen. `supervisor_position` beside it is a Link and resolves to today, so renaming a rung silently restates every historical attestation.",
+   "fieldname": "supervisor_position_title",
+   "fieldtype": "Data",
+   "label": "Supervisor Position At Time",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "supervisor_tier_at_time",
+   "fieldtype": "Int",
+   "label": "Supervisor Tier At Time",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "learner_position_title",
+   "fieldtype": "Data",
+   "label": "Learner Position At Time",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "learner_tier_at_time",
+   "fieldtype": "Int",
+   "label": "Learner Tier At Time",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
    "fieldname": "amended_from",
    "fieldtype": "Link",
    "hidden": 1,
@@ -183,7 +234,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-09-11 12:00:00.000000",
+ "modified": "2026-09-11 17:00:00.000000",
  "modified_by": "Administrator",
  "module": "Training",
  "name": "Training Signoff",

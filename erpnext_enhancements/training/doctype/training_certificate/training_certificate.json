@@ -20,6 +20,8 @@
   "validity_section",
   "issued_on",
   "expires_on",
+  "revoked_on",
+  "history_note",
   "score_percent",
   "column_break_validity",
   "verification_code",
@@ -141,6 +143,23 @@
    "label": "Expires On"
   },
   {
+   "description": "When the certificate was withdrawn. Before v1.396.0 there was no such field and the revoke path OVERWROTE `expires_on` with today() instead -- destroying the validity window printed on the document the holder is carrying. An empty value on a revoked row means the date is not reconstructible; it must never be filled with today's.",
+   "fieldname": "revoked_on",
+   "fieldtype": "Date",
+   "label": "Revoked On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "Set by a backfill when a date could only be partly recovered, saying what is known and what is not. Never shown on the printed certificate.",
+   "fieldname": "history_note",
+   "fieldtype": "Small Text",
+   "label": "History Note",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
    "fieldname": "score_percent",
    "fieldtype": "Percent",
    "label": "Score",
@@ -194,7 +213,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-08-02 12:00:00.000000",
+ "modified": "2026-09-11 17:00:00.000000",
  "modified_by": "Administrator",
  "module": "Training",
  "name": "Training Certificate",

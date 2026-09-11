@@ -61,7 +61,12 @@ class TrainingCertificate(Document):
 		# training/compliance.py reads this status to decide whether somebody is
 		# certified, and a cancelled certificate that still reads Valid is exactly
 		# the safeguard-that-stopped-being-one this phase is guarding against.
-		self.db_set("status", REVOKED, update_modified=False)
+		values = {"status": REVOKED}
+		if self.meta.has_field("revoked_on") and not self.get("revoked_on"):
+			# The date the window actually closed. `expires_on` keeps the window the
+			# printed certificate states, which is what somebody is holding.
+			values["revoked_on"] = nowdate()
+		self.db_set(values, update_modified=False)
 
 	# ------------------------------------------------------------------ helpers
 
@@ -171,6 +176,14 @@ class TrainingCertificate(Document):
 	def _derive_status(self):
 		"""Status is a fact about the dates and the docstatus, never typed."""
 		if cint(self.docstatus) == 2:
+			self.status = REVOKED
+			return
+		if self.get("revoked_on"):
+			# A dated revocation outranks the resurrection branch below. Without this,
+			# dropping the `expires_on = today()` clobber from `_revoke_certificates_for`
+			# would let a certificate whose cancel() FAILED come back as Valid -- that
+			# clobber was doing this job by accident, which is why the two changes have
+			# to ship together. Cleared only on an explicit amend.
 			self.status = REVOKED
 			return
 		if self.status == REVOKED and cint(self.docstatus) != 2:
