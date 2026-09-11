@@ -2729,7 +2729,7 @@
 
 			function record(outcome) {
 				if (busy) return;
-				// The server refuses "Needs More Practice" with no note, and a round
+				// The server refuses anything but "Competent" with no note, and a round
 				// trip to be told so on a phone beside a fountain is a bad way to
 				// find out. Same rule, said earlier -- not a second rule.
 				if (outcome !== "Competent" && !note.value.trim()) {
@@ -2780,9 +2780,18 @@
 					});
 			}
 
+			// Three outcomes, and "Competent" is deliberately NOT the one big
+			// obvious button. A supervisor standing in the sun with a phone taps the
+			// prominent control, and the prominent control must not be the one that
+			// attests somebody can work alone. All three are the same weight.
 			actions.appendChild(
-				button(t("Competent"), "tr-button", function () {
+				button(t("Competent"), "tr-button tr-button-quiet", function () {
 					record("Competent");
+				})
+			);
+			actions.appendChild(
+				button(t("Supervised only"), "tr-button tr-button-quiet", function () {
+					record("Supervised Only");
 				})
 			);
 			actions.appendChild(

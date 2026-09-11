@@ -268,5 +268,109 @@ class TestTheStateIsNotColourOnly(unittest.TestCase):
                 self.assertIn(f".tr-rung-{state}", css)
 
 
+class TestTheThirdSignoffOutcome(unittest.TestCase):
+    """`Supervised Only` — WI-073 A.
+
+    Two outcomes forced a supervisor to choose between "I would send them alone"
+    and "come back to me" for somebody who had just done the whole job correctly
+    with help. Faced with that, supervisors pick Competent, and the system then
+    reports somebody as ready to work alone on the strength of a job they did with
+    someone standing next to them. At a pump vault that is the failure that puts a
+    person at a site on their own.
+
+    So every assertion here is about the outcome being treated as **not**
+    competent. It is recorded progress; it is not an attestation.
+    """
+
+    SIGNOFF_JSON = APP / "training/doctype/training_signoff/training_signoff.json"
+    SIGNOFF_PY = APP / "training/doctype/training_signoff/training_signoff.py"
+    SIGNOFF_MODULE = APP / "training/signoff.py"
+    SIGNOFF_FORM = APP / "training/doctype/training_signoff/training_signoff.js"
+    EVALUATION_JS = APP / "public/js/training/training_evaluation.js"
+
+    def test_the_option_exists_on_the_doctype(self):
+        fields = {f["fieldname"]: f for f in json.loads(_text(self.SIGNOFF_JSON))["fields"]}
+        options = fields["outcome"]["options"].splitlines()
+        self.assertEqual(options, ["Competent", "Supervised Only", "Needs More Practice"])
+
+    def test_every_surface_offers_all_three(self):
+        """A picker that offers two is a picker that forces the overstatement."""
+        for path in (PLAYER, self.SIGNOFF_FORM, self.EVALUATION_JS):
+            with self.subTest(path=path.name):
+                self.assertIn("Supervised Only", _text(path))
+
+    def test_competent_is_not_the_prominent_button_on_the_phone(self):
+        """A supervisor standing in the sun taps the obvious control, and the
+        obvious control must not be the one attesting somebody can work alone."""
+        body = _js(PLAYER)
+        at = body.index('record("Competent")')
+        line = body[body.rindex("button(", 0, at) : at]
+        self.assertIn("tr-button-quiet", line)
+
+    def test_a_note_is_required_for_it_too(self):
+        """"Supervised only" with no note does not say what still needs watching,
+        which is the one thing the next supervisor needs before deciding whether
+        to stand there again."""
+        body = _fn("_require_notes_when_not_competent", self.SIGNOFF_PY)
+        self.assertIn("NOT_YET_SOLO", body)
+        self.assertNotIn("== NEEDS_PRACTICE", body)
+
+    def test_it_does_not_satisfy_a_rung_requirement(self):
+        """The point of the whole outcome, asserted where it bites."""
+        body = _fn("_signoff_line", PROGRESSION)
+        at = body.index("Supervised Only")
+        after = body[at:]
+        self.assertIn("MISSING", after)
+        self.assertNotIn("HELD", after)
+
+    def test_it_says_what_it_is_rather_than_reading_as_nothing(self):
+        """Progress that is visible and honest, rather than progress that quietly
+        counts -- or progress that is invisible, which is how a supervisor learns
+        that recording it was pointless."""
+        body = _fn("_signoff_line", PROGRESSION)
+        self.assertIn("not yet solo", body.lower())
+
+    def test_nothing_that_means_go_out_alone_accepts_it(self):
+        """Completion, badge, feed entry and the recertification clock are all
+        gated on COMPETENT alone. Asserted through the AST on the comparison
+        itself, because the surrounding prose necessarily names the other
+        outcomes."""
+        import ast
+
+        tree = ast.parse(_text(self.SIGNOFF_MODULE))
+        compares = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Compare)
+            and isinstance(n.left, ast.Attribute)
+            and n.left.attr == "outcome"
+        ]
+        self.assertTrue(compares, "expected at least one outcome comparison")
+        for node in compares:
+            for comparator in node.comparators:
+                with self.subTest(line=node.lineno):
+                    self.assertEqual(
+                        getattr(comparator, "id", None),
+                        "COMPETENT",
+                        "an outcome gate must compare against COMPETENT, never against "
+                        "a not-competent value -- a new outcome would slip past it",
+                    )
+
+    def test_the_rejection_message_is_built_from_the_tuple(self):
+        """It grew from two outcomes to three. A hand-written sentence is how an
+        error message ends up describing a version of the feature that no longer
+        exists."""
+        body = _fn("record_signoff", self.SIGNOFF_MODULE)
+        at = body.index("outcome not in OUTCOMES")
+        branch = body[at : at + 300]
+        self.assertIn("OUTCOMES", branch)
+        self.assertNotIn("NEEDS_PRACTICE", branch)
+
+    def test_a_fourth_outcome_would_join_one_tuple(self):
+        """`NOT_YET_SOLO` exists so no caller has to remember to name both."""
+        src = _text(self.SIGNOFF_PY)
+        self.assertIn("NOT_YET_SOLO = (SUPERVISED_ONLY, NEEDS_PRACTICE)", src)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -60,6 +60,7 @@ from erpnext_enhancements.training.doctype.training_settings.training_settings i
 from erpnext_enhancements.training.doctype.training_signoff.training_signoff import (
 	COMPETENT,
 	NEEDS_PRACTICE,
+	SUPERVISED_ONLY,
 )
 
 SIGNOFF_DOCTYPE = "Training Signoff"
@@ -81,7 +82,10 @@ SIGNOFF_ROUTE = "training-signoff"
 # makes it matter.
 MANAGER_ROLES = {"Training Manager", "System Manager", "HR Manager"}
 
-OUTCOMES = (COMPETENT, NEEDS_PRACTICE)
+# Order matters: it is the order the phone surface draws the buttons in, and
+# `Competent` is deliberately not first-and-largest there. A supervisor tapping the
+# obvious button should not be attesting that somebody can work alone.
+OUTCOMES = (COMPETENT, SUPERVISED_ONLY, NEEDS_PRACTICE)
 
 # Assignment status while a request is outstanding. The option exists on Training
 # Assignment already; naming it here keeps the two files from drifting silently.
@@ -304,7 +308,12 @@ def record_signoff(signoff, outcome, competency_notes=None, signature_image=None
 	"""
 	caller = _session_user()
 	if outcome not in OUTCOMES:
-		frappe.throw(_("A sign-off is either {0} or {1}.").format(COMPETENT, NEEDS_PRACTICE))
+		# Built from OUTCOMES rather than naming two -- the list grew from two to
+		# three in v1.387.0 and a hand-written sentence is how the message ends up
+		# describing a version of the feature that no longer exists.
+		frappe.throw(
+			_("A sign-off must be one of: {0}.").format(", ".join(OUTCOMES))
+		)
 
 	doc = frappe.get_doc(SIGNOFF_DOCTYPE, signoff)
 	if cint(doc.docstatus) != 0:
@@ -349,9 +358,18 @@ def after_signoff_submitted(doc):
 	  ``api.training.resume_after_signoff``, which re-evaluates *every* gate. The
 	  sign-off unblocks one of them; it does not grant a pass, so a learner with a
 	  lesson still outstanding stays outstanding and the assignment stays open.
-	* **Needs More Practice** — take the assignment back out of ``Awaiting
-	  Sign-off``. Left there it reads as "waiting on somebody else" for ever, when
-	  in fact the ball is back with the learner.
+	* **Supervised Only** and **Needs More Practice** — take the assignment back out
+	  of ``Awaiting Sign-off``. Left there it reads as "waiting on somebody else"
+	  for ever, when in fact the ball is back with the learner.
+
+	  The two share a branch on purpose, and it is the right side for `Supervised
+	  Only` to be on. It is real progress and the learner's record says so, but it
+	  is **not** an attestation that they can work alone: no completion, no badge,
+	  no feed entry, no recertification clock, and it does not satisfy a rung
+	  requirement in `hr_enhancements/progression.py`. Everything that means "this
+	  person may go out on their own" is gated on `COMPETENT` alone, which is the
+	  whole reason the third outcome could be added without auditing each of those
+	  gates for a two-outcome assumption.
 
 	Wrapped because it runs inside a submit: an attestation must not fail to
 	record because the bookkeeping behind it hit a problem. The sign-off is the

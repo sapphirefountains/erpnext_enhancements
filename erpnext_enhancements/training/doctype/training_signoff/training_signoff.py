@@ -37,7 +37,26 @@ from frappe.model.document import Document
 from frappe.utils import now_datetime
 
 COMPETENT = "Competent"
+#: "They did the whole job, with me standing next to them."
+#:
+#: The third outcome exists because two force supervisors to overstate. Watching a
+#: Junior drain a basin correctly under supervision is neither "I would send them
+#: alone" nor "come back to me", and a supervisor with only those options picks
+#: Competent -- at which point the system reports somebody as ready to go out on
+#: their own on the strength of a job they did with help. That is the failure this
+#: prevents, and it is the one that puts a person at a site alone.
+#:
+#: Treated as NOT competent everywhere it matters: it does not complete the
+#: course, does not mint a badge or a feed entry, does not satisfy a rung
+#: requirement, and does not reset a recertification clock. It is recorded
+#: progress, and the learner's record says so.
+SUPERVISED_ONLY = "Supervised Only"
 NEEDS_PRACTICE = "Needs More Practice"
+
+#: Everything that is not a clean, unsupervised attestation. Grouped so no caller
+#: has to remember to name both -- a fourth outcome added later joins this tuple
+#: and every "not competent" branch picks it up.
+NOT_YET_SOLO = (SUPERVISED_ONLY, NEEDS_PRACTICE)
 
 # Roles allowed to submit somebody else's sign-off without being the named
 # supervisor. A Training Manager records sign-offs made on paper or over the
@@ -152,10 +171,17 @@ class TrainingSignoff(Document):
 		)
 
 	def _require_notes_when_not_competent(self):
-		if self.outcome == NEEDS_PRACTICE and not (self.competency_notes or "").strip():
+		"""A note for anything that is not a clean attestation.
+
+		Keyed on ``NOT_YET_SOLO`` rather than on ``NEEDS_PRACTICE``, so the
+		requirement covers `Supervised Only` too: "supervised only" with no note
+		does not say what still needs watching, which is the one thing the next
+		supervisor needs to know before deciding whether to stand there again.
+		"""
+		if self.outcome in NOT_YET_SOLO and not (self.competency_notes or "").strip():
 			frappe.throw(
-				_("Say what still needs work. \"Needs more practice\" with no note leaves the learner "
-				  "nothing to act on and the next supervisor nothing to check.")
+				_("Say what still needs work. \"{0}\" with no note leaves the learner nothing to "
+				  "act on and the next supervisor nothing to check.").format(self.outcome)
 			)
 
 	def _stamp_signed_on(self):

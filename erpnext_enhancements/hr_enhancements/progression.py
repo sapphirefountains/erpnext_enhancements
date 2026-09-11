@@ -211,9 +211,30 @@ def _signoff_line(user, row):
 		["name", "signed_on"],
 		as_dict=True,
 	)
-	if not signoff:
-		return _line(row, _("Sign-off"), title, MISSING, _("Not signed off"))
-	return _line(row, _("Sign-off"), title, HELD, _("Signed off"))
+	if signoff:
+		return _line(row, _("Sign-off"), title, HELD, _("Signed off"))
+
+	# **`Supervised Only` is not held, and saying so is the entire reason that
+	# outcome exists.** Two outcomes forced a supervisor to choose between "I would
+	# send them alone" and "come back to me" for somebody who had just done the
+	# whole job correctly with help — and faced with that, supervisors pick
+	# Competent. The system then reports somebody as ready to go out on their own on
+	# the strength of a job they did with someone standing next to them.
+	#
+	# So it reads as MISSING here, with a detail line that says what it is. Progress
+	# that is visible and honest, rather than progress that quietly counts.
+	supervised = frappe.db.get_value(
+		"Training Signoff",
+		{"user": user, "course": row.training_course, "docstatus": 1, "outcome": "Supervised Only"},
+		["name", "signed_on"],
+		order_by="signed_on desc",
+		as_dict=True,
+	)
+	if supervised:
+		return _line(
+			row, _("Sign-off"), title, MISSING, _("Done with a supervisor, not yet solo")
+		)
+	return _line(row, _("Sign-off"), title, MISSING, _("Not signed off"))
 
 
 def _date_state(expires_on, verb):

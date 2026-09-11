@@ -56,6 +56,25 @@ BambooHR.
   is the most performance-shaped data this module holds, and **your own is motivating where a
   colleague's is a ranking**.
 
+- **A third sign-off outcome: `Supervised Only`.** Two outcomes forced a supervisor to choose
+  between "I would send them alone" and "come back to me" for somebody who had just done the
+  whole job correctly *with help*. Faced with that choice supervisors pick **Competent** — and
+  the system then reports a Junior as ready to work unsupervised on the strength of a job they
+  did with someone standing next to them. At a pump vault that is the failure that puts a
+  person at a site alone.
+
+  It is treated as **not competent** everywhere it matters: no completion, no badge, no feed
+  entry, no recertification clock, and it does not satisfy a rung requirement — the ladder
+  panel shows it as *"done with a supervisor, not yet solo"*, which is honest in both
+  directions. Every gate that means "may go out alone" was already written as
+  `outcome == COMPETENT` rather than as "not Needs More Practice", which is the only reason a
+  third outcome could be added without auditing each of them; a test now pins that, asserting
+  through the AST that no outcome comparison anywhere names a not-competent value.
+
+  On the phone, **Competent is deliberately not the one big obvious button**. A supervisor
+  standing in the sun taps the prominent control, and the prominent control must not be the
+  one that attests somebody can work alone. All three are the same weight.
+
 ### Fixed
 
 - **The Skills Matrix was sorting on nothing.** Its `Gaps` column counted every Published and
