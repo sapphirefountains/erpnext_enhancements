@@ -878,3 +878,19 @@ erpnext_enhancements.patches.protect_employee_compensation_fields
 # with BOTH module and app set, so a module here would be irreversible. Gating is entirely
 # on Workspace.roles, one `* Team` role each. Safe twice.
 erpnext_enhancements.patches.fill_team_hub_workspaces
+# v1.396.0 (WI-074 C) -- gives four facts a date they never had, and recovers each one ONLY as
+# far as a Version row can prove it. Everything else is left NULL and marked, because an empty
+# date means 'not reconstructible' and the roster renders it that way; filling it with today's
+# turns an unanswerable question into a confidently wrong answer. Expect a low yield and a lot
+# of 'not reconstructible': track_changes=1 is set on nearly every doctype here and is NOT a
+# safety net for status, because every derived-status write goes through
+# db_set(update_modified=False), which never reaches save_version(). Docstatus flips are the one
+# class that did leave a trace, since cancel()/submit() route through save(). Safe twice.
+erpnext_enhancements.patches.backfill_dated_history
+# v1.396.0 (WI-074 C) -- recovers certificate revocation dates. Deliberately does NOT key on
+# status='Revoked': that status has TWO writers and only one clobbered expires_on, so keying on
+# it would stamp a certificate's original (possibly years-future) expiry onto a field labelled
+# 'Revoked On'. Keys instead on the clobber's real signature -- the linked completion being
+# docstatus 2, AND expires_on differing from what _default_dates would derive. Everything else
+# gets a history_note and a NULL date. Safe twice.
+erpnext_enhancements.patches.backfill_certificate_revocation_dates

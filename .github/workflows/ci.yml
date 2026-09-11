@@ -376,6 +376,13 @@ jobs:
       # `bench migrate`, which on this repo is the deploy, so it half-installed prod.
       - name: Singles table is not queried through the ORM
         run: python -m unittest erpnext_enhancements.tests.test_singles_table_access -v
+      # The audit roster answers a DATE, not today. Every derived-status write in the
+      # HR and Training modules goes through db_set(update_modified=False), which never
+      # reaches save_version() -- so a stored status is a fact about TODAY and
+      # track_changes=1 recorded nothing about how it got there. A sheet handed to an
+      # insurer that silently restates today over a past date is worse than no sheet.
+      - name: HR audit roster (dates not statuses; leavers included)
+        run: python -m unittest erpnext_enhancements.tests.test_hr_qualification_roster -v
       # Guards the silent workspace failure mode: `content` (the layout) and the
       # child tables (the data) are joined by label and nothing keeps them in sync,
       # so a block with no row renders an empty div and a row with no block never

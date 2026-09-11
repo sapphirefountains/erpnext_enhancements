@@ -84,6 +84,56 @@ def _time_off(users, when):
 	return found
 
 
+def restrictions_covering(users, on_date):
+	"""Every restriction that was IN FORCE on ``on_date``, as ``[(user, doc)]``.
+
+	One predicate, two callers, because the two used to disagree and the
+	disagreement was invisible.
+
+	**Never filters on ``status``.** A status is a fact about *today*: a row marked
+	Ended says nothing about whether it applied in March, and filtering
+	``status = "Active"`` made a past-date question return "no restrictions" for a
+	day somebody was on no-lifting. That read as correct only because nothing ever
+	wrote Ended -- the first tidy-up would have retroactively erased history, with
+	no symptom. The dates are the fact; the status is a summary of them.
+
+	A row whose status has moved but which carries NO transition date is not
+	answerable for a past date. Those are returned in the second list so the caller
+	can say so rather than silently counting them in or out.
+	"""
+	if not users or not frappe.db.exists("DocType", RESTRICTION):
+		return [], []
+
+	when = getdate(on_date or today())
+	dated = frappe.get_meta(RESTRICTION).has_field("ended_on")
+	fields = ["name", "user", "to_date", "status"] + (["ended_on", "canceled_on"] if dated else [])
+
+	in_force, unknown = [], []
+	for row in frappe.get_all(
+		RESTRICTION,
+		filters={"user": ["in", list(users)], "from_date": ["<=", when]},
+		fields=fields,
+	):
+		# An absent `to_date` is open-ended, not expired. Filtered in Python rather
+		# than the query because a `>=` filter on a nullable date silently matches
+		# NULLs in Frappe -- right by accident here, wrong wherever it is copied.
+		if row.to_date and getdate(row.to_date) < when:
+			continue
+
+		stopped = None
+		if dated:
+			stopped = row.get("ended_on") or row.get("canceled_on")
+		if stopped and getdate(stopped) <= when:
+			continue
+		if not stopped and row.status in ("Ended", "Canceled"):
+			# Moved on at an unknown date. Cannot be placed relative to `when`.
+			unknown.append((row.user, frappe.get_cached_doc(RESTRICTION, row.name)))
+			continue
+
+		in_force.append((row.user, frappe.get_cached_doc(RESTRICTION, row.name)))
+
+	return in_force, unknown
+
 def _restrictions(users, when):
 	"""Active restricted duty covering *when*.
 
@@ -94,20 +144,10 @@ def _restrictions(users, when):
 	if not frappe.db.exists("DocType", RESTRICTION):
 		return {}
 	found = {}
-	for row in frappe.get_all(
-		RESTRICTION,
-		filters={"user": ["in", users], "status": "Active", "from_date": ["<=", when]},
-		fields=["name", "user", "to_date"],
-	):
-		# An absent `to_date` is open-ended, not expired. Filtered here rather than
-		# in the query because `["or"]` on a nullable date is where the coalesce
-		# trap lives -- a `>=` filter silently matches NULLs in Frappe, which would
-		# be right by accident here and wrong the next time somebody copies it.
-		if row.to_date and getdate(row.to_date) < when:
-			continue
-		doc = frappe.get_cached_doc(RESTRICTION, row.name)
+	in_force, _unknown = restrictions_covering(users, when)
+	for user, doc in in_force:
 		summary = doc.summary()
-		found[row.user] = (
+		found[user] = (
 			_("is on restricted duty: {0}").format(summary)
 			if summary
 			else _("is on restricted duty")
@@ -127,14 +167,8 @@ def restriction_blocks(user, on_date=None, kinds=()):
 		return []
 	when = getdate(on_date or today())
 	hits = []
-	for row in frappe.get_all(
-		RESTRICTION,
-		filters={"user": user, "status": "Active", "from_date": ["<=", when]},
-		fields=["name", "to_date"],
-	):
-		if row.to_date and getdate(row.to_date) < when:
-			continue
-		doc = frappe.get_cached_doc(RESTRICTION, row.name)
+	in_force, _unknown = restrictions_covering([user], when)
+	for _user, doc in in_force:
 		if any(doc.get(kind) for kind in kinds):
 			hits.append(doc.summary())
 	return hits

@@ -1,0 +1,99 @@
+<!--
+	Print sheet for the Crew Qualification Roster (WI-074 package C).
+
+	Frappe picks this up by filename: get_html_format() reads <report>.html out of
+	the report folder and query_report.js uses it as the custom format for Print and
+	PDF, with no registration anywhere. Three things to know before editing:
+
+	* NO LETTERHEAD HERE. Frappe wrapper already emits print_settings.letter_head
+	  around {{ content }}, so a letterhead drawn in this file prints twice. That is
+	  the exact inverse of the Jinja print-format rule elsewhere in this app, where
+	  custom_format = 1 means the template draws everything.
+	* It is bypassed the moment somebody picks specific columns in the print dialog,
+	  because get_print_template() falls back to print_grid then. For a document
+	  handed to an insurer that matters: the designed sheet quietly becomes a grid
+	  dump. Print with the default column set.
+	* `data` is get_data_for_print(), i.e. the rows AS CURRENTLY SORTED AND FILTERED
+	  ON SCREEN, not the canonical result. Re-sorting the report changes the sheet.
+
+	MIND THE TEMPLATE ENGINE. frappe.template.compile flattens every newline to a
+	space before compiling, so a line comment inside a template block would swallow
+	the rest of the file. It also escapes only the last apostrophe in each text run,
+	so apostrophes are avoided throughout. Use block comments and rephrase.
+
+	WHY THE SHEET LOOKS LIKE THIS. It is evidence, so it leads with the question it
+	answers and the date it answers it for, and it prints the caveats rather than
+	hiding them. A cell reading "not reconstructible" is the honest answer to a
+	question this data cannot support, and an auditor reading a blank would assume
+	the opposite.
+-->
+<style>
+	.cqr-sheet { font-size: 10pt; }
+	.cqr-sheet h2 { margin: 0 0 2px 0; font-size: 14pt; }
+	.cqr-asof { font-size: 11pt; font-weight: bold; margin-bottom: 6px; }
+	.cqr-note { font-size: 8.5pt; color: #555; margin-bottom: 10px; line-height: 1.35; }
+	.cqr-sheet table { width: 100%; border-collapse: collapse; }
+	.cqr-sheet th {
+		text-align: left;
+		border-bottom: 1.5px solid #333;
+		padding: 3px 4px;
+		font-size: 9pt;
+		text-transform: uppercase;
+		letter-spacing: 0.4px;
+	}
+	.cqr-sheet td { border-bottom: 1px solid #ddd; padding: 3px 4px; vertical-align: top; }
+	.cqr-person { font-weight: bold; }
+	.cqr-unknown { color: #8a6d1f; }
+	.cqr-notcleared { color: #a4262c; font-weight: bold; }
+	.cqr-foot { margin-top: 14px; font-size: 8.5pt; color: #555; border-top: 1px solid #ccc; padding-top: 6px; }
+</style>
+
+<div class="cqr-sheet">
+	<h2>Crew qualification roster</h2>
+	<div class="cqr-asof">As of {%= frappe.datetime.str_to_user(filters.as_of) %}</div>
+
+	<div class="cqr-note">
+		Every state on this sheet is re-derived from stored dates rather than read from a
+		current status, so it answers the date above rather than today. Position and tier are
+		shown as not reconstructible because no effective-from date is recorded for them:
+		this sheet will not print a rung somebody holds now against a past date. People who
+		have since left the company are included, because they were employed on the date.
+	</div>
+
+	<table>
+		<thead>
+			<tr>
+				<th style="width: 18%">Person</th>
+				<th style="width: 9%">Employment</th>
+				<th style="width: 9%">Record</th>
+				<th style="width: 20%">What</th>
+				<th style="width: 20%">On this date</th>
+				<th style="width: 9%">Valid until</th>
+				<th style="width: 15%">Note</th>
+			</tr>
+		</thead>
+		<tbody>
+			{% for (var i = 0; i < data.length; i++) { %}
+			<tr>
+				<td class="cqr-person">{%= data[i].employee_name %}</td>
+				<td>{%= data[i].employed %}</td>
+				<td>{%= data[i].kind %}</td>
+				<td>{%= data[i].what %}</td>
+				<td
+					class="{%= (data[i].verdict || "").indexOf("NOT cleared") >= 0 ? "cqr-notcleared" : ((data[i].verdict === "Unknown") ? "cqr-unknown" : "") %}"
+				>
+					{%= data[i].verdict %}
+				</td>
+				<td>{%= data[i].valid_until %}</td>
+				<td>{%= data[i].note %}</td>
+			</tr>
+			{% } %}
+		</tbody>
+	</table>
+
+	<div class="cqr-foot">
+		Produced {%= frappe.datetime.str_to_user(frappe.datetime.get_today()) %}. Rows appear in
+		the order shown on screen at the time of printing. A blank cell means the field does not
+		apply; where a fact could not be established from stored dates the cell says so in words.
+	</div>
+</div>

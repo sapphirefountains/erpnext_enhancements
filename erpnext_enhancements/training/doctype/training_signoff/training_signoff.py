@@ -84,6 +84,7 @@ class TrainingSignoff(Document):
 		that must not come from the learner."""
 		self._reject_learner_submitting()
 		self._require_authority()
+		self._stamp_attested_on()
 
 	def on_submit(self):
 		"""Advance whatever this attestation was blocking.
@@ -185,5 +186,23 @@ class TrainingSignoff(Document):
 			)
 
 	def _stamp_signed_on(self):
+		"""When the REQUEST was raised. Not the attestation -- see `_stamp_attested_on`."""
 		if not self.signed_on:
 			self.signed_on = now_datetime()
+
+	def _stamp_attested_on(self):
+		"""When the supervisor actually attested.
+
+		Separate from `signed_on` because they are different events and the gap
+		between them is sometimes days: the learner raises the request, the Senior
+		Technician signs when they are next on the same site. An audit asking "was
+		this person cleared to work alone on 1 March" needs the attestation date;
+		answering with the request date reports somebody as competent from the moment
+		they ASKED to be, which is the wrong direction to be wrong in.
+
+		Only ever set when blank, so a historical import can carry an honest date.
+		Rows submitted before v1.396.0 have none, and the roster must render them as
+		not reconstructible rather than falling back to `signed_on`.
+		"""
+		if self.meta.has_field("attested_on") and not self.get("attested_on"):
+			self.attested_on = now_datetime()

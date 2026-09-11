@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.397.0] - 2026-09-11
+
+### Added
+
+- **`Crew Qualification Roster`** — a Script Report plus a print sheet answering "who was
+  qualified to do what, on this day". The version you hand an insurer.
+
+  **It re-derives every state from stored dates and never reads a `status` column.** That one
+  rule is what makes it correct. Every derived-status write in both modules goes through
+  `db_set(..., update_modified=False)`, which never reaches `save_version()` — so a stored status
+  is a fact about *today*, `track_changes = 1` recorded nothing about how it got there, and
+  reading one to answer a question about March silently restates the present over the past.
+
+  Four consequences, each inverting an instinct. **The roster of people comes from
+  `date_of_joining` / `relieving_date`, not `status = "Active"`** — every other enumeration in this
+  app filters on Active, which silently omits leavers, and after an incident leavers are precisely
+  who an insurer asks about. **`Expiring` counts as HELD**, and its 90-day horizon runs from the
+  as-of date, so a card inside its warning window in March reads that way in March. **`Supervised
+  Only` is never folded into competence** — it shares a doctype, a docstatus and a date stamp with
+  `Competent`, so a query filtering on `docstatus = 1` alone reports somebody as cleared to work
+  alone on the strength of a job they did with help. And **a fact that cannot be reconstructed says
+  so in words**: position and tier have no effective-from date anywhere, so the report refuses to
+  state a historical rung rather than printing today's against a past date.
+
+  It refuses to render rather than rendering blank. An empty roster reads as "everyone is clear",
+  which is the most dangerous sentence the page could produce.
+
+- **Dates for four facts that had none.** `Training Signoff` gains `attested_on` plus frozen
+  copies of the supervisor's name, position title and tier — `supervisor_position` beside them is a
+  Link and resolves to *today*, so renaming a rung silently restated every historical attestation,
+  which is exactly what that function's own docstring said must not happen. `signed_on` is
+  relabelled **Requested On**, because it records when the learner raised the request and the gap
+  between the two is sometimes days; answering an audit with it reports somebody as competent from
+  the moment they *asked* to be. `Training Certificate` gains `revoked_on`. `Work Restriction` gains
+  `ended_on` and `canceled_on`.
+
+### Fixed
+
+- **Revoking a certificate destroyed the validity window printed on the document the holder is
+  carrying.** `_revoke_certificates_for` wrote `expires_on = today()` because there was no
+  revocation date field, so an as-of question answered from `issued_on <= D <= expires_on` returned
+  a plausible, shorter, wrong window that disagreed with the paper — with nothing recording that it
+  had moved. Now writes `revoked_on` and leaves the window alone.
+
+  That clobber was also, by accident, the only thing stopping a certificate whose `cancel()` failed
+  from reading Valid again. `_derive_status` now returns `Revoked` on any dated revocation, which is
+  the deliberate version of the same protection — **the two changes had to ship together**, which is
+  why this moved out of v1.395.2 rather than being fixed there.
+
+- **`restriction_blocks()` accepted a past date and then filtered `status = "Active"`**, so a
+  restriction somebody had since tidied to Ended reported as never having existed — the export would
+  say "no restrictions" for a day the person was on no-lifting. It read as correct only because
+  nothing ever wrote Ended; the first tidy-up would have retroactively erased history with no
+  symptom. Both readers now go through one dated predicate, `restrictions_covering()`, which never
+  consults a status and returns rows whose transition date is unknown *separately*, so the caller can
+  say so rather than silently counting them in or out.
+
+- `Employee Credential.derive_status(as_of=...)` compared `revoked_on` for truth rather than against
+  `as_of`, so a credential revoked in June reported as Revoked for a question about March.
+
+- Two backfills recover what a `Version` row can **prove** and mark everything else as not
+  reconstructible. Expect a low yield, and that is the honest number: `track_changes = 1` reads like
+  a safety net and is not one here, because the status writes bypassed the version machinery
+  entirely. The certificate backfill deliberately does **not** key on `status = 'Revoked'` — that
+  status has two writers and only one clobbered the expiry, so keying on it would stamp a
+  certificate's original, possibly years-future, expiry onto a field labelled "Revoked On".
+
 ## [1.396.0] - 2026-09-11
 
 ### Added

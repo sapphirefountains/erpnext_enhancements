@@ -165,15 +165,43 @@ def snapshot_positions(doc, user):
 	that has since been retitled or a tier that has since been renumbered.
 	"""
 	basis = authority_basis(doc, user)
+	supervisor_position = _position_of_user(user) or ""
+	learner_position = _position_of_user(doc.get("user")) or ""
+	sup_title, sup_tier = _position_facts(supervisor_position)
+	lrn_title, lrn_tier = _position_facts(learner_position)
 	values = {
 		"authority_basis": basis or "",
-		"supervisor_position": _position_of_user(user) or "",
-		"learner_position": _position_of_user(doc.get("user")) or "",
+		"supervisor_position": supervisor_position,
+		"learner_position": learner_position,
+		# The Links above resolve to TODAY, which is what the docstring says must not
+		# happen. These four are the frozen copies: rename a rung or renumber a tier
+		# and every historical attestation would otherwise silently restate itself.
+		# `Safety Incident.job_title_at_time` is the precedent in this app.
+		"supervisor_name_at_time": frappe.db.get_value("User", user, "full_name") or user or "",
+		"supervisor_position_title": sup_title,
+		"supervisor_tier_at_time": sup_tier,
+		"learner_position_title": lrn_title,
+		"learner_tier_at_time": lrn_tier,
 	}
 	for field, value in values.items():
 		if doc.meta.has_field(field):
 			doc.set(field, value)
 	return basis
+
+
+def _position_facts(position):
+	"""``(title, tier)`` for a Position name, frozen at the moment of the call.
+
+	Returns ``("", 0)`` for an unset or missing position rather than raising: a
+	sign-off from somebody who is not on the ladder is a real case (the HR Manager
+	blanket authority), and it must record "no rung" rather than abort the submit.
+	"""
+	if not position:
+		return "", 0
+	row = frappe.db.get_value("Position", position, ["position_name", "tier"], as_dict=True)
+	if not row:
+		return "", 0
+	return row.get("position_name") or position, cint(row.get("tier"))
 
 
 def tier_of_user(user):

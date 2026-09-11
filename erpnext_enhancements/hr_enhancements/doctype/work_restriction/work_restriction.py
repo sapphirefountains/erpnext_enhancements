@@ -50,6 +50,7 @@ RESTRICTIONS = (
 
 class WorkRestriction(Document):
 	def validate(self):
+		self._stamp_transition()
 		self._resolve_user()
 		self._require_a_restriction()
 		self._reject_backwards_dates()
@@ -99,3 +100,22 @@ class WorkRestriction(Document):
 				for p in parts
 			]
 		return ", ".join(str(p) for p in parts)
+
+	def _stamp_transition(self):
+		"""Give the end of a restriction a DATE, not just a status.
+
+		`status` is a fact about today. Marking a row Ended without recording when
+		erased the fact that it had ever applied -- and `restriction_blocks` takes an
+		`on_date`, so a question about 1 March answered against a row somebody has
+		since tidied returned "no restrictions" for a day the person was on no-lifting.
+		It read as correct only because nothing ever wrote Ended; the first tidy-up
+		would have retroactively erased history.
+
+		Only ever fills a blank, so a correction typed by a human stands.
+		"""
+		if not self.meta.has_field("ended_on"):
+			return
+		if self.status == "Ended" and not self.get("ended_on"):
+			self.ended_on = self.to_date or today()
+		if self.status == "Canceled" and not self.get("canceled_on"):
+			self.canceled_on = today()
