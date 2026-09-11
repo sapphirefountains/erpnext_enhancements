@@ -107,10 +107,16 @@ class TrainingLesson(Document):
 		``alert``. ``msgprint`` queues onto ``_server_messages`` and rides out on
 		the response whatever the client does with it, so a warning on ``validate``
 		is a toast on every autosave — the same defect in a friendlier colour. The
-		author is looking at a WYSIWYG; the empty block is visible on the page. The
-		machine-readable signal goes to the editor through the bootstrap payload
-		(``incomplete_blocks``) so it can badge the block, and to the author as a
-		single sentence when they press Publish.
+		author is looking at a WYSIWYG, and both editors already say so in place: the
+		canvas renders "No file attached yet." inside the block
+		(``training_canvas.js``) and the classic builder does the same. The refusal
+		arrives as a single sentence naming every offending lesson and block when
+		they press Publish.
+
+		``incomplete_blocks`` is therefore a server-side predicate with one caller
+		(``TrainingCourseVersion._require_finished_blocks``); it is deliberately
+		**not** on the builder bootstrap payload. An earlier draft of this docstring
+		claimed it was, which was simply untrue — the branch review caught it.
 		"""
 		for row in self.blocks or []:
 			if not 0 <= cint(row.min_coverage_percent) <= 100:

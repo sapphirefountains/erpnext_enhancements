@@ -261,11 +261,17 @@ def _courses_owed_by(user, required):
 def _uncertified(user, required):
 	"""Required courses this learner is not currently certified in.
 
-	Three sources, merged by course and in this priority order: an open assignment,
-	a completion that has been expired or revoked, and a completion whose
-	``expires_on`` has passed but which the nightly sweep has not restatused yet.
+	**Four** sources, merged by course and in this priority order: an open
+	assignment; a completion that has been expired or revoked; a completion whose
+	``expires_on`` has passed but which the nightly sweep has not restatused yet;
+	and a Required course this person's rules say they owe and which they have
+	nothing to show for.
+
 	The third exists because the advisory is read at dispatch time and must not
-	depend on a scheduler run having happened this morning.
+	depend on a scheduler run having happened this morning. The fourth is what made
+	the whole check capable of firing at all — every one of the first three needs
+	the person to have *already been assigned* the course, so on a site with no
+	assignment rules this described nobody and reported all-clear doing it.
 	"""
 	valid = _currently_valid_courses(user)
 	learner_name = frappe.db.get_value("User", user, "full_name") or user
@@ -326,7 +332,23 @@ def _uncertified(user, required):
 	# Scoped by the assignment engine's own targeting, so this asks "does this
 	# person owe it?" rather than "does the course exist?". Without that narrowing
 	# every technician would be flagged for "Accounting in ERPNext".
+	# Anything deliberately closed is not a gap. A **Waived** assignment is somebody
+	# saying out loud "this person does not need this course", and a **Cancelled**
+	# one usually means the course was retired out from under them — reporting
+	# either as "Never assigned" would make the advisory argue with a decision a
+	# manager already took, permanently, with no way to silence it. Found by the
+	# branch review; the first version of this reported both.
+	excused = {
+		row.course
+		for row in frappe.get_all(
+			"Training Assignment",
+			filters={"user": user, "status": ["in", ("Waived", "Cancelled")]},
+			fields=["course"],
+		)
+	}
 	for course in _courses_owed_by(user, required):
+		if course in excused:
+			continue
 		title = frappe.db.get_value("Training Course", course, "course_title")
 		add(course, title, _("Never assigned"))
 

@@ -378,11 +378,6 @@ class TestItIsWiredUp(unittest.TestCase):
         body = player[at : player.index("function openRecord(")]
         self.assertIn("b.is_staff", body)
         self.assertIn('go("feed")', body)
-
-
-if __name__ == "__main__":
-    unittest.main()
-
 class TestTheLeaderboardIsNotTheWholeCompany(unittest.TestCase):
     """`LEADERBOARD_LIMIT` is 20 against sixteen active employees, so the board WAS
     the entire staff in rank order — including last place, with no way off it and
@@ -427,6 +422,55 @@ class TestTheLeaderboardIsNotTheWholeCompany(unittest.TestCase):
         player = _code(_text(PLAYER))
         self.assertIn("total_ranked", player)
         self.assertIn("my_rank", player)
+
+if __name__ == "__main__":
+    unittest.main()
+
+class TestTheFeedIsGatedOnTheVIEWER(unittest.TestCase):
+    """The leak the first version of this shipped, caught by the branch review.
+
+    `achievement_query_conditions` filtered on the **row's** `learner_type`. A
+    customer contact holds `Training Learner`, would fail the "your own rows"
+    clause and *pass* `visibility = 'Team' AND learner_type = 'Staff'` — and would
+    be served the entire staff feed through `/api/resource`.
+
+    The rule is about who is asking, not about the row. "Is this person staff" is a
+    fact about them, and the fix is the same predicate used everywhere else in this
+    release: employment, not a role.
+    """
+
+    def test_the_query_condition_checks_the_viewer(self):
+        body = _fn("achievement_query_conditions", PERMISSIONS)
+        self.assertIn("if not _is_staff(resolved):", body)
+
+    def test_a_non_staff_viewer_gets_only_their_own_rows(self):
+        """Sliced to the guard's own `return`, not a fixed window — the Team clause
+        lives on the very next statement, so a generous slice reads it and the
+        assertion fails on correct code."""
+        body = _fn("achievement_query_conditions", PERMISSIONS)
+        at = body.index("if not _is_staff(resolved):")
+        branch = body[at : body.index("\n", body.index("return", at))]
+        self.assertIn("`user` = {own}", branch)
+        self.assertNotIn("Team", branch)
+
+    def test_the_single_document_read_checks_the_viewer_too(self):
+        """A query condition filters lists and says nothing about `frappe.get_doc`,
+        so without this a customer could still read any staff achievement by name."""
+        body = _fn("achievement_has_permission", PERMISSIONS)
+        self.assertIn("if not _is_staff(resolved):", body)
+
+    def test_kudos_are_gated_the_same_way(self):
+        """Otherwise a customer could not read the feed but could read every
+        reaction posted to it, which names the people and what they finished."""
+        body = _fn("kudos_query_conditions", PERMISSIONS)
+        self.assertIn("if not _is_staff(resolved):", body)
+        self.assertIn("if not _is_staff(resolved):", _fn("kudos_has_permission", PERMISSIONS))
+
+    def test_staff_is_employment_not_a_role(self):
+        body = _fn("_is_staff", PERMISSIONS)
+        self.assertIn('frappe.db.exists("Employee"', body)
+        self.assertNotIn("get_roles", body)
+
 
 
 if __name__ == "__main__":

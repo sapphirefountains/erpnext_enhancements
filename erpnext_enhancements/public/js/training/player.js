@@ -2477,6 +2477,7 @@
 		}
 
 		function kudosControls(item, kudosWrap) {
+			var box = el("div", "tr-feed-compose");
 			var wrap = el("div", "tr-feed-actions");
 			var note = document.createElement("input");
 			note.type = "text";
@@ -2502,8 +2503,11 @@
 									line.appendChild(el("div", "tr-feed-kudo-note", note.value.trim()));
 								}
 								kudosWrap.appendChild(line);
-								note.value = "";
-								wrap.remove();
+								// The whole compose box goes, not just the buttons. Removing
+								// `wrap` alone left the text input sitting there with nothing
+								// to submit it -- somebody would type a second thought and
+								// have no way to send it.
+								box.remove();
 							})
 							.catch(function (err) {
 								fail(wrap, err);
@@ -2511,7 +2515,6 @@
 					})
 				);
 			});
-			var box = el("div", "tr-feed-compose");
 			box.appendChild(note);
 			box.appendChild(wrap);
 			return box;
@@ -2685,9 +2688,18 @@
 						item.appendChild(
 							el("div", "tr-queue-done", fmt(t("Recorded: {0}"), [recorded]))
 						);
-						if (!list.querySelector(".tr-queue-row:not(.is-done)")) {
-							clear(main);
-							main.appendChild(el("p", "tr-empty", t("Nothing is waiting on you.")));
+						// Guarded on the view still being the queue. `main` is shared by
+						// every view, this POST can outlive a navigation (nothing aborts
+						// it), and an unguarded clear() would wipe whichever screen the
+						// supervisor had moved on to. Also scoped to `list` rather than
+						// `main` so it cannot reach anything else on the page.
+						if (
+							state.view === "queue" &&
+							list.isConnected &&
+							!list.querySelector(".tr-queue-row:not(.is-done)")
+						) {
+							clear(list);
+							list.appendChild(el("p", "tr-empty", t("Nothing is waiting on you.")));
 						}
 					})
 					.catch(function (err) {

@@ -7,7 +7,8 @@
 //
 // Colour carries the status, and only Approved is green. A Requested day is not a
 // day off yet, and a calendar that showed it as one would have somebody scheduling
-// around a request that later gets declined.
+// around a request that later gets declined. `status` has to be in field_map for
+// get_css_class to receive it.
 
 frappe.views.calendar["Time Off Request"] = {
 	field_map: {
@@ -24,12 +25,18 @@ frappe.views.calendar["Time Off Request"] = {
 		// would be a small lie repeated on every row.
 		defaultView: "dayGridMonth",
 	},
-	style_map: {
-		Draft: "standard",
-		Requested: "warning",
-		Approved: "success",
-		Declined: "danger",
-		Canceled: "standard",
+	// `get_css_class`, NOT `style_map`. The latter looks like the right key and is
+	// dead config in v16: calendar.js's prepare_colors() branches only on
+	// get_css_class and otherwise falls back to `d.color`, and grepping
+	// origin/version-16 finds style_map declared in two places and consumed in
+	// none. Shipping it would have coloured every status identically while the
+	// comment above claimed only Approved was green -- exactly the sort of silent
+	// no-op this repo keeps paying for.
+	get_css_class: function (data) {
+		if (data.status === "Approved") return "success";
+		if (data.status === "Requested") return "warning";
+		if (data.status === "Declined") return "danger";
+		return "standard";
 	},
 	filters: [
 		{

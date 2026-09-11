@@ -164,10 +164,28 @@ def achievement_query_conditions(user=None):
 	resolved = _resolve(user)
 	table = "`tabTraining Achievement`"
 	own = frappe.db.escape(resolved)
+
+	# The Team clause is gated on the VIEWER, not only on the row. Filtering on the
+	# row's `learner_type` alone was the bug: a customer contact holds Training
+	# Learner, would fail the first clause and pass the second, and would be served
+	# the entire staff feed through /api/resource. The rule is about who is asking,
+	# and "is this person staff" is a fact about them, not about the row.
+	if not _is_staff(resolved):
+		return f"{table}.`user` = {own}"
+
 	return (
 		f"({table}.`user` = {own}"
 		f" or ({table}.`visibility` = 'Team' and {table}.`learner_type` = 'Staff'))"
 	)
+
+
+def _is_staff(user):
+	"""Employment, not a role — the same predicate `hr_enhancements.profile` uses.
+
+	A role can be granted by accident and `Training Learner` is on every customer
+	contact; whether somebody works here cannot be.
+	"""
+	return bool(frappe.db.exists("Employee", {"user_id": user, "status": "Active"}))
 
 
 def achievement_has_permission(doc, ptype=None, user=None):
@@ -176,6 +194,11 @@ def achievement_has_permission(doc, ptype=None, user=None):
 	resolved = _resolve(user)
 	if doc.get("user") == resolved:
 		return True
+	# Same viewer gate as the query condition. A query condition filters lists and
+	# says nothing about frappe.get_doc(), so without this a customer could still
+	# read any staff achievement by name.
+	if not _is_staff(resolved):
+		return False
 	return doc.get("visibility") == "Team" and doc.get("learner_type") == "Staff"
 
 
@@ -195,6 +218,14 @@ def kudos_query_conditions(user=None):
 		return ""
 	resolved = _resolve(user)
 	own = frappe.db.escape(resolved)
+	if not _is_staff(resolved):
+		# Same viewer gate as the achievement itself -- otherwise a customer could
+		# not read the staff feed but could read every reaction posted to it, which
+		# names the people and what they finished.
+		return (
+			"`tabTraining Kudos`.`achievement` in ("
+			f"select `name` from `tabTraining Achievement` where `user` = {own})"
+		)
 	return (
 		"`tabTraining Kudos`.`achievement` in ("
 		"select `name` from `tabTraining Achievement` where "
@@ -213,6 +244,8 @@ def kudos_has_permission(doc, ptype=None, user=None):
 		return False
 	if target.user == resolved:
 		return True
+	if not _is_staff(resolved):
+		return False
 	return target.visibility == "Team" and target.learner_type == "Staff"
 
 

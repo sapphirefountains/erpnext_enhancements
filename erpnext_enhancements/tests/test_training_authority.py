@@ -86,10 +86,20 @@ class _FakeDB:
     def __init__(self):
         self.positions = {}
         self.employees = {}
-        self.columns = {"tabEmployee": {"custom_position"}}
+        # Keyed by DOCTYPE, matching real frappe. It used to be keyed "tabEmployee"
+        # -- which reproduced the production bug exactly, so the stub answered True
+        # for the one argument real frappe raises on, and CI stayed green while five
+        # call sites were broken. A stub that mirrors a mistake hides it.
+        self.columns = {"Employee": {"custom_position"}}
 
-    def has_column(self, table, column):
-        return column in self.columns.get(table, set())
+    def has_column(self, doctype, column):
+        if doctype.startswith("tab"):
+            # Real frappe prefixes "tab" itself and raises TableMissingError on the
+            # resulting "tabtabEmployee". Raising here too is the whole point.
+            raise AssertionError(
+                f"has_column takes a DocType, not a table name (got {doctype!r})"
+            )
+        return column in self.columns.get(doctype, set())
 
     def get_value(self, doctype, name, fields=None, as_dict=False):
         if doctype == "Employee":
@@ -135,6 +145,9 @@ def _install_stub():
         return [r["name"] for r in rows] if pluck else rows
 
     fake.get_all = get_all
+    # position.py decorates get_position_children with @frappe.whitelist(), which
+    # runs at import time.
+    fake.whitelist = lambda *a, **k: (lambda fn: fn)
     fake.get_roles = lambda user=None: fake.roles.get(user, [])
     fake.throw = lambda *a, **k: (_ for _ in ()).throw(AssertionError("throw"))
     fake._ = lambda t: t
@@ -339,7 +352,7 @@ class TestAuthorityBasis(unittest.TestCase):
         """A site part-way through this release has no `custom_position` column. Tier
         authority is simply unavailable until it migrates; the other bases still
         work, so sign-offs keep being recordable."""
-        sys.modules["frappe"].db.columns["tabEmployee"] = set()
+        sys.modules["frappe"].db.columns["Employee"] = set()
         try:
             self.assertIsNone(authority.authority_basis(_doc("junior@x"), "senior@x"))
             self.assertEqual(
@@ -347,7 +360,7 @@ class TestAuthorityBasis(unittest.TestCase):
                 authority.OBSERVED,
             )
         finally:
-            sys.modules["frappe"].db.columns["tabEmployee"] = {"custom_position"}
+            sys.modules["frappe"].db.columns["Employee"] = {"custom_position"}
 
     def test_may_sign_agrees_with_the_basis(self):
         for signer in ("senior@x", "master@x", "junior2@x", "designer@x"):

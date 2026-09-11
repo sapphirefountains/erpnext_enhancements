@@ -104,6 +104,10 @@ def _install_frappe_stub():
         return [r["name"] for r in rows] if pluck else rows
 
     fake.get_all = get_all
+    # `position.py` decorates get_position_children with @frappe.whitelist(), which
+    # runs at import. A stub without it fails the whole module at setUpModule --
+    # which is how this one caught the decorator being added.
+    fake.whitelist = lambda *a, **k: (lambda fn: fn)
     fake.throw = lambda *a, **k: (_ for _ in ()).throw(AssertionError(a[0] if a else "throw"))
     fake._ = lambda text: text
     fake.get_doc = lambda *a, **k: None
@@ -383,12 +387,6 @@ class TestPositionsOutrankedBy(unittest.TestCase):
     def test_no_position_at_all_outranks_nobody(self):
         self.assertEqual(position.positions_outranked_by(None), [])
         self.assertEqual(position.positions_outranked_by("Nonexistent"), [])
-
-
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestAssignmentCanActuallyReachPeople(unittest.TestCase):
     """The precondition for everything else in WI-072.
 
@@ -438,10 +436,68 @@ class TestAssignmentCanActuallyReachPeople(unittest.TestCase):
 
     def test_the_employee_row_carries_the_column_the_rule_reads(self):
         """The match is `employee.get(field) == value`, so a field the row was never
-        fetched with can never match — and would fail silently, forever."""
+        fetched with can never match — and would fail silently, forever.
+
+        The field list lives in `_employee_rule_fields()` rather than inline,
+        because `custom_position` is a *fixture* Custom Field and `sync_fixtures()`
+        runs after the post-model-sync patches: on the migrate that introduces it
+        there is a real window where the DocType exists and the column does not, and
+        naming it unconditionally made the SELECT itself raise.
+        """
         src = self.ASSIGNMENT.read_text(encoding="utf-8")
-        body = src[src.index("def _matching_rule") : src.index("def _has_role_profile")]
-        self.assertIn("custom_position", body)
+        fields = src[src.index("def _employee_rule_fields") : src.index("def _matching_rule")]
+        self.assertIn("custom_position", fields)
+        self.assertIn('has_column("Employee"', fields)
+
+        rule = src[src.index("def _matching_rule") : src.index("def _has_role_profile")]
+        self.assertIn("_employee_rule_fields()", rule)
+
+    def test_has_column_is_never_passed_a_table_name(self):
+        """`frappe.db.has_column(doctype, column)` prefixes `tab` itself and
+        **raises** `TableMissingError` on an unknown table rather than returning
+        False (frappe `origin/version-16:frappe/database/database.py:1365-1374`). So
+        `has_column("tabEmployee", ...)` throws unconditionally — every guard
+        written that way does the exact opposite of failing soft.
+
+        This branch shipped five of them, in a patch that would have aborted
+        `bench migrate`, in sign-off submission, in every profile, in the skills
+        matrix and in the assign dialog. Repo-wide, because the next one will be
+        somewhere else.
+
+        Tokenised, so it reads executable code only. The comment and docstring
+        explaining this defect necessarily quote it, and a scan that read the
+        explanation as the code would be the same mistake in the other direction —
+        this assertion failed on its own fix the first time it ran.
+        """
+        import io
+        import tokenize
+
+        offenders = []
+        for path in sorted(APP.glob("**/*.py")):
+            if "/tests/" in path.as_posix():
+                continue
+            source = path.read_text(encoding="utf-8")
+            if "has_column" not in source:
+                continue
+            try:
+                tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+            except (tokenize.TokenError, IndentationError, SyntaxError):
+                continue
+            for tok in tokens:
+                if tok.type in (tokenize.COMMENT, tokenize.STRING):
+                    continue
+                if tok.type == tokenize.NAME and tok.string == "has_column":
+                    # The argument two tokens along: has_column ( <arg>
+                    index = tokens.index(tok)
+                    arg = tokens[index + 2] if index + 2 < len(tokens) else None
+                    if arg and arg.type == tokenize.STRING and arg.string[1:4] == "tab":
+                        offenders.append(f"{path.relative_to(APP)}:{tok.start[0]}")
+        self.assertEqual(
+            offenders,
+            [],
+            "has_column takes a DocType and prefixes `tab` itself; passing a table "
+            f"name raises instead of returning False: {offenders}",
+        )
 
     def test_a_promotion_re_evaluates_what_you_owe(self):
         self.assertIn("custom_position", self.ASSIGNMENT.read_text(encoding="utf-8").split("EMPLOYEE_FIELD_FOR_RULE")[0])
@@ -513,3 +569,7 @@ class TestAssignmentCanActuallyReachPeople(unittest.TestCase):
                     f'"{option}"' in script or f"{bare}:" in script,
                     f"{option!r} is not mapped in the course form script",
                 )
+
+
+if __name__ == "__main__":
+    unittest.main()

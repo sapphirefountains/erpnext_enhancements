@@ -788,7 +788,7 @@ def _group_users(target_type, target_value=None):
         field = EMPLOYEE_FIELD_FOR_RULE.get(target_type)
         if not field:
             frappe.throw(_("{0} is not a group this app can assign to.").format(target_type))
-        if not frappe.db.has_column("tabEmployee", field):
+        if not frappe.db.has_column("Employee", field):
             # The column has not migrated yet. Empty rather than an exception: the
             # dialog says "nobody" and the author picks a different group.
             return []

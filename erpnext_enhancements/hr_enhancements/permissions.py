@@ -110,6 +110,14 @@ def timeoff_has_permission(doc, ptype=None, user=None):
 		return True
 	if doc.get("user") == resolved or doc.get("approver_user") == resolved:
 		return True
+	# `user` is derived in validate(), so it is still empty when the permission
+	# check runs on a NEW document -- which meant an ordinary employee was refused
+	# permission to create their own request. Fall back to the Employee they named,
+	# which is populated from the form.
+	if doc.get("employee") and frappe.db.get_value(
+		"Employee", doc.get("employee"), "user_id"
+	) == resolved:
+		return True
 	manager = frappe.db.get_value("Employee", {"user_id": resolved}, "name")
 	if not manager:
 		return False
@@ -138,6 +146,11 @@ def onboarding_has_permission(doc, ptype=None, user=None):
 	if _is_unscoped(resolved):
 		return True
 	if doc.get("user") == resolved:
+		return True
+	# Same as time off: `user` is derived in validate() and is empty on a new row.
+	if doc.get("employee") and frappe.db.get_value(
+		"Employee", doc.get("employee"), "user_id"
+	) == resolved:
 		return True
 	manager = frappe.db.get_value("Employee", {"user_id": resolved}, "name")
 	if not manager:

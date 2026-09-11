@@ -81,7 +81,7 @@ def _position_of_user(user):
 	"""
 	if not user:
 		return None
-	if not frappe.db.has_column("tabEmployee", "custom_position"):
+	if not frappe.db.has_column("Employee", "custom_position"):
 		# The custom field has not migrated yet. Tier authority is simply
 		# unavailable until it does; the other bases still work, so a site
 		# part-way through this release can still record sign-offs.

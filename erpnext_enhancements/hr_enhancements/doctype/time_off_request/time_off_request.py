@@ -45,11 +45,37 @@ BLOCKING_STATUSES = (REQUESTED, APPROVED)
 class TimeOffRequest(Document):
 	def validate(self):
 		self._resolve_user()
+		self._guard_status()
 		self._reject_backwards_dates()
 		self._compute_days()
 		self._resolve_approver()
 		self._require_decline_reason()
 		self._warn_on_overlap()
+
+	def _guard_status(self):
+		"""The status moves only through ``hr_enhancements/timeoff.py``.
+
+		``read_only`` on the field hides it in the Desk form and nothing more —
+		Frappe does not enforce read-only against the API, and the `Employee` role
+		holds write on this doctype, so without this check anybody could POST their
+		own request straight to ``Approved`` and the whole approval flow would be
+		decorative. That was live until the adversarial review of this branch found
+		it.
+
+		The endpoints set ``flags.timeoff_transition`` before saving; anything else
+		may only leave the status where it already was.
+		"""
+		if self.flags.get("timeoff_transition") or self.is_new():
+			return
+		if frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_patch:
+			return
+		before = self.get_doc_before_save()
+		if before and before.status != self.status:
+			frappe.throw(
+				_("Time off is approved or declined through the buttons on this form, not by "
+				  "editing the status."),
+				frappe.PermissionError,
+			)
 
 	# ------------------------------------------------------------------ helpers
 

@@ -82,7 +82,7 @@ def _employees(filters):
 	if filters.get("department"):
 		where["department"] = filters.department
 	fields = ["name", "employee_name", "department", "designation"]
-	if frappe.db.has_column("tabEmployee", "custom_position"):
+	if frappe.db.has_column("Employee", "custom_position"):
 		fields.append("custom_position")
 	return frappe.get_all("Employee", filters=where, fields=fields, order_by="employee_name asc")
 

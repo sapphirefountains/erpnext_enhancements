@@ -1340,6 +1340,13 @@ after_migrate = [
 	# Projects-module dashboard widgets (Custom HTML Blocks) — repo is the source
 	# of truth; upserts the blocks from "Custom HTML Block/" and places them on Home
 	"erpnext_enhancements.setup.custom_html_blocks.sync_custom_html_blocks",
+	# hr_enhancements (WI-072): place every Employee on the Position ladder. NOT in
+	# the seeding patch, because the column it writes is `Employee.custom_position`
+	# -- a FIXTURE Custom Field, and `sync_fixtures()` runs in post_schema_updates,
+	# after the post-model-sync patches. A patch doing this would map nobody on the
+	# migrate that introduces the field, then record itself in Patch Log and never
+	# run again. Idempotent: writes only where custom_position is empty.
+	"erpnext_enhancements.patches.seed_positions_from_designations.map_employees_to_positions",
 	# device_management (MDM/EMM): Employee "Assigned Devices" panel field
 	"erpnext_enhancements.device_management.setup.create_device_employee_fields",
 	# accounting_intake: Supplier Drive folder id (document filing)

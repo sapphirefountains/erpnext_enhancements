@@ -518,6 +518,89 @@ broken in the direction that does not announce itself.
   colleague pages, credentials and expiry, the social layer, the editor, PTO, and the
   assignment UI. Tracked on PRJ-00616 as TASK-2026-01938 with a task per deliverable.
 
+### Fixed before shipping — the adversarial review of this branch
+
+Everything above was then reviewed by 83 agents across five dimensions, each finding
+independently checked by three verifiers prompted to **refute** it. Sixteen findings
+survived. They are recorded here rather than quietly squashed, because the shape of them
+is the useful part: none was a typo, and the two worst were both *invisible* — one aborted
+`bench migrate`, and one published staff data to customers while every endpoint stayed
+correct.
+
+- **`frappe.db.has_column("tabEmployee", …)` in five places would have aborted the deploy.**
+  v16's `has_column(doctype, column)` prefixes `tab` **itself** and **raises**
+  `TableMissingError` on an unknown table rather than returning False
+  (`frappe origin/version-16:frappe/database/database.py:1365-1374`). So every one of these
+  guards — written to make the code fail *soft* while a fixture field is mid-migrate —
+  threw unconditionally instead. The blast radius was the migrate itself plus sign-off
+  submit, every profile page, the Skills Matrix and the assign-to-group dialog. The test
+  stub in `test_training_authority.py` had **reproduced the same mistake**, keying its fake
+  on `"tabEmployee"`, so CI agreed with the bug; that stub now raises on a `tab`-prefixed
+  argument, and a repo-wide tokenised scan fails the build on any new occurrence.
+- **The team feed was readable by customers.** `achievement_query_conditions` filtered on
+  the **row's** `learner_type`, so a customer Website User holding `Training Learner` failed
+  the "own rows" clause and sailed through `visibility = 'Team' and learner_type = 'Staff'`
+  — the whole staff feed. The gate belongs on the **viewer**: a new `_is_staff()` tests
+  employment, not a role, because `Training Learner` is on every customer contact and
+  whether somebody works here cannot be granted by accident. Applied to all four entry
+  points, since a query condition filters lists and says nothing about `frappe.get_doc()`.
+- **Anybody could approve their own time off.** `status` was an ordinary editable Select and
+  the `Employee` role holds write on the doctype, which made the entire approval flow
+  decorative. `read_only` is not the fix on its own — Frappe does not enforce read-only
+  against the API — so `_guard_status()` refuses any status change that did not come through
+  `hr_enhancements/timeoff.py`, which flags its own transitions.
+- **`who_is_out` was authenticated-only**, so a customer contact with a login could
+  enumerate every staff member's absences — a rough map of the company's week. Staff only
+  now, again by employment.
+- **Colleague profiles leaked points past the leaderboard opt-out.** Somebody who took
+  themselves off the board and then found their score on their own profile card, visible to
+  every colleague, would reasonably conclude the setting did nothing. `_points` now takes
+  the viewer and returns nothing to a colleague who opted out; their own view is unchanged.
+- **The seed patch would have mapped nobody, then recorded itself as successful.**
+  `Employee.custom_position` is a **fixture** Custom Field and `sync_fixtures()` runs in
+  `post_schema_updates()` — *after* the post-model-sync patches (`migrate.py:143` then
+  `:171`). On the very migrate that introduces the field, the column does not exist when the
+  patch runs. The mapping moved to an `after_migrate` hook, which runs after fixtures and is
+  idempotent. Same root cause as the `Chat Relay Job` backfill in v1.280.3, from the other
+  direction.
+- **The Position tree never showed a tier** — the entire reason that tree exists.
+  `frappe.desk.treeview.get_children` selects exactly three columns (`value`, `title`,
+  `expandable`), so `node.data.tier` was undefined and `onrender` drew nothing, silently.
+  Replaced with a whitelisted `get_position_children` returning core's shape plus the two
+  columns.
+- **The time-off calendar's `style_map` is dead config in v16.** `prepare_colors()` branches
+  only on `get_css_class`; `style_map` is declared in two places in `origin/version-16` and
+  consumed in none. Shipping it would have coloured every status identically while the
+  comment above it claimed only Approved was green.
+- **The dispatch advisory reported Waived and Cancelled assignments as "Never assigned".** A
+  waiver is a manager saying out loud that this person does not need the course; re-raising
+  it as a gap would have made the advisory argue with a decision somebody already took,
+  permanently and with no way to silence it.
+- **`timeoff_has_permission` refused ordinary staff permission to create their own request.**
+  `user` is derived in `validate()`, so it is still empty when the permission check runs on a
+  new document. Falls back to the `Employee` they named. Same fix in `onboarding_has_permission`.
+- **`_matching_rule` named `custom_position` unconditionally in its field list**, so the
+  SELECT itself raised during the fixture window — the opposite of the fail-soft behaviour
+  the guard below it promised.
+- Two player defects: posting kudos removed the buttons but left the text input orphaned
+  with nothing to submit it, and finishing the last sign-off in the queue called `clear(main)`
+  — a shared container — from a callback that can outlive a navigation, so it could wipe
+  whichever screen the supervisor had moved on to.
+- Three **docstrings that described code that does not exist**: an `Onboarding Checklist
+  Template` doctype that was never built, an `incomplete_blocks` key on the builder bootstrap
+  payload that is not sent, and a `_public_profile` function that had been refactored away.
+  A comment asserting a safety property that isn't there is worse than no comment, because
+  the next reader stops checking.
+
+Each of these is pinned by a regression test written to fail on the original code. Five of
+those tests had to be rewritten first: an absence assertion like
+`assertNotIn("msgprint", source)` matches the **docstring explaining why there is no
+msgprint**, so it passed on code that had the defect. They now parse the AST, strip
+docstrings and `//` comments, and assert on imports and calls rather than on substrings.
+That failure mode — a contract test that passes because the forbidden word appears in the
+prose forbidding it — is the same one `test_training_boundary_contract` warns about, and it
+turned up five times in one afternoon.
+
 ## [1.385.0] - 2026-09-10
 
 ### Added

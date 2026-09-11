@@ -201,6 +201,30 @@ full CI suite (156 steps) green after every commit.
 | **D8** Onboarding checklist + PTO | done |
 | **D9** Assignment UI, group targeting, sweep, seeded rules | done |
 
+
+### The branch review (2026-09-10)
+
+Eighty-three agents across five dimensions, every finding independently checked by three
+verifiers prompted to refute it. **Sixteen survived**, all fixed and all pinned by a
+regression test written to fail on the original code. The full list and the reasoning is in
+the CHANGELOG under 1.386.0, *Fixed before shipping*. Two are worth carrying here because
+they are patterns, not incidents:
+
+- **`frappe.db.has_column` takes a DOCTYPE, prefixes `tab` itself, and RAISES on an unknown
+  table.** It never returns False. Five guards on this branch were written as
+  `has_column("tabEmployee", …)`, so every one of them threw unconditionally — including the
+  one in the seed patch, which would have aborted `bench migrate` on the deploy. The stub in
+  `test_training_authority.py` had reproduced the same mistake, so CI agreed with the bug.
+  A tokenised repo-wide scan now fails the build on any new occurrence.
+- **An absence assertion matches the prose explaining the absence.**
+  `assertNotIn("msgprint", source)` passes on code that calls `msgprint` if the docstring
+  says "no msgprint here" — no, worse: it *fails on correct code* and *passes on broken
+  code* depending on which way the comment is worded, which is the same thing as not
+  testing. Five of this branch's contract tests were written that way. They now parse the
+  AST, drop docstrings and `//` comments, and assert on imports and calls.
+
+Neither is specific to this work item; both are in the project memory.
+
 ### Deliberately not done, and why
 
 **Per-role desk home grids (D1).** The mechanism exists — a `Workspace` carries a `roles`

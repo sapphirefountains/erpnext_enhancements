@@ -10,11 +10,11 @@ the trigger point, though, already existed — `hooks.py` fires
 joins that call rather than adding a second Employee hook whose ordering nobody
 declared.
 
-**The default list is data in a patch, not a fixture, and not a constant here.**
-It is the sort of thing that gets edited by whoever is doing the onboarding, in
-the week they are doing it — a fixture would be delete-and-reinserted on every
-migrate and quietly throw away their edits, and a constant in code would need a
-deploy to change a line about PPE.
+**The default list is a constant here, for now.** Once a checklist is raised the
+items live on the row and are edited there, which is where the editing actually
+happens — the default only decides what a *new* hire starts with. If that list
+ever needs changing without a deploy it becomes a DocType, and `default_items()`
+is the single seam that would change.
 
 Deliberately not a task-assignment system. Every item's owner is a plain string,
 because half of them are done by whoever is free that morning, and requiring an
@@ -28,9 +28,10 @@ from frappe.utils import add_days, cint, getdate, today
 
 CHECKLIST = "Onboarding Checklist"
 
-#: The starting list, used only when no `Onboarding Checklist Template` rows exist
-#: (i.e. before the seed patch runs, or on a site that has deleted them all).
-#: Fallback rather than source of truth -- see the module docstring.
+#: The starting list. There is no template DocType yet, so this IS the source --
+#: an earlier comment here described one that was never built, which the branch
+#: review caught. Editing a checklist edits the row, not this; the list is only
+#: ever read once, when the checklist is first raised.
 FALLBACK_ITEMS = (
 	("Paperwork signed and filed", "HR", 0),
 	("Payroll details collected", "HR", 0),
@@ -98,7 +99,12 @@ def ensure_checklist(employee):
 
 
 def default_items():
-	"""The list to start from. Editable data first, code second."""
+	"""The list a new checklist starts from.
+
+	A seam, kept deliberately: the moment somebody wants to edit the default list
+	without a deploy, this is the one function that changes, and every caller
+	already goes through it.
+	"""
 	return FALLBACK_ITEMS
 
 

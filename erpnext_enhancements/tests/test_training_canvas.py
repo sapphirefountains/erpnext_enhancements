@@ -244,12 +244,6 @@ class TestCanvasPageIsRegistered(unittest.TestCase):
         leak into other desk pages."""
         code = _canvas()
         self.assertIn("training-canvas-fullbleed", code)
-
-
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestCanvasWritesLegalSelectValues(unittest.TestCase):
     """The defect that made this suite's absence from CI expensive.
 
@@ -309,3 +303,6 @@ class TestCanvasWritesLegalSelectValues(unittest.TestCase):
         self.assertEqual(
             unknown, [], f"canvas branches on block types {unknown} which the DocType does not declare"
         )
+
+if __name__ == "__main__":
+    unittest.main()

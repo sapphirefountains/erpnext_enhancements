@@ -135,6 +135,40 @@ class Position(NestedSet):
 				doc.db_set("job_family", doc.job_family, update_modified=False)
 
 
+@frappe.whitelist()
+def get_position_children(doctype=None, parent=None, is_root=False, **kwargs):
+	"""Tree nodes carrying the tier, which core's ``get_children`` does not.
+
+	``frappe.desk.treeview.get_children`` selects exactly three columns —
+	``name as value``, the title field, and ``is_group as expandable``
+	(frappe ``origin/version-16:frappe/desk/treeview.py:58-70``). So a tree page
+	pointed at it receives no ``tier``, and an ``onrender`` that reads
+	``node.data.tier`` draws nothing at all. The tier is the entire reason this
+	tree exists, and it was invisible on it until the branch review caught it.
+
+	Same shape as core's reply plus the two extra columns, so the standard
+	treeview handles it unchanged.
+	"""
+	parent = parent or ""
+	if parent == doctype:
+		# The tree's root node is labelled with the doctype name; core resolves that
+		# to "no parent" and so must this, or the first level comes back empty.
+		parent = ""
+	return frappe.get_all(
+		"Position",
+		filters={"parent_position": parent or ["in", ("", None)]},
+		fields=[
+			"name as value",
+			"position_name as title",
+			"is_group as expandable",
+			"tier",
+			"tier_label",
+			"is_active",
+		],
+		order_by="tier asc, position_name asc",
+	)
+
+
 def outranks(position, other):
 	"""Whether *position* is strictly senior to *other* on the same ladder.
 

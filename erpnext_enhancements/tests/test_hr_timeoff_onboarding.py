@@ -49,6 +49,14 @@ def _text(path):
     return path.read_text(encoding="utf-8")
 
 
+def _code(text):
+    """JS with `//` comments stripped -- an absence assertion must not read the
+    comment explaining the absence."""
+    import re
+
+    return re.sub(r"//.*$", "", text, flags=re.M)
+
+
 def _fields(path):
     return {f["fieldname"]: f for f in json.loads(_text(path))["fields"]}
 
@@ -190,11 +198,34 @@ class TestTheCalendarIsHonest(unittest.TestCase):
     def test_only_approved_is_green(self):
         """A Requested day is not a day off yet, and a calendar showing it as one
         would have somebody scheduling around a request that later gets declined."""
+        # Anchored on the definition, not the first mention: the comment above it
+        # explains the choice and names `get_css_class` too.
         js = _text(CALENDAR)
-        at = js.index("style_map")
-        block = js[at : js.index("}", at)]
-        self.assertIn('Approved: "success"', block)
-        self.assertIn('Requested: "warning"', block)
+        at = js.index("get_css_class: function")
+        block = js[at : js.index("\n\t},", at)]
+        self.assertIn('data.status === "Approved"', block)
+        self.assertIn('"success"', block)
+        self.assertIn('data.status === "Requested"', block)
+        self.assertIn('"warning"', block)
+
+    def test_it_uses_the_key_frappe_actually_reads(self):
+        """`style_map` looks like the right key and is dead config in v16:
+        `calendar.js`'s `prepare_colors()` branches only on `get_css_class` and
+        otherwise falls back to `d.color`, and grepping `origin/version-16` finds
+        `style_map` declared in two places and consumed in none. Shipping it would
+        have coloured every status identically while the comment above the block
+        claimed only Approved was green — a silent no-op of exactly the kind this
+        repo keeps paying for. Caught by the branch review."""
+        code = _code(_text(CALENDAR))
+        self.assertIn("get_css_class", code)
+        self.assertNotIn("style_map", code)
+
+    def test_the_status_reaches_the_colour_function(self):
+        """`get_css_class` receives the row, so `status` has to be in `field_map` or
+        every day renders the same."""
+        js = _text(CALENDAR)
+        block = js[js.index("field_map") : js.index("get_events_method")]
+        self.assertIn('status: "status"', block)
 
     def test_who_is_out_says_who_and_when_and_not_why(self):
         """A sick day is not something to publish to the crew."""
@@ -292,6 +323,64 @@ class TestBothAreScoped(unittest.TestCase):
         """Even when the requester is not one of their direct reports — a stand-in
         approver would otherwise be asked to decide something they cannot open."""
         self.assertIn("approver_user", _fn("timeoff_query_conditions", PERMISSIONS))
+
+
+class TestTheStatusCannotBeSelfApproved(unittest.TestCase):
+    """The hole the branch review found, and it made the approval flow decorative.
+
+    `status` was an ordinary editable Select and the `Employee` role holds write on
+    this doctype, so anybody could open their own request in the Desk and set it to
+    `Approved`. Nothing else in the flow would have noticed.
+
+    `read_only` on the field is not the fix on its own — Frappe does not enforce
+    read-only against the API — so the controller refuses any status change that did
+    not come through `hr_enhancements/timeoff.py`.
+    """
+
+    def test_the_decision_fields_are_read_only(self):
+        fields = _fields(TIMEOFF_JSON)
+        for name in ("status", "decided_on", "decision_note"):
+            with self.subTest(field=name):
+                self.assertEqual(fields[name].get("read_only"), 1)
+
+    def test_the_controller_refuses_a_status_change_from_anywhere_else(self):
+        """read_only hides the field in the form and nothing more."""
+        self.assertIn("_guard_status", _fn("validate", TIMEOFF_PY))
+        body = _fn("_guard_status", TIMEOFF_PY)
+        self.assertIn("get_doc_before_save", body)
+        self.assertIn("frappe.throw", body)
+
+    def test_the_endpoints_flag_their_own_transitions(self):
+        """Or the guard would refuse the legitimate path too."""
+        src = _text(TIMEOFF)
+        self.assertIn("doc.flags.timeoff_transition = True", src)
+        for fn in ("decide", "cancel_request"):
+            with self.subTest(fn=fn):
+                self.assertIn("timeoff_transition", _fn(fn, TIMEOFF))
+
+    def test_submitting_uses_db_set_and_needs_no_flag(self):
+        """`db_set` writes the column without running validate, so the guard never
+        sees it — which is correct here: Draft to Requested is the requester's own
+        move and the endpoint has already checked they own it."""
+        self.assertIn('doc.db_set("status", REQUESTED)', _fn("submit_request", TIMEOFF))
+
+    def test_who_is_out_is_staff_only(self):
+        """It was authenticated-only, so a customer contact with a login could
+        enumerate every staff member's absences -- a rough map of the company's
+        week, and none of their business."""
+        body = _fn("who_is_out", TIMEOFF)
+        self.assertIn('frappe.db.exists("Employee"', body)
+        self.assertIn("PermissionError", body)
+
+    def test_creating_your_own_request_is_not_refused(self):
+        """`user` is derived in validate(), so it is empty when the permission check
+        runs on a NEW row -- which refused ordinary staff permission to create their
+        own request until the review caught it."""
+        for fn in ("timeoff_has_permission", "onboarding_has_permission"):
+            with self.subTest(fn=fn):
+                body = _fn(fn, PERMISSIONS)
+                self.assertIn('doc.get("employee")', body)
+
 
 
 if __name__ == "__main__":

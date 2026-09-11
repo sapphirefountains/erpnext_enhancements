@@ -68,7 +68,16 @@ def execute():
 			continue
 		_ensure(designation, ROOT, 0, STANDALONE_TIER, None)
 
-	_map_employees()
+	# NOT mapped here. `Employee.custom_position` is a FIXTURE Custom Field, and
+	# `sync_fixtures()` runs in `post_schema_updates()` -- *after* the post-model-sync
+	# patches (frappe v16 `migrate.py:143` then `:171`). So on the very migrate that
+	# introduces the field the column does not exist yet, this would map nobody, and
+	# the patch would record itself in `tabPatch Log` and never run again: a
+	# permanently empty ladder that looks like it was seeded successfully.
+	#
+	# The mapping is an `after_migrate` hook instead, which runs after fixtures and
+	# is idempotent, so it lands on this deploy and self-heals on every later one.
+	# Found by the adversarial review of this branch.
 
 
 def _ensure(name, parent, is_group, tier, tier_label):
@@ -87,8 +96,13 @@ def _ensure(name, parent, is_group, tier, tier_label):
 	).insert(ignore_permissions=True)
 
 
-def _map_employees():
+def map_employees_to_positions():
 	"""Point each Employee at the Position that shares its Designation's name.
+
+	An ``after_migrate`` hook rather than part of the patch above, because the
+	column it writes is created by ``sync_fixtures()``, which runs after patches.
+	Cheap and idempotent: one indexed read per employee, and it writes only where
+	``custom_position`` is empty, so every later migrate is a no-op.
 
 	Matched on the name because the seed above *is* the Designation list, so the
 	correspondence is exact by construction rather than by guesswork. An Employee
@@ -102,7 +116,13 @@ def _map_employees():
 	the ALTER and an emptiness-keyed backfill would have matched nothing while
 	still recording itself as a successful run.
 	"""
-	if not frappe.db.has_column("tabEmployee", "custom_position"):
+	if not frappe.db.exists("DocType", "Position"):
+		return
+	try:
+		if not frappe.db.has_column("Employee", "custom_position"):
+			return
+	except Exception:
+		# has_column raises rather than returning False when the table is missing.
 		return
 
 	rows = frappe.get_all(

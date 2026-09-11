@@ -102,6 +102,8 @@ def decide(request, decision, note=None):
 	doc.status = decision
 	doc.decision_note = (note or "").strip() or None
 	doc.decided_on = now_datetime()
+	# The controller refuses a status change that did not come through here.
+	doc.flags.timeoff_transition = True
 	doc.save(ignore_permissions=True)
 
 	notified = _notify(
@@ -130,6 +132,7 @@ def cancel_request(request, note=None):
 	was = doc.status
 	doc.status = CANCELED
 	doc.decision_note = (note or "").strip() or doc.decision_note
+	doc.flags.timeoff_transition = True
 	doc.save(ignore_permissions=True)
 
 	notified = False
@@ -150,7 +153,12 @@ def who_is_out(from_date=None, to_date=None):
 	scheduling question; *why* somebody is off is between them, their manager and
 	HR, and a sick day is not something to publish to the crew.
 	"""
-	_me()
+	me = _me()
+	if not frappe.db.exists("Employee", {"user_id": me, "status": "Active"}):
+		# Staff only, by EMPLOYMENT rather than by role -- a customer contact holds
+		# a login and could otherwise enumerate every staff member's absences, which
+		# is both none of their business and a rough map of the company's week.
+		frappe.throw(_("Only staff can see who is out."), frappe.PermissionError)
 	filters = {"status": APPROVED}
 	if to_date:
 		filters["from_date"] = ["<=", getdate(to_date)]

@@ -76,7 +76,8 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "options": "Draft\nRequested\nApproved\nDeclined\nCanceled",
-   "description": "Canceled with one l, house style. Renaming a Select option later needs a data patch or every existing row refuses to save."
+   "description": "Read-only and moved only by hr_enhancements/timeoff.py. It was an editable Select, and the Employee role holds write -- so anybody could open their own request in the Desk and set it to Approved, which made the whole approval flow decorative. Canceled with one l, house style: renaming a Select option later needs a data patch or every existing row refuses to save.",
+   "read_only": 1
   },
   {
    "fieldname": "time_off_type",
@@ -162,7 +163,8 @@
    "fieldname": "decision_note",
    "fieldtype": "Small Text",
    "label": "Note",
-   "description": "Required when declining. A refusal with no reason leaves somebody nothing to plan around."
+   "description": "Required when declining. A refusal with no reason leaves somebody nothing to plan around.",
+   "read_only": 1
   }
  ],
  "icon": "fa fa-plane",

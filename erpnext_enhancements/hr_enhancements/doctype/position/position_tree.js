@@ -11,7 +11,12 @@
 // runs your week, Position is who is qualified to say you can do the job.
 
 frappe.treeview_settings["Position"] = {
-	get_tree_nodes: "frappe.desk.treeview.get_children",
+	// Our own, not frappe.desk.treeview.get_children: core selects exactly three
+	// columns (value, title, expandable), so `node.data.tier` is undefined and the
+	// onrender below silently draws nothing. The tier is the whole reason this tree
+	// exists, and it was invisible on it until the branch review caught it.
+	get_tree_nodes:
+		"erpnext_enhancements.hr_enhancements.doctype.position.position.get_position_children",
 	filters: [
 		{
 			fieldname: "company",
@@ -75,15 +80,15 @@ frappe.treeview_settings["Position"] = {
 		},
 	],
 	onrender: function (node) {
-		if (node.is_root || !node.data) return;
+		if (node.is_root || !node.data || !node.$tree_link) return;
 		const tier = node.data.tier;
 		const label = node.data.tier_label;
+		// A job family legitimately has no tier, so it simply gets no chip rather
+		// than "tier 0", which would read as a rung below Junior.
 		if (!tier && !label) return;
-		// The tier is the whole reason this tree exists, so it is shown on the node
-		// rather than hidden one click away in the form.
 		$('<span class="text-muted small"></span>')
 			.text(label ? `${label} · ${__("tier")} ${tier}` : `${__("tier")} ${tier}`)
 			.css("margin-left", "8px")
-			.appendTo(node.$ul ? node.$tree_link : node.$tree_link);
+			.appendTo(node.$tree_link);
 	},
 };

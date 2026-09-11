@@ -225,6 +225,31 @@ def _candidate_users():
 	)
 
 
+def _employee_rule_fields():
+	"""Employee columns the rule engine reads, minus any that have not migrated.
+
+	`custom_position` is a **fixture** Custom Field, and `sync_fixtures()` runs in
+	`post_schema_updates()` — *after* the post-model-sync patches. So there is a
+	real window, on the very migrate that introduces it, where the DocType exists
+	and the column does not. Naming it unconditionally in the field list made the
+	SELECT itself raise, which is the opposite of the fail-soft behaviour the guard
+	further down promises.
+
+	Checked with the doctype name, not the table name: `frappe.db.has_column`
+	prefixes `tab` itself and **raises** `TableMissingError` on an unknown table
+	rather than returning False, so `has_column("tabEmployee", ...)` throws
+	unconditionally. Five call sites on this branch got that wrong and the branch
+	review caught them.
+	"""
+	fields = ["name", "department", "designation", "grade", "employment_type"]
+	try:
+		if frappe.db.has_column("Employee", "custom_position"):
+			fields.append("custom_position")
+	except Exception:
+		pass
+	return fields
+
+
 def _matching_rule(course, user):
 	"""The first enabled rule on ``course`` that matches ``user``, or None.
 
@@ -235,7 +260,7 @@ def _matching_rule(course, user):
 	employee = frappe.db.get_value(
 		"Employee",
 		{"user_id": user, "status": "Active"},
-		["name", "department", "designation", "grade", "employment_type", "custom_position"],
+		_employee_rule_fields(),
 		as_dict=True,
 	)
 	roles = None

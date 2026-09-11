@@ -18,9 +18,11 @@ a **failure**, a **due date**, a **licence number**, or anything about a course
 somebody is part-way through. Those are either performance data or personal
 documents, and neither is a directory question.
 
-That is not a filter applied at the end. ``_public_profile`` builds a different
-dict from a different query; there is no "full profile minus some keys" path that
-a later field addition could silently widen. The gamification module made the same
+That is not a filter applied at the end. ``colleague_profile`` builds its payload
+by **selecting** ``PUBLIC_FIELDS`` out of the shared dict; there is no "full
+profile minus some keys" path that a later field addition could silently widen,
+because the self-only panels are added by ``my_profile`` *after* ``_shared``
+returns and never exist on a colleague payload at all. The gamification module made the same
 choice for the same reason and wrote it down: *"an optional privacy filter is a
 privacy filter somebody eventually leaves out."*
 
@@ -113,7 +115,7 @@ def colleague_profile(viewer, user):
 		frappe.throw(_("No such colleague."))
 
 	employee = _employee_of(user)
-	full = _shared(user, employee)
+	full = _shared(user, employee, viewer=viewer)
 	# Built by SELECTING the public keys, never by deleting private ones. A profile
 	# that grows a field must not become a profile that leaks one.
 	profile = {key: full.get(key) for key in PUBLIC_FIELDS}
@@ -121,7 +123,7 @@ def colleague_profile(viewer, user):
 	return profile
 
 
-def _shared(user, employee):
+def _shared(user, employee, viewer=None):
 	"""The half both audiences see. Nothing in here is performance data."""
 	employee = employee or frappe._dict()
 	return {
@@ -136,7 +138,7 @@ def _shared(user, employee):
 		"badges": _badges(user),
 		"completed": _completed(user),
 		"qualifications": _qualifications(employee),
-		"points": _points(user),
+		"points": _points(user, viewer=viewer),
 	}
 
 
@@ -144,7 +146,7 @@ def _position(employee):
 	name = employee.get("custom_position") if employee else None
 	if not name and employee and employee.get("name"):
 		name = frappe.db.get_value("Employee", employee.get("name"), "custom_position") if (
-			frappe.db.has_column("tabEmployee", "custom_position")
+			frappe.db.has_column("Employee", "custom_position")
 		) else None
 	if not name:
 		return None
@@ -247,9 +249,27 @@ def _qualifications(employee):
 	)
 
 
-def _points(user):
+def _points(user, viewer=None):
+	"""Points, unless this person has taken themselves off the board.
+
+	The opt-out has to hold here too. Somebody who left the leaderboard and then
+	found their score on their own profile card, visible to every colleague, would
+	reasonably conclude the setting did nothing — and they would be right. Their
+	own view still shows it; it is the *public* number that goes.
+	"""
 	if not frappe.db.exists("DocType", "Training Learner Stat"):
 		return 0
+	if viewer and viewer != user:
+		try:
+			from erpnext_enhancements.training import social
+
+			if not social.get_preferences(user).get("show_on_leaderboard"):
+				return None
+		except Exception:
+			# Preferences unavailable (doctype not migrated). Fail closed on a
+			# number nobody needs rather than publish one somebody may have opted
+			# out of.
+			return None
 	return cint(frappe.db.get_value("Training Learner Stat", {"user": user}, "total_points"))
 
 
