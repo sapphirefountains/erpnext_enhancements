@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.404.0] - 2026-09-11
+
+### Fixed
+
+- **A training lesson has been telling people to expect an Expense Claim that cannot exist
+  here** (WI-074 F). TRN-LSN-000080 *"Step-by-step: entering a supplier bill"* says Document
+  Intake creates "Purchase Invoice, Expense Claim, Payment Entry". There is no `Expense Claim`
+  DocType on this site — HRMS is not installed — and `accounting_intake` registers exactly five
+  actions, the Expense Claim one being refused by `_require_expense_claims()` and never even
+  proposed by `extraction._action_for`, because `expense_claims_available()` is False. Wrong
+  since v1.388.0. The lesson now names what actually gets created — Purchase Invoice,
+  **Reimbursement Bill** (itself a Purchase Invoice, raised against the employee's own
+  reimbursement supplier rather than the merchant), Payment Entry, Purchase Receipt — and says
+  plainly that Expense Claim does not exist here.
+- **Two statements that the date-stamped lesson titles were hiding had gone false.** Both are
+  in courses about to be published:
+  - TRN-LSN-000091: *"the general ledger holds four rows"*. It held exactly **4** rows created
+    before 2026-08-05 and holds **31,452** today, with 1,324 submitted Sales Invoices, 1,312
+    Payment Entries and 11,084 Journal Entries. The claim was precisely right when written.
+  - TRN-LSN-000107: *"Fiscal Year 2027 does not exist"*. It exists — 2027-01-01 to 2027-12-31,
+    enabled.
+- **The two "… as of 5 August 2026" titles lose the stamp**, now that what sat underneath them
+  is true again. `_materialize_lessons` freezes lesson titles into `toc_json` at publish and
+  the version cannot be edited afterwards, so a dated title is permanent. Both lessons already
+  describe themselves as a dated snapshot in their `summary`; TRN-LSN-000091 opens with an
+  explicit disclaimer callout and TRN-LSN-000107 now does too.
+- `qualification_coverage`'s module docstring asserted as live fact that prod "has four Junior
+  Technicians and one Senior — so **one man** is the only person in the company who can attest
+  that any of the other four may work alone." Measured 2026-09-11: **three** Junior and **two**
+  Senior. It still trips the report's `THIN` threshold, but it is no longer a single point of
+  failure, and that sentence is the justification the whole report rests on.
+
+### Notes
+
+**"Plaid Settings" is deliberately NOT renamed, and that reverses the brief.** The task said to
+change it to "Plaid Banking Settings". That would have been wrong:
+`patches/rename_plaid_settings_doctype.py` (v1.361.0) renamed *this app's* Single out of the
+way and handed the name `Plaid Settings` back to ERPNext's native integration — and the
+Invoicing workspace's Banking card still carries a Workspace Link labelled exactly "Plaid
+Settings". Renaming the lesson would have made it describe a card that is not on the page. Both
+DocTypes now exist side by side, so the lesson disambiguates instead. The test asserts this in
+the **inverted** direction: `Plaid Settings` must survive, because the failure mode is a later
+pass helpfully renaming it.
+
+**Two correctness guards worth naming.** The patch checks `docstatus` itself rather than
+trusting the controller: `TrainingLesson._reject_edits_to_published_version` returns **early**
+when `frappe.flags.in_patch` is set, so it would wave a patch straight through to a published
+lesson — and `published_content_json`, `toc_json` and `content_hash` would then silently
+disagree with the blocks, with nothing recomputing them. And matching is done in Python with
+`in`/`str.replace`, never a SQL `LIKE`: MariaDB's default collation is PAD SPACE, so a
+trailing-space comparison in SQL is vacuously true, and these strings carry em-dashes and
+`&amp;` entities besides.
+
+All five `old` substrings were verified against production before the patch was written — five
+of five, exactly one occurrence each, with the em-dash reconstructed from the live content
+rather than retyped. Nothing throws; a target already corrected, or edited by hand since, is
+skipped and reported in the migrate log.
+
+**Two neighbouring claims in the same bullet list were re-checked and left alone** because they
+are still true: zero Sales Orders exist, and zero Purchase Invoices are submitted (10 exist,
+all drafts).
+
+### Known gaps, recorded not fixed
+
+`tabPosition Requirement` holds **zero** rows across all twenty Positions and
+`tabEmployee Credential` holds zero, against a seeded taxonomy of fifteen Credential Types. So
+the credential and course halves of the qualification grid are correctly reporting that nobody
+holds anything — because nothing has ever said what a position requires. That is the substrate
+the "credential gap register" needs, and it is the next piece of WI-074 F.
+
 ## [1.403.1] - 2026-09-11
 
 ### Added
