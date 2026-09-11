@@ -875,3 +875,141 @@ class TestSignOffDoesNotEvictTheLearner(unittest.TestCase):
         self.assertIn('classList.add("is-banner")', body)
         css = (APP / "public/css/training/player.css").read_text(encoding="utf-8")
         self.assertIn(".tr-signoff.is-banner", css)
+
+
+TRAINING_API = APP / "api/training.py"
+
+
+def _api_fn(name):
+    """One function's AST node out of api/training.py, without importing frappe."""
+    tree = ast.parse(TRAINING_API.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"{name} not found in api/training.py")
+
+
+class TestAFinishedCourseStaysOpenable(unittest.TestCase):
+    """P7, half 2 (v1.405.x). A completed course vanished from the catalogue.
+
+    `TrainingAssignment.OPEN_STATUSES` does not contain ``Completed``, so the moment
+    a sign-off landed the assignment stopped being found by `_open_assignments` — and
+    the bootstrap's ``if name in assignments: ... elif course.weight == "Optional":``
+    then filed a completed **Required** course in neither list. It disappeared for the
+    one person entitled to look at it, and `courseCard`'s ``"Review"`` verb was
+    unreachable because nothing could set the status it keys on.
+    """
+
+    def test_completed_courses_is_keyed_on_a_submitted_completion(self):
+        src = ast.unparse(_api_fn("_completed_courses"))
+        self.assertIn("Training Completion", src)
+        self.assertIn("'docstatus': 1", src.replace('"', "'"))
+
+    def test_visibility_keeps_a_course_you_have_finished(self):
+        src = ast.unparse(_api_fn("_visible_course_names"))
+        self.assertIn("_completed_courses(user)", src)
+        self.assertIn("in finished", src)
+
+    def test_review_resolves_the_version_from_the_completion(self):
+        """**The one line that cannot be got wrong quietly.** `get_lesson` resolves a
+        lesson key against the ATTEMPT's `course_version` via `_lesson_name`. Build the
+        review outline from `doc.current_version` instead and every row is a key
+        `get_lesson` refuses — a page of dead links, and a throw the learner reads as a
+        broken course.
+
+        Asserted on the parsed call, not on text: today every completion on production
+        sits on its course's current version, so this would look correct right up until
+        the first republish, and a text match could be satisfied by a comment.
+        """
+        node = _api_fn("get_course")
+        resolved = []
+        for call in ast.walk(node):
+            if not isinstance(call, ast.Call):
+                continue
+            func = call.func
+            if not (isinstance(func, ast.Attribute) and func.attr == "get_value"):
+                continue
+            if not call.args or not isinstance(call.args[0], ast.Constant):
+                continue
+            if call.args[0].value != "Training Course Version":
+                continue
+            resolved.append(ast.unparse(call.args[1]))
+        self.assertTrue(resolved, "get_course no longer looks up a course version")
+        for arg in resolved:
+            with self.subTest(arg=arg):
+                self.assertEqual(arg, "version_name")
+                self.assertNotIn("current_version", arg)
+
+    def test_the_version_falls_back_to_current_when_there_is_no_completion(self):
+        """Review mode must not change the ordinary path: a learner mid-course still
+        gets the live version."""
+        src = ast.unparse(_api_fn("get_course"))
+        self.assertIn("or doc.current_version", src)
+
+    def test_get_course_reports_review_mode(self):
+        src = ast.unparse(_api_fn("get_course"))
+        self.assertIn("'read_only': read_only", src.replace('"', "'"))
+
+    def test_a_completion_without_an_attempt_is_still_review_mode(self):
+        """One production row has `attempt = NULL`. What makes this a review is the
+        completion, not whether there is progress to show."""
+        src = ast.unparse(_api_fn("get_course"))
+        order = src.index("read_only = True")
+        self.assertLess(src.index("attempt_name = completion.attempt"), order)
+
+    def test_the_catalogue_has_a_completed_shelf(self):
+        src = ast.unparse(_api_fn("get_learner_bootstrap"))
+        self.assertIn("elif name in completions:", src)
+        self.assertIn("'completed': finished", src.replace('"', "'"))
+
+    def test_the_card_can_say_completed_once_the_assignment_is_gone(self):
+        src = ast.unparse(_api_fn("_course_card"))
+        self.assertIn("Completed", src)
+        self.assertIn("completed_on", src)
+
+    def test_widening_visibility_did_not_make_a_finished_course_restartable(self):
+        """`_require_visible` gates `start_attempt` too, so widening it could have let
+        somebody mint a fresh attempt on a course they had already passed. It does not:
+        `start_attempt` carries its own independent gate on an OPEN assignment, and that
+        gate must stay."""
+        src = ast.unparse(_api_fn("start_attempt"))
+        self.assertIn("_open_assignments(user).get(course)", src)
+        self.assertIn("if not assignment:", src)
+        self.assertIn("Required", src)
+        self.assertIn("frappe.throw", src)
+
+    # ---------------------------------------------------------------- client half
+
+    def _player(self):
+        from erpnext_enhancements.tests.test_training_canvas import _strip_js_comments
+
+        return _strip_js_comments(_player_js())
+
+    def test_the_catalogue_renders_the_completed_shelf(self):
+        """`test_training_boundary_contract` fails on any key the server sends that
+        nothing reads, which is what caught the server half trying to ship alone."""
+        body = _fn_body(self._player(), "function renderCatalog()")
+        self.assertIn("b.completed", body)
+        self.assertIn("finished.forEach", body)
+
+    def test_the_empty_state_accounts_for_finished_courses(self):
+        """"Nothing is assigned to you right now" while a Finished shelf sits below it
+        would be the same wrong-page problem in a new costume."""
+        body = _fn_body(self._player(), "function renderCatalog()")
+        self.assertIn("!finished.length", body)
+
+    def test_review_mode_never_mints_an_attempt(self):
+        """The server refuses anyway — `start_attempt` throws for a Required course
+        with no open assignment — but letting the call go out turns a quiet read into
+        a red dialog on a course the learner has every right to re-read. Reachable:
+        one production completion carries no attempt at all."""
+        body = _fn_body(self._player(), "function load(courseName, lessonKey)")
+        self.assertIn("state.readOnly = !!payload.read_only", body)
+        guard = body.index("if (state.readOnly) return null;")
+        self.assertLess(guard, body.index('call("startAttempt"'))
+
+    def test_a_finished_lesson_has_no_action_bar(self):
+        """Its only contents are the quiz entry and Finish, and both would write
+        progress against a submitted completion."""
+        body = _fn_body(self._player(), "function renderBottomBar()")
+        self.assertIn("if (state.readOnly) return;", body)
