@@ -369,6 +369,13 @@ jobs:
       # objects, and only at runtime.
       - name: SQL percent escaping (parameterised queries)
         run: python -m unittest erpnext_enhancements.tests.test_sql_percent_escaping -v
+      # `tabSingles` has exactly three columns -- doctype, field, value -- while
+      # db.get_value and friends default to ORDER BY creation. So a get_value aimed
+      # at "Singles" is not a read that can fail, it is one that CANNOT SUCCEED, on
+      # every site every time. v1.395.0 shipped one in a patch; a raising patch aborts
+      # `bench migrate`, which on this repo is the deploy, so it half-installed prod.
+      - name: Singles table is not queried through the ORM
+        run: python -m unittest erpnext_enhancements.tests.test_singles_table_access -v
       # Guards the silent workspace failure mode: `content` (the layout) and the
       # child tables (the data) are joined by label and nothing keeps them in sync,
       # so a block with no row renders an empty div and a row with no block never
