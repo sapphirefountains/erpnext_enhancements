@@ -745,6 +745,16 @@ jobs:
       # prose explaining that necessarily names the thing being excluded.
       - name: HR time off + onboarding (scope, authority, and the scoping hooks)
         run: python -m unittest erpnext_enhancements.tests.test_hr_timeoff_onboarding -v
+      # Recording a training that already happened -- the tailgate talk, the
+      # manufacturer walkthrough, the ride-along. Nothing here could produce one:
+      # Training Completion was only ever minted off a finished attempt, and
+      # Training Live Class has no attendance path out of it. Pins that no course
+      # is required (requiring one puts a content-authoring project between
+      # somebody and a five-minute record) and that linking one keeps the resulting
+      # certification auditable -- the completion names the session, the session
+      # names who led it and carries the signed sheet, and cancelling withdraws it.
+      - name: Training sessions (record what already happened, auditably)
+        run: python -m unittest erpnext_enhancements.tests.test_training_sessions -v
       # Tiered sign-off authority. The behavioural half is the Junior/Senior/Master
       # rule; the STRUCTURAL half is the point. A sign-off can be submitted through
       # two doors -- record_signoff sets ignore_permissions and the Desk Submit

@@ -187,6 +187,27 @@ broken in the direction that does not announce itself.
   all return nothing, and nothing means refused. A customer contact has a User and no Employee,
   which is exactly why they can never acquire authority over staff.
 
+- **Recording a training that already happened — the half of "anyone can build a training" that
+  is not about the editor.** Most training here is not a course: it is a ten-minute tailgate talk
+  before a basin drain, a manufacturer's rep walking three people through a filter, a ride-along.
+  It has already happened, in the yard. Nothing in this module could produce a record of it —
+  `Training Completion` is only ever minted off a finished attempt, and `Training Live Class` has
+  no attendance path out of it at all — so a safety talk left no trace, because recording one
+  meant authoring a course first.
+
+  `Training Session` takes a free-text title, a date, who led it, who was there, what was covered,
+  and a photo of the signed sheet. **No course is required**: requiring one puts a
+  content-authoring project between somebody and a five-minute record, which is precisely the
+  barrier this removes.
+
+  Linking a course turns attendance into **certification** — every attendee gets a real
+  `Training Completion` against the published version. That is legitimate (`attempt` is not a
+  required field, and somebody taught the material in person by a competent person has met the
+  course's substance) and it stays auditable because of provenance: the completion carries a new
+  read-only `source_session`, the session names who led it and carries the roster photo, an
+  absentee is never certified, and cancelling the session withdraws the completions — a session
+  that did not happen must not leave certifications behind.
+
 - **Time off — request, approve, calendar, and nothing else.** No balances, no accrual, no
   carryover. That scope is a decision: balances are where the real complexity and every payroll
   argument live, and they are only worth carrying if PTO is tracked as a liability. `total_days`

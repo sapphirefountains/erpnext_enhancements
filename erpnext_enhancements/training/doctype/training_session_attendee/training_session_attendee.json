@@ -1,0 +1,76 @@
+{
+ "actions": [],
+ "allow_import": 0,
+ "creation": "2026-09-10 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "istable": 1,
+ "field_order": [
+  "employee",
+  "employee_name",
+  "column_break_head",
+  "user",
+  "attended",
+  "completion"
+ ],
+ "fields": [
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Employee",
+   "options": "Employee",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "label": "Name",
+   "fetch_from": "employee.employee_name",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "attended",
+   "fieldtype": "Check",
+   "label": "Was there",
+   "default": "1",
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Untick somebody who was on the list and did not turn up. A roster that quietly records absentees as trained is worse than no roster."
+  },
+  {
+   "fieldname": "completion",
+   "fieldtype": "Link",
+   "label": "Completion",
+   "options": "Training Completion",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Session Attendee",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "idx",
+ "sort_order": "ASC",
+ "states": []
+}

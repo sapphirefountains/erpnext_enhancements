@@ -17,6 +17,7 @@
   "employee",
   "customer",
   "attempt",
+  "source_session",
   "signoff",
   "result_section",
   "score_percent",
@@ -125,6 +126,14 @@
    "fieldtype": "Link",
    "label": "Attempt",
    "options": "Training Attempt"
+  },
+  {
+   "description": "Set when this completion came from an in-person session rather than from working through the course online. Blank means it came from an attempt. This is what makes a roster-based certification auditable: the session names who led it, what was covered, and carries the photo of the signed sheet.",
+   "fieldname": "source_session",
+   "fieldtype": "Link",
+   "label": "From Session",
+   "options": "Training Session",
+   "read_only": 1
   },
   {
    "description": "The supervisor's attestation, for courses that require one. Deferred in Phase 1 because a Link naming a DocType the app does not ship fails bench migrate; restored in Phase 4 with the doctype it points at.",

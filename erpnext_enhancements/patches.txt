@@ -860,3 +860,10 @@ erpnext_enhancements.patches.enable_uncertified_dispatch_warning
 # nobody had to DO anything to earn, which matters in a feed whose whole risk is becoming a
 # scoreboard. Idempotent (social.record refuses duplicates); never raises. Safe twice.
 erpnext_enhancements.patches.backfill_training_achievements
+# v1.386.0 (WI-072) -- forces the Training + HR workspaces and the HR sidebar to re-sync. Workspace
+# and Workspace Sidebar are TIMESTAMP-gated on import (unlike a DocType, which is hash-gated), so a
+# file that is not newer than the stored row is skipped in silence -- the same check that stranded
+# the Training workspace's extra cards for five weeks. Both stamps are bumped; reload_doc(force=True)
+# is the belt to that suspenders. Also replaces an orphaned standard=0 "HR" sidebar sitting on prod
+# since 2026-02-08 pointing at a workspace that does not exist. Never aborts a migrate. Safe twice.
+erpnext_enhancements.patches.resync_hr_and_training_workspaces

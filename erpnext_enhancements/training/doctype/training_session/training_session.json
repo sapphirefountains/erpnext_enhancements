@@ -1,0 +1,209 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "autoname": "naming_series:",
+ "is_submittable": 1,
+ "creation": "2026-09-10 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "session_title",
+  "course",
+  "column_break_head",
+  "held_on",
+  "duration_minutes",
+  "led_by",
+  "detail_section",
+  "location",
+  "topics_covered",
+  "column_break_detail",
+  "roster_photo",
+  "course_version",
+  "attendees_section",
+  "attendees",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "options": "TRN-SES-.#####",
+   "hidden": 1,
+   "no_copy": 1,
+   "print_hide": 1
+  },
+  {
+   "fieldname": "session_title",
+   "fieldtype": "Data",
+   "label": "What it was",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "Free text on purpose. Most of these are a ten-minute talk in the yard, and making somebody author a course first is exactly why they never get recorded."
+  },
+  {
+   "fieldname": "course",
+   "fieldtype": "Link",
+   "label": "Against a course",
+   "options": "Training Course",
+   "in_standard_filter": 1,
+   "description": "Optional. Link one and every attendee gets a real Training Completion against its published version. Leave it blank and the session is its own record -- still evidence, still on their profile, just not a certification."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "held_on",
+   "fieldtype": "Date",
+   "label": "When",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "duration_minutes",
+   "fieldtype": "Int",
+   "label": "Minutes"
+  },
+  {
+   "fieldname": "led_by",
+   "fieldtype": "Link",
+   "label": "Led by",
+   "options": "Employee",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "detail_section",
+   "fieldtype": "Section Break",
+   "label": "Detail"
+  },
+  {
+   "fieldname": "location",
+   "fieldtype": "Data",
+   "label": "Where"
+  },
+  {
+   "fieldname": "topics_covered",
+   "fieldtype": "Small Text",
+   "label": "What was covered",
+   "description": "What an auditor reads when they ask what this session actually consisted of."
+  },
+  {
+   "fieldname": "column_break_detail",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "roster_photo",
+   "fieldtype": "Attach",
+   "label": "Signed roster",
+   "description": "A photo of the sheet people signed. For a toolbox talk this IS the evidence -- there is no attempt, no score and no video behind it."
+  },
+  {
+   "fieldname": "course_version",
+   "fieldtype": "Link",
+   "label": "Course Version",
+   "options": "Training Course Version",
+   "read_only": 1,
+   "description": "Resolved from the course at submit and frozen. A completion has to name the exact content somebody was taught, and the live version moves."
+  },
+  {
+   "fieldname": "attendees_section",
+   "fieldtype": "Section Break",
+   "label": "Who was there"
+  },
+  {
+   "fieldname": "attendees",
+   "fieldtype": "Table",
+   "label": "Attendees",
+   "options": "Training Session Attendee",
+   "reqd": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "options": "Training Session",
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide": 1
+  }
+ ],
+ "icon": "fa fa-users",
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Session",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "cancel": 1,
+   "amend": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "submit": 1,
+   "cancel": 1,
+   "amend": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "submit": 1,
+   "cancel": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR User",
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Author"
+  }
+ ],
+ "search_fields": "session_title,held_on,led_by",
+ "sort_field": "held_on",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
