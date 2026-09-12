@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.407.0] - 2026-09-11
+
+### Added
+
+- **`publish_training_course` — the step of the AI authoring chain that had no tool.**
+  `draft_course_spec` proposes a course, `author_training_course` builds it as a Draft, and
+  nothing could take it the last inch. That was not a gap in the tool surface so much as a
+  consequence of what publishing *is*: not a document submit, but
+  `api/training_author.publish_version`, which materializes `toc_json` and `content_hash` from
+  the lessons, *then* submits, then refreshes the course status, queues the video copies and —
+  for a Required course with `auto_assign` — fans the assignments out.
+
+  The generic tools therefore fail in both directions, quietly. `submit_document` skips the
+  materializer and is refused by `_require_materialized_content`. `update_document` on
+  `toc_json` would satisfy that gate while writing a table of contents nothing derived from
+  the lessons.
+
+### Notes
+
+**Gated as a one-way door, at Medium risk.** It is in `_gate.APP_MUTATING`, so with AI write
+gating on it returns an `awaiting_user_confirmation` envelope and an **AI Pending Action** and
+publishes nothing until a person confirms in the Desk. Deliberately *not* `LOW_RISK` like
+`author_training_course` — that is a create yielding a draft nobody can see, whereas three of
+publishing's effects reach people and none is undoable from the tool:
+
+- `_materialize_lessons` **freezes the lesson titles into `toc_json`**, and a submitted version
+  cannot be edited afterwards.
+- a Required course with `auto_assign` assigns it to every matching learner, with notifications.
+- `change_type = "Material Change (require retake)"` **invalidates every existing completion**.
+
+It is not `HIGH_RISK` either — nothing is destroyed, nothing arbitrary executes — so it lands
+on the fail-safe Medium band by being in neither risk set, which is the honest classification
+rather than a default.
+
+**`change_type` is required and has no default.** The argument that can invalidate everyone's
+training record must never arrive by omission, and the tool's description tells the model to
+ask the author rather than guess.
+
+**The two `change_type` literals are read from the DocType JSON, not retyped.** Writing them by
+hand got `Material Change (require retake)` wrong on the first attempt — as
+`(supersede completions)`, which is what the option *does* rather than what it is *called*. A
+wrong literal there passes every bench-free test and is then refused by the controller at the
+moment of publishing, which is the worst possible place to find out. The controller's own
+constants cannot simply be imported: the bench-free suites install a `frappe` stub that is a
+module rather than a package, so importing any doctype controller breaks tool collection. The
+JSON is what the Select actually enforces anyway, and a test asserts the controller agrees
+with it.
+
+**Authority is delegated, not re-implemented.** `publish_version` calls `_require_manager` and
+refuses a course whose AI-drafted questions have not been reviewed by a person — which is what
+keeps "an AI drafted it" and "an AI shipped it" two different things. A second copy of either
+rule in the tool would be a second thing to keep in step.
+
 ## [1.406.0] - 2026-09-11
 
 ### Fixed
