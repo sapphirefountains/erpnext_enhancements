@@ -423,8 +423,6 @@ class TestTheLeaderboardIsNotTheWholeCompany(unittest.TestCase):
         self.assertIn("total_ranked", player)
         self.assertIn("my_rank", player)
 
-if __name__ == "__main__":
-    unittest.main()
 
 class TestTheFeedIsGatedOnTheVIEWER(unittest.TestCase):
     """The leak the first version of this shipped, caught by the branch review.
@@ -588,5 +586,14 @@ class TestTheFeedIsGatedOnTheVIEWER(unittest.TestCase):
 
 
 
+if __name__ == "__main__":
+    unittest.main()
+
+
+# Runs LAST, deliberately: anything declared after this block is invisible to a
+# direct `python <file>` run, while CI's `python -m unittest <module>` still
+# collects it. That divergence hid 211 tests across ten suites (v1.416.0), and it
+# fails GREEN, which is the dangerous direction. tests/test_test_collection.py
+# fails the build if it drifts back.
 if __name__ == "__main__":
     unittest.main()

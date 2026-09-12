@@ -72,8 +72,7 @@
    "reqd": 1
   },
   {
-   "default": "Probed",
-   "description": "Probed means the duration came from the file itself and is trustworthy. Manual means a probe failed and someone typed it — coverage gating on such a video is reported as unverified.",
+   "description": "Probed means the duration came from the file itself and is trustworthy. Manual means a probe failed and someone typed it — coverage gating on such a video is reported as unverified. NO default: a new record must arrive empty so the controller can stamp Manual.",
    "fieldname": "duration_source",
    "fieldtype": "Select",
    "label": "Duration Source",

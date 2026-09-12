@@ -119,22 +119,44 @@ def _method(src, name):
     return src[i:]
 
 
-class TestOpenBuilderActuallyOpensTheBuilder(unittest.TestCase):
-    def test_the_button_routes_to_the_page(self):
-        src = _course_form()
-        self.assertIn("training-builder", src, "Open Builder does not route to the builder page")
-        self.assertIn("frappe.set_route", src)
+class TestTheBuilderIsStillReachableByUrl(unittest.TestCase):
+    """Was `TestOpenBuilderActuallyOpensTheBuilder`, until R1 (v1.416.0) removed the
+    Course form's Open Builder button and the `open_builder()` helper behind it.
 
-    def test_it_passes_the_course_through(self):
-        """The page reads `course` from the query string, then route_options. A
-        route with neither lands on the course picker, which is not what pressing
-        the button on a specific course should do."""
-        self.assertIn("frappe.route_options", _course_form())
+    Its two form-side assertions went with them. They were not weakened — they were
+    the guard keeping that door wired, and R1 is the decision to stop. Deleting the
+    button without deleting them would have left an assertion passing over a helper
+    nothing could call.
+
+    What survives is the half that now pins R1's actual promise: the page stays
+    reachable at a hand-typed or bookmarked /app/training-builder?course=… ."""
 
     def test_the_builder_still_reads_route_options(self):
-        """The other half of the same contract — asserted here so the two cannot
-        drift apart silently."""
+        """R1 unlinks; it does not remove. `handle_route` reads the query string first
+        and falls back to route_options, so a bookmark still lands on the right course
+        with no in-app link left anywhere."""
         self.assertIn("frappe.route_options.course", _builder())
+
+    def test_the_canvas_keeps_exactly_one_door_open(self):
+        """Registering a NEW video from Drive is the one authoring job still living
+        only here: `register_video_asset` has one caller repo-wide and
+        `retry_video_copy` three, all in this page. So the canvas's Video block keeps a
+        hand-off — and that hand-off is the ONLY remaining call to `open_classic`.
+
+        Pinned at one, not merely at non-zero: the whole point of R1 is that the
+        classic stopped being a general-purpose destination. Comment-stripped, because
+        the comments explaining the narrowing name `open_classic` repeatedly.
+
+        Uses this file's own `_code`, not an import from `test_training_canvas`: all
+        three of these suites have a `__main__` block, and a cross-module import makes
+        the direct run die with ModuleNotFoundError while CI stays green — the exact
+        run-it-two-ways divergence this same commit removes from this file."""
+        canvas = _code(
+            (APP / "training/page/training_canvas/training_canvas.js").read_text(encoding="utf-8")
+        )
+        self.assertEqual(canvas.count("this.open_classic()"), 1)
+        self.assertNotIn("Open classic builder", canvas)
+        self.assertNotIn("tc-classic", canvas)
 
     def test_the_button_is_not_a_placeholder_dialog(self):
         """The bug itself: a button whose entire body was a msgprint saying the
@@ -493,10 +515,6 @@ class TestChaptersCanBeManaged(unittest.TestCase):
         self.assertIn("chapter_title", _method(_builder(), "manage_chapters"))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestVideoCanBeAuthored(unittest.TestCase):
     """The two gaps that made a video impossible to add and impossible to debug.
 
@@ -618,3 +636,11 @@ class TestVideoCanBeAuthored(unittest.TestCase):
         start = source.index("def register_video_asset(")
         body = source[start : source.index("\ndef ", start + 5)]
         self.assertIn("drive_file_id_from(", body)
+
+# Runs LAST, deliberately. This block used to sit above
+# `class TestVideoCanBeAuthored`, so `python -m unittest <module>` (what CI does)
+# collected all 51 tests while running the file directly collected only the ones
+# declared above it — and the classes that silently vanished included the video
+# one, i.e. exactly the capability R1's scope turns on.
+if __name__ == "__main__":
+    unittest.main()

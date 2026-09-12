@@ -110,16 +110,18 @@ function render_actions(frm, draft, is_manager) {
 		frm.add_custom_button(__("Retire Course"), () => retire(frm), __("Learners"));
 	}
 
-	// The builder shipped in Phase 3, but this button went on saying it had not
-	// for three releases — the placeholder outlived the thing it was standing in
-	// for. Anyone who trusted it never found the builder at all.
-	// The visual editor first, because it is the one an author who is not a
-	// developer can use, and until v1.386.0 NOTHING linked to it at all -- grepping
-	// for "training-canvas" outside its own directory returned two CHANGELOG lines
-	// and its test file. It shipped, and the only way to reach it was to know the
-	// URL and type it.
+	// ONE authoring button, as of R1 (v1.416.0). The canvas is the authoring
+	// surface; the classic builder is being retired and no longer has a door here.
+	// Until v1.386.0 the canvas had no door at ALL -- grepping for
+	// "training-canvas" outside its own directory returned two CHANGELOG lines and
+	// its test file -- so for a while the only way to reach the better editor was
+	// to know the URL and type it. Two doors then meant authors had to guess which
+	// editor was the real one; one door answers that.
+	//
+	// /app/training-builder stays reachable by URL for one release. The one thing
+	// it still does alone is register a NEW video from Drive, and the canvas hands
+	// off to it from the Video block for exactly that.
 	const $canvas = frm.add_custom_button(__("Edit Visually"), () => open_canvas(frm));
-	const $builder = frm.add_custom_button(__("Open Builder"), () => open_builder(frm));
 	// Primary only when nothing else already is: a manager looking at a draft has
 	// Publish highlighted, and two primary buttons side by side just make the
 	// author guess which one is the safe click.
@@ -157,13 +159,6 @@ function open_canvas(frm) {
 	frappe.set_route("training-canvas");
 }
 
-function open_builder(frm) {
-	// `handle_route` reads `course` from the query string first and falls back to
-	// route_options, so this works whether the page is already mounted or is being
-	// opened cold.
-	frappe.route_options = { course: frm.doc.name };
-	frappe.set_route("training-builder");
-}
 
 function render_status_banner(frm, draft) {
 	if (frm.doc.status === "Published" && draft) {

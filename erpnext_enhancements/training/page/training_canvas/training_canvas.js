@@ -148,7 +148,6 @@ class TrainingCanvas {
 		this.page.add_menu_item(__("New draft version"), () => this.new_draft());
 		this.page.add_menu_item(__("Submit for review"), () => this.submit_for_review());
 		this.page.add_menu_item(__("Publish…"), () => this.publish());
-		this.page.add_menu_item(__("Open classic builder"), () => this.open_classic());
 
 		// The autosave debounce is 1200ms, so a tab closed a second after the last
 		// keystroke loses it. The browser prompt is the only thing between the author
@@ -196,7 +195,6 @@ class TrainingCanvas {
 						<span class="tc-pip"></span><span class="tc-status-text">${__("Saved")}</span>
 					</span>
 					<button class="btn btn-default btn-sm tc-lessonset">⚙ ${__("Lesson")}</button>
-					<button class="btn btn-default btn-sm tc-classic">${__("Classic builder")}</button>
 				</div>
 				<div class="tc-rt-toolbar" hidden></div>
 				<div class="tc-main">
@@ -221,7 +219,6 @@ class TrainingCanvas {
 		this.$lessonset = this.$app.find(".tc-lessonsettings");
 		this.build_rt_toolbar(this.$app.find(".tc-rt-toolbar"));
 
-		this.$app.find(".tc-classic").on("click", () => this.open_classic());
 		this.$app.find(".tc-rail-toggle").on("click", () => this.$app.toggleClass("is-rail-collapsed"));
 		this.$app.find(".tc-lessonset").on("click", () => this.toggle_lesson_settings());
 		this.$title.on("input", () => {
@@ -234,6 +231,9 @@ class TrainingCanvas {
 		});
 	}
 
+	// ONE caller, in `video_editor` -- registering a new video from Drive. That is
+	// the whole remaining reason to open the classic builder, and keeping this method
+	// down to a single call site is what makes that checkable (a test asserts it).
 	open_classic() {
 		const course = this.course && this.course.name;
 		frappe.set_route("training-builder", course ? { course } : {});
@@ -790,14 +790,11 @@ class TrainingCanvas {
 			.appendTo($panel);
 		const $list = $('<ul class="tc-readiness-list"></ul>').appendTo($panel);
 		blocks.forEach((line) => $("<li></li>").text(line).appendTo($list));
-		checkpoints.forEach((line) => {
-			const $li = $("<li></li>").text(line).appendTo($list);
-			// The canvas cannot edit checkpoints -- they stay in the classic builder --
-			// so a checkpoint line without this is an error message with no remedy.
-			$('<span class="tc-readiness-where"></span>')
-				.text(" " + __("(edit in the classic builder)"))
-				.appendTo($li);
-		});
+		// No "where to fix this" suffix any more: since v1.413.0 every problem
+		// `Training Checkpoint.incomplete_reasons()` reports -- no question typed,
+		// fewer than two options, none ticked correct -- is fixable in the pin
+		// inspector on this page. The line IS the remedy now.
+		checkpoints.forEach((line) => $("<li></li>").text(line).appendTo($list));
 		if (r.truncated) {
 			$('<div class="tc-readiness-more"></div>')
 				.text(__("…and more. Publishing lists every one."))
@@ -1086,8 +1083,15 @@ class TrainingCanvas {
 	}
 
 	// Video — pick a registered Training Video Asset (from the bootstrap) and set the
-	// poster / coverage gate. Registering a NEW video (the Drive probe) and placing
-	// in-video checkpoints stay in the classic builder.
+	// poster / coverage gate. Checkpoints are placed HERE as of v1.413.0.
+	//
+	// Registering a NEW video is the one authoring job that still lives only in the
+	// classic builder, and the hand-off at the bottom of this editor is the only
+	// door to it left after R1 (v1.416.0). Deliberately not replaced by "just make
+	// the record in the Desk": `duration_source` is read_only, so a hand-made row
+	// cannot be corrected to Manual, and until v1.416.0 it also defaulted to
+	// "Probed" -- which made `grading._duration_is_verified` enforce the coverage
+	// gate against a duration nobody measured. Waiving beats gating on a guess.
 	video_editor(lesson, block) {
 		const $box = $('<div class="tc-media"></div>');
 		$('<div class="tc-embed-label"></div>').text(__("Video")).appendTo($box);
@@ -1120,8 +1124,8 @@ class TrainingCanvas {
 			const $d = this.render_ai_drawer(lesson);
 			if ($d && this.ai_drafts.kind === "checkpoint") $box.append($d);
 		}
-		$('<div class="tc-hint"></div>').text(__("Register a new video in the classic builder. Checkpoints are placed here.")).appendTo($box);
-		$('<button class="btn btn-default btn-xs" style="margin-top:6px"></button>').text(__("Open classic builder")).on("click", () => this.open_classic()).appendTo($box);
+		$('<div class="tc-hint"></div>').text(__("Registering a NEW video from Drive is still done in the classic builder — it probes the real length, which watch coverage is measured against.")).appendTo($box);
+		$('<button class="btn btn-default btn-xs" style="margin-top:6px"></button>').text(__("Register a video (classic builder)")).on("click", () => this.open_classic()).appendTo($box);
 		if (!this.editable()) $box.find("input, select").attr("disabled", "disabled");
 		return $box;
 	}

@@ -536,10 +536,6 @@ class TestTheSeamsThatBrokeStayPinned(unittest.TestCase):
         self.assertIn("doc_min_dwell_seconds", keys)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestGateThresholdBinding(unittest.TestCase):
     """The `gates` group must be read off `gates`, and must be read at all.
 
@@ -613,3 +609,12 @@ class TestGateThresholdBinding(unittest.TestCase):
         # Every key read off `gates` must be one the server actually sends there.
         stray = sorted(reads - self._gate_keys())
         self.assertFalse(stray, f"read off state.gates but not sent under `gates`: {stray}")
+
+
+# Runs LAST, deliberately: anything declared after this block is invisible to a
+# direct `python <file>` run, while CI's `python -m unittest <module>` still
+# collects it. That divergence hid 211 tests across ten suites (v1.416.0), and it
+# fails GREEN, which is the dangerous direction. tests/test_test_collection.py
+# fails the build if it drifts back.
+if __name__ == "__main__":
+    unittest.main()

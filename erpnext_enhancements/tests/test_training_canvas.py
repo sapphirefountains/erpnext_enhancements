@@ -665,10 +665,6 @@ class TestTurnIntoSaysWhatItWillCost(unittest.TestCase):
         self.assertIn("stays counted", _canvas())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestCheckpointsAreReconciledAfterEverySave(unittest.TestCase):
     """`_reap_orphan_checkpoints` runs after every single `lesson.save()` and deletes
     pins whose block has stopped being a Video — which is exactly what `turn_into`
@@ -1017,3 +1013,13 @@ class TestThePreviewIsASecondModeNotAThirdTransport(unittest.TestCase):
         html = _strip_js_comments(self.PREVIEW_HTML.read_text(encoding='utf-8'))
         self.assertNotIn("draftToc", html)
         self.assertIn("toc: DRAFT.toc", html)
+
+# Runs LAST, deliberately. This block sat at line 668 of 1019, so
+# `python -m unittest <module>` (what CI does) collected all 94 tests while running
+# the file directly collected 62 — and the 32 that silently vanished were every
+# suite added after it: checkpoint reconciliation, the pin model, AI drafting, and
+# the draft preview. A developer checking their work the obvious way got a green
+# run over a third of nothing. Same defect fixed in test_training_builder_entry.py
+# in this release.
+if __name__ == "__main__":
+    unittest.main()

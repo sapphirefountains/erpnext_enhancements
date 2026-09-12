@@ -467,10 +467,6 @@ class TestErrorDescriptionIsNeverEmpty(unittest.TestCase):
 		self.assertTrue(STATE["errors"])
 
 
-if __name__ == "__main__":
-	unittest.main()
-
-
 class TestConnectionTestNeedsOnlyWhatTheAppNeeds(unittest.TestCase):
 	"""The pre-flight must not demand a permission the module never uses.
 
@@ -527,3 +523,12 @@ def ", start)` raises when the function is the last in the
 			line for line in source.splitlines() if not line.strip().startswith("#")
 		)
 		self.assertNotIn("buckets().get(", code)
+
+
+# Runs LAST, deliberately: anything declared after this block is invisible to a
+# direct `python <file>` run, while CI's `python -m unittest <module>` still
+# collects it. That divergence hid 211 tests across ten suites (v1.416.0), and it
+# fails GREEN, which is the dangerous direction. tests/test_test_collection.py
+# fails the build if it drifts back.
+if __name__ == "__main__":
+	unittest.main()

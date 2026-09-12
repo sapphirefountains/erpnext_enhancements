@@ -1298,9 +1298,10 @@ def _readiness(version_doc):
         "blocks": blocks,
         "checkpoints": checkpoints,
         "truncated": len(blocks) >= ADVISORY_LIMIT or len(checkpoints) >= ADVISORY_LIMIT,
-        # The canvas cannot edit checkpoints -- they stay in the classic builder --
-        # so a checkpoint line without this is an error message with no remedy.
-        "checkpoints_editable_in": "training-builder",
+        # `checkpoints_editable_in` was removed in v1.416.0. It shipped the string
+        # "training-builder" to every client as the place to fix a checkpoint, which
+        # v1.413.0 made false and R1 made a dead end. Nothing read it -- one grep hit
+        # repo-wide, its own definition -- so removing it is behaviour-neutral.
     }
 
 
