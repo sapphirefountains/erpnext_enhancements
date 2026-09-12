@@ -47,8 +47,17 @@ MAX_CARDS_PER_STAGE = 30
 WON_AMBER_DAYS = 1
 WON_RED_DAYS = 3
 
-DEFAULT_STALE_AMBER_DAYS = 7
-DEFAULT_STALE_RED_DAYS = 14
+# Calibrated 2026-09-12 against the actual spread of the 39 gated open cards, which ran
+# 2..134 days with a natural break at ~60. The shipped 7/14 put 34 of 39 straight to red,
+# and a board that is uniformly red carries no more information than one that is
+# uniformly green -- it just reads as urgent. 45/90 splits them 15 fresh / 12 amber /
+# 12 red, which is the only setting where all three colours mean something.
+#
+# These are the FALLBACKS, not the live values: `_thresholds` prefers the Single, and
+# substitutes these only when the field is None or "". A deliberate 0 still disables a
+# tier, which is what `_stale_level`'s `> 0` guards are for.
+DEFAULT_STALE_AMBER_DAYS = 45
+DEFAULT_STALE_RED_DAYS = 90
 
 # Hand-off rail: how many in-progress projects show under the board.
 HANDOFF_RAIL_LIMIT = 14

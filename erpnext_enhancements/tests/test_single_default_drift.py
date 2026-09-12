@@ -261,6 +261,72 @@ class TestTheMechanicsCannotAbortAMigrate(unittest.TestCase):
         self.assertIn("[post_model_sync]", text[:at])
 
 
+class TestTheCalibratedThresholdsAgreeEverywhere(unittest.TestCase):
+    """The pipeline thresholds are stated in four places and all four must match, or the
+    board behaves differently depending on how the site got its value.
+
+    v1.421.0 moved them 7/14 -> 45/90 after measuring the real spread. A fresh install
+    reads the DocType JSON; a site with no row falls back to the module constants; the
+    backfill writes its own table; and `calibrate_pipeline_staleness` moves the live value.
+    Three of those are checked here (the fourth is the patch's own MOVES, below).
+    """
+
+    AMBER, RED = 45, 90
+
+    def _settings_json(self):
+        import glob
+
+        for path in glob.glob(str(APP / "**/doctype/*/*.json"), recursive=True):
+            doc = json.loads(Path(path).read_text(encoding="utf-8"))
+            if doc.get("name") == "ERPNext Enhancements Settings":
+                return {f["fieldname"]: f for f in doc.get("fields", [])}
+        raise AssertionError("ERPNext Enhancements Settings JSON not found")
+
+    def test_the_doctype_json_declares_them(self):
+        fields = self._settings_json()
+        self.assertEqual(fields["pipeline_stale_amber_days"].get("default"), str(self.AMBER))
+        self.assertEqual(fields["pipeline_stale_red_days"].get("default"), str(self.RED))
+
+    def test_the_module_fallbacks_match(self):
+        """`_thresholds` substitutes these when the field is None or "". A fallback that
+        disagrees with the JSON means two sites can render the same data differently."""
+        src = (APP / "crm_enhancements/page/sales_pipeline/sales_pipeline.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("DEFAULT_STALE_AMBER_DAYS = %d" % self.AMBER, src)
+        self.assertIn("DEFAULT_STALE_RED_DAYS = %d" % self.RED, src)
+
+    def test_the_calibration_patch_moves_from_the_old_pair(self):
+        """Guarded on the exact pre-calibration value, not on falsiness and not
+        unconditionally: somebody may have tuned these by hand between the v1.419.0
+        backfill and this deploy, and that choice outranks the patch's."""
+        patch = APP / "patches/calibrate_pipeline_staleness.py"
+        self.assertTrue(patch.is_file())
+        tree = ast.parse(patch.read_text(encoding="utf-8"))
+        moves = None
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Tuple):
+                if any(getattr(t, "id", None) == "MOVES" for t in node.targets):
+                    moves = ast.literal_eval(node.value)
+        self.assertIsNotNone(moves, "MOVES not found in calibrate_pipeline_staleness")
+        self.assertEqual(
+            sorted(moves),
+            sorted(
+                [
+                    ("pipeline_stale_amber_days", 7, self.AMBER),
+                    ("pipeline_stale_red_days", 14, self.RED),
+                ]
+            ),
+        )
+
+        # The table alone is not the guarantee. Without the equality guard the patch
+        # overwrites whatever is there, and a hand-tune made between the v1.419.0 backfill
+        # and this deploy would be silently reverted on the next migrate. Deleting the
+        # guard left this test green until it checked for it.
+        body = ast.unparse(ast.parse(patch.read_text(encoding="utf-8")))
+        self.assertIn("if cint(current) != was:", body.replace(" + ", chr(34)))
+
+
 class TestTheAssertionsCannotPassVacuously(unittest.TestCase):
     """Most of the above iterate over `_table()`. If that parser silently returned nothing,
     every one of them would pass while checking an empty dict."""
