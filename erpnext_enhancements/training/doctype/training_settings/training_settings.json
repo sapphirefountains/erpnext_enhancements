@@ -14,8 +14,6 @@
   "gamification_enabled",
   "ai_section",
   "ai_assist_enabled",
-  "authoring_section",
-  "classic_builder_retired",
   "defaults_section",
   "default_passing_score",
   "default_min_video_coverage",
@@ -108,18 +106,7 @@
    "fieldtype": "Check",
    "label": "AI Question Drafting"
   },
-  {
-   "fieldname": "authoring_section",
-   "fieldtype": "Section Break",
-   "label": "Authoring"
-  },
-  {
-   "default": "0",
-   "description": "Retire the old Training Builder at /app/training-builder. Nothing in the app links to it any more (v1.416.0) and the canvas does everything it did, including registering a video from Drive (v1.417.0) — tick this to close the URL too. Reversible: untick it and the page works again, with no code change. It stays in the awesomebar either way, because that list is built from page permissions and a setting cannot remove it; opening it will say it has been retired. This is a retirement switch, not access control — the Page's own roles are still the permission boundary.",
-   "fieldname": "classic_builder_retired",
-   "fieldtype": "Check",
-   "label": "Retire The Classic Builder"
-  },
+
   {
    "fieldname": "defaults_section",
    "fieldtype": "Section Break",

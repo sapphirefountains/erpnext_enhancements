@@ -966,3 +966,15 @@ erpnext_enhancements.patches.enable_briefing_gemini_narrative
 # three colours mean something. Nik chose it from four measured options. Guarded on the
 # exact pre-calibration pair so a later hand-tune is never clobbered. Safe twice.
 erpnext_enhancements.patches.calibrate_pipeline_staleness
+# v1.422.0 (WI-074 D / R3) -- deletes the classic Training Builder page, approved by Nik
+# 2026-09-12. End of a staged retirement: R1 unlinked (v1.416.0), v1.417.0 ported video
+# registration (the last classic-only capability -- until it landed, ticking the R2 flag
+# would have removed the only way to register a video), R2 added the flag (v1.418.0), and
+# this deletes the page. ONE-WAY. Removing the folder stops the page being SYNCED; the
+# Page row on the site outlives that, so it is deleted explicitly -- v16's
+# remove_orphan_entities would very likely take it, but only when no installed app ships
+# it, and a leftover row is a desk route that 404s rather than one that is absent. Also
+# drops the tabSingles row for classic_builder_retired, whose JSON declaration goes in the
+# same release. Deliberately does NOT touch register_video_asset / retry_video_copy /
+# _builder_video_assets / _probe_drive_video -- the canvas calls all four. Safe twice.
+erpnext_enhancements.patches.delete_classic_training_builder

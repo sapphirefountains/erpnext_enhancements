@@ -636,14 +636,6 @@ class TestRuntimeModulesMeet(unittest.TestCase):
             line for line in src.splitlines() if not line.strip().startswith("//")
         )
 
-    @staticmethod
-    def _builder():
-        path = APP / "training/page/training_builder/training_builder.js"
-        src = path.read_text(encoding="utf-8")
-        src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
-        return "\n".join(
-            line for line in src.splitlines() if not line.strip().startswith("//")
-        )
 
     def test_video_exports_the_entry_point_blocks_js_calls(self):
         self.assertIn("TR.Video.mount(", self._js("blocks.js"))
@@ -690,14 +682,13 @@ class TestRuntimeModulesMeet(unittest.TestCase):
         checks their work. Both bugs above survived four releases behind exactly
         this.
         """
-        builder = self._builder()
-        self.assertNotIn("install_runtime_shims", builder)
-        for forbidden in ("TR.Video.mount =", "TR.Quiz.mount =", "TR.Player ="):
-            self.assertNotIn(
-                forbidden,
-                builder,
-                f"the builder assigns {forbidden} — the preview must not repair the runtime",
-            )
+    # Deleted with the classic builder in v1.422.0 (R3). These pinned that page's
+    # HAND-ROLLED preview against the runtime -- they existed because the classic
+    # rebuilt each payload in JavaScript and the two drifted. The preview is now
+    # /training_preview, and in draft mode its payload comes from the server via
+    # `training_author._split_lesson`, so there is no second implementation left to
+    # drift from. The guarantee is structural now rather than a comparison, and
+    # `test_training_canvas.TestThePreviewIsASecondModeNotAThirdTransport` pins it.
 
 
 class TestHeartbeatIsShapedForItsEndpoint(unittest.TestCase):
@@ -796,7 +787,6 @@ class TestHeartbeatIsShapedForItsEndpoint(unittest.TestCase):
 # Read the header of this file for why these checks are static.
 
 VIDEO = JS_DIR / "video.js"
-BUILDER = APP / "training/page/training_builder/training_builder.js"
 
 
 def _strip_comments(src):
@@ -808,8 +798,6 @@ def _video_code():
     return _strip_comments(VIDEO.read_text(encoding="utf-8"))
 
 
-def _builder_code():
-    return _strip_comments(BUILDER.read_text(encoding="utf-8"))
 
 
 def _js_object_keys(code, marker):
@@ -865,17 +853,13 @@ class TestCheckpointFieldNames(unittest.TestCase):
         for gone in ("at", "question", "type", "rewind", "pause", "scored"):
             self.assertNotIn(gone, sent, f"_checkpoint_payload is sending `{gone}` again")
 
-    def test_the_builder_preview_matches_the_runtime_key_for_key(self):
-        """`preview_checkpoint` exists so an author can test a checkpoint before
-        a learner meets one. It is worth nothing if it serves a different shape —
-        and it drifted precisely because nothing compared the two."""
-        preview = _js_object_keys(_builder_code(), "preview_checkpoint(cp) {")
-        self.assertEqual(
-            preview,
-            _returned_keys("_checkpoint_payload"),
-            "training_builder.preview_checkpoint and api.training._checkpoint_payload "
-            "have drifted apart",
-        )
+    # Deleted with the classic builder in v1.422.0 (R3). These pinned that page's
+    # HAND-ROLLED preview against the runtime -- they existed because the classic
+    # rebuilt each payload in JavaScript and the two drifted. The preview is now
+    # /training_preview, and in draft mode its payload comes from the server via
+    # `training_author._split_lesson`, so there is no second implementation left to
+    # drift from. The guarantee is structural now rather than a comparison, and
+    # `test_training_canvas.TestThePreviewIsASecondModeNotAThirdTransport` pins it.
 
 
 class TestCheckpointEnvelope(unittest.TestCase):
@@ -890,9 +874,13 @@ class TestCheckpointEnvelope(unittest.TestCase):
         keys = _returned_keys("open_checkpoint")
         self.assertEqual(keys, {"enabled", "checkpoint"})
 
-    def test_the_builder_preview_sends_the_envelope_too(self):
-        code = _builder_code()
-        self.assertIn("enabled: true, checkpoint:", code)
+    # Deleted with the classic builder in v1.422.0 (R3). These pinned that page's
+    # HAND-ROLLED preview against the runtime -- they existed because the classic
+    # rebuilt each payload in JavaScript and the two drifted. The preview is now
+    # /training_preview, and in draft mode its payload comes from the server via
+    # `training_author._split_lesson`, so there is no second implementation left to
+    # drift from. The guarantee is structural now rather than a comparison, and
+    # `test_training_canvas.TestThePreviewIsASecondModeNotAThirdTransport` pins it.
 
 
 class TestRewindHasOneAuthority(unittest.TestCase):
@@ -942,9 +930,13 @@ class TestCheckpointsCanRearm(unittest.TestCase):
         self.assertIn("nextCheckpointAt", body)
         self.assertIn("armNext()", body)
 
-    def test_the_builder_preview_reports_it(self):
-        """Otherwise the author previews a video in which no pin ever fires."""
-        self.assertIn("next_checkpoint_at: next_at", _builder_code())
+    # Deleted with the classic builder in v1.422.0 (R3). These pinned that page's
+    # HAND-ROLLED preview against the runtime -- they existed because the classic
+    # rebuilt each payload in JavaScript and the two drifted. The preview is now
+    # /training_preview, and in draft mode its payload comes from the server via
+    # `training_author._split_lesson`, so there is no second implementation left to
+    # drift from. The guarantee is structural now rather than a comparison, and
+    # `test_training_canvas.TestThePreviewIsASecondModeNotAThirdTransport` pins it.
 
 
 # ------------------------------------------------------------------------ quiz
@@ -1018,12 +1010,13 @@ class TestCanRetryIsSaidOutLoud(unittest.TestCase):
         for key in ("attempts_used", "max_attempts"):
             self.assertIn(f'payload["{key}"]', runtime)
 
-    def test_the_builder_preview_says_it_too(self):
-        """Otherwise an author previewing a failed quiz sees no Try again button
-        and reasonably concludes the learner will not get one either."""
-        builder = _builder_code()
-        self.assertIn("can_retry:", builder)
-        self.assertIn("awarded:", builder)
+    # Deleted with the classic builder in v1.422.0 (R3). These pinned that page's
+    # HAND-ROLLED preview against the runtime -- they existed because the classic
+    # rebuilt each payload in JavaScript and the two drifted. The preview is now
+    # /training_preview, and in draft mode its payload comes from the server via
+    # `training_author._split_lesson`, so there is no second implementation left to
+    # drift from. The guarantee is structural now rather than a comparison, and
+    # `test_training_canvas.TestThePreviewIsASecondModeNotAThirdTransport` pins it.
 
 
 # ----------------------------------------------------------------- get_lesson

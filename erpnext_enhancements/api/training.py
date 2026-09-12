@@ -1096,9 +1096,9 @@ def _checkpoint_payload(checkpoint):
 
     **The keys are the Training Checkpoint field names, deliberately.** They used
     to be abbreviated — ``at``, ``type``, ``question``, ``rewind`` — and nothing
-    read them under those names: ``video.js`` and the builder's preview harness
-    (``training_builder.preview_checkpoint``) both spelled them out in full, which
-    is to say both consumers independently agreed with the doctype and disagreed
+    read them under those names: ``video.js`` and the classic builder's preview
+    harness (``preview_checkpoint``, deleted with that page in v1.422.0) both spelled
+    them out in full, which is to say both consumers agreed with the doctype and disagreed
     with this function. An abbreviation is a translation layer, and a translation
     layer with no reader is just a second name for the same thing waiting to be
     read wrong. ``at`` in particular did not say its unit, in a module whose

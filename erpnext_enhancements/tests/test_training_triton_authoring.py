@@ -14,8 +14,10 @@ was removed. These guards keep it removed and keep the reuse wired:
   * the learner ``/training`` player carries no Triton trident (no ``tritonFab``,
     no ``tr-triton-fab``, no ``draftCourse`` transport, no ``can_author`` boot key,
     no ``draft_course`` re-export, no ``draft_course_with_triton`` endpoint);
-  * the **builder** opens the real bubble through ``window.SapphireTriton.ask``,
-    the same pattern the Training Course form already uses.
+  * the **Training Course form** opens the real bubble through
+    ``window.SapphireTriton.ask``. It is the only surface that does so: the classic
+    builder carried the same wiring and was deleted in v1.422.0 (R3), and the canvas
+    has no Triton button at all.
 
 Run: python -m unittest erpnext_enhancements.tests.test_training_triton_authoring
 """
@@ -29,11 +31,11 @@ APP = REPO_ROOT / "erpnext_enhancements"
 
 
 # Every assertion below is an ABSENCE assertion, and this project has now been bitten
-# eleven times by the same thing: the comment explaining why a token is gone names the
+# thirteen times by the same thing: the comment explaining why a token is gone names the
 # token, so a raw substring search matches the explanation and the test passes over a
-# genuine regression. These read four source files, three of which v1.416.0 (R1) wrote
-# new comments into. They were honest before that change and they are honest after it;
-# they are hardened here so they stay honest without anyone having to remember.
+# genuine regression. These read three source files that v1.416.0 (R1) wrote new comments
+# into. They were honest before that change and they are honest after it; they are
+# hardened here so they stay honest without anyone having to remember.
 
 
 def _py(path):
@@ -99,15 +101,13 @@ class TestTheCustomTridentIsGone(unittest.TestCase):
         self.assertNotIn("draftCourse", method_map)
 
 
-class TestTheBuilderReusesTheRealBubble(unittest.TestCase):
-    def test_the_builder_opens_the_real_triton_via_sapphiretriton(self):
-        js = _web(APP / "training/page/training_builder/training_builder.js")
-        self.assertIn("open_triton_authoring", js)
-        self.assertIn("window.SapphireTriton", js)
-        self.assertIn("SapphireTriton.ask", js)
-        # It never resurrects a private authoring endpoint.
-        self.assertNotIn("draft_course_with_triton", js)
-        self.assertNotIn("tb-triton-fab", js)
+class TestTheCourseFormReusesTheRealBubble(unittest.TestCase):
+    """Was `TestTheBuilderReusesTheRealBubble`. Its builder half was deleted with the
+    classic builder in v1.422.0 (R3) -- it read training_builder.js, which no longer exists.
+
+    The Training Course form is now the only surface that opens Triton for authoring; the
+    canvas has no Triton button at all (grep SapphireTriton in training_canvas.js returns
+    nothing), which is stated in training/README.md rather than left to be discovered."""
 
     def test_the_training_course_form_pattern_still_exists(self):
         # The established reuse pattern the builder mirrors; a sanity anchor so this

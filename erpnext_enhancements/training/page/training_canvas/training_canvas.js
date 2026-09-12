@@ -3,7 +3,7 @@
 //
 // Training Canvas (/app/training-canvas?course=…) — a full-bleed WYSIWYG builder.
 //
-// The classic Training Builder (/app/training-builder) edited a lesson as a list of
+// The classic Training Builder -- deleted in v1.422.0 -- edited a lesson as a list of
 // summary cards with the real controls in a right-hand inspector, alongside a
 // separate "Preview as learner" pane. This page collapses those into one surface:
 // it renders every block with the REAL learner renderer

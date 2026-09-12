@@ -1083,11 +1083,13 @@ def _probe_drive_video(drive_file_id):
     }
 
 
-# --------------------------------------------------------------------- builder
+# -------------------------------------------------------------------- authoring
 #
-# Everything below backs the Training Builder desk page
-# (`training/page/training_builder`). See the note in the module docstring on why
-# the allowlist and the `modified` lock are the two load-bearing pieces.
+# Everything below backs the Training Canvas desk page
+# (`training/page/training_canvas`). It backed the classic Training Builder too until
+# that page was deleted in v1.422.0 -- this is an API, and deleting a page did not
+# delete it. See the note in the module docstring on why the allowlist and the
+# `modified` lock are the two load-bearing pieces.
 
 
 # Fields the builder may write, by scope. Anything sent that is not named here —
