@@ -2230,6 +2230,14 @@ assistant_tools = [
 	# quiz question flagged unreviewed so publication stays gated on a human.
 	"erpnext_enhancements.assistant_tools.draft_course_spec.DraftCourseSpec",
 	"erpnext_enhancements.assistant_tools.author_training_course.AuthorTrainingCourse",
+	# publish_training_course is the third step, and the one that had no tool at all:
+	# publishing is NOT a document submit -- it is training_author.publish_version,
+	# which materializes toc_json/content_hash from the lessons and only then submits.
+	# So submit_document skipped the materializer and was refused by
+	# _require_materialized_content, and nothing else could take a drafted course the
+	# last inch. APP_MUTATING and Medium risk: it is a one-way door that freezes lesson
+	# titles permanently and can fan assignments out to everyone.
+	"erpnext_enhancements.assistant_tools.publish_training_course.PublishTrainingCourse",
 	"erpnext_enhancements.assistant_tools.maintenance_day_board.MaintenanceDayBoard",
 	"erpnext_enhancements.assistant_tools.maintenance_contract_status.MaintenanceContractStatus",
 	"erpnext_enhancements.assistant_tools.maintenance_visit_history.MaintenanceVisitHistory",

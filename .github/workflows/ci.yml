@@ -396,6 +396,12 @@ jobs:
       # appears. v1.146.0 shipped exactly that across seven widgets.
       - name: Workspace structure (content <-> child rows, WI-018)
         run: python -m unittest erpnext_enhancements.tests.test_workspaces -v
+      # The publish_training_course assistant tool. Guards the two ways it could be
+      # wrong invisibly: a change_type literal that does not match the DocType (the
+      # option that invalidates every completion is one typo away), and a risk
+      # classification that lets a one-way door through without a confirmation.
+      - name: Training publish tool (change types cannot drift, gated as one-way)
+        run: python -m unittest erpnext_enhancements.tests.test_training_publish_tool -v
       # The four draft courses' stale content. Asserts the REPLACEMENT TABLE, because the
       # content itself lives only in tabTraining Content Block on prod. The Expense Claim
       # assertion is deliberately not 'must not appear' -- the correction names it in order to

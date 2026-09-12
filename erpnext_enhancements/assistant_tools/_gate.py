@@ -124,6 +124,14 @@ APP_MUTATING = {
     # Course Spec. A create that yields a Draft (never published) whose quiz
     # questions are all flagged unreviewed, so publication is still gated on a human.
     "author_training_course",
+    # ... and the step after it. Publishing is a one-way door: _materialize_lessons
+    # freezes the lesson titles into toc_json and a submitted version cannot be
+    # edited, a Required course with auto_assign fans assignments out to everyone
+    # with notifications, and change_type="Material Change (require retake)"
+    # invalidates every existing completion. Not HIGH_RISK -- nothing is destroyed
+    # and nothing arbitrary executes -- so it lands on the fail-safe Medium band by
+    # being in neither risk set, which is the honest classification.
+    "publish_training_course",
 }
 
 HIGH_RISK = {
