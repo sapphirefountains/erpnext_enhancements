@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.409.0] - 2026-09-11
+
+### Added
+
+- **The sign-off queue says how long each request has been waiting** (WI-074 E4, P20).
+  `QUEUE_FIELDS` already carried a date and `queueRow` rendered the course title, the learner,
+  the instructions, a note box and three buttons — with no date anywhere. A queue with no age
+  in it is a list: a supervisor could not tell the request raised this morning from the one
+  raised three weeks ago, which is the only thing that decides which to do first.
+
+### Notes
+
+**It reports `signed_on`, not `creation`.** `_stamp_signed_on` documents `signed_on` as when
+the *request* was raised and only ever sets it when blank, so a historical import can carry an
+honest date. `creation` is the row insert, and would report an imported backlog as brand new.
+
+**A row with no date says so.** It renders "Date of request not recorded" — never today's date,
+and never "0 days". That is the WI-074 guardrail verbatim: a fact that cannot be reconstructed
+historically must be marked as such rather than silently given a plausible value. The client
+reuses the existing `daysUntil`, which already returns null on an unparseable date, rather than
+adding a second date parser that would have to get leap years right on its own.
+
+**The "too old" threshold is the site's own.** `default_escalate_after_days` already decides
+when this module chases somebody, so it is read from Training Settings and sent with each row.
+A number hardcoded in the client would be a second answer to "how long is too long", and the
+two would drift the first time anyone changed the setting. A test forbids the literal.
+
+`order_by="creation asc"` is left alone — oldest first is already right for a queue — but the
+ordering is now visible on screen, so it is worth knowing it was a choice rather than an
+accident.
+
 ## [1.408.0] - 2026-09-11
 
 ### Added
