@@ -1014,6 +1014,117 @@ class TestThePreviewIsASecondModeNotAThirdTransport(unittest.TestCase):
         self.assertNotIn("draftToc", html)
         self.assertIn("toc: DRAFT.toc", html)
 
+class TestVideoIsAuthoredEntirelyOnTheCanvas(unittest.TestCase):
+    """v1.417.0. Registering a video from Drive was the LAST capability that existed
+    only in the classic builder, and it is the reason R1 (v1.416.0) left one door open.
+
+    It could not be waved away with "make the record in the Desk": `duration_source` is
+    `read_only` and, until v1.416.0, defaulted to `Probed` — so a hand-made row claimed a
+    duration nobody measured and `grading._duration_is_verified` then ENFORCED the
+    coverage gate against it, which that function's own docstring calls worse than no
+    gate because it reads as one.
+
+    These mirror `test_training_builder_entry.TestVideoCanBeAuthored` assertion for
+    assertion. Every one of those names a mutation that survived a weaker version, and
+    the canvas is now the only surface carrying the capability, so it inherits the bar
+    rather than a lower one."""
+
+    def _fn(self, name):
+        """One class method, bounded at its own closing brace.
+
+        Keyed on the DEFINITION at a line start, not on a bare name: a bare name matches
+        the first CALL SITE instead, and a fixed-size window then runs past the end of
+        the method into the next one. Both have bitten this file already."""
+        src = _canvas()
+        opener = "\n\t" + name + "("
+        at = src.index(opener) + 1
+        end = src.index("\n\t}", at)
+        return src[at:end]
+
+    def test_the_canvas_can_register_a_video(self):
+        """Asserts the button is WIRED, not merely that the method exists. Checking for
+        the name alone passed a mutation on the classic that unhooked the click handler
+        and left `register_drive_video` sitting there complete and unreachable."""
+        src = _canvas()
+        self.assertIn("training_author.register_video_asset", src)
+        self.assertIn("this.register_drive_video(", self._fn("video_editor"))
+
+    def test_registration_chains_off_the_save(self):
+        """Peculiar to the canvas, and the reason this is not a straight copy.
+
+        The registration itself would survive a stale draft, but the `video_asset` it
+        sets onto the block would be overwritten by the in-flight autosave carrying the
+        OLD block table — the author would watch their newly picked video un-pick itself
+        a second later."""
+        body = self._fn("register_drive_video")
+        self.assertIn("this.save_then(", body)
+        self.assertLess(
+            body.index("save_then"),
+            body.index("register_video_asset"),
+            "the registration call must come after the flush, not before",
+        )
+
+    def test_it_reports_whether_the_length_was_really_probed(self):
+        """`duration_probed: false` means the service account could not read the file —
+        the length is a placeholder and the gate will be waived. Saying "registered" and
+        nothing else would hide exactly that."""
+        self.assertIn("duration_probed", self._fn("video_registered"))
+
+    def test_a_failed_copy_is_shown_with_a_way_out(self):
+        body = self._fn("render_asset_state")
+        self.assertTrue(body, "render_asset_state not found")
+        self.assertIn("last_error", body)
+        self.assertIn("retry_video_copy", body)
+
+    def test_the_404_is_translated(self):
+        """Drive answers 404 rather than 403 for a file the service account cannot see,
+        so the raw error points away from the actual cause.
+
+        Asserts the EXPLANATION, not the digits: checking for "404" alone passed a
+        mutation that disabled the branch, because the regex detecting it still contained
+        the number. And the detector must be computed AND used as the condition —
+        asserting the sentence alone passed a mutation that replaced the condition with
+        `false`, leaving the text in the file and unreachable."""
+        body = self._fn("render_asset_state")
+        self.assertIn("not shared", body)
+        self.assertIn("service account", body)
+        self.assertGreaterEqual(
+            body.count("notFound"), 2, "the 404 detector is computed but never used"
+        )
+
+    def test_an_unverified_duration_is_called_out(self):
+        """The quiet one. A `Manual` duration means the coverage gate is WAIVED, and the
+        Coverage field sits directly above this panel — without the warning it reads as a
+        setting that is being applied."""
+        body = self._fn("render_asset_state")
+        self.assertIn("duration_source", body)
+        self.assertIn("waived", body)
+
+    def test_the_state_panel_is_rendered(self):
+        """The panel existing is not the same as the panel being shown — the classic
+        carried that exact bug in reverse (a section built after a throw)."""
+        self.assertIn("this.render_asset_state(", self._fn("video_editor"))
+
+    def test_it_patches_its_asset_list_instead_of_reloading(self):
+        """`reload()` calls `reset()`, which throws away unsaved edits. The classic could
+        afford that call because it had already flushed; here the author may have typed
+        since. Both write endpoints hand back the row they changed for exactly this, so
+        the patched list cannot drift from what a reload would have produced."""
+        for name in ("video_registered", "retry_video_copy"):
+            with self.subTest(method=name):
+                body = self._fn(name)
+                self.assertIn("this.adopt_video_asset(", body)
+                self.assertNotIn("this.reload()", body)
+
+    def test_adopting_replaces_rather_than_duplicates(self):
+        """A retry adopts a row that is already in the list. Pushing unconditionally would
+        put the same asset in the picker twice, with the stale copy sorting alongside the
+        fresh one and no way to tell which is which."""
+        body = self._fn("adopt_video_asset")
+        self.assertIn("findIndex", body)
+        self.assertIn("splice", body)
+
+
 # Runs LAST, deliberately. This block sat at line 668 of 1019, so
 # `python -m unittest <module>` (what CI does) collected all 94 tests while running
 # the file directly collected 62 — and the 32 that silently vanished were every

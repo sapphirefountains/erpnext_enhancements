@@ -141,11 +141,11 @@ endpoint does not count as a caller.
 Open a Training Course and press **Edit Visually**, or go straight to
 `/app/training-canvas?course=TRN-CRS-00001`. That is the authoring surface.
 
-The classic builder at `/app/training-builder` is **being retired** (R1, v1.416.0).
-It has no button anywhere any more and is reachable only by typing the URL. One
-job still lives there alone — **registering a new video from Drive** — and the
-canvas's Video block hands off to it for exactly that. Everything below about
-drafts applies to both.
+The classic builder at `/app/training-builder` is **being retired**. R1 (v1.416.0)
+removed its buttons; v1.417.0 ported the last capability that existed only there
+(**registering a video from Drive**), so nothing in the app links to it and nothing
+needs it. It is reachable by typing the URL until the page is removed. Everything
+below about drafts applies to both.
 
 **Authoring only ever edits an open draft.** Publishing turns the draft into the
 live version and leaves the course with none, so the next round of edits starts a
@@ -192,14 +192,27 @@ are placed here too, on a timeline under the video block, with a pin inspector f
 question and its options (v1.413.0) — and a draft can be **previewed as a learner** through
 the real player (v1.415.0).
 
-**One specialised job stays in the classic builder: registering a new video.** The Drive
-probe reads the real length from `videoMediaMetadata.durationMillis`, and that length is the
-denominator watch coverage is measured against. Making the record by hand in the Desk is
-**not** an equivalent: `duration_source` is `read_only`, so a hand-made row cannot be
-corrected to `Manual` afterwards — and until v1.416.0 it also carried `"default": "Probed"`,
-which made `grading._duration_is_verified` enforce the coverage gate against a number nobody
-measured. The design is to *waive* the gate on an unverified duration rather than run it on a
-guess; that default silently inverted it.
+**Video is authored end to end here as of v1.417.0.** **Add a video from Drive…** registers a
+Training Video Asset through `register_video_asset`, which **probes** the real length from
+`videoMediaMetadata.durationMillis` — the denominator watch coverage is measured against. A
+panel under the block then says what is wrong with the asset: a failed Drive→GCS copy with
+its error and a **Retry the copy** button (Drive answers 404 for a file that is merely
+*unshared*, so that case is translated rather than shown raw), a copy that has not run yet,
+and — the quiet one — a duration that was typed rather than probed.
+
+That last warning sits directly under the Coverage field on purpose. A `Manual` duration makes
+`evaluate_gates` **waive** the coverage gate entirely, so without it the number an author just
+typed reads as a setting that is being applied when it is not.
+
+Making the record by hand in the Desk is **not** an equivalent and never was: `duration_source`
+is `read_only`, so a hand-made row cannot be corrected to `Manual` afterwards — and until
+v1.416.0 it also carried `"default": "Probed"`, which made `grading._duration_is_verified`
+*enforce* the gate against a number nobody measured. The design is to waive on an unverified
+duration rather than run on a guess; that default silently inverted it.
+
+One classic-only convenience is **not** ported: `upload_video`, which attaches a raw file for a
+local preview. Its own message said a Training Video Asset still has to be registered for
+coverage gating, so it was never the authoritative path — and the authoritative path is here.
 
 **It forced a real round-trip fix that also helped the classic builder.**
 `get_builder_bootstrap` returned each block's edit shape but *omitted* `data` (the

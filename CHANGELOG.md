@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.417.0] - 2026-09-12
+
+### Added
+
+- **Video is authored entirely on the canvas** (WI-074 D). **Add a video from Drive…** registers a
+  Training Video Asset, and a diagnostics panel under the block says what is wrong with it: a
+  failed Drive→GCS copy with its error and a **Retry the copy** button, a copy that has not run
+  yet, and a duration that was typed rather than probed.
+
+  This was the last capability that existed only in the classic builder. With it ported,
+  `open_classic()` has no callers and is **deleted** — nothing in the app links to
+  `/app/training-builder` any more.
+
+### Notes
+
+**This is what makes the R2 flag switchable, and it is the whole reason it came first.** R1
+(v1.416.0) deliberately left one door open, because `register_video_asset` had exactly one caller
+repo-wide and `retry_video_copy` three, all of them in the classic builder. A retirement flag
+shipped before this would have been a switch nobody could safely flip: ticking it would have
+removed the only way to register a video. A test now asserts the canvas contains **no** reference
+to `open_classic` *or* to the route string — a method can be deleted while a stray
+`frappe.set_route("training-builder")` survives elsewhere.
+
+**Registration is not a convenience over making the record in the Desk — it is the only correct
+way.** `register_video_asset` **probes** the real length from Drive's
+`videoMediaMetadata.durationMillis`, and watch coverage is a fraction of `duration_seconds`, so a
+hand-typed 600 against a real 900-second video passes an 80% gate on 53% of an actual watch.
+`duration_source` is `read_only`, so a hand-made row cannot be corrected to `Manual` afterwards,
+and until v1.416.0 it also defaulted to `"Probed"` — which made `grading._duration_is_verified`
+*enforce* the gate against a number nobody measured. That is why R1 kept the door rather than
+telling authors to use the Desk.
+
+**The order on screen is deliberate.** The Coverage field, then the asset's state. A `Manual`
+duration makes `evaluate_gates` **waive** that gate entirely, so a warning placed anywhere else
+would leave the number an author just typed reading as a setting that is being applied.
+
+**Registering chains off the save, for a reason peculiar to the canvas.** The registration itself
+would survive a stale draft, but the `video_asset` it sets onto the block would be overwritten by
+the in-flight autosave carrying the *old* block table — the author would watch their newly picked
+video un-pick itself a second later. The classic never had this problem because it flushed first
+for unrelated reasons.
+
+**Both write endpoints now hand back the picker row they changed, and the client patches its own
+list.** The classic called `this.reload()`; on the canvas `reload()` calls `reset()`, which throws
+away unsaved edits. The row is shaped by the same `_video_asset_row` the bootstrap uses — extracted
+in this release so the list and the two single-row replies have **one** definition — so a patched
+list cannot drift from what a reload would have produced. `register_video_asset` returns it on
+*both* paths, created and already-existing: a client that only got a row on creation would silently
+fail to show the picker entry for a video a colleague had already registered, which is the common
+case on a shared Drive folder.
+
+**`upload_video` is deliberately not ported.** It attaches a raw file for a local preview, and its
+own message said a Training Video Asset still has to be registered for coverage gating — so it was
+never the authoritative path. The authoritative path is now on the canvas.
+
+**The canvas tests inherit the classic's bar, not a lower one.** Every assertion in
+`test_training_builder_entry.TestVideoCanBeAuthored` names the mutation that defeated a weaker
+version of itself — a click handler unhooked leaving the method "complete and unreachable", a 404
+branch disabled while the regex still contained the digits. The canvas is now the only surface with
+this capability, so it gets the same assertions, and four mutations (unhooking the save chain,
+disabling the 404 branch, dropping the panel render, reloading instead of patching) were each
+confirmed to fail them before the code was restored.
+
+### Changed
+
+- `_builder_video_assets` now delegates to a new `_video_asset_row`. The picker contract test
+  follows the literal to its new home **and** additionally pins that the picker still calls the
+  shaper and that both write endpoints return a row — following a moved literal alone would let the
+  picker stop using it and still pass.
+
 ## [1.416.0] - 2026-09-12
 
 ### Changed

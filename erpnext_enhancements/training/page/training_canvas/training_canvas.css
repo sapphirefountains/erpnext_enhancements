@@ -981,6 +981,31 @@
 	color: var(--orange-600, #ea580c);
 }
 
+/* ------------------------------------------------- video asset diagnostics */
+
+/* Deliberately louder than .tc-hint. These three say a video will not play, or
+   that the coverage gate sitting directly above is being WAIVED -- the field
+   would otherwise read as a setting that is applied. A muted grey note under a
+   number the author just typed is how "80%" comes to mean nothing. */
+.tc-asset-warn {
+	margin-top: 8px;
+	padding: 8px 10px;
+	border-radius: 8px;
+	font-size: 0.82rem;
+	line-height: 1.45;
+	background: var(--orange-50, #fff7ed);
+	border: 1px solid var(--orange-200, #fed7aa);
+	color: var(--orange-700, #c2410c);
+}
+
+.tc-asset-warn > div + div {
+	margin-top: 4px;
+}
+
+.tc-asset-warn .btn {
+	margin-top: 8px;
+}
+
 .tc-ai-done {
 	margin-top: 6px;
 	color: var(--green-600, #16a34a);

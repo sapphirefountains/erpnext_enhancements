@@ -969,7 +969,11 @@ def register_video_asset(drive_file_id, title=None):
 
     existing = frappe.db.exists("Training Video Asset", {"drive_file_id": drive_file_id})
     if existing:
-        return {"video_asset": existing, "created": False}
+        # `asset` on every return path, including this one. A client that only got a
+        # row when something was CREATED would silently fail to show the picker entry
+        # for a video somebody else had already registered — the commonest case on a
+        # site with a shared Drive folder.
+        return {"video_asset": existing, "created": False, "asset": _one_video_asset(existing)}
 
     probe = _probe_drive_video(drive_file_id)
 
@@ -994,7 +998,14 @@ def register_video_asset(drive_file_id, title=None):
             indicator="orange",
             alert=True,
         )
-    return {"video_asset": doc.name, "created": True, "duration_probed": bool(probe.get("duration_seconds"))}
+    return {
+        "video_asset": doc.name,
+        "created": True,
+        "duration_probed": bool(probe.get("duration_seconds")),
+        # The picker row, so a client can add it to its own list rather than
+        # re-fetching the entire bootstrap.
+        "asset": _one_video_asset(doc.name),
+    }
 
 
 @frappe.whitelist()
@@ -1029,6 +1040,11 @@ def retry_video_copy(video_asset):
         "status": asset.status,
         "copied": bool((asset.gcs_object or "").strip()),
         "last_error": ((asset.last_error or "").strip().splitlines() or [""])[-1][:300],
+        # The refreshed picker row. The scalars above are kept because the classic
+        # builder reads them; a client with a local asset list replaces its row with
+        # this one, so what it renders next cannot drift from what the bootstrap
+        # would have said.
+        "asset": _one_video_asset(video_asset),
     }
 
 
@@ -1305,35 +1321,67 @@ def _readiness(version_doc):
     }
 
 
-def _builder_video_assets():
-    """The video picker. ``has_transcript`` rides along because it is what decides
-    whether ``training_ai.suggest_checkpoints`` will refuse — the builder can grey
-    the action out instead of letting the author discover the refusal."""
+_VIDEO_ASSET_FIELDS = [
+    "name", "title", "duration_seconds", "duration_source", "status",
+    "transcript_source", "gcs_object", "drive_file_id", "last_error",
+]
+
+
+def _video_asset_row(row):
+    """One picker row, shaped once.
+
+    Every caller that hands a video asset to an authoring client goes through here:
+    the bootstrap's whole list, and the two write endpoints handing back the single
+    row they just changed. The alternative — each building its own dict — is how the
+    canvas ends up rendering a diagnostic the bootstrap spells differently, and the
+    diagnostics are the entire reason these fields are sent.
+
+    ``has_transcript`` rides along because it is what decides whether
+    ``training_ai.suggest_checkpoints`` will refuse — an authoring page can grey the
+    action out instead of letting the author discover the refusal.
+    """
+    return {
+        "name": row.name,
+        "title": row.title,
+        "duration_seconds": cint(row.duration_seconds),
+        # `duration_source` decides whether the coverage gate applies at all —
+        # `Manual` waives it rather than dividing by a number nobody checked.
+        # An authoring page has to be able to say that out loud.
+        "duration_source": row.duration_source or "Manual",
+        "status": row.status,
+        "copied": bool((row.gcs_object or "").strip()),
+        "drive_file_id": row.drive_file_id or "",
+        # The tail only: `last_error` is a full traceback, and the useful part
+        # is the exception on the last line.
+        "last_error": ((row.last_error or "").strip().splitlines() or [""])[-1][:300],
+        "has_transcript": row.transcript_source in ("Author Pasted", "Uploaded VTT"),
+    }
+
+
+def _one_video_asset(name):
+    """The picker row for a single asset, or None.
+
+    Re-read rather than shaped from the in-memory doc, so a row handed back by a
+    write endpoint is byte-for-byte what the next bootstrap will send. A client
+    patches its own list with this instead of reloading everything — which on the
+    canvas means `reset()`, and `reset()` throws away unsaved edits.
+    """
     rows = frappe.get_all(
-        "Training Video Asset",
-        fields=["name", "title", "duration_seconds", "duration_source", "status",
-                "transcript_source", "gcs_object", "drive_file_id", "last_error"],
-        order_by="title asc",
-        limit=VIDEO_ASSET_LIMIT,
+        "Training Video Asset", fields=_VIDEO_ASSET_FIELDS, filters={"name": name}, limit=1
     )
+    return _video_asset_row(rows[0]) if rows else None
+
+
+def _builder_video_assets():
+    """The video picker: every asset, newest-usable shape, one row per asset."""
     return [
-        {
-            "name": row.name,
-            "title": row.title,
-            "duration_seconds": cint(row.duration_seconds),
-            # `duration_source` decides whether the coverage gate applies at all —
-            # `Manual` waives it rather than dividing by a number nobody checked.
-            # The builder has to be able to say that out loud.
-            "duration_source": row.duration_source or "Manual",
-            "status": row.status,
-            "copied": bool((row.gcs_object or "").strip()),
-            "drive_file_id": row.drive_file_id or "",
-            # The tail only: `last_error` is a full traceback, and the useful part
-            # is the exception on the last line.
-            "last_error": ((row.last_error or "").strip().splitlines() or [""])[-1][:300],
-            "has_transcript": row.transcript_source in ("Author Pasted", "Uploaded VTT"),
-        }
-        for row in rows
+        _video_asset_row(row)
+        for row in frappe.get_all(
+            "Training Video Asset",
+            fields=_VIDEO_ASSET_FIELDS,
+            order_by="title asc",
+            limit=VIDEO_ASSET_LIMIT,
+        )
     ]
 
 
