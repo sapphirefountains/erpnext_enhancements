@@ -978,3 +978,27 @@ erpnext_enhancements.patches.calibrate_pipeline_staleness
 # same release. Deliberately does NOT touch register_video_asset / retry_video_copy /
 # _builder_video_assets / _probe_drive_video -- the canvas calls all four. Safe twice.
 erpnext_enhancements.patches.delete_classic_training_builder
+# v1.423.0 (WI-074 C / F) -- says what each Position requires. tabPosition Requirement held
+# ZERO rows across all 20 Positions against 15 seeded Credential Types, so the Skills Matrix
+# and Qualification Coverage were correctly reporting that nobody holds anything. Nik chose
+# the full 20-position mapping 2026-09-12. THE LOAD-BEARING FACT: requirements do NOT
+# inherit down the Position tree (progression.requirements_for reads one doc's own child
+# table), so a baseline on the All Positions root would apply to nobody and every leaf
+# spells out its whole set -- Driver's License appears 19 times and that is not duplication.
+# The two GROUP positions get nothing; a family is not a job. is_mandatory is used to mean
+# something rather than set everywhere. CDL and DOT Medical Card go to nobody: they apply to
+# commercial vehicles over 26,000 lb and nothing in this fleet qualifies. Seeds only a
+# Position whose requirements table is EMPTY, so a hand-edit is never overwritten. Saved
+# through the doc API because Position is a NestedSet. Safe twice.
+erpnext_enhancements.patches.seed_position_credential_requirements
+# v1.423.0 (WI-074 C / F) -- raises the offboarding checklist for the four leavers who left
+# before hr_enhancements/onboarding.py existed (a fifth already has one). LEAVERS, NOT
+# JOINERS, and that was the decision: a joining checklist raised today for somebody hired in
+# 2004 is eight items nobody can ever tick, ~120 permanently-red rows across 15 active
+# employees, on the very dashboards this module built to make outstanding work visible.
+# leaving_items derives its rows AT CREATION TIME, so a backfilled checklist lists what is
+# still outstanding TODAY -- a device still in a departed person's name is the finding, not
+# a reconstruction of their last day. Goes through ensure_checklist, idempotent on
+# (employee, kind); existence is checked BEFORE the call because that helper returns the
+# existing name too, and a count taken from its result would report success over nothing.
+erpnext_enhancements.patches.backfill_leaving_checklists

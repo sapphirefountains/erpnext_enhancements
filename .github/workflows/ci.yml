@@ -748,6 +748,18 @@ jobs:
       # `password`), and it never rolls a hand-entered newer credential backwards.
       - name: Renamed-doctype secrets (__Auth rescue, no plaintext, no rollback)
         run: python -m unittest erpnext_enhancements.tests.test_renamed_doctype_secrets -v
+      # WI-074 F. The load-bearing fact this pins: Position requirements do NOT inherit down
+      # the tree -- progression.requirements_for and skills_matrix each read ONE doc's own
+      # child table, neither walks parent_position. So a baseline on the All Positions root
+      # would apply to nobody, and every leaf spells out its whole set (Driver's License
+      # appears 19 times and that is not duplication). If inheritance is ever added the seed
+      # becomes 19-fold duplication overnight and nothing else would notice. Also pins that
+      # is_mandatory means something rather than being set everywhere, that the seed cannot
+      # overwrite a hand-edit, and that the leaver backfill checks existence BEFORE calling
+      # ensure_checklist (which returns the EXISTING name, so a count from its result would
+      # report success over nothing).
+      - name: Position requirements seed + leaver backfill (WI-074 F)
+        run: python -m unittest erpnext_enhancements.tests.test_position_requirements_seed -v
       # Does recording a sign-off actually finish anything? It did not: Training
       # Signoff had no on_submit at all, so `Competent` moved nothing and the
       # assignment stayed at "Awaiting Sign-off" for ever. Same suite pins the
