@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.419.0] - 2026-09-12
+
+### Fixed
+
+- **22 Single fields were storing `0` against a non-falsy declared default**, and eight of them
+  were changing behaviour. A backfill patch restores each to the value its JSON has always
+  declared.
+
+  The two that prompted this — `Training Settings.max_playback_rate` (`0` vs `1.25`) and
+  `doc_min_dwell_seconds` (`0` vs `20`) — turned out to be **inert**: `api/training.py` coalesces
+  (`flt(...) or 1.25`), and `video.js`, `blocks.js` and `progress.py` each coalesce again. Four
+  independent fallbacks, so the stored zero never reached the player. Sweeping the rest of the
+  app's Singles for the same pattern is what found the ones that were not inert.
+
+### Notes
+
+**Eight were live, because their read site deliberately honours an explicit zero:**
+
+- `pipeline_stale_amber_days` / `pipeline_stale_red_days` — `_stale_level` is guarded
+  `if amber_days > 0` / `if red_days > 0`, so **every staleness colour on the Sales Pipeline board
+  was dead**, and `sales_pipeline.js` prints the raw value, so the board's own caption read
+  *"amber after 0 days in stage, red after 0"* — which a person reads as *everything goes amber
+  immediately*, the exact inverse of what was happening. 363 of 378 open Opportunities are past
+  the declared 7-day threshold. The zero fails **closed**, so the board looked calm rather than
+  broken, which is why nobody reported it.
+- `geofence_radius_m` — `api/time_kiosk.py` treats `0` as a documented *disabled* sentinel and
+  returns before it queries a single coordinate. The kiosk's nearby-visit suggestion has never
+  worked, and an admin opening the form saw `0` beside a description saying 0 disables it, so the
+  broken state read as a deliberate choice.
+- The five `fleet_*` intervals — `fleet_maintenance/status.py` uses
+  `cint(raw) if raw not in (None, "") else default`, a **presence** test rather than a falsiness
+  test (deliberately: an explicit 0 is meaningful for the due-soon window). A stored `0` therefore
+  reaches the engine, and `add_months(last, 0)` sets a vehicle's next-due date equal to its
+  last-done date — pinning it Overdue from the day after it is serviced, permanently. Harmless
+  today only because the vehicle register is empty; it would land on the first vehicle anyone
+  creates, at form-save time, and read as "the new fleet module is broken".
+
+**How the drift happened is one step past the documented rule.** `CLAUDE.md` records that a
+`default` on a new field of a Single never reaches the existing row. The second half, learned
+here: **a Desk save does not heal it.** Saving a Single deletes and re-inserts every field row
+from the in-memory doc, and that doc loaded `None`; `get_valid_dict` casts `None` to `cint(None)`
+= `0` on the way out. So the act of opening the settings form and pressing Save is what baked the
+zeros to disk. "It self-heals on the next save" is true of the *row* and false of the *value*.
+
+**That inverts the predicate, and the inversion is the whole design of the patch.**
+`backfill_chat_settings_defaults` fills a field **only when it has no row**, and its docstring
+gives the reason: *"an unchecked checkbox and a deliberate 0 are both falsy and are not the same
+fact."* That argument is right, and it is exactly why this patch could not copy it — **every one
+of these 22 fields already has a row**, so the row-absence predicate matches **zero rows**,
+commits, and records itself in `tabPatch Log`, which is indistinguishable from a successful run
+(the v1.280.3 failure).
+
+So the safety comes from the contents rather than the predicate: an explicit enumerated table,
+every entry chosen after reading that field's call sites — and **no `Check` field is in it.**
+Twenty `Int`, two `Float`, two `Data`. A patch that touches no boolean cannot re-enable something
+somebody switched off, whatever anyone later assumes about the predicate. A test asserts that, so
+it stays true if the table grows.
+
+**`briefing_use_gemini` is deliberately excluded, and it is the biggest finding here.** It is the
+one drifted `Check`. `api/briefing.py:328` reads it raw — `if not cint(...): return
+compose_fallback(...)` — with `briefing_enabled = 1` and a weekday cron. Production evidence: **all
+200 Daily Briefing rows from 2026-07-13 to 2026-09-11 are `narrative_source = "Fallback"`**, and
+`AI Model Usage` holds no `morning_briefing` row at all while the Vertex client is demonstrably
+alive (18 `feedback_work_breakdown` rows). The Gemini narrative — including the "Top 3 Priorities"
+section `compose_fallback` never emits — has never once been produced. Nothing errors and nothing
+logs; the only tell is a "· data-only" suffix that reads as a label.
+
+It is **not** in the patch because turning it on starts a Vertex call per recipient every weekday
+morning. That is a spend decision, and it needs a person, not a backfill. A test names it so a
+later edit cannot quietly fold it in.
+
+**Also deliberately untouched:** every declared default on these two Singles that is *not*
+drifted — this must never become a "restore all defaults" sweep, which on a doc whose rows exist
+could only key on falsiness and would re-tick `po_sod_enforcement_enabled`, `handoff_gate_enabled`
+and `fountain_move_auto_convert` over somebody's decision. And the other 22 Singles in the app: a
+cross-Single sweep is the unsafe move, and each needs its own read-site audit first — which is
+precisely the work this table represents.
+
+**The coordinate triple is written together or not at all.** `weather_latitude`,
+`weather_longitude` and `weather_label`: half a pair is worse than none, because `(40.8894, 0.0)`
+is a point in the Atlantic that renders a real, plausible, wrong forecast, and `+111.8808` instead
+of `-111.8808` is western China — and being truthy it would sail through the `or` guard the zero
+currently trips.
+
+**Mechanics.** `db.set_single_value`, never `.save()` — a settings controller's `validate` can
+throw on a field the patch never touches, and a patch that raises aborts `bench migrate`, which on
+this repo is the deploy. Guarded on the DocType existing, every write wrapped, and safe to run
+twice: the second run reads a non-falsy value and writes nothing.
+
+### Added
+
+- [`tests/test_single_default_drift.py`](erpnext_enhancements/tests/test_single_default_drift.py) —
+  asserts the table matches the declared defaults, that no `Check` is in it, that it is a strict
+  subset rather than a sweep, and the migrate-safety mechanics. Three mutations were each confirmed
+  to fail it: folding in the spend switch, writing a value that disagrees with the JSON, and
+  swapping `set_single_value` for `.save()`.
+
+  Its own absence assertions read the patch through an `ast` stripper — the first version failed
+  because the patch's docstring names `get_value("Singles", …)` while explaining why it must never
+  be used. **Twelfth occurrence** of that trap in this project, and the first inside a test written
+  about the trap itself.
+
 ## [1.418.0] - 2026-09-12
 
 ### Added

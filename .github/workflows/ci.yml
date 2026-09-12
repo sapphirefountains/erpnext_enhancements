@@ -727,6 +727,16 @@ jobs:
       # anything in the app still routes to the page it closes.
       - name: Classic builder retirement flag (polarity, gate, reversibility)
         run: python -m unittest erpnext_enhancements.tests.test_classic_builder_retirement -v
+      # The Single default-drift backfill. This patch keys on FALSINESS, which is the
+      # opposite of backfill_chat_settings_defaults and unsafe in general -- every one of
+      # its 22 fields already HAS a tabSingles row holding '0', so the row-absence predicate
+      # would match nothing, commit, and log itself as a success (the v1.280.3 shape). What
+      # makes it safe is the contents, not the predicate: no Check field is in the table, so
+      # it cannot re-tick a box anyone deliberately unticked. That is the assertion this
+      # suite exists for, plus the migrate-safety mechanics (set_single_value never save(),
+      # never a direct tabSingles read, guarded and wrapped so it cannot abort the deploy).
+      - name: Single default drift backfill (table, safety, migrate mechanics)
+        run: python -m unittest erpnext_enhancements.tests.test_single_default_drift -v
       # Does recording a sign-off actually finish anything? It did not: Training
       # Signoff had no on_submit at all, so `Competent` moved nothing and the
       # assignment stayed at "Awaiting Sign-off" for ever. Same suite pins the

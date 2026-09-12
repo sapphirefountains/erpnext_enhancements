@@ -928,3 +928,15 @@ erpnext_enhancements.patches.resync_ai_governance_workspace
 # _reject_edits_to_published_version returns early under frappe.flags.in_patch. Never throws.
 # Safe twice.
 erpnext_enhancements.patches.fix_stale_training_course_content
+# v1.419.0 -- restores 22 Single fields whose declared default never reached the row that
+# already existed. THE OPPOSITE PREDICATE to backfill_chat_settings_defaults, deliberately:
+# every one of these 22 already HAS a tabSingles row holding '0' (a Desk save re-inserts
+# every row from a doc that loaded None, and get_valid_dict casts that to 0), so the
+# row-absence predicate would match zero rows, commit, and log itself as a success -- the
+# v1.280.3 shape. Safety comes from an enumerated table instead, and from the fact that NO
+# Check field is in it, so it cannot re-enable anything anyone switched off. Eight of the 22
+# were live: the pipeline staleness pair (all board lighting off, caption printing the
+# inverse), geofence_radius_m (0 is a documented disabled sentinel), and the five fleet
+# intervals (add_months(last, 0) pins a vehicle Overdue forever). briefing_use_gemini is
+# deliberately NOT included -- it is a spend decision. set_single_value, never save(). Safe twice.
+erpnext_enhancements.patches.restore_drifted_single_defaults
