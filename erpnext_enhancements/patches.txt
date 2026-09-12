@@ -940,3 +940,21 @@ erpnext_enhancements.patches.fix_stale_training_course_content
 # intervals (add_months(last, 0) pins a vehicle Overdue forever). briefing_use_gemini is
 # deliberately NOT included -- it is a spend decision. set_single_value, never save(). Safe twice.
 erpnext_enhancements.patches.restore_drifted_single_defaults
+# v1.420.0 -- frappe.rename_doc on a DOCTYPE does not move its stored passwords. A Password
+# field keeps a masked placeholder in tabSingles and the real encrypted value in __Auth,
+# keyed by (doctype, name, fieldname); rename_doc rewrites the first and not the second. So
+# rename_poseidon_settings_doctype stranded four secrets, and the Desk cannot show it because
+# a Password field renders blank either way. Two were re-entered by hand; maps_api_key and
+# twilio_auth_token were not -- which is why every Vertex feature in the app has never worked
+# and every inbound Twilio webhook has been rejected (fails CLOSED, nothing was let through).
+# Re-files the rows by UPDATEing doctype/name; never decrypts, never selects `password`, and
+# leaves the two hand-entered newer values alone rather than rolling them back. Safe twice.
+erpnext_enhancements.patches.rescue_renamed_doctype_auth_rows
+# v1.420.0 -- turns the morning briefing's Gemini narrative on (Nik, 2026-09-12). Its own
+# patch because it is a SPEND decision, kept out of restore_drifted_single_defaults so a
+# later edit cannot fold one into the other (a test asserts the exclusion) and so it can be
+# reverted alone. All 200 briefings to date are narrative_source='Fallback' with no
+# morning_briefing row in AI Model Usage -- the narrative has never run. Only meaningful
+# alongside the rescue above, which is what makes the Vertex key readable. Writes only while
+# the value is still falsy, so switching it back off in the Desk survives the next migrate.
+erpnext_enhancements.patches.enable_briefing_gemini_narrative
