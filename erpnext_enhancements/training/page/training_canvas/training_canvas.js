@@ -673,7 +673,7 @@ class TrainingCanvas {
 		paintQuiz();
 
 		$('<div class="tc-hint"></div>')
-			.html(__("Quiz questions themselves, and in-video checkpoints, are edited in the classic builder."))
+			.html(__("In-video checkpoints are placed on the video block's timeline. Quiz questions are still edited in the classic builder."))
 			.appendTo(this.$lessonset);
 
 		if (!ed) this.$lessonset.find("input, textarea, select").attr("disabled", "disabled");
@@ -1087,7 +1087,12 @@ class TrainingCanvas {
 		const $cp = $('<input type="checkbox" />').prop("checked", !!this.num(block.checkpoints_enabled));
 		$cp.on("change", () => { block.checkpoints_enabled = $cp.prop("checked") ? 1 : 0; this.dirty_blocks(lesson); this.mark_dirty(); });
 		field(__("In-video checkpoints"), $cp);
-		$('<div class="tc-hint"></div>').text(__("Register a new video, and place its checkpoints on the timeline, in the classic builder.")).appendTo($box);
+		// The timeline. Replaces the standing apology that sent authors to the classic
+		// builder to place a pin -- which, until v1.400.0, could not actually be done
+		// there either: `add_pin` seeded an empty question against a `reqd` field, so the
+		// insert was refused on a four-second autosave.
+		$box.append(this.timeline(lesson, block));
+		$('<div class="tc-hint"></div>').text(__("Register a new video in the classic builder. Checkpoints are placed here.")).appendTo($box);
 		$('<button class="btn btn-default btn-xs" style="margin-top:6px"></button>').text(__("Open classic builder")).on("click", () => this.open_classic()).appendTo($box);
 		if (!this.editable()) $box.find("input, select").attr("disabled", "disabled");
 		return $box;
@@ -1421,6 +1426,17 @@ class TrainingCanvas {
 			const from = this.block_family(block.block_type);
 			const to = this.block_family(target);
 			// The key is NOT touched. That is the entire contract.
+			// But the PINS go, in memory as well as on the server. `_reap_orphan_checkpoints`
+			// deletes them on the next save because the block has stopped being a Video;
+			// leaving them here would repaint ghost pins on a timeline whose `cp.name` points
+			// at a deleted document, and the next edit would 404. Not done in
+			// `duplicate_block` -- a duplicate must not carry somebody else's questions, and
+			// a test asserts that method never mentions checkpoints at all.
+			if (block.block_type === "Video" && target !== "Video") {
+				lesson.checkpoints = (lesson.checkpoints || []).filter(
+					(cp) => cp && cp.block_key !== block.block_key
+				);
+			}
 			block.block_type = target;
 			if (!(from === "content" && to === "content")) block.content = "";
 			if (!(from === "data" && to === "data")) block.data = "";
@@ -1622,6 +1638,327 @@ class TrainingCanvas {
 				throw error;
 			});
 		return this._inflight;
+	}
+
+	// ------------------------------------------------- in-video checkpoints
+	//
+	// Ported from the classic builder, and the port is NOT a copy. Twelve members
+	// the classic's pin code calls do not exist here -- `save_then` did not until
+	// v1.411.0, and `paint_save_state`, `render_canvas`, `render_inspector`,
+	// `guard_editable`, `set_block_field`, `pins_for`, `seek_preview`, `_pending_pins`
+	// and the module-level `tb_mmss` still do not. Each is named and shimmed below
+	// rather than assumed, because the thing that would have broken quietly is the
+	// rule that matters most: `checkpoint_key` is SERVER-OWNED. Learner answers are
+	// filed under it, and the one place this file may mint anything is the transient
+	// "cp-" below, which is thrown away the moment a real key comes back.
+
+	timeline(lesson, block) {
+		const duration = Math.max(1, this.num(block.video_duration_seconds));
+		const $wrap = $('<div class="tc-timeline-wrap"></div>');
+		if (!this.num(block.video_duration_seconds)) {
+			$('<div class="tc-muted"></div>')
+				.text(__("Pick a video asset first — its duration is what the timeline is measured against."))
+				.appendTo($wrap);
+			return $wrap;
+		}
+		const $strip = $('<div class="tc-timeline"></div>').appendTo($wrap);
+		$('<div class="tc-timeline-scale"></div>')
+			.text("0:00 — " + this.mmss(duration))
+			.appendTo($wrap);
+		if (this.editable()) {
+			$strip.on("click", (e) => {
+				// Clicks on a pin stop propagation, so reaching here means empty strip.
+				this.add_pin(lesson, block, this.seconds_at(e.clientX, $strip, duration));
+			});
+			$('<div class="tc-timeline-help"></div>')
+				.text(__("Click the strip to place a checkpoint."))
+				.appendTo($wrap);
+		}
+		// Remembered so `refresh_pins` can repaint without re-rendering the sheet.
+		this._timeline = { lesson, block, $strip, duration };
+		this.paint_pins(lesson, block, $strip, duration);
+		$wrap.append($('<div class="tc-pin-inspector"></div>'));
+		setTimeout(() => this.render_pin_inspector(), 0);
+		return $wrap;
+	}
+
+	//: The selected pin's editor. Deliberately compact and deliberately COMPLETE:
+	//: a pin you can place but not finish is worse than no pin at all, because an
+	//: unfinished checkpoint is what `_require_finished_checkpoints` refuses at publish
+	//: and what `grading._unanswered_checkpoints` would hold a learner on forever.
+	render_pin_inspector() {
+		const strip = this._timeline;
+		if (!strip) return;
+		const $host = strip.$strip.closest(".tc-timeline-wrap").find(".tc-pin-inspector");
+		if (!$host.length) return;
+		$host.empty();
+		const cp = this.pins_for(strip.lesson, strip.block).find(
+			(row) => row.checkpoint_key === this.checkpoint_key
+		);
+		if (!cp) return;
+		const touch = () => this.persist_checkpoint(strip.lesson, cp);
+
+		$('<div class="tc-pin-at"></div>').text(__("Checkpoint at {0}", [this.mmss(cp.at_seconds)])).appendTo($host);
+
+		const $q = $('<textarea class="form-control" rows="2"></textarea>')
+			.attr("placeholder", __("What are you asking?"))
+			.val(cp.question_text || "");
+		$q.on("change", () => { cp.question_text = $q.val(); touch(); });
+		$host.append($q);
+
+		const $type = $('<select class="form-control"></select>');
+		["Single Choice", "Multiple Choice", "True-False"].forEach((t) =>
+			$("<option></option>").attr("value", t).text(t).appendTo($type)
+		);
+		$type.val(cp.question_type || "Single Choice");
+		$type.on("change", () => { cp.question_type = $type.val(); touch(); });
+		$host.append($('<label class="tc-set"></label>').append($("<span></span>").text(__("Type")), $type));
+
+		(cp.options || []).forEach((opt, i) => {
+			const $row = $('<div class="tc-pin-option"></div>');
+			const $ok = $('<input type="checkbox" />').prop("checked", !!Number(opt.is_correct));
+			$ok.on("change", () => {
+				// Single Choice and True-False allow exactly one correct option, and the
+				// controller THROWS on two -- one of the few contradictions that still
+				// refuse at save time. Enforce it here so the author never meets that.
+				if ($ok.prop("checked") && cp.question_type !== "Multiple Choice") {
+					(cp.options || []).forEach((o) => { o.is_correct = 0; });
+				}
+				opt.is_correct = $ok.prop("checked") ? 1 : 0;
+				touch();
+				this.render_pin_inspector();
+			});
+			const $text = $('<input type="text" class="form-control" />')
+				.attr("placeholder", __("Option {0}", [i + 1]))
+				.val(opt.option_text || "");
+			$text.on("change", () => { opt.option_text = $text.val(); touch(); });
+			$row.append($ok, $text).appendTo($host);
+		});
+
+		const $add = $('<button class="btn btn-default btn-xs"></button>').text(__("Add option"));
+		$add.on("click", () => {
+			cp.options = cp.options || [];
+			cp.options.push({ option_key: "o" + (cp.options.length + 1), option_text: "", is_correct: 0 });
+			touch();
+			this.render_pin_inspector();
+		});
+		const $del = $('<button class="btn btn-default btn-xs"></button>').text(__("Delete checkpoint"));
+		$del.on("click", () => {
+			frappe.confirm(__("Delete this checkpoint? Any answers already recorded against it go with it."), () =>
+				this.delete_checkpoint(strip.lesson, cp)
+			);
+		});
+		$host.append($('<div class="tc-pin-actions"></div>').append($add, $del));
+		if (!this.editable()) $host.find("input, select, textarea, button").attr("disabled", "disabled");
+	}
+
+	//: This block's pins, in time order. Reads `lesson.checkpoints`, which since
+	//: v1.412.0 the server refreshes on every save -- so a pin reaped by
+	//: `_reap_orphan_checkpoints` is gone from here too rather than lingering as a
+	//: ghost whose edit 404s.
+	pins_for(lesson, block) {
+		return (lesson.checkpoints || [])
+			.filter((cp) => cp && cp.block_key === block.block_key)
+			.sort((a, b) => (Number(a.at_seconds) || 0) - (Number(b.at_seconds) || 0));
+	}
+
+	// The strip has 10px of padding at each end, so a pin's position is 10px plus
+	// its share of the remaining width. A bare percentage drifts by up to 20px
+	// across the strip -- enough that a pin visibly does not sit on the tick it was
+	// dropped at, which reads as the timestamps being wrong. Verbatim from the
+	// classic: it is pure arithmetic and there is nothing to adapt.
+	offset_for(seconds, duration) {
+		const ratio = Math.max(0, Math.min(1, (Number(seconds) || 0) / Math.max(1, duration)));
+		return "calc(10px + " + ratio + " * (100% - 20px))";
+	}
+
+	seconds_at(clientX, $strip, duration) {
+		const rect = $strip[0].getBoundingClientRect();
+		const ratio = (clientX - rect.left - 10) / Math.max(1, rect.width - 20);
+		return Math.round(Math.max(0, Math.min(1, ratio)) * duration);
+	}
+
+	checkpoint_doc(lesson, cp) {
+		return {
+			doctype: "Training Checkpoint",
+			lesson: lesson.name,
+			block_key: cp.block_key,
+			at_seconds: Number(cp.at_seconds) || 0,
+			question_type: cp.question_type,
+			question_text: cp.question_text || "",
+			explanation: cp.explanation || "",
+			pause_video: Number(cp.pause_video) || 0,
+			allow_skip: Number(cp.allow_skip) || 0,
+			max_attempts: Number(cp.max_attempts) || 0,
+			rewind_seconds_on_wrong: Number(cp.rewind_seconds_on_wrong) || 0,
+			counts_toward_score: Number(cp.counts_toward_score) || 0,
+			options: (cp.options || []).map((option) => ({
+				doctype: "Training Answer Option",
+				option_key: option.option_key || "",
+				option_text: option.option_text || "",
+				is_correct: Number(option.is_correct) || 0,
+				explanation: option.explanation || "",
+			})),
+		};
+	}
+
+	write_checkpoint(lesson, cp) {
+		const doc = this.checkpoint_doc(lesson, cp);
+		if (!cp.name) {
+			// No checkpoint_key on the way in. The CONTROLLER mints it; the transient
+			// "cp-…" this file hangs the pin on is thrown away the moment a real one
+			// comes back.
+			return frappe
+				.call("frappe.client.insert", { doc })
+				.then((r) => {
+					const saved = (r && r.message) || {};
+					cp.name = saved.name;
+					cp.checkpoint_key = saved.checkpoint_key || cp.checkpoint_key;
+					cp.modified = saved.modified;
+					if (this.checkpoint_key && this.checkpoint_key !== cp.checkpoint_key) {
+						this.checkpoint_key = cp.checkpoint_key;
+					}
+					this.after_checkpoint_write();
+				})
+				.catch((error) => this.checkpoint_write_failed(error));
+		}
+		const send = (modified) =>
+			frappe
+				.call("frappe.client.save", {
+					// The real key goes back with EVERY save. Omitting it blanks the field
+					// and strands every answer already recorded against it.
+					doc: { ...doc, name: cp.name, checkpoint_key: cp.checkpoint_key, modified },
+				})
+				.then((r) => {
+					cp.modified = ((r && r.message) || {}).modified;
+					this.after_checkpoint_write();
+				})
+				.catch((error) => this.checkpoint_write_failed(error));
+		if (cp.modified) return send(cp.modified);
+		// A checkpoint loaded from the bootstrap has no timestamp, so the first edit
+		// fetches one -- a real optimistic lock rather than last-write-wins over
+		// somebody else's edit.
+		return frappe
+			.call("frappe.client.get", { doctype: "Training Checkpoint", name: cp.name })
+			.then((r) => send(((r && r.message) || {}).modified))
+			.catch((error) => this.checkpoint_write_failed(error));
+	}
+
+	after_checkpoint_write() {
+		this.paint_status("saved");
+		// Repaint the PINS, not the sheet. A full re-render tears down the rich-text
+		// controls, so a checkpoint save landing seconds after a pin drag would eat
+		// whatever the author had started typing in a block.
+		this.refresh_pins();
+	}
+
+	checkpoint_write_failed(error) {
+		this.paint_status("dirty");
+		frappe.show_alert({
+			message: __("That checkpoint did not save: {0}", [(error && error.message) || __("unknown error")]),
+			indicator: "red",
+		});
+	}
+
+	refresh_pins() {
+		const strip = this._timeline;
+		if (!strip || !strip.$strip.closest("body").length) return;
+		this.paint_pins(strip.lesson, strip.block, strip.$strip, strip.duration);
+		this.render_pin_inspector();
+	}
+
+	paint_pins(lesson, block, $strip, duration) {
+		$strip.find(".tc-pin").remove();
+		this.pins_for(lesson, block).forEach((cp) => {
+			const unfinished =
+				!(cp.question_text || "").trim() ||
+				(cp.options || []).length < 2 ||
+				!(cp.options || []).some((o) => Number(o.is_correct));
+			$(
+				'<button type="button" class="tc-pin"></button>'
+			)
+				.toggleClass("is-unfinished", unfinished)
+				.toggleClass("is-active", cp.checkpoint_key === this.checkpoint_key)
+				.attr("aria-label", __("Checkpoint at {0}", [this.mmss(cp.at_seconds)]))
+				.attr("title", this.mmss(cp.at_seconds))
+				.css("left", this.offset_for(cp.at_seconds, duration))
+				.on("click", (e) => {
+					e.stopPropagation();
+					this.checkpoint_key = cp.checkpoint_key;
+					this.refresh_pins();
+				})
+				.appendTo($strip);
+		});
+	}
+
+	add_pin(lesson, block, at_seconds) {
+		if (!this.editable()) return;
+		const cp = {
+			// Transient until the insert lands. `checkpoint_key` is server-owned for
+			// the same reason `lesson_key` is: it is what stored learner answers are
+			// filed under. This is the ONLY mint in this file.
+			checkpoint_key: "cp-" + frappe.utils.get_random(10),
+			block_key: block.block_key,
+			at_seconds: Math.max(0, Math.round(at_seconds)),
+			question_type: "Single Choice",
+			question_text: "",
+			explanation: "",
+			pause_video: 1,
+			allow_skip: 0,
+			max_attempts: 2,
+			rewind_seconds_on_wrong: 15,
+			counts_toward_score: 0,
+			options: [
+				{ option_key: "a", option_text: "", is_correct: 0 },
+				{ option_key: "b", option_text: "", is_correct: 0 },
+			],
+		};
+		lesson.checkpoints = lesson.checkpoints || [];
+		lesson.checkpoints.push(cp);
+		this.checkpoint_key = cp.checkpoint_key;
+		if (!Number(block.checkpoints_enabled)) {
+			// A pin on a block with checkpoints switched off never fires and the author
+			// has no way of knowing why. Turn it on with the first pin. (The classic's
+			// `set_block_field` does not exist here; this is the canvas's own dirty path.)
+			block.checkpoints_enabled = 1;
+			this.dirty_blocks(lesson);
+			this.mark_dirty();
+		}
+		this.persist_checkpoint(lesson, cp);
+		this.refresh_pins();
+	}
+
+	persist_checkpoint(lesson, cp) {
+		// THE WHOLE POINT OF THIS STEP. `TrainingCheckpoint._validate_block` resolves
+		// its block by querying `tabTraining Content Block` for `parent = lesson` and
+		// the given `block_key` -- and a canvas block exists only in memory until the
+		// 1200ms autosave lands. Writing a pin first throws "No content block on X has
+		// the key Y", on the commonest authoring sequence there is: add a Video block,
+		// drop a pin on it.
+		//
+		// So every pin write chains off the save. `save_then` additionally names the
+		// abandoned action if the save fails, because otherwise the only thing on
+		// screen is frappe's error about the AUTOSAVE and nothing connects it to the
+		// pin the author just dropped.
+		//
+		// No debounce of its own. The classic has one; with the save chained there is
+		// no window for it, and a second uncoordinated timer beside TC_SAVE_DEBOUNCE_MS
+		// is how two writers end up racing over one row.
+		return this.save_then(__("Placing the checkpoint"))
+			.then(() => this.write_checkpoint(lesson, cp))
+			.catch(() => {});
+	}
+
+	delete_checkpoint(lesson, cp) {
+		lesson.checkpoints = (lesson.checkpoints || []).filter(
+			(row) => row.checkpoint_key !== cp.checkpoint_key
+		);
+		if (this.checkpoint_key === cp.checkpoint_key) this.checkpoint_key = null;
+		this.refresh_pins();
+		if (!cp.name) return Promise.resolve();
+		return frappe
+			.call("frappe.client.delete", { doctype: "Training Checkpoint", name: cp.name })
+			.catch((error) => this.checkpoint_write_failed(error));
 	}
 
 	adopt_checkpoints(byLesson) {

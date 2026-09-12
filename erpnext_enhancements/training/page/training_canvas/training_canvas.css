@@ -836,3 +836,77 @@
 	margin-top: 6px;
 	color: var(--text-muted, #6b7280);
 }
+
+/* ------------------------------------------- in-video checkpoints (S4b) */
+/* The strip carries 10px of padding at each end and `offset_for` assumes it --
+   change one and the pins stop sitting on the tick they were dropped at, which
+   reads as the timestamps being wrong rather than as a layout bug. */
+.tc-timeline-wrap {
+	margin-top: 10px;
+}
+
+.tc-timeline {
+	position: relative;
+	height: 26px;
+	padding: 0 10px;
+	border-radius: 13px;
+	background: var(--control-bg, #f1f5f9);
+	cursor: copy;
+}
+
+.tc-timeline-scale,
+.tc-timeline-help {
+	margin-top: 4px;
+	font-size: 11px;
+	color: var(--text-muted, #6b7280);
+}
+
+.tc-pin {
+	position: absolute;
+	top: 3px;
+	width: 10px;
+	height: 20px;
+	margin-left: -5px;
+	padding: 0;
+	border: 1px solid var(--blue-500, #2490ef);
+	border-radius: 3px;
+	background: var(--blue-500, #2490ef);
+	cursor: pointer;
+}
+
+/* Unfinished is the common state for the first few seconds of a pin's life, so it
+   is marked rather than alarming. The publish gate is what refuses it. */
+.tc-pin.is-unfinished {
+	background: var(--yellow-300, #fde047);
+	border-color: var(--yellow-500, #eab308);
+}
+
+.tc-pin.is-active {
+	outline: 2px solid var(--gray-900, #111827);
+	outline-offset: 1px;
+}
+
+.tc-pin-inspector:not(:empty) {
+	margin-top: 10px;
+	padding: 10px;
+	border: 1px solid var(--border-color, #e2e8f0);
+	border-radius: 8px;
+}
+
+.tc-pin-at {
+	font-weight: 600;
+	margin-bottom: 6px;
+}
+
+.tc-pin-option {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 6px;
+}
+
+.tc-pin-actions {
+	display: flex;
+	gap: 6px;
+	margin-top: 10px;
+}

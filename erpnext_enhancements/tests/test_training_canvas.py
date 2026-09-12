@@ -543,9 +543,17 @@ class TestTheChapterControlIsAlwaysOffered(unittest.TestCase):
         """Gating it on `this.chapters.length` is what made chapters unreachable:
         no chapters meant no control, and the control was the only place they were
         mentioned."""
+        # Keyed on the DEFINITION. `src.index("render_lesson_settings()")` lands on
+        # the CALL SITE hundreds of lines earlier, and the fixed 3000-char window from
+        # there never reached the method at all -- so this assertion passed over source
+        # that could not contain the string either way, and guarded nothing. Found by
+        # an adversarial review of the checkpoint-pin plan, which edits this method.
         src = _canvas()
-        at = src.index("render_lesson_settings()")
-        block = src[at : at + 3000]
+        at = src.index("render_lesson_settings() {")
+        # Bounded from the definition, so adding lines ABOVE it cannot silently move
+        # the window off the code under test the way the old call-site index did.
+        block = src[at : at + 4000]
+        self.assertIn("tc-add-chapter", block)
         self.assertNotIn("if (this.chapters.length) {", block)
 
     def test_there_is_an_escape_hatch_when_there_are_none(self):
@@ -715,3 +723,90 @@ class TestCheckpointsAreReconciledAfterEverySave(unittest.TestCase):
             src.index("this._saved_names = state.saved"),
             src.index("this.adopt_checkpoints(state.checkpoints)"),
         )
+
+
+class TestInVideoCheckpointsOnTheCanvas(unittest.TestCase):
+    """S4b. The canvas can now place, edit and delete in-video checkpoints.
+
+    The port is not a copy. Twelve members the classic builder's pin code calls do
+    not exist here — `paint_save_state`, `render_canvas`, `render_inspector`,
+    `guard_editable`, `set_block_field`, `seek_preview`, `_pending_pins` and the
+    module-level `tb_mmss` among them — so each is shimmed explicitly. An adversarial
+    review of the original plan found exactly that, including one (`seek_preview`)
+    whose absence would have thrown inside a `pointermove` handler on every drag.
+    """
+
+    def test_every_pin_write_chains_off_the_save(self):
+        """THE point of the step. `TrainingCheckpoint._validate_block` resolves its
+        block by querying `tabTraining Content Block` — and a canvas block exists only
+        in memory until the 1200ms autosave lands. Writing a pin first throws "No
+        content block on X has the key Y", on the commonest authoring sequence there
+        is: add a Video block, drop a pin on it."""
+        src = _canvas()
+        at = src.index("persist_checkpoint(lesson, cp) {")
+        body = src[at : at + 1400]
+        self.assertIn("this.save_then(", body)
+        self.assertLess(body.index("save_then"), body.index("write_checkpoint"))
+
+    def test_there_is_no_second_debounce(self):
+        """The classic has one. With the save chained there is no window for it, and a
+        second uncoordinated timer beside TC_SAVE_DEBOUNCE_MS is how two writers end up
+        racing over one row."""
+        src = _canvas()
+        at = src.index("persist_checkpoint(lesson, cp) {")
+        body = src[at : at + 1400]
+        self.assertNotIn("setTimeout", body)
+        self.assertNotIn("_pending_pins", src)
+
+    def test_the_checkpoint_key_is_never_minted_except_once(self):
+        """`checkpoint_key` is server-owned: learner answers are filed under it. The
+        only mint permitted in this file is the transient "cp-" in `add_pin`, which the
+        insert response immediately replaces. Comment-stripped, because the comments
+        explaining the rule name the field repeatedly."""
+        src = _canvas()
+        mints = re.findall(r'checkpoint_key:\s*"cp-"', src)
+        self.assertEqual(len(mints), 1, "exactly one transient mint is allowed")
+        self.assertIn("cp.checkpoint_key = saved.checkpoint_key", src)
+
+    def test_the_real_key_goes_back_on_every_save(self):
+        """Omitting it blanks the field and strands every answer already recorded
+        against it — the single most expensive mistake available here."""
+        src = _canvas()
+        at = src.index("write_checkpoint(lesson, cp) {")
+        body = src[at : src.index("after_checkpoint_write() {", at)]
+        self.assertIn("checkpoint_key: cp.checkpoint_key", body)
+
+    def test_a_write_repaints_pins_not_the_sheet(self):
+        """A full re-render tears down the rich-text controls, so a checkpoint save
+        landing seconds after a pin drag would eat whatever the author had started
+        typing in a block."""
+        src = _canvas()
+        at = src.index("after_checkpoint_write() {")
+        body = src[at : src.index("checkpoint_write_failed(error) {", at)]
+        self.assertIn("refresh_pins()", body)
+        self.assertNotIn("render_sheet()", body)
+
+    def test_turning_a_video_into_something_else_drops_its_pins(self):
+        """`_reap_orphan_checkpoints` deletes them server-side on the next save.
+        Keeping them here would repaint ghost pins whose `cp.name` points at a deleted
+        document, and the next edit would 404."""
+        src = _canvas()
+        at = src.index("turn_into(lesson, block, target) {")
+        body = src[at : at + 2200]
+        self.assertIn("lesson.checkpoints = (lesson.checkpoints || []).filter", body)
+
+    def test_the_duplicate_still_carries_none(self):
+        """The opposite rule, and it must not be undone by the one above: a duplicate
+        that silently acquired somebody else's questions is worse than one that
+        acquired none."""
+        src = _canvas()
+        at = src.index("duplicate_block(lesson, block) {")
+        body = src[at : at + 1200]
+        self.assertNotIn("checkpoints", body)
+
+    def test_the_hint_no_longer_sends_authors_away_to_place_one(self):
+        """Until v1.400.0 a pin could not actually be placed in the classic builder
+        either: `add_pin` seeded an empty question against a `reqd` field, so the insert
+        was refused on a four-second autosave."""
+        src = _canvas()
+        self.assertNotIn("place its checkpoints on the timeline, in the classic builder", src)
