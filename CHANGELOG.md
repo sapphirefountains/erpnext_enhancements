@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.412.0] - 2026-09-11
+
+### Fixed
+
+- **The canvas's "you will lose N in-video checkpoints" warning could be describing
+  checkpoints that were already deleted.** `_reap_orphan_checkpoints` runs after *every*
+  `lesson.save()` and deletes pins whose block has stopped being a Video — which is exactly
+  what `turn_into` does. The client never heard about it, so `turn_losses` kept reading a stale
+  `lesson.checkpoints` and asked the author to weigh a cost they had already paid.
+
+  `save_draft_version` now returns what each saved lesson actually holds afterwards, and the
+  canvas replaces its copy.
+
+### Notes
+
+**The client had nothing to reconcile against.** That is why this is a server change first: the
+only other whitelisted reader of checkpoints is `get_builder_bootstrap`, and re-running it after
+every save tears down the live editors and eats whatever the author was typing — the classic
+builder documents that trap at its own `after_checkpoint_write`. The response reuses
+`_builder_checkpoints`, the same builder the bootstrap uses, so the client has one parser rather
+than two, and the second would be the one that drifts.
+
+**Replaced per lesson, not merged.** A merge would preserve precisely the ghosts this exists to
+drop.
+
+**A lesson absent from the payload is left alone.** `_builder_checkpoints` omits a lesson that
+has no checkpoints, so an absent key means either "saved, and now has none" or "not part of this
+save" — and only the first should clear anything. The response's own `saved` list separates
+them; clearing on the second would drop pins from every lesson the author was not editing.
+
+This is the server half of in-video checkpoint pins on the canvas, shipped with the reconcile it
+enables rather than alone, and it has standalone value today: the turn-into warning stops lying.
+The remaining half is the pin UI itself, which the earlier plan under-scoped — an adversarial
+review found twelve members it wanted to "reuse unchanged" from the classic builder that do not
+exist on the canvas.
+
 ## [1.411.0] - 2026-09-11
 
 ### Fixed

@@ -659,3 +659,59 @@ class TestTurnIntoSaysWhatItWillCost(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCheckpointsAreReconciledAfterEverySave(unittest.TestCase):
+    """`_reap_orphan_checkpoints` runs after every single `lesson.save()` and deletes
+    pins whose block has stopped being a Video — which is exactly what `turn_into`
+    does. Until v1.412.0 the client never heard about it.
+
+    The visible symptom was a confirmation dialog that lied: `turn_losses` reads
+    `lesson.checkpoints` to warn "you will lose 2 in-video checkpoints", and after one
+    turn those rows were already deleted server-side. The author was being asked to
+    weigh a cost they had already paid.
+    """
+
+    def test_the_save_response_carries_them(self):
+        author = (APP / "api/training_author.py").read_text(encoding="utf-8")
+        at = author.index("def save_draft_version(")
+        body = author[at : author.index("\ndef ", at + 10)]
+        self.assertIn('"checkpoints": _builder_checkpoints(', body)
+
+    def test_it_reuses_the_bootstrap_builder(self):
+        """Same shape from the same builder, so the client has one parser rather than
+        two — and the second would be the one that drifts."""
+        author = (APP / "api/training_author.py").read_text(encoding="utf-8")
+        self.assertIn("def _builder_checkpoints(", author)
+
+    def test_the_canvas_adopts_them(self):
+        src = _canvas()
+        self.assertIn("adopt_checkpoints(state.checkpoints)", src)
+
+    def test_it_replaces_rather_than_merges(self):
+        """A merge would preserve precisely the ghosts this exists to drop."""
+        src = _canvas()
+        at = src.index("adopt_checkpoints(byLesson) {")
+        body = src[at : src.index("adopt_created(created) {", at)]
+        self.assertIn("lesson.checkpoints = byLesson[lesson.name] || [];", body)
+
+    def test_a_lesson_not_in_this_save_is_left_alone(self):
+        """`_builder_checkpoints` omits a lesson with no checkpoints, so an absent key
+        means either "saved, now has none" or "not part of this save". Only the first
+        should clear the list — clearing the second would drop pins from every lesson
+        the author was not editing."""
+        src = _canvas()
+        at = src.index("adopt_checkpoints(byLesson) {")
+        body = src[at : src.index("adopt_created(created) {", at)]
+        self.assertIn("_saved_names", body)
+        self.assertIn("hasOwnProperty", body)
+
+    def test_the_saved_list_is_recorded_before_it_is_read(self):
+        """`_saved_names` is set from the same response; if it were assigned after
+        `adopt_checkpoints` ran, every lesson would look "not part of this save" and
+        nothing would ever be cleared."""
+        src = _canvas()
+        self.assertLess(
+            src.index("this._saved_names = state.saved"),
+            src.index("this.adopt_checkpoints(state.checkpoints)"),
+        )
