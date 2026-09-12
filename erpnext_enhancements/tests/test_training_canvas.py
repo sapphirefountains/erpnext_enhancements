@@ -422,6 +422,42 @@ class TestTheSaveFlushIsHonest(unittest.TestCase):
         self.assertIn("this._inflight = frappe", src)
         self.assertIn("return this._inflight;", src)
 
+    def test_flush_no_longer_swallows_the_failure(self):
+        """Both exits used to end `.catch(() => {})`, which made a failed save
+        indistinguishable from a clean one to every caller. A pin writer chained off
+        it would fire AFTER the save had thrown, fail again resolving a block that was
+        never written, and report the wrong cause -- `enter_conflict()` on a stale
+        `modified` is exactly that case.
+
+        A promise that resolves whether or not the work landed is not a flush, it is
+        a delay."""
+        src = _canvas()
+        at = src.index("flush_save() {")
+        block = src[at : src.index("save_then(label) {", at)]
+        self.assertNotIn("catch(() => {})", block)
+
+    def test_the_swallow_moved_to_the_caller_that_wants_it(self):
+        """The reorder genuinely does want to give up quietly -- the rail has already
+        re-rendered optimistically and the autosave has surfaced its own error. That is
+        a property of that caller, not of the flush, and while it lived inside
+        flush_save it was hiding failures from every other caller too."""
+        src = _canvas()
+        at = src.index("commit_lesson_order($list) {")
+        body = src[at : src.index("load_vtt(lesson) {", at)]
+        self.assertIn("catch(() => {})", body)
+
+    def test_save_then_names_the_abandoned_action(self):
+        """When the save fails the chained action is correctly abandoned -- but the
+        dialog has closed and the only thing on screen is frappe's error about the
+        AUTOSAVE. Nothing connects that to the button the author pressed, so the thing
+        they asked for never happens and no message says why."""
+        src = _canvas()
+        at = src.index("save_then(label) {")
+        body = src[at : at + 1200]
+        self.assertIn("this.flush_save()", body)
+        self.assertIn("msgprint", body)
+        self.assertIn("throw error", body)
+
     def test_the_reorder_waits_for_it(self):
         """`.filter(Boolean)` drops any lesson created this session, because it has
         no `name` until the save returns — and reorder_lessons renumbers only what it
@@ -431,8 +467,12 @@ class TestTheSaveFlushIsHonest(unittest.TestCase):
         # lands on `this.commit_lesson_order($list)` and slices the wrong method.
         at = src.index("commit_lesson_order($list) {")
         block = src[at : at + 1400]
-        self.assertIn("this.flush_save().then(", block)
-        self.assertLess(block.index("flush_save"), block.index("reorder_lessons"))
+        # Chains off `save_then`, which WRAPS flush_save and additionally names the
+        # abandoned action when the save fails. The wrapper's own delegation is
+        # asserted below, so both links stay pinned -- a save_then that stopped
+        # flushing would otherwise pass this.
+        self.assertIn("this.save_then(", block)
+        self.assertLess(block.index("save_then"), block.index("reorder_lessons"))
 
     def test_a_closing_tab_is_warned(self):
         """The autosave debounce is 1200ms, so a tab closed a second after the last

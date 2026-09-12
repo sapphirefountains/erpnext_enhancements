@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.411.0] - 2026-09-11
+
+### Fixed
+
+- **The canvas's `flush_save()` swallowed its own failures**, which made a failed save
+  indistinguishable from a clean one to every caller. Both exits ended `.catch(() => {})`, so a
+  promise that was supposed to mean "your edits are stored" resolved just as happily when they
+  were not. A promise that resolves whether or not the work landed is not a flush, it is a
+  delay.
+
+  This matters most for the work that is about to chain off it. A pin writer or a preview
+  resolves its target **through the database**, where a block that exists only in memory is
+  simply absent — so it would fire after the save had thrown, fail again looking for a block
+  that was never written, and report the wrong cause. `enter_conflict()` on a stale `modified`
+  is exactly that case.
+
+### Added
+
+- **`save_then(label)`**, ported from the classic builder for the reason it was written there.
+  When the save fails the chained action is correctly abandoned — but whatever dialog the author
+  was in has already closed, and the only thing on screen is frappe's error about the *autosave*.
+  Nothing connects that to the button they pressed, so the thing they asked for simply never
+  happens and no message says why. `save_then` names the abandoned action in its own right.
+
+### Notes
+
+The swallow was not deleted, it **moved to the one caller that genuinely wants it**.
+`commit_lesson_order` has already re-rendered the rail optimistically and the autosave has
+surfaced its own error, so giving up quietly there is right — but that is a property of that
+caller, not of the flush, and while it lived inside `flush_save` it was hiding failures from
+every other caller too.
+
+This is the precondition for the remaining canvas work (in-video checkpoint pins, the lesson
+preview, and AI drafting), all three of which must not run against content the server has not
+stored.
+
+An existing assertion was redirected rather than weakened: `commit_lesson_order` now chains off
+`save_then`, which *wraps* `flush_save`, so the test pins both links — a `save_then` that
+stopped flushing would otherwise still pass.
+
 ## [1.410.0] - 2026-09-11
 
 ### Added
