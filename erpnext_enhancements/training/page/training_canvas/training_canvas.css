@@ -910,3 +910,84 @@
 	gap: 6px;
 	margin-top: 10px;
 }
+
+/* ---------------------------------------------------- AI drafting (S8) */
+/* Drafts are SUGGESTIONS and the styling says so: nothing here looks like
+   saved content until it has been accepted, because accepting is the human
+   review the publish gate is built on. */
+.tc-ai-bar {
+	margin-top: 10px;
+}
+
+.tc-ai {
+	margin-top: 10px;
+	padding: 10px;
+	border: 1px dashed var(--border-color, #e2e8f0);
+	border-radius: 8px;
+}
+
+.tc-ai-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	font-weight: 600;
+	margin-bottom: 8px;
+}
+
+.tc-ai-card {
+	margin-top: 8px;
+	padding: 8px;
+	border-radius: 6px;
+	background: var(--control-bg, #f8fafc);
+}
+
+.tc-ai-card.is-accepted {
+	opacity: 0.65;
+}
+
+/* An ungrounded suggestion is the one a reviewer must read hardest. The server
+   already drops what it cannot trace back to the lesson, so this is belt and
+   braces -- but it must not look like the others. */
+.tc-ai-card.is-ungrounded {
+	border-left: 3px solid var(--orange-500, #f97316);
+}
+
+.tc-ai-at {
+	font-size: 11px;
+	color: var(--text-muted, #6b7280);
+}
+
+.tc-ai-q {
+	font-weight: 600;
+}
+
+.tc-ai-options {
+	margin: 6px 0 0;
+	padding-left: 18px;
+}
+
+.tc-ai-options li.is-correct {
+	font-weight: 600;
+}
+
+.tc-ai-quote {
+	margin-top: 6px;
+	font-style: italic;
+	color: var(--text-muted, #6b7280);
+}
+
+.tc-ai-warn {
+	margin-top: 6px;
+	color: var(--orange-600, #ea580c);
+}
+
+.tc-ai-done {
+	margin-top: 6px;
+	color: var(--green-600, #16a34a);
+}
+
+.tc-ai-actions {
+	display: flex;
+	gap: 6px;
+	margin-top: 8px;
+}

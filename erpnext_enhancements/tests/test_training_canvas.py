@@ -810,3 +810,84 @@ class TestInVideoCheckpointsOnTheCanvas(unittest.TestCase):
         was refused on a four-second autosave."""
         src = _canvas()
         self.assertNotIn("place its checkpoints on the timeline, in the classic builder", src)
+
+
+class TestAiDraftingOnTheCanvas(unittest.TestCase):
+    """S8, and it is the blocker for retiring the classic builder rather than a
+    nicety.
+
+    `publish_version` refuses any course holding an `ai_generated` question with no
+    `ai_reviewed_by`; `accept_ai_suggestions` is the ONLY thing that stamps a
+    reviewer; and the classic builder's quiz section is read-only with no hand-add
+    anywhere. So the AI drawer is the only surface on the site that can unblock a
+    Triton-authored course. Production is not blocked today only because the four
+    spec-authored courses have zero quiz rows — the next one will not.
+    """
+
+    def test_the_canvas_dials_the_three_ai_endpoints(self):
+        src = _canvas()
+        for method in ("draft_quiz_questions", "suggest_checkpoints", "accept_ai_suggestions"):
+            with self.subTest(method=method):
+                self.assertIn("training_ai." + method, src)
+
+    def test_drafting_chains_off_the_save(self):
+        """Peculiar to this endpoint: `_lesson()` resolves the lesson FROM THE
+        DATABASE and `draft_quiz_questions` refuses below MIN_SOURCE_CHARS (120). So
+        drafting against unflushed edits does not merely use stale text — it tells the
+        author there is not enough written content in a lesson that is visibly full on
+        their screen."""
+        src = _canvas()
+        for fn in ("draft_questions(lesson) {", "draft_checkpoints(lesson, block) {"):
+            with self.subTest(fn=fn):
+                at = src.index(fn)
+                body = src[at : at + 1200]
+                self.assertIn("this.save_then(", body)
+                self.assertLess(body.index("save_then"), body.index("training_ai."))
+
+    def test_there_is_no_accept_all(self):
+        """Accepting IS the human review the publish gate is built on. A button that
+        performs it in bulk without anyone reading anything makes the gate
+        ornamental."""
+        src = _canvas()
+        self.assertIn("Reject all", src)
+        self.assertNotIn("Accept all", src)
+
+    def test_accepting_sends_one_suggestion_at_a_time(self):
+        """The same rule expressed in the payload, not just the absence of a button."""
+        src = _canvas()
+        at = src.index("accept_draft(lesson, item) {")
+        body = src[at : at + 900]
+        self.assertIn("JSON.stringify([item])", body)
+
+    def test_drafts_are_scoped_to_the_lesson_they_came_from(self):
+        """A suggestion drafted from lesson A shown under lesson B is a question about
+        content the reviewer is not looking at."""
+        src = _canvas()
+        at = src.index("render_ai_drawer(lesson) {")
+        body = src[at : at + 600]
+        self.assertIn("d.lesson !== lesson.name", body)
+
+    def test_the_entry_points_are_gated_on_ai_enabled(self):
+        """`get_builder_bootstrap` already returns `ai_enabled`; offering a button that
+        the server will refuse is worse than not offering it."""
+        src = _canvas()
+        self.assertIn("this.ai_enabled = !!data.ai_enabled", src)
+        self.assertIn("if (this.ai_enabled) {", src)
+
+    def test_an_ungrounded_suggestion_is_marked(self):
+        """The server already drops what it cannot trace back to the lesson, so this is
+        belt and braces — but an ungrounded suggestion is the one a reviewer must read
+        hardest and it must not look like the others."""
+        src = _canvas()
+        self.assertIn("is-ungrounded", src)
+        css = (APP / "training/page/training_canvas/training_canvas.css").read_text(encoding="utf-8")
+        self.assertIn(".tc-ai-card.is-ungrounded", css)
+
+    def test_a_failed_draft_does_not_leave_the_drawer_busy(self):
+        """A drawer stuck on "Drafting…" reads as a hang, and `suggest_checkpoints`
+        genuinely refuses on the only video asset production has — its
+        `transcript_source` is "None"."""
+        src = _canvas()
+        at = src.index("ai_failed() {")
+        body = src[at : at + 400]
+        self.assertIn("this.ai_reset()", body)

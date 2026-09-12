@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.414.0] - 2026-09-11
+
+### Added
+
+- **AI drafting and review on the canvas** (WI-074 D / S8): draft quiz questions for a lesson,
+  suggest in-video checkpoints for a video block, and review each suggestion one at a time.
+
+### Notes
+
+**This is the blocker for retiring the classic builder, not a nicety.** `publish_version`
+refuses any course holding an `ai_generated` question with no `ai_reviewed_by`;
+`accept_ai_suggestions` is the **only** thing that stamps a reviewer; and the classic builder's
+quiz section is read-only with no hand-add anywhere. So the AI drawer is the only surface on
+this site that can unblock a Triton-authored course. Production is not blocked today only
+because the four courses published this evening carry zero quiz rows — the next AI-drafted one
+will.
+
+The engine already existed. `api/training_ai.py` has had `draft_quiz_questions`,
+`suggest_checkpoints` and `accept_ai_suggestions` all along; the canvas dialled none of them.
+
+**Drafting chains off the save, for a reason peculiar to these endpoints.** `_lesson()` resolves
+the lesson **from the database**, and `draft_quiz_questions` refuses below `MIN_SOURCE_CHARS`
+(120). So drafting against unflushed canvas edits does not merely use stale text — it tells the
+author there is not enough written content in a lesson that is visibly full on their screen.
+
+**There is a "Reject all" and deliberately no "Accept all"**, carried across from the classic
+builder along with the reason: accepting *is* the human review the publish gate is built on, and
+a button that performs it in bulk without anyone reading anything makes the gate ornamental. The
+same rule is expressed in the payload rather than only in the absence of a button — `accept`
+sends exactly one suggestion.
+
+**Drafts are scoped to the lesson they came from.** A suggestion drafted from lesson A shown
+under lesson B is a question about content the reviewer is not looking at.
+
+**An ungrounded suggestion is marked.** The server already drops anything it cannot trace back
+to the lesson text, so this is belt and braces — but the one suggestion a reviewer must read
+hardest should not look like the others.
+
+**`suggest_checkpoints` will refuse on the only video asset production has.** Its
+`transcript_source` is `"None"`, and the endpoint requires a *timed* transcript. That refusal is
+correct and is left to the server to state rather than pre-empted with a client-side guess —
+the remedy is the `.vtt` loader the canvas already has. A failed draft resets the drawer rather
+than leaving it on "Drafting…", which would read as a hang.
+
 ## [1.413.0] - 2026-09-11
 
 ### Added
