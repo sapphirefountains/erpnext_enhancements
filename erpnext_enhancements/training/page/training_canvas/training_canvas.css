@@ -798,3 +798,41 @@
 	align-self: flex-start;
 	margin: 2px 0 8px 0;
 }
+
+/* ------------------------------------------------ publish readiness (E7) */
+/* What publish would refuse, standing in the rail while there is still time to
+   fix it. Quiet by design: it is a fact about the draft, not an interruption --
+   the loudest version of this idea was a msgprint on validate, which became a
+   toast every four seconds on a 1200ms autosave. */
+.tc-readiness {
+	margin: 16px 8px 8px;
+	padding: 10px 12px;
+	border-radius: 8px;
+	border: 1px solid var(--border-color, #e2e8f0);
+	background: var(--fg-color, #fff);
+	font-size: 12px;
+}
+
+.tc-readiness.is-ready {
+	border-color: var(--green-300, #86efac);
+}
+
+.tc-readiness-head {
+	font-weight: 600;
+	margin-bottom: 6px;
+}
+
+.tc-readiness-list {
+	margin: 0;
+	padding-left: 16px;
+	line-height: 1.5;
+}
+
+.tc-readiness-where {
+	color: var(--text-muted, #6b7280);
+}
+
+.tc-readiness-more {
+	margin-top: 6px;
+	color: var(--text-muted, #6b7280);
+}

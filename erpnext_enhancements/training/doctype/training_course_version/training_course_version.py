@@ -150,6 +150,29 @@ class TrainingCourseVersion(Document):
 		Named per lesson and per block. "Something is empty somewhere in a
 		forty-lesson course" is not an error message, it is a scavenger hunt.
 		"""
+		problems = self.unfinished_block_problems()
+		if not problems:
+			return
+		frappe.throw(
+			_("These blocks are not finished, so a learner would see a blank space where they are:")
+			+ "<br><br>"
+			+ "<br>".join(frappe.utils.escape_html(p) for p in problems)
+		)
+
+	def unfinished_block_problems(self, limit=None):
+		"""Why this draft cannot be published yet, block by block, as sentences.
+
+		The builder half of the contract ``TrainingLesson.incomplete_blocks`` already
+		declares for itself -- advisory while the version is a draft, a hard refusal at
+		publish. Until v1.410.0 only the refusal existed, because this loop lived
+		inside ``_require_finished_blocks`` and its one caller was ``before_submit``.
+		So an author found out what was unfinished at the moment they tried to ship.
+
+		Never throws. ``limit`` stops the scan early for the advisory, which is a
+		preview rather than an audit; the publish gate passes no limit and stays
+		exhaustive, because a refusal that listed only the first few would send
+		somebody round the loop once per hidden problem.
+		"""
 		problems = []
 		for name in frappe.get_all(
 			"Training Lesson", filters={"course_version": self.name}, pluck="name", order_by="idx asc"
@@ -161,13 +184,9 @@ class TrainingCourseVersion(Document):
 						lesson.lesson_title or name, idx, block_type, why
 					)
 				)
-		if not problems:
-			return
-		frappe.throw(
-			_("These blocks are not finished, so a learner would see a blank space where they are:")
-			+ "<br><br>"
-			+ "<br>".join(frappe.utils.escape_html(p) for p in problems)
-		)
+				if limit and len(problems) >= limit:
+					return problems
+		return problems
 
 	def _require_finished_checkpoints(self):
 		"""No half-built checkpoint reaches a learner.
@@ -184,6 +203,29 @@ class TrainingCourseVersion(Document):
 
 		Named per lesson and per timestamp, because "a checkpoint is unfinished
 		somewhere in a forty-lesson course" is a scavenger hunt, not a message.
+		"""
+		problems = self.unfinished_checkpoint_problems()
+		if not problems:
+			return
+		frappe.throw(
+			_("These checkpoints are not finished. A checkpoint with no question, or with no "
+			  "correct option, can never be passed — it would hold every learner on that video "
+			  "with no way forward:")
+			+ "<br><br>"
+			+ "<br>".join(frappe.utils.escape_html(p) for p in problems)
+		)
+
+	def unfinished_checkpoint_problems(self, limit=None):
+		"""The same, for in-video checkpoints. Never throws.
+
+		``limit`` matters more here than it does for blocks: this loads each
+		checkpoint as a full document to ask it ``incomplete_reasons()``, so an
+		unbounded scan on a forty-lesson course is N document loads on a page open.
+		The publish gate still passes no limit -- it must be exhaustive -- but the
+		draft advisory asks for a handful.
+
+		Production currently holds zero Training Checkpoints, so this is cheap today
+		and would stop being cheap the moment in-video pins are used in anger.
 		"""
 		problems = []
 		for name in frappe.get_all(
@@ -205,15 +247,9 @@ class TrainingCourseVersion(Document):
 				problems.append(
 					_("{0} — checkpoint at {1} ({2})").format(title, stamp, ", ".join(why))
 				)
-		if not problems:
-			return
-		frappe.throw(
-			_("These checkpoints are not finished. A checkpoint with no question, or with no "
-			  "correct option, can never be passed — it would hold every learner on that video "
-			  "with no way forward:")
-			+ "<br><br>"
-			+ "<br>".join(frappe.utils.escape_html(p) for p in problems)
-		)
+				if limit and len(problems) >= limit:
+					return problems
+		return problems
 
 	def _require_materialized_content(self):
 		"""Refuse a submit that has not been through ``publish_version``.

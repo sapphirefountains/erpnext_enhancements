@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.410.0] - 2026-09-11
+
+### Added
+
+- **The canvas says what publish will refuse, while there is still time to fix it**
+  (WI-074 E7, replacing P21). `TrainingLesson.incomplete_blocks` and
+  `TrainingCheckpoint.incomplete_reasons` have both declared the same contract in their own
+  docstrings since they were written — *advisory while the version is a draft, a hard refusal
+  at publish* — and the draft half had never been built. Each had exactly one caller: the
+  publish gate. So an author found out what was unfinished at the moment they tried to ship.
+
+  Both gates are now split into a problems-builder and a thin thrower
+  (`unfinished_block_problems` / `unfinished_checkpoint_problems`), and the canvas renders the
+  same sentences in a standing panel in its rail.
+
+### Notes
+
+**One implementation, two readings.** The advisory and the refusal come from the same two
+builders, so an author cannot satisfy the panel and then be refused, or satisfy the refusal and
+wonder why the panel still complains. Two notions of "unfinished" would drift, and the drift
+shows up as somebody learning to distrust the panel.
+
+**It never interrupts, and that word is load-bearing.** `_readiness` returns data. It does not
+throw and it does not `msgprint`. `msgprint` queues onto `_server_messages` and rides out on
+the response whatever the client does with it, so a warning raised on the save path becomes a
+toast every four seconds on a 1200ms autosave debounce — which `TrainingLesson`'s own docstring
+records as the single loudest complaint about the editor. A test asserts the absence, over
+executable source only, because the function's docstring says "never msgprints" in order to
+explain the rule.
+
+**The advisory is bounded; the refusal is not.** `unfinished_checkpoint_problems` loads each
+checkpoint as a full document to ask it `incomplete_reasons()`, so an unbounded scan on a
+forty-lesson course would be N document loads on every page open. The draft advisory asks for
+twelve and says "…and more"; the publish gate passes no limit and stays exhaustive, because a
+refusal listing only the first few would send an author round the loop once per hidden problem.
+Production holds zero checkpoints today, so this is cheap now and would stop being cheap the
+moment in-video pins are used in anger.
+
+**A checkpoint line names where to go.** The canvas cannot edit checkpoints — they stay in the
+classic builder — so without that, a checkpoint in the advisory is an error message with no
+remedy.
+
+**Nothing is recomputed in JavaScript.** `training_canvas.js` already records the ruling that a
+third client-side copy of an emptiness test is not a second line of defence, it is the exact
+mismatch that lets a compliance course lose its teeth unnoticed.
+
+Three existing assertions were redirected rather than weakened: they pointed at loops that have
+moved into the builders, so each now pins the delegation *and* the builder — a gate that stopped
+delegating would otherwise still pass a test on the builder alone.
+
 ## [1.409.0] - 2026-09-11
 
 ### Added

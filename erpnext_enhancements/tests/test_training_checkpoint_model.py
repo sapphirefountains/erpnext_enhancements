@@ -167,15 +167,34 @@ class TestTheGateThatMakesItSafe(unittest.TestCase):
 
     def test_the_gate_reads_the_one_implementation(self):
         """Not a second copy of the rule. Two implementations of "unfinished" drift,
-        and the drift is invisible until a learner is stuck."""
-        self.assertIn("incomplete_reasons()", _fn(VERSION_PY, "_require_finished_checkpoints"))
+        and the drift is invisible until a learner is stuck.
+
+        Since v1.410.0 the gate reads it INDIRECTLY: the loop moved into
+        `unfinished_checkpoint_problems` so the canvas can show the same sentences
+        while the version is still a draft. The chain is what matters, so both links
+        are asserted -- a gate that stopped delegating would pass a test on the"
+        builder alone."""
+        gate = _fn(VERSION_PY, "_require_finished_checkpoints")
+        self.assertIn("unfinished_checkpoint_problems()", gate)
+        builder = _fn(VERSION_PY, "unfinished_checkpoint_problems")
+        self.assertIn("incomplete_reasons()", builder)
 
     def test_it_names_the_lesson_and_the_timestamp(self):
         """"A checkpoint is unfinished somewhere in a forty-lesson course" is a
-        scavenger hunt, not an error message."""
-        body = _fn(VERSION_PY, "_require_finished_checkpoints")
+        scavenger hunt, not an error message. Now built in
+        `unfinished_checkpoint_problems`, and read by both the gate and the draft
+        advisory, so the author sees the same sentence either way."""
+        body = _fn(VERSION_PY, "unfinished_checkpoint_problems")
         self.assertIn("lesson_title", body)
         self.assertIn("at_seconds", body)
+
+    def test_the_builder_never_throws(self):
+        """The advisory half of the contract. A panel that raised while somebody was
+        typing would be the four-second red dialog this whole work item exists to
+        remove."""
+        body = _fn(VERSION_PY, "unfinished_checkpoint_problems")
+        self.assertNotIn("frappe.throw", body)
+        self.assertIn("return problems", body)
 
 
 class TestTheOneImplementation(unittest.TestCase):

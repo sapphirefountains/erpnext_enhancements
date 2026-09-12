@@ -297,6 +297,7 @@ class TrainingCanvas {
 	apply_bootstrap(data) {
 		this.course = data.course || null;
 		this.version = data.version || null;
+		this.readiness = data.readiness || null;
 		this.chapters = data.chapters || [];
 		this.video_assets = data.video_assets || [];
 		this.lessons = (data.lessons || []).map((lesson) => {
@@ -385,6 +386,7 @@ class TrainingCanvas {
 		});
 
 		this.$rail.append($add, $list);
+		this.render_readiness();
 		if (window.Sortable && this.editable()) {
 			Sortable.create($list[0], {
 				handle: ".tc-rail-title",
@@ -733,6 +735,53 @@ class TrainingCanvas {
 	}
 
 	// --------------------------------------------------------------- sheet
+	// ---------------------------------------------------- publish readiness
+	//
+	// What publish would refuse, shown while there is still time to fix it. The
+	// sentences come from the SAME two builders the publish gate reads
+	// (`unfinished_block_problems` / `unfinished_checkpoint_problems`), so an author
+	// cannot satisfy this panel and then be refused, or satisfy the refusal and
+	// wonder why the panel still complains.
+	//
+	// It is deliberately NOT recomputed in JavaScript. `training_canvas.js` already
+	// records the ruling that a third client-side copy of an emptiness test is not a
+	// second line of defence, it is the exact mismatch that lets a compliance course
+	// lose its teeth unnoticed.
+	render_readiness() {
+		this.$app.find(".tc-readiness").remove();
+		const r = this.readiness;
+		if (!r) return;
+		const blocks = r.blocks || [];
+		const checkpoints = r.checkpoints || [];
+		const total = blocks.length + checkpoints.length;
+		const $panel = $('<div class="tc-readiness"></div>');
+		if (!total) {
+			$panel.addClass("is-ready");
+			$('<div class="tc-readiness-head"></div>').text(__("Ready to publish")).appendTo($panel);
+			this.$rail.append($panel);
+			return;
+		}
+		$('<div class="tc-readiness-head"></div>')
+			.text(__("{0} thing(s) to finish before this can be published").format([total]))
+			.appendTo($panel);
+		const $list = $('<ul class="tc-readiness-list"></ul>').appendTo($panel);
+		blocks.forEach((line) => $("<li></li>").text(line).appendTo($list));
+		checkpoints.forEach((line) => {
+			const $li = $("<li></li>").text(line).appendTo($list);
+			// The canvas cannot edit checkpoints -- they stay in the classic builder --
+			// so a checkpoint line without this is an error message with no remedy.
+			$('<span class="tc-readiness-where"></span>')
+				.text(" " + __("(edit in the classic builder)"))
+				.appendTo($li);
+		});
+		if (r.truncated) {
+			$('<div class="tc-readiness-more"></div>')
+				.text(__("…and more. Publishing lists every one."))
+				.appendTo($panel);
+		}
+		this.$rail.append($panel);
+	}
+
 	render_sheet() {
 		const lesson = this.current_lesson();
 		this.$title.text(lesson ? lesson.lesson_title || "" : "");
@@ -1502,6 +1551,13 @@ class TrainingCanvas {
 				if (state.chapters) this.chapters = state.chapters;
 				this.adopt_created(state.created_lessons);
 				this.report_rejected(state.rejected);
+				// Recomputed server-side on every save, so the advisory tracks the edit that
+				// just landed. Note what does NOT happen here: nothing throws and nothing
+				// msgprints. A warning on the save path becomes a toast every four seconds on
+				// a 1200ms debounce, which is the complaint this whole work item exists to
+				// remove -- the panel is a standing fact on the page, not an interruption.
+				if (state.readiness !== undefined) this.readiness = state.readiness;
+				this.render_readiness();
 				this.paint_status(this.has_dirty() ? "dirty" : "saved");
 				// CHAIN, do not re-arm. Keystrokes typed during an in-flight save land in
 				// `this.dirty`, and handing them to `mark_dirty()` puts them behind the

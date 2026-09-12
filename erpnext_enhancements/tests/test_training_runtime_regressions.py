@@ -797,10 +797,58 @@ class TestUnfinishedBlocksDoNotFightTheAuthor(unittest.TestCase):
 
     def test_the_refusal_names_the_lesson_and_the_block(self):
         """'Something is empty somewhere in a forty-lesson course' is a scavenger
-        hunt, not an error message."""
-        body = self._executable(self.VERSION, "TrainingCourseVersion", "_require_finished_blocks")
+        hunt, not an error message.
+
+        Since v1.410.0 the sentences are built in `unfinished_block_problems` so the
+        canvas can show the same ones while the version is still a draft. The gate
+        reads that builder rather than looping itself, so both links are asserted --
+        a gate that stopped delegating would still pass a test on the builder alone.
+        """
+        gate = self._executable(self.VERSION, "TrainingCourseVersion", "_require_finished_blocks")
+        self.assertIn("unfinished_block_problems()", gate)
+        body = self._executable(
+            self.VERSION, "TrainingCourseVersion", "unfinished_block_problems"
+        )
         self.assertIn("lesson_title", body)
         self.assertIn("block {1}", body)
+
+    def test_the_draft_advisory_reads_the_same_builder(self):
+        """One implementation, two readings. Two notions of "unfinished" drift, and
+        the drift shows up as an author satisfying the panel and then being refused
+        anyway -- which teaches them to distrust the panel."""
+        author = (APP / "api/training_author.py").read_text(encoding="utf-8")
+        self.assertIn("unfinished_block_problems(", author)
+        self.assertIn("unfinished_checkpoint_problems(", author)
+
+    def test_the_advisory_never_interrupts(self):
+        """`msgprint` queues onto `_server_messages` and rides out on the response
+        whatever the client does with it, so a warning on the save path becomes a
+        toast every four seconds on a 1200ms autosave debounce. That is the single
+        loudest complaint about the editor, and it must not come back.
+
+        Asserted over EXECUTABLE source. `_readiness`'s own docstring says it "never
+        msgprints" and explains why — so a text match on the raw function fails on its
+        own explanation. That is the ninth occurrence of that trap in this project,
+        and the second in the release that added this test.
+        """
+        src = (APP / "api/training_author.py").read_text(encoding="utf-8")
+        node = None
+        for candidate in ast.walk(ast.parse(src)):
+            if isinstance(candidate, ast.FunctionDef) and candidate.name == "_readiness":
+                node = candidate
+        self.assertIsNotNone(node, "_readiness is gone")
+        stripped = [
+            n
+            for n in node.body
+            if not (
+                isinstance(n, ast.Expr)
+                and isinstance(n.value, ast.Constant)
+                and isinstance(n.value.value, str)
+            )
+        ]
+        body = "\n".join(ast.unparse(n) for n in stripped)
+        self.assertNotIn("frappe.throw", body)
+        self.assertNotIn("msgprint", body)
 
     def test_the_structural_rules_still_throw(self):
         """Relaxing emptiness must not relax the rules that hold mid-edit -- a
