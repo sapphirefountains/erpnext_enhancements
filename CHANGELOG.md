@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.413.0] - 2026-09-11
+
+### Added
+
+- **In-video checkpoints can be placed, edited and deleted on the canvas** (WI-074 D / S4b).
+  A timeline sits under the video block's settings; clicking it drops a pin, and the selected
+  pin gets a compact editor — question, type, options with the correct one ticked, and delete.
+
+### Notes
+
+**Every pin write chains off the save, and that is the whole point of the step.**
+`TrainingCheckpoint._validate_block` resolves its block by querying
+`tabTraining Content Block` for `parent = lesson` and the given `block_key` — and a canvas
+block exists only in memory until the 1200ms autosave lands. Writing a pin first throws *"No
+content block on X has the key Y"*, on the commonest authoring sequence there is: add a Video
+block, drop a pin on it. `save_then` (v1.411.0) is what makes the chain possible and names the
+abandoned action if the save fails.
+
+**No second debounce.** The classic builder has one; with the save chained there is no window
+for it, and a second uncoordinated timer beside `TC_SAVE_DEBOUNCE_MS` is how two writers end up
+racing over one row.
+
+**The port is not a copy, and that mattered.** An adversarial review of the original plan found
+**twelve members** the classic builder's pin code calls that do not exist on the canvas —
+`paint_save_state`, `render_canvas`, `render_inspector`, `guard_editable`, `set_block_field`,
+`pins_for`, `seek_preview`, `_pending_pins` and the module-level `tb_mmss` among them. One of
+them (`seek_preview`) would have thrown inside a `pointermove` handler on every drag. Each is
+shimmed explicitly rather than assumed, because the rule that would otherwise have broken
+quietly is the important one: **`checkpoint_key` is server-owned**. Learner answers are filed
+under it, the controller mints it, and the only mint permitted in this file is the transient
+`"cp-"` that the insert response immediately replaces. A test allows exactly one.
+
+**Turning a Video into something else now drops its pins in memory too.**
+`_reap_orphan_checkpoints` deletes them server-side on the next save; keeping them client-side
+would repaint ghost pins whose `cp.name` points at a deleted document, and the next edit would
+404. Deliberately *not* done in `duplicate_block` — a duplicate that silently acquired somebody
+else's questions is worse than one that acquired none, and a test asserts that method never
+mentions checkpoints at all.
+
+**The inspector is compact but complete on purpose.** A pin you can place but not finish is
+worse than no pin: an unfinished checkpoint is exactly what `_require_finished_checkpoints`
+refuses at publish, and what `grading._unanswered_checkpoints` would hold a learner on forever.
+The one contradiction the controller still throws on at save time — more than one correct option
+on a Single Choice — is prevented in the editor rather than discovered.
+
+### Fixed
+
+- An assertion in `test_training_canvas.py` that **guarded nothing**. It keyed on
+  `src.index("render_lesson_settings()")`, which lands on the *call site* hundreds of lines
+  before the definition, and its fixed 3000-character window never reached the method at all —
+  so it passed over source that could not have contained the string either way. Found by the
+  adversarial review, because this release edits that method.
+
 ## [1.412.0] - 2026-09-11
 
 ### Fixed
