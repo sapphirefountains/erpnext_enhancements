@@ -97,7 +97,20 @@ CLOSED_ASSIGNMENT_STATUSES = ("Completed", "Cancelled", "Waived")
 #: Columns the supervisor queue reads. Named once because it is now fetched from
 #: two branches, and a field present in one and not the other is the kind of
 #: difference that only shows up for whoever hits the second branch.
-QUEUE_FIELDS = ["name", "course", "course_version", "user", "supervisor_user", "creation"]
+#:
+#: `signed_on` is the age the queue reports, NOT `creation`. `_stamp_signed_on`
+#: documents it as when the REQUEST was raised and only ever sets it when blank, so a
+#: historical import can carry an honest date; `creation` is the row insert, and would
+#: report an imported backlog as brand new.
+QUEUE_FIELDS = [
+	"name",
+	"course",
+	"course_version",
+	"user",
+	"supervisor_user",
+	"creation",
+	"signed_on",
+]
 
 
 def _in_maintenance_context():
@@ -593,6 +606,11 @@ def get_signoff_queue():
 			order_by="creation asc",
 		)
 	courses = {}
+	# Read once, not per row.
+	escalate_after = cint(
+		frappe.db.get_single_value("Training Settings", "default_escalate_after_days")
+	) or 7
+
 	for row in rows:
 		detail = courses.get(row.course)
 		if detail is None:
@@ -602,6 +620,11 @@ def get_signoff_queue():
 			courses[row.course] = detail
 		row["course_title"] = detail.get("course_title") or row.course
 		row["instructions"] = detail.get("signoff_instructions")
+		# The site's OWN escalation threshold, carried per row rather than hardcoded in
+		# the client. `overdue_escalation_enabled` / `default_escalate_after_days` already
+		# decide when this module chases somebody; a second number in JavaScript would be
+		# a second answer to 'how long is too long'.
+		row["escalate_after_days"] = escalate_after
 	# A manager's own requests are dropped here rather than in SQL, so the
 	# manager/supervisor branches above stay readable.
 	return [row for row in rows if row.get("user") != caller]

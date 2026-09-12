@@ -1070,3 +1070,54 @@ class TestTheLearnerCanTellWhereTheyAre(unittest.TestCase):
         for fn in ("function renderLesson()", "function renderCourse()"):
             with self.subTest(fn=fn):
                 self.assertIn("courseCounter()", _fn_body(src, fn))
+
+
+class TestTheSignOffQueueShowsItsAge(unittest.TestCase):
+    """P20 (v1.409.0). `QUEUE_FIELDS` already carried a date and `queueRow` rendered
+    title, learner, instructions, a note box and three buttons — with no date anywhere.
+
+    A queue with no age in it is a list. A supervisor cannot tell the request raised
+    this morning from the one raised three weeks ago, which is the only thing that
+    decides which to do first.
+    """
+
+    SIGNOFF = APP / "training/signoff.py"
+
+    def _player(self):
+        from erpnext_enhancements.tests.test_training_canvas import _strip_js_comments
+
+        return _strip_js_comments(_player_js())
+
+    def test_the_queue_sends_signed_on_not_just_creation(self):
+        """`_stamp_signed_on` documents `signed_on` as when the REQUEST was raised and
+        only sets it when blank, so a historical import can carry an honest date.
+        `creation` is the row insert and would report an imported backlog as new."""
+        src = self.SIGNOFF.read_text(encoding="utf-8")
+        fields = src[src.index("QUEUE_FIELDS = [") : src.index("def _in_maintenance_context")]
+        self.assertIn('"signed_on"', fields)
+
+    def test_the_threshold_comes_from_settings_not_from_javascript(self):
+        """`default_escalate_after_days` already decides when this module chases
+        somebody. A number in the client would be a second answer to "how long is too
+        long", and the two would drift the first time anyone changed the setting."""
+        src = self.SIGNOFF.read_text(encoding="utf-8")
+        self.assertIn("default_escalate_after_days", src)
+        body = _fn_body(self._player(), "function queueRow(row, list)")
+        self.assertIn("row.escalate_after_days", body)
+        self.assertNotIn("=== 7", body)
+        self.assertNotIn(">= 7", body)
+
+    def test_a_missing_date_is_marked_not_filled_in(self):
+        """The WI-074 guardrail, verbatim: a row that cannot be reconstructed
+        historically must be marked as such, never silently given today's value. So a
+        null `signed_on` must not render as "0 days" or as today."""
+        body = _fn_body(self._player(), "function queueRow(row, list)")
+        self.assertIn("not recorded", body)
+        gate = body.index("row.signed_on ?")
+        self.assertLess(gate, body.index("Waiting {0} day(s)"))
+
+    def test_it_reuses_the_existing_date_helper(self):
+        """`daysUntil` already returns null on an unparseable date. A second date
+        parser would be a second thing that has to get leap years right."""
+        body = _fn_body(self._player(), "function queueRow(row, list)")
+        self.assertIn("daysUntil(row.signed_on)", body)

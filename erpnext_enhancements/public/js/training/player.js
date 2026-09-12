@@ -2847,6 +2847,31 @@
 			var item = el("div", "tr-queue-row");
 			item.appendChild(el("div", "tr-queue-title", row.course_title || row.course || t("Course")));
 			item.appendChild(el("div", "tr-queue-who", row.user || ""));
+
+			// How long it has been waiting. A queue with no age in it is a list, and a
+			// supervisor cannot tell the request raised this morning from the one raised
+			// three weeks ago -- which is the only thing that decides which to do first.
+			//
+			// `signed_on` is when the REQUEST was raised, not `creation` (the row insert),
+			// so an imported backlog reports its real age. A row with no date says so
+			// rather than being given today's: a date that cannot be reconstructed must be
+			// marked as such, never silently filled in.
+			var waited = row.signed_on ? daysUntil(row.signed_on) : null;
+			var age = el("div", "tr-queue-age");
+			if (waited === null) {
+				age.textContent = t("Date of request not recorded");
+			} else {
+				var days = Math.max(0, -waited);
+				age.textContent =
+					days === 0
+						? t("Asked today")
+						: fmt(t("Waiting {0} day(s), since {1}"), [days, row.signed_on.slice(0, 10)]);
+				// The site's own threshold, sent with the row. Hardcoding a number here
+				// would be a second answer to "how long is too long".
+				var limit = row.escalate_after_days || 0;
+				if (limit && days >= limit) age.classList.add("is-stale");
+			}
+			item.appendChild(age);
 			// The course's own "what to verify" text, which is the whole reason a
 			// supervisor can attest to anything specific rather than to a feeling.
 			if (row.instructions) {

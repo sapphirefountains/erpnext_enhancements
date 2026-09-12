@@ -619,6 +619,21 @@
 /* "Lesson 4 of 20 - 3 done" / "3 of 20 lessons done". Rendered in both the lesson
    header and the course view from the SAME courseCounter(), so the two can never
    disagree; muted because it is orientation, not an instruction. */
+/* How long a sign-off request has been waiting. Muted by default -- most of a
+   queue is not urgent -- and `.is-stale` only once the row passes the site's own
+   `default_escalate_after_days`, which arrives on the row rather than being
+   guessed at here. */
+.tr-queue-age {
+	margin-top: 2px;
+	color: var(--tr-muted);
+	font-size: 0.85rem;
+}
+
+.tr-queue-age.is-stale {
+	color: var(--tr-danger, #b42318);
+	font-weight: 600;
+}
+
 .tr-course-place {
 	margin: 0 0 6px;
 	color: var(--tr-muted);
