@@ -143,6 +143,7 @@ class TrainingCanvas {
 		this.reset();
 		this.build_chrome();
 		this.page.set_secondary_action(__("Reload"), () => this.reload());
+		this.page.add_menu_item(__("Preview as a learner"), () => this.open_preview());
 		this.page.add_menu_item(__("Chapters…"), () => this.open_chapters());
 		this.page.add_menu_item(__("New draft version"), () => this.new_draft());
 		this.page.add_menu_item(__("Submit for review"), () => this.submit_for_review());
@@ -1665,6 +1666,28 @@ class TrainingCanvas {
 				throw error;
 			});
 		return this._inflight;
+	}
+
+	open_preview() {
+		// The entire client change for the preview, and that is the point. The classic
+		// builder carries roughly 640 lines -- load_player, preview_boot, preview_lesson,
+		// preview_outline, preview_transport, preview_checkpoint -- whose whole job is to
+		// rebuild, in JavaScript, a payload the server already builds correctly in
+		// `_split_lesson`. None of it is ported. `/training_preview?course=…` asks the
+		// server for the bytes publish would write.
+		//
+		// Chained off the save because opening the preview before the flush lands shows
+		// the author the PREVIOUSLY saved draft while their screen shows newer text --
+		// the silent staleness the classic shipped and only ever fixed for publish. A
+		// lesson created this session also has no `lesson_key` until the save returns, so
+		// the URL would otherwise carry `undefined` and land on lesson one.
+		if (!this.course) return;
+		this.save_then(__("Opening the preview")).then(() => {
+			const lesson = this.current_lesson() || {};
+			const url = "/training_preview?course=" + encodeURIComponent(this.course.name) +
+				(lesson.lesson_key ? "&lesson=" + encodeURIComponent(lesson.lesson_key) : "");
+			window.open(url, "_blank");
+		}).catch(() => {});
 	}
 
 	// ------------------------------------------------------- AI drafting

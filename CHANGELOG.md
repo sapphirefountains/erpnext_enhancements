@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.415.0] - 2026-09-11
+
+### Added
+
+- **The canvas can preview a draft as a learner** (WI-074 D / S5–S7).
+  `/training_preview` grows a second mode: with `?course=…` it resolves that course's open
+  draft and renders it through the **real** player. The canvas gets a "Preview as a learner"
+  action, and that action is the entire client change.
+
+### Notes
+
+**A second mode, not a third transport.** The template still holds exactly one `transport`
+object; only where each method's *data* comes from changes. No new fetch wrapper, no second
+method map, no new endpoint names — `training.html` stays the only fetch transport in the app.
+Every grading and progress method stays in memory in both modes: if draft mode ever dialled
+`api.training` for real, the author would be quietly completing their own compliance course.
+
+**Every field is copied from a real producer, never approximated.** The lesson payloads come
+from `_split_lesson`, whose own docstring names it as the single place a learner-facing payload
+may be built, "because the guarantee being made is only as strong as the number of functions
+capable of breaking it". The table of contents is assembled exactly as `_materialize_lessons`
+assembles it for `toc_json` at publish. The envelope around them mirrors
+`api.training.get_course` key for key — including reading `gates` off the course rather than
+hardcoding thresholds, since the gates are what the player grades and paces against and are
+exactly what an author is most likely to be checking.
+
+The classic builder rebuilt that payload in JavaScript — roughly 640 lines across `load_player`,
+`preview_boot`, `preview_lesson`, `preview_outline`, `preview_transport` and
+`preview_checkpoint` — and the two drifted, so a shim made a broken runtime look fine to the
+author and broken to every learner. **None of those 640 lines is ported**, and a test asserts it.
+
+Three defects were caught during the build by reading those producers side by side with the
+draft of this code, and all three would have shipped silently:
+
+- Lessons were ordered `idx asc`. **`Training Lesson` is not a child table, so `idx` is 0 on
+  every row** and that orders by nothing — the preview would have shown a reading order that
+  exists nowhere else in the app. The order every other caller uses is
+  `chapter_key asc, idx_in_chapter asc, creation asc`.
+- The TOC was rebuilt client-side off `lesson.chapter_key`, a field `_split_lesson` does not put
+  in the public payload — so every lesson would have landed in a blank chapter. It was also the
+  very reconstruction this step exists to stop doing.
+- `version` carried only `version_number`, but the player's course counter reads
+  `version.lessons`. `total_lessons` and `estimated_minutes` are computed at publish, so a
+  draft's copies are stale by definition; both are counted from the lessons actually walked.
+
+Tests cover the first two; both were confirmed to fail against the defective versions rather
+than merely asserted to pass against the fixed one.
+
+**Draft mode is gated harder than the workbench around it.** The page-level check admits anyone
+on a developer-mode site; draft mode does not inherit that, because developer mode is a
+deployment setting and not a permission — and this returns the answer key. Draft mode requires
+an authoring role **and** write permission on the specific course, the same gate
+`get_builder_bootstrap` uses.
+
+The answer key rides along deliberately: an author is already entitled to it
+(`get_builder_bootstrap` serves `is_correct` to exactly these people), and without it the
+preview cannot grade — which is what the classic builder's own note means by "test this
+checkpoint tests nothing". That entitlement is the reason the gate is stricter, not an
+afterthought to it.
+
+**The page says which mode it is in.** A preview that silently shows different content from the
+canned workbench, with nothing on screen distinguishing them, is a preview of the wrong thing
+half the time. The draft payload is delivered as a JSON data island rather than an inline
+assignment — there is no `frappe.*` in this page and the player runs for Website Users with
+`desk_access = 0`, so a `<script type="application/json">` keeps it that way and cannot execute
+whatever a lesson's content happens to contain.
+
+**The canvas action chains off the save.** Opening the preview before the flush lands shows the
+author the *previously* saved draft while their screen shows newer text — the silent staleness
+the classic shipped and only ever fixed for publish. A lesson created this session also has no
+`lesson_key` until the save returns, so the URL would otherwise carry `undefined` and land on
+lesson one.
+
+The filename stays `training_preview.py`, underscored. Frappe imports a web page's controller
+by hyphen-to-underscore-ing the template basename, so a hyphenated one is never imported and
+`get_context` silently never runs — `stripe-return.py` was broken that way from the day it was
+written, and `scripts/check_www_controllers.py` guards it.
+
 ## [1.414.0] - 2026-09-11
 
 ### Added

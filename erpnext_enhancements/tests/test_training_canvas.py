@@ -891,3 +891,129 @@ class TestAiDraftingOnTheCanvas(unittest.TestCase):
         at = src.index("ai_failed() {")
         body = src[at : at + 400]
         self.assertIn("this.ai_reset()", body)
+
+
+class TestThePreviewIsASecondModeNotAThirdTransport(unittest.TestCase):
+    """S5–S7. `/training_preview` grows a draft mode; the canvas points at it and
+    ports nothing.
+
+    The classic builder carries roughly 640 lines — `load_player`, `preview_boot`,
+    `preview_lesson`, `preview_outline`, `preview_transport`, `preview_checkpoint` —
+    whose whole job is to rebuild, in JavaScript, a payload the server already builds
+    correctly in `_split_lesson`. That reconstruction is not hypothetically risky: it
+    drifted, and a shim made a broken runtime look fine to the author and broken to
+    every learner.
+    """
+
+    PREVIEW_PY = APP / "www/training_preview.py"
+    PREVIEW_HTML = APP / "www/training_preview.html"
+
+    def test_the_payload_comes_from_split_lesson(self):
+        """`_split_lesson`'s own docstring names it as the single place a learner-facing
+        payload may be built, "because the guarantee being made is only as strong as
+        the number of functions capable of breaking it"."""
+        src = self.PREVIEW_PY.read_text(encoding="utf-8")
+        self.assertIn("_split_lesson", src)
+
+    def test_draft_mode_does_not_inherit_the_developer_mode_gate(self):
+        """The page-level check admits anyone on a developer-mode site. Draft mode must
+        not, because developer mode is a deployment setting rather than a permission —
+        and this returns the answer key."""
+        src = self.PREVIEW_PY.read_text(encoding="utf-8")
+        at = src.index("def _draft_payload()")
+        body = src[at:]
+        self.assertNotIn("developer_mode", body)
+        self.assertIn('frappe.has_permission("Training Course", "write"', body)
+        self.assertIn("ALLOWED_ROLES", body)
+
+    def test_the_filename_stays_underscored(self):
+        """Frappe imports a web page's controller by hyphen-to-underscore-ing the
+        template basename, so a hyphenated controller is never imported and
+        `get_context` silently never runs. `stripe-return.py` was broken that way from
+        the day it was written."""
+        self.assertTrue(self.PREVIEW_PY.is_file())
+        self.assertNotIn("-", self.PREVIEW_PY.stem)
+
+    def test_there_is_still_exactly_one_transport(self):
+        """"A second mode, not a third transport": no new fetch wrapper, no second
+        method map, no new endpoint names. Only where each method's DATA comes from
+        changes."""
+        html = self.PREVIEW_HTML.read_text(encoding="utf-8")
+        self.assertEqual(html.count("var transport = {"), 1)
+
+    def test_draft_mode_still_grades_in_memory(self):
+        """If draft mode ever dialled api.training for real, the author would be quietly
+        completing their own compliance course.
+
+        Asserted over the EXECUTABLE script only, with JS comments stripped. The
+        template's own header comment promises "No frappe.call and no server round
+        trips", so a whole-file match fails on the sentence guaranteeing the absence.
+        Tenth occurrence of that trap in this project.
+        """
+        html = self.PREVIEW_HTML.read_text(encoding="utf-8")
+        body = _strip_js_comments(html[html.rindex("<script>") : html.rindex("</script>")])
+        self.assertNotIn("frappe.call", body)
+        self.assertNotIn("/api/method/", body)
+
+    def test_the_page_says_when_it_is_previewing_a_draft(self):
+        """A preview that silently shows different content from the canned workbench,
+        with nothing on screen distinguishing them, is a preview of the wrong thing half
+        the time."""
+        html = self.PREVIEW_HTML.read_text(encoding="utf-8")
+        self.assertIn("tp-draft-banner", html)
+
+    def test_the_canvas_button_chains_off_the_save(self):
+        """Opening the preview before the flush lands shows the author the PREVIOUSLY
+        saved draft while their screen shows newer text — and a lesson created this
+        session has no `lesson_key` at all until the save returns, so the URL would
+        carry `undefined` and land on lesson one."""
+        src = _canvas()
+        at = src.index("open_preview() {")
+        body = src[at : at + 1200]
+        self.assertIn("this.save_then(", body)
+        self.assertLess(body.index("save_then"), body.index("window.open"))
+
+    def test_the_canvas_ports_none_of_the_classic_preview_cluster(self):
+        """Roughly 640 lines deliberately not brought across."""
+        src = _canvas()
+        for symbol in ("preview_boot", "preview_lesson", "preview_outline", "preview_transport"):
+            with self.subTest(symbol=symbol):
+                self.assertNotIn(symbol, src)
+
+    def test_lessons_are_read_in_the_order_every_other_caller_uses(self):
+        """`Training Lesson` is not a child table, so `idx` is 0 on every row and
+        ordering by it is ordering by nothing — the preview would show a reading order
+        that exists nowhere else. `api.training._version_lessons` and
+        `training_author._materialize_lessons` both use the three-part order, and the
+        preview has to agree with them or it is previewing a different course."""
+        src = self.PREVIEW_PY.read_text(encoding='utf-8')
+        at = src.index('def _draft_payload()')
+        body = src[at:]
+        self.assertIn("chapter_key asc, idx_in_chapter asc, creation asc", body)
+        # The chapters query legitimately orders by `idx` — Training Chapter IS a
+        # child table — so this pins the lesson query specifically rather than
+        # asserting the string is absent from the function.
+        lessons_at = body.index('"Training Lesson",')
+        self.assertIn(
+            "chapter_key asc, idx_in_chapter asc, creation asc",
+            body[lessons_at : lessons_at + 400],
+        )
+
+    def test_the_table_of_contents_is_built_by_the_server(self):
+        """The one thing this step exists to stop doing is rebuilding a learner payload
+        in JavaScript. A client-side TOC also cannot work here: it would have to key on
+        `chapter_key`, and `_split_lesson` does not put `chapter_key` in the public
+        payload — so every lesson would silently land in a blank chapter.
+
+        The server builds the rows exactly as `_materialize_lessons` builds them for
+        `toc_json` at publish, and the template passes them through."""
+        src = self.PREVIEW_PY.read_text(encoding='utf-8')
+        at = src.index('def _draft_payload()')
+        body = src[at:]
+        for field in ("lesson_key", "chapter_key", "has_quiz", "blocks"):
+            with self.subTest(field=field):
+                self.assertIn('"%s":' % field, body)
+
+        html = _strip_js_comments(self.PREVIEW_HTML.read_text(encoding='utf-8'))
+        self.assertNotIn("draftToc", html)
+        self.assertIn("toc: DRAFT.toc", html)

@@ -44,6 +44,16 @@
 
   /* The harness chrome — deliberately plain and outside the .tr-* namespace so it
      cannot be mistaken for, or collide with, the player it is framing. */
+  /* Draft mode says so. A preview that silently shows different content from the
+     canned workbench, with nothing on screen distinguishing them, is a preview of
+     the wrong thing half the time. */
+  .tp-draft-banner {
+    padding: 8px 14px;
+    background: #fef3c7;
+    border-bottom: 1px solid #fde68a;
+    font-size: 13px;
+  }
+
   .hp-bar {
     position: sticky; top: 0; z-index: 200;
     display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
@@ -93,6 +103,16 @@
 {% endblock %}
 
 {% block script %}
+{%- if draft_json %}
+<!-- The draft payload, as a data island rather than an inline assignment. The
+     player runs for Website Users with desk_access = 0 and there is no frappe.* in
+     this page; a JSON script tag keeps it that way and cannot execute whatever a
+     lesson's content happens to contain. -->
+<script type="application/json" id="tp-draft">{{ draft_json }}</script>
+<div class="tp-draft-banner" role="status">
+	Previewing an unpublished draft. Nothing here is recorded, and no learner sees it until the course is published.
+</div>
+{%- endif %}
 <script src="/assets/erpnext_enhancements/js/training/blocks.js?v={{ deploy_version }}"></script>
 <script src="/assets/erpnext_enhancements/js/training/video.js?v={{ deploy_version }}"></script>
 <script src="/assets/erpnext_enhancements/js/training/quiz.js?v={{ deploy_version }}"></script>
@@ -304,10 +324,52 @@
 		return base;
 	}
 
+	// ---- draft mode -------------------------------------------------------
+	//
+	// ONE transport, two SOURCES. The methods below are unchanged; only where each
+	// one's data comes from changes. That is what "a second mode, not a third
+	// transport" means concretely: no new fetch wrapper, no second method map, no new
+	// endpoint names -- `training.html` stays the only fetch transport in the app.
+	//
+	// Every grading and progress method stays IN MEMORY in both modes. If draft mode
+	// ever dialled api.training for real, the author would be quietly completing their
+	// own compliance course.
+	var DRAFT = (function () {
+		try {
+			var raw = document.getElementById("tp-draft");
+			return raw ? JSON.parse(raw.textContent || "null") : null;
+		} catch (e) {
+			return null;
+		}
+	})();
+
+	function draftLessons() {
+		var map = {};
+		(DRAFT.lessons || []).forEach(function (lesson) { map[lesson.lesson_key] = lesson; });
+		return map;
+	}
+
+
 	// ---- the transport: one method per api.training reply the player dials ----
 
 	var transport = {
 		getCourse: function () {
+			if (DRAFT) {
+				// A pass-through, deliberately. course/gates/version/chapters/toc arrive
+				// already shaped by the server, mirroring api.training.get_course key for
+				// key -- there is nothing left to assemble here, which is the point.
+				return {
+					enabled: true,
+					read_only: false,
+					course: DRAFT.course,
+					gates: DRAFT.gates,
+					version: DRAFT.version,
+					chapters: DRAFT.chapters || [],
+					toc: DRAFT.toc || [],
+					assignment: { status: "In Progress" },
+					attempt: ATTEMPT
+				};
+			}
 			return {
 				course: { course: COURSE, name: COURSE, title: "Basin Draining & Confined-Space Safety",
 					summary: "Isolate, test, and safely enter a drained basin." },
@@ -322,6 +384,15 @@
 		startAttempt: function () { return ATTEMPT; },
 		getLesson: function (args) {
 			var key = (args && args.lesson_key) || "l1";
+			if (DRAFT) {
+				var map = draftLessons();
+				var first = (DRAFT.lessons || [])[0];
+				return {
+					attempt: ATTEMPT, lesson: map[key] || first,
+					progress: { status: "in_progress", blocks: {}, quiz: {} },
+					status: "In Progress", next_checkpoints: {}
+				};
+			}
 			return {
 				attempt: ATTEMPT, lesson: LESSONS[key] || LESSONS.l1,
 				progress: { status: "in_progress", blocks: {}, quiz: {} },
