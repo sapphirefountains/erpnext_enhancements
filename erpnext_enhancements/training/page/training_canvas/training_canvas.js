@@ -3,21 +3,26 @@
 //
 // Training Canvas (/app/training-canvas?course=…) — a full-bleed WYSIWYG builder.
 //
-// The classic Training Builder (/app/training-builder) edits a lesson as a list of
+// The classic Training Builder (/app/training-builder) edited a lesson as a list of
 // summary cards with the real controls in a right-hand inspector, alongside a
 // separate "Preview as learner" pane. This page collapses those into one surface:
 // it renders every block with the REAL learner renderer
 // (public/js/training/blocks.js -> TR.renderBlock) and lets the author edit ON that
 // render — the thing you edit is the thing a learner sees, in the learner stylesheet.
 //
-// It authors a course completely: a lesson rail (add / reorder / delete / chapters),
-// a lesson-settings panel (summary, minutes, gating, quiz settings), content blocks
-// edited in place (Rich Text and Callout with a formatting toolbar; Checklist /
-// Flashcards / Accordion inline editors; External Embed), block add / reorder / remove,
-// and the draft lifecycle (new draft, submit for review, publish). Media that needs a
-// signed draft asset URL (Image, PDF, Downloadable File, Video, Image Hotspots) and the
-// in-video checkpoint scrubber stay in the classic builder, which this page never
-// replaces — a media block renders as a hand-off card.
+// It authors a course COMPLETELY, and as of v1.417.0 that is meant literally: a
+// lesson rail (add / reorder / delete / chapters), a lesson-settings panel (summary,
+// minutes, gating, quiz settings), content blocks edited in place (Rich Text and
+// Callout with a formatting toolbar; Checklist / Flashcards / Accordion inline
+// editors; External Embed), block add / reorder / remove, all twelve media types
+// including Image Hotspots, in-video checkpoints on a timeline (v1.413.0), AI
+// drafting and review (v1.414.0), preview as a learner through the real player
+// (v1.415.0), video registration from Drive with its copy diagnostics (v1.417.0),
+// and the draft lifecycle (new draft, submit for review, publish).
+//
+// Nothing here hands off to the classic builder any more. R1 (v1.416.0) unlinked it
+// everywhere except the Video block, because registering a video existed only there;
+// v1.417.0 ported that and closed the last door.
 //
 // Decisions that are load-bearing, not preferences:
 //
@@ -231,13 +236,6 @@ class TrainingCanvas {
 		});
 	}
 
-	// ONE caller, in `video_editor` -- registering a new video from Drive. That is
-	// the whole remaining reason to open the classic builder, and keeping this method
-	// down to a single call site is what makes that checkable (a test asserts it).
-	open_classic() {
-		const course = this.course && this.course.name;
-		frappe.set_route("training-builder", course ? { course } : {});
-	}
 
 	// ----------------------------------------------------------------- route
 	handle_route() {
@@ -1082,16 +1080,195 @@ class TrainingCanvas {
 		return $box;
 	}
 
-	// Video — pick a registered Training Video Asset (from the bootstrap) and set the
-	// poster / coverage gate. Checkpoints are placed HERE as of v1.413.0.
+	// ------------------------------------------------ video assets
 	//
-	// Registering a NEW video is the one authoring job that still lives only in the
-	// classic builder, and the hand-off at the bottom of this editor is the only
-	// door to it left after R1 (v1.416.0). Deliberately not replaced by "just make
-	// the record in the Desk": `duration_source` is read_only, so a hand-made row
-	// cannot be corrected to Manual, and until v1.416.0 it also defaulted to
-	// "Probed" -- which made `grading._duration_is_verified` enforce the coverage
-	// gate against a duration nobody measured. Waiving beats gating on a guess.
+	// Ported from the classic builder in v1.417.0. It was the last thing that
+	// existed only there, and it is why R1 left one door open; with it here the door
+	// closes and `open_classic()` is gone.
+	//
+	// Registering through `register_video_asset` is not a convenience over making the
+	// record in the Desk -- it is the only correct way. The endpoint PROBES the real
+	// length from Drive, and watch coverage is a fraction of `duration_seconds`, so a
+	// hand-typed 600 against a real 900-second video passes an 80% gate on 53% of an
+	// actual watch.
+
+	video_asset(block) {
+		return (this.video_assets || []).find((row) => row.name === block.video_asset) || null;
+	}
+
+	adopt_video_asset(row) {
+		// Patch the local list rather than reloading. `reload()` calls `reset()`, which
+		// throws away unsaved edits -- the classic could afford that call because it had
+		// already flushed; here the author may have typed since. The row comes from the
+		// server shaped by the same `_video_asset_row` the bootstrap uses, so the patched
+		// list cannot drift from what a reload would have produced.
+		if (!row || !row.name) return;
+		this.video_assets = this.video_assets || [];
+		const at = this.video_assets.findIndex((a) => a.name === row.name);
+		if (at === -1) this.video_assets.push(row);
+		else this.video_assets.splice(at, 1, row);
+		this.video_assets.sort((a, b) => String(a.title || a.name).localeCompare(String(b.title || b.name)));
+	}
+
+	register_drive_video(lesson, block) {
+		if (!this.editable()) return;
+		const dialog = new frappe.ui.Dialog({
+			title: __("Add a video from Drive"),
+			fields: [
+				{
+					fieldname: "drive_file_id",
+					fieldtype: "Data",
+					label: __("Drive link or file id"),
+					reqd: 1,
+					description: __(
+						"Paste the address of the video itself. A folder link or the shared drive's own link will not work, and both fail later with an unhelpful 'file not found'."
+					),
+				},
+				{
+					fieldname: "title",
+					fieldtype: "Data",
+					label: __("Title"),
+					description: __("Optional — Drive's own name is used when this is blank."),
+				},
+			],
+			primary_action_label: __("Register"),
+			primary_action: (values) => {
+				dialog.hide();
+				// Chained off the save, like every other canvas action that writes. The
+				// registration itself would survive a stale draft, but the `video_asset`
+				// this sets onto the block would be overwritten by the in-flight autosave
+				// carrying the OLD block table -- the author would watch their new video
+				// un-pick itself a second later.
+				this.save_then(__("Registering the video"))
+					.then(() =>
+						frappe.call({
+							method: "erpnext_enhancements.api.training_author.register_video_asset",
+							args: { drive_file_id: values.drive_file_id, title: values.title || null },
+							freeze: true,
+							freeze_message: __("Reading the video from Drive…"),
+						})
+					)
+					.then((r) => this.video_registered(lesson, block, (r && r.message) || {}))
+					.catch(() => {});
+			},
+		});
+		dialog.show();
+	}
+
+	video_registered(lesson, block, result) {
+		if (!result.video_asset) return;
+		this.adopt_video_asset(result.asset);
+		block.video_asset = result.video_asset;
+		this.dirty_blocks(lesson);
+		this.mark_dirty();
+		this.render_sheet();
+		// `duration_probed` is the honest signal and the only one worth interrupting
+		// for: a false means the service account could not read the file, the length is
+		// a placeholder, and the coverage gate will be WAIVED rather than enforced. An
+		// author who was told only "registered" would think the gate they set applies.
+		if (result.duration_probed) {
+			frappe.show_alert(
+				{ message: __("Registered, and its length was read from Drive."), indicator: "green" },
+				5
+			);
+			return;
+		}
+		frappe.msgprint({
+			title: __("Registered, but Drive could not be read"),
+			indicator: "orange",
+			message: __(
+				"The video is linked, but its length could not be read from Drive — which usually means the file is not shared with the service account that copies it. Until that is fixed the video will not play for a learner and the watch-coverage gate is waived."
+			),
+		});
+	}
+
+	retry_video_copy(asset, $button) {
+		// Inline, not queued, and the button says so while it runs. The author pressed
+		// it and is waiting for an answer; the alternative is a spinner that resolves
+		// into silence.
+		$button.prop("disabled", true).text(__("Copying…"));
+		frappe
+			.call({
+				method: "erpnext_enhancements.api.training_author.retry_video_copy",
+				args: { video_asset: asset.name },
+			})
+			.then((r) => {
+				const result = (r && r.message) || {};
+				this.adopt_video_asset(result.asset);
+				if (result.ok) {
+					frappe.show_alert({ message: __("Copied. The video is ready."), indicator: "green" }, 5);
+					this.render_sheet();
+					return;
+				}
+				$button.prop("disabled", false).text(__("Retry the copy"));
+				frappe.msgprint({
+					title: __("Still failing"),
+					indicator: "red",
+					message: result.last_error || result.reason || __("The copy did not succeed."),
+				});
+			})
+			.catch(() => $button.prop("disabled", false).text(__("Retry the copy")));
+	}
+
+	render_asset_state($box, block) {
+		const asset = this.video_asset(block);
+		if (!asset) return;
+
+		if (asset.status === "Error") {
+			const $warn = $('<div class="tc-asset-warn"></div>').appendTo($box);
+			$("<div></div>")
+				.text(__("The copy from Drive failed, so this video will not play for a learner."))
+				.appendTo($warn);
+			if (asset.last_error) {
+				// Drive answers 404 rather than 403 for a file the service account cannot
+				// see, so the raw error points away from the cause. "File not found"
+				// almost always means "not shared".
+				const notFound = /404|not found/i.test(asset.last_error);
+				$("<div></div>")
+					.text(
+						notFound
+							? __("Drive says the file was not found. That usually means it is not shared with the service account rather than missing — check sharing on the file or the shared drive it lives in.")
+							: asset.last_error
+					)
+					.appendTo($warn);
+			}
+			$('<button type="button" class="btn btn-default btn-xs"></button>')
+				.text(__("Retry the copy"))
+				.on("click", (event) => this.retry_video_copy(asset, $(event.currentTarget)))
+				.appendTo($warn);
+			return;
+		}
+
+		if (!asset.copied) {
+			$('<div class="tc-hint"></div>')
+				.text(
+					__("Not copied into the bucket yet. Publishing queues the copy; a learner sees nothing here until it finishes.")
+				)
+				.appendTo($box);
+		}
+
+		// The quiet one, and the one that matters most. `Manual` means the length was
+		// typed rather than read from Drive, and `evaluate_gates` WAIVES the coverage
+		// gate in that case rather than scoring against a guess. An author who thinks
+		// they set an 80% gate deserves to know it is not being applied -- the Coverage
+		// field sits directly above this and would otherwise be a lie.
+		if (asset.duration_source !== "Probed") {
+			$('<div class="tc-asset-warn"></div>')
+				.text(
+					__("This video's length was entered by hand, not read from Drive, so the watch-coverage gate is waived for it. Re-add it from Drive to have the real length probed.")
+				)
+				.appendTo($box);
+		}
+	}
+
+	// Video — register one from Drive or pick a registered Training Video Asset, set
+	// the poster and coverage gate, place checkpoints on the timeline, and see what is
+	// wrong with the asset. Complete here as of v1.417.0; nothing about a video sends
+	// an author anywhere else.
+	//
+	// The order on screen is deliberate: the coverage field, then the asset's state.
+	// A `Manual` duration WAIVES that gate entirely, so the field immediately above
+	// would otherwise read as a setting that is being applied when it is not.
 	video_editor(lesson, block) {
 		const $box = $('<div class="tc-media"></div>');
 		$('<div class="tc-embed-label"></div>').text(__("Video")).appendTo($box);
@@ -1124,8 +1301,11 @@ class TrainingCanvas {
 			const $d = this.render_ai_drawer(lesson);
 			if ($d && this.ai_drafts.kind === "checkpoint") $box.append($d);
 		}
-		$('<div class="tc-hint"></div>').text(__("Registering a NEW video from Drive is still done in the classic builder — it probes the real length, which watch coverage is measured against.")).appendTo($box);
-		$('<button class="btn btn-default btn-xs" style="margin-top:6px"></button>').text(__("Register a video (classic builder)")).on("click", () => this.open_classic()).appendTo($box);
+		$('<button class="btn btn-default btn-xs" style="margin-top:6px"></button>')
+			.text(__("Add a video from Drive…"))
+			.on("click", () => this.register_drive_video(lesson, block))
+			.appendTo($box);
+		this.render_asset_state($box, block);
 		if (!this.editable()) $box.find("input, select").attr("disabled", "disabled");
 		return $box;
 	}

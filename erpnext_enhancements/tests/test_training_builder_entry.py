@@ -137,25 +137,25 @@ class TestTheBuilderIsStillReachableByUrl(unittest.TestCase):
         with no in-app link left anywhere."""
         self.assertIn("frappe.route_options.course", _builder())
 
-    def test_the_canvas_keeps_exactly_one_door_open(self):
-        """Registering a NEW video from Drive is the one authoring job still living
-        only here: `register_video_asset` has one caller repo-wide and
-        `retry_video_copy` three, all in this page. So the canvas's Video block keeps a
-        hand-off — and that hand-off is the ONLY remaining call to `open_classic`.
+    def test_the_canvas_has_no_door_to_the_classic_builder_at_all(self):
+        """R1 (v1.416.0) left exactly one: the Video block hand-off, because registering
+        a video existed only in the classic builder. v1.417.0 ported that, so the door
+        closed and `open_classic()` was deleted rather than left with no callers.
 
-        Pinned at one, not merely at non-zero: the whole point of R1 is that the
-        classic stopped being a general-purpose destination. Comment-stripped, because
-        the comments explaining the narrowing name `open_classic` repeatedly.
+        Asserted at ZERO, and on the route string too — a method can be deleted while
+        a `frappe.set_route("training-builder")` survives somewhere else. This is the
+        check that has to hold before the R2 flag can ever be switched on: with a door
+        still open, ticking it would remove the only way to register a video.
 
         Uses this file's own `_code`, not an import from `test_training_canvas`: all
         three of these suites have a `__main__` block, and a cross-module import makes
-        the direct run die with ModuleNotFoundError while CI stays green — the exact
-        run-it-two-ways divergence this same commit removes from this file."""
+        the direct run die with ModuleNotFoundError while CI stays green.
+        """
         canvas = _code(
             (APP / "training/page/training_canvas/training_canvas.js").read_text(encoding="utf-8")
         )
-        self.assertEqual(canvas.count("this.open_classic()"), 1)
-        self.assertNotIn("Open classic builder", canvas)
+        self.assertNotIn("open_classic", canvas)
+        self.assertNotIn("training-builder", canvas)
         self.assertNotIn("tc-classic", canvas)
 
     def test_the_button_is_not_a_placeholder_dialog(self):
@@ -608,7 +608,7 @@ class TestVideoCanBeAuthored(unittest.TestCase):
         tree = ast.parse(self._author())
         sent = set()
         for node in ast.walk(tree):
-            if not (isinstance(node, ast.FunctionDef) and node.name == "_builder_video_assets"):
+            if not (isinstance(node, ast.FunctionDef) and node.name == "_video_asset_row"):
                 continue
             for inner in ast.walk(node):
                 if isinstance(inner, ast.Dict):
@@ -617,9 +617,28 @@ class TestVideoCanBeAuthored(unittest.TestCase):
                         for key in inner.keys
                         if isinstance(key, ast.Constant) and isinstance(key.value, str)
                     }
-        self.assertTrue(sent, "could not parse what _builder_video_assets returns")
+        self.assertTrue(sent, "could not parse what _video_asset_row returns")
         for field in ("duration_source", "last_error", "copied"):
-            self.assertIn(field, sent, f"_builder_video_assets does not return {field}")
+            self.assertIn(field, sent, f"_video_asset_row does not return {field}")
+
+        # v1.417.0 moved the literal out of `_builder_video_assets` into
+        # `_video_asset_row`, so that both the bootstrap's list and the row each write
+        # endpoint hands back have ONE definition. Following the literal is not enough
+        # on its own: the picker could stop calling the shaper and this would still
+        # pass. Pin the delegation as well as the shape.
+        source = self._author()
+        start = source.index("def _builder_video_assets(")
+        body = source[start : source.index("\ndef ", start + 5)]
+        self.assertIn("_video_asset_row(", body)
+
+        # And both write endpoints hand the caller the row they just changed, so a
+        # client can patch its own list instead of reloading the whole bootstrap —
+        # which on the canvas means reset(), and reset() discards unsaved edits.
+        for fn in ("register_video_asset", "retry_video_copy"):
+            with self.subTest(fn=fn):
+                at = source.index("def %s(" % fn)
+                end = source.index("\ndef ", at + 5)
+                self.assertIn("_one_video_asset(", source[at:end])
 
     def test_a_pasted_folder_or_drive_link_is_refused(self):
         """Three ways to copy the wrong id, and all three fail identically an hour
