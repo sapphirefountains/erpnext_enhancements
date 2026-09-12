@@ -458,7 +458,11 @@ class TrainingCanvas {
 		// it has no `name` until the save comes back -- and reorder_lessons renumbers only
 		// what it was given, so dragging a new lesson to the top silently left it where it
 		// was. After the flush every lesson has a real name.
-		this.flush_save().then(() => {
+		// This caller genuinely wants to give up quietly: the rail has already been
+		// re-rendered optimistically, and a failed autosave has surfaced its own error.
+		// The swallow lives HERE now rather than inside flush_save, where it was hiding
+		// failures from every other caller too.
+		this.save_then(__("Saving the lesson order")).then(() => {
 			const names = this.lessons.map((l) => l.name).filter(Boolean);
 			if (!names.length) return;
 			return frappe
@@ -468,7 +472,7 @@ class TrainingCanvas {
 				})
 				.then(() => frappe.show_alert({ message: __("Lesson order saved."), indicator: "green" }, 3))
 				.catch(() => this.render_rail());
-		});
+		}).catch(() => {});
 	}
 
 	load_vtt(lesson) {
@@ -1521,10 +1525,39 @@ class TrainingCanvas {
 		// writer and the preview, both of which resolve their target through the
 		// DATABASE, where a block that exists only in memory is simply absent.
 		// Same contract as the classic builder.
+		//
+		// It no longer SWALLOWS. Both exits used to end `.catch(() => {})`, which made a
+		// failed save indistinguishable from a clean one to every caller -- so a pin
+		// writer or a preview chained off it would fire after the save had thrown, then
+		// fail again resolving a block that was never written, and report the wrong
+		// cause. `enter_conflict()` on a stale `modified` is exactly that case. A promise
+		// that resolves whether or not the work landed is not a flush, it is a delay.
 		clearTimeout(this._save_timer);
-		if (this._saving && this._inflight) return this._inflight.catch(() => {});
+		if (this._saving && this._inflight) return this._inflight;
 		if (!this.has_dirty()) return Promise.resolve();
-		return this.save().catch(() => {});
+		return this.save();
+	}
+
+	save_then(label) {
+		// Actions that must not run against stale content chain off flush_save(). When
+		// the save fails the chained action is correctly abandoned -- but whatever dialog
+		// the author was in has already closed, and the only thing on screen is frappe's
+		// error about the AUTOSAVE. Nothing connects that to the button they pressed, so
+		// the thing they asked for simply never happens and no message says why.
+		//
+		// Named after the classic builder's own save_then, and for the same reason it
+		// was written there.
+		return this.flush_save().catch((error) => {
+			frappe.msgprint({
+				title: __("{0} was not done", [label]),
+				indicator: "red",
+				message: __(
+					"Your unsaved edits could not be stored, so {0} was not attempted — going ahead would have thrown them away. Nothing has been lost: the edits are still here. Resolve the error above and try again.",
+					[label]
+				),
+			});
+			throw error;
+		});
 	}
 
 	save() {
