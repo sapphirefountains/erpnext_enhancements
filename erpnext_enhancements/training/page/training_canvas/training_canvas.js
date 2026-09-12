@@ -1582,6 +1582,11 @@ class TrainingCanvas {
 				this._saving = false;
 				if (state.modified) this.version.modified = state.modified;
 				if (state.chapters) this.chapters = state.chapters;
+				// Which lessons this save actually covered. `_builder_checkpoints` returns a
+				// map keyed by lesson and OMITS a lesson with no checkpoints, so an absent
+				// key means either 'saved, now has none' or 'not part of this save'. Only
+				// the first should clear the list.
+				this._saved_names = state.saved || [];
 				this.adopt_created(state.created_lessons);
 				this.report_rejected(state.rejected);
 				// Recomputed server-side on every save, so the advisory tracks the edit that
@@ -1591,6 +1596,7 @@ class TrainingCanvas {
 				// remove -- the panel is a standing fact on the page, not an interruption.
 				if (state.readiness !== undefined) this.readiness = state.readiness;
 				this.render_readiness();
+				this.adopt_checkpoints(state.checkpoints);
 				this.paint_status(this.has_dirty() ? "dirty" : "saved");
 				// CHAIN, do not re-arm. Keystrokes typed during an in-flight save land in
 				// `this.dirty`, and handing them to `mark_dirty()` puts them behind the
@@ -1616,6 +1622,31 @@ class TrainingCanvas {
 				throw error;
 			});
 		return this._inflight;
+	}
+
+	adopt_checkpoints(byLesson) {
+		// Replace each saved lesson's pin list with what the server says it NOW holds.
+		//
+		// `_reap_orphan_checkpoints` runs after every `lesson.save()` and deletes pins
+		// whose block has stopped being a Video -- which is exactly what `turn_into`
+		// does. Without this the client keeps the deleted rows and `turn_losses` then
+		// warns "you will lose 2 in-video checkpoints" about checkpoints that were
+		// already deleted on the previous save: a confirmation dialog telling the author
+		// to weigh a cost they have already paid.
+		//
+		// Replaced per lesson rather than merged: the server's list is the answer, and a
+		// merge would preserve precisely the ghosts this exists to drop. Lessons absent
+		// from the payload are left alone -- they were not saved, so nothing was reaped.
+		if (!byLesson) return;
+		this.lessons.forEach((lesson) => {
+			if (!lesson.name) return;
+			if (!Object.prototype.hasOwnProperty.call(byLesson, lesson.name)) {
+				// Saved and came back with none: every pin it had is gone.
+				if ((this._saved_names || []).indexOf(lesson.name) >= 0) lesson.checkpoints = [];
+				return;
+			}
+			lesson.checkpoints = byLesson[lesson.name] || [];
+		});
 	}
 
 	adopt_created(created) {

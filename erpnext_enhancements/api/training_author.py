@@ -1591,6 +1591,18 @@ def save_draft_version(course_version, payload, modified=None):
         # Recomputed on every autosave so the advisory panel tracks the edit that just
         # landed, without a reload and without a second round trip.
         "readiness": _readiness(doc),
+        # What checkpoints these lessons ACTUALLY hold now, after the reap above.
+        #
+        # `_reap_orphan_checkpoints` runs after every single `lesson.save()` and can
+        # delete rows the client still believes in -- a Video block turned into Rich
+        # Text takes its pins with it. Without this the client has nothing to
+        # reconcile against: the only other whitelisted reader is
+        # `get_builder_bootstrap`, and re-running that after every save tears down
+        # the live editors and eats whatever the author was typing.
+        #
+        # Same shape as the bootstrap's, from the same builder, so the client has one
+        # parser rather than two.
+        "checkpoints": _builder_checkpoints(saved) if saved else {},
     }
 
 
