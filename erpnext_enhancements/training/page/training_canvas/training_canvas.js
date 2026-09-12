@@ -298,6 +298,8 @@ class TrainingCanvas {
 		this.course = data.course || null;
 		this.version = data.version || null;
 		this.readiness = data.readiness || null;
+		this.ai_enabled = !!data.ai_enabled;
+		this.ai_drafts = { kind: null, lesson: null, block_key: null, items: [], message: "", busy: false };
 		this.chapters = data.chapters || [];
 		this.video_assets = data.video_assets || [];
 		this.lessons = (data.lessons || []).map((lesson) => {
@@ -672,8 +674,25 @@ class TrainingCanvas {
 		$quiz.on("change", paintQuiz);
 		paintQuiz();
 
+		// AI drafting. The drawer is the ONLY surface on this site that can stamp
+		// `ai_reviewed_by`, and `publish_version` refuses a course holding an
+		// `ai_generated` question without one -- so an AI-authored course that never
+		// passes through here can never be published at all.
+		if (this.ai_enabled) {
+			const $ai = $('<div class="tc-ai-bar"></div>').appendTo(this.$lessonset);
+			$('<button class="btn btn-default btn-xs"></button>')
+				.text(__("Draft quiz questions with AI"))
+				.on("click", () => this.draft_questions(lesson))
+				.appendTo($ai);
+			$('<div class="tc-muted"></div>')
+				.text(__("Drafts are suggestions. Nothing is written until you accept it, and accepting is what records you as the reviewer."))
+				.appendTo($ai);
+			const $drawer = this.render_ai_drawer(lesson);
+			if ($drawer) this.$lessonset.append($drawer);
+		}
+
 		$('<div class="tc-hint"></div>')
-			.html(__("In-video checkpoints are placed on the video block's timeline. Quiz questions are still edited in the classic builder."))
+			.html(__("In-video checkpoints are placed on the video block's timeline. Quiz questions themselves are still listed in the classic builder."))
 			.appendTo(this.$lessonset);
 
 		if (!ed) this.$lessonset.find("input, textarea, select").attr("disabled", "disabled");
@@ -1092,6 +1111,14 @@ class TrainingCanvas {
 		// there either: `add_pin` seeded an empty question against a `reqd` field, so the
 		// insert was refused on a four-second autosave.
 		$box.append(this.timeline(lesson, block));
+		if (this.ai_enabled) {
+			$('<button class="btn btn-default btn-xs" style="margin-top:6px"></button>')
+				.text(__("Suggest checkpoints with AI"))
+				.on("click", () => this.draft_checkpoints(lesson, block))
+				.appendTo($box);
+			const $d = this.render_ai_drawer(lesson);
+			if ($d && this.ai_drafts.kind === "checkpoint") $box.append($d);
+		}
 		$('<div class="tc-hint"></div>').text(__("Register a new video in the classic builder. Checkpoints are placed here.")).appendTo($box);
 		$('<button class="btn btn-default btn-xs" style="margin-top:6px"></button>').text(__("Open classic builder")).on("click", () => this.open_classic()).appendTo($box);
 		if (!this.editable()) $box.find("input, select").attr("disabled", "disabled");
@@ -1638,6 +1665,179 @@ class TrainingCanvas {
 				throw error;
 			});
 		return this._inflight;
+	}
+
+	// ------------------------------------------------------- AI drafting
+	//
+	// The engine already existed -- `api/training_ai.py` has `draft_quiz_questions`,
+	// `suggest_checkpoints` and `accept_ai_suggestions` -- and the canvas dialled
+	// none of it. That is why this is the blocker for retiring the classic builder
+	// rather than a nicety: `publish_version` refuses any course holding an
+	// `ai_generated` question with no `ai_reviewed_by`, `accept_ai_suggestions` is
+	// the ONLY thing that stamps a reviewer, and the classic's quiz section is
+	// read-only with no hand-add anywhere. Production is not blocked today only
+	// because the four spec-authored courses have zero quiz rows. The next one will.
+
+	ai_reset() {
+		this.ai_drafts = { kind: null, lesson: null, block_key: null, items: [], message: "", busy: false };
+	}
+
+	draft_questions(lesson) {
+		// Chained off the save for a reason peculiar to this endpoint: `_lesson()`
+		// resolves the lesson FROM THE DATABASE and `draft_quiz_questions` refuses
+		// below MIN_SOURCE_CHARS (120). So drafting against unflushed edits does not
+		// merely use stale text -- it tells the author there is not enough written
+		// content in a lesson that is visibly full on their screen.
+		this.ai_drafts = { kind: "quiz", lesson: lesson.name, block_key: null, items: [], message: "", busy: true };
+		this.render_sheet();
+		return this.save_then(__("Drafting questions"))
+			.then(() =>
+				frappe.call({
+					method: "erpnext_enhancements.api.training_ai.draft_quiz_questions",
+					args: { lesson: lesson.name },
+				})
+			)
+			.then((r) => this.adopt_drafts((r && r.message) || {}))
+			.catch(() => this.ai_failed());
+	}
+
+	draft_checkpoints(lesson, block) {
+		// `suggest_checkpoints` refuses without a TIMED transcript, and production's
+		// only video asset has transcript_source "None" -- so this feature correctly
+		// refuses on the only video that exists until somebody uses the .vtt loader
+		// the canvas already has. The refusal says so; do not pre-empt it here with a
+		// guess about what the server will accept.
+		this.ai_drafts = {
+			kind: "checkpoint",
+			lesson: lesson.name,
+			block_key: block.block_key,
+			items: [],
+			message: "",
+			busy: true,
+		};
+		this.render_sheet();
+		return this.save_then(__("Drafting checkpoints"))
+			.then(() =>
+				frappe.call({
+					method: "erpnext_enhancements.api.training_ai.suggest_checkpoints",
+					args: { lesson: lesson.name, block_key: block.block_key },
+				})
+			)
+			.then((r) => this.adopt_drafts((r && r.message) || {}))
+			.catch(() => this.ai_failed());
+	}
+
+	adopt_drafts(payload) {
+		this.ai_drafts.busy = false;
+		this.ai_drafts.items = (payload.suggestions || []).map((item, i) =>
+			Object.assign({ id: "d" + i }, item)
+		);
+		this.ai_drafts.message = payload.message || "";
+		this.render_sheet();
+	}
+
+	ai_failed() {
+		// The server's own message has already been shown by frappe. Just stop
+		// claiming to be busy -- a drawer stuck on "Drafting…" reads as a hang.
+		this.ai_reset();
+		this.render_sheet();
+	}
+
+	accept_draft(lesson, item) {
+		// THIS CALL IS THE HUMAN REVIEW. `accept_ai_suggestions` stamps
+		// `ai_generated` and `ai_reviewed_by` together -- the pair
+		// `_unreviewed_ai_questions` reads -- so it is the only thing that can let an
+		// AI-drafted course publish.
+		return frappe
+			.call({
+				method: "erpnext_enhancements.api.training_ai.accept_ai_suggestions",
+				args: {
+					lesson: lesson.name,
+					kind: this.ai_drafts.kind,
+					suggestions: JSON.stringify([item]),
+				},
+			})
+			.then(() => {
+				item.accepted = true;
+				frappe.show_alert({ message: __("Accepted."), indicator: "green" }, 3);
+				this.render_sheet();
+			});
+	}
+
+	render_ai_drawer(lesson) {
+		const d = this.ai_drafts || {};
+		if (d.lesson !== lesson.name) return null;
+		if (!d.items.length && !d.busy && !d.message) return null;
+		const $drawer = $('<div class="tc-ai"></div>');
+		const $head = $('<div class="tc-ai-head"></div>').appendTo($drawer);
+		$("<span></span>")
+			.text(d.kind === "checkpoint" ? __("Drafted checkpoints") : __("Drafted questions"))
+			.appendTo($head);
+		// "Reject all" exists and "Accept all" deliberately does NOT. Accepting IS the
+		// human review the publish gate is built on; a button that performs it in bulk
+		// without anyone reading anything makes the gate ornamental.
+		$('<button type="button" class="btn btn-default btn-xs"></button>')
+			.text(__("Reject all"))
+			.on("click", () => {
+				this.ai_reset();
+				this.render_sheet();
+			})
+			.appendTo($head);
+		if (d.busy) {
+			$('<div class="tc-muted"></div>').text(__("Drafting…")).appendTo($drawer);
+			return $drawer;
+		}
+		if (d.message) $('<div class="tc-ai-warn"></div>').text(d.message).appendTo($drawer);
+		if (!d.items.length) {
+			$('<div class="tc-muted"></div>').text(__("Nothing to review.")).appendTo($drawer);
+			return $drawer;
+		}
+		d.items.forEach((item) => $drawer.append(this.ai_card(lesson, item)));
+		return $drawer;
+	}
+
+	ai_card(lesson, item) {
+		const $card = $('<div class="tc-ai-card"></div>');
+		if (item.accepted) $card.addClass("is-accepted");
+		if (!item.grounding_quote) $card.addClass("is-ungrounded");
+		if (item.at_seconds != null) {
+			$('<div class="tc-ai-at"></div>').text(this.mmss(item.at_seconds)).appendTo($card);
+		}
+		$('<div class="tc-ai-q"></div>').text(item.question || "").appendTo($card);
+		const $opts = $('<ul class="tc-ai-options"></ul>').appendTo($card);
+		(item.options || []).forEach((o) => {
+			$("<li></li>")
+				.toggleClass("is-correct", !!Number(o.is_correct))
+				.text(o.text || o.option_text || "")
+				.appendTo($opts);
+		});
+		if (item.grounding_quote) {
+			$('<div class="tc-ai-quote"></div>').text("“" + item.grounding_quote + "”").appendTo($card);
+		} else {
+			// The server already drops anything it cannot trace back to the lesson, so
+			// this is belt and braces -- but an ungrounded suggestion is the one a
+			// reviewer must read hardest, and it should not look like the others.
+			$('<div class="tc-ai-warn"></div>')
+				.text(__("No grounding quote — this may not come from the lesson at all."))
+				.appendTo($card);
+		}
+		if (item.accepted) {
+			$('<div class="tc-ai-done"></div>').text(__("Accepted — reviewed by you.")).appendTo($card);
+			return $card;
+		}
+		const $actions = $('<div class="tc-ai-actions"></div>').appendTo($card);
+		$('<button type="button" class="btn btn-primary btn-xs"></button>')
+			.text(__("Accept"))
+			.on("click", () => this.accept_draft(lesson, item))
+			.appendTo($actions);
+		$('<button type="button" class="btn btn-default btn-xs"></button>')
+			.text(__("Reject"))
+			.on("click", () => {
+				this.ai_drafts.items = this.ai_drafts.items.filter((row) => row.id !== item.id);
+				this.render_sheet();
+			})
+			.appendTo($actions);
+		return $card;
 	}
 
 	// ------------------------------------------------- in-video checkpoints
