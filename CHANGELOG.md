@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.421.0] - 2026-09-12
+
+### Changed
+
+- **Sales Pipeline staleness thresholds calibrated: 7/14 -> 45/90 days.** Chosen by Nik from
+  four measured options after v1.419.0 made the board light up for the first time.
+
+### Notes
+
+v1.419.0 restored these two fields from a stored `0`, which had made `_stale_level`'s
+`if amber_days > 0` / `if red_days > 0` guards unreachable and left **every** card unlit. That
+was the right fix to the drift — and it immediately showed that the declared numbers had never
+been calibrated against anything. 7 and 14 days are a plausible guess at what "stale" means and
+bear no relation to how this pipeline actually moves.
+
+Measured across the 39 gated open cards — Qualification, Needs Analysis, Negotiation/Review;
+`On Hold` is parked and never flags, and Closed Won ages on its own 1/3-day clock.
+`days_in_stage` ran 2 to 134 with a natural break around 60:
+
+| thresholds | fresh | amber | red |
+|---|---|---|---|
+| 7 / 14 | 4 | 1 | **34** |
+| 30 / 60 | 9 | 11 | 19 |
+| **45 / 90** | **15** | **12** | **12** |
+| 60 / 120 | 20 | 18 | 1 |
+
+**A board that is uniformly red carries no more information than one that is uniformly green.**
+It reads as urgent, which is worse than reading as nothing, because the colour stops being a
+queue and becomes wallpaper. 45/90 is the only setting where all three tiers distinguish
+anything, and it falls on the gap in the data rather than on a round number somebody liked.
+
+The numbers were computed and the split shown **before** the choice was made, deliberately:
+quietly widening a threshold until the red goes away would reproduce the v1.419.0 failure in a
+politer form.
+
+**All four places that state these thresholds are moved together**, because a site can get its
+value from any of them and they must not disagree: the DocType JSON defaults (fresh install),
+`sales_pipeline.py`'s `DEFAULT_STALE_*` constants (the fallback `_thresholds` uses when the
+field is None or ""), `restore_drifted_single_defaults`'s table, and the live row. A test now
+pins all four in step.
+
+The live move is guarded on the values still being **exactly** 7 and 14 — not on falsiness and
+not unconditional — so a hand-tune made in the Desk between the v1.419.0 deploy and this one is
+never clobbered. Removing that guard was one of the two mutations confirmed to fail the new
+tests.
+
 ## [1.420.0] - 2026-09-12
 
 ### Fixed

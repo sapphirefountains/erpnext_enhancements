@@ -96,8 +96,8 @@ from frappe.utils import cint
 # like for like is what makes the "already correct" check honest.
 ENHANCEMENTS = {
 	# --- live: the read site honours an explicit 0 -------------------------------
-	"pipeline_stale_amber_days": "7",
-	"pipeline_stale_red_days": "14",
+	"pipeline_stale_amber_days": "45",
+	"pipeline_stale_red_days": "90",
 	"geofence_radius_m": "250",
 	"fleet_weekly_interval_days": "7",
 	"fleet_oil_change_interval_months": "3",

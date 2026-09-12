@@ -958,3 +958,11 @@ erpnext_enhancements.patches.rescue_renamed_doctype_auth_rows
 # alongside the rescue above, which is what makes the Vertex key readable. Writes only while
 # the value is still falsy, so switching it back off in the Desk survives the next migrate.
 erpnext_enhancements.patches.enable_briefing_gemini_narrative
+# v1.421.0 -- calibrates the Sales Pipeline staleness thresholds 7/14 -> 45/90. v1.419.0
+# restored these from a stored 0 (which had made _stale_level's `> 0` guards unreachable
+# and left the whole board unlit) and in doing so showed the declared numbers had never
+# been calibrated: on the 39 gated open cards, 7/14 put 34 straight to red. Measured spread
+# was 2..134 days with a break near 60; 45/90 splits 15/12/12, the only setting where all
+# three colours mean something. Nik chose it from four measured options. Guarded on the
+# exact pre-calibration pair so a later hand-tune is never clobbered. Safe twice.
+erpnext_enhancements.patches.calibrate_pipeline_staleness

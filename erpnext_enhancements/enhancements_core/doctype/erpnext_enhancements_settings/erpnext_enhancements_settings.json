@@ -371,15 +371,15 @@
    "label": "Sales Pipeline Dashboard"
   },
   {
-   "default": "7",
-   "description": "Opportunities sitting in a stage this many days turn amber on the Sales Pipeline board.",
+   "default": "45",
+   "description": "Opportunities sitting in a stage this many days turn amber on the Sales Pipeline board. Calibrated against the real spread on 2026-09-12 — see CHANGELOG v1.421.0.",
    "fieldname": "pipeline_stale_amber_days",
    "fieldtype": "Int",
    "label": "Stale After (Days, Amber)"
   },
   {
-   "default": "14",
-   "description": "Opportunities sitting in a stage this many days turn red and pulse on the Sales Pipeline board.",
+   "default": "90",
+   "description": "Opportunities sitting in a stage this many days turn red and pulse on the Sales Pipeline board. Calibrated against the real spread on 2026-09-12 — see CHANGELOG v1.421.0.",
    "fieldname": "pipeline_stale_red_days",
    "fieldtype": "Int",
    "label": "Very Stale After (Days, Red)"
