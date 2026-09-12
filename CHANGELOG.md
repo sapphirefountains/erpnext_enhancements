@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.423.0] - 2026-09-12
+
+### Added
+
+- **Every Position now says what it requires** (WI-074 F). `tabPosition Requirement` held
+  **zero rows across all twenty Positions** against a seeded taxonomy of fifteen Credential
+  Types, so the Skills Matrix and Qualification Coverage were correctly reporting that nobody
+  holds anything — nothing had ever said what a position needs. The reports were not broken;
+  they had nothing to report on.
+
+- **The offboarding checklist is raised for the four people who left before there was one.**
+
+### Notes
+
+**Requirements do NOT inherit down the Position tree, and that decided the whole shape of the
+seed.** `progression.requirements_for` reads one doc's own `requirements` child table and
+`skills_matrix` does the same; neither walks `parent_position`. So a baseline placed on the
+**All Positions** root would apply to nobody, and every leaf has to spell out its whole set.
+
+That is why `Driver's License` appears nineteen times rather than once. It reads as
+duplication and is not — it is the only shape the consumers can see. A test asserts the
+no-inheritance fact directly, because if inheritance were ever added the seed would become
+nineteen-fold duplication overnight and nothing else would notice.
+
+The two **group** positions — `All Positions` and `Technician` — get nothing. A job family is
+not a job; nobody holds one (confirmed against `Employee.custom_position` on prod), and with
+no inheritance a row there would be invisible to every reader.
+
+**`is_mandatory` is used to mean something.** Flagging every line mandatory would make the
+distinction worthless and the roster uniformly red — the same mistake the pipeline thresholds
+made, corrected two releases ago. Mandatory means the job genuinely cannot be done without it:
+a technician who has not done confined-space entry may not enter a drained basin, and that is
+not a matter of degree. Everything else is expected, tracked, and not a stop-work item.
+
+**CDL and DOT Medical Card are assigned to nobody**, deliberately. They are in the taxonomy
+for completeness but apply to commercial vehicles over 26,000 lb, and nothing in this fleet
+qualifies. Assigning them would manufacture a permanent gap against a rule that does not apply
+to this company.
+
+**Leavers, not joiners — and that was the decision, not an omission.** The obvious reading of
+"backfill onboarding" is the joining side: a checklist for each of the fifteen active
+employees. A joining checklist raised today for somebody hired in 2004 is eight items that
+were done two decades ago and can never be ticked from evidence — roughly **120 permanently-red
+rows** on the very dashboards this module built to make outstanding work visible. A checklist
+nobody can complete teaches people to ignore checklists.
+
+The leaving side is the opposite, because `leaving_items` derives its rows **at creation
+time** — devices, assets with them as custodian, credentials, open work, direct reports,
+vehicles. So a backfilled checklist is not a reconstruction of somebody's last day; it lists
+**what is still outstanding today**. If a laptop issued to someone who left in September 2025
+is still in their name, this is the thing that says so. A clean exit yields a short checklist,
+which is itself the correct answer.
+
+**Both are additive and neither overwrites a decision.** The seed touches only a Position whose
+`requirements` table is empty — one hand-added row and it is left entirely alone. The backfill
+goes through `ensure_checklist`, which is idempotent on `(employee, kind)` and whose own
+docstring names a patch as one of its three callers.
+
+Existence is checked **before** that call rather than from its return value, because
+`ensure_checklist` hands back the *existing* name when there already is one — a count taken
+from its result would report every leaver as newly raised, which is indistinguishable from a
+real run and is the failure shape this changelog has recorded twice already.
+
+The seed saves through the doc API rather than writing child rows directly: `Position` is a
+`NestedSet` whose `on_update` maintains `lft`/`rgt` and repairs descendants, and going around
+that to save milliseconds is how a tree gets corrupted.
+
+### Added
+
+- [`tests/test_position_requirements_seed.py`](erpnext_enhancements/tests/test_position_requirements_seed.py).
+  Five mutations were each confirmed to fail it, individually, before restoring: putting the
+  baseline on the group root, flagging every line mandatory, seeding over a hand-edit, checking
+  the leaver's existence after the call instead of before, and dropping a leaf position.
+
+  Its credential names are cross-checked against `seed_credential_types.TYPES`, the one place
+  the taxonomy is defined — the first version read JSON fixtures, found none (the types come
+  from a patch) and **skipped**, passing over exactly the check it exists to make.
+
 ## [1.422.0] - 2026-09-12
 
 ### Removed
