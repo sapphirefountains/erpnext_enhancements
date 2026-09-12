@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.420.0] - 2026-09-12
+
+### Fixed
+
+- **`frappe.rename_doc` on a DocType does not move its stored passwords**, and this site had
+  been running on that for months without a symptom anyone could see. The Poseidon Settings →
+  Triton Settings rename stranded four secrets; two were silently dead ever since.
+
+### Notes
+
+**The mechanism.** A Password field keeps a *masked placeholder* in `tabSingles` and the real
+encrypted value in the separate `__Auth` table, keyed by `(doctype, name, fieldname)`.
+`rename_doc` rewrites `tabSingles` and leaves `__Auth` alone. So `tabSingles` had a
+`maps_api_key` row for **Triton Settings** while `__Auth` still filed the value under
+**Poseidon Settings**, and `get_password("maps_api_key")` returned `None`.
+
+`rename_poseidon_settings_doctype`'s own docstring claimed the rename carried "the configured
+Gateway URL, **secrets**, prompts and Twilio credentials" across. Gateway URL and prompts, yes.
+Secrets, no. That docstring is corrected in place, because believing it is what kept anyone
+from looking.
+
+**Why nobody could see it.** A Password field renders blank whether or not a value is stored,
+so the Desk form for a correctly-configured site and a silently-broken one are identical. The
+only way to tell is to ask the server to decrypt. Two of the four — `admin_webhook_secret` and
+`twilio_api_secret` — were re-entered by hand at some point, which is presumably how somebody
+noticed *something* was wrong. The other two were not:
+
+- **`maps_api_key`** — read by `api/gemini.generate_content_with_vertex_ai`, which throws
+  *"Vertex AI API Key (maps_api_key) is missing in Triton Settings"*. **Every Vertex feature in
+  this app had therefore never worked**: the morning briefing's Gemini narrative,
+  `api/communication`'s email and SMS drafts, `api/training_ai`'s quiz and checkpoint drafting,
+  and `assistant_tools/draft_course_spec`. Seven Error Log rows ("Enhancement Request
+  description draft failed") carry that exact message.
+- **`twilio_auth_token`** — read by `api/telephony.validate_twilio_request`, which builds a
+  `RequestValidator("")` and so rejects **every** inbound Twilio webhook with PermissionError
+  (`receive_mms` is guest-facing and guarded by it); and by `api/call_recording_export`, which
+  sends HTTP basic auth with an empty password and gets a 401. Note the direction: this one
+  fails **closed**. Nothing was ever let through.
+
+**The 18 `AI Model Usage` rows tagged `feedback_work_breakdown` are not evidence to the
+contrary**, and were previously read that way. `product_feedback/breakdown.py` never calls the
+Vertex client — it calls `triton_client.request_breakdown`, which goes through Triton's own
+gateway with its own credentials, and merely *records* a usage row in the same shape. A usage
+row proves something recorded one, not which client ran.
+
+**The repair never handles the secret.** The rows are re-filed by rewriting `doctype` and
+`name`; the plaintext is never materialised, and the `password` column is never selected.
+Frappe encrypts with the site's own `encryption_key`, so the ciphertext does not depend on the
+doctype name and re-filing is sufficient. A decrypt/re-encrypt round trip would also work and
+is strictly worse — it puts a live secret in a local, where a traceback can publish it
+(`frappe.log_error` writes frame locals).
+
+**And it never rolls a credential backwards.** Only fieldnames with no row under the new name
+are moved. The two hand-entered values are newer and are what the site actually authenticates
+with; overwriting them with a pre-rename copy would be an unannounced credential rollback. The
+superseded orphans are deleted rather than left as a second copy of a live secret.
+
+### Added
+
+- **The morning briefing's Gemini narrative is on** (Nik, 2026-09-12). Its own patch, because
+  it is a **spend** decision — a Vertex call per recipient every weekday — kept out of
+  `restore_drifted_single_defaults` so it can be reverted alone and so a later edit cannot fold
+  a spend decision into a data-hygiene backfill. A test asserts both sides of that.
+
+  It writes only while the value is still falsy, so switching the feature back off in the Desk
+  survives the next migrate. The failure direction is safe and was checked rather than assumed:
+  `_generate_narrative` catches, logs, and falls back to `compose_fallback` with the reason on
+  `generation_error`, so the worst case is today's briefing plus a stated reason.
+
+  This is only meaningful *because* of the `__Auth` rescue above. On its own it would have
+  changed nothing except to start recording a missing-key error every weekday morning.
+
+- [`tests/test_renamed_doctype_secrets.py`](erpnext_enhancements/tests/test_renamed_doctype_secrets.py).
+  Three mutations each confirmed to fail it before restoring: swapping the re-file for a
+  decrypt round trip, moving every stranded row (rolling the two live credentials back), and
+  making the briefing switch overwrite unconditionally so a Desk opt-out could not survive.
+
+  Its absence assertions read the patch through an `ast` stripper, because the patch's docstring
+  discusses `password` and decryption at length while explaining that it does neither —
+  **thirteenth occurrence** of that trap here.
+
 ## [1.419.0] - 2026-09-12
 
 ### Fixed

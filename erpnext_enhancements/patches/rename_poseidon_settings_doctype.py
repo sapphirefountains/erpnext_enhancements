@@ -2,8 +2,24 @@
 
 Renames the single DocType "Poseidon Settings" -> "Triton Settings" before the
 new ``triton_settings`` JSON is synced, so the stored configuration (gateway
-URL, secrets, prompts, Twilio creds) carries across instead of being orphaned.
+URL, prompts, plain Twilio identifiers) carries across instead of being orphaned.
 Idempotent: see :func:`execute`.
+
+.. warning::
+
+   **This did NOT carry the secrets across, and an earlier version of this docstring
+   said it did.** A Password field keeps a masked placeholder in ``tabSingles`` and the
+   real encrypted value in ``__Auth``, keyed by ``(doctype, name, fieldname)``.
+   ``frappe.rename_doc`` rewrites ``tabSingles`` and leaves ``__Auth`` alone, so four
+   secrets stayed filed under the old name and read back as ``None`` — invisibly, because
+   a Password field renders blank whether or not a value is stored.
+
+   ``maps_api_key`` and ``twilio_auth_token`` were still stranded on production in
+   September 2026, which is why no Vertex feature in the app had ever worked and every
+   inbound Twilio webhook was being rejected. Repaired by
+   ``patches/rescue_renamed_doctype_auth_rows`` (v1.420.0).
+
+   If you ever rename a DocType that owns Password fields, move its ``__Auth`` rows too.
 """
 import frappe
 
