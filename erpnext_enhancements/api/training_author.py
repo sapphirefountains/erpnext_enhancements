@@ -1212,6 +1212,10 @@ def get_builder_bootstrap(course):
     version = None
     chapters = []
     lessons = []
+    # Bound to None up front: it is read again at the return for `readiness`, and a
+    # course with no open draft would otherwise raise NameError there rather than
+    # simply having nothing to advise about.
+    draft = None
     draft_name = frappe.db.exists("Training Course Version", {"course": course, "docstatus": 0})
     if draft_name:
         draft = frappe.get_doc("Training Course Version", draft_name)
@@ -1262,6 +1266,41 @@ def get_builder_bootstrap(course):
         # correctly at the moment the button is pressed.
         "can_publish": bool({"Training Manager", "System Manager"} & set(frappe.get_roles())),
         "ai_enabled": _ai_enabled(),
+        # What publish would refuse, shown while there is still time to fix it.
+        "readiness": _readiness(draft) if draft else None,
+    }
+
+
+#: How many unfinished things the DRAFT advisory lists before it stops counting.
+#: The publish gate is unbounded -- a refusal that showed only the first few would
+#: send somebody round the loop once per hidden problem -- but the advisory is a
+#: standing panel on every page open, and `unfinished_checkpoint_problems` loads each
+#: checkpoint as a full document to ask it `incomplete_reasons()`.
+ADVISORY_LIMIT = 12
+
+
+def _readiness(version_doc):
+    """What publish would refuse this draft for, while it is still a draft.
+
+    The same sentences, from the same two builders the publish gate reads. That is the
+    whole point: an author must not be able to satisfy the panel and then be refused,
+    or satisfy the refusal and wonder why the panel still complains.
+
+    ADVISORY, and that word is load-bearing. It returns data; it never throws and
+    never msgprints. `msgprint` queues onto `_server_messages` and rides out on the
+    response whatever the client does with it, so a warning raised on validate becomes
+    a toast every four seconds on autosave -- which TrainingLesson's own docstring
+    records as the single loudest complaint about the editor.
+    """
+    blocks = version_doc.unfinished_block_problems(limit=ADVISORY_LIMIT)
+    checkpoints = version_doc.unfinished_checkpoint_problems(limit=ADVISORY_LIMIT)
+    return {
+        "blocks": blocks,
+        "checkpoints": checkpoints,
+        "truncated": len(blocks) >= ADVISORY_LIMIT or len(checkpoints) >= ADVISORY_LIMIT,
+        # The canvas cannot edit checkpoints -- they stay in the classic builder --
+        # so a checkpoint line without this is an error message with no remedy.
+        "checkpoints_editable_in": "training-builder",
     }
 
 
@@ -1549,6 +1588,9 @@ def save_draft_version(course_version, payload, modified=None):
             for row in doc.chapters or []
         ],
         "rejected": rejected,
+        # Recomputed on every autosave so the advisory panel tracks the edit that just
+        # landed, without a reload and without a second round trip.
+        "readiness": _readiness(doc),
     }
 
 
