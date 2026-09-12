@@ -141,23 +141,25 @@ endpoint does not count as a caller.
 Open a Training Course and press **Edit Visually**, or go straight to
 `/app/training-canvas?course=TRN-CRS-00001`. That is the authoring surface.
 
-The classic builder at `/app/training-builder` is **being retired**, in stages:
+The classic builder is **gone**. It was retired in stages, and the order mattered:
 
 | | |
 |---|---|
-| R1 (v1.416.0) | Removed its buttons. Nothing in the app links to it. |
-| v1.417.0 | Ported the last capability that existed only there — **registering a video from Drive** — so nothing needs it either. |
-| R2 (v1.418.0) | **Training Settings → Authoring → Retire The Classic Builder.** Ships **off**; tick it to close the URL too. |
-| R3 | Delete the page. A separate, deliberate decision — not scheduled. |
+| R1 (v1.416.0) | Removed its buttons. Nothing in the app linked to it. |
+| v1.417.0 | Ported the last capability that existed only there — **registering a video from Drive**. |
+| R2 (v1.418.0) | A Training Settings flag, shipped off. |
+| R3 (v1.422.0) | Deleted the page, the flag, and the 50-test suite that guarded its internals. |
 
-The switch is **reversible**: untick it and the page works again with no code change,
-because R2 gates and deletes nothing. Two things it is *not*. It is not access control —
-this is a desk Page with no server controller, the check is in the page's own JS, and the
-Page's `roles` remain the permission boundary. And it cannot remove the page from the
-awesomebar, which is built from page permissions; someone who finds it there lands on a
-notice that says it has been retired and links to the same course on the canvas.
+R2 shipped a switch that was never thrown, on purpose: until v1.417.0 landed, ticking it
+would have removed the only way to register a video from Drive. That is why the port came
+first and the flag second.
 
-Everything below about drafts applies to both pages.
+The **API** the page used is untouched — `register_video_asset`, `retry_video_copy`,
+`_builder_video_assets` and `_probe_drive_video` all stay, because the canvas calls them.
+Deleting a page is not deleting an API.
+
+Triton authoring is reachable from the **Training Course form** only; the canvas has no
+Triton button.
 
 **Authoring only ever edits an open draft.** Publishing turns the draft into the
 live version and leaves the course with none, so the next round of edits starts a

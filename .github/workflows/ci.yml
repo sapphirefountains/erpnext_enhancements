@@ -698,8 +698,9 @@ jobs:
       # neither is catchable by unit-testing a function: a placeholder that
       # outlived its feature, and a refusal that named the wrong state. Static
       # reads of the desk JS, which never runs in CI and has no bench here.
-      - name: Training builder entry path (routing, guards, change_type)
-        run: python -m unittest erpnext_enhancements.tests.test_training_builder_entry -v
+      # `test_training_builder_entry` was deleted with the classic builder in v1.422.0 (R3).
+      # Its 50 tests guarded that page's internals; the page is gone, and the canvas suite
+      # below is what guards authoring now.
       # The WYSIWYG canvas. This suite existed from the day the canvas shipped and
       # was never wired here, so the one Training surface with no CI coverage was
       # the one an author spends all day in -- and it held a live defect

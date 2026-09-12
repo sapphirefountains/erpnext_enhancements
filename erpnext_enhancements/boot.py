@@ -105,35 +105,6 @@ def boot_session(bootinfo):
 	bootinfo.ee_contract_esign = 1 if contract_esign_enabled() else 0
 	bootinfo.ee_contract_esign_public = 1 if contract_esign_public_page_enabled() else 0
 	bootinfo.ee_chat = 1 if _chat_visible() else 0
-	bootinfo.ee_training_classic_builder = 0 if _classic_builder_retired() else 1
-
-
-def _classic_builder_retired() -> bool:
-	"""Has an administrator retired the old Training Builder? Never raises.
-
-	Read straight off the Single with ``get_single_value``, NOT through
-	``training_settings.is_enabled``. That helper returns False for any switch while
-	``training_enabled`` is off, and this module's own docstring promises that
-	"Authoring works with every switch off" -- routed through it, a dormant site would
-	read "not retired" for a reason that has nothing to do with the decision. This is
-	not a feature switch gated by the master switch; it is a statement about which
-	authoring page exists.
-
-	And NOT with ``frappe.db.get_value("Singles", ...)``: that table has three columns
-	and no ``creation``, so the default ``order_by`` makes such a read fail on every
-	site, every time. ``tests/test_singles_table_access.py`` fails the build on it.
-
-	None and "" both mean 0, i.e. NOT retired -- which is the point of the field's
-	polarity. A Single writes no row for a newly declared field, so every existing site
-	reads None here until somebody ticks the box, and None has to mean status quo.
-
-	Every failure answers "not retired". ``extend_bootinfo`` runs on every desk load for
-	every user, and a flag that can raise turns a missing DocType into a blank desk.
-	"""
-	try:
-		return bool(cint(frappe.db.get_single_value("Training Settings", "classic_builder_retired")))
-	except Exception:
-		return False
 
 
 def _chat_visible() -> bool:

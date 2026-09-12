@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.422.0] - 2026-09-12
+
+### Removed
+
+- **The classic Training Builder is deleted** (WI-074 D / R3), approved by Nik on 2026-09-12.
+  The page, its 3,842-line JS, its 1,141-line CSS, its Page JSON, the `classic_builder_retired`
+  flag that gated it, and the 50-test suite that guarded its internals. **One-way.**
+
+### Notes
+
+**The order was load-bearing, and is the part worth keeping on the record:**
+
+| | |
+|---|---|
+| R1 (v1.416.0) | Unlinked it — no button anywhere, URL still reachable. |
+| v1.417.0 | Ported video registration, the last capability that existed only there. |
+| R2 (v1.418.0) | Added `classic_builder_retired`, shipped **off**. |
+| R3 (this) | Deleted the page. |
+
+R2 shipped a switch that was **never thrown**, deliberately: until v1.417.0 landed, ticking it
+would have removed the only way to register a video from Drive. That is why the port came
+first and the flag second, and why the flag now goes too — it gated a page that no longer
+exists, and a settings checkbox that does nothing is exactly the kind of stale claim this
+retirement spent three releases removing.
+
+**Two records, not one.** Deleting the folder stops the page being *synced*; the `Page` row on
+the site outlives it. Same two-step rule `fixtures/README.md` states for Custom Fields. v16's
+`remove_orphan_entities` would very likely take it — but only when **no installed app** ships
+it, and a row left behind is a desk route that 404s on click rather than one that is absent.
+The `tabSingles` row for the removed flag goes the same way, for the same reason.
+
+**Deleting a page is not deleting an API.** `register_video_asset`, `retry_video_copy`,
+`_builder_video_assets` and `_probe_drive_video` all stay in `api/training_author.py` — the
+canvas calls all four as of v1.417.0, and `get_builder_bootstrap` / `save_draft_version` were
+always shared. A test asserts they survive, because a retirement that swept them would be an
+irreversible capability loss dressed as tidying, and nothing in CI would have noticed.
+
+### Fixed
+
+- **A skip gate that would have silently disabled an entire suite.**
+  `test_training_phase3_contracts` computes `phase3 = unittest.skipUnless(_phase3_built(), …)`
+  from a tuple of paths that included the builder's JS and JSON. Deleting them would have made
+  every `@phase3` test skip — and `test_phase3_is_actually_built` calls `self.skipTest` rather
+  than failing, so even the tripwire would have gone quiet. Green, with 18 tests never
+  evaluated. That is precisely the failure the suite's own docstring exists to prevent.
+
+  `PHASE3_FILES` now points at `www/training_preview.html`, and the two seams that still mean
+  something are re-pointed there with it — a strictly better target, since that page *is* the
+  live preview and holds exactly one `transport` object, so a method the player calls and the
+  preview does not answer is a real hole rather than two implementations drifting.
+
+### Changed
+
+- **Five `test_training_boot_wire` tests removed rather than re-pointed.** They pinned the
+  classic's *hand-rolled* preview against the runtime — `preview_checkpoint` key-for-key
+  against `_checkpoint_payload`, the checkpoint envelope, `next_checkpoint_at`, the quiz retry
+  keys, and "the preview must not repair the runtime". They existed because the classic rebuilt
+  each payload in JavaScript and the two drifted.
+
+  They cannot be re-pointed honestly: the canvas preview's draft mode takes its payload from
+  the server via `_split_lesson`, so there is no second implementation left to drift from. The
+  guarantee is structural now rather than a comparison, and
+  `test_training_canvas.TestThePreviewIsASecondModeNotAThirdTransport` is what pins it. Each
+  deletion leaves a note saying so.
+
+- `TestBuilderPageRegistration` deleted. Its claims — valid Page JSON, in the Training module,
+  role-gated to authors — are already made about the surviving page by
+  `test_training_canvas.TestCanvasPageIsRegistered`, which pins the exact role set **and** the
+  module. Checked before deleting rather than assumed: coverage moved, not dropped.
+
+- The new `test_classic_builder_retirement` replaces the R2 suite of the same name, and its
+  assertions are the opposites of that one's: nothing may reference the route, and the flag
+  must be gone from the DocType JSON, the boot payload and the boot helper.
+
+  Its repo-wide sweep covers **shipped code only** and excludes `tests/`, deliberately: a test
+  that asserts the route is absent must name the route to do so, and several legitimately do.
+  Flagging those would be the absence-assertion trap one level up, punishing exactly the tests
+  doing the right thing. A companion test plants a real reference in a temp file and confirms
+  the sweep's stripper would catch it — otherwise the absence assertion could pass because the
+  walk found nothing.
 ## [1.421.0] - 2026-09-12
 
 ### Changed

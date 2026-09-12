@@ -42,11 +42,17 @@ RUNTIME_API = APP / "api/training.py"
 AUTHOR_API = APP / "api/training_author.py"
 
 # Phase 3, to be built.
-BUILDER_JS = APP / "training/page/training_builder/training_builder.js"
-BUILDER_JSON = APP / "training/page/training_builder/training_builder.json"
+# The classic builder was deleted in v1.422.0 (R3). Its preview was the Phase 3
+# artefact these seams were written against; the preview is now the real player at
+# /training_preview, so the two seams that still mean something point there instead.
+#
+# BUILDER_JS/BUILDER_JSON are deliberately NOT replaced by canvas equivalents in
+# PHASE3_FILES below: that tuple feeds a skipUnless gate, and a path that does not
+# exist silently skips this entire suite.
+PREVIEW_HTML = APP / "www/training_preview.html"
 AI_API = APP / "api/training_ai.py"
 
-PHASE3_FILES = (BUILDER_JS, BUILDER_JSON, AI_API)
+PHASE3_FILES = (PREVIEW_HTML, AI_API)
 
 
 def _read(path):
@@ -143,16 +149,23 @@ class TestPreviewTransportMatchesThePlayer(unittest.TestCase):
 
     @phase3
     def test_preview_implements_every_transport_method(self):
+        """Re-pointed from the classic builder to /training_preview in v1.422.0.
+
+        A strictly better target: the preview page IS the live one now, and it holds
+        exactly one `transport` object, so a method the player calls and the preview
+        does not answer is a real hole rather than a second implementation drifting."""
         required = _transport_calls(PLAYER_JS, VIDEO_JS, QUIZ_JS, BLOCKS_JS)
-        builder = _read(BUILDER_JS)
-        missing = sorted(m for m in required if not re.search(rf"\b{m}\b", builder))
+        preview = _read(PREVIEW_HTML)
+        missing = sorted(m for m in required if not re.search(rf"\b{m}\b", preview))
         self.assertEqual(
             missing, [], f"preview transport is missing {missing}; the player calls transport.<name>"
         )
 
     @phase3
     def test_preview_constructs_the_real_player(self):
-        self.assertRegex(_read(BUILDER_JS), r"TR\.Player|new\s+\w*\.?Player\s*\(")
+        """The whole point of the harness: it boots the REAL TR.Player, so what an
+        author sees is the runtime a learner gets rather than a mock of it."""
+        self.assertRegex(_read(PREVIEW_HTML), r"TR\.Player|new\s+\w*\.?Player\s*\(")
 
 
 # ------------------------------- seam 2: builder autosave <-> server allowlist
@@ -264,24 +277,13 @@ class TestAiDraftsCannotReachAPublishedCourse(unittest.TestCase):
 
 
 # ----------------------------------------------- seam 4: the desk page itself
-
-
-class TestBuilderPageRegistration(unittest.TestCase):
-    @phase3
-    def test_page_json_is_valid_and_in_the_training_module(self):
-        data = json.loads(_read(BUILDER_JSON))
-        self.assertEqual(data.get("doctype"), "Page")
-        self.assertEqual(data.get("module"), "Training")
-
-    @phase3
-    def test_page_is_role_gated_to_authors(self):
-        """A publish action reachable by anyone with a desk login would bypass the
-        Training Manager gate entirely."""
-        roles = {r.get("role") for r in json.loads(_read(BUILDER_JSON)).get("roles") or []}
-        self.assertTrue(
-            {"Training Author", "Training Manager", "System Manager"} & roles,
-            f"builder page is not role-gated (roles: {roles or 'none'})",
-        )
+#
+# `TestBuilderPageRegistration` lived here and was deleted with the page in v1.422.0
+# (R3). It asserted the Page JSON was valid, in the Training module, and role-gated to
+# authors. Every one of those claims is already made about the surviving page by
+# `test_training_canvas.TestCanvasPageIsRegistered.test_the_page_is_gated_to_authors`,
+# which pins the exact role set AND the module -- so this is coverage moved, not
+# coverage dropped. Checked before deleting rather than assumed.
 
 
 # --------------------------------------------------- the Phase 2 seam, pinned

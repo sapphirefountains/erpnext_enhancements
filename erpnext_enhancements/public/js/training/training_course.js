@@ -118,9 +118,9 @@ function render_actions(frm, draft, is_manager) {
 	// to know the URL and type it. Two doors then meant authors had to guess which
 	// editor was the real one; one door answers that.
 	//
-	// /app/training-builder stays reachable by URL for one release. The one thing
-	// it still does alone is register a NEW video from Drive, and the canvas hands
-	// off to it from the Video block for exactly that.
+	// The classic builder was deleted in v1.422.0. Its last exclusive capability --
+	// registering a video from Drive -- moved to the canvas in v1.417.0, which is why
+	// the port came first and the retirement second.
 	const $canvas = frm.add_custom_button(__("Edit Visually"), () => open_canvas(frm));
 	// Primary only when nothing else already is: a manager looking at a draft has
 	// Publish highlighted, and two primary buttons side by side just make the
