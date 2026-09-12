@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.418.0] - 2026-09-12
+
+### Added
+
+- **A switch that retires the classic Training Builder** (WI-074 D / R2). Training Settings →
+  Authoring → **Retire The Classic Builder**. Ships **off**. Ticking it closes
+  `/app/training-builder`: the page renders a notice pointing at the canvas, carrying the course
+  through so an old bookmark lands on the same course rather than on a picker.
+
+### Notes
+
+**The polarity is the whole design, and the inverse would have shipped R3 a release early.**
+`Training Settings` is a Single, and a `default` on a *new* field of a Single never reaches the
+row that already exists — `bench migrate` writes no `tabSingles` row for it, and `load_from_db`
+applies no defaults (they fire in `new_doc()`, i.e. fresh install and never again). So on every
+live site the field reads `None`, and `cint(None)` is `0`.
+
+- `classic_builder_retired` default `"0"` — the missing-row reading (0 = *not* retired) and the
+  declared default **agree**. Dormant everywhere, nothing changes on deploy, and the door closes
+  only when a human ticks the box.
+- `classic_builder_enabled` default `"1"` was the trap. Production would read `None` → `0` →
+  **disabled**, so the builder would switch off on the live site the day this deployed, chosen by
+  nobody, while the JSON read `1` so every cheap check said it was on.
+
+**The rule worth keeping: name the flag so the missing-row reading IS the status-quo answer.**
+Verified live before shipping — Training Settings has 33 rows in `tabSingles` and every currently
+declared field has one, which is precisely why a newly declared one will not.
+
+**No backfill patch, deliberately.** There is nothing to backfill: the declared default and the
+missing-row reading already agree. A patch keyed on emptiness would match zero rows, commit, and
+record itself in `tabPatch Log` — indistinguishable from a successful run, which is the v1.280.3
+failure exactly. It would also be a patch on a Single, the one place a raise aborts `bench
+migrate`, which on this repo is the deploy (v1.395.0). A test asserts no such patch exists.
+
+**Read straight off the Single, not through `is_enabled`.** That helper returns False for any
+switch while `training_enabled` is off, and the module's own docstring promises *"Authoring works
+with every switch off"* — routed through it, a dormant site would read "not retired" for a reason
+that has nothing to do with the decision. This is not a feature switch gated by the master switch;
+it is a statement about which authoring page exists. And never via
+`frappe.db.get_value("Singles", …)`, which cannot succeed on any site.
+
+**An unknown value means NOT retired, at both layers.** The server helper answers "not retired" on
+every exception, because `extend_bootinfo` runs on every desk load for every user and a flag that
+raises turns a missing DocType into a blank desk. The client checks `=== 0` rather than
+truthiness, because an older desk session leaves the boot key `undefined` — truthiness would read
+that as retired and close the tool on a stale tab, chosen by nobody. That is the same shape as the
+default-1 trap, one layer out.
+
+**Two things this is not, both stated in the field's own description** — the only place an
+operator reads about it before ticking it:
+
+- **Not access control.** A desk Page has no server controller, so the check lives in the page's
+  own JS. The Page's `roles` remain the permission boundary and are untouched. A test pins those
+  three roles, because emptying `roles` would *open* the page to every desk user: frappe v16's
+  `Page.is_permitted` returns True on an empty allow-list.
+- **Not able to remove the awesomebar entry.** That list is built from page permissions and no
+  setting can change it. Somebody who finds the page that way lands on the notice and is told.
+
+**R2 could not ship before v1.417.0, and that is asserted rather than remembered.** Ticking this
+box while the canvas still handed off to the classic builder for video registration would have
+removed the only way to register a video. A test refuses to let the switch exist while anything in
+the app still routes to the page it closes — it sweeps every `.js` outside the builder's own
+directory, over comment-stripped source, because this release writes several comments naming the
+route while explaining that nothing uses it.
+
+**R2 gates; R3 deletes.** No file under `training/page/training_builder/` is removed or emptied,
+the Page record and its JSON are untouched, and `register_video_asset` / `retry_video_copy` stay.
+Unticking the box restores the whole tool with no code change — which is what keeps R3 a separate
+decision that is still reversible until it is taken.
+
 ## [1.417.0] - 2026-09-12
 
 ### Added

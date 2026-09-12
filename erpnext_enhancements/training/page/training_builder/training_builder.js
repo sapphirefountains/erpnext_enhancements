@@ -49,14 +49,68 @@
 // including its re-merge-on-failure path: a failed batch keeps its edits and
 // loses to any newer in-flight change on the same field.
 
+// RETIREMENT (R2, v1.418.0). `Training Settings.classic_builder_retired` closes this
+// page. Nothing has linked to it since v1.416.0 and the canvas does everything it did,
+// including registering a video from Drive (v1.417.0) -- the last thing that lived only
+// here, and the reason the switch could not ship until that was ported.
+//
+// A CLIENT check, and honestly so. This is a desk Page: no server controller runs on the
+// way in, so nothing here is a permission boundary and it must not be described as one.
+// The Page's own `roles` are the boundary and are untouched. This is the difference
+// between a tool being retired and a door being locked, and the same rule WI-074 records
+// for Desktop Icon.roles: show/hide, never access control.
+//
+// The awesomebar still offers the page, because that list is built from page permissions
+// and no setting can remove it. Someone who finds it that way lands here and is told.
+//
+// Nothing below this point is deleted. Unticking the box restores the whole tool with no
+// code change -- which is what makes R2 reversible and R3 the separate decision.
 frappe.pages["training-builder"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
 		title: __("Training Builder"),
 		single_column: true,
 	});
+
+	// `!== 0` rather than truthiness: an older desk session, or any boot that failed to
+	// set the key, leaves it undefined -- and undefined must mean NOT retired. The server
+	// helper answers 'not retired' on every failure for the same reason. A flag whose
+	// unknown state closes the tool would retire it by accident on a stale tab.
+	if (frappe.boot && frappe.boot.ee_training_classic_builder === 0) {
+		tb_render_retired(page);
+		return;
+	}
+
 	wrapper.training_builder = new TrainingBuilder(page, wrapper);
 };
+
+function tb_render_retired(page) {
+	// Says where to go and carries the course through, so somebody following an old
+	// bookmark lands on the same course in the canvas rather than on a picker. Being told
+	// "this is gone" and then having to find your own way back is how a retirement reads
+	// as a breakage.
+	const course = frappe.utils.get_url_arg("course") || "";
+	const $box = $('<div class="text-center" style="padding:64px 24px;max-width:560px;margin:0 auto"></div>')
+		.appendTo(page.main);
+	$("<h4></h4>").text(__("The Training Builder has been retired")).appendTo($box);
+	$('<p class="text-muted"></p>')
+		.text(
+			__("Courses are authored on the Training Canvas now — it does everything this page did, on the page a learner actually sees.")
+		)
+		.appendTo($box);
+	$('<button class="btn btn-primary"></button>')
+		.text(course ? __("Open this course on the canvas") : __("Go to the Training Canvas"))
+		.on("click", () => {
+			if (course) frappe.route_options = { course };
+			frappe.set_route("training-canvas");
+		})
+		.appendTo($box);
+	$('<p class="text-muted small" style="margin-top:16px"></p>')
+		.text(
+			__("An administrator can bring this page back by unticking “Retire The Classic Builder” in Training Settings.")
+		)
+		.appendTo($box);
+}
 
 frappe.pages["training-builder"].on_page_show = function (wrapper) {
 	if (wrapper.training_builder) wrapper.training_builder.handle_route();
