@@ -141,11 +141,23 @@ endpoint does not count as a caller.
 Open a Training Course and press **Edit Visually**, or go straight to
 `/app/training-canvas?course=TRN-CRS-00001`. That is the authoring surface.
 
-The classic builder at `/app/training-builder` is **being retired**. R1 (v1.416.0)
-removed its buttons; v1.417.0 ported the last capability that existed only there
-(**registering a video from Drive**), so nothing in the app links to it and nothing
-needs it. It is reachable by typing the URL until the page is removed. Everything
-below about drafts applies to both.
+The classic builder at `/app/training-builder` is **being retired**, in stages:
+
+| | |
+|---|---|
+| R1 (v1.416.0) | Removed its buttons. Nothing in the app links to it. |
+| v1.417.0 | Ported the last capability that existed only there — **registering a video from Drive** — so nothing needs it either. |
+| R2 (v1.418.0) | **Training Settings → Authoring → Retire The Classic Builder.** Ships **off**; tick it to close the URL too. |
+| R3 | Delete the page. A separate, deliberate decision — not scheduled. |
+
+The switch is **reversible**: untick it and the page works again with no code change,
+because R2 gates and deletes nothing. Two things it is *not*. It is not access control —
+this is a desk Page with no server controller, the check is in the page's own JS, and the
+Page's `roles` remain the permission boundary. And it cannot remove the page from the
+awesomebar, which is built from page permissions; someone who finds it there lands on a
+notice that says it has been retired and links to the same course on the canvas.
+
+Everything below about drafts applies to both pages.
 
 **Authoring only ever edits an open draft.** Publishing turns the draft into the
 live version and leaves the course with none, so the next round of edits starts a

@@ -717,6 +717,16 @@ jobs:
       # run over a subset is worse than no run, so this fails the build on it.
       - name: Tests are collectable both ways they are run
         run: python -m unittest erpnext_enhancements.tests.test_test_collection -v
+      # Retiring the classic Training Builder (R2). The POLARITY is the whole design:
+      # Training Settings is a Single, and a `default` on a NEW field of a Single never
+      # reaches the row that already exists, so every live site reads None -> 0. The flag
+      # is named `classic_builder_retired` with default 0 so that reading IS the status
+      # quo. The inverse -- `_enabled` defaulting to 1 -- would switch the builder off on
+      # prod the day it deployed, chosen by nobody, while the JSON still read 1 so every
+      # cheap check said it was on. This suite also refuses to let the switch exist while
+      # anything in the app still routes to the page it closes.
+      - name: Classic builder retirement flag (polarity, gate, reversibility)
+        run: python -m unittest erpnext_enhancements.tests.test_classic_builder_retirement -v
       # Does recording a sign-off actually finish anything? It did not: Training
       # Signoff had no on_submit at all, so `Competent` moved nothing and the
       # assignment stayed at "Awaiting Sign-off" for ever. Same suite pins the
