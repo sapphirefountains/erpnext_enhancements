@@ -892,6 +892,17 @@ def get_lesson(attempt, lesson_key):
         # It is here as well as on the heartbeat because a checkpoint at 0:05
         # would otherwise fire before the first beat ever arrived.
         "next_checkpoints": _next_checkpoints_by_block(doc, lesson_key),
+        # Where the server thinks this learner should go next, on the path they
+        # actually open a lesson through. The value already existed on
+        # `_attempt_state` and `complete_lesson` and nowhere here, so the player
+        # had to infer the order from the outline alone and could not show the
+        # NAME of the next lesson on the button.
+        #
+        # Deliberately NOT added to `heartbeat` for symmetry: `_next_lesson_key`
+        # does a `progress.load()` plus a `_version_lessons()` child-table query.
+        # That is cheap once per lesson open and expensive every ~15 seconds per
+        # watching learner.
+        "next_lesson_key": _next_lesson_key(doc.name, doc.course_version),
     }
 
 

@@ -616,6 +616,15 @@
    rather than a class of its own -- `tests/test_training_player_css_contract.py`
    requires a rule for every standalone class the scripts emit, and styles
    `is-*` modifiers as `.base.is-state`. */
+/* "Lesson 4 of 20 - 3 done" / "3 of 20 lessons done". Rendered in both the lesson
+   header and the course view from the SAME courseCounter(), so the two can never
+   disagree; muted because it is orientation, not an instruction. */
+.tr-course-place {
+	margin: 0 0 6px;
+	color: var(--tr-muted);
+	font-size: 0.9rem;
+}
+
 .tr-signoff.is-banner {
 	gap: 8px;
 	margin-bottom: 20px;

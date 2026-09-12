@@ -1013,3 +1013,60 @@ class TestAFinishedCourseStaysOpenable(unittest.TestCase):
         progress against a submitted completion."""
         body = _fn_body(self._player(), "function renderBottomBar()")
         self.assertIn("if (state.readOnly) return;", body)
+
+
+class TestTheLearnerCanTellWhereTheyAre(unittest.TestCase):
+    """P9/P8/P6 (v1.408.0). The player had no course-level navigation at all.
+
+    `renderBottomBar` built exactly one action — the quiz or Finish — so the only
+    way between lessons was back out to the outline and in again. `renderLesson`
+    drew only the *within-lesson* meter, so "how far through the course am I" was
+    answered nowhere, even though `get_course` has been sending
+    `attempt.percent_complete` all along and the player never read it. And
+    `get_lesson` carried no `next_lesson_key`, though `_attempt_state` and
+    `complete_lesson` both do — so the recommendation existed everywhere except the
+    path a learner actually opens a lesson through.
+    """
+
+    def _player(self):
+        from erpnext_enhancements.tests.test_training_canvas import _strip_js_comments
+
+        return _strip_js_comments(_player_js())
+
+    def test_get_lesson_now_sends_the_next_key(self):
+        src = ast.unparse(_api_fn("get_lesson"))
+        self.assertIn("next_lesson_key", src)
+
+    def test_the_heartbeat_does_not(self):
+        """`_next_lesson_key` does a `progress.load()` plus a `_version_lessons()`
+        child-table query. Cheap once per lesson open; expensive every ~15 seconds per
+        watching learner, and adding it there 'for symmetry' is the obvious next move."""
+        src = ast.unparse(_api_fn("heartbeat"))
+        self.assertNotIn("_next_lesson_key", src)
+
+    def test_previous_and_next_are_quiet_not_primary(self):
+        """There is no lesson locking — `_next_lesson_key` recommends an order and
+        does not enforce one — so these are free navigation. A prominent Next would
+        teach people to skip the quiz to reach it."""
+        body = _fn_body(self._player(), "function renderBottomBar()")
+        self.assertIn("outlineIndexOf(state.lessonKey)", body)
+        for label in ('t("Previous")', 't("Next")'):
+            with self.subTest(label=label):
+                self.assertIn(label, body)
+        quiet = body.count("tr-button-quiet")
+        self.assertGreaterEqual(quiet, 2, "Previous/Next must both be quiet-styled")
+
+    def test_the_counter_uses_the_servers_total_not_the_outline_length(self):
+        """`_percent_complete` counts lessons whose status is exactly "done" against
+        the VERSION's `total_lessons`. Counting outline rows instead would make the
+        lesson header and the catalogue card's progress bar disagree by a lesson —
+        which reads as a bug in both places rather than as one definition in two."""
+        body = _fn_body(self._player(), "function courseCounter()")
+        self.assertIn("state.version && state.version.lessons", body)
+        self.assertIn('lessonStatus(row.lesson_key) === "done"', body)
+
+    def test_both_views_render_the_same_tally(self):
+        src = self._player()
+        for fn in ("function renderLesson()", "function renderCourse()"):
+            with self.subTest(fn=fn):
+                self.assertIn("courseCounter()", _fn_body(src, fn))

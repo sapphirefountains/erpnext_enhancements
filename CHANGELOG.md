@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.408.0] - 2026-09-11
+
+### Added
+
+- **Previous / Next controls, and a course-level progress counter** (WI-074 E5/E6, P9 + P8 +
+  P6). The player had no course-level navigation at all: `renderBottomBar` built exactly one
+  action — the quiz or Finish — so the only way between lessons was back out to the outline
+  and in again. `renderLesson` drew only the *within-lesson* meter, so "how far through the
+  course am I" was answered nowhere, even though `get_course` has been sending
+  `attempt.percent_complete` all along and nothing read it.
+
+  The lesson header now reads "Lesson 4 of 20 · 3 done", the course view shows the same tally
+  with a meter above the outline, and the bottom bar carries Previous / Next.
+- **`get_lesson` returns `next_lesson_key`.** The value already existed on `_attempt_state` and
+  `complete_lesson` — everywhere except the path a learner actually opens a lesson through — so
+  the Next button can now name the lesson it goes to.
+
+### Notes
+
+**Previous / Next must not read as a gate.** There is no lesson locking anywhere:
+`_next_lesson_key` *recommends* an order and does not enforce one, the outline deliberately
+opens any lesson, and `TestOutlineRowFields` fails if `row.locked` ever comes back. So both are
+quiet-styled and sit beside the primary action rather than replacing it — a prominent Next
+would teach people to skip the quiz to reach it.
+
+**The counter uses the server's total, not the outline length.** `_percent_complete` counts
+lessons whose recorded status is exactly `"done"` against the *version's* `total_lessons`.
+Counting outline rows instead would let the lesson header and the catalogue card's progress bar
+disagree by a lesson — which reads as a bug in both places rather than as one definition
+expressed twice. Both views render from the same `courseCounter()` for the same reason.
+
+**`next_lesson_key` is deliberately NOT added to `heartbeat`.** `_next_lesson_key` does a
+`progress.load()` plus a `_version_lessons()` child-table query. That is cheap once per lesson
+open and expensive every ~15 seconds per watching learner, and adding it there "for symmetry"
+is the obvious next move — so a test forbids it.
+
 ## [1.407.0] - 2026-09-11
 
 ### Added

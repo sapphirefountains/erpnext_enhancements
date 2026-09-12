@@ -1023,6 +1023,10 @@
 								state.lesson = payload.lesson;
 								state.lessonKey = payload.lesson.lesson_key || wanted;
 							}
+							// The server's recommendation, which until v1.408.0 existed on
+							// _attempt_state and complete_lesson and nowhere on the path a
+							// learner opens a lesson through.
+							state.nextLessonKey = payload.next_lesson_key || null;
 							// MERGE, never assign. `get_lesson` sends the progress of the
 							// ONE lesson it was asked for — {status, blocks, checkpoints,
 							// quiz} — and this slot holds the whole {lessons: {...}} map
@@ -1124,6 +1128,15 @@
 				main.appendChild(waiting);
 			}
 
+			// The same tally the lesson header shows, so the two never disagree.
+			var tally = courseCounter();
+			if (tally.total) {
+				main.appendChild(
+					el("p", "tr-course-place", fmt(t("{0} of {1} lessons done"), [tally.done, tally.total]))
+				);
+				main.appendChild(meter(Math.round((tally.done * 100) / tally.total), t("Course progress")));
+			}
+
 			var list = el("ol", "tr-outline");
 			var lastChapter = null;
 			(state.outline || []).forEach(function (row, index) {
@@ -1157,6 +1170,36 @@
 				if (row.lesson_key === lessonKey) found = row;
 			});
 			return found;
+		}
+
+		//: Where a lesson sits in the published order, or -1. The outline IS the
+		//: order -- `_public_toc` emits it exactly as `_materialize_lessons` froze
+		//: it -- so Previous/Next need no server round trip.
+		function outlineIndexOf(lessonKey) {
+			var at = -1;
+			(state.outline || []).forEach(function (row, index) {
+				if (row.lesson_key === lessonKey) at = index;
+			});
+			return at;
+		}
+
+		//: {done, total} for the whole course.
+		//:
+		//: `total` comes from the SERVER (`state.version.lessons`, i.e. the version's
+		//: `total_lessons`) rather than `state.outline.length`, and `done` counts the
+		//: same thing `_percent_complete` counts -- a lesson whose recorded status is
+		//: exactly "done". The two can diverge, and if this counted outline rows the
+		//: lesson header and the catalogue card's progress bar would disagree by a
+		//: lesson, which reads as a bug in both places rather than a difference of
+		//: definition in one.
+		function courseCounter() {
+			var rows = state.outline || [];
+			var done = 0;
+			rows.forEach(function (row) {
+				if (lessonStatus(row.lesson_key) === "done") done += 1;
+			});
+			var total = (state.version && state.version.lessons) || rows.length || 0;
+			return { done: Math.min(done, total), total: total };
 		}
 
 		function firstOpenLesson() {
@@ -1251,6 +1294,21 @@
 			}));
 			bar.appendChild(el("h1", "tr-title", lesson.title || ""));
 			head.appendChild(bar);
+			// Where this lesson sits in the course, above the within-lesson meter. The
+			// meter answers "how far through this page am I"; this answers "how far
+			// through the course", which is the question a learner opening lesson four
+			// of twenty is actually asking and which nothing on the screen answered.
+			var place = outlineIndexOf(state.lessonKey);
+			var tally = courseCounter();
+			if (place >= 0 && tally.total) {
+				head.appendChild(
+					el(
+						"p",
+						"tr-course-place",
+						fmt(t("Lesson {0} of {1} · {2} done"), [place + 1, tally.total, tally.done])
+					)
+				);
+			}
 			head.appendChild(meter(lessonPercent(), t("Lesson progress")));
 			head.classList.add("is-sticky");
 
@@ -1614,6 +1672,39 @@
 				// support. Let them press it and let the server answer.
 				if (!gates.ok) finishBtn.classList.add("is-tentative");
 				actions.appendChild(finishBtn);
+			}
+
+			// Free navigation, and it must not READ as a gate. There is no lesson
+			// locking anywhere: `_next_lesson_key` recommends an order and does not
+			// enforce one, the outline deliberately opens any lesson, and
+			// TestOutlineRowFields fails if `row.locked` ever comes back. So these are
+			// quiet-styled and sit beside the primary action rather than replacing it --
+			// a prominent Next would teach people to skip the quiz to reach it.
+			var at = outlineIndexOf(state.lessonKey);
+			var rows = state.outline || [];
+			if (at > 0) {
+				var prev = rows[at - 1];
+				actions.insertBefore(
+					button("← " + t("Previous"), "tr-button tr-button-quiet", function () {
+						openLesson(prev.lesson_key);
+					}),
+					actions.firstChild
+				);
+			}
+			if (at >= 0 && at < rows.length - 1) {
+				var next = rows[at + 1];
+				// Name it when the server's progress-aware recommendation agrees with the
+				// published order, so the two are visibly the same thing rather than two
+				// competing notions of "next".
+				var label =
+					state.nextLessonKey && state.nextLessonKey === next.lesson_key && next.title
+						? fmt(t("Next: {0}"), [next.title])
+						: t("Next");
+				actions.appendChild(
+					button(label + " →", "tr-button tr-button-quiet", function () {
+						openLesson(next.lesson_key);
+					})
+				);
 			}
 			foot.appendChild(actions);
 		}
