@@ -7,6 +7,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.416.0] - 2026-09-12
+
+### Changed
+
+- **The classic Training Builder loses its entry points** (WI-074 D / R1). The canvas is the
+  authoring surface. `/app/training-builder` stays reachable by URL — this release unlinks it,
+  it does not remove it — but nothing in the app sends an author there any more, with one
+  deliberate exception.
+
+  Three of the four doors close: the Course form's **Open Builder** button (and the
+  `open_builder()` helper behind it), the canvas page-menu item, and the **Classic builder**
+  button that sat in the canvas top bar for the whole session.
+
+### Notes
+
+**The fourth door stays open, and narrowing to one was the whole finding.** Registering a new
+video from Drive is the one authoring job that still exists *only* in the classic builder:
+`register_video_asset` has exactly one caller repo-wide and `retry_video_copy` three, all of
+them there. So the canvas's Video block keeps its hand-off, reworded to say that and nothing
+else, and `open_classic()` now has exactly one call site — pinned at one by a test, because
+"not zero" is not the same claim.
+
+**"Just make the record in the Desk" is not an alternative, and it fails in the silent
+direction.** That is why the door had to stay rather than being swept with the others. See the
+`duration_source` fix below: until this release a hand-made video asset claimed a *probed*
+duration, and the coverage gate then ran against a number nobody measured.
+
+**Nobody is stranded.** `handle_route` reads `course` from the query string before
+route_options, so a bookmarked `/app/training-builder?course=…` still lands on the right course
+with no in-app link left anywhere. Verified against production before shipping: zero draft
+versions in flight, no `Custom Role` row for either page, no `Enhancement Desk Shortcut` and no
+Workspace shortcut or link pointing at the builder — so there is no site-side artefact to
+repoint. The desk awesomebar still offers the page to the three gated roles; R1 cannot reach
+that, and closing it is what R2 is for.
+
+**Three claims that had gone false are corrected**, all of them user-visible rather than
+comments:
+
+- `api/training_author.py` shipped `"checkpoints_editable_in": "training-builder"` in the
+  readiness payload — the string every client was told to send an author to in order to fix a
+  checkpoint. v1.413.0 made that false and R1 makes it a dead end. Removed rather than
+  repointed: one grep hit repo-wide, its own definition, so nothing read it.
+- The canvas appended **"(edit in the classic builder)"** to *every* checkpoint line in the
+  publish-readiness panel — the sentence an author reads at the exact moment they are trying to
+  finish a course. All three problems `Training Checkpoint.incomplete_reasons()` reports are
+  fixable in the pin inspector on that page. The line is the remedy now.
+- `training/README.md` said "the classic builder is complemented, never replaced."
+
+### Fixed
+
+- **The classic builder's video inspector threw a ReferenceError, live on production.**
+  `render_video_controls` read `asset` at `training_builder.js:2378` without ever declaring it —
+  the nearest declaration is in `render_asset_state`, a different method — and a class body is
+  strict mode. It fired on every Video block whenever AI assist is on, **which it is on
+  production** (`ai_assist_enabled = 1`).
+
+  The throw escaped the method and killed the entire **Gating** section that follows it in
+  `render_block_section`: "Minimum watch coverage %" and "In-video checkpoints" simply did not
+  render. The two controls that matter most for a video, on the page that until this release was
+  the only place to author one. Found only because R1 makes this page the sanctioned route for
+  video work — the narrowing is what made anyone look.
+
+- **`Training Video Asset.duration_source` defaulted to `"Probed"`, which inverted the coverage
+  gate's safety design.** `_stamp_registration` has always intended to stamp `"Manual"` on a
+  hand-made record — its comment says so — but the guard `if not self.duration_source` was
+  **inert**: on a *normal* doctype (unlike a Single) a JSON `default` reaches every new record
+  through `new_doc()`, so the field was already `"Probed"` before the guard ran.
+
+  The design is that an unverified duration **waives** the gate — `grading.py` says so in as many
+  words, "waive rather than gate on it", because coverage is a fraction of `duration_seconds` and
+  `_duration_is_verified`'s own docstring calls a hand-typed denominator "worse than no gate
+  because it reads as one". The default made every hand-made asset *claim* to be probed, so the
+  gate ran on a guess. `duration_seconds` is `reqd`, and the field is `read_only`, so nobody
+  could correct it afterwards — the runbook's stated remedy ("set duration_source to Manual") was
+  impossible to follow.
+
+  Latent, not yet triggered: production has exactly one video asset and it went through the real
+  probe path. Removing the default changes no existing row.
+
+- **211 tests were invisible to a direct `python <file>` run, across ten suites.** The
+  `if __name__ == "__main__": unittest.main()` block sat in the *middle* of each file, so
+  everything declared after it was never collected — `test_training_boot_wire.py` ran **29 of
+  100**, `test_training_runtime_regressions.py` **31 of 91**, `test_training_canvas.py` **62 of
+  94**, and in that last one the 32 that vanished were every suite added after it: the checkpoint
+  model, AI drafting and the draft preview, i.e. exactly the work whose author was most likely to
+  be running that file directly.
+
+  Nothing was unguarded *in CI* — CI uses `python -m unittest <module>`, which collects
+  everything — which is why it survived so long. But a developer checking their own change the
+  obvious way got a green run over a subset, and a green run over a subset is worse than no run.
+  Same family as the `unittest`/`pytest` split in `CLAUDE.md`: a collection failure that reports
+  success.
+
+### Added
+
+- [`tests/test_test_collection.py`](erpnext_enhancements/tests/test_test_collection.py) — fails
+  the build if any suite declares a test after its `__main__` guard. It also asserts its own
+  detector still detects, because a checker that silently stops matching passes forever over the
+  defect it exists to catch. Wired into `ci.yml` as its own step.
+
+- Comment-stripping in [`tests/test_training_triton_authoring.py`](erpnext_enhancements/tests/test_training_triton_authoring.py).
+  Its eight `assertNotIn` checks read four source files raw, three of which this release writes
+  new comments into. They were honest before and after — verified — but they are one comment away
+  from matching their own explanation, which is the trap this project has now hit **eleven**
+  times. Separate strippers for Python (`ast`, dropping comments and docstrings) and for
+  JS/CSS/HTML, and both were mutation-tested by injecting each forbidden token into a comment and
+  confirming it is stripped.
+
 ## [1.415.0] - 2026-09-11
 
 ### Added

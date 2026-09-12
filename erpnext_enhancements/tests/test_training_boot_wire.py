@@ -606,10 +606,6 @@ class TestTransportArguments(unittest.TestCase):
                 )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestRuntimeModulesMeet(unittest.TestCase):
     """The joins between the four player files, and the shim that hid them.
 
@@ -1325,3 +1321,12 @@ class TestThePlayerHonoursBootEnabled(unittest.TestCase):
         """The two states are different sentences and both are needed: nothing
         assigned on a live site is a real thing to say."""
         self.assertIn("Nothing is assigned to you right now.", _player_code())
+
+
+# Runs LAST, deliberately: anything declared after this block is invisible to a
+# direct `python <file>` run, while CI's `python -m unittest <module>` still
+# collects it. That divergence hid 211 tests across ten suites (v1.416.0), and it
+# fails GREEN, which is the dangerous direction. tests/test_test_collection.py
+# fails the build if it drifts back.
+if __name__ == "__main__":
+    unittest.main()

@@ -43,6 +43,33 @@ def _text(path):
     return path.read_text(encoding="utf-8")
 
 
+def _strip_js_comments(src):
+    """`src` with whole-line JS comments removed.
+
+    Needed because R1 writes comments that NAME the thing they explain the absence
+    of: the note replacing the Open Builder button says "/app/training-builder stays
+    reachable by URL". Run over raw source, an assertion that the string is gone
+    matches the sentence saying it is gone. Eleventh occurrence of that trap.
+
+    Defined here rather than imported from `test_training_canvas`, because this file
+    has a `__main__` block and a cross-module import breaks the direct run with
+    ModuleNotFoundError while leaving CI green."""
+    out, in_block = [], False
+    for line in src.splitlines():
+        stripped = line.strip()
+        if in_block:
+            if "*/" in stripped:
+                in_block = False
+            continue
+        if stripped.startswith("/*"):
+            in_block = "*/" not in stripped
+            continue
+        if stripped.startswith("//"):
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def _const(name, path):
     for node in ast.parse(_text(path)).body:
         if isinstance(node, ast.Assign) and any(
@@ -64,24 +91,40 @@ class TestTheVisualEditorIsReachable(unittest.TestCase):
 
     def test_the_link_hands_over_the_course(self):
         """The page reads `course` from the query string and falls back to
-        route_options, so this has to be set or the editor opens on nothing."""
+        route_options, so this has to be set or the editor opens on nothing.
+
+        The slice used to end at `function open_builder(`, which R1 deleted — so
+        this raised ValueError and reported an ERROR with a stack trace, inside a
+        test about the canvas. Anchored to the next function instead, whichever it
+        happens to be."""
         src = _text(COURSE_JS)
         at = src.index("function open_canvas(")
-        body = src[at : src.index("function open_builder(")]
+        end = src.index("\nfunction ", at + 1)
+        body = src[at:end]
         self.assertIn("frappe.route_options = { course: frm.doc.name }", body)
 
-    def test_the_classic_builder_is_still_there(self):
-        """Roughly 2,600 of its 3,842 lines have no canvas equivalent — chapters,
-        the quiz pool, checkpoint placement, video registration, preview. It stays
-        the power tool until each of those lands."""
-        self.assertIn("training-builder", _text(COURSE_JS))
+    def test_the_course_form_has_exactly_one_authoring_door(self):
+        """R1 (v1.416.0). Replaces `test_the_classic_builder_is_still_there`, whose
+        whole purpose was to keep the classic entry point wired — and whose docstring
+        had gone stale on four of the five gaps it named (chapters v1.398.0,
+        checkpoint placement v1.413.0, preview v1.415.0; only video registration and
+        the quiz pool survive).
+
+        Two authoring buttons made an author guess which editor was the real one.
+        Asserted over comment-stripped source, because the comment that replaced the
+        button necessarily says "training-builder"."""
+        src = _strip_js_comments(_text(COURSE_JS))
+        self.assertIn("training-canvas", src)
+        self.assertNotIn("training-builder", src)
+        self.assertNotIn("open_builder", src)
 
     def test_the_visual_editor_is_the_highlighted_one(self):
         """It is the surface an author who is not a developer can use, so on a draft
-        it is the primary action rather than the second button."""
+        it is the primary action. The paired `assertNotIn` on `$builder` was dropped
+        in v1.416.0: with the const deleted it could never fire again, so it read
+        like a guard while guarding nothing."""
         src = _text(COURSE_JS)
         self.assertIn('$canvas.addClass("btn-primary")', src)
-        self.assertNotIn('$builder.addClass("btn-primary")', src)
 
 
 class TestStartersAreCourseSpecs(unittest.TestCase):

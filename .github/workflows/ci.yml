@@ -707,6 +707,16 @@ jobs:
       # that killed the whole lesson autosave on the first Callout anyone created.
       - name: Training canvas (WYSIWYG authoring surface)
         run: python -m unittest erpnext_enhancements.tests.test_training_canvas -v
+      # Are the suites above collectable the way a DEVELOPER runs them, not just the
+      # way this file runs them? `python -m unittest <module>` collects every TestCase
+      # wherever it is declared; `python <file>` stops at `unittest.main()`. Eight
+      # suites had that block in the middle, hiding 211 tests from the direct run --
+      # test_training_boot_wire collected 29 of 100, test_training_canvas 62 of 94, and
+      # the 32 it dropped were the newest ones, i.e. exactly what their author was most
+      # likely to be checking. CI never noticed because CI uses the other path. A green
+      # run over a subset is worse than no run, so this fails the build on it.
+      - name: Tests are collectable both ways they are run
+        run: python -m unittest erpnext_enhancements.tests.test_test_collection -v
       # Does recording a sign-off actually finish anything? It did not: Training
       # Signoff had no on_submit at all, so `Competent` moved nothing and the
       # assignment stayed at "Awaiting Sign-off" for ever. Same suite pins the

@@ -2375,6 +2375,17 @@ class TrainingBuilder {
 			// `has_transcript` rides along on the video asset for exactly this:
 			// greying the action out is a better answer than letting the author
 			// press it and collect a refusal.
+			//
+			// `asset` is resolved HERE. It used to be read without ever being declared in
+			// this method -- the nearest declaration is in `render_asset_state`, a
+			// different one -- and a class body is strict mode, so this line threw a
+			// ReferenceError on every Video block whenever AI assist was on (it is on, in
+			// production). The throw escaped `render_video_controls` and killed the whole
+			// Gating section that follows it in `render_block_section`: "Minimum watch
+			// coverage %" and "In-video checkpoints" simply did not render. Fixed
+			// v1.416.0, and noticed only because R1 makes this page the sanctioned route
+			// for video work.
+			const asset = this.video_asset(block);
 			const timed = !!(asset && asset.has_transcript) || /-->/.test(lesson.transcript || "");
 			$(`<button type="button" class="tb-icon-btn">✨ ${__("Draft checkpoints with AI")}</button>`)
 				.prop("disabled", !this.editable() || !timed)

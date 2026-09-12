@@ -20,6 +20,7 @@ was removed. These guards keep it removed and keep the reuse wired:
 Run: python -m unittest erpnext_enhancements.tests.test_training_triton_authoring
 """
 
+import ast
 import unittest
 from pathlib import Path
 
@@ -27,10 +28,62 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 APP = REPO_ROOT / "erpnext_enhancements"
 
 
+# Every assertion below is an ABSENCE assertion, and this project has now been bitten
+# eleven times by the same thing: the comment explaining why a token is gone names the
+# token, so a raw substring search matches the explanation and the test passes over a
+# genuine regression. These read four source files, three of which v1.416.0 (R1) wrote
+# new comments into. They were honest before that change and they are honest after it;
+# they are hardened here so they stay honest without anyone having to remember.
+
+
+def _py(path):
+    """Python source with comments and docstrings removed.
+
+    `ast` never retains comments, so unparsing drops them for free; docstrings are
+    stripped explicitly because prose about code is not code."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = getattr(node, "body", None)
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            node.body = body[1:] or [ast.Pass()]
+    return ast.unparse(ast.fix_missing_locations(tree))
+
+
+def _web(path):
+    """JS/CSS/HTML source with whole-line and block comments removed.
+
+    Line-START only, matching the `_code` helpers in the sibling suites: a trailing-
+    comment stripper that is not quote-aware mangles `https://` inside string literals."""
+    out, in_block = [], False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if in_block:
+            if "*/" in stripped:
+                in_block = False
+            continue
+        if stripped.startswith("/*"):
+            in_block = "*/" not in stripped
+            continue
+        if stripped.startswith("<!--"):
+            in_block = "-->" not in stripped
+            continue
+        if stripped.startswith("//"):
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
 class TestTheCustomTridentIsGone(unittest.TestCase):
     def test_no_endpoint_or_wrapper_remains(self):
-        ai = (APP / "api/training_ai.py").read_text(encoding="utf-8")
-        api = (APP / "api/training.py").read_text(encoding="utf-8")
+        ai = _py(APP / "api/training_ai.py")
+        api = _py(APP / "api/training.py")
         self.assertNotIn("draft_course_with_triton", ai)
         self.assertNotIn("def draft_course(", api)
         # The boot key that only gated the removed trident is gone too, so the
@@ -38,9 +91,9 @@ class TestTheCustomTridentIsGone(unittest.TestCase):
         self.assertNotIn("can_author", api)
 
     def test_the_learner_player_has_no_trident(self):
-        player = (APP / "public/js/training/player.js").read_text(encoding="utf-8")
-        css = (APP / "public/css/training/player.css").read_text(encoding="utf-8")
-        method_map = (APP / "www/training.html").read_text(encoding="utf-8")
+        player = _web(APP / "public/js/training/player.js")
+        css = _web(APP / "public/css/training/player.css")
+        method_map = _web(APP / "www/training.html")
         self.assertNotIn("tritonFab", player)
         self.assertNotIn("tr-triton-fab", css)
         self.assertNotIn("draftCourse", method_map)
@@ -48,7 +101,7 @@ class TestTheCustomTridentIsGone(unittest.TestCase):
 
 class TestTheBuilderReusesTheRealBubble(unittest.TestCase):
     def test_the_builder_opens_the_real_triton_via_sapphiretriton(self):
-        js = (APP / "training/page/training_builder/training_builder.js").read_text(encoding="utf-8")
+        js = _web(APP / "training/page/training_builder/training_builder.js")
         self.assertIn("open_triton_authoring", js)
         self.assertIn("window.SapphireTriton", js)
         self.assertIn("SapphireTriton.ask", js)
@@ -59,7 +112,7 @@ class TestTheBuilderReusesTheRealBubble(unittest.TestCase):
     def test_the_training_course_form_pattern_still_exists(self):
         # The established reuse pattern the builder mirrors; a sanity anchor so this
         # test fails loudly if the shared opener is renamed or removed.
-        form = (APP / "public/js/training/training_course.js").read_text(encoding="utf-8")
+        form = _web(APP / "public/js/training/training_course.js")
         self.assertIn("window.SapphireTriton", form)
         self.assertIn("SapphireTriton.ask", form)
 

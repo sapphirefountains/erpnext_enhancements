@@ -359,10 +359,6 @@ class TestCoverageReachesTheRecord(unittest.TestCase):
         self.assertIn("update_modified=False", call.group(0))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestSignoffMatchesTheCourseNotTheVersion(unittest.TestCase):
     """A sign-off follows the learner and the course, not the content revision.
 
@@ -1169,3 +1165,12 @@ class TestTheSignOffQueueShowsItsAge(unittest.TestCase):
         parser would be a second thing that has to get leap years right."""
         body = _fn_body(self._player(), "function queueRow(row, list)")
         self.assertIn("daysUntil(row.signed_on)", body)
+
+
+# Runs LAST, deliberately: anything declared after this block is invisible to a
+# direct `python <file>` run, while CI's `python -m unittest <module>` still
+# collects it. That divergence hid 211 tests across ten suites (v1.416.0), and it
+# fails GREEN, which is the dangerous direction. tests/test_test_collection.py
+# fails the build if it drifts back.
+if __name__ == "__main__":
+    unittest.main()

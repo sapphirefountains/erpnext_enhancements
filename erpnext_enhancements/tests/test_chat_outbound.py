@@ -2092,10 +2092,6 @@ class TestTransitionGate(RelayTestCase):
 			outbound.transition(claimed, RelayState.IN_PROGRESS)
 
 
-if __name__ == "__main__":  # pragma: no cover
-	unittest.main()
-
-
 class TestAuthIdentity(RelayTestCase):
 	"""Which Google identity the worker writes as, and the two guards that stop applying.
 
@@ -2152,3 +2148,12 @@ class TestAuthIdentity(RelayTestCase):
 		with self.assertRaises(ValueError) as caught:
 			real_build_client("someone@example.com", identity="APP")
 		self.assertIn("does not impersonate", str(caught.exception))
+
+
+# Runs LAST, deliberately: anything declared after this block is invisible to a
+# direct `python <file>` run, while CI's `python -m unittest <module>` still
+# collects it. That divergence hid 211 tests across ten suites (v1.416.0), and it
+# fails GREEN, which is the dangerous direction. tests/test_test_collection.py
+# fails the build if it drifts back.
+if __name__ == "__main__":  # pragma: no cover
+	unittest.main()

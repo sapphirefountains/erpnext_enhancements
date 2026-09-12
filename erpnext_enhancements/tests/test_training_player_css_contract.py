@@ -391,10 +391,6 @@ class TestHostThemeReset(unittest.TestCase):
                 self.fail(f"bare tag selector {stripped!r} leaks outside .tr-shell")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestTheChromeRemovalSparesThePlayer(unittest.TestCase):
     """The page hides the website chrome, and hid its own action bar with it.
 
@@ -526,3 +522,12 @@ class TestInjectedStylesheetsStayOnPalette(unittest.TestCase):
                 f"quiz.js's {desk_name} fallback {match.group(1)} disagrees with "
                 f"player.css {token} = {tokens.get(token)}",
             )
+
+
+# Runs LAST, deliberately: anything declared after this block is invisible to a
+# direct `python <file>` run, while CI's `python -m unittest <module>` still
+# collects it. That divergence hid 211 tests across ten suites (v1.416.0), and it
+# fails GREEN, which is the dangerous direction. tests/test_test_collection.py
+# fails the build if it drifts back.
+if __name__ == "__main__":
+    unittest.main()

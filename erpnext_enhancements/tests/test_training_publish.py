@@ -389,10 +389,6 @@ class TestAnswerKeyIsUsable(unittest.TestCase):
 		self.assertEqual(checkpoint["block_key"], "blk1")
 
 
-if __name__ == "__main__":
-	unittest.main()
-
-
 class TestPublishingIsNotTheSameAsSubmitting(unittest.TestCase):
 	"""Static guards on the two things a Desk **Submit** silently skipped.
 
@@ -500,3 +496,12 @@ class TestVideoCopyIsActuallyTriggered(unittest.TestCase):
 		body = source[start : source.index("\ndef ", start + 5)]
 		self.assertIn("frappe.enqueue", body)
 		self.assertIn("enqueue_after_commit=True", body)
+
+
+# Runs LAST, deliberately: anything declared after this block is invisible to a
+# direct `python <file>` run, while CI's `python -m unittest <module>` still
+# collects it. That divergence hid 211 tests across ten suites (v1.416.0), and it
+# fails GREEN, which is the dangerous direction. tests/test_test_collection.py
+# fails the build if it drifts back.
+if __name__ == "__main__":
+	unittest.main()

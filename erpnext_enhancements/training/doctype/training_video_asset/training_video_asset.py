@@ -52,6 +52,17 @@ class TrainingVideoAsset(Document):
 			self.uploaded_on = now_datetime()
 			# A duration that arrives with a brand-new record was typed by a human;
 			# the probe path sets this to "Probed" explicitly after it reads the file.
+			#
+			# This guard was INERT until v1.416.0, and it failed in the direction that
+			# reads as safe. The JSON carried `"default": "Probed"`, and on a normal
+			# doctype (unlike a Single) a default reaches every new record through
+			# `new_doc()` -- so `self.duration_source` was already "Probed" by the time
+			# this ran, `not self.duration_source` was never true, and a hand-made record
+			# claimed a duration nobody measured. `grading._duration_is_verified` then
+			# ENFORCED the coverage gate on it, which its own docstring calls worse than
+			# no gate because it reads as one. The field is also `read_only`, so nobody
+			# could correct it afterwards -- the runbook's remedy was impossible to
+			# follow. The default is gone; do not put it back.
 			if not self.duration_source:
 				self.duration_source = "Manual"
 

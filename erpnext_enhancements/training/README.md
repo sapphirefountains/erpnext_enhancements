@@ -138,10 +138,16 @@ endpoint does not count as a caller.
 
 ## Authoring a course
 
-Open a Training Course and press **Open Builder**, or go straight to
-`/app/training-builder?course=TRN-CRS-00001`.
+Open a Training Course and press **Edit Visually**, or go straight to
+`/app/training-canvas?course=TRN-CRS-00001`. That is the authoring surface.
 
-**The builder only ever edits an open draft.** Publishing turns the draft into the
+The classic builder at `/app/training-builder` is **being retired** (R1, v1.416.0).
+It has no button anywhere any more and is reachable only by typing the URL. One
+job still lives there alone — **registering a new video from Drive** — and the
+canvas's Video block hands off to it for exactly that. Everything below about
+drafts applies to both.
+
+**Authoring only ever edits an open draft.** Publishing turns the draft into the
 live version and leaves the course with none, so the next round of edits starts a
 new draft — press **New Draft Version**. A new draft copies the live content and
 keeps every lesson, block and checkpoint key, which is what lets a learner who is
@@ -181,10 +187,19 @@ finish", and Callout tone; headings are edited on the render itself). **Media** 
 here too: **Image / PDF / Downloadable File** attach a private file (the classic builder's
 `/api/method/upload_file` idiom) and preview it; **Video** picks a registered Training Video
 Asset with poster and coverage gate; **Image Hotspots** attaches a diagram and places pins.
-Every one of the twelve block types can be added from the `+` menu. Only two specialised
-things stay in the classic builder: **registering a new video** (the Drive-probe that sets
-the coverage denominator) and placing **in-video checkpoints** on the timeline — both linked
-from the video block. So the classic builder is complemented, never replaced.
+Every one of the twelve block types can be added from the `+` menu. **In-video checkpoints**
+are placed here too, on a timeline under the video block, with a pin inspector for the
+question and its options (v1.413.0) — and a draft can be **previewed as a learner** through
+the real player (v1.415.0).
+
+**One specialised job stays in the classic builder: registering a new video.** The Drive
+probe reads the real length from `videoMediaMetadata.durationMillis`, and that length is the
+denominator watch coverage is measured against. Making the record by hand in the Desk is
+**not** an equivalent: `duration_source` is `read_only`, so a hand-made row cannot be
+corrected to `Manual` afterwards — and until v1.416.0 it also carried `"default": "Probed"`,
+which made `grading._duration_is_verified` enforce the coverage gate against a number nobody
+measured. The design is to *waive* the gate on an unverified duration rather than run it on a
+guess; that default silently inverted it.
 
 **It forced a real round-trip fix that also helped the classic builder.**
 `get_builder_bootstrap` returned each block's edit shape but *omitted* `data` (the
