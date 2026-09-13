@@ -7,6 +7,130 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.426.6] - 2026-09-13
+
+### Fixed
+
+- **The audit roster's load-bearing comment about frappe was backwards, and believing it
+  would have emptied the sheet.** `_people_on` filters `relieving_date` in Python and said
+  it did so because *"a `>=` filter on a nullable date silently matches NULLs (the coalesce
+  trap)"*. It does not. Read off the compiled condition on prod, the two directions differ:
+
+      relieving_date >= X   ->   `relieving_date` >= '2026-03-01'          no wrap at all
+      relieving_date <= X   ->   ifnull(`relieving_date`, '0001-01-01') <= '...'
+
+  `prepare_filter_condition` sets the sentinel to the **minimum** of the type, so it can
+  only ever pull NULLs into `<` and `<=`. Measured: `>=` matched 1 of 20 Employees while 15
+  have a NULL `relieving_date`.
+
+  Which inverts the consequence. SQL would not over-include here — it would silently
+  **drop** those 15, and NULL is exactly the people still employed. A reader who believed
+  the comment would have moved the filter into the query, or added an `is set` "to be
+  safe", and either one empties the roster of the current crew while still printing a
+  confident header over it. A rationale that is wrong in the reassuring direction is worse
+  than no rationale.
+
+- **The roster told an insurer "No record of any kind on this date" about people it had
+  never searched.** Courses, sign-offs and restrictions are all keyed on a **user login**,
+  so `_completion_rows`, `_signoff_rows` and `_restriction_rows` each return `[]` for an
+  employee with no `user_id` — by construction, before any query runs. Only credentials,
+  keyed on `employee`, were genuinely looked up.
+
+  Now such a person gets an explicit *"Not searched"* row, and it is emitted **whether or
+  not other rows were found** — because the worse case is the one with a credential: a line
+  reading "Credential — Held" and no training under it reads as somebody who holds a ticket
+  and has sat no courses. The two header framings carry the same qualification, since the
+  header is the line that gets read aloud. Latent: all 20 Employees carry a `user_id`
+  today.
+
+- **`_nothing_on_file` was unreachable from the day it was written.** `_rows_for` never
+  returns empty — it always emits a per-person row — so `execute`'s `if not rows:` could
+  not fire once `people` was non-empty, and the empty case had already returned `_refusal`
+  above it. The aggregate finding it exists to print, which is a strictly stronger
+  statement than the per-person rows, never rendered. Decided on the evidence rows now.
+
+- **`tasks.py` unpacked `frappe.db.get_value` straight into three names inside a scheduled
+  job.** `get_value` returns **None**, not a row of Nones, for a missing row, so
+  `a, b, c = ...` raises `TypeError` — confirmed on prod. In `generate_predictive_maintenance`
+  that ends the whole job: every remaining item and every later step skipped, with nothing a
+  user would ever see. Dormant (no submitted Sales Order Item on this site), but an item
+  outliving its Sales Order is ordinary.
+
+- **`api/telephony.log_call_details` had the same unpack on caller-supplied input.** It is a
+  whitelist endpoint and `reference_docname` arrives from the caller, so a deleted or
+  mistyped Contact is reachable from outside; the outer `except` would turn it into an error
+  dict and the completed call would simply not be logged. **The `Customer` and `Lead`
+  branches either side of it were already None-safe** — only the `Contact` branch unpacked.
+
+- **`backfill_leaving_checklists` selected `status != "Active"`**, which is not what "has
+  left" means. The Select options are Active / Inactive / Suspended / Left: a suspended
+  employee has not left, and raising an HR-OFF checklist against them starts an offboarding
+  — keys back, accounts revoked, final pay. `!=` is also one of the wrapped operators
+  (`ifnull(status, '') != 'Active'`), so a NULL status matched too. Neither fired here: the
+  patch ran 2026-09-12, all five leavers read `Left`, and nothing is Inactive, Suspended or
+  NULL — so the records it produced are right and `bench migrate` will not re-run it. This
+  is correctness for the next site, not a repair.
+
+### Changed
+
+- **`tests/test_nullable_date_filters.py` now scans only the DatabaseQuery entry points.**
+  **The ifnull wrap is a property of the API, not of the filter** — the same filter dict
+  gets different SQL, and a different answer, depending on which call carries it. Measured
+  on prod against `Employee.relieving_date` (15 of 20 rows NULL), asking `<= '0002-01-01'`
+  so only the sentinel could match:
+
+  | call | rows |
+  |---|---|
+  | `frappe.get_all` / `db.get_all` / `db.get_list` | **15** — wrapped |
+  | `frappe.db.count` | 0 — no wrap |
+  | `frappe.db.get_value` | None — no wrap |
+  | `frappe.db.exists` | False — no wrap |
+
+  So `count`, `get_value`, `exists` and `delete` are **correct without a guard**, and the
+  guard was scanning them: latent false positives, of exactly the kind the (doctype, field)
+  keying exists to prevent. Nothing was failing, which is why it survived review — a guard
+  only cries wolf once somebody writes the call it would flag. 603 ORM calls are still
+  scanned.
+
+  This cost time in the other direction too. Verifying the v1.426.5 deploy, the 228-vs-31
+  alert bug was first "reproduced" with `frappe.db.count`, came back 31 = 31, and read as no
+  bug at all. Reproduce a DatabaseQuery bug with a DatabaseQuery call.
+
+### Added
+
+- **`tests/test_get_value_unpacking.py`** — a sweep found **nine** tuple-unpacked
+  `get_value` calls. Seven are fine and are allowlisted *with the reason*: the name was
+  resolved by a lookup earlier in the same call, or it is a Link the framework validates on
+  save, or the call sits inside a `try` that logs and moves on. None of those is "it cannot
+  happen" — each is an argument about *where the failure lands*, which is the question the
+  two fixed sites answer differently. The file fails on a **new** unpack, so adding one
+  means writing down why.
+
+  Keyed on `(path, names, the identifier looked up)`. The first draft keyed on
+  `(path, names)` and could not distinguish the fixed `api/telephony.py` site from a kept
+  one — two of the three unpack into `(first, last)`. Its own test caught that.
+
+### Notes
+
+**Four mutations were run and all four killed** — the no-login row, the aggregate finding's
+reachability, the header caveat, and re-widening the nullable guard. Anchors written with
+tabs, because three of those files are tab-indented and a space-indented anchor matches
+nothing and reports a false pass; that has happened five times in this series.
+
+**A pre-existing test pinned the exact spelling of the filter this release corrects.**
+`test_it_is_not_hard_coded_to_the_four` asserted the literal string
+`filters={"status": ("!=", "Active")}` in order to check something else entirely — that
+nobody is named. It now asserts the property. Second time in this series a test has broken
+for pinning a filter's spelling rather than the fact it was written to protect.
+
+**One of the four reported findings was not a defect.** The roster's
+`date_of_joining <= as_of` is wrapped, but the field carries `reqd = 1` and no row on this
+site has a NULL one — the same call the guard makes about `Travel Trip.end_date`, and
+"fixing" it would have contradicted the test that pins that distinction. The comment now
+says why it is left alone, and what the honest answer would be if one ever appeared: not
+`is set`, which drops the person silently, but a row saying the employment window is
+unknown.
+
 ## [1.426.5] - 2026-09-13
 
 ### Fixed

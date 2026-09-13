@@ -70,6 +70,11 @@ EXPIRY_HORIZON_DAYS = 90
 
 NOT_RECONSTRUCTIBLE = _("not reconstructible")
 
+#: The two rows that are statements about the REPORT rather than about the person.
+#: Named so `execute` can tell them from evidence when it decides which framing to print.
+NOTHING_ON_FILE = _("Nothing on file")
+NO_LOGIN = _("No login")
+
 
 def execute(filters=None):
 	filters = frappe._dict(filters or {})
@@ -83,10 +88,18 @@ def execute(filters=None):
 	for person in people:
 		rows.extend(_rows_for(person, as_of))
 
-	if not rows:
-		return _columns(), [], _nothing_on_file(as_of, len(people))
+	# Tested on the EVIDENCE rows, not on `rows`. `_rows_for` never returns empty -- it
+	# always emits a "Nothing on file" or "No login" line so that a person who has
+	# nothing still appears on the sheet by name. That made the old `if not rows:` branch
+	# below unreachable from the day it was written: `people` is non-empty here (the
+	# empty case returned `_refusal` above), so `rows` never was. The aggregate finding
+	# it exists to print -- "N people, and not one carries anything" -- could not render.
+	unsearchable = sum(1 for person in people if not person.user_id)
+	evidence = [row for row in rows if row["kind"] not in (NOTHING_ON_FILE, NO_LOGIN)]
+	if not evidence:
+		return _columns(), rows, _nothing_on_file(as_of, len(people), unsearchable)
 
-	return _columns(), rows, _preamble(as_of, len(people))
+	return _columns(), rows, _preamble(as_of, len(people), unsearchable)
 
 
 # --------------------------------------------------------------------- the people
@@ -99,6 +112,13 @@ def _people_on(as_of, filters):
 	it cannot place anybody relative to a past day; joining and relieving dates can,
 	and they are core ERPNext fields this app has never used.
 	"""
+	# `date_of_joining <=` IS wrapped -- `ifnull(date_of_joining, '0001-01-01') <= as_of`
+	# -- so an Employee with no joining date would read as employed on every date in
+	# history. It is left unguarded deliberately: the field carries `reqd = 1`, which is
+	# the same reason `tests/test_nullable_date_filters.py` does not police it and does
+	# not police `Travel Trip.end_date` either. Nothing on this site has a NULL joining
+	# date. Should one ever appear, the honest answer is not `is set` -- that would drop
+	# the person silently -- but a row saying their employment window is unknown.
 	conditions = {"date_of_joining": ["<=", as_of]}
 	if filters.get("employee"):
 		conditions["name"] = filters.get("employee")
@@ -119,9 +139,23 @@ def _people_on(as_of, filters):
 		],
 		order_by="employee_name asc",
 	)
-	# Filtered in Python: a `>=` filter on a nullable date silently matches NULLs in
-	# Frappe (the coalesce trap), and here NULL means "still employed", which is the
-	# opposite of what a naive filter would conclude.
+	# Filtered in Python, and the reason is the INVERSE of what this comment said until
+	# v1.426.6. It claimed `>=` "silently matches NULLs (the coalesce trap)". It does
+	# not. Read off the compiled condition on prod (v16), the two directions differ:
+	#
+	#     relieving_date >= X   ->   `relieving_date` >= '2026-03-01'          no wrap
+	#     relieving_date <= X   ->   ifnull(`relieving_date`, '0001-01-01') <= '...'
+	#
+	# `prepare_filter_condition` sets the sentinel to the MINIMUM of the type, so it can
+	# only ever pull NULLs into `<` and `<=`. Measured: `>=` matched 1 of 20 Employees
+	# while 15 of them have a NULL relieving_date.
+	#
+	# Which means SQL would not over-include here -- it would silently DROP every one of
+	# those 15, and NULL is exactly the people still employed. The filter has to happen
+	# in Python, but a reader who believed the old comment would have "simplified" this
+	# into the query, or added an `is set` guard to be safe, and either one empties the
+	# roster of the current crew while still printing a confident header. A rationale
+	# that is wrong in the reassuring direction is worse than no rationale at all.
 	return [r for r in rows if not r.relieving_date or getdate(r.relieving_date) >= as_of]
 
 
@@ -134,11 +168,53 @@ def _rows_for(person, as_of):
 	rows.extend(_completion_rows(person, as_of))
 	rows.extend(_signoff_rows(person, as_of))
 	rows.extend(_restriction_rows(person, as_of))
-	if not rows:
+	if not person.user_id:
+		rows.append(_no_login_row(person, as_of))
+	elif not rows:
 		rows.append(
-			_row(person, as_of, _("Nothing on file"), "", "", "", _("No record of any kind on this date."))
+			_row(person, as_of, NOTHING_ON_FILE, "", "", "", _("No record of any kind on this date."))
 		)
 	return rows
+
+
+def _no_login_row(person, as_of):
+	"""Say what could not be looked up, instead of letting silence read as a clear record.
+
+	Courses, sign-offs and restrictions are all held against a **user login** --
+	``Training Completion.user``, ``Training Signoff.user``, and ``restrictions_covering``,
+	which takes a list of users. So ``_completion_rows``, ``_signoff_rows`` and
+	``_restriction_rows`` each return ``[]`` for an employee with no ``user_id``, by
+	construction, before any query runs. Only ``_credential_rows``, keyed on ``employee``,
+	genuinely searches.
+
+	For such a person the old blanket row said *"Nothing on file -- No record of any kind
+	on this date"*: an affirmative claim about three record types nothing had examined. On
+	a sheet whose entire purpose is to be handed to an insurer, that is the dangerous
+	direction to be wrong in, because it reads as cleared.
+
+	Emitted whether or not other rows were found, and that is the point rather than an
+	edge case. The **more** misleading version is the one where a credential does turn up:
+	a line reading "Credential -- Held" with no training under it reads as somebody who
+	holds a ticket and has sat no courses, and nothing on the sheet would say otherwise.
+
+	Nobody on this site is in this state today -- all 20 Employees carry a ``user_id``.
+	That is a fact about today's data; ``user_id`` is not required, and a field employee
+	who never needed a desk login is the ordinary way it goes missing.
+	"""
+	return _row(
+		person,
+		as_of,
+		NO_LOGIN,
+		"",
+		_("Not searched"),
+		"",
+		_(
+			"This employee has no user login. Courses, sign-offs and restrictions are all "
+			"recorded against one, so none could be looked up -- their absence here is {0}, "
+			"not a finding. Credentials are held against the employee record and were "
+			"searched normally."
+		).format(NOT_RECONSTRUCTIBLE),
+	)
 
 
 def _credential_rows(person, as_of):
@@ -460,20 +536,40 @@ def _columns():
 	]
 
 
-def _preamble(as_of, count):
-	return _(
+def _preamble(as_of, count, unsearchable=0):
+	message = _(
 		"<b>Qualifications as of {0}</b> for {1} employed on that date, including anyone who has "
 		"since left.<br>Every state here is re-derived from stored dates. Position and tier are "
 		"shown as <i>{2}</i> because no effective-from date is recorded for them anywhere — this "
 		"report will not print today's rung against a past date."
 	).format(frappe.format(as_of, {"fieldtype": "Date"}), _("{0} people").format(count), NOT_RECONSTRUCTIBLE)
+	return message + _unsearchable_caveat(unsearchable)
 
 
-def _nothing_on_file(as_of, count):
-	return _(
+def _nothing_on_file(as_of, count, unsearchable=0):
+	message = _(
 		"<b>{0} people were employed on {1}, and not one carries a credential, an attestation or a "
 		"restriction on that date.</b><br>That is a finding, not an empty report."
 	).format(count, frappe.format(as_of, {"fieldtype": "Date"}))
+	return message + _unsearchable_caveat(unsearchable)
+
+
+def _unsearchable_caveat(unsearchable):
+	"""The header has to carry the same qualification the rows do.
+
+	Both framings above make a confident statement about the whole group, and
+	``_nothing_on_file`` makes the strongest one on the page — *not one of them carries
+	anything*. For an employee with no user login that sentence is not supported by
+	anything: three of the four record types were never queried. A caveat on the rows
+	alone is not enough, because the header is the line that gets read aloud.
+	"""
+	if not unsearchable:
+		return ""
+	return "<br>" + _(
+		"<b>{0} of them have no user login.</b> Courses, sign-offs and restrictions are recorded "
+		"against a login, so for those people none could be looked up — this report found nothing "
+		"because it could not look, which is not the same as finding nothing."
+	).format(unsearchable)
 
 
 def _refusal(as_of, filters):

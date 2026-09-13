@@ -94,7 +94,27 @@ FILTER_BUILDERS = {
     ): "due_date",
 }
 
-ORM_FUNCTIONS = {"get_all", "get_list", "get_value", "count", "exists", "delete", "fetch_all"}
+#: Only the DatabaseQuery entry points. **The wrap is a property of the API, not of the
+#: filter** — the same filter dict gets different SQL, and different answers, depending on
+#: which call carries it. Measured on prod 2026-09-13 against `Employee.relieving_date`
+#: (15 of 20 rows NULL), asking `<= '0002-01-01'` so that ONLY the sentinel could match:
+#:
+#:     frappe.get_all / db.get_all / db.get_list   ->  15 rows   wrapped
+#:     frappe.db.count                             ->   0        no wrap
+#:     frappe.db.get_value                         ->   None     no wrap
+#:     frappe.db.exists                            ->   False    no wrap
+#:
+#: DatabaseQuery calls `prepare_filter_condition`, which builds the ifnull; the Query
+#: Builder path the others take never does. So `count`, `get_value`, `exists` and `delete`
+#: are **correct without a guard**, and the first version of this file scanned them —
+#: latent false positives, of exactly the kind the (doctype, field) keying exists to
+#: avoid. Nothing was failing, which is why it survived review: a guard only cries wolf
+#: once somebody writes the call it would flag.
+#:
+#: This cost real time in the other direction too. Verifying the v1.426.5 deploy, the
+#: 228-vs-31 alert bug was first "reproduced" with `frappe.db.count` and came back 31 =
+#: 31, reading as no bug at all. Reproduce a DatabaseQuery bug with a DatabaseQuery call.
+ORM_FUNCTIONS = {"get_all", "get_list"}
 SKIP_DIRS = {"tests", "node_modules", "__pycache__"}
 UNSAFE_OPERATORS = ("<", "<=")
 
@@ -233,7 +253,9 @@ class TestTheGuardCannotPassVacuously(unittest.TestCase):
 
     def test_the_walk_reads_a_lot_of_orm_calls(self):
         found = list(_orm_filters())
-        self.assertGreater(len(found), 150, "the ORM-call walk is not finding calls")
+        # 603 after the v1.426.6 narrowing, so the floor has room and still fails loudly
+        # if the matchers stop matching.
+        self.assertGreater(len(found), 400, "the ORM-call walk is not finding calls")
 
     def test_it_resolves_a_doctype_held_in_a_module_constant(self):
         """`triton_attachments.py` calls get_all(DOCTYPE, ...). Without constant
@@ -257,6 +279,40 @@ class TestTheGuardCannotPassVacuously(unittest.TestCase):
         code = '{"due_date": ("<=", horizon)}'
         self.assertEqual(_compares(code, "due_date"), "<=")
         self.assertFalse(_guards(code, "due_date"))
+
+
+class TestTheScanIsNarrowedOnPurpose(unittest.TestCase):
+    """The scan covers DatabaseQuery and nothing else, and that is a measurement.
+
+    Measured on prod 2026-09-13 on `Employee.relieving_date`, 15 of 20 rows NULL, with
+    `<= '0002-01-01'` so that only the ifnull sentinel could produce a match::
+
+        frappe.get_all / db.get_all / db.get_list   ->  15      wrapped
+        frappe.db.count                             ->   0      no wrap
+        frappe.db.get_value                         ->   None   no wrap
+        frappe.db.exists                            ->   False  no wrap
+
+    Widening this set back is the tempting move — it reads as "being thorough" — and it
+    is what the first version of this file did. It puts false positives in front of the
+    next reader, on calls that are already correct.
+    """
+
+    def test_only_the_databasequery_entry_points_are_scanned(self):
+        self.assertEqual(ORM_FUNCTIONS, {"get_all", "get_list"})
+
+    def test_the_query_builder_apis_are_excluded_deliberately(self):
+        for api in ("count", "get_value", "exists", "delete"):
+            with self.subTest(api=api):
+                self.assertNotIn(api, ORM_FUNCTIONS)
+
+    def test_narrowing_did_not_gut_the_doctype_coverage(self):
+        """If the two remaining names had been wrong, this collapses rather than passing
+        quietly on a handful of calls."""
+        doctypes = {doctype for _p, doctype, _f in _orm_filters()}
+        self.assertGreater(len(doctypes), 100)
+        for policed in {declared for declared, _field in NULLABLE_DATE_FIELDS}:
+            with self.subTest(doctype=policed):
+                self.assertIn(policed, doctypes)
 
     def test_it_would_catch_an_unguarded_list_filter(self):
         """The spelling that slipped past a narrower guard during mutation testing."""

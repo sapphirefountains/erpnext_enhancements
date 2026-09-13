@@ -81,9 +81,28 @@ def execute():
 	# Anybody who has left. Not filtered to a hard-coded list of four: the four are what
 	# this site has today, and a site restored from an older backup, or one that loses
 	# somebody between this being written and deployed, should get the same treatment.
+	#
+	# `status = "Left"`, not `!= "Active"`. The original spelling was wrong twice over,
+	# in the same direction -- it selected MORE people than "has left" means:
+	#
+	# * `Employee.status` is a Select whose options are Active / Inactive / Suspended /
+	#   Left. Somebody suspended has not left, and neither has somebody marked inactive
+	#   for a season. Raising an HR-OFF checklist for them starts an offboarding -- hand
+	#   back the keys, revoke the accounts, final pay -- against a person still employed.
+	# * `!=` is one of the operators frappe wraps in an ifnull sentinel:
+	#   `ifnull(`status`, '') != 'Active'`, so a row with a NULL status MATCHES. `status`
+	#   carries `reqd = 1` and a default of Active, but `not_nullable` is 0, so the column
+	#   accepts NULL from `db_set`, a raw insert or an import.
+	#
+	# Neither fired here. This patch ran on 2026-09-12 and raised four checklists; all
+	# five leavers on this site read `Left`, and nothing is Inactive, Suspended or NULL.
+	# So this is a correctness fix for a re-run or a fresh install, not a repair --
+	# `bench migrate` will not re-execute a patch already in `tabPatch Log`, and the
+	# records it produced here are right. It is worth changing anyway, because the next
+	# site to run it is the one where somebody is suspended.
 	leavers = frappe.get_all(
 		"Employee",
-		filters={"status": ("!=", "Active")},
+		filters=[["status", "=", "Left"]],
 		pluck="name",
 		order_by="relieving_date asc",
 	)

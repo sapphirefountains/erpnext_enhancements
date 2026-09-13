@@ -1137,7 +1137,16 @@ def log_call_details(call_sid, direction, from_number, to_number, duration, tran
             if reference_doctype == "Customer":
                 display_name = frappe.db.get_value("Customer", reference_docname, "customer_name") or display_name
             elif reference_doctype == "Contact":
-                first, last = frappe.db.get_value("Contact", reference_docname, ["first_name", "last_name"])
+                # `or (None, None)`: this is a whitelist endpoint and `reference_docname`
+                # arrives from the caller, so a deleted or mistyped Contact is reachable
+                # from outside. `frappe.db.get_value` returns None -- not a pair -- for a
+                # missing row, and `first, last = None` raises TypeError, which the outer
+                # `except` turns into an error dict. The call would simply not be logged.
+                # The Customer and Lead branches either side of this one are already
+                # None-safe via `or display_name`; only this branch unpacks.
+                first, last = frappe.db.get_value(
+                    "Contact", reference_docname, ["first_name", "last_name"]
+                ) or (None, None)
                 display_name = f"{first or ''} {last or ''}".strip() or display_name
             elif reference_doctype == "Lead":
                 display_name = frappe.db.get_value("Lead", reference_docname, "lead_name") or display_name
