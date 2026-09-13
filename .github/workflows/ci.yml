@@ -405,6 +405,13 @@ jobs:
       # green -- an endpoint only fails when a browser calls it.
       - name: Whitelist decorators sit on endpoints, not helpers
         run: python -m unittest erpnext_enhancements.tests.test_whitelist_placement -v
+      # `frappe.db.get_value` returns None, not a row of Nones, so `a, b = get_value(...)`
+      # raises TypeError on a missing row. A sweep on 2026-09-13 found nine; seven are
+      # fine and are allowlisted with the reason. The two that were not sat where the
+      # exception is expensive -- a scheduler job that dies takes every later step with
+      # it, and a whitelist endpoint that dies loses a completed call's record.
+      - name: No unguarded tuple-unpack of frappe.db.get_value
+        run: python -m unittest erpnext_enhancements.tests.test_get_value_unpacking -v
       # RUNS the roster's print guard rather than reading it, and that distinction is
       # the whole reason this step exists. The previous defect on this report was a
       # print template that had never once been rendered: a double brace inside an HTML

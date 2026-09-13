@@ -203,10 +203,37 @@ class TestTheLeaverBackfillIsLeaversOnly(unittest.TestCase):
         one that loses somebody between writing and deploying, should get the same
         treatment."""
         code = _code(BACKFILL)
-        self.assertIn('filters={"status": ("!=", "Active")}', code)
+        # Asserted as a PROPERTY, not as a spelling. This pinned the exact string
+        # `filters={"status": ("!=", "Active")}` until v1.426.6 -- so correcting that
+        # predicate broke a test that is about something else entirely, namely that
+        # nobody is named. The second time in this series a test has failed for pinning
+        # the spelling of a filter rather than the fact it was written to protect.
+        self.assertIn('"Employee"', code)
+        self.assertIn("status", code)
         for person in ("Farris", "Brimley", "Shefchik", "Larsen"):
             with self.subTest(name=person):
                 self.assertNotIn(person, code)
+
+    def test_it_selects_who_has_left_rather_than_who_is_not_active(self):
+        """`status != "Active"` selected MORE people than "has left" means, twice over.
+
+        `Employee.status` is a Select whose options are Active / Inactive / Suspended /
+        Left. Somebody suspended has not left, and neither has somebody marked inactive
+        for a season -- and an HR-OFF checklist starts an offboarding against them: hand
+        back the keys, revoke the accounts, final pay.
+
+        And `!=` is one of the operators frappe wraps in an ifnull sentinel --
+        `ifnull(`status`, '') != 'Active'` -- so a NULL status MATCHES. `status` carries
+        `reqd = 1`, but `not_nullable` is 0, so the column takes NULL from `db_set`, a
+        raw insert or an import.
+
+        Neither fired on this site: the patch ran 2026-09-12, all five leavers read
+        `Left`, and nothing is Inactive, Suspended or NULL. A re-run or a fresh install
+        is where it would have mattered.
+        """
+        code = _code(BACKFILL)
+        self.assertIn('["status", "=", "Left"]', code)
+        self.assertNotIn('"!="', code)
 
     def test_the_joining_guard_it_relies_on_still_exists(self):
         """`ensure_checklist` refuses a JOINING checklist for a non-Active employee. The

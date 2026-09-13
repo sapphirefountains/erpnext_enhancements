@@ -265,12 +265,29 @@ def generate_predictive_maintenance_records():
 	)
 
 	for item in items:
-		# Check if parent is an active maintenance order
-		so_status, so_project, so_customer = frappe.db.get_value(
+		# Check if parent is an active maintenance order.
+		#
+		# `as_dict` and a `continue`, rather than unpacking straight into three names:
+		# `frappe.db.get_value` returns **None**, not a triple, when the parent row is
+		# gone, and `a, b, c = None` raises TypeError. This function runs from
+		# `scheduler_events`, where an uncaught exception ends the whole job -- every
+		# remaining item in this loop and every later step in the same task would be
+		# skipped, and a scheduled job that dies this way leaves nothing a user would
+		# ever see.
+		#
+		# Dormant on 2026-09-13: no Sales Order Item on this site is orphaned, and in
+		# fact none is submitted at all, so the loop never runs. But an item outliving
+		# its Sales Order is ordinary -- deletion, a botched import, a cancelled order
+		# whose children were not cleaned up -- and the cost of the guard is one line.
+		order = frappe.db.get_value(
 			"Sales Order",
 			item.parent,
-			["status", "project", "customer"]
+			["status", "project", "customer"],
+			as_dict=True,
 		)
+		if not order:
+			continue
+		so_status, so_project, so_customer = order.status, order.project, order.customer
 
 		if so_project in contract_projects:
 			continue

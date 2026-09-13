@@ -111,6 +111,7 @@ def setUpModule():
     fake.get_all = lambda *a, **k: []
     fake.get_meta = lambda *a, **k: _MetaStub(())
     fake.format = lambda value, spec=None: str(value)
+    fake._dict = _Dict
     sys.modules["frappe"] = fake
 
     utils = types.ModuleType("frappe.utils")
@@ -695,6 +696,177 @@ class TestItIsRegistered(unittest.TestCase):
         nothing detects it."""
         ci = (APP.parent / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("test_hr_qualification_roster", ci)
+
+
+class TestAnEmployeeWithNoLoginIsNotReportedAsClear(unittest.TestCase):
+    """Three of the four record types are keyed on a user login, so for an employee
+    without one they are never queried -- and the sheet used to say "No record of any
+    kind on this date" anyway.
+
+    ``Training Completion.user``, ``Training Signoff.user`` and ``restrictions_covering``
+    all take a user. Only ``_credential_rows``, keyed on ``employee``, genuinely searches.
+    The old blanket row therefore made an affirmative claim about three things nothing had
+    looked at, on the one artefact in this app written to be handed to an insurer.
+
+    Everybody on this site has a login today, so this is latent -- which is exactly why it
+    needs a test rather than a note.
+    """
+
+    AS_OF = date(2026, 3, 1)
+
+    def setUp(self):
+        from erpnext_enhancements.hr_enhancements.report.crew_qualification_roster import (
+            crew_qualification_roster as report,
+        )
+
+        self.report = report
+        self.fake = sys.modules["frappe"]
+        self.fake.get_meta = lambda doctype: _MetaStub({"revoked_on", "attested_on"})
+        # Work Restriction switched off so `_restriction_rows` returns before importing
+        # `availability`. This class is about the no-login branch, not about restrictions.
+        self.fake.db = types.SimpleNamespace(
+            exists=lambda *a, **k: not (len(a) > 1 and a[1] == "Work Restriction")
+        )
+        self.fake.get_all = lambda doctype, **kw: []
+
+    def _person(self, user_id):
+        return types.SimpleNamespace(
+            name="HR-EMP-0002",
+            employee_name="Pat Fieldhand",
+            user_id=user_id,
+            relieving_date=None,
+        )
+
+    def test_with_no_login_and_nothing_found_it_says_it_did_not_look(self):
+        rows = self.report._rows_for(self._person(""), self.AS_OF)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["kind"], self.report.NO_LOGIN)
+        self.assertEqual(rows[0]["verdict"], "Not searched")
+        self.assertIn("no user login", rows[0]["note"])
+        self.assertIn("not reconstructible", rows[0]["note"])
+
+    def test_with_a_login_and_nothing_found_it_still_reports_a_finding(self):
+        """The honest claim, preserved. Here the queries DID run and came back empty."""
+        rows = self.report._rows_for(self._person("pat@x"), self.AS_OF)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["kind"], self.report.NOTHING_ON_FILE)
+        self.assertIn("No record of any kind", rows[0]["note"])
+
+    def test_the_caveat_is_emitted_even_when_a_credential_was_found(self):
+        """THE case, and the reason this is not gated on `if not rows`.
+
+        A credential is keyed on `employee`, so it turns up for somebody with no login.
+        A sheet showing "Credential -- Held" and no training line under it reads as a
+        person who holds a ticket and has sat no courses. Nothing else would say
+        otherwise.
+        """
+        self.fake.get_all = lambda doctype, **kw: [
+            _Dict(
+                {
+                    "name": "HR-CRD-0001",
+                    "credential_type": "Confined Space Entry",
+                    "issued_on": "2025-06-01",
+                    "expires_on": None,
+                    "revoked_on": None,
+                }
+            )
+        ]
+        rows = self.report._rows_for(self._person(""), self.AS_OF)
+        kinds = [row["kind"] for row in rows]
+        self.assertIn("Credential", kinds)
+        self.assertIn(self.report.NO_LOGIN, kinds)
+
+
+class TestTheAggregateFindingCanActuallyRender(unittest.TestCase):
+    """`_nothing_on_file` was unreachable from the day it was written.
+
+    `_rows_for` never returns empty -- it always emits a per-person row so that somebody
+    with nothing still appears on the sheet by name. So `execute`'s `if not rows:` could
+    not fire once `people` was non-empty, and the empty-`people` case had already returned
+    `_refusal` above it. A strictly stronger statement than the per-person rows, and it
+    never printed. Decided on the EVIDENCE rows now instead.
+    """
+
+    AS_OF = "2026-03-01"
+
+    def setUp(self):
+        from erpnext_enhancements.hr_enhancements.report.crew_qualification_roster import (
+            crew_qualification_roster as report,
+        )
+
+        self.report = report
+        self.fake = sys.modules["frappe"]
+        self.fake.get_meta = lambda doctype: _MetaStub({"revoked_on", "attested_on"})
+        self.fake.db = types.SimpleNamespace(
+            exists=lambda *a, **k: not (len(a) > 1 and a[1] == "Work Restriction")
+        )
+
+    def _run(self, *employees):
+        def get_all(doctype, **kw):
+            if doctype == "Employee":
+                return [_Dict(e) for e in employees]
+            return []
+
+        self.fake.get_all = get_all
+        return self.report.execute({"as_of": self.AS_OF})
+
+    @staticmethod
+    def _employee(**overrides):
+        row = {
+            "name": "HR-EMP-0003",
+            "employee_name": "Sam Crew",
+            "user_id": "sam@x",
+            "department": None,
+            "designation": None,
+            "date_of_joining": "2024-01-01",
+            "relieving_date": None,
+        }
+        row.update(overrides)
+        return row
+
+    def test_everybody_blank_reaches_the_aggregate_finding(self):
+        _columns, rows, message = self._run(self._employee(), self._employee(name="HR-EMP-0004"))
+        self.assertEqual(len(rows), 2)
+        self.assertIn("That is a finding, not an empty report", message)
+
+    def test_the_aggregate_finding_admits_who_it_could_not_search(self):
+        """The strongest sentence on the page -- "not one carries anything" -- must not be
+        printed unqualified over somebody nothing was looked up for."""
+        _columns, _rows, message = self._run(self._employee(user_id=""))
+        self.assertIn("That is a finding, not an empty report", message)
+        self.assertIn("no user login", message)
+        self.assertIn("could not look", message)
+
+    def test_one_real_row_switches_it_back_to_the_ordinary_preamble(self):
+        original = self.report._credential_rows
+        self.report._credential_rows = lambda person, as_of: [
+            self.report._row(person, as_of, "Credential", "Confined Space Entry", "Held", "", "")
+        ]
+        try:
+            _columns, rows, message = self._run(self._employee())
+        finally:
+            self.report._credential_rows = original
+        self.assertIn("Qualifications as of", message)
+        self.assertNotIn("That is a finding", message)
+        self.assertEqual([row["kind"] for row in rows], ["Credential"])
+
+    def test_the_ordinary_preamble_carries_the_caveat_too(self):
+        """A mixed sheet is the common case: most people have a login, one does not. The
+        caveat has to travel with the header that actually prints."""
+        original = self.report._credential_rows
+        self.report._credential_rows = lambda person, as_of: (
+            [self.report._row(person, as_of, "Credential", "Confined Space Entry", "Held", "", "")]
+            if person.user_id
+            else []
+        )
+        try:
+            _columns, _rows, message = self._run(
+                self._employee(), self._employee(name="HR-EMP-0005", user_id="")
+            )
+        finally:
+            self.report._credential_rows = original
+        self.assertIn("Qualifications as of", message)
+        self.assertIn("no user login", message)
 
 
 if __name__ == "__main__":
