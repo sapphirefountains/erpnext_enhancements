@@ -77,14 +77,19 @@ def send_expiry_digest():
 	horizon = add_days(today(), EXPIRY_HORIZON_DAYS)
 	rows = frappe.get_all(
 		CREDENTIAL,
-		filters={
-			"status": ["in", ("Expiring", "Expired")],
-			# Explicit rather than relying on the status alone: a filter on a
-			# nullable date pushed through frappe's query builder is coalesced, and
-			# a NULL expiry would land on whichever side of the comparison the
-			# sentinel falls. Belt and braces, and it costs one indexed read.
-			"expires_on": ["<=", horizon],
-		},
+		# The `status` clause already excludes a NULL expiry -- nothing can reach
+		# Expiring/Expired without one, because `refresh_credential_status` above
+		# filters `expires_on is set` before it writes any status. The `is set` clause
+		# here says that out loud rather than leaving it to be re-derived: the
+		# comparison IS coalesced (ifnull(col, '0001-01-01') <= horizon), so a NULL
+		# expiry matches it, and this filter is safe only because of a clause about a
+		# different field. That is exactly the kind of safety that stops being true
+		# when somebody edits the other one.
+		filters=[
+			["status", "in", ("Expiring", "Expired")],
+			["expires_on", "is", "set"],
+			["expires_on", "<=", horizon],
+		],
 		fields=["name", "user", "employee", "employee_name", "credential_type", "expires_on", "status"],
 		order_by="expires_on asc",
 	)

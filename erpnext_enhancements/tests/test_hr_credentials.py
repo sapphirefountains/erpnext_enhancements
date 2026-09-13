@@ -176,11 +176,20 @@ class TestTheHorizonExists(unittest.TestCase):
         self.assertIn("log_error", body)
         self.assertIn("except Exception:", body)
 
-    def test_the_date_filter_is_explicit(self):
+    def test_the_date_filter_is_explicit_and_guarded(self):
         """A filter on a nullable date pushed through the query builder is coalesced,
         and a NULL expiry lands on whichever side of the comparison the sentinel
-        falls -- which is not the side you assumed."""
-        self.assertIn('"expires_on": ["<=", horizon]', _text(TASKS))
+        falls -- which is not the side you assumed.
+
+        Asserts the PROPERTY, not a spelling. The first version of this pinned the
+        exact dict literal `"expires_on": ["<=", horizon]`, so adding the `is set`
+        clause in v1.426.5 -- which is strictly the stronger guarantee this test wants
+        -- broke it. An assertion keyed to one way of writing something fails on an
+        improvement as readily as on a regression."""
+        body = _text(TASKS)
+        self.assertIn("horizon", body)
+        self.assertIn('["expires_on", "is", "set"]', body)
+        self.assertIn('["expires_on", "<=", horizon]', body)
 
 
 class TestItIsNotATrainingCertificate(unittest.TestCase):

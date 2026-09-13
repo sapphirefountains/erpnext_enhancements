@@ -242,13 +242,25 @@ def generate_predictive_maintenance_records():
 
 	# 2. Legacy fallback for projects without an Active contract: Sales Order
 	# Items whose next predictive visit is within 7 days.
+	# `["custom_next_predictive_visit", "is", "set"]`: the field is a nullable Date and
+	# blank means *no visit has ever been scheduled for this equipment*. Frappe wraps a
+	# comparison on a nullable column in `ifnull(col, '0001-01-01')`, so without the
+	# clause every never-scheduled serial read as due today and the loop below would
+	# draft a Maintenance Record dated `today` for equipment nobody had put on a
+	# schedule. The sibling clause on `custom_serial_no` shows the idiom was already
+	# known in this very filter.
+	#
+	# Dormant rather than live on 2026-09-13: no submitted Sales Order Item on this site
+	# carries a `custom_serial_no` at all, so the fallback selects nothing either way.
+	# That is a fact about today's data, not a property of the query.
 	items = frappe.db.get_all(
 		"Sales Order Item",
-		filters={
-			"docstatus": 1,
-			"custom_next_predictive_visit": ["<=", horizon],
-			"custom_serial_no": ["is", "set"]
-		},
+		filters=[
+			["docstatus", "=", 1],
+			["custom_serial_no", "is", "set"],
+			["custom_next_predictive_visit", "is", "set"],
+			["custom_next_predictive_visit", "<=", horizon],
+		],
 		fields=["name", "parent", "custom_serial_no", "custom_next_predictive_visit"],
 	)
 

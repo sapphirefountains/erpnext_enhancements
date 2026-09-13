@@ -189,9 +189,23 @@ def _user_pipeline(user):
 
 
 def _user_todos(user, today):
+	# The same trap as the task queries a hundred lines above, missed in the commit
+	# that fixed those: `ToDo.date` carries a `default: "Today"` but no `reqd` and no
+	# `not_nullable` (frappe v16 `todo.json`), and `prepare_filter_condition` never
+	# consults a default — so a row that reached the table another way would be
+	# coalesced to the year 1 and always read as due.
+	#
+	# Latent, not live: every one of the 1,339 open ToDos on this site carries a date,
+	# because the default fires on the ordinary path. That is a fact about today's
+	# data, not a property of the query.
 	todos = frappe.get_all(
 		"ToDo",
-		filters={"allocated_to": user, "status": "Open", "date": ("<=", today)},
+		filters=[
+			["allocated_to", "=", user],
+			["status", "=", "Open"],
+			["date", "is", "set"],
+			["date", "<=", today],
+		],
 		fields=["description", "date", "priority"],
 		order_by="date asc",
 		limit_page_length=TODO_LIMIT,

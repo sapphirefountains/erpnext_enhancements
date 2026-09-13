@@ -184,6 +184,36 @@ def deliver_closed_won_alerts(opportunity):
 	)
 
 
+def _unconverted_list_url():
+	"""The list view showing EXACTLY the set the message counted.
+
+	The link used to be `/app/opportunity?status=Closed%20Won` — status alone, no
+	project clause, no date clause — so the recipient was told "N waiting on a
+	project" and handed every Closed-Won opportunity on the site. Clicking through,
+	the one action that would have exposed the count as wrong, produced a third
+	number instead.
+
+	That mismatch gets worse once the count is right: the text now says 31 while an
+	unfiltered list still shows 228. A link that disagrees with the sentence above it
+	teaches people to distrust both.
+
+	The `["is", "not set"]` form is frappe's own list-view filter syntax and is parsed
+	client-side — `frappe/public/js/frappe/list/list_view.js` (version-16) does
+	`if (typeof value === "string" && value.startsWith("[") && value.endsWith("]")) value = JSON.parse(value)`.
+	Read from origin/version-16 rather than the sibling develop checkout.
+	"""
+	from urllib.parse import urlencode
+
+	query = urlencode(
+		{
+			"status": "Closed Won",
+			"custom_created_project": '["is","not set"]',
+			"custom_date_closed_won": '["is","set"]',
+		}
+	)
+	return get_url("/app/opportunity?" + query)
+
+
 def nag_unconverted_opportunities():
 	"""Daily scheduler: remind the team about won opportunities with no Project yet.
 
@@ -205,13 +235,33 @@ def nag_unconverted_opportunities():
 		return
 
 	cutoff = getdate(add_to_date(now_datetime(), hours=-hours))
+	# `["custom_date_closed_won", "is", "set"]` is what makes this a FRESHNESS nag
+	# rather than a running total, and the docstring above is the specification it
+	# failed: "an opportunity won today is never nagged, one won yesterday or earlier
+	# is." A row with no won-date cannot be placed in time at all, so it can satisfy
+	# "won yesterday or earlier" only through the sentinel -- frappe wraps a comparison
+	# on a nullable column in `ifnull(col, '0001-01-01')`, which reads every undated
+	# opportunity as won in the year 1 and therefore maximally overdue.
+	#
+	# Live on 2026-09-13: the daily alert told three people that **228** won
+	# opportunities were waiting on a project. 197 of those are Zoho imports that
+	# landed with no won-date at all (see the opportunity-status-history note: the
+	# won-date, project, invoice and quotation signals on Opportunity are all circular
+	# for imported rows). The real, dated figure is 31.
+	#
+	# Those 197 are not thereby dismissed. "Won deals with no project" is a genuine
+	# backlog and somebody should look at it -- but a daily email that says 228 when it
+	# means 31 is how an alert stops being read, and a backlog that old wants a report
+	# with a date range, not an hourly reminder. The list form is required rather than
+	# stylistic: two conditions on one field cannot both live in a filter dict.
 	opportunities = frappe.get_all(
 		"Opportunity",
-		filters={
-			"status": "Closed Won",
-			"custom_created_project": ("is", "not set"),
-			"custom_date_closed_won": ("<=", cutoff),
-		},
+		filters=[
+			["status", "=", "Closed Won"],
+			["custom_created_project", "is", "not set"],
+			["custom_date_closed_won", "is", "set"],
+			["custom_date_closed_won", "<=", cutoff],
+		],
 		fields=["name", "customer_name", "party_name"],
 		order_by="custom_date_closed_won asc",
 	)
@@ -225,7 +275,7 @@ def nag_unconverted_opportunities():
 	noun = "opportunity" if len(labels) == 1 else "opportunities"
 	message = (
 		f"{len(labels)} won {noun} still waiting on a project: {shown}\n"
-		f"{get_url('/app/opportunity?status=Closed%20Won')}"
+		f"{_unconverted_list_url()}"
 	)
 
 	_deliver(

@@ -122,8 +122,6 @@ def _task_card(task, names, projects):
 	}
 
 
-@frappe.whitelist()
-
 def overdue_task_filters(today, extra=None):
 	"""Open tasks that are genuinely past a deadline they actually have.
 
@@ -179,6 +177,8 @@ def spanning_task_filters(today, extra=None):
 		*(extra or []),
 	]
 
+
+@frappe.whitelist()
 def get_task_dashboard_data():
 	"""Everything the Task Dashboard block renders, in one call."""
 	_check_access()
