@@ -22,11 +22,11 @@ import frappe
 from frappe.utils import add_days, getdate, nowdate
 
 from erpnext_enhancements.api.dashboard_widgets import fetch_all, widget_feed
+from erpnext_enhancements.training.doctype.training_assignment.training_assignment import (
+	due_date_filters,
+)
 
 ROW_LIMIT = 20
-
-# Assignment statuses that still expect work from the learner.
-OPEN_TRAINING_STATUSES = ("Not Started", "In Progress", "Awaiting Sign-off", "Overdue")
 
 # Window for "has this person logged any time recently".
 TIME_WINDOW_DAYS = 7
@@ -56,12 +56,12 @@ def get_training_compliance():
 	stops being read.
 	"""
 	today = getdate(nowdate())
+	# Shared with the two nightly sweeps rather than restated. Without the `is set`
+	# clause this counted every optional-course assignment as non-compliance, which is
+	# how a compliance list stops being read.
 	rows = fetch_all(
 		"Training Assignment",
-		filters={
-			"status": ("in", OPEN_TRAINING_STATUSES),
-			"due_date": ("<=", add_days(today, 14)),
-		},
+		filters=due_date_filters("<=", add_days(today, 14)),
 		fields=["name", "course_title", "course", "status", "due_date", "employee", "user", "learner_type"],
 		order_by="due_date asc",
 		limit=ROW_LIMIT,

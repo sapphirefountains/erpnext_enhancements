@@ -377,6 +377,15 @@ jobs:
       # here -- which is why this had no coverage at all.
       - name: Task overdue/today filters (nullable columns)
         run: python -m unittest erpnext_enhancements.tests.test_task_overdue_filters -v
+      # `TrainingAssignment._default_due_date` leaves the date BLANK on an optional
+      # library course, and says why: "putting one on an optional library course would
+      # make it overdue and start chasing people over something nobody asked them to
+      # do." Three sweeps did precisely that through the ifnull sentinel -- marked them
+      # Overdue, emailed a nudge, and counted them as non-compliance -- while the
+      # controller's own `_derive_overdue` guarded the same rule correctly in Python.
+      # The two halves disagreed on the same row because only one went through SQL.
+      - name: Training assignment due-date filters (nullable columns)
+        run: python -m unittest erpnext_enhancements.tests.test_training_due_date_filters -v
       # RUNS the roster's print guard rather than reading it, and that distinction is
       # the whole reason this step exists. The previous defect on this report was a
       # print template that had never once been rendered: a double brace inside an HTML
