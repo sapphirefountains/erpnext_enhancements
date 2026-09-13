@@ -185,10 +185,11 @@ for (const { fn, destructive } of MUST_GUARD) {
 	// (a) Enter-to-send must not fire while an IME is composing. Pressing Enter to
 	// COMMIT a candidate is the ordinary way to type Japanese, Chinese or Korean;
 	// without the guard it sends the half-finished message instead.
-	// The rule itself lives in ONE place — `chat/dom.js::isComposingKey`, which checks both
-	// `isComposing` and the legacy `keyCode === 229` and is exercised executably by
-	// scripts/test_chat_client_logic.mjs. What this asserts is the half that file cannot:
-	// that the widget consults it, and consults it BEFORE it sends.
+	// The rule itself lives in ONE place — `public/js/triton/keys.js::isComposingKey`, which
+	// checks both `isComposing` and the legacy `keyCode === 229`. (It was `chat/dom.js` until
+	// v1.426.0; the chat module went, the helper did not, and it moved rather than being
+	// inlined precisely so this assertion still has one place to point at.) What this asserts
+	// is the half a unit test cannot: that the widget consults it, and BEFORE it sends.
 	const composerStart = SOURCE.indexOf('state.els.text.addEventListener("keydown"');
 	const composerEnd = SOURCE.indexOf('state.els.text.addEventListener("input"');
 	const block = composerStart === -1 ? '' : SOURCE.slice(composerStart, composerEnd);
@@ -212,7 +213,7 @@ for (const { fn, destructive } of MUST_GUARD) {
 		fail('the composer calls isComposingKey() AFTER onSend(). By then the message is gone.');
 	} else if (!/import \{[^}]*\bisComposingKey\b/s.test(SOURCE)) {
 		fail(
-			'isComposingKey is used but not imported from chat/dom.js — so it is either a local ' +
+			'isComposingKey is used but not imported from triton/keys.js — so it is either a local ' +
 				'reimplementation (two copies of one rule, which is how the next one carries only ' +
 				'half of it) or a ReferenceError at load.'
 		);

@@ -65,10 +65,13 @@ install and never again.
 
 Chat Settings hit this in v1.277.3 and its settings page became **unsaveable**: `validate`
 refused the zeros the row had never been given, so opening the page and pressing Save
-returned fifteen errors about fields nobody had touched. Note the shape — saving a Single
-deletes and re-inserts every field row, so a page people use self-heals on the next save. The
-ones that bite are the settings for **dormant** features, where the first save is the one you
-need and the one that fails. This module is dormant by design.
+returned fifteen errors about fields nobody had touched. That Single no longer exists — it
+went with the chat module in v1.426.0 — but the trap is a property of how Frappe stores a
+Single, not of that feature, and this module is still standing in front of it. Note the
+shape — saving a Single deletes and re-inserts every field row, so a page people use
+self-heals on the next save. The ones that bite are the settings for **dormant** features,
+where the first save is the one you need and the one that fails. This module is dormant by
+design.
 
 So two things ship together:
 

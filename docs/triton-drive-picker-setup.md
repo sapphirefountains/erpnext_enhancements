@@ -391,12 +391,20 @@ console and only in the console — which is why the instruction belongs in the 
 **The recommended design uses no service account, so no DWD grant is required. Do not make
 one.** This section exists so the next person who proposes it can read why.
 
-DWD in this app today is real but narrow: `chat/gchat/auth.py` implements keyless delegation
-for the Google Chat relay, and its scope tuple is frozen at three `chat.*` scopes with a
-standing note — *"Do not add a scope here speculatively — Google's own DWD guidance is 'do not
-give access to non-essential OAuth scopes'"* (`chat/gchat/auth.py:160-161`). There are **no
-Drive scopes on it**, and the Drive service account is a different account entirely, with no
-delegation at all.
+**This app now performs no domain-wide delegation at all**, which strengthens the argument
+rather than weakening it. Until v1.426.0 there was exactly one use of it, and it was narrow:
+`chat/gchat/auth.py` implemented keyless delegation for the Google Chat relay, its scope tuple
+frozen at three `chat.*` scopes behind a standing note — *"Do not add a scope here
+speculatively — Google's own DWD guidance is 'do not give access to non-essential OAuth
+scopes'"*. There were **no Drive scopes on it**, and the Drive service account was a different
+account entirely, with no delegation at all.
+[ADR 0011](../decisions/adr/0011-retire-google-chat-and-coworker-chat.md) retired the relay and
+that file went with it. So adding Drive to a delegation grant is no longer "widening a grant we
+already live with" — it is reintroducing a mechanism this app deliberately no longer has.
+The code is gone; the **Admin-console grant is not**, because a console object cannot be
+deleted by a deploy. It is removed by hand in §4 of
+[google-chat-teardown.md](google-chat-teardown.md), and until someone does that there is still
+an entry sitting there to widen.
 
 If someone did add Drive to a delegation grant, this is the exact step:
 
@@ -414,9 +422,10 @@ sees, and revoked only in that same console. The blast radius is the whole domai
 the benefit is one turn of convenience. The per-user OAuth path in §3 gives the same
 functionality constrained by the permissions each person already has, and revocation is theirs.
 
-The same asymmetry the chat module already wrote down applies here:
-*"Copying the bytes into ERPNext re-homes somebody else's ACL decision inside ours and there is
-no way to un-make that later"* (`chat/sync/attachments.py:51-55`). Referencing a file the user
+The same asymmetry the retired chat module wrote down applies here. Its attachment sync refused
+to copy Drive bytes into ERPNext on the grounds that *"copying the bytes into ERPNext re-homes
+somebody else's ACL decision inside ours and there is no way to un-make that later"*
+(`chat/sync/attachments.py:51-55`, deleted in v1.426.0). Referencing a file the user
 re-authorizes on each fetch keeps that property; a delegated service account destroys it.
 
 ---
@@ -460,8 +469,9 @@ app. Effects, in order of when you notice:
 1. The next `requestAccessToken()` shows consent again (recoverable, invisible, fine).
 2. Every previously granted per-file `drive.file` grant is gone at once.
 3. A **previously attached** file becomes unfetchable — and that is the correct behaviour, not
-   a regression. It is the property the chat module protects by refusing to copy Drive bytes.
-   Any design that caches the extracted text forever quietly re-breaks it.
+   a regression. It is the property §7 argues for: a reference the user can still revoke, never
+   a copy nobody can un-make. Any design that caches the extracted text forever quietly
+   re-breaks it.
 
 Revoking Triton's *login* grant is a bigger deal: it takes Calendar, Gmail and Drive with it and
 the user must sign in to Triton again.
@@ -504,8 +514,9 @@ A reviewer of this change should be able to tick every one of these:
       actively wrong, not merely unnecessary).
 - [ ] `get_config()` returns the picker block **inside** the
       `enabled and user_has_widget_access()` gate, not beside it.
-- [ ] No new Drive scope was added to `chat/gchat/auth.py`'s `RELAY_SCOPES`, and no DWD grant
-      was created in the Admin console.
+- [ ] No DWD grant was created or widened in the Admin console. Since v1.426.0 this app holds
+      no delegation code at all (§7), so a delegated call in the diff is a net-new mechanism,
+      not an extension of one already in use.
 - [ ] No code path calls `google_drive.drive_utils.get_drive_service()` for a picked file. The
       service account must not appear in this feature.
 - [ ] The Google access token is never persisted — not in a DocType, not in `frappe.cache()`,
@@ -518,7 +529,7 @@ A reviewer of this change should be able to tick every one of these:
       client lives in. A wrong or missing one makes the pick succeed and the later download
       fail — the failure is remote, in Triton, and reads as a Triton bug.
 - [ ] A Drive `file_url`/webViewLink rendered as a chip goes through `isSafeUrl`
-      (`public/js/chat/citations.js:412`) — a `drive.google.com` https URL passes; a `blob:`
+      (`public/js/triton/citations.js:412`) — a `drive.google.com` https URL passes; a `blob:`
       preview URL does not and renders as inert text.
 
 ### Rollback

@@ -3,29 +3,32 @@
 
 """The Triton client for one work breakdown, carrying the **approving reviewer's** identity.
 
-Modelled closely on :mod:`erpnext_enhancements.chat.invoke.triton_client`, which is the
-worked example of calling Triton from a background job in this app. Read that file first;
-the identity reasoning, the "never repeat a response body" rule and the ``TritonUnavailable``
-shape are all lifted from it deliberately rather than reinvented.
+Modelled closely on ``chat/invoke/triton_client``, which was this app's worked example of
+calling Triton from a background job. That module was retired with the rest of the chat
+product in v1.426.0 (ADR 0011), so this file inherits the role: the identity reasoning, the
+"repeat only what a type guarantees is content-free" rule stated on ``_error_fields`` and the
+``TritonUnavailable`` shape were taken from it deliberately rather than reinvented, and are
+written out here rather than left as a pointer.
 
 --------------------------------------------------------------------------------------
-Two ways this differs from the chat client, both on purpose
+Two ways this differs from the desk widget's own seam, both on purpose
 --------------------------------------------------------------------------------------
 
 **1. It is not gated on the assistant widget's switch.** ``triton_chat.get_settings()``
 reports ``enabled`` from ``Triton Assistant Settings``, which is the *desk widget's* on/off.
-The chat client refuses when it is off, correctly — ``@triton`` in a room is the same
-product as the widget. A work breakdown is not: it has its own kill switch
-(``Product Feedback Settings.paused``), and coupling the two would mean somebody turning the
-floating chat bubble off silently breaks feature intake with no error that names the cause.
+``triton_chat._request`` throws when it is off, correctly — that seam *is* the widget. A work
+breakdown is not: it has its own kill switch (``Product Feedback Settings.paused``), and
+coupling the two would mean somebody turning the floating chat bubble off silently breaks
+feature intake with no error that names the cause.
 This module reads ``base_url`` and ``gateway_secret`` from the same settings and ignores
 ``enabled``.
 
-**2. There is no session.** The chat client keeps a long-lived Triton session per (person,
-room) so a follow-up mention continues the conversation. A breakdown is one shot: there is
-no follow-up, nothing to continue, and a cached session id would only add the stale-404
-recovery path that file needed. This posts once to a route that returns structured JSON and
-is done. See ADR 0010.
+**2. There is no session.** The widget's calls are session-scoped
+(``/api/v1/assistant/sessions/...``) because a conversation continues across turns; the
+retired chat client kept one per (person, room) for the same reason. A breakdown is one shot:
+there is no follow-up, nothing to continue, and a cached session id would only add the
+stale-404 recovery path those needed. This posts once to a route that returns structured JSON
+and is done. See ADR 0010.
 
 The identity chain is otherwise identical: the human's action → that human's Triton token →
 whatever Triton does under their name. **The token cache is keyed on the session user**, so
@@ -48,7 +51,7 @@ import frappe
 
 #: Added to Triton in the same change as this module. Unlike the assistant routes this one is
 #: **not** session-scoped — there is no session to create first, which is the mistake the
-#: chat client's docstring records paying for.
+#: retired chat client's docstring recorded paying for.
 WORK_BREAKDOWN_PATH: str = "/api/v1/planning/work-breakdown"
 
 #: The "Expand with AI" button. Called by the *requester*, an ordinary employee — not a
@@ -78,7 +81,7 @@ class TritonUnavailable(Exception):
 
 
 #: What Triton's structured error codes mean for a breakdown, in the words the person reading
-#: an Error Log needs. Same vocabulary as the chat client, restated because the remedy differs:
+#: an Error Log needs. Triton's own vocabulary, restated here because the remedy differs:
 #: here it is the *reviewer* who must link, not the person who filed the request.
 _ERROR_CODE_MEANINGS: dict[str, str] = {
 	"erpnext_link_required": (

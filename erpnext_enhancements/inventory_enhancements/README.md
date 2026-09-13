@@ -96,9 +96,15 @@ and a confident second opinion that contradicts a regex is worse than none.
 
 It goes through `triton_chat._request` rather than being a third Triton client. That seam already
 refuses when the assistant is off, mints the token **under the current session user**, retries a
-stale-token 401, and scrubs URLs. Do **not** reach for `chat/invoke/triton_client.ask()` here: it
-calls `frappe.set_user` unconditionally, which on an HTTP request overwrites `session.sid` and
-logs the user out — that shipped as v1.325.0.
+stale-token 401, and scrubs URLs. The rule behind that seam is **never impersonate on the
+request path.** The client this warning used to name — `chat/invoke/triton_client.ask()` — went
+with the chat module in v1.426.0, but the trap it modelled is a property of Frappe, not of that
+file: `frappe.set_user` overwrites `session.sid` with the username and empties the session data,
+so calling it unconditionally inside an HTTP request destroys the caller's live session and the
+`finally` restore does not undo it. "Expand with AI" shipped that way as v1.325.0 and logged
+people out one click into their session (fixed in v1.325.1). This is a desk button: a client
+borrowed for it must impersonate **only when the target differs from the session user**, the way
+`product_feedback/triton_client._call_as` does.
 
 ### Two traps that made the obvious query wrong
 

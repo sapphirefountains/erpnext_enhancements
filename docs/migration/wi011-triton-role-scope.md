@@ -96,6 +96,13 @@ account:
 `HR User`→Designation · `HR Manager`→Holiday List · `PO Creator`→Purchase Order ·
 `Knowledge Base Editor`→Help Article · `Newsletter Manager`→Newsletter · `Item Manager`→Item/Brand/UOM …
 
+**One entry of that map has since gone away on its own.** `Chat User`→`Chat Room` was measured
+against a module that no longer exists: v1.426.0 retired the Google Chat mirror and the coworker
+chat product ([ADR 0011](../../decisions/adr/0011-retire-google-chat-and-coworker-chat.md)), and
+[`patches/delete_chat_module.py`](../../erpnext_enhancements/patches/delete_chat_module.py) deletes
+the 23 Chat DocTypes **and** both seeded Roles — which takes this account's `Has Role` row with
+them. Nothing else in the map moves.
+
 Note what this kills: **"System Manager covers everything" is false on this site.** Custom DocPerm
 means System Manager holds no row at all on Opportunity, Project, Issue and many others.
 
@@ -134,8 +141,11 @@ Verified against the live site, all eight ptypes, 2,856 grants — this is the w
 The four full losses appear **nowhere** in the account's enumerated call surface. `Operation:report`
 and the four `export` losses are desk capabilities — a REST client neither runs a query report nor
 clicks Export. `Server Script` is the point of the exercise: that capability is what the 2026-08-02
-intruder used, `server_script_enabled` is `0`, and this repo's own `chat/invoke/triton_link.py`
-already lists `Script Manager` in `UNSAFE_BOT_ROLES`.
+intruder used, `server_script_enabled` is `0`, and this repo's own bot-credential check already
+listed `Script Manager` in its `UNSAFE_BOT_ROLES` frozenset (`chat/invoke/triton_link.py`, deleted
+with the chat module in v1.426.0 — no copy of that frozenset survives anywhere in the app, so the
+corroboration is gone and the argument rests on the 2026-08-02 incident alone, which is where it
+always rested).
 
 **Reports are a second permission system and must be counted separately.** A Report carries its own
 `roles` child table, and `Report.is_permitted()` has **no System Manager short-circuit** — so a
@@ -167,6 +177,11 @@ requiring `Expense Approver`/`Leave Approver`/`PO Approver` (0).
 `Purchase Master Manager`, `PO Creator`, `Manufacturing User`, `Quality Manager`,
 `Website Manager`, `Knowledge Base Editor`, `Newsletter Manager`, `Fleet Manager`,
 `Workspace Manager`.
+
+**Twenty-nine of those thirty exist today.** `Chat User` was deleted outright with the chat module
+in v1.426.0 (above), so wave 2 has nothing to do about it and must not read its absence as drift
+against this list. `Raven Admin` / `Raven User` are unaffected — Raven is a separate app and was
+never part of what ADR 0011 retired.
 
 `System Manager` stays **for now** and is the obvious next target: it is what gates FAC's
 `run_database_query` and `run_python_code`, it disables FAC field redaction
@@ -221,10 +236,13 @@ Stated plainly, because a role nobody examined is not a cleared role:
 - **Wiki, Insights and Helpdesk app internals.** Their roles are in the removal set and the diff
   says their DocPerm access survives via retained roles — but none of those apps was opened to
   look for role literals. `wiki_sync.py` runs in **system mode**, so Wiki is the one to check.
-- **`Chat Settings.alert_post_as`.** Unreadable through the generic tools — the chat denylist
-  refused the query, correctly. If it names this account, `Chat User` is load-bearing:
-  `governance/alert_delivery.py:53` deliberately runs **without** `ignore_permissions`. `Chat User`
-  is kept regardless, so this blocks nothing.
+- **`Chat Settings.alert_post_as`** — **closed by deletion, not by an answer.** It was unreadable
+  through the generic tools (the chat denylist refused the query, correctly), and the open question
+  was whether it named this account: if it did, `Chat User` was load-bearing, because
+  `chat/governance/alert_delivery.py:53` deliberately ran **without** `ignore_permissions`.
+  v1.426.0 removed the Single, that file, the denylist and the role together, so there is nothing
+  left to read. It blocked nothing then — `Chat User` was kept regardless — and it blocks nothing
+  now.
 - **Whether `poseidon-voice-gateway` shares this key.** It reads `FRAPPE_API_KEY` from its own
   environment and hits only `allow_guest=True` telephony endpoints, so it needs no roles either
   way — but which account that env var resolves to was not confirmed.

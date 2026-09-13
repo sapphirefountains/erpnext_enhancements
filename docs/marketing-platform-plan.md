@@ -83,16 +83,20 @@ argument for reading live quota rather than trusting any constant, including the
 
 ## Auth: what can be keyless and what cannot
 
-`chat/gchat/auth.py` is the house reference for a new Google integration — keyless
-domain-wide delegation via `projects.serviceAccounts.signJwt`, no private key on disk. It
-does not apply to most of this work, and the reason is worth stating plainly:
+The house reference for a new Google integration used to be `chat/gchat/auth.py` — keyless
+domain-wide delegation via `projects.serviceAccounts.signJwt`, no private key on disk. It went
+with the rest of the chat module in v1.426.0
+([ADR 0011](../decisions/adr/0011-retire-google-chat-and-coworker-chat.md)), and that costs
+this plan nothing, because it never applied to most of this work anyway. The reason is worth
+stating plainly:
 
 - **A service account cannot own or post to a YouTube channel, a Google Ads account, or a
   Google Business Profile location.** Those are user-owned assets. They need
   authorization-code OAuth with a stored refresh token.
 - Only **GA4 and Search Console** work service-account style, and both already do.
 
-So the auth pattern here is **QuickBooks, not Chat**: `start_oauth` with a cached one-time
+So the auth pattern here is **QuickBooks** — which, with Chat gone, is also the only
+authorization-code OAuth precedent left in the repo: `start_oauth` with a cached one-time
 CSRF `state`, a guest `oauth_callback`, tokens in `Password` fields on the module Single
 accessed only through `core/utils.get_secret` / `set_secret`, proactive hourly refresh plus
 reactive refresh on a 401 retry, and `invalid_grant` clearing the tokens and marking the
@@ -132,7 +136,7 @@ marketing/
 ├── publish/
 │   ├── outbox.py        ← Social Publish Job state machine
 │   ├── sweeper.py       ← re-drives Pending past available_at; reclaims expired leases
-│   └── ratelimit.py     ← pure decision functions + Redis Lua, per chat/sync/ratelimit.py
+│   └── ratelimit.py     ← pure decision functions + Redis Lua; shape described below
 ├── attribution/         ← the spend ↔ pipeline join
 ├── doctype/
 └── README.md
@@ -157,9 +161,11 @@ All of these are documented elsewhere in the repo and all of them have bitten be
 2. **A `default` on a new field of a Single never reaches the existing row.** `Marketing
    Settings` ships with a large number of flags and thresholds; **it must ship with a
    backfill patch in the same PR**, modelled on
-   `patches/backfill_chat_settings_defaults.py`. This is exactly the dormant-feature shape
-   that made Chat Settings unsaveable in v1.277.3 — the settings page nobody has opened yet
-   is the one where the first save is the one that matters and the one that fails.
+   `patches/backfill_triton_assistant_settings_defaults.py`. This is exactly the
+   dormant-feature shape that made Chat Settings unsaveable in v1.277.3 — the settings page
+   nobody has opened yet is the one where the first save is the one that matters and the one
+   that fails. That doctype and its own backfill patch went with the chat module in v1.426.0,
+   but the failure they record is why this trap is on the list at all.
 3. **The production deploy runs `redis-cli FLUSHDB`,** destroying every queued-but-unrun job,
    and Frappe v16 wires no RQ retries. `frappe.enqueue` reaches no RQ scheduler, so
    **`available_at` + a cron sweep is the defer timer** — a scheduled post held in the queue
@@ -290,23 +296,25 @@ per-platform flags, and posts require draft → approve → publish.
 a cron sweeper drives it. That is the only design that survives a deploy `FLUSHDB` and the
 only one where "scheduled for 9am Tuesday" is a promise rather than a hope.
 
-Rate limiting copies the chat pattern exactly: pure decision functions in the bench-free CI
-tier, deployed as Redis Lua so the limiter is shared across workers, with the Lua printed
+Rate limiting follows the pattern the chat module established and took with it when it was
+retired, so this doc is now the only written copy: pure decision functions in the bench-free
+CI tier, deployed as Redis Lua so the limiter is shared across workers, with the Lua printed
 next to the function it mirrors. And the standing rule — **the bucket is an optimisation;
 backoff is the correctness mechanism.** Never retry a 4xx other than 429; a 403 is a config
 fault and retrying turns a fast legible failure into a slow confusing one.
 
 ### The `/marketing` SPA
 
-A chrome-free `www/` shell plus a bundle, following the Chat SPA, which is the most recent
-substantial UI in the app and the best model:
+A chrome-free `www/` shell plus a bundle. The Chat SPA was the model when this was written and
+is gone; the surviving shell built to the same rules is the **Feedback SPA**
+(`www/feedback.html` + `feedback.bundle.js`), whose own header comment states them:
 
 - **No Vue**, **no `innerHTML`** — not "none with user data", none — enforced by a
   build-blocking source-rule test in `scripts/`, not by discipline.
 - `--ee-brand` (`#00a0dd`) may never carry text; use `--ee-brand-ink` for accent-as-text and
   `--ee-brand-surface` for accent-as-background.
 - One route rule serving the whole subtree; the server never parses the path.
-- Measure and document the bundle cost, as Chat did.
+- Measure and document the bundle cost.
 
 Surfaces: month/week content calendar with drag-to-reschedule, composer with per-network
 preview and character/aspect-ratio validation, media picker over `Marketing Media Asset`,

@@ -92,9 +92,11 @@ itself; the seed patch is for visibility in the desk, not for correctness.
 
 **The status is the outbox.** The prod deploy `FLUSHDB`s the queue redis and destroys queued
 jobs silently. A request in `Approved` with no proposal *is* a lost job, it is visible in the
-review queue, and `sweep_stalled_breakdowns` re-drives it hourly. Do not add a `Chat Relay
-Job`-shaped table here — and do not add `deduplicate=True`, which drops the new enqueue while
-an existing job is QUEUED **or STARTED**.
+review queue, and `sweep_stalled_breakdowns` re-drives it hourly. Do not add a separate
+relay-job table to track what was enqueued — that was the shape the retired chat module used
+(`Chat Relay Job`, gone in v1.426.0), and a second record of what still owes work is exactly
+the job the status is already doing. And do not add `deduplicate=True`, which drops the new
+enqueue while an existing job is QUEUED **or STARTED**.
 
 **The model names a `target`, never a Project.** `proposal.py` maps `"erpnext"`/`"triton"` to
 an id from settings. The prompt reasons over prose an employee typed; a model that could emit a

@@ -26,7 +26,6 @@ Product Configurator
 Package Dispatch
 Training
 Offsite Backup
-Chat
 Marketing
 Product Feedback
 HR Enhancements

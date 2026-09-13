@@ -1,8 +1,8 @@
 # `accounting_intake/` — accounting document intake
 
-Vendor bills, receipts and customer remittances arrive by email, Drive, mobile and chat.
-This module funnels all of them through one door, extracts their contents with AI, proposes
-a posting, and puts a human in front of it before anything reaches the ledger.
+Vendor bills, receipts and customer remittances arrive by email, Drive, mobile and manual
+upload. This module funnels all of them through one door, extracts their contents with AI,
+proposes a posting, and puts a human in front of it before anything reaches the ledger.
 
 Pipeline overview: [`docs/DOCUMENT_MERGE.md`](../../docs/DOCUMENT_MERGE.md) covers the
 related merge behaviour; this README is the code map.
@@ -39,7 +39,7 @@ independent approvals into one and puts AI-extracted figures straight into the l
 | File | Purpose |
 |---|---|
 | `intake.py` | **The single entry point every channel funnels through.** `ingest_document` dedupes by content hash, creates the `Document Intake` row, and (when enabled) enqueues extraction via Triton. The manual-upload channel lives here |
-| `channels.py` | The other adapters, all thin wrappers over that one door: `email_from_communication` (inbound-email attachments, on `Communication.on_update` — the mail pipeline creates the Files *after* insert, so `after_insert` sees none), `poll_watched_folder` (a Google Drive folder, hourly), plus mobile and chat-origin |
+| `channels.py` | The other adapters, all thin wrappers over that one door: `email_from_communication` (inbound-email attachments, on `Communication.on_update` — the mail pipeline creates the Files *after* insert, so `after_insert` sees none), `poll_watched_folder` (a Google Drive folder, hourly), plus `ingest_mobile_photo` (phone capture). A chat-origin adapter was planned and never written; the chat product it would have read was retired in v1.426.0, so `Document Intake.source_channel` carries a `Chat` option nothing writes — harmless, and dropping a Select option is a data migration, not an edit |
 | `extraction.py` | Maps a Triton Document AI extraction onto the review record — header fields, line items with Item resolution, advisory matches, resulting review status. Items that can't be resolved are **proposed on the line** for the inventory clerk rather than created |
 | `matching.py` | Advisory party (Supplier/Customer) and source-document (PO / Sales Invoice) suggestions, reusing the pure fuzzy scorer in `google_drive/drive_match.py` |
 | `review.py` | The whitelisted review actions and the two-gate approval (below) |

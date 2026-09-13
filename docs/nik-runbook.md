@@ -12,6 +12,20 @@ queues measured in weeks and half of them gate the other half.
 > Nothing here is a request for a status update. Each item names what to do, where, what must be
 > true first, and how you know it worked.
 
+> **2026-09-13 — the chat programme is withdrawn, and a large part of this runbook went with it.**
+> v1.426.0 deleted the Google Chat integration *and* the ERPNext coworker chat product
+> ([ADR 0011](../decisions/adr/0011-retire-google-chat-and-coworker-chat.md), which supersedes ADR
+> 0009 and both its addenda). The chat items below have been **removed rather than ticked off** —
+> the governance decisions, the four Phase 5 confirmations, the pilot walkthrough, the live Google
+> round trip, the notification matrix, the chat bench suites, and their per-task residuals in
+> [§5](#5-appendix--the-reconciliation-in-full). None of them can be done any more, and a runbook
+> that keeps undoable items is a runbook that stops being read. **The Triton widget is untouched**
+> — it was always a separate surface with a separate server side — so what is here about the
+> deployed agents, the ERPNext link grant, the citation manifest and the widget's own sources row
+> is still live and still yours. One chat item is *added* rather than removed: the Google-side
+> estate is not deleted by the deploy and has to be torn down by hand, which is
+> [§3.3](#33-tear-down-the-google-chat-estate--console-work-the-deploy-cannot-do).
+
 ---
 
 ## 0. What changed today, before you read the rest
@@ -20,16 +34,15 @@ queues measured in weeks and half of them gate the other half.
 `#828`–`#831`, triton `#340`/`#343` — has since merged. `erpnext_enhancements` is on **1.299.0**,
 `triton` on **0.68.2**.*
 
-**Two PRs are open. Neither is merged; `main` auto-deploys to production, so merging is yours.**
+**Two PRs were open when this was written. Both have since merged.**
 
 | PR | Version | What it is |
 |---|---|---|
-| [#853](https://github.com/sapphirefountains/erpnext_enhancements/pull/853) | 1.299.1 | The oversight viewer returned an **empty transcript** on every call — and wrote a full audit row saying it had not |
+| [#853](https://github.com/sapphirefountains/erpnext_enhancements/pull/853) | 1.299.1 | The oversight viewer returned an **empty transcript** on every call — and wrote a full audit row saying it had not. The viewer it fixed was itself deleted in v1.426.0 |
 | [#854](https://github.com/sapphirefountains/erpnext_enhancements/pull/854) | 1.299.2 | "Hide the activity feed on every tab but the first" has done **nothing** since v1.259.4, and its test passed the whole time |
 
-`#854` is **stacked on** `#853` — merge `#853` first and `#854` retargets to `main` by itself.
-They are stacked rather than independent only because both bump the version files, which conflict
-on every line otherwise.
+`#854` was **stacked on** `#853` rather than independent only because both bump the version files,
+which conflict on every line otherwise.
 
 > Both were found the same way: **re-reading the code behind a task that claimed to be shipped.**
 > Neither feature has ever been used in production, which is exactly why a silent failure in each
@@ -47,9 +60,8 @@ the production-evidence tasks that have never run). Both were rejected by queryi
 rather than reading the verdict.
 
 **What that leaves is the honest shape of the work:** almost everything that is code is done, and
-almost everything that is left needs production — a bench, a phone, a live Google round trip, a
-walkthrough with a person who is not an engineer, or a decision only you can make. That is what
-the rest of this document is.
+almost everything that is left needs production — a console, a deployed environment, a roster of
+people to chase, or a decision only you can make. That is what the rest of this document is.
 
 Parent progress figures are now a computed roll-up of each container's children (Completed counted
 as 100), capped at 95 while any child is open — so a container can no longer read 99% because it
@@ -211,35 +223,8 @@ common failure mode.
 
 ## 2. Decisions only you can make
 
-Each has a recommendation attached; most are a yes or a redirect rather than fresh thinking. Two
-are cheap now and expensive later.
-
-### 2.1 Chat governance — three still open (TASK-2026-01512)
-
-| # | Decision | Recommendation | Why it is still open |
-|---|---|---|---|
-| **D-10** | A nightly off-box append-only copy of the audit rows | **Offered without one** | The hash chain makes tampering *detectable, not impossible* — anyone with database write access or root on the VM can rewrite a row and recompute the tail. A bucket with object versioning and a retention lock is the only durable fix, and it is a real recurring cost. This is a budget decision, not a technical one. |
-| **D-11** | Import back-fill of historical Google Chat content | **No** | Silence is not a no here, because guessing wrong costs in both directions: it cannot be undone once done, and it cannot be done at all after 90 days. |
-| **D-8** | Who owns the matching **Google Vault** retention rule | Needs an owner, not an answer | This system cannot purge Google's copies — they are governed by Workspace retention in a console it cannot reach. Deleting from ERPNext while Chat keeps everything forever is a reporting gap, not a retention policy. Currently unowned. |
-
-### 2.2 Phase 5 — four decisions built on a recommendation (TASK-2026-01366)
-
-These were **implemented to the ADR's own written recommendation** rather than to an answer, and
-each is cheap to reverse *now*. Confirming them turns four silent assumptions into four decisions.
-
-- **Token ceiling (CQ-17)** — built at 40,000 as a Chat Settings field with the realised count
-  logged every turn, so the answer can come from two weeks of data rather than a guess.
-- **Triton's reply exemption (CQ-18)** — built with the narrow exemption: a conversational reply to
-  a mention, same room and thread, no external mutation, bot identity, still writing an audit row.
-  Declining does not mean gating the reply; it means Phase 5 has to build an approval surface
-  inside Google Chat, which is a design task with a schedule.
-- **Sources chip row (CQ-14)** — built additively; the chip row renders exactly what it renders
-  today.
-- **Vector storage (CQ-23)** — base64 float32 scored with in-process numpy behind a two-method
-  adapter, so the backend is a one-file swap. Production MariaDB is 10.11 with no vector type and
-  the deploy pipeline cannot pip-install, so this adds no dependency.
-
-### 2.3 Two small ones blocking code
+Two are left, and both block code rather than a schedule. Each is a choice between options that
+are already written out, not fresh thinking.
 
 - **`agent_user` is NULL for inbound, missed and voicemail calls** (TASK-2026-01384). Either
   populate it on every call path, or decide explicitly how unattributed rows are surfaced.
@@ -255,8 +240,9 @@ each is cheap to reverse *now*. Confirming them turns four silent assumptions in
 
 ## 3. Things that cannot be done from a development machine
 
-`docs/chat-phase6-plan.md` §5 states this up front so the checkpoint is not "full of unverified
-checkboxes". These are in dependency order.
+Every item here needs something a development machine does not have — a Google Cloud console, a
+deployed environment, or a person. Naming them separately is what keeps the rest of the board from
+filling up with unverified checkboxes. These are in dependency order.
 
 ### 3.1 Redeploy the 13 Triton agents — **one command, settles three open items**
 
@@ -299,74 +285,48 @@ gcloud sql instances list   # settles TASK-2026-01392: does triton-main-db exist
 ```
 
 **One caveat that matters before you attach anything:** OWASP preconfigured rules
-**false-positive on user-typed chat text** — a coworker pasting a SQL snippet or an HTML tag gets a
-403 with no feedback. Attach in preview mode first.
+**false-positive on user-typed prose** — someone pasting a SQL snippet or an HTML tag into a
+question for Triton gets a 403 with no feedback. Attach in preview mode first.
 
-### 3.3 The pilot walkthrough — ~20 minutes, you and James (TASK-2026-01363)
+### 3.3 Tear down the Google Chat estate — console work the deploy cannot do
 
-**This is the single highest-value item in section 3.** Every Phase 3 feature is built and
-deployed, and six of them have been used **zero times in production** — mentions, attachments,
-threads, edits, deletes, revisions. Whole feature set to date: 1 room, 5 messages, 2 users.
+v1.426.0 deleted the code, and `patches/delete_chat_module.py` deletes the database residue on the
+next `bench migrate`. **Neither touches Google.** What is still standing in `erpnext-465317` is the
+Chat app registration, one Workspace Events subscription per coworker, the Pub/Sub topic and its
+subscription, the domain-wide delegation grant, and the `serviceAccountTokenCreator` binding that
+made the keyless design work. None of it is under Terraform — `grep -ril chat infra/ modules/`
+returns nothing — so `terraform plan` shows no drift before or after, and will not do this for you.
 
-Twelve tasks were sitting at *Pending Review* waiting on this evidence rather than on code. It is
-one sitting, ten actions in order, and it either produces the evidence or produces a defect list.
-The script is on the task.
+The ordered checklist is [`docs/google-chat-teardown.md`](google-chat-teardown.md). Three things
+from it are worth knowing before you open a console:
 
-### 3.4 Run the bench suites — the security model is unproven by execution
+- **The resource names were only ever written down in `Chat Settings`.** The patch prints every
+  Google identifier it held into the deploy log, under `delete_chat_module: Google resources this
+  integration named`, immediately before deleting the rows. Capture that while the log still
+  exists; the original provisioning runbook is not in this repository.
+- **Two projects, easy to confuse.** The Chat estate is in `erpnext-465317`. Triton's Drive picker
+  is in `triton-497321` and is **not part of this teardown** — deleting the wrong project's OAuth
+  client breaks the Drive attach button in the widget this whole change exists to keep.
+- **Two steps are shared with things that still work.** The delegation service account may also
+  sign for Drive and Calendar, so remove the `chat.*` scopes rather than the entry; and
+  `iamcredentials.googleapis.com` stays enabled for the same reason.
 
-**15 of the 22 named Phase 6 tests need a real bench, and three bench suites from earlier phases
-have never been executed at all.** CI has no bench and will not get one, so these are worth exactly
-as much as the discipline of running them.
+On the ERPNext side there is exactly one manual item: remove `chat_vapid_private_key` and
+`chat_vapid_public_key` from `site_config.json`. They are the Web Push keypair for the coworker
+product, nothing in the code will clean them up, and they will otherwise sit in every backup.
 
-```bash
-bench --site <site> run-tests --app erpnext_enhancements --module erpnext_enhancements.tests.test_chat_attachments_bench
-bench --site <site> run-tests --app erpnext_enhancements --module erpnext_enhancements.tests.test_chat_triton_bench
-bench --site <site> run-tests --app erpnext_enhancements
-```
-
-The first is the residual on TASK-2026-01313: it asserts a non-member gets a 403 on an attachment,
-authenticated and unauthenticated. That claim is currently supported by code review, not by running
-it.
-
-**And one specific question to answer while you have a bench** (TASK-2026-01289) — does `migrate`
-drop the hand-added FULLTEXT index?
-
-```bash
-bench --site <site> migrate
-bench --site <site> mariadb -e "show index from \`tabChat Context Chunk\`"   # look for chunk_body_fulltext
-bench --site <site> migrate
-bench --site <site> mariadb -e "show index from \`tabChat Context Chunk\`"
-```
-
-Until that is answered, `test_record_here_whether_migrate_drops_it` is a placeholder that asserts
-nothing, and whether the `after_migrate` backstop is load-bearing or decorative is unknown.
-
-### 3.5 The live round trips
-
-- **Google Chat, real space, real credentials** (TASK-2026-01331). The 200-message soak ran
-  entirely against an in-memory fake **written from documentation rather than observation**. It
-  proves the engine is internally consistent; it cannot prove that `clientAssignedMessageId` is
-  actually populated in a `messages.get` response, which is the assumption echo suppression rests on.
-- **The Phase 5 gate** (TASK-2026-01419) — the same question asked from both clients, answered
-  in-thread, with citations that resolve.
-- **The notification matrix** (TASK-2026-01303) — two browser profiles, one phone, production.
-  Script it first, then run it live, saying out loud what should happen before it happens.
-- **Web Push on a real phone**, and check what origin `frappe.utils.get_url()` returns from behind
-  the load balancer. That is not cosmetic: an `http://localhost` origin would be baked into a
-  downloaded legal artefact.
-
-### 3.6 The roster chase — an afternoon, but only if someone schedules it (TASK-2026-01267)
+### 3.4 The roster chase — an afternoon, but only if someone schedules it (TASK-2026-01267)
 
 **Everyone Triton may answer for must have clicked "Link ERPNext" once, or the turn dies before it
 starts.** Auto-provisioning somebody a Triton account does *not* auto-provision their ERPNext grant.
 Across the full staff roster that is on the order of fifty people.
 
-Left until the phase is being tested, it presents as an intermittent Phase 5 bug that only affects
-some people — which is the most expensive way to discover it. Enumerate the roster, check each
-account for a grant, chase the remainder, and **decide the fallback for an unlinked mentioning
-user**: a mandatory link prompt, a degraded answer without ERPNext tools, or an explicit refusal.
+Left until people are using the widget in anger, it presents as an intermittent bug that only
+affects some of them — which is the most expensive way to discover it. Enumerate the roster, check
+each account for a grant, chase the remainder, and **decide the fallback for an unlinked user**: a
+mandatory link prompt, a degraded answer without ERPNext tools, or an explicit refusal.
 
-### 3.7 Marketing — two production actions
+### 3.5 Marketing — two production actions
 
 - **Turn on lead attribution** (TASK-2026-01472). `lead_attribution_enabled` is `0` today, so the
   whole WP-1 feature is off in production. Staged order matters, per
@@ -393,7 +353,7 @@ genuinely unfinished (now Open, with a comment naming the residual).
 That is the useful outcome: *Pending Review* now means "code merged, needs your eye" and nothing
 else. The twelve tasks that were sitting there waiting on **evidence** rather than on review are
 now Open and cross-referenced into [§3](#3-things-that-cannot-be-done-from-a-development-machine),
-which is where they actually belong.
+which is where they actually belong — most of them were chat, and went with it on 2026-09-13.
 
 ---
 
@@ -401,6 +361,13 @@ which is where they actually belong.
 
 One row per task. **Verdict** is what the evidence supported after an adversarial second pass over
 every "shipped" claim; **11 of those claims were overturned** and are marked `↺`.
+
+> **Thirty-five rows were removed on 2026-09-13** — every open chat task, across *Partial*, *Human
+> action* and *Not started*. They named residual work on a product that no longer exists, so there
+> is no verdict left to record and nothing a reader could act on; the tasks themselves are in
+> ERPNext and the reasoning is in [ADR 0011](../decisions/adr/0011-retire-google-chat-and-coworker-chat.md).
+> The counts above describe the original pass, not the rows still printed here. *Shipped* was left
+> whole on purpose — see the note under it.
 
 ### Partial — shipped in part, with named residual work
 
@@ -410,59 +377,26 @@ every "shipped" claim; **11 of those claims were overturned** and are marked `�
 | TASK-2026-01157 | ↺ | Supervisor sign-off, ask-the-author Q&A, gamification &… | Learner-facing surfaces for two strands were never built. (1) Ask-the-author Q&A: add ask_question and get_lesson_questions to the METHOD map in www/training.html and build the lesson-level ask/read UI in public/js/training/player.js — today training/qa.py's three whitelisted functions have no caller in the app, so no… |
 | TASK-2026-01191 | ↺ | Triton: deployed ADK agents cannot name a single ERPNext… | Run `python -m scripts.deploy_agents` (all 13 Agent Engine agents) from backend/ so the committed 53-tool snapshot actually reaches the deployed agents, then confirm one deployed agent can name e.g. fac_training_compliance_status. Neither CI nor the VM deploy performs this step, and there is no record it has been done… |
 | TASK-2026-01241 |  | Lint backlog: 433 ruff findings keep the lint job advisory | Run the `ruff format` pass (457 files) as its own PR at a quiet moment; clear or consciously ignore the remaining 152 `ruff check` findings; then delete `continue-on-error: true` from the lint job in .github/workflows/ci.yml and refresh the stale comment above it that still says 73. |
-| TASK-2026-01278 |  | Chat Auditor role and a threaded oversight viewer, not a list… | Build the threaded oversight viewer as a new separate surface (not a mode of the employee chat app): sequence-number ordering rather than timestamp, edited messages expanding to their revision chain, deleted messages as tombstones whose original content is a separately audited expand, a member timeline of who could… |
-| TASK-2026-01280 | ↺ | Bell rows with deep links that resolve on a cold page load | Write the bell-surface tests the task asked for and wire them into ci.yml: (1) the named acceptance test that zero rows land in `tabEmail Queue` for a Chat Message / Chat Mention notification even for a user who has explicitly opted that type in - today nothing anywhere asserts `notification_skip_email_types` is… |
-| TASK-2026-01288 | ↺ | Native Web Push with hand-rolled VAPID, because no push… | Honour Retry-After on a 429 in chat/notifications/webpush/sender.py. Today _note_retry_after only logs the header at debug level and the push is discarded; the task requires the rate-limited case to respect the retry header (a delayed re-send or a small retry queue). 404/410 pruning and the 413… |
-| TASK-2026-01289 | ↺ | Chunking, embeddings and the lexical tier that makes an exact… | Run the bench procedure and record the answer: `bench --site <site> migrate`, then `show index from \`tabChat Context Chunk\`` to see whether chunk_body_fulltext survives, repeat once more, and write the result into the ADR addendum. Until that is done,… |
-| TASK-2026-01293 |  | One definition of a non-participant read - unified audit,… | 1) Build the unified Chat Access Report (the planned chat/governance/access_report.py) that unions Chat Retrieval Audit and Chat Audit Log, and make every consumer in the phase read it. 2) Establish the one-record-per-non-participant-read property across every path once those paths exist - viewer, oversight search,… |
-| TASK-2026-01295 | ↺ | Cross-surface read and dismiss sync, and a badge that… | Write the badge-vs-coalescing test the task demands: twenty messages delivered to an away recipient must produce an unread badge of 20, exactly one Chat Room bell row (bell.notify_room's dedupe_unread path), and at most two push banners. bell.notify_room / bell.has_unread_row are currently imported by no test. The… |
-| TASK-2026-01296 |  | Permission hooks for Chat Room and Chat Message, registered… | Run the bench-required suite on a real site - bench --site <site> run-tests --app erpnext_enhancements --module erpnext_enhancements.tests.test_chat_permissions_bench - and record the result at the checkpoint. No code change is expected. |
-| TASK-2026-01297 |  | Attachments and inline images, with the private-file 403… | 1) Fix prepare_upload to read the real AttachmentLimits surface (outbound_ceiling()/inbound_ceiling() or chat_bytes/erpnext_bytes) so max_file_bytes is non-zero, and add a contract test - the current getattr defaults hide the mismatch silently. 2) Store image width/height on Chat Attachment at ingest and emit them (or… |
-| TASK-2026-01308 |  | Space provisioning in all three modes, and membership sync… | "A Chat member with no ERPNext account is stored by email rather than dropped" is not implemented. Chat Room Member has a `user` Link and no email column; membership.insert_room_member returns "" when resolve_user finds no User, and _accept_inbound writes an audit note instead of a member row. The divergence is… |
 | TASK-2026-01310 | ↺ | Search that cannot leak a room you are not in, and the… | Move the Desk Triton bubble's full-screen-sheet breakpoint in erpnext_enhancements/public/css/global_enhancements/triton_widget.css from max-width:480px to ~767px (both the .triton-panel block at line 576 and the header-picker block at line 1244), and perform the on-handset check that the composer stays above the… |
-| TASK-2026-01311 |  | Security hardening pass where every item is a command and its… | 1) No rate limit on any chat whitelisted method and no written exemption - chat/endpoints.py says the classification is the precondition for it, and only gchat/webhook.py carries @rate_limit. 2) Attachment content types are still taken from Google's contentType / the upload header, never sniffed from the bytes;… |
-| TASK-2026-01313 | ↺ | Attachments both directions - each end has a permission… | Execute erpnext_enhancements/tests/test_chat_attachments_bench.py on a real bench (bench --site <site> run-tests) and confirm the parity-row 403s for a non-member, authenticated and unauthenticated. This is a bench/live verification step, not more code - CI has no bench and will not get one. |
 | TASK-2026-01315 |  | Inline citations added without regressing the sources chip… | Nothing emits a `citations` SSE frame. The Desk widget already handles `citations` and `citations_append` events and reads meta.citations off `done`, but triton_chat.stream_query only forwards Triton's stream verbatim and the Triton backend (app/api/v1/endpoints/streaming.py, app/core/intelligence.py) emits `sources`… |
-| TASK-2026-01316 |  | Health dashboard with real thresholds, and drift repair that… | 1) There is no dashboard a human can look at - health.py is deliberately NOT @frappe.whitelist() and is not in hooks.py, so it is bench-only; api/integrations_health.py has a single small chat tile, not the panel set. 2) Thresholds are hard-coded module constants (DUE_PENDING_WARN_SECONDS etc.), explicitly documented… |
 | TASK-2026-01318 | ↺ | The Triton surface - inline citation links added without… | No producer emits a `citations` / `citations_append` SSE event on the Desk Triton widget's stream, so live.manifest stays null and applyCitations is a permanent no-op there; and no stored turn carries meta.citations. Wire the widget's backend turn to emit the manifest (the work tracked as TASK-2026-01315) before this… |
-| TASK-2026-01321 |  | Fail-closed retrieval audit trail, plus an invocation log… | 1) There is no report or chart over Triton Invocation Log, so "what did Triton cost last week" still requires SQL. No Report or Dashboard Chart exists for it anywhere in the repo; the panel added in v1.288.2 lives in chat/health.py and prints only the last ten turns by status, and the table's zero DocPerm closes the… |
-| TASK-2026-01328 |  | Prove the permission boundary still holds now rows arrive… | Run erpnext_enhancements/tests/test_chat_permissions_bench.py against a real bench on a non-production site, and resolve the DocShare result: if a DocShare row on Chat Room does widen a non-member's read (Chat Room is the one chat doctype carrying a read DocPerm), that is a design finding needing either a DocShare… |
 | TASK-2026-01381 |  | Withdraw lead-time modelling (done); decide on the open-PO… | Someone in procurement must confirm the open-PO overdue list is real before anything is built on it: 71 overdue lines across 5 projects (PRJ-00566 38 lines / oldest 306d, PRJ-00567 22 / 67d, PRJ-00219 5 / 235d, PRJ-00694 4 / 74d, PRJ-00438 2 / 2d). If it is noise — every open project line being overdue may just mean… |
 | TASK-2026-01385 | ↺ | Cookie-bound nonce for the OAuth state parameter | Single-use is only enforced on the success path. Clear the state cookie on rejection too — either by catching the 400 in google_callback and returning a response that carries response.delete_cookie(_OAUTH_STATE_COOKIE, path='/'), or by deleting it in the StarletteHTTPException handler for this route. Then make… |
 | TASK-2026-01389 | ↺ | aria-expanded on the four remaining disclosure controls | frontend/src/views/ChatView.vue:696 — the 'View Proposed Plan Parameters' details-accordion-toggle button still has no aria-expanded and no aria-controls, while the region it controls (the v-if at line 712) has no id. Give the button :aria-expanded="!!msg.ui_metadata._details_open" and an aria-controls pointing at a… |
 | TASK-2026-01391 |  | Deployed Vertex Agent Engine returns "0 events received" | Production remediation, all outside the repo: delete reasoning engine 7827804258916368384; run python -m scripts.deploy_agents --agent research (it will report created); put the new full projects/.../reasoningEngines/... path into REASONING_ENGINE_RESEARCH_RESOURCE in Secret Manager; run sudo… |
 | TASK-2026-01471 |  | Fluent Forms Pro → submit_web_lead, plus the first-touch UTM… | On WordPress: install the mu-plugin, create the hidden attribution fields plus the hp_company_url honeypot in each Fluent Forms builder, and add a webhook per form posting to submit_web_lead with the bearer header. In ERPNext: set web_lead_shared_secret and web_lead_default_owner, then enable web_lead_ingress_enabled.… |
 | TASK-2026-01479 |  | marketing/ module scaffold + Module Def patch + Marketing… | Still to build: core/{client,api,constants,utils,tasks,oauth}.py, the platforms/ and publish/ packages, the top-level api.py re-export that keeps registered webhook URLs on a stable short path, and the scheduler entries — hooks.py currently registers no marketing scheduler_events, which is exactly the 'added later, by… |
-| TASK-2026-01501 |  | Two live URL sinks in the widget's own sources row | A server-authoritative safe_url (§4.G.7 item 1) — the client-side check is a rendering decision, not a boundary. Also still true: no Content-Security-Policy anywhere in the app. Both will matter again for the export's transcript.html, which is the same renderer writing a file that leaves the building. |
-| TASK-2026-01502 |  | The oversight hatch granted write, and three read paths… | The DocShare finding (F-2). A DocShare row is still ORed past the permission_query_conditions hook on Chat Room, and assign_to.add auto-creates one — there is no DocShare validate guard, no sweep, and no decision recorded on whether assignment on Chat Room is possible at all. The only coverage is… |
-| TASK-2026-01503 |  | Endpoint posture: two ungated writers, and 37 endpoints that… | Rate limiting (§4.G.4). No chat endpoint carries frappe.rate_limiter.rate_limit — the only @rate_limit in the package is the pre-existing one on gchat/webhook.py:675 for Google's inbound webhook. Still to build: the decorator placed below @frappe.whitelist(), a zero-arg callable for limit= so the count is… |
-| TASK-2026-01504 |  | Attachment serving: the four-extension list is not the whole… | Content-type validation at the two entry points. There is no byte-signature sniffing anywhere in the chat package; ERPNext-side uploads still write no content_type, and sync/attachments.py:626 still takes Google's contentType verbatim with only a fallback default. And image/svg+xml is still in the client's… |
-| TASK-2026-01505 |  | Audit immutability: consolidate the vault, do not rebuild it | 1) The oversight role still holds read on neither audit table: chat_retrieval_audit.json and chat_audit_log.json each grant read/report to System Manager only, and hooks.py registers no has_permission hook for either, so an auditor still cannot read the trail they are meant to review. 2) No on_change runtime tripwire… |
-| TASK-2026-01285 | ↺ | Cross-room oversight search and a hash-manifested export | **Was filed here as "not started — everything"; that was eleven releases stale.** Shipped across v1.289.3/v1.289.4: `governance/viewer.py:137-176` `search()` is a separate endpoint from the employee search, with a server-side role re-check, a graded reason plus mandatory category, `@rate_limit(120/hr)`, and one audit parent row with a child row per hit room. Left: the sender / date-range / origin / attachment-presence filters; an include-deleted-content option that is itself an audited act; and reconciling "searches all rooms" against the shipped named-rooms-max-25 design — implement it or record the divergence in the ADR addendum. |
-| TASK-2026-01306 | ↺ | Retention: the policy value, the dry run, and what survives a purge | **Was filed here as "no purge job exists"; both halves have since shipped.** The planner is v1.293.0 (`governance/retention.py` — `plan()`, `report()`, and the `retention_run` writer, the last of four declared-but-unwritten event types), and the purge itself is v1.299.0 (`governance/purge.py`). It ships **Disabled** per decision D-6, has no HTTP endpoint and is deliberately not scheduled — a job that destroys conversation on a timer is not something to add and then remember to think about. Left: it has never been run, not even as a dry run, and that first run is yours. |
-| TASK-2026-01508 | ↺ | The oversight read path, and the function nothing has ever called | **Was filed here as "zero production callers"; it has one now** — `governance/viewer.py` — and the two named gate defects are fixed (`gate.py:687-708` passes `verbatim_across_rooms=True` and `authored_user=subject`). But the transcript did not reach the caller: `viewer.py:173` read `getattr(result, "text", "")` and `RetrievalResult` has no `text` field, so every oversight read returned **empty** while writing a full audit row saying otherwise. Fixed in **PR #853**, unmerged. Left after that: the viewer *surface* itself, under TASK-2026-01278. |
-| TASK-2026-01509 | ↺ | Export: the artefact that leaves the building | **Was filed here as "nothing exists"; that was written at v1.288.5 and is stale.** Shipped v1.289.4/v1.289.5: `chat/doctype/chat_export_request/` (21 fields, zero DocPerm, so `/private/files` is closed), `governance/export.py` (the Frappe-free builder) and `governance/export_runner.py`, which writes the `export_requested` audit row **before** enqueue and refuses to build if that write fails. Left: the bundle is **six of the seven** specified parts — `members.csv` is neither built nor in `BUNDLE_FILES`; no drift-disagreement note in `README.txt`; `transcript.html` carries no named timezone; and the human pre-ship check is open. |
+| TASK-2026-01501 |  | Two live URL sinks in the widget's own sources row | A server-authoritative safe_url — the client-side check in `public/js/triton/citations.js` is a rendering decision, not a boundary. Also still true: no Content-Security-Policy anywhere in the app. The chat export that would have carried the same renderer into a downloadable file is gone, so this is now about the widget's own sources row and nothing else. |
 
 ### Human action — not code
 
 | Task | ↺ | What it was | Where it actually stands / what is left |
 |---|---|---|---|
 | TASK-2026-01150 |  | SPIKE: GCS signed-URL video pipeline — infra applied, 206… | Run the one-time operator procedure: confirm `terraform apply` covers infra/storage.tf with enable_training_media_bucket on, create the sa-training-media JSON key by hand and paste it into Training Settings via the key dialog (never into the field or Terraform state), then execute Test GCS Connection on prod and… |
-| TASK-2026-01265 |  | Open decisions from the chat ADR that need Nikolas to answer… | The CQs still unanswered, per addendum A2.3-A2.4: gate.py's own two doors; the off-box append-only audit copy; import-mode back-fill of history; and who owns the matching Google Vault retention rule (console work this system cannot reach and currently unowned). Plus the DocShare-past-permission_query hole on Chat… |
-| TASK-2026-01267 |  | Everyone Triton may answer for must link ERPNext first, or… | Run erpnext_link_report on a bench against the live roster, then chase the ~50 people it lists to click Link ERPNext once, with a named owner and a scheduled afternoon. Left until the phase is tested, this presents as an intermittent Phase 5 bug affecting only some people. |
-| TASK-2026-01300 |  | Prove the edit and delete trail end to end, both directions,… | Run the demonstration on a real bench in both directions (deleted from the chat app, then deleted from the native client), asserting the same end state each time: no deleted content on an ordinary read, the revision row holding the original with actor/origin/timestamp, the message gone from the other surface, the… |
-| TASK-2026-01303 |  | Run the whole notification matrix live on production before… | Script the walkthrough first, then run it live on production: walk each presence state saying the expected outcome aloud before it happens with debug.explain shown alongside; a twenty-messages-in-twenty-seconds burst to someone absent showing badge 20, one bell row and at most two banners; a read on the phone clearing… |
-| TASK-2026-01322 |  | Pilot rollout behind a server-side flag, layered rollback,… | 1) Choose and brief the 5-8 pilot users in writing about oversight access, assistant reads and retention. 2) Point the Chat app's own visibility setting at that same group in the Workspace admin console, and confirm both sides name the same people. 3) Write the layered-rollback table (per layer: blast radius, what is… |
-| TASK-2026-01330 |  | Run the bench-required chat suites - nothing in Phase 2 has… | On a non-production site: `bench --site <site> execute erpnext_enhancements.chat.bench_verify.run` and read the printed PASS/FAIL block, then run the three *_bench.py suites (permissions, attachments, triton) which no runner currently invokes. |
-| TASK-2026-01331 |  | Live round trip against real Google Chat - what the fake… | Run the live pilot round trip, log the first real event payload verbatim and diff it against chat/testing/fixtures.py, capture a real 429 body, and confirm a relayed message shows in the native Chat client authored by the real person with no App badge. Re-disarm enabled/dry_run_mode afterwards. |
-| TASK-2026-01332 |  | Re-run C2 as an ordinary pilot user, not a super-admin,… | On production-erpnext-standard-vm: `python3 ~/c2_events_subscription_check.py <ordinary-pilot-user>@sapphirefountains.com`. Every call carries validateOnly=true so nothing is created. If Q1 fails for an ordinary user, shape B does not scale to the roster and the inbound design needs revisiting before rollout. |
-| TASK-2026-01363 |  | Pilot walkthrough - exercise the six Phase 3 features that… | Run the ten steps in the stated order (order matters: step 2 depends on step 1, and step 7 destroys the message step 6 needs), then say "walkthrough done" so the database verification pass can run in one go. |
-| TASK-2026-01366 |  | Confirm the four Phase 5 decisions built on a recommendation,… | Get Nikolas's yes/no on four items: CQ-17 the 40,000-token context ceiling (per-turn realised counts are being logged, so this can be answered from data); CQ-18 the narrow confirmation exemption for Triton's conversational reply (declining means Phase 5 must build an approval surface inside Google Chat, which is a… |
+| TASK-2026-01267 |  | Everyone Triton may answer for must link ERPNext first, or… | Run erpnext_link_report on a bench against the live roster, then chase the ~50 people it lists to click Link ERPNext once, with a named owner and a scheduled afternoon. Left until people are using the widget in anger, this presents as an intermittent bug affecting only some of them. |
 | TASK-2026-01384 |  | agent_user is NULL for inbound, missed and voicemail rows | Decide explicitly how unattributed call rows are surfaced if per-agent scoping is ever adopted — an agent seeing a partial archive with no indication that rows are missing is worse than the current role-based all-or-nothing. Only after that is settled can the scoping approach be weighed against the role approach that… |
 | TASK-2026-01390 |  | Orphaned Cloud Run load balancer stack - decide Cloud Armor… | Decide whether the Cloud Armor policy on the orphaned triton-backend-service should be reattached to the live triton-backend-svc or deliberately dropped; then delete backend service triton-backend-service, url map triton-load-balancer and NEG triton-frontend-network-endpoint-group, and tick the box in… |
 | TASK-2026-01392 |  | Cloud SQL triton-main-db - verify existence and cost | Confirm whether triton-497321:us-central1:triton-main-db still exists, whether anything connects to it, and what it costs; if it is an orphan, fold it into the load-balancer teardown decision (TASK-2026-01390) and update deploy/MIGRATION.md section 8. |
-| TASK-2026-01416 |  | Run the Phase 5 bench suite and record the evaluation baseline | On a real site, run bench --site <site> run-tests --app erpnext_enhancements --module erpnext_enhancements.tests.test_chat_triton_bench, and record: the result of test_a_non_members_message_appears_in_no_tier (the one that matters), the fail-closed audit group, the three-value watermark group, the two-identities… |
-| TASK-2026-01419 |  | The Phase 5 gate: the same question from both clients,… | Type the same question as an @triton mention in the native Google Chat client and in the ERPNext chat window, and observe: the same answer, posted in the same thread, authored by the bot rather than the asking person, with citation links that resolve to real messages. Prerequisites to sort first: the participants must… |
 | TASK-2026-01465 |  | Meta App Review - publishing + ads_read in one submission | Complete Meta Business Verification first (company documents only). Pre-flight before submitting: confirm the Instagram account is a Business account, not Creator or personal, and that it is linked to the Facebook Page inside Business Manager - without that link IG publishing is impossible regardless of approval. Then… |
 | TASK-2026-01466 |  | LinkedIn Community Management API access (organic publishing) | Confirm who holds LinkedIn Page super admin; create a brand-new app; file Development Tier, build against it, then file Standard Tier with the required screencast. Update the status table in docs/marketing-platform-approvals.md as each moves. |
 | TASK-2026-01467 |  | LinkedIn Marketing Developer Platform access (ads reporting) | File the Advertising API request from a second LinkedIn app and track it in the status table. No code is blocked on it today. |
@@ -473,8 +407,6 @@ every "shipped" claim; **11 of those claims were overturned** and are marked `�
 | TASK-2026-01474 |  | Fix the Search Console 403 — organic has read 0 for the… | Identify the Search Console property administrator; add the GA4/GSC service account as a user on the property; confirm the property type (sc-domain: vs URL-prefix) matches what gsc_property_url requests; then backfill the affected range so the historical zeros stop reading as real organic figures. |
 | TASK-2026-01478 |  | Security pre-flight: verify the X-Forwarded-For chain before… | Infrastructure: find the nginx directive putting the load-balancer address into the first X-Forwarded-For entry (likely proxy_set_header X-Forwarded-For $remote_addr) and identify what changed on 2026-07-18; then re-key the rate limiter once a real client address is available. Repo-side leftover: the X-Forwarded-For… |
 | TASK-2026-01500 |  | Verify Triton deploy: import check locally, confirm rollback… | After the call-tracking work lands: run `python -c "import app.main"` locally; confirm a failed deploy still auto-rolls-back; and confirm the Twilio number-pool credentials and the hard provisioning cap are present in the deployed environment, not just in a local .env. |
-| TASK-2026-01510 |  | Rollout: pilot gating server-side, and a degradation that is… | Agent-draftable and not yet written: the 24-step non-engineer checklist with expected results and the four gate steps; the layer-by-layer rollback table (including the Workspace Events subscription that cannot be undone in place, only recreated plus a reconciliation sweep); the disclosure note for Nikolas to send; and… |
-| TASK-2026-01512 |  | Governance decisions: eight answered 2026-08-13, three still… | Still needing Nikolas: D-10, whether to fund a nightly off-box append-only copy of the audit rows to a bucket with object versioning and a retention lock (offered without a recommendation; the hash chain makes tampering detectable, not impossible). D-11, whether to import historical Google Chat content —… |
 
 ### Not started
 
@@ -488,17 +420,17 @@ every "shipped" claim; **11 of those claims were overturned** and are marked `�
 | TASK-2026-01477 |  | The join that justifies the project: spend → Lead →… | The join does not exist. Nothing in the repo reads Ad Daily Metric except the module's own doctype code — the only other mention anywhere is a docstring in tests/test_marketing_settings.py. What exists is a different, older thing that should not be mistaken for it: kpi_dashboards/report/marketing_spend_rollup computes… |
 | TASK-2026-01480 |  | Per-platform OAuth: start / callback / refresh / disconnect | No OAuth code exists for marketing. A case-insensitive grep for 'oauth' across erpnext_enhancements/marketing/ returns nothing, and the only start_oauth / oauth_callback / disconnect_callback in the whole app are the QuickBooks ones in quickbooks_online/core/api.py — the very pattern this task says to copy. Marketing… |
 | TASK-2026-01481 |  | Publishing doctypes + the outbox and its sweeper | No code on main. The marketing module contains only the Phase 1 ads data model (Ad Account, Ad Campaign, Ad Daily Metric, Marketing Raw Payload, Marketing Settings, Marketing Sync Log). None of the six publishing doctypes exist -- a repo-wide search for 'Social Account', 'Social Post', 'Social Post Target', 'Social… |
-| TASK-2026-01482 |  | Rate limiter + backoff: pure decision functions, Redis Lua… | No code on main. There is no marketing/publish/ratelimit.py and no marketing backoff module; the marketing package is doctype/ plus README only. The two source files this task says to copy are present and unchanged -- chat/sync/ratelimit.py and chat/gchat/backoff.py -- so the template exists but nothing has been… |
+| TASK-2026-01482 |  | Rate limiter + backoff: pure decision functions, Redis Lua… | No code on main. There is no marketing/publish/ratelimit.py and no marketing backoff module; the marketing package is doctype/ plus README only. The two source files this task says to copy -- chat/sync/ratelimit.py and chat/gchat/backoff.py -- went with the chat module in v1.426.0, so the template now has to be read out of git history (`git show v1.423.0:erpnext_enhancements/chat/sync/ratelimit.py`) rather than off the tree. |
 | TASK-2026-01483 |  | Meta publisher — Facebook Pages + Instagram content publishing | No code on main. There is no marketing/platforms/ directory and no meta.py; no Facebook Pages or Instagram Content Publishing client exists anywhere in the repo. No per-network validation (aspect ratio, caption length, hashtag limits) has been written. The only Meta material in the repo is planning prose in… |
 | TASK-2026-01484 |  | LinkedIn publisher — organization posts | No code on main. No marketing/platforms/linkedin.py, no organization-URN post client, no image/video upload registration step. Nothing in the repo references LinkedIn outside the two marketing planning docs. Still blocked on Community Management API approval; note the filing constraint recorded in CHANGELOG v1.278.4… |
 | TASK-2026-01485 |  | YouTube uploader — resumable upload, quota-aware queue | No code on main. No marketing/platforms/youtube.py, no resumable-upload implementation, no quota accounting, and no OAuth token storage for a channel owner. The GCS pattern the task says to reuse does exist at training/gcs_media.py. Two corrections for whoever builds this, from CHANGELOG v1.278.4: an upload costs 1… |
 | TASK-2026-01486 |  | Draft → approve → publish workflow + marketing roles | No code on main. There is no Social Post doctype for a workflow to attach to, so the draft/approve/publish workflow cannot and does not exist -- fixtures/workflow.json carries no marketing workflow, and there are no approver or approval-timestamp fields anywhere. On roles: a 'Marketing Manager' role already exists and… |
-| TASK-2026-01487 |  | /marketing SPA — calendar, composer, media picker, approval… | No code on main. erpnext_enhancements/www/ contains no marketing.py and no marketing.html; hooks.py website_route_rules (line 923) has exactly one entry, for /chat. No marketing bundle exists -- the only marketing-named JS in the repo is the four pre-existing KPI custom_html_blocks widgets and the Marketing Spend… |
+| TASK-2026-01487 |  | /marketing SPA — calendar, composer, media picker, approval… | No code on main. erpnext_enhancements/www/ contains no marketing.py and no marketing.html; hooks.py website_route_rules has exactly one entry, and since v1.426.0 removed /chat it is for /feedback. No marketing bundle exists -- the only marketing-named JS in the repo is the four pre-existing KPI custom_html_blocks widgets and the Marketing Spend… |
 | TASK-2026-01488 |  | Engagement metrics pull-back — close the loop from post to… | No code on main. The Social Post Metric doctype this task writes into does not exist, and neither does any nightly engagement pull -- hooks.py registers no marketing scheduler_events at all. The upsert-on-restate convention the task says to mirror is implemented for paid ads (marketing/doctype/ad_daily_metric with its… |
 | TASK-2026-01489 |  | Field photo capture → content pipeline (Time Kiosk +… | No code on main for the marketing extension. The base this task builds on is real and unchanged: api/time_kiosk.record_job_photo (line 696) still keys on the device-minted client_uid, and workforce/photo_routing.py (WP-3, pre-existing) already copies a job photo onto the Project and tags it cust:/vs:/shot:. But none… |
 | TASK-2026-01490 |  | Index Drive project folders into Marketing Media Asset | No code on main. The Marketing Media Asset doctype does not exist, so there is nothing to index into, and no indexing job of any kind has been written. The google_drive module and its per-project folder provisioning are unchanged, and the scar the task warns about is still intact and must stay that way:… |
 | TASK-2026-01491 |  | AI caption and reply drafting via Vertex (drafts only, into… | No code on main. No caption drafting and no GBP review-reply drafting exists. The infrastructure the task reuses is all present -- api/gemini.py, the existing email/SMS reply drafting in api/communication.py, and the ai_governance module with its doctypes and tasks.py -- but nothing marketing-related calls into any of… |
-| TASK-2026-01492 |  | Campaign landing pages + UTM link builder | No code on main. There are no campaign landing pages in erpnext_enhancements/www/ and no UTM link builder or short-link minting anywhere -- a repo search for a link builder returns only chat/links.py, which is unrelated Chat URL handling. The precedent the task names is present and is the right template:… |
+| TASK-2026-01492 |  | Campaign landing pages + UTM link builder | No code on main. There are no campaign landing pages in erpnext_enhancements/www/ and no UTM link builder or short-link minting anywhere -- a repo search for a link builder now returns nothing at all, chat/links.py having gone with the chat module in v1.426.0. The precedent the task names is present and is the right template:… |
 | TASK-2026-01493 |  | Newsletter + SMS nurture on Frappe Newsletter and the… | No code on main. Nothing in the app touches Frappe Newsletter or Email Group -- the only two 'newsletter' hits in the codebase are string literals in channel-classification lists (crm_enhancements/attribution.py:124 EMAIL_MEDIUMS, kpi_dashboards/marketing_spend_import.py:55), not integration code. No segmentation… |
 | TASK-2026-01494 |  | Marketing consent model + SMS STOP handling (TCPA) | No code on main, in either repo. There are no marketing email or SMS opt-in fields on Contact -- the sole 'unsubscribed' hit in fixtures/custom_field.json is an insert_after anchor referencing a stock Frappe field, not a consent field of ours. No source/timestamp/IP consent evidence is captured, no global unsubscribe,… |
 | TASK-2026-01495 |  | Google Business Profile — reviews, AI-drafted replies, local… | No code on main. No marketing/platforms/gbp.py, no review ingestion or alerting, no local posts, and no automatic review requests after a completed Project or maintenance visit. Every GBP mention in the repo is prose -- docs/marketing-platform-plan.md, docs/marketing-platform-approvals.md, and the CHANGELOG v1.278.4… |
@@ -507,6 +439,12 @@ every "shipped" claim; **11 of those claims were overturned** and are marked `�
 | TASK-2026-01499 |  | Inbound call webhook — report the attributed call to ERPNext | No inbound handler for a pool number exists in Triton, and nothing reports a dialled tracking number, disposition or call SID to ERPNext for attribution. Both ends are missing: the sender here, and the ERPNext receiver (TASK-2026-01496). The idempotency requirement (unique index on the Twilio call SID) has no table to… |
 
 ### Shipped — verified in code on `main`, not just in a changelog line
+
+> Two dozen of these rows are chat, and they stay. This is a dated ledger of what was verified in
+> code on 2026-08-15, and each row was true when it was written; deleting them would make the
+> reconciliation look like it found less than it did, and would quietly erase the record of what
+> v1.426.0 cost. **Read every chat row below as history rather than as inventory** — the feature it
+> names shipped, and was then removed by [ADR 0011](../decisions/adr/0011-retire-google-chat-and-coworker-chat.md).
 
 | Task | Version | Released | PR | What it was |
 |---|---|---|---|---|

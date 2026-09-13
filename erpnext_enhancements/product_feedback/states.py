@@ -10,7 +10,8 @@ DocType JSON's ``Select`` options, so the two cannot drift; renaming a Select op
 a data patch or existing rows refuse to save, and that test is what makes the rename
 visible before it ships.
 
-Modelled on :mod:`erpnext_enhancements.chat.sync.states`, for the same reasons.
+The retired chat module's ``chat/sync/states`` was this shape first and for the same
+reasons; it went with that module in v1.426.0, so this file is now the worked example.
 
 --------------------------------------------------------------------------------------
 Why the lifecycle is a ``status`` field and not a Frappe Workflow
@@ -25,8 +26,9 @@ accept-the-edited-proposal call, not a ``docstatus`` bump. Expressing that as a 
 means either a second status field for the machine states or transitions no human ever
 performs. See ADR 0010.
 
-``docstatus`` is wrong here for the reason ``chat_export_request.py`` already states: a
-governance record that can be *cancelled* is a governance record with an undo button.
+``docstatus`` is wrong here for the reason the chat module's ``chat_export_request.py``
+recorded before it was deleted: a governance record that can be *cancelled* is a governance
+record with an undo button.
 
 --------------------------------------------------------------------------------------
 Two things the table encodes that are easy to miss

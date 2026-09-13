@@ -73,10 +73,11 @@ jobs:
   #
   # What is left is genuinely editorial, and TASK-2026-01241 tracks it: mostly
   # autofixable idiom (UP030/UP031, RUF005/007/015, I001), plus two decisions —
-  # 36 `# noqa: BLE001` comments that RUF100 calls unused (BLE is not in `select`,
+  # the `# noqa: BLE001` comments that RUF100 calls unused (BLE is not in `select`,
   # so the suppression is dead, but the comments mark deliberate blind `except`
-  # handlers in chat/governance/ that CLAUDE.md calls load-bearing), and B905's
-  # `strict=` on 9 call sites.
+  # handlers that CLAUDE.md calls load-bearing), and B905's `strict=` on 9 call
+  # sites. Most of the BLE001 sites were in chat/governance/ and went with that
+  # module in v1.426.0; the class of finding did not.
   #
   # F821 is already a hard gate in its own job below; that is the rule that
   # actually catches runtime failures, and it does not wait for this.
@@ -157,40 +158,6 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip httpx pytest jinja2
       - run: python -m unittest test_sync_time_kiosk.py -v
-      # test_chat_mcp_denylist is APPENDED here rather than given its own step, and it is
-      # the one place in this file where appending is right rather than wrong: it exercises
-      # _gate.py under the sys.modules stub set that test_assistant_tools_schema installs,
-      # so it needs to share a process with it. Every other bench-free suite gets its own
-      # step precisely so the stub sets cannot cross-talk.
-      - name: AI gate + assistant-tool contract + integrations health + device mgmt
-        run: >-
-          python -m unittest
-          erpnext_enhancements.tests.test_assistant_tools_schema
-          erpnext_enhancements.tests.test_ai_gate_unit
-          erpnext_enhancements.tests.test_chat_mcp_denylist
-          erpnext_enhancements.tests.test_integrations_health
-          erpnext_enhancements.tests.test_device_management
-          erpnext_enhancements.tests.test_mdm_integration
-          erpnext_enhancements.tests.test_drive_match -v
-      # Its own step, and not appended above, because it installs its own `frappe` stub —
-      # the rule every bench-free suite here follows except the one noted above.
-      #
-      # It guards two things that failed silently in production: that a Triton error body
-      # gives up its `code` and `request_id` and NEVER its `message` (the message can quote
-      # the prompt, and the prompt is the transcript), and that a cached Triton session id
-      # Triton no longer has costs one retry rather than thirty days of a dead room.
-      - name: Triton chat client + bot credential link
-        run: python -m unittest erpnext_enhancements.tests.test_chat_triton_client -v
-      # Also its own step, and for the same reason: `chat/invoke/handler.py` reaches the
-      # invocation-log controller at import, so this one needs `frappe.model.document` on
-      # top of the client suite's stubs.
-      #
-      # It guards the *other* half of that message rule. The client is careful never to log
-      # a Triton error body; the handler was so careful it logged nothing at all, recording
-      # `model turn failed: TritonUnavailable` for four unrelated causes in four different
-      # files. The message that class carries is written to be safe — and only that class's.
-      - name: Triton model-failure detail (the reason survives, and only the safe one)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_invoke_failure_detail -v
       # The A1 read tools each wrap a function that returns more than a reader
       # should see: a live billable Google Maps browser key, the e-signature
       # evidence (token hashes, the agreement text as signed, signature image,
@@ -198,6 +165,15 @@ jobs:
       # per-learner answers behind an "aggregate" item analysis. Static, and
       # checked against the live doctypes, so a field renamed later cannot drop
       # out of the list it is supposed to be in.
+      - name: AI gate + assistant-tool contract + integrations health + device mgmt
+        run: >-
+          python -m unittest
+          erpnext_enhancements.tests.test_assistant_tools_schema
+          erpnext_enhancements.tests.test_ai_gate_unit
+          erpnext_enhancements.tests.test_integrations_health
+          erpnext_enhancements.tests.test_device_management
+          erpnext_enhancements.tests.test_mdm_integration
+          erpnext_enhancements.tests.test_drive_match -v
       - name: Assistant tool redaction (what the read tools must never return)
         run: python -m unittest erpnext_enhancements.tests.test_assistant_tools_redaction -v
       # Its own step, and NOT appended to the assistant-tool step above, because that
@@ -728,8 +704,20 @@ jobs:
       # anything in the app still routes to the page it closes.
       - name: Classic builder retirement flag (polarity, gate, reversibility)
         run: python -m unittest erpnext_enhancements.tests.test_classic_builder_retirement -v
+      # The chat module's retirement (ADR 0011, v1.426.0). Two sweeps and a survivor list.
+      #
+      # The survivor half is the one that earns its place: three things the deletion nearly
+      # took with it were all SILENT. `triton_widget.js` imports three browser modules that
+      # lived under `public/js/chat/` and ships in the GLOBAL Desk bundle, so a stale import
+      # is a failed `bench build` -- which the deploy runs AFTER `bench migrate` has already
+      # committed. And ~60 lines of decision #7's citation CSS sat inside the "PHASE 3" block
+      # that was otherwise deleted wholesale; losing them strips inline citations off every
+      # Triton answer with nothing anywhere failing.
+      - name: Chat module retirement (the sweep, and what had to survive it)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_module_retirement -v
       # The Single default-drift backfill. This patch keys on FALSINESS, which is the
-      # opposite of backfill_chat_settings_defaults and unsafe in general -- every one of
+      # opposite of the chat settings backfill this repo used to carry, and unsafe in
+      # general -- every one of
       # its 22 fields already HAS a tabSingles row holding '0', so the row-absence predicate
       # would match nothing, commit, and log itself as a success (the v1.280.3 shape). What
       # makes it safe is the contents, not the predicate: no Check field is in the table, so
@@ -1066,6 +1054,15 @@ jobs:
       #
       # Fails only in the vulnerability direction (server says safe, browser does not). It is
       # a pipe rather than a new dependency — node and python are both already in this job.
+      # The two browser modules the Triton widget still imports, at their post-chat paths
+      # (public/js/triton/). They moved in v1.426.0 when public/js/chat/ was deleted; the
+      # renderer is the widget's ONLY markdown path -- `frappe.markdown` was removed as an
+      # unsanitised innerHTML sink -- and the citation renderer is decision #7's inline
+      # `[[ref:N]]` rendering, which still runs on every answer Triton streams.
+      - name: Triton markdown renderer (bench-free, node)
+        run: node scripts/test_triton_markdown.mjs
+      - name: Triton inline citation renderer (bench-free, node)
+        run: node scripts/test_triton_citations.mjs
       - name: URL boundary must never be looser than the browser (differential fuzz)
         run: node scripts/fuzz_url_safety.mjs | python scripts/fuzz_url_safety_check.py
       # A www/ controller whose filename contains a hyphen is never imported by
@@ -1140,524 +1137,6 @@ jobs:
       # of 32 item rows on production were mislabelled.
       - name: Procurement quantity/status math (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_procurement_quantities.py -q
-      # -----------------------------------------------------------------------
-      # Chat / Google Chat (ADR 0009, Phase 1). SIX steps, one file each, and the
-      # split between them is not cosmetic.
-      #
-      # Five of these are pytest-style (plain functions, `monkeypatch`) and get
-      # their own `python -m pytest` step. Appending one of them to a `python -m
-      # unittest` module list above would collect ZERO tests and report success --
-      # the exact failure that left the QuickBooks suite running nowhere for weeks,
-      # and that left test_triton_personas.py never executed at all. The guardrails
-      # suite is TestCase-based and so is the one that belongs on unittest.
-      #
-      # One file per step for the other reason too: each bench-free suite installs
-      # its own `frappe` stub, and a shared process is how they cross-talk.
-      #
-      # The security-relevant one is the webhook verifier. `chat.gchat.webhook.handle`
-      # is `allow_guest=True` -- world-reachable -- and the JWT is the only thing
-      # between it and an open relay. Two of its six negative cases (a valid Google
-      # token with the wrong issuer, and one minted for another audience) are exactly
-      # what a generic ID-token verification waves through, so they are pinned by
-      # name. Verified 2026-08-08 by deleting the issuer check from a copy of the
-      # module: ten assertions went red, the rest stayed green.
-      - name: Chat guardrails (DocPerms, realtime targeting, transport containment)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_guardrails -v
-      - name: Chat Google client (backoff, id derivation, dry-run calls nothing)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_gchat_client.py -q
-      - name: Chat DWD assertion claims (exp <= 10 min, no key material logged)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_auth_claims.py -q
-      - name: Chat webhook JWT verification (six negative cases, 401 with no DB write)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_webhook_verify.py -q
-      - name: Chat Settings budget arithmetic (tier budgets + reserve <= ceiling)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_settings_budget.py -q
-      # Phase 2's pure tier. These six exist BECAUSE this is the only tier with automatic
-      # regression protection in this repo, so leaving any of them unwired would defeat the
-      # entire reason the modules were written frappe-free. One file per step, same as the
-      # suites above: each installs its own `frappe` stub in setUpModule and a shared
-      # process is how they cross-talk.
-      #
-      # The decisions suite is the one to look at first when it goes red. Its table IS the
-      # echo-suppression specification, and the failure mode it guards is asymmetric: a
-      # duplicated message is visible and annoying, while a SUPPRESSED one is a coworker's
-      # message that silently never arrives. Test names say which direction they defend.
-      - name: Chat relay state machine (every legal transition, and every illegal one raising)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_sync_states.py -q
-      - name: Chat echo suppression + event parsing (the decision matrix is the spec)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_sync_decisions.py -q
-      - name: Chat 32,000-byte budget (emoji, CJK, no split codepoints)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_budget.py -q
-      - name: Chat per-space token bucket arithmetic (GCRA, pure half only)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_ratelimit.py -q
-      - name: Chat realtime targeting (never a bare room, never task_id, always after_commit)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_realtime_targeting.py -q
-      - name: Chat fake API harness (quotas, requestId replay, tombstones, the race)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_fake_api.py -q
-      # The engine. Separate steps rather than one pytest invocation over the directory,
-      # because each suite installs its own `frappe` stub in setUpModule and they cross-talk
-      # in a shared process -- run together these six go red for reasons that have nothing to
-      # do with the code under test.
-      - name: Chat write path / outbox (seq allocation, relay refusal, edit+delete ordering)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_outbox.py -q
-      - name: Chat outbound relay (state machine, token bucket, sweeper, kill switch, chaos 4-9)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_outbound.py -q
-      - name: Chat inbound ingest + Pub/Sub puller (echo ladder, the §4.D race, defer timer)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_inbound.py -q
-      - name: Chat provisioning + membership (three modes, revert cap, converging diff)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_provisioning.py -q
-      - name: Chat attachments (permission parity, upload cost, Drive links stay links)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_attachments.py -q
-      - name: Chat subscription lifecycle + reconciliation sweep (chaos 10)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_subscriptions.py -q
-      # Raw SQL is the one path the permission stack does NOT cover: a
-      # permission_query_conditions fragment is appended by get_list and by nothing else, and
-      # frappe.get_all is get_list(ignore_permissions=True) wearing a friendlier name. So this
-      # walks every module under chat/ with `ast` and asserts each raw query either lives in an
-      # allowlisted operational table or ANDs in permissions.membership_filter_sql itself.
-      # Mutation-tested in both directions when it was written: a planted non-compliant query
-      # turns it red and naming the offender, and the same query with the filter turns it green.
-      - name: Chat raw-SQL membership guard (the likeliest route to a real data leak)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_rawsql_guard -v
-      # Phase 5's fence, and it lands before the code it polices -- a scan written after
-      # the search functions exist is a scan that gets argued with, one exemption at a
-      # time, by an author who has already written the query. Four rules: the index tables
-      # (Chat Context Chunk and the two digests) are named from exactly one file; every
-      # query builder in chat/retrieval/ takes `allowed_rooms` as a REQUIRED FIRST
-      # POSITIONAL parameter, so omitting it is a TypeError in development rather than an
-      # unfiltered query in production; the package exports exactly two symbols; and the
-      # entry point has no parameter at all by which a caller supplies room ids.
-      #
-      # The failure this guards is the only one in Phase 5 that nobody notices: every other
-      # bug here produces a wrong answer, and this one produces a correct answer delivered
-      # to somebody who is not in the room.
-      - name: Chat retrieval gate has one door (the ungated-SQL source scan)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_gate_source_scan -v
-      # `origin_timestamp` was selected from Chat Message, which has no such field. MariaDB
-      # answers that with 1054 on every execution, and it ran on production for two hours
-      # because nothing had ever executed that statement: the pure suites test the chunker,
-      # and the SQL that feeds it needs a database. A wrong column name is invisible to every
-      # bench-free test, and review does not catch it either - the name was entirely
-      # plausible. Both sides of the check are files, so it needs no bench.
-      # Triton's answers rendered three different ways on three surfaces, all wrong: the SPA
-      # showed literal **bold**, the widget's frappe.markdown lives in the Desk bundle and fell
-      # back SILENTLY to escaped text on /chat, and Google Chat got raw CommonMark whose double
-      # asterisks its single-asterisk bold turns into bold-plus-a-stray-character.
-      #
-      # The renderer builds NODES, never HTML strings, because the input is model output: it
-      # carries prompt-injected content and quotes employees' messages back verbatim. The suite
-      # asserts that directly - no innerHTML is ever assigned, and no element is created that
-      # the renderer does not itself construct - plus the §4.G.7 hostile corpus through every
-      # link path.
-      # Phase 6 §4.A.4 and §4.D.3 layer 4. Chat Audit Log shipped in v1.285.0 as a vault
-      # with nothing in it - four immutability layers and no writer, which is §6 step 5's
-      # ordering. This is the first writer, and two properties need a test rather than a
-      # comment.
-      #
-      # ONE CHAIN PER TABLE. Interleaving two writers into a single chain makes every
-      # concurrent write a fork, and the verifier reports a fork as a permanent break that is
-      # indistinguishable from tampering. Separate genesis strings, separate locks.
-      #
-      # And every DATA FIELD is signed, checked by set equality against the DocType JSON. The
-      # per-field test alone is not enough: deleting a field from the signed tuple makes that
-      # loop skip it, so it stays green while the field becomes editable without breaking the
-      # chain - which is exactly what the chain exists to catch.
-      #
-      # Own step: installs its own frappe stub in setUpModule.
-      - name: Chat governance audit (the second chain, and the role-grant hook)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_governance_audit -v
-      # The unified access report - ONE definition of a non-participant read, over both audit
-      # tables. Two tables is acceptable; two definitions of a read is not, and a consumer
-      # querying either table directly counts a request that spanned four rooms as one read or
-      # as four depending which table it picked.
-      #
-      # The half asserted here is the pure half: how a reason is graded (the failure mode that
-      # matters is the placeholder that CLEARS the length bar, because that one only appears
-      # once somebody has worked out the field is unread), what the subject projection is
-      # allowed to contain, and that `reason_category` is signed only when present - which is
-      # what let a governance column join an already-hashed log without re-serialising every
-      # historical row into a false "tampered" verdict.
-      #
-      # Own step: installs its own frappe stub in setUpModule.
-      - name: Chat access report (the unified read record, and optional chaining)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_access_report -v
-      # The oversight read path. `retrieve_for_oversight()` had ZERO callers for its whole
-      # life, and two defects only a caller would have surfaced: T1 was gated on a single
-      # `room` (the oversight path names a SET and no thread, so the verbatim tier never ran
-      # and the read answered with summaries while looking complete), and the authored tier
-      # ran as the auditor, returning their OWN messages in place of the ones under audit.
-      #
-      # Those two are AST, on the shape of the call, because the WIRING is what regressed.
-      #
-      # A THIRD defect then hid behind exactly that choice (v1.306.2): the tier that fixed the
-      # first one served the whole named room set with one `order by seq desc limit 200`, and
-      # `seq` is a PER-ROOM counter — so a busy room took every slot and a quiet room named in
-      # the same read came back empty, while chunks and digests still answered. Every AST
-      # assertion that could have caught it was already here and passed, because the source
-      # text is identical either way. So the suite now also installs its own frappe stub and a
-      # fake `db.sql` that answers from what the statement BOUND rather than how it was
-      # written; that is what lets one fake both reproduce the old defect and verify the fix.
-      # Own step, per the stub rule above. Verified to bite: reverting gate.py fails six of
-      # these assertions, four of them behavioural rather than AttributeError.
-      - name: Chat oversight read (whose messages, which tier, and every named room)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_oversight_read -v
-      # The oversight viewer's gates. Three properties make this surface safe to switch on:
-      # G6-10 (a bad reason is REFUSED, not accepted-and-blanked, graded by the same function
-      # the compliance report uses so there is one threshold rather than two), G6-6 (no
-      # realtime at all - a socket join on a room the auditor is not in is a read this module
-      # cannot audit), and that the free-text reason never reaches the subject.
-      #
-      # AST and comment-stripped text, because three separate text scans in this change
-      # flagged the prose explaining why a thing is absent. A guard that cannot tell an
-      # explanation from a call gets satisfied by deleting the explanation.
-      - name: Chat oversight viewer (the reason gate, and the absent socket)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_oversight_viewer -v
-      # The export bundle - the artefact that LEAVES the building, so its contents are a
-      # legal question wearing a serialization costume. Two G6-9 properties:
-      #
-      #  * the deleted body is in revisions.jsonl and NOT in messages.jsonl. That is a
-      #    DECISION, not a filter: on this schema an is_deleted=1 row RETAINS its text
-      #    (divergence D4), so a naive dump hands over every deleted message in the file a
-      #    reader opens first. Verified to bite - removing the redaction fails two tests.
-      #  * a re-export is byte-identical apart from the timestamp and the export id, which
-      #    is what makes the manifest worth anything.
-      #
-      # Pure: chat/governance/export.py imports nothing from Frappe, so no stub is needed.
-      - name: Chat export (what leaves the building, and what does not)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_export -v
-      # The export runner's WIRING - the things a database hides rather than reveals:
-      # the frappe.enqueue kwarg name (this package has been bitten twice, once by a kwarg
-      # called `event` that the enqueue machinery ate before the job saw it), that the
-      # download endpoint writes its audit row BEFORE the bytes are attached and fails
-      # closed when that write does not happen, and that the job cannot strand a row in
-      # "In Progress".
-      #
-      # Own step: installs its own frappe stub in setUpModule.
-      - name: Chat export runner (the queue contract, and the download that records itself)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_export_runner -v
-      # Seeing through a delete. `tombstone_expanded` was the third event Chat Audit Log
-      # had declared since v1.285.0 with nothing able to produce it.
-      #
-      # The property asserted: the audit row is written BEFORE the body is returned, and a
-      # failed write REFUSES the read - record_governance_event swallows its failures and
-      # returns None, so a caller that ignores the return has assumed a record that does not
-      # exist. Plus: only a deleted message (a live one goes through the viewer, so the
-      # event type keeps one meaning and stays countable), and one shared reason grader.
-      #
-      # Own step: no frappe import needed, the module is only ever parsed.
-      - name: Chat tombstone expand (recorded before revealed, or refused)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_tombstone -v
-      # The alert path's JUDGEMENT, executed rather than inspected - alert_rules.py imports
-      # nothing, which was the point of splitting it out. The property that most wants a real
-      # test: the deduplication key never carries a measurement. A key holding the queue depth
-      # changes every time the depth does, so nothing matches its predecessor and the table
-      # grows exactly as fast as it would with no deduplication at all - while the code, the
-      # schema and the dashboard all claim the alerts are deduplicated. Invisible until
-      # somebody counts rows.
-      #
-      # Pure: no frappe stub needed.
-      - name: Chat alert rules (dedup, doubling schedule, terminal resolve)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_alert_rules -v
-      # The SHAPE of the module that performs those decisions, which no unit test can see:
-      # the log-file line happens before any database work (the failure class where an alert
-      # matters most is the one where a database-backed alert is least likely to survive),
-      # nothing raises, the ops-space post passes no ignore_permissions, and email is
-      # frappe.sendmail and never a Notification Log row (G6-18).
-      #
-      # Scans DOCSTRING-STRIPPED source. Six text-matching assertions in this series flagged
-      # prose rather than code, and both new files discuss the forbidden name at length.
-      #
-      # Own step: no frappe import needed, the modules are only ever parsed.
-      - name: Chat alert surface (logged first, never raises, no membership bypass)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_alerts_surface -v
-      # The push sender's status table, which its own docstring calls "the module" and which
-      # nothing asserted until v1.299.5. Only 404/410 may retire a subscription: retire too
-      # eagerly and one bad afternoon wipes the roster, too reluctantly and the table fills
-      # with dead rows -- and neither is visible for weeks, because the symptom is a
-      # notification that did not arrive.
-      #
-      # The load-bearing assertion is that a 429 alerts under a subsystem inside
-      # alert_rules.SELF_DELIVERING. An alert about push must not be delivered by push: the
-      # ops-space channel is a Chat Message, whose banner is the thing that just failed.
-      # Asserted against the rules module rather than against the literal "notifications", so
-      # it still holds if this call site is rewritten.
-      - name: Chat web push sender (status table, one alert per fan-out, not self-delivered)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_webpush_sender -v
-      # What counts as drift, and what merely counts as SWITCHED OFF. This app ships dormant
-      # - enabled=0, dry_run_mode=1, relay_outbound_enabled=0, relay_inbound_enabled=0 - so on
-      # a shipped-state site every message has an empty gchat_message_name and no Google
-      # resource has an ERPNext row. A detector keyed on ABSENCE reports the entire corpus as
-      # drifted, forever, and cannot tell "the mirror drifted" from "the mirror was never
-      # turned on". DormantSiteTest is that scenario run against the real classifier: the
-      # verdict must flip on one affirmative fact (a relay job completed) and on nothing else.
-      #
-      # Pure: drift_rules.py imports nothing at all, which PurityTest asserts.
-      - name: Chat drift rules (evidence the mirror ran, never an empty column)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_drift_rules -v
-      # The promises the census makes that no unit test can see: it issues NO Google call of
-      # any kind, it repairs nothing, it never selects a body column, it refuses on the master
-      # switch before the feature switch, and it CLEARS findings it stops observing - a census
-      # that can only open findings produces a board of things that were once true.
-      #
-      # Own step: no frappe import needed, the modules are only ever parsed.
-      - name: Chat drift surface (no Google call, no repair, no bodies)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_drift_surface -v
-      # The survives-a-purge table, asserted for SET EQUALITY against chat/doctype/ on disk,
-      # so a chat DocType added next year fails the build until somebody decides what a purge
-      # does to it. Containment would let a new table be treated by accident, and the accident
-      # is silent in both directions - purged when it should survive, or kept when it holds a
-      # body. Plus the eligibility rule, which returns EVERY hold rather than the first.
-      #
-      # Pure: purge_rules.py imports nothing at all.
-      - name: Chat purge rules (what survives a purge, and why it cannot run)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_purge_rules -v
-      # The prerequisite the purge is blocked on: retiring derived coverage of destroyed
-      # messages. Two assertions here came out of a design review and were both wrong in the
-      # obvious version. The delete predicate keys on first_seq, not last_seq - for a snapped
-      # mark the two are equivalent, but the field is read_only on the DocField, which is not
-      # a database constraint, and for a mark set by hand last_seq leaves a chunk holding the
-      # retired transcript verbatim that can never be cleaned up, because the monotonicity
-      # rule forbids lowering the mark to re-snap it. And is_straddler is a DETECTION
-      # predicate as well as a construction-time one: the chunk sweep reads a room's messages
-      # and commits later, so a mark committed in between produces a straddler the snap never
-      # saw.
-      #
-      # Pure: chat/retire_rules.py imports nothing at all. It sits at the PACKAGE ROOT, not in
-      # chat/indexing, and that is load-bearing: chat/indexing is the writer package whose
-      # exemption rests on four properties, the fourth being "no endpoint importing it", and
-      # the retrieval gate needs this fragment.
-      - name: Chat retirement rules (the boundary, by arithmetic rather than re-chunking)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_retire_rules -v
-      # The WIRING of that arithmetic - a mark nothing reads is a column. The one that
-      # matters most is the watermark floor: indexer._rooms_needing_chunks computes its
-      # watermark as max(last_seq) over sealed chunks with NO staleness filter, so deleting a
-      # room's retired chunks would drop it and the ten-minute sweep would re-read every
-      # surviving message above the hole and re-chunk it VERBATIM with a fresh embedding. That
-      # is the specific reason purge_rules marked three doctypes BLOCKED.
-      #
-      # The gate half is correctness: a retired chunk or digest must never be served, and there
-      # are five separate queries that could serve one. The fragment is declared once.
-      - name: Chat retirement wiring (the floor, the gate, the emptied room)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_retire_wiring -v
-      # The WRITER, and the refusal that makes it safe to have at all. The mark asserts
-      # "every message at or below this seq is gone forever" and every consumer acts on that:
-      # the chunk sweep never reads below it, the digest sweep drops the room, the gate stops
-      # serving anything covering it. Set it over messages that still EXIST and you have not
-      # retired anything - you have made a stretch of live, readable conversation permanently
-      # invisible to the assistant, which nobody reports as a bug. They report that Triton
-      # "doesn't know about" a conversation, and the cause is a column nobody looks at.
-      #
-      # So the order is forced by code: destroy first, then retire. There is deliberately no
-      # argument that bypasses the check, and its absence is asserted - the case for a force=
-      # is always "I know they are gone", which is the belief the check exists to test.
-      - name: Chat retirement writer (destroy first, then retire)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_retire_writer -v
-      # The purge - the only code in this system that deliberately destroys a message.
-      # Almost all of it is ordering, and almost all of this suite asserts that ordering,
-      # because every one of these was got wrong in a design that was reviewed and rewritten:
-      #
-      #   * the audit row BEFORE any deletion, and a failed write refuses the purge -
-      #     outbox.refuse_hard_delete's own docstring says this path "has to write its audit
-      #     row first", and record_governance_event swallows failures and returns None;
-      #   * the message, THEN its sidecars - the reverse leaves a live message stripped of the
-      #     only copies of its superseded bodies when delete_doc raises, which it may;
-      #   * delete_permanently=True - without it the whole document, body included, is copied
-      #     into tabDeleted Document, and the purge reports success having retained everything;
-      #   * the retirement mark LAST, and only over the contiguous purged prefix.
-      #
-      # Five mutations are run against it in development; all five go red.
-      - name: Chat purge (the ordering, which is the whole thing)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_purge -v
-      # The assistant's own answers must never become indexed content. handler.py posts
-      # Triton's reply as a REAL Chat Message through the ordinary outbox, and its text is
-      # composed from the chunk bodies and digest summaries retrieval just handed it - so
-      # indexing it made a second verbatim copy of the quoted conversation that OUTLIVES the
-      # original, because every retention mechanism is a floor keyed on seq and the reply sits
-      # at the top of the room with its own creation date.
-      #
-      # The exclusion is deliberately narrow: T0 (room digest) and T2 (cross-room chunks) are
-      # excluded; T1 (thread) is untouched because gate._thread_messages reads Chat Message
-      # directly, so a follow-up still sees the earlier answer at no cost. The suite asserts
-      # BOTH halves - a later tidy-up that "completes" the exclusion would quietly cost Triton
-      # the ability to follow up on itself.
-      - name: Chat assistant replies are not indexed (TASK-2026-01569)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_assistant_not_indexed -v
-      # The assertion that 4.F as shipped CANNOT destroy anything: no delete_doc, no db.delete,
-      # no DELETE literal, no set_value, no body column, in either module. This matters more
-      # than the usual surface test because the destructive half was designed, reviewed by
-      # three adversarial passes and CUT - so the obvious next commit is somebody adding the
-      # twenty lines that "finish" it. This is what that commit collides with, and the failure
-      # message names the blocker: Phase 5's derived layer has a staleness story and no
-      # retirement story, so a purge can neither keep nor destroy the chunks and digests
-      # covering what it removes.
-      #
-      # Own step: no frappe import needed, the modules are only ever parsed.
-      - name: Chat purge surface (the planner cannot destroy anything)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_purge_surface -v
-      # The chat clients survive a 429, which is not a hypothetical: frappe.rate_limiter is
-      # wired into the request lifecycle in frappe/app.py, so frappe.conf.rate_limit applies a
-      # GLOBAL limiter to every request whether or not any endpoint carries a decorator.
-      # Before v1.294.1 no chat client mentioned 429 anywhere and four paths failed SILENTLY -
-      # presence kept beating into the limiter and read as absent (notification spam), the read
-      # mark was LOST because take() advances the cursor before the POST, push memoised the
-      # failed promise and stayed dead for the tab's session, and a refused room open left the
-      # tab joined to no socket room.
-      #
-      # A source scan because this repo has no JS test runner - package.json declares lint and
-      # nothing else. Comment-stripped, because every file it reads discusses 429 at length.
-      - name: Chat clients survive a 429 (presence, read marks, push)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_client_throttling -v
-      # The SPA received NO realtime events at all - not another person's message, not
-      # @triton's reply, not even its own - and looked healthy doing it, because every symptom
-      # pointed away from the cause. Frappe's socket server namespaces connections by site and
-      # its auth middleware compares `socket.nsp.name` against the resolved site; connecting to
-      # the bare origin lands in `/`, so the comparison is "" != site and the connection is
-      # refused. The engine.io handshake still succeeds (it runs before namespace middleware),
-      # the rejection happens inside the Node process so nothing reaches ERPNext's Error Log,
-      # and connect_error only set a status nobody surfaced.
-      #
-      # socketUrl is pure, so the one thing that mattered is directly assertable.
-      - name: Chat realtime connection URL carries the site namespace
-        run: node scripts/test_chat_socket_url.mjs
-      - name: Chat markdown renderer (browser half)
-        run: node scripts/test_chat_markdown.mjs
-      # The server half. Pure `re`, imports no frappe, so it gets its own step and can never
-      # cross-talk with another suite's stub set. The interesting assertion is that the
-      # conversion is NOT idempotent and that this is a property to know rather than a bug to
-      # fix: `*x*` is Chat's bold and CommonMark's italic, so no translator between them can be.
-      # What keeps it safe is the call site, which converts from the stored markdown every time.
-      - name: Chat markdown to Google Chat formatting (server half)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_gchat_markdown -v
-      - name: Chat SQL only names columns that exist (the 1054 guard)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_sql_columns -v
-      # Phase 6 §4.G.5. Two findings and one property.
-      #
-      # The findings: `enroll_org_units` and `start_org_mirror` shipped with NO role gate at
-      # all, so any authenticated System User could create Chat Room rows and open a
-      # provisioning run - and `dry_run` is a caller-supplied parameter, so the default that
-      # exists to make the irreversible half deliberate was one query-string value away from
-      # being skipped. And 42 of 43 chat endpoints declared no `methods=`, so every
-      # state-changer answered GET, which is CSRF-able whatever the token handling does.
-      #
-      # The property is the one that matters in a year: `chat/endpoints.py` is compared to
-      # the AST by SET EQUALITY, so a new @frappe.whitelist() in the package fails this suite
-      # until somebody classifies it as mutating or not. A hardcoded list nothing compares
-      # against the source is the same bug as no list, arriving later and with more
-      # confidence - the precedent is the chat MCP denylist, checked the same way.
-      #
-      # Its own step, like every other bench-free chat suite, so no other module's frappe
-      # stub is in sys.modules when it runs. This one imports no frappe at all.
-      - name: Chat HTTP surface is enumerated, POST-only where it mutates, role-gated where it must be
-        run: python -m unittest erpnext_enhancements.tests.test_chat_endpoint_surface -v
-      # Five of the seven retrieval modules import nothing but the stdlib, and this is why:
-      # what they decide fails SILENTLY when it is wrong. A chunker that is not deterministic
-      # makes the content hash meaningless and re-running the indexer duplicative. A ranker
-      # that adds raw scores instead of fusing ranks lets whichever tier has the larger
-      # numbers decide the answer. A ladder that degrades out of order throws away the thread
-      # the question was asked in. An assembly whose stable prefix is not byte-stable costs
-      # the entire prompt-cache discount on every request with no error and no log line. And
-      # a boolean-mode query built from raw user text turns "-20%" into an exclusion and
-      # returns fewer rows for no stated reason.
-      #
-      # Its own pytest step, like every other bench-free chat suite: `python -m unittest`
-      # silently collects zero tests from a file of plain functions and reports success.
-      - name: Chat retrieval pure logic (chunking, ranking, budget ladder, assembly order)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_retrieval_pure.py -q
-      # Decision #12 buys a non-participant read with a record of it, and that trade only holds
-      # while the record cannot be quietly altered afterwards. Immutability has to be argued in
-      # layers because each mechanism is bypassed by the next one down: DocPerm is bypassed by
-      # ignore_permissions (which the writer needs), the controller's before_save/on_trash are
-      # bypassed by db_set/db.set_value/raw SQL (none of which load a document), and both are
-      # bypassed by a direct MariaDB edit. This step is the layer that can see the controller's
-      # blind spot -- it walks the whole app and fails if any module other than the one
-      # allowlisted writer names an audit table beside a mutating call. Mutation-tested in both
-      # directions: eleven planted defects, including a guard neutered to `if False:` and a
-      # handler narrowed from Exception to ValueError, each confirmed caught.
-      - name: Chat audit log is append-only (the layer the controller cannot enforce)
-        run: python -m unittest erpnext_enhancements.tests.test_chat_audit_immutability -v
-      # The Phase 2 checkpoint gate. Two hundred messages both ways through the fake Chat API --
-      # edits, deletes, attachments, three 10-in-2-second bursts, a 60-second outage, every tenth
-      # event redelivered, both out-of-order pairs, a worker killed mid-relay -- then the whole
-      # thing replayed to prove reprocessing the backlog is a no-op.
-      #
-      # It asserts ARRIVAL counts per origin, not just the absence of duplicates, and that is
-      # deliberate: both of the worst bugs this phase produced were SUPPRESSIONS -- a real
-      # message consumed while believed to be our own echo -- and a soak that only counted
-      # duplicates would have passed with both of them present.
-      - name: Chat 200-message two-way soak (checkpoint gate, cold + replay)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_soak.py -q
-      # Phase 3's server surface: the read/write API the SPA runs on, which Phase 2
-      # deliberately did not ship (there was no get_rooms, no get_messages, no
-      # send_message at all). Its own pytest step, like every other bench-free chat
-      # suite, because each installs its own `frappe` stub in module scope and they
-      # cross-talk in a shared process.
-      #
-      # The rows that matter: a deleted row never emits its body (is_deleted = 1 rows
-      # KEEP their text -- Google's tombstone is content-free, so ERPNext is the only
-      # copy -- and one read path forgetting to strip it leaks exactly the thing the
-      # user chose to delete); the membership fragment never returns "" (an empty
-      # fragment disappears out of a hand-written WHERE and the query then returns
-      # everything); paging is keyset on `seq` and never OFFSET or a timestamp; and
-      # every whitelisted endpoint calls a gate before it reads.
-      - name: Chat Phase 3 API contracts (bench-free pytest suite)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_api_contracts.py -q
-      # Phase 4's suppression matrix -- ADR 0009 §H.1's twelve rows, asserted against a
-      # LITERAL expectation table rather than a re-implementation. This is the one rule
-      # deciding whether twenty people's phones buzz, and every way of getting it wrong
-      # is invisible: nobody reports the notification they did not receive, and a
-      # correctly-suppressed message and a silently-broken one look identical from the
-      # sender's side, the recipient's side and the server log.
-      # It also carries the two named tests that stop presence quietly becoming a sticky
-      # flag: stop the heartbeat with NO cooperation from the client (no pagehide, no
-      # disconnect, no key deletion), advance past the TTL, and assert notifications
-      # resume. A flag-based design leaves a crashed browser suppressing its owner's
-      # messages forever, which people report as chat being broken rather than as a
-      # notification bug.
-      # No frappe stub: the module under test imports nothing outside the standard
-      # library, and the suite asserts that too -- a `frappe` import appearing there
-      # would delete this whole step from CI silently.
-      - name: Chat Phase 4 notification policy (bench-free pytest suite)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_notification_policy.py -q
-      # The chat log-retention sync. Guards a bug whose whole nature is that nothing
-      # errors: `Chat Settings.relay_job_retention_days` and `inbound_event_retention_days`
-      # shipped in Phase 1, were validated, and were then read by NOTHING -- while both
-      # controllers carried a `clear_old_logs` Frappe never called, because nothing ever
-      # registered either doctype with Log Settings. Two dead controls, two dead
-      # implementations, two unbounded queue tables, and no symptom until somebody looks.
-      # The tests are mostly about the wiring being real rather than about arithmetic: a
-      # typo'd fieldname reads as 0, and 0 now means NEVER PURGE, so a typo silently
-      # restores the original bug. It also asserts the design decision -- that these two
-      # doctypes are NOT in `default_log_clearing_doctypes` -- because a static hook fights
-      # the settings field and `add_default_logtypes` re-adds any row removed to mean never.
-      - name: Chat log retention sync (bench-free pytest suite)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_retention.py -q
-      # The Web Push key schedule, pinned to RFC 8291's published example byte for byte.
-      # A round-trip test cannot substitute for this and it is worth saying why: every
-      # mistake available in that code is SYMMETRIC. Swap the two public keys in
-      # key_info, use the message salt where the auth secret belongs, write 0x01 as the
-      # padding delimiter instead of 0x02 -- in each case encryption and decryption still
-      # agree perfectly, the round trip passes, and every real browser silently discards
-      # the payload while the push service returns 201 and the server logs a success.
-      # Only an answer computed by somebody else catches a uniformly-wrong implementation.
-      #
-      # This is the ONE step that installs a package, and the exception is deliberate
-      # rather than drift: `cryptography` is already on the production bench (46.0.7,
-      # measured), nothing shipped gains a dependency, and the alternative is having no
-      # automated check at all on ~200 lines of hand-rolled authenticated crypto. The
-      # suite skips itself without the library, so the install is not optional -- a
-      # skipped step reads as a passing one.
-      - name: Chat Phase 4 Web Push crypto (RFC 8291 known-answer vectors)
-        run: |
-          python -m pip install cryptography
-          python -m pytest erpnext_enhancements/tests/test_chat_webpush_crypto.py -q
-      # Where an attachment's content_type comes from, which until v1.302.0 was nowhere:
-      # inbound took Google's contentType verbatim, the SPA side wrote octet-stream
-      # unconditionally, and message_view.js decides inline rendering from that field -- so
-      # one photo rendered inline from Chat and as a file row from the SPA. Its own step and
-      # pytest-style, because it installs its own frappe stub (including a savepoint no-op,
-      # which attachments.py imports at module scope) and would cross-talk if appended to a
-      # unittest module list.
-      - name: Chat attachment content type (sniffed from bytes, never guessed into SVG)
-        run: python -m pytest erpnext_enhancements/tests/test_chat_attachment_content_type.py -q
       # The only automated coverage of triton_chat.py, and `grep -c
       # test_triton_personas .github/workflows/ci.yml` returned 0 until this line:
       # the file shipped and then never ran. Everything it guards -- the SSE relay,
@@ -1802,45 +1281,6 @@ jobs:
       # on every desk load, and v16 throws there between a deploy and its migrate.
       - name: Field text wrapping source guards (bundle wiring, gating, control swap)
         run: node scripts/test_field_text_wrap.js
-      # ------------------------------------------------------------------
-      # Phase 3's chat client. Three node steps, no runner and no npm install --
-      # the same shape as the three guards above, and for the same reason: a test
-      # framework that needs `npm ci` is a test framework this deploy pipeline does
-      # not have, and one that is installed but never invoked is worse than none.
-      #
-      # These are .mjs because the code under test is ESM. Node prints a
-      # MODULE_TYPELESS_PACKAGE_JSON warning on the imported .js files; do NOT
-      # silence it by adding "type": "module" to package.json, which would turn the
-      # two CommonJS guards above into parse errors.
-      # ------------------------------------------------------------------
-      # The whole §4.10 degradation table as executable rows. Every failure mode it
-      # covers is INVISIBLE in production: a dropped token looks like the model chose
-      # not to cite, a truncated tail looks like the model stopped early, a split
-      # token looks like a glitch nobody can reproduce. The row that matters most is
-      # "no citations event at all renders identically to today" -- that is what lets
-      # Phase 3 ship before Phase 5 exists.
-      - name: Chat inline citation renderer (bench-free, node)
-        run: node scripts/test_chat_citations.mjs
-      # Routes, the three-tier restoration precedence, the handoff record, optimistic
-      # reconciliation, the read batcher, typing and the multi-tab presence union.
-      #
-      # Each is a rule that is impossible to notice breaking: the URL losing to
-      # restored state dumps people in the wrong room only when they happen to have
-      # restored state; a non-idempotent reconciliation duplicates a message in only
-      # one of four orderings; a presence union that takes the last writer makes
-      # notifications stop when somebody opens a second tab. It found three real
-      # defects on its first run.
-      - name: Chat SPA pure client logic (bench-free, node)
-        run: node scripts/test_chat_client_logic.mjs
-      # Source rules "we were careful" cannot keep: no innerHTML anywhere in the chat
-      # client (every message body, sender name, room title and filename is written
-      # by an employee and rendered to every other employee), no Vue in the SPA
-      # bundle (the two-runtime hazard, which presents six weeks later as "the widget
-      # stopped updating after I opened chat"), and the realtime event names matching
-      # between chat/realtime.py and chat/socket.js (a name added on one side only is
-      # indistinguishable, from the client, from a quiet room).
-      - name: Chat client source rules (bench-free, node)
-        run: node scripts/test_chat_source_rules.js
       # The Address coordinate gate. Latitude/longitude are user-editable and
       # every map trusts that point over the address text, so this is the one
       # place a typo silently relocates a job site. Both failures it rejects --
@@ -1877,11 +1317,12 @@ jobs:
   # ---------------------------------------------------------------------------
   # Committed secrets — a HARD gate, and deliberately its own job.
   #
-  # ADR 0009 makes the Google integration keyless: the VM mints its own tokens via
-  # IAM Credentials `signJwt`, there is no service-account JSON key, and
-  # `Chat Settings` holds identifiers only. That design removes the credential.
-  # This job is what keeps it removed, because the design holds only until somebody
-  # drops a key file in the tree to test something locally.
+  # This app has no service-account JSON key anywhere: Drive and Calendar delegate
+  # through the VM's own identity, and the retired Google Chat integration did the
+  # same (ADR 0009 was keyless by construction, and ADR 0011 removed it entirely).
+  # The design removes the credential; this job is what keeps it removed, because
+  # the design holds only until somebody drops a key file in the tree to test
+  # something locally.
   #
   # NOT a step in `unit-tests`, for one concrete reason: `actions/checkout` clones
   # at depth 1, and the whole point of the scan is HISTORY. `git rm` does not

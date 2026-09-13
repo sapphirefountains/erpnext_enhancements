@@ -25,7 +25,7 @@
  * Deterministic: the seed is fixed and printed, so a red build is replayable. Pass a seed as
  * argv[2] to reproduce one.
  */
-import { isSafeUrl } from "../erpnext_enhancements/public/js/chat/citations.js";
+import { isSafeUrl } from "../erpnext_enhancements/public/js/triton/citations.js";
 
 const SEED = Number(process.argv[2] || 20260815);
 

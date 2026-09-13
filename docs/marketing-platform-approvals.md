@@ -578,9 +578,10 @@ for the privacy lock.
 Meta returns **`X-App-Usage`** and **`X-Business-Use-Case-Usage`** response headers.
 
 Treat them as the authoritative signal and back off on them rather than guessing. This is the
-same standing rule the chat module already follows: **the bucket is an optimisation, backoff is
-the correctness mechanism.** Never retry a 4xx other than 429 — a 403 is a configuration fault,
-and retrying it turns a fast, legible failure into a slow, confusing one.
+same standing rule the chat module established before it was retired in v1.426.0: **the bucket
+is an optimisation, backoff is the correctness mechanism.** Never retry a 4xx other than
+429 — a 403 is a configuration fault, and retrying it turns a fast, legible failure into a
+slow, confusing one.
 
 ### LinkedIn
 

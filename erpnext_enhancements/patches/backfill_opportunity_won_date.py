@@ -33,7 +33,11 @@ shortfall.
 Keying on emptiness is correct **here**, which is worth stating given how loudly this repo
 warns against it. That warning is about fields with a `default`: on a normal doctype the
 `ALTER` writes the default into every existing row, so nothing is ever empty and an
-emptiness predicate matches nothing (`backfill_relay_auth_identity`, v1.280.3).
+emptiness predicate matches nothing. That is not hypothetical: a v1.280.3 backfill keyed on
+`coalesce(auth_identity, '') = ''` against a column whose field declared `"default": "USER"`
+matched zero rows, committed, and recorded itself in `tabPatch Log` as a success — which is
+indistinguishable from having worked. (The patch itself went with the chat module in
+v1.426.0; the lesson is in CLAUDE.md.)
 ``custom_date_closed_won`` is a Date custom field with no default, so its 221 NULLs are
 genuine — verified against the live instance, not assumed. The predicate also makes the
 patch safe twice and keeps a hand-corrected date from being overwritten on a re-run.
