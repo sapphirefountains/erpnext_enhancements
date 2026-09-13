@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.424.1] - 2026-09-13
+
+### Changed
+
+- **Documented the report print-format traps in `CLAUDE.md`.** Docs only; no executable
+  behaviour changes. The two defects v1.424.0 fixed on the Crew Qualification Roster are both
+  platform behaviour rather than anything specific to that report, so they belong in the
+  gotchas list where the next person writing a `.html` print format will read them:
+
+  - `frappe.template.compile` begins with `str.replace(/{{/g, "{%=")` across the **entire
+    file**, HTML comments included, so a double brace written in prose becomes a live output
+    expression. It then compiles into `with(obj){ ... }`, where a name absent from the render
+    context falls through to global scope and **throws** rather than coming back `undefined`.
+    That is how a header comment kept the roster from rendering at all for six months.
+  - `render_grid` passes both `data` and `original_data`, and `data` is
+    `get_data_for_print()` — the rows as currently sorted *and inline-filtered on screen*.
+    A column filter silently drops rows from the printed sheet.
+
+  Both fail in the direction that looks fine: the prose reads as documentation and the sheet
+  reads as complete. Rendering the template is the only check that finds either, which is why
+  the bullet says to port `microtemplate.js` into node and run the file through it.
+
 ## [1.424.0] - 2026-09-13
 
 ### Fixed
