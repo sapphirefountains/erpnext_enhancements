@@ -282,18 +282,54 @@
 		// through every block card a learner scrolled past, and on a phone that
 		// reads as "back is broken". Replacing keeps refresh landing where they
 		// were and lets back mean "leave the course".
+		// Which views are ABOUT a course. The URL is derived from this, not from
+		// whatever `state.courseName` happens to still hold.
+		//
+		// It used to be derived from the state, and the state is not cleared on the way
+		// out of a course: `go("catalog")` sets `state.view` and nothing else, so
+		// `?course=TRN-CRS-00002` survived pressing "All Courses" and sat in the address
+		// bar above the catalogue. That is not cosmetic, because two code paths read the
+		// URL back as the source of truth -- `start()` on every page load and the
+		// `popstate` handler on browser back. So a stale param meant a refresh of the
+		// catalogue silently reopened the last course, and back landed on it too.
+		//
+		// The same staleness applied to the transcript, queue, feed, directory and
+		// person views, all reached from the catalogue and none of them about a course.
+		//
+		// Note the shape of the original: `lesson=` WAS guarded by view and `course=`
+		// was not. One of the two halves of this rule was written and the other was
+		// assumed, which is why the bug reads as an oversight rather than a wrong idea.
+		var COURSE_SCOPED_VIEWS = {
+			course: true,
+			lesson: true,
+			quiz: true,
+			results: true,
+			signoff: true,
+			complete: true,
+		};
+
 		function route() {
 			if (b.history === false || !window.history || !window.history.replaceState) return;
 			var base = b.route_base || window.location.pathname;
 			var params = [];
-			if (state.courseName) params.push("course=" + encodeURIComponent(state.courseName));
-			if (state.lessonKey && state.view !== "catalog" && state.view !== "course") {
+			var inCourse = COURSE_SCOPED_VIEWS[state.view] === true;
+			if (inCourse && state.courseName) {
+				params.push("course=" + encodeURIComponent(state.courseName));
+			}
+			// `course` is the outline: it names the course but no single lesson.
+			if (inCourse && state.lessonKey && state.view !== "course") {
 				params.push("lesson=" + encodeURIComponent(state.lessonKey));
 			}
 			if (state.view === "quiz" || state.view === "results") params.push("view=" + state.view);
 			try {
 				window.history.replaceState(
-					{ tr: { view: state.view, course: state.courseName, lesson: state.lessonKey } },
+					{
+						tr: {
+							view: state.view,
+							course: inCourse ? state.courseName : null,
+							lesson: inCourse ? state.lessonKey : null,
+						},
+					},
 					"",
 					base + (params.length ? "?" + params.join("&") : "")
 				);
