@@ -570,7 +570,7 @@ class TestOneHungRequestCannotStopDelivery(unittest.TestCase):
     player refuses to trust that it did.
     """
 
-    PAGE = APP / "www/training.html"
+    PAGE = APP / "public/js/training/transport.js"
 
     def test_the_page_transport_gives_every_call_a_deadline(self):
         src = self.PAGE.read_text(encoding="utf-8")

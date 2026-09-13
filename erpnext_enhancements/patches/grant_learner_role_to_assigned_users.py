@@ -34,9 +34,22 @@ this repo *is* the deploy.
 
 import frappe
 
+# Staff who should hold the role but whom no rule reaches. Kept as an explicit,
+# dated list rather than a widened rule, because the reason is a fact about one
+# person and not a policy: she is the only Sapphire staff member with **no
+# Employee record**, which is exactly why `grant_training_learner_to_employees`
+# skipped her in v1.208.0 and why the sweep below -- keyed on owing a course --
+# does not reach her either. Granted on Nik's instruction, 2026-09-13.
+#
+# A one-off list in a patch is a record of a decision. Widening the rule to reach
+# her ("every enabled System User", "anyone on the company domain") would have
+# swept in two external addresses that should not hold it, to avoid writing one
+# name down.
+NAMED_GRANTS = ("kendalyn.harris@sapphirefountains.com",)
+
 
 def execute():
-	from erpnext_enhancements.training.roles import ROLE
+	from erpnext_enhancements.training.roles import ROLE, grant_learner_role
 
 	if not frappe.db.exists("Role", ROLE):
 		# seed_training_roles runs first in patches.txt; if it somehow did not,
@@ -47,6 +60,13 @@ def execute():
 		from erpnext_enhancements.training.tasks import sweep_learner_roles
 
 		sweep_learner_roles()
+		for user in NAMED_GRANTS:
+			# grant_learner_role picks the durable path for the user it is given --
+			# an extra Role Profile for a profiled user, a direct grant for a
+			# profile-less one -- and swallows its own failures. Never invert that
+			# by assigning a profile to somebody who has none: their roles would be
+			# regenerated from it and everything else they hold would be wiped.
+			grant_learner_role(user)
 	except Exception:
 		# A role backfill is not worth a failed deploy. Logged rather than
 		# swallowed, because "nobody was granted anything" is the defect.

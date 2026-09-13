@@ -35,7 +35,7 @@ APP = Path(__file__).resolve().parents[1]
 PROFILE = APP / "hr_enhancements/profile.py"
 RUNTIME = APP / "api/training.py"
 PLAYER = APP / "public/js/training/player.js"
-PAGE = APP / "www/training.html"
+PAGE = APP / "public/js/training/transport.js"
 
 
 def _text(path):

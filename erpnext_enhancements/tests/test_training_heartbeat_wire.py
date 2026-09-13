@@ -359,7 +359,7 @@ class TestTransportMapPointsAtRealEndpoints(unittest.TestCase):
 	preview implements this same set, so the list has to be right.
 	"""
 
-	HTML = REPO_ROOT / "erpnext_enhancements/www/training.html"
+	HTML = REPO_ROOT / "erpnext_enhancements/public/js/training/transport.js"
 	API = REPO_ROOT / "erpnext_enhancements/api/training.py"
 	JS_DIR = REPO_ROOT / "erpnext_enhancements/public/js/training"
 
@@ -379,9 +379,17 @@ class TestTransportMapPointsAtRealEndpoints(unittest.TestCase):
 		api = self.API.read_text(encoding="utf-8")
 		return set(re.findall(r"@frappe\.whitelist\([^)]*\)\s*\ndef\s+(\w+)", api))
 
+	# The four player files, named rather than globbed. transport.js lives in the
+	# same directory and is the one file that DEFINES `transport.x` rather than
+	# calling it -- `transport.uploadFile = function ...` reads identically to a
+	# call site under this regex, so globbing the directory made the transport
+	# appear to be its own caller and reported uploadFile as an unmapped method.
+	CALLERS = ("player.js", "video.js", "quiz.js", "blocks.js")
+
 	def _transport_calls(self):
 		used = set()
-		for path in self.JS_DIR.glob("*.js"):
+		for name in self.CALLERS:
+			path = self.JS_DIR / name
 			used |= set(re.findall(r"transport\.(\w+)", path.read_text(encoding="utf-8")))
 		return used
 

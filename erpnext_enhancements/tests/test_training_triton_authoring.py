@@ -95,7 +95,7 @@ class TestTheCustomTridentIsGone(unittest.TestCase):
     def test_the_learner_player_has_no_trident(self):
         player = _web(APP / "public/js/training/player.js")
         css = _web(APP / "public/css/training/player.css")
-        method_map = _web(APP / "www/training.html")
+        method_map = _web(APP / "public/js/training/transport.js")
         self.assertNotIn("tritonFab", player)
         self.assertNotIn("tr-triton-fab", css)
         self.assertNotIn("draftCourse", method_map)

@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.428.1] - 2026-09-13
+
+Training Phase 6, D1. A refactor with no behaviour change: the learner transport
+moves out of the portal template so a second host can load it.
+
+### Changed
+
+- **The transport left `www/training.html` for `public/js/training/transport.js`**
+  (`TR.makeTransport({csrf})`, 256 lines). The METHOD map, `PREFIX`, the 20-second
+  deadline, the `AbortSignal`/`AbortController` pair, the `_server_messages` unwrap, the
+  multipart upload and the synchronous `sendBeacon` all moved **verbatim, comments
+  included**; the template is 291 lines down to 121 and now holds one page-specific fact,
+  which is where its CSRF token comes from.
+
+  This was fine while there was exactly one host. The Desk Page in D4 has no template to
+  hold it, and copying it would give two hosts independently drifting maps of the same 25
+  endpoint names — the failure this module already has a name for. Doing it *first*, on
+  the live portal page and before any desk code exists, turns "delete the sole home of
+  seven separately-pinned contracts" into "the file no longer holds anything".
+
+  `csrf` is taken as a value **or** a function: the portal renders its token once,
+  server-side, and passes the constant; a Desk session can outlive the token it booted
+  with, so it will pass a closure.
+
+- **The transport is NOT switched to `frappe.call`, and will not be.** Reasons read out of
+  frappe v16 rather than assumed: `request.js` builds its ajax args from a fixed key list
+  with **no `timeout`**, and jQuery has no default — the 20s deadline is not decoration,
+  because the heartbeat holds a `flushing` latch released only when its promise settles, so
+  one socket dropped without a FIN stops every later beat for the life of the page and the
+  learner's coverage meter never moves again. `frappe.xcall` rejects with `r && r.message`,
+  which a `frappe.throw` does not carry (it sends `exc_type` and `_server_messages` on a
+  417), so every server refusal would collapse to "Something went wrong" and the
+  advisory-gates doctrine would die silently. And `sendBeacon` cannot use it at all.
+
+### Added
+
+- **`tests/test_training_transport.py`** (21 tests) — the home for the properties that are
+  the transport's own and that no other suite watches: the 20s deadline and its older-Safari
+  fallback, every call carrying the abort signal, the POST rule, the synchronous boolean
+  beacon (a Promise there is truthy, so `video.js` would drop every queued beat as
+  "delivered"), the un-set `Content-Type` on the multipart upload, and the
+  METHOD-above-PREFIX declaration order. The four suites that already assert things *about*
+  the transport keep their own independent extractors — the duplication is what makes them
+  independent observers, and this was not the release to spend it.
+
+- **The no-`frappe.*` rule now covers five files, not four.**
+  `test_training_phase3_contracts` extends `test_the_player_never_calls_frappe` and
+  `test_the_player_never_reaches_for_the_page_globals` to `transport.js`. It is not a player
+  file — the player receives it rather than importing it — but it runs in the same document
+  for the same `desk_access = 0` Website Users, and it is the file most likely to be
+  "improved" into `frappe.call` by somebody who only ever tests while logged into the Desk.
+
+### Fixed
+
+- **Ten suites' extractors repointed**, and two that broke for a subtler reason than the
+  path. `transport.js` lives in `public/js/training/`, which two scans glob wholesale — so
+  the file that *defines* `transport.uploadFile` was read as a file that *calls* it, and
+  `csrf` (an option off the transport's own settings object) was read as a key the player
+  expects on a server reply. Both scans now name the four player files explicitly, plus a
+  `training/page/*/*.js` glob for the Desk host that does not exist yet; a scan that
+  silently stops covering a caller is the failure `test_training_boot_wire` documents.
+
+- **`test_training_endpoint_surface`'s map extractor was anchored on an indent depth**
+  (`\n\t\};`). The map is nested one level deeper inside `TR.makeTransport` than it was
+  inside the template's IIFE, so the anchor stopped matching the moment the code it
+  describes was merely re-nested. Anchored on the closing brace's own line instead.
+
+- The parse guard added in v1.428.0 earned itself immediately: the first draft of
+  `transport.js` carried a header comment quoting the literal `var METHOD = {`, and the
+  extractors slice on raw text without stripping comments — so the slice began inside the
+  sentence explaining the rule and ended a few words later, yielding an empty map. Exactly
+  the failure the guard exists to make loud instead of silent.
+
 ## [1.428.0] - 2026-09-13
 
 Groundwork for moving the learner training player into the Desk (Training Phase 6, D0). Nothing

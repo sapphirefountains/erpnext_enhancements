@@ -41,7 +41,10 @@ from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]
 API = APP / "api" / "training.py"
-PAGE = APP / "www" / "training.html"
+# The transport moved out of www/training.html in v1.428.1, when the portal page
+# stopped being the only host. It is the file this module is about: the METHOD
+# map, the POST rule and the beacon path all live there now.
+PAGE = APP / "public" / "js" / "training" / "transport.js"
 
 #: Whitelisted endpoints the player's ``METHOD`` map deliberately does not carry.
 #: Each needs a reason, and the reason has to survive somebody reading it.
@@ -118,14 +121,18 @@ def _body(name):
 
 
 def _method_map():
-    """The endpoint names ``www/training.html`` can dial, from its ``METHOD`` map.
+    """The endpoint names the transport can dial, from its ``METHOD`` map.
 
     Read from the map's own braces rather than by grepping the file for identifiers:
-    the page mentions endpoint names in prose too, and a scan that cannot tell a
+    the file mentions endpoint names in prose too, and a scan that cannot tell a
     comment from a dispatch table is satisfied by deleting the comment.
     """
     src = PAGE.read_text(encoding="utf-8")
-    match = re.search(r"var METHOD = \{(.*?)\n\t\};", src, re.S)
+    # Anchored on the closing brace's own LINE rather than on a literal indent
+    # depth: the map is nested one level deeper inside TR.makeTransport than it
+    # was inside the template's IIFE, and an indent-depth anchor silently stops
+    # matching when the code it describes is merely re-nested.
+    match = re.search(r"var METHOD = \{(.*?)^\s*\};", src, re.S | re.M)
     assert match, "the METHOD map has moved or changed shape; re-derive this scan"
     body = re.sub(r"//.*$", "", match.group(1), flags=re.M)
     return set(re.findall(r':\s*"([a-z_]+)"', body))
@@ -591,7 +598,7 @@ class TheClientStillPostsTest(unittest.TestCase):
         self.assertRegex(
             src,
             r"fetch\(PREFIX \+ method, \{\s*\n\s*method: \"POST\"",
-            "www/training.html's call() no longer posts — declaring the server "
+            "the transport's call() no longer posts — declaring the server "
             "POST-only would 405 every learner request",
         )
 
