@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.430.0] - 2026-09-13
+
+Training Phase 6, D7. **Being given a course now reaches the person it is given to.**
+
+### Fixed
+
+- **A Desk-created Training Assignment notified nobody.** `notifications.notify_assigned`
+  had exactly two callers — the auto-assign engine and
+  `api.training_author.assign_course` — and `hooks.py` named `Training Assignment` only in
+  its two permission hooks. So a Training Manager pressing **New** on the list, or filling
+  a row in by hand, produced no email, no bell, no ToDo and no sign of any kind. The
+  assignment existed, the learner was never told, and the first anybody knew was the
+  overdue sweep at 06:40 some days later.
+
+  It is a `doc_event` (`after_insert`) now, and the two explicit calls are **removed**, so
+  there is exactly one path. Deliberately not a third caller: the shape of this bug is
+  "one more path that forgot", and another explicit call would have been a fourth path
+  waiting to be forgotten by whatever creates assignments next.
+
+  The handler is gated on the module switch and wrapped: a notification that fails must
+  not abort the insert. The row is the obligation; the email is only how somebody hears
+  about it.
+
+### Added
+
+- **The course lands in the learner's own ToDo list, and rings the desk bell.**
+  `frappe.desk.form.assign_to.add` creates a **ToDo** — the desk's "assigned to me" list —
+  *and* a **Notification Log** entry, in one native call. The email is the notification
+  somebody reads once and archives; this is the one that stays where they already look.
+
+  Three things make it careful rather than a one-liner:
+
+  - **It runs in the enqueued job, never in `after_insert`.** `assign_to.add` can
+    `frappe.throw` — if the assignee lacks read permission and `disable_document_sharing`
+    is on it refuses with "Missing Permission" — and a throw inside `after_insert` aborts
+    the insert. Losing the assignment because the ToDo could not be made would be exactly
+    backwards.
+  - **`frappe.flags.mute_messages`.** `assign_to.add` `msgprint`s on a duplicate or a
+    share, and a msgprint raised in a background job still rides out to whatever client is
+    listening as `_server_messages` — so a manager assigning a course would have watched
+    "Already in the following Users ToDo list" pop over the form.
+  - **Idempotent by `assign_to`'s own hand**, which collects `users_with_duplicate_todo`
+    and skips them. That matters here specifically: the prod deploy `FLUSHDB`s the queue
+    redis and destroys pending jobs, so this work has to survive being re-driven.
+
+  Its own failure is swallowed and logged, because it shares a job with the email — an
+  exception escaping would take the notification that actually reaches somebody with it.
+
+### Deferred, with the reason
+
+- **Number cards for overdue and completion** were part of this phase and are moved to D8.
+  They are counters over the same rollup the manager analytics page computes, and building
+  them here would mean two implementations of "how many are overdue" — which is the
+  question whose obvious SQL spelling silently sweeps in NULLs, and which
+  `training/analytics.py` already answers as a Python predicate for exactly that reason.
+
 ## [1.429.2] - 2026-09-13
 
 Training Phase 6, D5. **`/training` is retired as a rendering surface and kept as a

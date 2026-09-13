@@ -886,7 +886,9 @@ def run_bulk_assign(course, targets, due_date=None, assigned_by=None):
             )
             doc.insert(ignore_permissions=True)
             created += 1
-            notifications.notify_assigned(doc)
+            # Not notified here: Training Assignment's after_insert hook owns it, so
+            # every row notifies whoever it is for -- including the ones created by
+            # hand on the Desk, which is where the silence was.
         except Exception:
             frappe.log_error(
                 f"Could not assign {course} to {user}\n{frappe.get_traceback()}", "Training assignment"

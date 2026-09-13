@@ -774,6 +774,15 @@ jobs:
       # /training" is satisfied just as well by a file somebody emptied.
       - name: Training portal retirement (the route redirects, the links moved)
         run: python -m unittest erpnext_enhancements.tests.test_training_portal_retirement -v
+      # Being given a course has to reach the person it is given to. notify_assigned
+      # had exactly two callers and hooks.py named Training Assignment only in its two
+      # permission hooks, so a manager pressing New produced no email, no bell, no
+      # ToDo and no sign of any kind -- the first anybody knew was the overdue sweep
+      # days later. This pins that there is exactly ONE path (a doc_event, not a third
+      # explicit call), that it cannot abort the insert, and that the ToDo is raised
+      # from the enqueued job because assign_to.add can frappe.throw.
+      - name: Training assignment notice (one path, and it cannot break the insert)
+        run: python -m unittest erpnext_enhancements.tests.test_training_assignment_notice -v
       # Every dotted path in hooks.py must name something that exists. Frappe
       # resolves after_migrate at the very END of `bench migrate`, so a typo there
       # fails the deploy after every schema change has already been applied -- the

@@ -366,7 +366,41 @@ def _assign(course, user, rule):
 		)
 		return False
 
-	from erpnext_enhancements.training import notifications
-
-	notifications.notify_assigned(doc)
+	# The notification is NOT sent from here any more. `Training Assignment`'s
+	# after_insert hook owns it, so every row notifies whoever it is for -- including
+	# the ones this function never sees, which was most of them: a manager pressing
+	# New on the list produced complete silence.
 	return True
+
+
+def on_assignment_insert(doc, method=None):
+	"""Tell the learner, however the row got here.
+
+	**The gap this closes.** `notifications.notify_assigned` had exactly two callers
+	-- the auto-assign engine and `api.training_author.assign_course` -- and
+	`hooks.py` named `Training Assignment` only in its two permission hooks. So a
+	Training Manager pressing **New** on the list, or filling in a row by hand,
+	produced no email, no bell, no ToDo and no sign of any kind. The assignment
+	existed, the learner was never told, and the first anyone knew was the overdue
+	sweep at 06:40 some days later.
+
+	Deliberately a doc_event rather than a third caller: the shape of that bug is
+	"one more path that forgot", and another explicit call would have been a fourth
+	path waiting to be forgotten by whatever creates assignments next.
+
+	Never raises. A notification that fails must not abort the insert -- the row is
+	the obligation, the email is only how somebody hears about it -- and
+	`notify_assigned` enqueues after commit, so nothing here runs inline anyway.
+	"""
+	if not _active():
+		return
+	try:
+		from erpnext_enhancements.training import notifications
+
+		notifications.notify_assigned(doc)
+	except Exception:
+		frappe.log_error(
+			f"Could not notify {doc.get('user')} about {doc.name}: "
+			f"{frappe.get_traceback()}",
+			"Training assignment",
+		)

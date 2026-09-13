@@ -681,6 +681,17 @@ doc_events = {
 			"erpnext_enhancements.hr_enhancements.onboarding.on_employee_update",
 		],
 	},
+	"Training Assignment": {
+		# training: tell the learner, however the row got here. notify_assigned had
+		# exactly two callers -- the auto-assign engine and api.training_author's
+		# assign_course -- and hooks.py named this doctype only in its two permission
+		# hooks. So a Training Manager pressing New on the list produced no email, no
+		# bell, no ToDo and no sign of any kind: the assignment existed, the learner
+		# was never told, and the first anybody knew was the overdue sweep some days
+		# later. A doc_event rather than a third explicit call, because the shape of
+		# that bug is "one more path that forgot".
+		"after_insert": "erpnext_enhancements.training.assignment.on_assignment_insert",
+	},
 	"Training Completion": {
 		# training: certificate issuance, badge awards and the "you passed" email ride the
 		# Completion submit rather than the endpoint, so a completion recorded by a manager
