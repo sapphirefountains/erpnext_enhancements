@@ -745,6 +745,16 @@ jobs:
       # read as a text slice.
       - name: Training transport (deadline, beacon, upload, declaration order)
         run: python -m unittest erpnext_enhancements.tests.test_training_transport -v
+      # The learner palette, now that two hosts disagree about what "dark" means. The
+      # portal carries no data-theme and follows prefers-color-scheme; the desk always
+      # stamps data-theme, having already resolved its own "automatic" mode -- so
+      # honouring only the media query put a dark player inside a light desk for anyone
+      # whose OS is dark. The two dark blocks are deliberate duplicates (a media block
+      # and a plain rule cannot share a declaration list) and this pins them identical,
+      # because one edited and the other not is invisible until somebody opens the page
+      # in the theme nobody tested.
+      - name: Training desk theme (three-way palette, one declaration site)
+        run: python -m unittest erpnext_enhancements.tests.test_training_desk_theme -v
       # Every dotted path in hooks.py must name something that exists. Frappe
       # resolves after_migrate at the very END of `bench migrate`, so a typo there
       # fails the deploy after every schema change has already been applied -- the

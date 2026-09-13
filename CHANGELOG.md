@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.428.3] - 2026-09-13
+
+Training Phase 6, D3. The palette now answers "is it dark?" for two hosts that
+disagree about it.
+
+### Fixed
+
+- **A learner whose OS is dark and whose desk theme is light got a dark player inside a
+  light desk.** `player.css` switched on `prefers-color-scheme` alone, which is right for
+  the portal page (a website page carries no desk `data-theme`) and wrong in the Desk,
+  where `theme_switcher.js` stamps `data-theme="light"` or `"dark"` on `<html>` and
+  **always** stamps one — it resolves its own "automatic" mode through `matchMedia` first.
+
+  The palette is now switched three ways: `:root` for light, a
+  `:root:not([data-theme="light"])` guard inside the media query so the OS preference only
+  speaks when the desk has not, and `:root[data-theme="dark"]` for the explicit choice.
+  Portal behaviour is byte-identical to before — it matches the `:not()` in every case.
+
+  Nothing errored here either. It rendered, in the wrong palette, and read as the page
+  being broken rather than as a disagreement about the theme.
+
+### Added
+
+- **`tests/test_training_desk_theme.py`** (11 tests). The two dark blocks are deliberate
+  duplicates — a media block and a plain rule cannot share one declaration list — so the
+  failure that matters is one being edited and the other not, which is invisible until
+  somebody opens the page in the theme nobody tested. The suite pins them identical,
+  refuses an unguarded `:root` inside a dark media block, requires a `data-theme="dark"`
+  twin for every guarded media override, and asserts dark is a subset of light with an
+  allow-list for the names whose light value is already correct on a dark ground.
+
+  It also pins the property the Desk host is most likely to break: **`--tr-*` is declared
+  in `player.css` and, for its injected fallback sheet only, in `quiz.js` — nowhere else.**
+  That single declaration site is what lets the authoring canvas inherit a palette fix for
+  free, and a page stylesheet declaring `--tr-surface` "to match the desk" would make the
+  authoring surface stop matching what the learner sees, which is the one thing the canvas
+  exists to guarantee. Hence the `tl-` prefix reserved for desk chrome.
+
+### Examined and deliberately left alone
+
+- **The quiz's `--tr-ok` / `--tr-bad` have no dark variant, and that is a decision.** It
+  was reported as a bug — the root palette lightens `--tr-ok` for dark and the quiz's does
+  not — but the stylesheet has said since it was written that semantic answer colours stay
+  literal: "correct" must not shift with a palette edit, and a learner who has learnt that
+  green means right should not have to relearn it in the dark. The header now says so in
+  the same place the exception lives, because it has been mistaken for an oversight once
+  and would have been again.
+
+- **No `--tr-bottom-offset` bridge variable.** `.tr-bottom` is `position: sticky; bottom: 0`,
+  which sticks to its scroll container rather than the viewport, so the sticky action bar
+  may well be correct in the Desk as it stands. Adding a variable on a prediction is worse
+  than adding one on an observation; this waits for D4, where the real page can be looked
+  at.
+
 ## [1.428.2] - 2026-09-13
 
 Training Phase 6, D2. One versioned-asset loader instead of a third private copy.
