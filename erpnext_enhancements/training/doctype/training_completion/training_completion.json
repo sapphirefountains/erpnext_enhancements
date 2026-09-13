@@ -29,6 +29,8 @@
   "certificate",
   "superseded_by_version",
   "revoked_reason",
+  "revoked_on",
+  "history_note",
   "amended_from"
  ],
  "fields": [
@@ -206,6 +208,24 @@
    "label": "Revoked Because"
   },
   {
+   "depends_on": "eval:doc.docstatus==2 || doc.status==\"Revoked\"",
+   "description": "When this completion was withdrawn. Stamped by `on_cancel` from v1.425.0; before that the cancel wrote only the status, through db_set(update_modified=False), which never reaches save_version() -- so track_changes recorded nothing and not even `modified` moved. An empty value on a revoked row means the date is NOT RECONSTRUCTIBLE and must never be filled with today's: the roster renders it as unknown, which is the honest answer.",
+   "fieldname": "revoked_on",
+   "fieldtype": "Date",
+   "label": "Revoked On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "Set when a date could only be partly recovered, saying what is known and what is not. Never printed.",
+   "fieldname": "history_note",
+   "fieldtype": "Small Text",
+   "label": "History Note",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
    "fieldname": "amended_from",
    "fieldtype": "Link",
    "hidden": 1,
@@ -218,7 +238,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-08-01 12:00:00.000000",
+ "modified": "2026-09-13 15:00:00.000000",
  "modified_by": "Administrator",
  "module": "Training",
  "name": "Training Completion",

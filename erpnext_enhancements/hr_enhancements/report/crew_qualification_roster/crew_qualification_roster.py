@@ -32,13 +32,30 @@ Four consequences worth stating, because each inverts an instinct:
   whose date the backfill could not prove. An empty cell would read as "nothing to
   report"; the words "not reconstructible" read as what they are.
 
+Courses arrived late, and the reason is the fourth rule
+-------------------------------------------------------
+
+``Training Completion`` is the module's central audit artefact and this report could
+not read it until v1.425.0, because there was nothing to read it *by*. Its withdrawal
+path wrote ``status = "Revoked"`` through ``db_set(..., update_modified=False)`` and no
+date at all — not even ``modified`` moved — so a completion withdrawn last week was
+indistinguishable from one withdrawn two years ago, and there was no honest way to say
+whether it stood on a past day. ``Training Certificate`` had been given ``revoked_on``
+for exactly this reason in v1.396.0; the completion behind it had not, which left the
+more important of the two records the less answerable. The field exists now, so the
+rows can.
+
+Note what this report still does **not** read: ``status``. A superseded completion is
+reported as passed, because it was — the material changed afterwards, which is a fact
+about the course rather than about the person on that day.
+
 It refuses to render rather than rendering blank — an empty roster reads as "everyone
 is clear", which is the most dangerous thing this page could say.
 """
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, getdate, today
+from frappe.utils import add_days, cint, getdate, today
 
 from erpnext_enhancements.training.authority import DELEGATE, OBSERVED, TIER
 
@@ -114,6 +131,7 @@ def _people_on(as_of, filters):
 def _rows_for(person, as_of):
 	rows = []
 	rows.extend(_credential_rows(person, as_of))
+	rows.extend(_completion_rows(person, as_of))
 	rows.extend(_signoff_rows(person, as_of))
 	rows.extend(_restriction_rows(person, as_of))
 	if not rows:
@@ -154,6 +172,92 @@ def _credential_rows(person, as_of):
 				as_of,
 				_("Credential"),
 				row.credential_type or row.name,
+				verdict,
+				frappe.format(row.expires_on, {"fieldtype": "Date"}) if row.expires_on else _("no expiry"),
+				"",
+			)
+		)
+	return out
+
+
+def _completion_rows(person, as_of):
+	"""Courses passed. Derived from three dates and a docstatus; never from ``status``.
+
+	The module constant for this doctype has sat at the top of this file unused since
+	the report was written, which is the shape of the gap: the rows were always meant
+	to be here and there was no dated way to produce them. ``revoked_on`` (v1.425.0) is
+	what made it possible.
+
+	**Cancelled completions are fetched deliberately** — ``docstatus in (1, 2)``, where
+	every other enumeration here takes ``docstatus = 1``. A completion withdrawn in
+	August was still in force in March, and dropping it because of its state *today* is
+	the exact mistake this whole report exists to avoid. The withdrawal date, not the
+	docstatus, decides whether it counts on the as-of date.
+
+	Three outcomes, and the middle one is the point:
+
+	* withdrawn **on or before** the as-of date — it did not stand; no row.
+	* withdrawn at an **unrecorded** date (cancelled before v1.425.0) — reported as
+	  *Unknown*. It must never be assumed to have stood, nor assumed not to.
+	* otherwise it stood, subject to ``expires_on`` on the same 90-day horizon the
+	  credential rows use, measured from the as-of date rather than from today.
+	"""
+	if not frappe.db.exists("DocType", COMPLETION) or not person.user_id:
+		return []
+	meta = frappe.get_meta(COMPLETION)
+	dated_revocation = meta.has_field("revoked_on")
+	fields = ["name", "docstatus", "course", "course_title_snapshot", "completed_on", "expires_on"]
+	if dated_revocation:
+		fields.append("revoked_on")
+
+	out = []
+	for row in frappe.get_all(
+		COMPLETION,
+		filters={"user": person.user_id, "docstatus": ["in", (1, 2)]},
+		fields=fields,
+		order_by="completed_on asc",
+	):
+		if not row.completed_on or getdate(row.completed_on) > as_of:
+			# Not passed yet on the date. `completed_on` is stamped at validate and is
+			# the only claim this row makes about when.
+			continue
+
+		what = row.course_title_snapshot or row.course or row.name
+		revoked = row.get("revoked_on") if dated_revocation else None
+
+		if revoked and getdate(revoked) <= as_of:
+			continue
+
+		if cint(row.docstatus) == 2 and not revoked:
+			out.append(
+				_row(
+					person,
+					as_of,
+					_("Course"),
+					what,
+					_("Unknown"),
+					"",
+					_(
+						"Withdrawn at an unrecorded date -- cancelled before v1.425.0, when no "
+						"revocation date was stored. Whether it stood on this date is {0}."
+					).format(NOT_RECONSTRUCTIBLE),
+				)
+			)
+			continue
+
+		if row.expires_on and getdate(row.expires_on) < as_of:
+			continue
+
+		verdict = _("Passed")
+		if row.expires_on and getdate(row.expires_on) <= getdate(add_days(as_of, EXPIRY_HORIZON_DAYS)):
+			verdict = _("Passed -- expiring")
+
+		out.append(
+			_row(
+				person,
+				as_of,
+				_("Course"),
+				what,
 				verdict,
 				frappe.format(row.expires_on, {"fieldtype": "Date"}) if row.expires_on else _("no expiry"),
 				"",

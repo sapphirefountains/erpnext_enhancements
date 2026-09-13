@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.425.0] - 2026-09-13
+
+### Fixed
+
+- **Withdrawing a `Training Completion` recorded *that* it happened and never *when*.**
+  `on_cancel` wrote `status = "Revoked"` through `db_set(..., update_modified=False)` — a
+  derived-status write that never reaches `save_version()`, so `track_changes` recorded
+  nothing and not even `modified` moved. A completion withdrawn last week was therefore
+  indistinguishable from one withdrawn two years ago. `Training Certificate` had been given
+  `revoked_on` for exactly this reason in v1.396.0 and the completion behind it had not,
+  which left the more important of the two records the one that could not answer the only
+  question it exists for: *was this person certified on 1 March?*
+
+### Added
+
+- **`revoked_on` and `history_note` on Training Completion**, stamped by `on_cancel` and only
+  when blank, so a historical import or a hand-corrected date survives a re-cancel. Guarded on
+  `meta.has_field` because `on_cancel` runs after docstatus is committed, and written in the
+  same single `db_set` as the status — two writes would allow a half-applied withdrawal, which
+  is the state this change exists to prevent.
+
+- **The Crew Qualification Roster now reports courses passed**, derived from `completed_on`,
+  `expires_on` and `revoked_on` and never from `status`. This is what `revoked_on` was needed
+  for: the report could not read the module's central audit artefact at all while there was no
+  dated way to say whether a withdrawn completion had stood on a past day. The `COMPLETION`
+  constant had sat unused at the top of that file since it was written — the shape of the gap.
+
+  Cancelled completions are fetched deliberately (`docstatus in (1, 2)`, where every other
+  enumeration here takes `1`): one withdrawn in August was still in force in March, and
+  dropping it for its state *today* is the exact mistake the report exists to avoid. Three
+  outcomes — withdrawn on or before the date (no row), withdrawn at an **unrecorded** date
+  (*Unknown*, never assumed either way), or standing, subject to the same 90-day expiry horizon
+  the credential rows use, measured from the as-of date. A superseded completion reads as
+  passed, because it was; the material changed afterwards, which is a fact about the course
+  rather than about the person on that day.
+
+- **A guard on the roster's print dialog**, because v16 has two one-click routes into an
+  unformatted grid dump and no server-side defence:
+
+  ```js
+  get_print_template(print_settings, custom_format) {
+      return print_settings.columns?.length || !custom_format ? "print_grid" : custom_format;
+  }
+  ```
+
+  Ticking **Pick Columns** is enough — its MultiCheck carries `select_all: true` — and choosing
+  a **Print Format** substitutes the sheet wholesale. What that costs: the heading, the as-of
+  date, the caveats, the *not cleared to work alone* colouring, and completeness, since
+  `print_grid` loops `data` (the on-screen rows) rather than `original_data`.
+
+### Notes
+
+**The guard warns, it does not block, and that is the point.** Somebody who genuinely wants a
+column subset should be able to have one; what they must not get is the swap *by surprise* on a
+document headed for an insurer. It is a UI guard, not a permission boundary — the same
+distinction this app's guardrails already draw about `Desktop Icon.roles`.
+
+**The Print Format route is currently unreachable on this report, and is guarded anyway.** That
+field's `get_query` filters Print Format to `print_format_for = "Report"` **and**
+`report = <this report>`; all nine such rows on this site belong to accounting reports. It
+becomes reachable the day somebody creates one. Conversely, leaving Pick Columns unticked is
+*not* a bypass: `get_print_settings` ends with `if (!settings.pick_columns) settings.columns =
+null`, so the select-all default cannot leak through on its own.
+
+**No backfill, and that is a measurement.** `tabTraining Completion` holds five rows on prod,
+all `docstatus = 1` — two Expired, three Valid, none ever withdrawn. So there is no row whose
+revocation date needs recovering, and a patch would have matched nothing and logged itself a
+success, which is the failure mode this repo has a rule about. Any row cancelled before this
+release reads as *Unknown* on the roster rather than being given a date it never had.
+
+**`scripts/test_roster_print_guard.mjs` RUNS the guard**, and has its own CI step. The guard is
+a monkey-patch over core's `print_report`/`pdf_report` on the report instance, and whether
+core's menu actually reaches the wrapper is not something reading the file can tell you — which
+is precisely how v1.424.0's print template managed never to render at all while every static
+check stayed green. One of its assertions was itself wrong first time round: the symptom of a
+double-wrapped guard is not two warnings but a *second* warning where the print should be, and
+the test only caught the mutation once it checked that.
+
 ## [1.424.1] - 2026-09-13
 
 ### Changed
