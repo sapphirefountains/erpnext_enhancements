@@ -25,6 +25,7 @@ import sys
 import tokenize
 import types
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -73,26 +74,51 @@ JS_KEYWORDS = {
 }
 
 
-def setUpModule():
-    """A frappe stub, so the attribution helper can be CALLED rather than grepped.
+class _Dict(dict):
+    """`frappe._dict`: a row that answers both `row.field` and `row.get("field")`.
 
-    Which of the two people on a sign-off gets printed is the thing this release
-    fixes, and an AST assertion about the shape of a branch is not the same claim as
-    the string that comes out of it.
+    Both forms appear in this report and mixing them up is how a stub ends up testing
+    itself rather than the code.
+    """
+
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(key) from None
+
+
+class _MetaStub:
+    def __init__(self, fields):
+        self._fields = set(fields)
+
+    def has_field(self, name):
+        return name in self._fields
+
+
+def setUpModule():
+    """A frappe stub, so the date logic can be CALLED rather than grepped.
+
+    Which of the two people on a sign-off gets printed, and whether a withdrawn course
+    counts on a past day, are both things an AST assertion about the shape of a branch
+    cannot claim. `getdate` and `add_days` are REAL here for the same reason: a stub
+    that hands back its own argument makes every date comparison vacuously true.
     """
     fake = types.ModuleType("frappe")
     fake._ = lambda text: text
     fake.whitelist = lambda *a, **k: (lambda fn: fn)
     fake.db = types.SimpleNamespace(exists=lambda *a, **k: True)
     fake.get_all = lambda *a, **k: []
-    fake.get_meta = lambda *a, **k: None
+    fake.get_meta = lambda *a, **k: _MetaStub(())
     fake.format = lambda value, spec=None: str(value)
     sys.modules["frappe"] = fake
 
     utils = types.ModuleType("frappe.utils")
     utils.cint = lambda v: int(v or 0)
-    utils.add_days = lambda d, n: d
-    utils.getdate = lambda d=None: d
+    utils.getdate = lambda d=None: (
+        d if isinstance(d, date) else date.fromisoformat(str(d)[:10])
+    )
+    utils.add_days = lambda d, n: utils.getdate(d) + timedelta(days=n)
     utils.today = lambda: "2026-01-01"
     sys.modules["frappe.utils"] = utils
     fake.utils = utils
@@ -444,6 +470,199 @@ class TestWhoAttestedIsReadThroughTheBasis(unittest.TestCase):
         for field in ("authority_basis", "recorded_by_at_time", "recorded_by_position_title"):
             with self.subTest(field=field):
                 self.assertIn(field, body)
+
+
+class TestCoursesPassedAreDerivedFromDates(unittest.TestCase):
+    """`Training Completion` is the module central audit artefact and this report could
+    not read it until v1.425.0, because there was nothing to read it BY.
+
+    The withdrawal path wrote `status = "Revoked"` through
+    `db_set(..., update_modified=False)` and no date at all -- not even `modified`
+    moved -- so a completion withdrawn last week was indistinguishable from one
+    withdrawn two years ago. `Training Certificate` had been given `revoked_on` for
+    exactly this reason in v1.396.0 and the completion behind it had not, which left
+    the more important of the two records the less answerable.
+
+    These call the function. The three-way outcome is the whole value of the change
+    and an AST assertion about a branch would not exercise a single date comparison.
+    """
+
+    AS_OF = date(2026, 3, 1)
+
+    def setUp(self):
+        from erpnext_enhancements.hr_enhancements.report.crew_qualification_roster import (
+            crew_qualification_roster as report,
+        )
+
+        self.report = report
+        self.fake = sys.modules["frappe"]
+        self.fake.get_meta = lambda doctype: _MetaStub({"revoked_on", "attested_on"})
+        self.person = types.SimpleNamespace(
+            name="HR-EMP-0001",
+            employee_name="Jim Junior",
+            user_id="junior@x",
+            relieving_date=None,
+        )
+
+    def _rows(self, *completions):
+        self.fake.get_all = lambda doctype, **kw: [_Dict(c) for c in completions]
+        return self.report._completion_rows(self.person, self.AS_OF)
+
+    def _completion(self, **overrides):
+        row = {
+            "name": "TRN-CMP-0001",
+            "docstatus": 1,
+            "course": "COURSE-0001",
+            "course_title_snapshot": "Draining a Fountain Basin Safely",
+            "completed_on": "2026-01-10 09:00:00",
+            "expires_on": None,
+            "revoked_on": None,
+        }
+        row.update(overrides)
+        return row
+
+    def test_a_course_passed_before_the_date_counts(self):
+        rows = self._rows(self._completion())
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["kind"], "Course")
+        self.assertEqual(rows[0]["what"], "Draining a Fountain Basin Safely")
+        self.assertEqual(rows[0]["verdict"], "Passed")
+
+    def test_a_course_passed_after_the_date_does_not(self):
+        """The report answers the as-of date, not today. Somebody trained in June was
+        not trained in March, and saying otherwise on an incident report is the single
+        most damaging thing this page could do."""
+        self.assertEqual(self._rows(self._completion(completed_on="2026-06-01 09:00:00")), [])
+
+    def test_a_withdrawal_before_the_date_removes_it(self):
+        self.assertEqual(
+            self._rows(self._completion(docstatus=2, revoked_on="2026-02-01")), []
+        )
+
+    def test_a_withdrawal_after_the_date_leaves_it_standing(self):
+        """THE case the whole field exists for. It was valid in March; it was withdrawn
+        in August. Dropping it because of its state today is exactly the mistake."""
+        rows = self._rows(self._completion(docstatus=2, revoked_on="2026-08-01"))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["verdict"], "Passed")
+
+    def test_a_withdrawal_with_no_date_is_reported_as_unknown(self):
+        """Cancelled before v1.425.0. It must never be assumed to have stood, nor
+        assumed not to -- an empty cell would read as "nothing to report"."""
+        rows = self._rows(self._completion(docstatus=2, revoked_on=None))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["verdict"], "Unknown")
+        self.assertIn("not reconstructible", rows[0]["note"])
+
+    def test_the_boundaries_match_the_credential_rows(self):
+        """Three off-by-one decisions, pinned so a later edit cannot quietly flip one.
+        They follow `_credential_rows` exactly, because two kinds of row on one sheet
+        disagreeing about what "on this date" means is worse than either answer."""
+        # passed ON the day: counts.
+        self.assertEqual(len(self._rows(self._completion(completed_on="2026-03-01 09:00:00"))), 1)
+        # withdrawn ON the day: does not count.
+        self.assertEqual(
+            self._rows(self._completion(docstatus=2, revoked_on="2026-03-01")), []
+        )
+        # expiring ON the day: still counts -- `expires_on` is the last valid day.
+        self.assertEqual(len(self._rows(self._completion(expires_on="2026-03-01"))), 1)
+
+    def test_an_expiry_before_the_date_removes_it(self):
+        self.assertEqual(self._rows(self._completion(expires_on="2026-02-01")), [])
+
+    def test_expiring_counts_as_passed_on_the_as_of_horizon(self):
+        """The 90-day horizon runs from the AS-OF date, not from today -- the same rule
+        the credential rows follow."""
+        rows = self._rows(self._completion(expires_on="2026-04-15"))
+        self.assertEqual(len(rows), 1)
+        self.assertIn("expiring", rows[0]["verdict"])
+
+    def test_an_expiry_well_beyond_the_horizon_is_plain_passed(self):
+        rows = self._rows(self._completion(expires_on="2027-01-01"))
+        self.assertEqual(rows[0]["verdict"], "Passed")
+
+    def test_the_withdrawal_date_outranks_the_expiry(self):
+        """Withdrawn in February, would have expired in April. On 1 March it is gone,
+        and the reason it is gone is the withdrawal."""
+        self.assertEqual(
+            self._rows(
+                self._completion(docstatus=2, revoked_on="2026-02-01", expires_on="2026-04-01")
+            ),
+            [],
+        )
+
+    def test_it_still_works_on_a_site_that_has_not_migrated_the_field(self):
+        """Mid-deploy, `revoked_on` does not exist yet. Every cancelled completion is
+        then unknown, which is the correct answer, and nothing raises."""
+        self.fake.get_meta = lambda doctype: _MetaStub(set())
+        rows = self._rows(self._completion(docstatus=2, revoked_on="2026-08-01"))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["verdict"], "Unknown")
+
+    def test_position_is_still_refused_on_a_course_row(self):
+        """Every row goes through `_row`, so the rung refusal cannot be forgotten on a
+        newly added kind."""
+        self.assertEqual(self._rows(self._completion())[0]["position_as_of"], "not reconstructible")
+
+
+class TestTheCompletionReaderNeverTrustsAStatus(unittest.TestCase):
+    def test_cancelled_completions_are_deliberately_fetched(self):
+        """Every other enumeration here takes `docstatus = 1`. This one must not: a
+        completion withdrawn in August was still in force in March."""
+        body = _fn("_completion_rows")
+        self.assertIn('"docstatus": ["in", (1, 2)]', body)
+
+    def test_it_reads_no_status_column(self):
+        """A superseded completion is reported as passed, because it was. The material
+        changed afterwards, which is a fact about the course, not about the person."""
+        body = _fn("_completion_rows")
+        self.assertNotIn('"status"', body)
+        self.assertNotIn("row.status", body)
+
+    def test_it_is_wired_into_the_rows_for_a_person(self):
+        """A reader nothing calls is the defect this repo keeps hitting."""
+        self.assertIn("_completion_rows(person, as_of)", _fn("_rows_for"))
+
+    def test_the_module_constant_is_no_longer_dead(self):
+        """`COMPLETION` sat unused at the top of this file from the day it was written
+        -- the shape of the gap, not a tidy-up.
+
+        Quotes normalised because `_code` goes through `ast.unparse`, which rewrites
+        every string literal to single quotes. Asserting a double-quoted token against
+        its output fails for a reason that has nothing to do with the claim."""
+        code = _code(PY).replace("'", '"')
+        self.assertIn("COMPLETION = ", code)
+        self.assertIn('frappe.db.exists("DocType", COMPLETION)', code)
+
+
+class TestThePrintGuard(unittest.TestCase):
+    """v16 offers no server-side defence, so the guard is client-side and is a warning
+    rather than a block. Its BEHAVIOUR is asserted by `scripts/test_roster_print_guard.mjs`,
+    which runs it; these only pin that it exists and is reachable."""
+
+    def test_the_guard_is_installed_from_onload(self):
+        js = _text(JS)
+        self.assertIn("guard_the_designed_sheet", js)
+        at = js.index("onload: function (report)")
+        self.assertIn("guard_the_designed_sheet(report)", js[at : at + 400])
+
+    def test_both_print_entry_points_are_wrapped(self):
+        js = re.sub(r"/\*.*?\*/", "", _text(JS), flags=re.S)
+        self.assertIn("print_report", js)
+        self.assertIn("pdf_report", js)
+
+    def test_it_warns_rather_than_blocking(self):
+        """Somebody who genuinely wants a column subset must still be able to have one.
+        What they must not get is the swap by surprise."""
+        js = _text(JS)
+        self.assertIn("frappe.warn", js)
+        self.assertNotIn("frappe.throw", js)
+
+    def test_the_executing_test_is_wired_into_ci(self):
+        """The lesson of v1.424.0: a static check cannot tell you whether code runs."""
+        ci = (APP.parent / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("scripts/test_roster_print_guard.mjs", ci)
+        self.assertTrue((APP.parent / "scripts/test_roster_print_guard.mjs").is_file())
 
 
 class TestTheFilters(unittest.TestCase):

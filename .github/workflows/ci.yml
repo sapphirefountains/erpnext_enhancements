@@ -383,6 +383,18 @@ jobs:
       # insurer that silently restates today over a past date is worse than no sheet.
       - name: HR audit roster (dates not statuses; leavers included)
         run: python -m unittest erpnext_enhancements.tests.test_hr_qualification_roster -v
+      # RUNS the roster's print guard rather than reading it, and that distinction is
+      # the whole reason this step exists. The previous defect on this report was a
+      # print template that had never once been rendered: a double brace inside an HTML
+      # comment became a live expression (frappe.template.compile rewrites those across
+      # the entire file before parsing), the name it read is not in the render context,
+      # and under `with(obj)` that is a ReferenceError -- so Print and Download PDF
+      # produced NOTHING from v1.397.0 to v1.424.0 while every static check stayed
+      # green. The guard added in v1.425.0 monkey-patches core's print_report/pdf_report
+      # on the report instance, and whether core's menu actually reaches the wrapper is
+      # not something reading the file can tell you.
+      - name: Roster print guard (executed, not grepped)
+        run: node scripts/test_roster_print_guard.mjs
       # Checkpoint completeness moved from validate to publish. BOTH halves are
       # asserted in that one suite on purpose: shipping the relaxation without the
       # publish gate lets a checkpoint with no correct option reach _split_lesson,

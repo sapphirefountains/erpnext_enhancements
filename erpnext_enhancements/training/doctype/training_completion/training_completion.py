@@ -29,7 +29,7 @@ the doctypes they point at.
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import cint, now_datetime
+from frappe.utils import cint, now_datetime, nowdate
 
 
 class TrainingCompletion(Document):
@@ -60,9 +60,35 @@ class TrainingCompletion(Document):
 		self._require_revoked_reason()
 
 	def on_cancel(self):
+		"""Withdraw it, and **record when**.
+
+		Until v1.425.0 this wrote the status alone. That is a derived-status write
+		through ``db_set(..., update_modified=False)``, which never reaches
+		``save_version()`` — so ``track_changes`` recorded nothing, ``modified`` did not
+		even move, and the row ended up saying *that* it had been withdrawn with
+		nothing anywhere saying *when*. ``Training Certificate`` got ``revoked_on`` for
+		exactly this reason in v1.396.0 and the completion behind it did not, which
+		left the more important of the two records the less answerable.
+
+		It matters because of the one question this document exists to answer: *was
+		this person certified on 1 March?* Without a date, a completion withdrawn last
+		week is indistinguishable from one withdrawn two years ago, and an as-of-date
+		reader has no honest choice but to report it as not reconstructible.
+
+		``nowdate()`` rather than ``today()`` for the same reason the rest of the module
+		uses it — see `frappe-local-time-vs-utc`; this is a site-local business date,
+		not a UTC instant.
+		"""
 		# db_set rather than assignment: on_cancel runs after the document has been
-		# written, so a plain field set would be discarded.
-		self.db_set("status", "Revoked", update_modified=False)
+		# written, so a plain field set would be discarded. One call, because two
+		# db_set calls are two writes and a half-applied withdrawal is the state this
+		# whole change exists to prevent.
+		values = {"status": "Revoked"}
+		if self.meta.has_field("revoked_on") and not self.get("revoked_on"):
+			# Only when blank, so a historical import or a hand-corrected date survives
+			# a later re-cancel rather than being restamped with today.
+			values["revoked_on"] = nowdate()
+		self.db_set(values, update_modified=False)
 
 	# ------------------------------------------------------------------ helpers
 
