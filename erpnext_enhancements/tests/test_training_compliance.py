@@ -161,28 +161,60 @@ def _like(value, pattern):
 	return body in (value or "")
 
 
-def _matches(row, filters):
-	for field, condition in (filters or {}).items():
-		value = row.get(field)
-		if isinstance(condition, (list, tuple)):
-			operator, operand = condition[0], condition[1]
-			operator = str(operator).lower()
-			if operator == "in":
-				ok = value in operand
-			elif operator == "not in":
-				ok = value not in operand
-			elif operator == "!=":
-				ok = value != operand
-			elif operator == "<":
-				ok = value is not None and str(value) < str(operand)
-			elif operator == ">":
-				ok = value is not None and str(value) > str(operand)
-			elif operator == "like":
-				ok = _like(value, operand)
+#: What frappe substitutes for a NULL, and the reason this stub was WRONG until
+#: v1.426.5 -- wrong by being **more correct than the framework**. It answered
+#: `value is not None` for `<`, the Python-intuitive result, while
+#: `frappe/model/db_query.py` wraps a comparison on a nullable column in
+#: `ifnull(col, <minimum of the type>)` so NULL rows DO match. `_uncertified` was
+#: reporting never-expiring completions as "Certification lapsed" on production
+#: while every test here passed. Same stub error as `test_training_certificates`.
+NULL_FALLBACK = ""
+
+
+def _conditions(filters):
+	"""Both filter forms frappe accepts. The list form is what an `is set` guard needs,
+	because two conditions on one field cannot both live in a dict."""
+	if isinstance(filters, dict):
+		for field, condition in (filters or {}).items():
+			if isinstance(condition, (list, tuple)):
+				yield field, condition[0], condition[1]
 			else:
-				raise AssertionError(f"stub does not implement operator {operator!r}")
+				yield field, "=", condition
+		return
+	for condition in filters or []:
+		if len(condition) == 4:
+			yield condition[1], condition[2], condition[3]
 		else:
-			ok = value == condition
+			yield condition[0], condition[1], condition[2]
+
+
+def _matches(row, filters):
+	for field, operator, operand in _conditions(filters):
+		raw = row.get(field)
+		value = NULL_FALLBACK if raw is None else raw
+		operator = str(operator).lower()
+		if operator == "=":
+			ok = raw == operand
+		elif operator == "in":
+			ok = raw in operand
+		elif operator == "not in":
+			ok = str(value) not in [str(o) for o in operand]
+		elif operator == "!=":
+			ok = str(value) != str(operand)
+		elif operator == "<":
+			ok = str(value) < str(operand)
+		elif operator == "<=":
+			ok = str(value) <= str(operand)
+		elif operator == ">":
+			ok = str(value) > str(operand)
+		elif operator == ">=":
+			ok = str(value) >= str(operand)
+		elif operator == "is":
+			ok = bool(raw) if operand == "set" else not raw
+		elif operator == "like":
+			ok = _like(raw, operand)
+		else:
+			raise AssertionError(f"stub does not implement operator {operator!r}")
 		if not ok:
 			return False
 	return True

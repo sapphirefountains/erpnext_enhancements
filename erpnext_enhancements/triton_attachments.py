@@ -844,9 +844,20 @@ def purge_expired() -> int:
         pluck="name",
         limit_page_length=0,
     )
+    # `["expires_on", "is", "set"]` on a sweep that DELETES. `expires_on` is nullable
+    # and frappe wraps a comparison on a nullable column in `ifnull(col, '0001-01-01')`,
+    # so a row that somehow reached the table without one would read as expired in the
+    # year 1 and be deleted along with its File, permanently, on the next nightly run.
+    #
+    # Both writers above set it at insert, so today no such row exists — but "the only
+    # two writers always set it" is an argument about the code as it stands, and this
+    # is an irreversible delete. The clause costs nothing and removes the class.
     expired = frappe.get_all(
         DOCTYPE,
-        filters={"expires_on": ["<", nowdate()]},
+        filters=[
+            ["expires_on", "is", "set"],
+            ["expires_on", "<", nowdate()],
+        ],
         pluck="name",
         limit_page_length=0,
     )

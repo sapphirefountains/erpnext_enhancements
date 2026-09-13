@@ -386,6 +386,25 @@ jobs:
       # The two halves disagreed on the same row because only one went through SQL.
       - name: Training assignment due-date filters (nullable columns)
         run: python -m unittest erpnext_enhancements.tests.test_training_due_date_filters -v
+      # ONE guard for the whole class, and the durable outcome of the 2026-09-13 audit.
+      # Frappe wraps a comparison on a nullable column in ifnull(col, <minimum of the
+      # type>), so `<` and `<=` MATCH every NULL row while `>`/`>=`/`between`/`is set`
+      # do not. Twelve instances existed across the app that day; five were live, and
+      # the worst force-expired 15 of 16 maintenance contracts, stopping both visit
+      # scheduling and invoicing. It fails by doing MORE than asked, so every one of
+      # them looked like it was working. The named field list in that file is the
+      # memory -- add to it the moment another nullable date turns up.
+      - name: Nullable date comparisons carry an `is set` clause
+        run: python -m unittest erpnext_enhancements.tests.test_nullable_date_filters -v
+      # `@frappe.whitelist()` decorates whatever def comes next, and blank lines between
+      # them are legal. On 2026-09-13 a refactor inserted two helpers BETWEEN an existing
+      # decorator and the endpoint it was written for: the file parsed, imported and
+      # deployed, `get_task_dashboard_data` silently stopped being whitelisted (the Task
+      # Dashboard failed for every user) and a filter builder became a public endpoint.
+      # Nothing caught it because the module still imports and the helpers still test
+      # green -- an endpoint only fails when a browser calls it.
+      - name: Whitelist decorators sit on endpoints, not helpers
+        run: python -m unittest erpnext_enhancements.tests.test_whitelist_placement -v
       # RUNS the roster's print guard rather than reading it, and that distinction is
       # the whole reason this step exists. The previous defect on this report was a
       # print template that had never once been rendered: a double brace inside an HTML

@@ -75,9 +75,11 @@ class TrainingCompletion(Document):
 		week is indistinguishable from one withdrawn two years ago, and an as-of-date
 		reader has no honest choice but to report it as not reconstructible.
 
-		``nowdate()`` rather than ``today()`` for the same reason the rest of the module
-		uses it — see `frappe-local-time-vs-utc`; this is a site-local business date,
-		not a UTC instant.
+		The date comes from ``nowdate()`` simply because that is what this module uses.
+		An earlier version of this docstring claimed a distinction from ``today()``;
+		there is none — ``frappe/utils/data.py`` in v16 defines ``today()`` as
+		``return nowdate()``, one calling the other. A rationale that sounds right and
+		is not makes the next reader change working code to satisfy it.
 		"""
 		# db_set rather than assignment: on_cancel runs after the document has been
 		# written, so a plain field set would be discarded. One call, because two

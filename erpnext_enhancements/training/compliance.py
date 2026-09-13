@@ -310,14 +310,32 @@ def _uncertified(user, required):
 			_("Certification expired") if row.get("status") == "Expired" else _("Certification revoked"),
 		)
 
+	# `["expires_on", "is", "set"]`. DEFENSIVE, not a live fix — the distinction matters
+	# and was nearly got wrong here.
+	#
+	# The filter genuinely over-matches: `expires_on` is nullable, NULL means never
+	# expires, and frappe wraps the comparison in `ifnull(col, '0001-01-01')`, so every
+	# never-expiring completion is fetched as though it had lapsed. On 2026-09-13 that
+	# was two real rows.
+	#
+	# **But nothing reaches the reader.** `_currently_valid_courses` above does the same
+	# test in Python and gets it right — `if not expires or str(expires) >= nowdate()` —
+	# so those courses are already in `valid`, and `add()` returns early for anything in
+	# `valid`. The over-match is discarded one call later. Measuring the query alone said
+	# "live defect"; tracing the loop body said otherwise, and the loop body is right.
+	#
+	# The clause stays because a filter that fetches rows it must then rely on somebody
+	# else to throw away is one edit from being wrong, and because the two halves of one
+	# rule should agree. `tests/test_nullable_date_filters.py` sweeps for the class.
 	for row in frappe.get_all(
 		"Training Completion",
-		filters={
-			"user": user,
-			"docstatus": 1,
-			"status": "Valid",
-			"expires_on": ["<", nowdate()],
-		},
+		filters=[
+			["user", "=", user],
+			["docstatus", "=", 1],
+			["status", "=", "Valid"],
+			["expires_on", "is", "set"],
+			["expires_on", "<", nowdate()],
+		],
 		fields=["course", "course_title_snapshot"],
 	):
 		add(row.get("course"), row.get("course_title_snapshot"), _("Certification lapsed"))

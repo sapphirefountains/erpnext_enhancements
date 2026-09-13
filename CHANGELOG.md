@@ -7,6 +7,124 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.426.5] - 2026-09-13
+
+### Fixed
+
+- **A regression from v1.426.3, live on production: the Task Dashboard had stopped
+  working, and a helper had become a public endpoint.** That release inserted two filter
+  builders into `api/task_dashboard.py` **between** an existing `@frappe.whitelist()` and
+  the function it was written for. Python permits blank lines between a decorator and its
+  `def`, so the file parsed, imported and deployed with nothing reporting a problem — but
+  the decorator had moved. Confirmed by testing membership of `frappe.whitelisted` on the
+  running site:
+
+  | | |
+  |---|---|
+  | `get_task_dashboard_data` | **False** — the dashboard's only endpoint, unreachable |
+  | `overdue_task_filters` | **True** — a pure helper, callable by any signed-in user |
+  | `get_wall_dashboard_data` | True — the control, proving the mechanism worked |
+
+  Nothing caught it because every ordinary check still passed: the module imports, and the
+  builders' own tests pass because they are plain functions. An endpoint only fails when a
+  browser calls it. Found by an adversarial audit of this series' own commits.
+
+- **The daily "won opportunities still waiting on a project" alert was reporting 228 when
+  it meant 31.** `status_alerts.nag_unconverted_opportunities` filtered
+  `{"custom_date_closed_won": ("<=", cutoff)}` on a nullable custom field, so the ifnull
+  sentinel read every undated Closed-Won opportunity as won in the year 1 and therefore
+  maximally overdue. 197 of the 228 are Zoho imports that landed with no won-date at all.
+
+  The function's own docstring is the specification it failed: *"an opportunity won today is
+  never nagged, one won yesterday or earlier is."* It is a **freshness** nag, and a row with
+  no won-date cannot be placed in time at all. Live: `unconverted_nag_hours = 24`,
+  `process_automation_enabled = 1`, three real recipients.
+
+  Those 197 are not thereby dismissed — "won deals with no project" is a genuine backlog.
+  But a daily email that says 228 when it means 31 is how an alert stops being read, and a
+  backlog that old wants a report with a date range, not a daily reminder.
+
+- **`tasks.py`'s legacy predictive-visit fallback** treated never-scheduled equipment as due
+  today (`custom_next_predictive_visit <= horizon`), which would have drafted a Maintenance
+  Record dated today for a serial nobody had put on a schedule. Dormant: no submitted Sales
+  Order Item on this site carries a `custom_serial_no` at all.
+
+- **`triton_attachments.purge_expired`** compared a nullable `expires_on` on a sweep that
+  **deletes** — a row that reached the table without one would have been removed along with
+  its `File`, permanently. Dormant today (both writers set it at insert), but "the only two
+  writers always set it" is an argument about the code as it stands, and this is an
+  irreversible delete.
+
+- **`hr_enhancements/tasks.py`'s expiring-credential digest** was safe only by accident of a
+  clause about a *different* field: nothing reaches `Expiring`/`Expired` without an expiry,
+  because the status writer above filters `expires_on is set`. The comment there already
+  described the coalescing trap; the clause now says it out loud, because safety that
+  depends on somebody not editing an unrelated filter is not safety.
+
+- **`training/compliance.py`** over-fetched the same way, and this one is **defensive
+  rather than a live fix** — the distinction was nearly got wrong. `_currently_valid_courses`
+  does the same test in Python and gets it right (`if not expires or ...`), so `add()`
+  discards the over-matched rows one call later. Measuring the query alone said "live
+  defect"; tracing the loop body said otherwise, and the loop body is right.
+
+### Added
+
+- **`tests/test_whitelist_placement.py`** — no private function and no `*_filters` helper
+  may carry `@frappe.whitelist()`, and a named inventory of endpoints whose loss would be
+  silent must stay whitelisted. Rule one catches a decorator that *moved*; rule two catches
+  one that *vanished*. The inventory failed on its first run because it named
+  `generate_briefing_for_user` from memory when the endpoint is `get_morning_briefing` —
+  the list doing its job on its own author.
+
+- **`tests/test_nullable_date_filters.py` — one guard for the whole class.** It walks every
+  ORM call in shipped code, resolves the doctype (including one held in a module constant),
+  and fails the build if a listed nullable date is compared with `<` or `<=` without an
+  `is set` clause. Shared filter builders, which carry no doctype at the call site, are
+  named explicitly.
+
+### Notes
+
+**Keyed on (doctype, field), not on the field name.** The first draft keyed on the name and
+immediately flagged three *correct* filters in `travel_management`, because
+`Travel Trip.end_date` is `reqd = 1` while `Sapphire Maintenance Contract.end_date` is
+nullable and load-bearing. A guard that cries wolf gets switched off. There is a test
+asserting that exact distinction still holds.
+
+**The guard found two instances a seven-agent audit had missed** — the credential digest and
+the Triton purge — and correctly declined to flag the travel ones. It is also the third
+place today where a **test stub was wrong by being more correct than the framework**:
+`test_training_compliance`'s filter engine answered `value is not None` for `<`, so
+`_uncertified` over-fetched on production while every test passed. That stub now models the
+ifnull fallback, as `test_training_certificates` and the rest already do.
+
+**Three mutations were run and one initially survived without applying** — a tab/space
+mismatch in the anchor, `api/` being four-space indented. That is the third time today a
+mutation has reported a false pass for that reason; re-running it properly is the only thing
+that made the result mean anything.
+
+**Two more instances found by auditing this series' own commits**, both now guarded:
+`api/briefing.py`'s ToDo query — the twin of the bug v1.426.3 fixed a hundred lines above
+it, in that same commit — and `training/compliance.py`, covered above. The ToDo one is
+**latent**: all 1,339 open ToDos carry a date, because the field's `default: "Today"` fires
+on the ordinary path. `prepare_filter_condition` never consults a default, so the guard is
+still right.
+
+**Two false claims of my own, corrected.** `Training Completion.on_cancel`'s docstring
+justified `nowdate()` over `today()` on a distinction that does not exist — v16 defines
+`today()` as `return nowdate()`, one calling the other. And v1.425.0's changelog said
+`history_note` is "stamped by `on_cancel`"; nothing writes that field. It remains available
+for a backfill to explain a partly-recovered date, which is what the field description
+says, but it is not written today.
+
+**The alert's deep link now shows the set it counted.** It used to be
+`/app/opportunity?status=Closed%20Won` — status alone — so the recipient was told "N waiting
+on a project" and handed every Closed-Won opportunity. Clicking through, the one action that
+would have exposed the count as wrong, produced a third number. Left alone it would have got
+worse: the text now says 31 while an unfiltered list still shows 228.
+
+**The chat inbound queue finding is gone**, not fixed: `chat/sync/inbound.py` was deleted
+with the module in v1.426.0.
+
 ## [1.426.4] - 2026-09-13
 
 ### Fixed
