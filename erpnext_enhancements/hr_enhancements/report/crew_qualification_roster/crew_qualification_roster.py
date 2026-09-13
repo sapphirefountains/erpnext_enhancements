@@ -40,6 +40,8 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, getdate, today
 
+from erpnext_enhancements.training.authority import DELEGATE, OBSERVED, TIER
+
 CREDENTIAL = "Employee Credential"
 SIGNOFF = "Training Signoff"
 COMPLETION = "Training Completion"
@@ -166,13 +168,27 @@ def _signoff_rows(person, as_of):
 	``signed_on`` is when the learner RAISED the request; using it would report
 	somebody as competent from the moment they asked to be. Rows predating v1.396.0
 	carry no ``attested_on`` and are reported as not reconstructible.
+
+	**Who attested is read through ``authority_basis``, not off one field.** See
+	:func:`_attestation_note`: a submitted sign-off carries two people, and which of
+	them did the attesting depends on the basis. Until v1.424.0 this printed
+	*Attested by* whoever was in ``supervisor_name_at_time``, which the snapshot had
+	frozen from the login that pressed submit — so under a delegate basis the sheet
+	named the typist.
 	"""
 	if not frappe.db.exists("DocType", SIGNOFF) or not person.user_id:
 		return []
 	meta = frappe.get_meta(SIGNOFF)
 	dated = meta.has_field("attested_on")
 	fields = ["name", "course", "outcome", "signed_on"]
-	for extra in ("attested_on", "supervisor_name_at_time", "supervisor_position_title"):
+	for extra in (
+		"attested_on",
+		"authority_basis",
+		"supervisor_name_at_time",
+		"supervisor_position_title",
+		"recorded_by_at_time",
+		"recorded_by_position_title",
+	):
 		if meta.has_field(extra):
 			fields.append(extra)
 
@@ -184,10 +200,6 @@ def _signoff_rows(person, as_of):
 		if attested and getdate(attested) > as_of:
 			continue
 
-		by = row.get("supervisor_name_at_time") or ""
-		rung = row.get("supervisor_position_title") or ""
-		attestor = f"{by} ({rung})" if by and rung else by
-
 		if not attested:
 			note = _(
 				"Attested before v1.396.0, when only the request date was stored. "
@@ -195,6 +207,8 @@ def _signoff_rows(person, as_of):
 			).format(NOT_RECONSTRUCTIBLE)
 			out.append(_row(person, as_of, _("Sign-off"), row.course or row.name, _("Unknown"), "", note))
 			continue
+
+		attestation = _attestation_note(row)
 
 		# Supervised Only is NOT competence and must never read as cleared to work
 		# alone. It shares doctype, docstatus and date stamp with Competent.
@@ -211,10 +225,69 @@ def _signoff_rows(person, as_of):
 				row.course or row.name,
 				verdict,
 				frappe.format(getdate(attested), {"fieldtype": "Date"}),
-				_("Attested by {0}").format(attestor) if attestor else "",
+				attestation,
 			)
 		)
 	return out
+
+
+def _who(name, rung):
+	"""``Name (Rung)``, or just the name when the rung was not recorded."""
+	name = (name or "").strip()
+	rung = (rung or "").strip()
+	return f"{name} ({rung})" if name and rung else name
+
+
+def _attestation_note(row):
+	"""Who attested — and, when that is not who typed it up, who typed it up.
+
+	A submitted sign-off carries **two** people, and ``authority_basis`` is the field
+	that says which of them did the attesting. Reading either identity on its own
+	misnames somebody on a document handed to an insurer, in one direction or the
+	other:
+
+	* ``Observed Supervisor`` — the same person both times, by definition
+	  (``supervisor_user == the session user`` is what selects this basis). Name them
+	  once. Both submitted sign-offs on this site are this.
+	* ``Manager Delegate`` — a Training Manager typing up a verdict relayed over the
+	  radio. **The named supervisor attested**; the manager only recorded it. Until
+	  v1.424.0 the snapshot froze the supervisor fields from the session login, so
+	  this sheet printed the typist as the attester and nothing on the row
+	  disagreed — every supervisor field held the same wrong person.
+	* ``Position Tier`` — the exact inverse, which is why swapping the two fields
+	  would not have been a fix. Here the recorder signs on **their own** rung and
+	  the named supervisor is only the address the request was routed to. On this
+	  site that is the live arrangement: the one Senior Technician is the
+	  ``reports_to`` of none of the four Junior Technicians, so every request he
+	  signs is addressed to the Project Manager.
+
+	Rows with no basis are pre-v1.386.0 and carry whatever was frozen at the time;
+	they fall through to the plain form and read exactly as they did before, which
+	for an observed sign-off is correct.
+	"""
+	named = _who(row.get("supervisor_name_at_time"), row.get("supervisor_position_title"))
+	recorder = _who(row.get("recorded_by_at_time"), row.get("recorded_by_position_title"))
+	basis = row.get("authority_basis") or ""
+
+	if basis == TIER and recorder:
+		if named and named != recorder:
+			return _("Attested by {0} on a position-tier basis; the request was addressed to {1}.").format(
+				recorder, named
+			)
+		return _("Attested by {0} on a position-tier basis.").format(recorder)
+
+	# Keyed on the basis rather than on whether the two names differ. Under
+	# `Observed Supervisor` they are the same human read out of two different tables
+	# -- Employee.employee_name and User.full_name -- and a spelling difference
+	# between those would otherwise print every ordinary sign-off as though two
+	# people had been involved.
+	if basis == DELEGATE and named and recorder:
+		return _("Attested by {0}, recorded by {1}.").format(named, recorder)
+	if basis == OBSERVED and not named:
+		return _("Attested by {0}.").format(recorder) if recorder else ""
+	if named:
+		return _("Attested by {0}.").format(named)
+	return _("Recorded by {0}.").format(recorder) if recorder else ""
 
 
 def _restriction_rows(person, as_of):

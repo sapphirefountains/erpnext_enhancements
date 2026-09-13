@@ -5,16 +5,38 @@
 	the report folder and query_report.js uses it as the custom format for Print and
 	PDF, with no registration anywhere. Three things to know before editing:
 
-	* NO LETTERHEAD HERE. Frappe wrapper already emits print_settings.letter_head
-	  around {{ content }}, so a letterhead drawn in this file prints twice. That is
-	  the exact inverse of the Jinja print-format rule elsewhere in this app, where
-	  custom_format = 1 means the template draws everything.
+	* NO LETTERHEAD HERE. The frappe print wrapper already emits
+	  print_settings.letter_head immediately above the block this file renders into,
+	  so a letterhead drawn here prints twice. That is the exact inverse of the Jinja
+	  print-format rule elsewhere in this app, where custom_format = 1 means the
+	  template draws everything.
+	* NEVER WRITE A DOUBLE BRACE IN THIS FILE, COMMENTS INCLUDED, AND THAT IS NOT
+	  PEDANTRY. frappe.template.compile runs str.replace on every double brace in the
+	  WHOLE file before it looks for anything else, HTML comments very much included,
+	  turning it into a live output expression. The bullet above used to describe the
+	  wrapper as emitting the letterhead around a double-braced "content" -- which
+	  compiled to a read of a variable that is not in the context: render_grid assigns
+	  opts.content FROM this render, so it is unset while this runs, and `content` is
+	  not a browser global either (checked in Chrome: it is not a property of window).
+	  Under the with(obj) scope the template compiles into, that is a ReferenceError,
+	  so Print and Download PDF both threw and produced nothing -- from the day this
+	  file was written in v1.397.0 until v1.424.0, on the one artefact in this app
+	  whose entire purpose is to be printed and handed to somebody. Nothing caught it
+	  because no test rendered the template and the prose reads as a comment.
 	* It is bypassed the moment somebody picks specific columns in the print dialog,
 	  because get_print_template() falls back to print_grid then. For a document
 	  handed to an insurer that matters: the designed sheet quietly becomes a grid
 	  dump. Print with the default column set.
-	* `data` is get_data_for_print(), i.e. the rows AS CURRENTLY SORTED AND FILTERED
-	  ON SCREEN, not the canonical result. Re-sorting the report changes the sheet.
+	* IT LOOPS `original_data`, NOT `data`, AND THAT IS NOT A PREFERENCE. Both are
+	  passed. `data` is get_data_for_print(), which maps
+	  datatable.datamanager.rowViewOrder and keeps only
+	  bodyRenderer.visibleRowIndices -- so it is the rows AS CURRENTLY SORTED AND
+	  INLINE-FILTERED ON SCREEN. Re-sorting reorders the sheet, and typing in a
+	  column filter silently DROPS rows from it, on a document whose whole purpose
+	  is to be complete. `original_data` is this.data, the canonical server result,
+	  and query_report.js passes it on the Print path and the PDF path alike. Read
+	  from git show origin/version-16, not from the sibling checkout, which is on
+	  develop and differs.
 
 	MIND THE TEMPLATE ENGINE. frappe.template.compile flattens every newline to a
 	space before compiling, so a line comment inside a template block would swallow
@@ -60,6 +82,8 @@
 		have since left the company are included, because they were employed on the date.
 	</div>
 
+	{% var rows = (typeof original_data !== "undefined" && original_data && original_data.length) ? original_data : data; %}
+
 	<table>
 		<thead>
 			<tr>
@@ -73,27 +97,29 @@
 			</tr>
 		</thead>
 		<tbody>
-			{% for (var i = 0; i < data.length; i++) { %}
+			{% for (var i = 0; i < rows.length; i++) { %}
 			<tr>
-				<td class="cqr-person">{%= data[i].employee_name %}</td>
-				<td>{%= data[i].employed %}</td>
-				<td>{%= data[i].kind %}</td>
-				<td>{%= data[i].what %}</td>
+				<td class="cqr-person">{%= rows[i].employee_name %}</td>
+				<td>{%= rows[i].employed %}</td>
+				<td>{%= rows[i].kind %}</td>
+				<td>{%= rows[i].what %}</td>
 				<td
-					class="{%= (data[i].verdict || "").indexOf("NOT cleared") >= 0 ? "cqr-notcleared" : ((data[i].verdict === "Unknown") ? "cqr-unknown" : "") %}"
+					class="{%= (rows[i].verdict || "").indexOf("NOT cleared") >= 0 ? "cqr-notcleared" : ((rows[i].verdict === "Unknown") ? "cqr-unknown" : "") %}"
 				>
-					{%= data[i].verdict %}
+					{%= rows[i].verdict %}
 				</td>
-				<td>{%= data[i].valid_until %}</td>
-				<td>{%= data[i].note %}</td>
+				<td>{%= rows[i].valid_until %}</td>
+				<td>{%= rows[i].note %}</td>
 			</tr>
 			{% } %}
 		</tbody>
 	</table>
 
 	<div class="cqr-foot">
-		Produced {%= frappe.datetime.str_to_user(frappe.datetime.get_today()) %}. Rows appear in
-		the order shown on screen at the time of printing. A blank cell means the field does not
-		apply; where a fact could not be established from stored dates the cell says so in words.
+		Produced {%= frappe.datetime.str_to_user(frappe.datetime.get_today()) %}. Rows are the
+		full result the report returned for this date, in the order it returned them: sorting or
+		filtering the columns on screen changes neither what is printed nor how much of it. A
+		blank cell means the field does not apply; where a fact could not be established from
+		stored dates the cell says so in words.
 	</div>
 </div>

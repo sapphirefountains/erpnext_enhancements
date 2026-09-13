@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.424.0] - 2026-09-13
+
+### Fixed
+
+- **The Crew Qualification Roster print sheet never rendered — not once, from the day it was
+  written.** Print and Download PDF both threw `ReferenceError` and produced nothing, on the
+  one artefact in this app whose entire purpose is to be printed and handed to somebody.
+  The cause is a comment. `frappe.template.compile` runs `str.replace(/{{/g, "{%=")` across
+  the **whole file** before it looks for anything else, HTML comments very much included, so
+  the header line describing the frappe wrapper as emitting the letterhead *around a
+  double-braced `content`* compiled into a live read of `content`. `render_grid` assigns
+  `opts.content` **from** that render, so it is not in the context; and `content` is not a
+  browser global either (checked in Chrome: it is not a property of `window`). Under the
+  `with(obj)` scope the compiled template runs in, an unresolvable identifier is a throw, not
+  an `undefined`. Found by porting `microtemplate.js` verbatim into node and rendering the
+  file, which is the only thing that would have found it: the text reads as documentation,
+  the suite stripped comments before asserting, and nothing in CI rendered the template.
+
+- **The print sheet printed the rows as sorted and filtered on screen, not the result.**
+  It looped `data`, which is `get_data_for_print()`: that maps
+  `datatable.datamanager.rowViewOrder` and keeps only `bodyRenderer.visibleRowIndices`, so
+  re-sorting reordered the sheet and typing in a column filter silently **dropped rows from
+  it** — on a document whose whole value is being complete. `query_report.js` also passes
+  `original_data`, the canonical server result, on the Print path and the PDF path alike;
+  `original_data` had zero occurrences anywhere in this repo. The template now reads it,
+  behind a `typeof` guard so a future frappe that stopped passing it costs the sheet its
+  ordering guarantee rather than its contents.
+
+- **A sign-off recorded by a delegate named the typist as the attester.**
+  `authority.snapshot_positions` froze `supervisor_name_at_time`, `supervisor_position`,
+  `supervisor_position_title` and `supervisor_tier_at_time` from `frappe.session.user` — the
+  login that pressed Submit, not the person the document names. Under `Manager Delegate`,
+  which exists precisely because sign-offs get relayed over the radio and typed up
+  afterwards, the roster therefore printed *Attested by <the typist>*; and nothing on the row
+  disagreed, because every supervisor field held the same wrong person. The module's own
+  docstring had said the opposite since it was written: *the audit value is in the named
+  supervisor on the document, not in which login pressed submit.*
+
+### Added
+
+- **`recorded_by_at_time`, `recorded_by_position_title` and `recorded_by_tier_at_time` on
+  Training Signoff** — the recorder, kept separately from the attester rather than instead of
+  them. `authority_basis` is what says which of the two did the attesting, and the roster
+  composes its *Attested by* line from the basis.
+
+### Notes
+
+**Swapping the two fields would not have been a fix, and that is the whole reason there are
+now six.** A submitted sign-off carries two people, and only under `Observed Supervisor` are
+they the same one:
+
+| Basis | Who attested | Who recorded it |
+|---|---|---|
+| `Observed Supervisor` | the named supervisor | the same person |
+| `Manager Delegate` | the named supervisor | a Training Manager typing it up |
+| `Position Tier` | **the recorder**, on their own rung | — the named supervisor is only the address the request was routed to |
+
+`Position Tier` is the exact inverse of the delegate case, and on this site it is the live
+arrangement rather than a hypothetical: the one Senior Technician is the `reports_to` of none
+of the four Junior Technicians, so every request he signs is addressed to the Project Manager.
+Freezing the supervisor half alone would have fixed the delegate row and broken the tier row,
+and would have left a `Position Tier` basis sitting next to two tiers that demonstrate no rank
+difference at all — an apparent violation of the rule, manufactured by the fix. So both
+identities are frozen, always, and the reader picks by basis.
+
+**No data patch, and that is a measurement rather than an assumption.** Both submitted sign-offs
+on prod are `Observed Supervisor` or predate the basis field, and under an observed basis the
+two identities are the same login by definition — so no stored row names the wrong person.
+`recorded_by_at_time` stays blank on them, and blank means *this row predates v1.424.0*, not
+*the same person*; the field description and the snapshot docstring both say so.
+
+The supervisor name is now frozen from `Employee.employee_name` before falling back to the
+login, because `supervisor` is the mandatory field and an Employee does not have to have a
+login — `supervisor_user` is derived from it and comes back empty for an Employee with no
+`user_id`. Reading the rung through the login would have recorded *no rung* for somebody who
+plainly has one.
+
+**The DocType `modified` stamp is bumped deliberately.** A DocType JSON whose `modified` is not
+newer than the row already on the site is skipped by the importer, so three new fields would
+have existed in the repo and on no site — and the snapshot would have written them nowhere and
+said nothing. A test pins it, next to the one that keeps `field_order` and `fields` in step.
+
+**Two new guards on the print sheet, and the second is the general form of the first.**
+`tests/test_hr_qualification_roster.py` now fails the build on a double brace anywhere in that
+file, and — modelling the rewrite frappe actually performs — extracts every free identifier the
+compiled template would read and asserts each one is something `render_grid` passes. `content`
+is deliberately absent from that list, so the historical defect fails the general check on its
+own rather than only the literal spelling of it.
+
 ## [1.423.0] - 2026-09-12
 
 ### Added

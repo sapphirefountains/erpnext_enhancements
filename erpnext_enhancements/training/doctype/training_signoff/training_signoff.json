@@ -31,6 +31,9 @@
   "supervisor_tier_at_time",
   "learner_position_title",
   "learner_tier_at_time",
+  "recorded_by_at_time",
+  "recorded_by_position_title",
+  "recorded_by_tier_at_time",
   "amended_from"
  ],
  "fields": [
@@ -222,6 +225,29 @@
    "read_only": 1
   },
   {
+   "description": "The login that pressed Submit, which is only the same person as the supervisor above under an Observed Supervisor basis. Blank on rows submitted before v1.424.0 -- blank does not mean the same person.",
+   "fieldname": "recorded_by_at_time",
+   "fieldtype": "Data",
+   "label": "Recorded By At Time",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "Frozen for the same reason as the supervisor title beside it, and load-bearing under a Position Tier basis: it is this rung, not the named supervisor's, that granted the authority.",
+   "fieldname": "recorded_by_position_title",
+   "fieldtype": "Data",
+   "label": "Recorded By Position At Time",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "recorded_by_tier_at_time",
+   "fieldtype": "Int",
+   "label": "Recorded By Tier At Time",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
    "fieldname": "amended_from",
    "fieldtype": "Link",
    "hidden": 1,
@@ -234,7 +260,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-09-11 17:00:00.000000",
+ "modified": "2026-09-13 11:00:00.000000",
  "modified_by": "Administrator",
  "module": "Training",
  "name": "Training Signoff",
