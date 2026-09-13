@@ -265,7 +265,7 @@ class TrainingCanvas {
 	load_assets() {
 		if (this._assets) return this._assets;
 		const version = (frappe.boot.versions && frappe.boot.versions.erpnext_enhancements) || "0";
-		this._assets = Promise.all(TC_ASSETS.map((path) => tc_load_asset(path + "?v=" + encodeURIComponent(version)))).catch(
+		this._assets = TR.loadAssets(TC_ASSETS, version).catch(
 			(error) => {
 				this._assets = null;
 				throw error;
@@ -2443,28 +2443,9 @@ class TrainingCanvas {
 	}
 }
 
-// Load a versioned /assets file by hand. NOT frappe.require: frappe.assets.extn()
-// derives the type by splitting on "?" and taking the last segment, so a
-// cache-busted "…/blocks.js?v=1.376.0" reports its extension as the version and
-// loads as neither css nor js. The version token itself is mandatory — raw
-// /assets are served immutable for a year (public/README.md). Same idiom as the
-// classic builder's load_player.
-function tc_load_asset(url) {
-	return new Promise((resolve, reject) => {
-		const is_css = url.split("?")[0].endsWith(".css");
-		const selector = is_css ? `link[data-tc-asset="${url}"]` : `script[data-tc-asset="${url}"]`;
-		if (document.querySelector(selector)) return resolve();
-		const el = document.createElement(is_css ? "link" : "script");
-		el.setAttribute("data-tc-asset", url);
-		if (is_css) {
-			el.rel = "stylesheet";
-			el.href = url;
-		} else {
-			el.async = false;
-			el.src = url;
-		}
-		el.onload = () => resolve();
-		el.onerror = () => reject(new Error(__("Could not load {0}", [url])));
-		document.head.appendChild(el);
-	});
-}
+// The versioned /assets loader now lives in public/js/training/desk_assets.js
+// (TR.loadAssets), imported by the global desk bundle so it exists before any
+// Desk Page script runs. It used to be a private tc_load_asset here -- the
+// second of three copies; the first was the classic builder's load_player,
+// deleted with that page in v1.422.0, and the learner Desk Page would have
+// been the fourth. The reasons it cannot be frappe.require moved with it.

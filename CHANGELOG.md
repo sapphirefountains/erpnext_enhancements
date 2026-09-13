@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.428.2] - 2026-09-13
+
+Training Phase 6, D2. One versioned-asset loader instead of a third private copy.
+
+### Changed
+
+- **`TR.loadAssets` (`public/js/training/desk_assets.js`)** replaces
+  `training_canvas.js`'s private `tc_load_asset`, and is imported by
+  `erpnext_enhancements.bundle.js` so it exists before any Desk Page script runs — a page
+  cannot load a helper before the helper exists, and every training desk surface needs
+  `player.css`, which lives outside all of their page folders.
+
+  This is the **third** copy of that loader. The first was the classic Training Builder's
+  `load_player`, deleted with the page in v1.422.0; the second is the one folded in here;
+  the learner Desk Page in D4 would have been the fourth. The reasons moved with it:
+  `frappe.require` cannot do this job, because `frappe.assets.extn()` derives the type by
+  splitting the URL on `?` and taking the last segment, so a cache-busted
+  `player.css?v=1.428.2` reports its extension as the version string and loads as neither
+  css nor js — failing by doing nothing, which on a stylesheet is an unstyled page rather
+  than an error.
+
+- **It now refuses a path with no `?v=` token** rather than loading it. Raw `/assets` are
+  served year-immutable with no content hash, so an unversioned URL works perfectly on a
+  cold cache and silently serves a year-old file to everybody else — and the one machine
+  that would notice is the author's, which is the one least likely to. The old helper
+  trusted its callers to append the token; both of them did, which is exactly how a rule
+  like that survives until it doesn't.
+
+  Also fixed in the move: the stylesheet test splits the query off first.
+  `".css?v=1".endsWith(".css")` is false, so a cache-busted stylesheet would have been
+  appended as a `<script>` — no error, no styles.
+
+### Documentation
+
+- The gotcha is written down in [`public/README.md`](erpnext_enhancements/public/README.md),
+  and [`training/README.md`](erpnext_enhancements/training/README.md) now names the five
+  files bound by the no-`frappe.*` rule and says why `desk_assets.js` is deliberately not
+  one of them.
+
 ## [1.428.1] - 2026-09-13
 
 Training Phase 6, D1. A refactor with no behaviour change: the learner transport

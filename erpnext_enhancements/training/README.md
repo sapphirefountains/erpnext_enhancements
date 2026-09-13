@@ -116,6 +116,23 @@ regardless of what any endpoint does.
 - `setup.py` — starter Training Categories (`after_migrate`, insert-only).
 - `workspace/training/` — the desk workspace.
 
+The learner runtime's front end lives in [`../public/js/training/`](../public/js/training/):
+`player.js` (shell, routing, the twelve views), `video.js` (watch telemetry and
+in-video checkpoints), `quiz.js`, `blocks.js` (one renderer per content block) and
+`transport.js` — the HTTP surface, and the **one** place the endpoint names appear.
+`transport.js` left `www/training.html` in v1.428.1, when the portal page stopped
+being the only host; all five are bound by the same rule, asserted in
+[`../tests/test_training_phase3_contracts.py`](../tests/test_training_phase3_contracts.py):
+**no `frappe.*`, ever**. A learner may be a Website User with `desk_access = 0`, who
+never loads the desk bundle — so `frappe.call`, `frappe.msgprint` and `__()` all work
+perfectly while a developer tests logged in as themselves, and throw a
+`ReferenceError` for every customer.
+
+`desk_assets.js` is the exception and is **not** part of that set: it is desk-only by
+definition (`TR.loadAssets`, the one versioned `/assets` loader the authoring canvas
+and the learner Desk Page share), and it is imported by the global desk bundle rather
+than by any page, because a Desk Page cannot load a helper before the helper exists.
+
 The Course form script is [`../public/js/training/training_course.js`](../public/js/training/training_course.js),
 wired via `doctype_js`.
 

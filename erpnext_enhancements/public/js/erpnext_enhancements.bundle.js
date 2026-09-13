@@ -110,3 +110,11 @@ import "./gantt_widget/gantt_widget.js";
 import "./gantt_widget/gantt_export.js";
 // Live collaborative form sync (COLLAB_DOCTYPES allowlist inside)
 import "./collab/live_form_sync.js";
+// TR.loadAssets -- the one versioned /assets loader for the Training desk surfaces
+// (the authoring canvas, and the learner page). Global rather than page-local
+// because a Desk Page cannot load a helper before the helper exists, and every one
+// of these surfaces needs player.css, which lives outside all of their page
+// folders. frappe.require cannot do it: frappe.assets.extn() splits the URL on "?"
+// and takes the last segment, so a cache-busted ".css?v=..." loads as neither css
+// nor js -- silently, as an unstyled page.
+import "./training/desk_assets.js";
