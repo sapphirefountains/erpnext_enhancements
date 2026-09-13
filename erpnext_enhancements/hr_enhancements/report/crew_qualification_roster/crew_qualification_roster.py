@@ -32,13 +32,32 @@ Four consequences worth stating, because each inverts an instinct:
   whose date the backfill could not prove. An empty cell would read as "nothing to
   report"; the words "not reconstructible" read as what they are.
 
+Courses arrived late, and the reason is the fourth rule
+-------------------------------------------------------
+
+``Training Completion`` is the module's central audit artefact and this report could
+not read it until v1.425.0, because there was nothing to read it *by*. Its withdrawal
+path wrote ``status = "Revoked"`` through ``db_set(..., update_modified=False)`` and no
+date at all — not even ``modified`` moved — so a completion withdrawn last week was
+indistinguishable from one withdrawn two years ago, and there was no honest way to say
+whether it stood on a past day. ``Training Certificate`` had been given ``revoked_on``
+for exactly this reason in v1.396.0; the completion behind it had not, which left the
+more important of the two records the less answerable. The field exists now, so the
+rows can.
+
+Note what this report still does **not** read: ``status``. A superseded completion is
+reported as passed, because it was — the material changed afterwards, which is a fact
+about the course rather than about the person on that day.
+
 It refuses to render rather than rendering blank — an empty roster reads as "everyone
 is clear", which is the most dangerous thing this page could say.
 """
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, getdate, today
+from frappe.utils import add_days, cint, getdate, today
+
+from erpnext_enhancements.training.authority import DELEGATE, OBSERVED, TIER
 
 CREDENTIAL = "Employee Credential"
 SIGNOFF = "Training Signoff"
@@ -112,6 +131,7 @@ def _people_on(as_of, filters):
 def _rows_for(person, as_of):
 	rows = []
 	rows.extend(_credential_rows(person, as_of))
+	rows.extend(_completion_rows(person, as_of))
 	rows.extend(_signoff_rows(person, as_of))
 	rows.extend(_restriction_rows(person, as_of))
 	if not rows:
@@ -160,19 +180,119 @@ def _credential_rows(person, as_of):
 	return out
 
 
+def _completion_rows(person, as_of):
+	"""Courses passed. Derived from three dates and a docstatus; never from ``status``.
+
+	The module constant for this doctype has sat at the top of this file unused since
+	the report was written, which is the shape of the gap: the rows were always meant
+	to be here and there was no dated way to produce them. ``revoked_on`` (v1.425.0) is
+	what made it possible.
+
+	**Cancelled completions are fetched deliberately** — ``docstatus in (1, 2)``, where
+	every other enumeration here takes ``docstatus = 1``. A completion withdrawn in
+	August was still in force in March, and dropping it because of its state *today* is
+	the exact mistake this whole report exists to avoid. The withdrawal date, not the
+	docstatus, decides whether it counts on the as-of date.
+
+	Three outcomes, and the middle one is the point:
+
+	* withdrawn **on or before** the as-of date — it did not stand; no row.
+	* withdrawn at an **unrecorded** date (cancelled before v1.425.0) — reported as
+	  *Unknown*. It must never be assumed to have stood, nor assumed not to.
+	* otherwise it stood, subject to ``expires_on`` on the same 90-day horizon the
+	  credential rows use, measured from the as-of date rather than from today.
+	"""
+	if not frappe.db.exists("DocType", COMPLETION) or not person.user_id:
+		return []
+	meta = frappe.get_meta(COMPLETION)
+	dated_revocation = meta.has_field("revoked_on")
+	fields = ["name", "docstatus", "course", "course_title_snapshot", "completed_on", "expires_on"]
+	if dated_revocation:
+		fields.append("revoked_on")
+
+	out = []
+	for row in frappe.get_all(
+		COMPLETION,
+		filters={"user": person.user_id, "docstatus": ["in", (1, 2)]},
+		fields=fields,
+		order_by="completed_on asc",
+	):
+		if not row.completed_on or getdate(row.completed_on) > as_of:
+			# Not passed yet on the date. `completed_on` is stamped at validate and is
+			# the only claim this row makes about when.
+			continue
+
+		what = row.course_title_snapshot or row.course or row.name
+		revoked = row.get("revoked_on") if dated_revocation else None
+
+		if revoked and getdate(revoked) <= as_of:
+			continue
+
+		if cint(row.docstatus) == 2 and not revoked:
+			out.append(
+				_row(
+					person,
+					as_of,
+					_("Course"),
+					what,
+					_("Unknown"),
+					"",
+					_(
+						"Withdrawn at an unrecorded date -- cancelled before v1.425.0, when no "
+						"revocation date was stored. Whether it stood on this date is {0}."
+					).format(NOT_RECONSTRUCTIBLE),
+				)
+			)
+			continue
+
+		if row.expires_on and getdate(row.expires_on) < as_of:
+			continue
+
+		verdict = _("Passed")
+		if row.expires_on and getdate(row.expires_on) <= getdate(add_days(as_of, EXPIRY_HORIZON_DAYS)):
+			verdict = _("Passed -- expiring")
+
+		out.append(
+			_row(
+				person,
+				as_of,
+				_("Course"),
+				what,
+				verdict,
+				frappe.format(row.expires_on, {"fieldtype": "Date"}) if row.expires_on else _("no expiry"),
+				"",
+			)
+		)
+	return out
+
+
 def _signoff_rows(person, as_of):
 	"""Attestations. Keyed on ``attested_on``, never on ``signed_on``.
 
 	``signed_on`` is when the learner RAISED the request; using it would report
 	somebody as competent from the moment they asked to be. Rows predating v1.396.0
 	carry no ``attested_on`` and are reported as not reconstructible.
+
+	**Who attested is read through ``authority_basis``, not off one field.** See
+	:func:`_attestation_note`: a submitted sign-off carries two people, and which of
+	them did the attesting depends on the basis. Until v1.424.0 this printed
+	*Attested by* whoever was in ``supervisor_name_at_time``, which the snapshot had
+	frozen from the login that pressed submit — so under a delegate basis the sheet
+	named the typist.
 	"""
 	if not frappe.db.exists("DocType", SIGNOFF) or not person.user_id:
 		return []
 	meta = frappe.get_meta(SIGNOFF)
 	dated = meta.has_field("attested_on")
 	fields = ["name", "course", "outcome", "signed_on"]
-	for extra in ("attested_on", "supervisor_name_at_time", "supervisor_position_title"):
+	for extra in (
+		"attested_on",
+		"authority_basis",
+		"supervisor_name_at_time",
+		"supervisor_position_title",
+		"recorded_by_at_time",
+		"recorded_by_position_title",
+	):
 		if meta.has_field(extra):
 			fields.append(extra)
 
@@ -184,10 +304,6 @@ def _signoff_rows(person, as_of):
 		if attested and getdate(attested) > as_of:
 			continue
 
-		by = row.get("supervisor_name_at_time") or ""
-		rung = row.get("supervisor_position_title") or ""
-		attestor = f"{by} ({rung})" if by and rung else by
-
 		if not attested:
 			note = _(
 				"Attested before v1.396.0, when only the request date was stored. "
@@ -195,6 +311,8 @@ def _signoff_rows(person, as_of):
 			).format(NOT_RECONSTRUCTIBLE)
 			out.append(_row(person, as_of, _("Sign-off"), row.course or row.name, _("Unknown"), "", note))
 			continue
+
+		attestation = _attestation_note(row)
 
 		# Supervised Only is NOT competence and must never read as cleared to work
 		# alone. It shares doctype, docstatus and date stamp with Competent.
@@ -211,10 +329,69 @@ def _signoff_rows(person, as_of):
 				row.course or row.name,
 				verdict,
 				frappe.format(getdate(attested), {"fieldtype": "Date"}),
-				_("Attested by {0}").format(attestor) if attestor else "",
+				attestation,
 			)
 		)
 	return out
+
+
+def _who(name, rung):
+	"""``Name (Rung)``, or just the name when the rung was not recorded."""
+	name = (name or "").strip()
+	rung = (rung or "").strip()
+	return f"{name} ({rung})" if name and rung else name
+
+
+def _attestation_note(row):
+	"""Who attested — and, when that is not who typed it up, who typed it up.
+
+	A submitted sign-off carries **two** people, and ``authority_basis`` is the field
+	that says which of them did the attesting. Reading either identity on its own
+	misnames somebody on a document handed to an insurer, in one direction or the
+	other:
+
+	* ``Observed Supervisor`` — the same person both times, by definition
+	  (``supervisor_user == the session user`` is what selects this basis). Name them
+	  once. Both submitted sign-offs on this site are this.
+	* ``Manager Delegate`` — a Training Manager typing up a verdict relayed over the
+	  radio. **The named supervisor attested**; the manager only recorded it. Until
+	  v1.424.0 the snapshot froze the supervisor fields from the session login, so
+	  this sheet printed the typist as the attester and nothing on the row
+	  disagreed — every supervisor field held the same wrong person.
+	* ``Position Tier`` — the exact inverse, which is why swapping the two fields
+	  would not have been a fix. Here the recorder signs on **their own** rung and
+	  the named supervisor is only the address the request was routed to. On this
+	  site that is the live arrangement: the one Senior Technician is the
+	  ``reports_to`` of none of the four Junior Technicians, so every request he
+	  signs is addressed to the Project Manager.
+
+	Rows with no basis are pre-v1.386.0 and carry whatever was frozen at the time;
+	they fall through to the plain form and read exactly as they did before, which
+	for an observed sign-off is correct.
+	"""
+	named = _who(row.get("supervisor_name_at_time"), row.get("supervisor_position_title"))
+	recorder = _who(row.get("recorded_by_at_time"), row.get("recorded_by_position_title"))
+	basis = row.get("authority_basis") or ""
+
+	if basis == TIER and recorder:
+		if named and named != recorder:
+			return _("Attested by {0} on a position-tier basis; the request was addressed to {1}.").format(
+				recorder, named
+			)
+		return _("Attested by {0} on a position-tier basis.").format(recorder)
+
+	# Keyed on the basis rather than on whether the two names differ. Under
+	# `Observed Supervisor` they are the same human read out of two different tables
+	# -- Employee.employee_name and User.full_name -- and a spelling difference
+	# between those would otherwise print every ordinary sign-off as though two
+	# people had been involved.
+	if basis == DELEGATE and named and recorder:
+		return _("Attested by {0}, recorded by {1}.").format(named, recorder)
+	if basis == OBSERVED and not named:
+		return _("Attested by {0}.").format(recorder) if recorder else ""
+	if named:
+		return _("Attested by {0}.").format(named)
+	return _("Recorded by {0}.").format(recorder) if recorder else ""
 
 
 def _restriction_rows(person, as_of):

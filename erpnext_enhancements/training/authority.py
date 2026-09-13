@@ -52,6 +52,30 @@ the addressee stays frozen. Both are then snapshotted onto the submitted documen
 matching the completion's own doctrine: what mattered is what was true when the
 attestation was made, and a link resolves to today.
 
+Two identities, and conflating them misnames a person on an insurer document
+-----------------------------------------------------------------------------
+
+A submitted sign-off carries **two** people, and only under ``Observed Supervisor``
+are they the same one:
+
+* the **named supervisor** — ``supervisor`` / ``supervisor_user`` on the document.
+  This is the attestation. The paragraph above says so in as many words: the audit
+  value sits in the named supervisor rather than in which login pressed submit.
+* the **recorder** — ``frappe.session.user``, the login that pressed submit.
+
+Until v1.424.0 :func:`snapshot_positions` froze ``supervisor_name_at_time`` and both
+supervisor rung fields from the *recorder*, so under ``Manager Delegate`` — the
+relayed-over-the-radio workflow the delegate arm exists for — the frozen name was
+the typist, and ``crew_qualification_roster`` printed *Attested by <typist>* on a
+sheet handed to an insurer. Nothing on the row disagreed, because every supervisor
+field agreed with every other one: they were all the wrong person.
+
+They are now frozen separately, and ``authority_basis`` is what says which of the
+two did the attesting. **Swapping the two is not a fix** — under ``Position Tier``
+the recorder is signing on their own rung and the named supervisor is only the
+address the request was routed to, which is the exact inverse of the delegate case.
+So both are recorded, always, and the reader picks by basis.
+
 Fails closed everywhere. No Employee record, no Position, an unknown ladder, a
 retired rung — all of them return ``None``, and ``None`` means refused.
 """
@@ -87,6 +111,49 @@ def _position_of_user(user):
 		# part-way through this release can still record sign-offs.
 		return None
 	return frappe.db.get_value("Employee", {"user_id": user}, "custom_position")
+
+
+def _position_of_employee(employee):
+	"""The Position on an Employee record, reached by employee name rather than login.
+
+	The named supervisor on a sign-off is an **Employee** link, and an Employee does
+	not have to have a login. ``Training Signoff.supervisor`` is mandatory;
+	``supervisor_user`` is derived from it and comes back empty for an Employee with
+	no ``user_id``. So the rung of the person a document names has to be reachable
+	without a login, which this is and :func:`_position_of_user` is not — and it
+	costs one indexed read instead of two.
+	"""
+	if not employee:
+		return None
+	if not frappe.db.has_column("Employee", "custom_position"):
+		# Same reasoning as `_position_of_user`: the custom field has not migrated
+		# yet, so no rung is recorded rather than the submit failing.
+		return None
+	return frappe.db.get_value("Employee", employee, "custom_position")
+
+
+def _full_name(user):
+	"""Display name for a login, falling back to the login itself.
+
+	Never blank for a user that exists, because a blank in a frozen audit field
+	reads as "nobody recorded this" rather than "the User row has no full_name".
+	"""
+	if not user:
+		return ""
+	return frappe.db.get_value("User", user, "full_name") or user
+
+
+def _attester_name(doc):
+	"""The named supervisor, frozen as text.
+
+	``Employee.employee_name`` first: ``supervisor`` is the mandatory field and an
+	Employee always carries a name, while ``supervisor_user`` is derived and can be
+	empty. Falls through to the login and then to the Employee id, so a document that
+	names somebody never freezes a blank.
+	"""
+	employee = doc.get("supervisor")
+	name = frappe.db.get_value("Employee", employee, "employee_name") if employee else None
+	return name or _full_name(doc.get("supervisor_user")) or employee or ""
 
 
 def authority_basis(doc, user):
@@ -155,7 +222,7 @@ def signable_learner_users(user):
 
 
 def snapshot_positions(doc, user):
-	"""Stamp the two positions and the basis onto a sign-off being submitted.
+	"""Stamp both identities, both rungs and the basis onto a sign-off being submitted.
 
 	A link resolves to *today*; an attestation is about what was true when it was
 	made. The completion record already works this way — it snapshots the course
@@ -163,12 +230,33 @@ def snapshot_positions(doc, user):
 	question an audit asks in 2029 is "on what basis did this person attest?", and
 	"they were a Senior Technician then" is not recoverable from a Position link
 	that has since been retitled or a tier that has since been renumbered.
+
+	``user`` is **the login recording the sign-off**, not the attester. The
+	``supervisor_*`` fields come off the document and the ``recorded_by_*`` fields
+	come off ``user``; the module docstring has the reasoning and the defect this
+	separation fixes.
+
+	Rows submitted before v1.424.0 carry no ``recorded_by_*`` at all, and their
+	``supervisor_*`` fields hold whatever the *recorder* was. That is the same value
+	under ``Observed Supervisor``, which is what every submitted row on this site
+	actually is, so nothing needs correcting — but a reader must not assume a blank
+	``recorded_by_at_time`` means "the same person".
 	"""
 	basis = authority_basis(doc, user)
-	supervisor_position = _position_of_user(user) or ""
+
+	# The attestation half, read off the DOCUMENT. `user` is the login pressing
+	# submit and is deliberately not consulted here -- see the module docstring.
+	supervisor_position = (
+		_position_of_employee(doc.get("supervisor")) or _position_of_user(doc.get("supervisor_user")) or ""
+	)
 	learner_position = _position_of_user(doc.get("user")) or ""
+	# The recording half, read off the SESSION.
+	recorder_position = _position_of_user(user) or ""
+
 	sup_title, sup_tier = _position_facts(supervisor_position)
 	lrn_title, lrn_tier = _position_facts(learner_position)
+	rec_title, rec_tier = _position_facts(recorder_position)
+
 	values = {
 		"authority_basis": basis or "",
 		"supervisor_position": supervisor_position,
@@ -177,11 +265,19 @@ def snapshot_positions(doc, user):
 		# happen. These four are the frozen copies: rename a rung or renumber a tier
 		# and every historical attestation would otherwise silently restate itself.
 		# `Safety Incident.job_title_at_time` is the precedent in this app.
-		"supervisor_name_at_time": frappe.db.get_value("User", user, "full_name") or user or "",
+		"supervisor_name_at_time": _attester_name(doc),
 		"supervisor_position_title": sup_title,
 		"supervisor_tier_at_time": sup_tier,
 		"learner_position_title": lrn_title,
 		"learner_tier_at_time": lrn_tier,
+		# Who typed it up. A separate fact, in separate fields, always recorded even
+		# when it is the same person -- a blank would be read as "nobody", and under
+		# `Position Tier` the recorder rung is the thing that granted the authority,
+		# so leaving it out would put a `Position Tier` basis next to two tiers that
+		# demonstrate no rank difference at all.
+		"recorded_by_at_time": _full_name(user),
+		"recorded_by_position_title": rec_title,
+		"recorded_by_tier_at_time": rec_tier,
 	}
 	for field, value in values.items():
 		if doc.meta.has_field(field):

@@ -142,6 +142,194 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a proxy for "the chat sweeps are still there" — an assertion about someone else's feature
   wearing this test's name, which went red the day that feature was legitimately removed.
 
+## [1.425.0] - 2026-09-13
+
+### Fixed
+
+- **Withdrawing a `Training Completion` recorded *that* it happened and never *when*.**
+  `on_cancel` wrote `status = "Revoked"` through `db_set(..., update_modified=False)` — a
+  derived-status write that never reaches `save_version()`, so `track_changes` recorded
+  nothing and not even `modified` moved. A completion withdrawn last week was therefore
+  indistinguishable from one withdrawn two years ago. `Training Certificate` had been given
+  `revoked_on` for exactly this reason in v1.396.0 and the completion behind it had not,
+  which left the more important of the two records the one that could not answer the only
+  question it exists for: *was this person certified on 1 March?*
+
+### Added
+
+- **`revoked_on` and `history_note` on Training Completion**, stamped by `on_cancel` and only
+  when blank, so a historical import or a hand-corrected date survives a re-cancel. Guarded on
+  `meta.has_field` because `on_cancel` runs after docstatus is committed, and written in the
+  same single `db_set` as the status — two writes would allow a half-applied withdrawal, which
+  is the state this change exists to prevent.
+
+- **The Crew Qualification Roster now reports courses passed**, derived from `completed_on`,
+  `expires_on` and `revoked_on` and never from `status`. This is what `revoked_on` was needed
+  for: the report could not read the module's central audit artefact at all while there was no
+  dated way to say whether a withdrawn completion had stood on a past day. The `COMPLETION`
+  constant had sat unused at the top of that file since it was written — the shape of the gap.
+
+  Cancelled completions are fetched deliberately (`docstatus in (1, 2)`, where every other
+  enumeration here takes `1`): one withdrawn in August was still in force in March, and
+  dropping it for its state *today* is the exact mistake the report exists to avoid. Three
+  outcomes — withdrawn on or before the date (no row), withdrawn at an **unrecorded** date
+  (*Unknown*, never assumed either way), or standing, subject to the same 90-day expiry horizon
+  the credential rows use, measured from the as-of date. A superseded completion reads as
+  passed, because it was; the material changed afterwards, which is a fact about the course
+  rather than about the person on that day.
+
+- **A guard on the roster's print dialog**, because v16 has two one-click routes into an
+  unformatted grid dump and no server-side defence:
+
+  ```js
+  get_print_template(print_settings, custom_format) {
+      return print_settings.columns?.length || !custom_format ? "print_grid" : custom_format;
+  }
+  ```
+
+  Ticking **Pick Columns** is enough — its MultiCheck carries `select_all: true` — and choosing
+  a **Print Format** substitutes the sheet wholesale. What that costs: the heading, the as-of
+  date, the caveats, the *not cleared to work alone* colouring, and completeness, since
+  `print_grid` loops `data` (the on-screen rows) rather than `original_data`.
+
+### Notes
+
+**The guard warns, it does not block, and that is the point.** Somebody who genuinely wants a
+column subset should be able to have one; what they must not get is the swap *by surprise* on a
+document headed for an insurer. It is a UI guard, not a permission boundary — the same
+distinction this app's guardrails already draw about `Desktop Icon.roles`.
+
+**The Print Format route is currently unreachable on this report, and is guarded anyway.** That
+field's `get_query` filters Print Format to `print_format_for = "Report"` **and**
+`report = <this report>`; all nine such rows on this site belong to accounting reports. It
+becomes reachable the day somebody creates one. Conversely, leaving Pick Columns unticked is
+*not* a bypass: `get_print_settings` ends with `if (!settings.pick_columns) settings.columns =
+null`, so the select-all default cannot leak through on its own.
+
+**No backfill, and that is a measurement.** `tabTraining Completion` holds five rows on prod,
+all `docstatus = 1` — two Expired, three Valid, none ever withdrawn. So there is no row whose
+revocation date needs recovering, and a patch would have matched nothing and logged itself a
+success, which is the failure mode this repo has a rule about. Any row cancelled before this
+release reads as *Unknown* on the roster rather than being given a date it never had.
+
+**`scripts/test_roster_print_guard.mjs` RUNS the guard**, and has its own CI step. The guard is
+a monkey-patch over core's `print_report`/`pdf_report` on the report instance, and whether
+core's menu actually reaches the wrapper is not something reading the file can tell you — which
+is precisely how v1.424.0's print template managed never to render at all while every static
+check stayed green. One of its assertions was itself wrong first time round: the symptom of a
+double-wrapped guard is not two warnings but a *second* warning where the print should be, and
+the test only caught the mutation once it checked that.
+
+## [1.424.1] - 2026-09-13
+
+### Changed
+
+- **Documented the report print-format traps in `CLAUDE.md`.** Docs only; no executable
+  behaviour changes. The two defects v1.424.0 fixed on the Crew Qualification Roster are both
+  platform behaviour rather than anything specific to that report, so they belong in the
+  gotchas list where the next person writing a `.html` print format will read them:
+
+  - `frappe.template.compile` begins with `str.replace(/{{/g, "{%=")` across the **entire
+    file**, HTML comments included, so a double brace written in prose becomes a live output
+    expression. It then compiles into `with(obj){ ... }`, where a name absent from the render
+    context falls through to global scope and **throws** rather than coming back `undefined`.
+    That is how a header comment kept the roster from rendering at all for six months.
+  - `render_grid` passes both `data` and `original_data`, and `data` is
+    `get_data_for_print()` — the rows as currently sorted *and inline-filtered on screen*.
+    A column filter silently drops rows from the printed sheet.
+
+  Both fail in the direction that looks fine: the prose reads as documentation and the sheet
+  reads as complete. Rendering the template is the only check that finds either, which is why
+  the bullet says to port `microtemplate.js` into node and run the file through it.
+
+## [1.424.0] - 2026-09-13
+
+### Fixed
+
+- **The Crew Qualification Roster print sheet never rendered — not once, from the day it was
+  written.** Print and Download PDF both threw `ReferenceError` and produced nothing, on the
+  one artefact in this app whose entire purpose is to be printed and handed to somebody.
+  The cause is a comment. `frappe.template.compile` runs `str.replace(/{{/g, "{%=")` across
+  the **whole file** before it looks for anything else, HTML comments very much included, so
+  the header line describing the frappe wrapper as emitting the letterhead *around a
+  double-braced `content`* compiled into a live read of `content`. `render_grid` assigns
+  `opts.content` **from** that render, so it is not in the context; and `content` is not a
+  browser global either (checked in Chrome: it is not a property of `window`). Under the
+  `with(obj)` scope the compiled template runs in, an unresolvable identifier is a throw, not
+  an `undefined`. Found by porting `microtemplate.js` verbatim into node and rendering the
+  file, which is the only thing that would have found it: the text reads as documentation,
+  the suite stripped comments before asserting, and nothing in CI rendered the template.
+
+- **The print sheet printed the rows as sorted and filtered on screen, not the result.**
+  It looped `data`, which is `get_data_for_print()`: that maps
+  `datatable.datamanager.rowViewOrder` and keeps only `bodyRenderer.visibleRowIndices`, so
+  re-sorting reordered the sheet and typing in a column filter silently **dropped rows from
+  it** — on a document whose whole value is being complete. `query_report.js` also passes
+  `original_data`, the canonical server result, on the Print path and the PDF path alike;
+  `original_data` had zero occurrences anywhere in this repo. The template now reads it,
+  behind a `typeof` guard so a future frappe that stopped passing it costs the sheet its
+  ordering guarantee rather than its contents.
+
+- **A sign-off recorded by a delegate named the typist as the attester.**
+  `authority.snapshot_positions` froze `supervisor_name_at_time`, `supervisor_position`,
+  `supervisor_position_title` and `supervisor_tier_at_time` from `frappe.session.user` — the
+  login that pressed Submit, not the person the document names. Under `Manager Delegate`,
+  which exists precisely because sign-offs get relayed over the radio and typed up
+  afterwards, the roster therefore printed *Attested by <the typist>*; and nothing on the row
+  disagreed, because every supervisor field held the same wrong person. The module's own
+  docstring had said the opposite since it was written: *the audit value is in the named
+  supervisor on the document, not in which login pressed submit.*
+
+### Added
+
+- **`recorded_by_at_time`, `recorded_by_position_title` and `recorded_by_tier_at_time` on
+  Training Signoff** — the recorder, kept separately from the attester rather than instead of
+  them. `authority_basis` is what says which of the two did the attesting, and the roster
+  composes its *Attested by* line from the basis.
+
+### Notes
+
+**Swapping the two fields would not have been a fix, and that is the whole reason there are
+now six.** A submitted sign-off carries two people, and only under `Observed Supervisor` are
+they the same one:
+
+| Basis | Who attested | Who recorded it |
+|---|---|---|
+| `Observed Supervisor` | the named supervisor | the same person |
+| `Manager Delegate` | the named supervisor | a Training Manager typing it up |
+| `Position Tier` | **the recorder**, on their own rung | — the named supervisor is only the address the request was routed to |
+
+`Position Tier` is the exact inverse of the delegate case, and on this site it is the live
+arrangement rather than a hypothetical: the one Senior Technician is the `reports_to` of none
+of the four Junior Technicians, so every request he signs is addressed to the Project Manager.
+Freezing the supervisor half alone would have fixed the delegate row and broken the tier row,
+and would have left a `Position Tier` basis sitting next to two tiers that demonstrate no rank
+difference at all — an apparent violation of the rule, manufactured by the fix. So both
+identities are frozen, always, and the reader picks by basis.
+
+**No data patch, and that is a measurement rather than an assumption.** Both submitted sign-offs
+on prod are `Observed Supervisor` or predate the basis field, and under an observed basis the
+two identities are the same login by definition — so no stored row names the wrong person.
+`recorded_by_at_time` stays blank on them, and blank means *this row predates v1.424.0*, not
+*the same person*; the field description and the snapshot docstring both say so.
+
+The supervisor name is now frozen from `Employee.employee_name` before falling back to the
+login, because `supervisor` is the mandatory field and an Employee does not have to have a
+login — `supervisor_user` is derived from it and comes back empty for an Employee with no
+`user_id`. Reading the rung through the login would have recorded *no rung* for somebody who
+plainly has one.
+
+**The DocType `modified` stamp is bumped deliberately.** A DocType JSON whose `modified` is not
+newer than the row already on the site is skipped by the importer, so three new fields would
+have existed in the repo and on no site — and the snapshot would have written them nowhere and
+said nothing. A test pins it, next to the one that keeps `field_order` and `fields` in step.
+
+**Two new guards on the print sheet, and the second is the general form of the first.**
+`tests/test_hr_qualification_roster.py` now fails the build on a double brace anywhere in that
+file, and — modelling the rewrite frappe actually performs — extracts every free identifier the
+compiled template would read and asserts each one is something `render_grid` passes. `content`
+is deliberately absent from that list, so the historical defect fails the general check on its
+own rather than only the literal spelling of it.
 
 ## [1.423.0] - 2026-09-12
 

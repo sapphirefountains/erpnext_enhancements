@@ -153,6 +153,30 @@ Verified, and all of them expensive to rediscover:
   Notification bodies call the `ee_*` Jinja globals instead. For the same reason they use
   `doc.get("field")`, never `doc.field`: a Document raises `AttributeError` on a missing
   field, and that is another silently dropped email.
+- **A report's `.html` print format is compiled whole — comments included — so a double brace
+  written in prose becomes running code.** `frappe.template.compile` begins with
+  `str.replace(/{{/g, "{%=")` across the entire file before it parses anything, and then
+  compiles into `with(obj){ … }`, where a name absent from the render context falls through to
+  global scope and **throws** rather than coming back `undefined`. `crew_qualification_roster`
+  described the frappe wrapper as emitting the letterhead *around a double-braced `content`* in
+  its header comment. `render_grid` assigns `opts.content` **from** that very render, and
+  `content` is not a browser global either (checked: not a property of `window`), so Print and
+  Download PDF both threw `ReferenceError` and produced **nothing** from v1.397.0 to v1.424.0 —
+  on the one artefact in this app whose entire purpose is to be printed and handed to an
+  insurer. `typeof x` is the only safe probe for a maybe-absent name. Compile also flattens
+  every carriage return, tab and newline to a space, so a `//` comment inside a template
+  block swallows the rest of the file, and it escapes only the *last* apostrophe in each
+  text run.
+  **And `data` is not the result.** `render_grid` passes `data` *and* `original_data`; `data`
+  is `get_data_for_print()`, the rows as currently sorted **and inline-filtered on screen**, so
+  re-sorting reorders the sheet and a column filter silently drops rows from it. Read
+  `original_data`, behind a `typeof` guard. Note what both failures have in common with the
+  trailing-space bullet above: the prose reads as documentation and the sheet reads as
+  complete, so nothing looks wrong. Rendering the template is the only check that finds them —
+  port `microtemplate.js` into node and run the file through it.
+  `tests/test_hr_qualification_roster.py` now fails the build on a double brace anywhere in
+  that file, and checks every identifier the compiled template would read against what
+  `render_grid` actually passes.
 - **Merging to `main` does more than deploy this app's code.** The prod deploy `FLUSHDB`s
   **both** redis instances — `:13000` and `:11000` — and restarts the bench. The `:11000`
   flush destroys every queued background job, silently, whether or not it had anything to

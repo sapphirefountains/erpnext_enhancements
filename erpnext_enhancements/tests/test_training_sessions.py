@@ -40,6 +40,7 @@ SESSION_JSON = APP / "training/doctype/training_session/training_session.json"
 SESSION_PY = APP / "training/doctype/training_session/training_session.py"
 ATTENDEE_JSON = APP / "training/doctype/training_session_attendee/training_session_attendee.json"
 COMPLETION_JSON = APP / "training/doctype/training_completion/training_completion.json"
+COMPLETION_PY = APP / "training/doctype/training_completion/training_completion.py"
 WORKSPACE = APP / "training/workspace/training/training.json"
 PATCH = APP / "patches/resync_hr_and_training_workspaces.py"
 PATCHES_TXT = APP / "patches.txt"
@@ -233,6 +234,76 @@ class TestCancellingASessionActuallyWithdrawsIt(unittest.TestCase):
     def test_an_existing_reason_is_never_overwritten(self):
         """Somebody else's stated reason outranks ours."""
         self.assertIn("if not (doc.revoked_reason", _fn("_withdraw_completions"))
+
+
+class TestTheWithdrawalIsDated(unittest.TestCase):
+    """v1.425.0. Cancelling a completion recorded THAT it happened and never WHEN.
+
+    `on_cancel` wrote `status = "Revoked"` through `db_set(..., update_modified=False)`,
+    which never reaches `save_version()` -- so `track_changes` recorded nothing and not
+    even `modified` moved. `Training Certificate` had been given `revoked_on` for this
+    exact reason in v1.396.0; the completion behind it had not, which left the more
+    important of the two records the one that could not answer "was this person
+    certified on 1 March".
+    """
+
+    def test_the_field_exists_and_is_read_only(self):
+        fields = _fields(COMPLETION_JSON)
+        for name in ("revoked_on", "history_note"):
+            with self.subTest(field=name):
+                self.assertIn(name, fields)
+                self.assertEqual(fields[name].get("read_only"), 1)
+
+    def test_field_order_and_fields_stay_in_step(self):
+        doc = json.loads(_text(COMPLETION_JSON))
+        self.assertEqual(
+            sorted(f["fieldname"] for f in doc["fields"]), sorted(doc["field_order"])
+        )
+
+    def test_the_doctype_was_touched_so_it_resyncs(self):
+        """A DocType JSON whose `modified` is not newer than the row on the site is
+        skipped by the importer -- the field would exist in the repo and on no site,
+        and `on_cancel` would write it nowhere."""
+        doc = json.loads(_text(COMPLETION_JSON))
+        self.assertGreater(doc["modified"], "2026-08-01 12:00:00.000000")
+
+    def test_on_cancel_stamps_the_date(self):
+        body = _fn("on_cancel", COMPLETION_PY)
+        self.assertIn("revoked_on", body)
+        self.assertIn("nowdate()", body)
+
+    def test_it_only_stamps_when_blank(self):
+        """A historical import or a hand-corrected date must survive a re-cancel
+        rather than being restamped with today."""
+        body = _fn("on_cancel", COMPLETION_PY)
+        self.assertIn('not self.get("revoked_on")', body)
+
+    def test_the_date_is_never_in_the_unconditional_write(self):
+        """The assertion above is not enough on its own, and a mutation proved it:
+        adding `revoked_on` to the initial `values` literal makes the stamp
+        unconditional while leaving the guard below untouched, so a test that only
+        checks the guard EXISTS passes on code that overwrites a real date with
+        today's. Assert where the write actually is."""
+        body = _fn("on_cancel", COMPLETION_PY)
+        opening = body.index("values = {")
+        self.assertNotIn("revoked_on", body[opening : body.index("}", opening)])
+
+    def test_it_is_one_write_not_two(self):
+        """Two `db_set` calls are two writes, and a half-applied withdrawal -- status
+        moved, date missing -- is the state this whole change exists to prevent."""
+        body = _fn("on_cancel", COMPLETION_PY)
+        self.assertEqual(body.count("db_set("), 1)
+        self.assertIn("update_modified=False", body)
+
+    def test_it_survives_a_site_without_the_field(self):
+        """`on_cancel` runs after docstatus is committed. Writing an unmigrated field
+        there would roll back a withdrawal that has already happened."""
+        self.assertIn('self.meta.has_field("revoked_on")', _fn("on_cancel", COMPLETION_PY))
+
+    def test_the_reason_gate_still_stands(self):
+        """The date is added ALONGSIDE the reason, not instead of it. If the stamp had
+        displaced `before_cancel`, every assertion above would still pass."""
+        self.assertIn("_require_revoked_reason", _text(COMPLETION_PY))
 
 
 if __name__ == "__main__":

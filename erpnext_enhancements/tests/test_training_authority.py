@@ -82,10 +82,31 @@ def _calls(path, name, cls=None):
 # ------------------------------------------------------------------ frappe stub
 
 
+class _Dict(dict):
+    """`frappe._dict`: attribute access AND `.get`.
+
+    The stub returned a SimpleNamespace until v1.424.0, which answers `mine.tier`
+    but raises AttributeError on `row.get("tier")`. `outranks` uses the first form
+    and `_position_facts` uses the second, so every test here passed while the
+    snapshot half of the module could not be called at all.
+    """
+
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(key) from None
+
+
 class _FakeDB:
     def __init__(self):
         self.positions = {}
         self.employees = {}
+        # Employees are reachable BOTH ways because the code now needs both: by
+        # user_id for the learner and the recorder, by name for the supervisor the
+        # document names -- an Employee link, which does not have to have a login.
+        self.employees_by_name = {}
+        self.users = {}
         # Keyed by DOCTYPE, matching real frappe. It used to be keyed "tabEmployee"
         # -- which reproduced the production bug exactly, so the stub answered True
         # for the one argument real frappe raises on, and CI stayed green while five
@@ -102,12 +123,14 @@ class _FakeDB:
         return column in self.columns.get(doctype, set())
 
     def get_value(self, doctype, name, fields=None, as_dict=False):
+        if doctype == "User":
+            row = self.users.get(name)
+            return (row or {}).get(fields) if isinstance(fields, str) else None
         if doctype == "Employee":
             if isinstance(name, dict):
-                user = name.get("user_id")
-                row = self.employees.get(user)
+                row = self.employees.get(name.get("user_id"))
             else:
-                row = None
+                row = self.employees_by_name.get(name)
             if not row:
                 return None
             return row.get(fields) if isinstance(fields, str) else None
@@ -115,7 +138,7 @@ class _FakeDB:
         if not row:
             return None
         if as_dict:
-            return types.SimpleNamespace(**{f: row.get(f) for f in fields})
+            return _Dict({f: row.get(f) for f in fields})
         if isinstance(fields, list):
             return [row.get(f) for f in fields]
         return row.get(fields)
@@ -188,12 +211,36 @@ def setUpModule():
     ].frappe = fake
 
 
-def _place(user, position):
-    sys.modules["frappe"].db.employees[user] = {
+def _login(user, full_name):
+    sys.modules["frappe"].db.users[user] = {"full_name": full_name}
+
+
+def _hire(employee, user, position, employee_name):
+    """An Employee row reachable by name, and by login only when there is one.
+
+    `user=None` is the real case the supervisor half has to survive: `Training
+    Signoff.supervisor` is a mandatory Employee link while `supervisor_user` is
+    derived from it and comes back empty for an Employee with no `user_id`.
+    """
+    row = {
+        "name": employee,
         "user_id": user,
+        "employee_name": employee_name,
         "custom_position": position,
         "status": "Active",
     }
+    db = sys.modules["frappe"].db
+    db.employees_by_name[employee] = row
+    if user:
+        db.employees[user] = row
+        _login(user, employee_name)
+    return employee
+
+
+def _place(user, position, employee_name=None):
+    return _hire(
+        "HR-EMP-" + user.split("@")[0], user, position, employee_name or user
+    )
 
 
 def _rung(name, family, tier, is_active=1, is_group=0):
@@ -205,6 +252,49 @@ def _rung(name, family, tier, is_active=1, is_group=0):
 
 def _doc(user, supervisor_user=None):
     return {"user": user, "supervisor_user": supervisor_user}
+
+
+class _Meta:
+    def __init__(self, fields):
+        self._fields = set(fields)
+
+    def has_field(self, name):
+        return name in self._fields
+
+
+class _SignoffDoc:
+    """Enough of a Document for `snapshot_positions`: get, set, and a meta.
+
+    Every snapshot field is declared, so a value coming back empty is the code
+    declining to write it rather than the doctype not having it.
+    """
+
+    FIELDS = (
+        "user",
+        "supervisor",
+        "supervisor_user",
+        "authority_basis",
+        "supervisor_position",
+        "learner_position",
+        "supervisor_name_at_time",
+        "supervisor_position_title",
+        "supervisor_tier_at_time",
+        "learner_position_title",
+        "learner_tier_at_time",
+        "recorded_by_at_time",
+        "recorded_by_position_title",
+        "recorded_by_tier_at_time",
+    )
+
+    def __init__(self, **values):
+        self._values = dict(values)
+        self.meta = _Meta(self.FIELDS)
+
+    def get(self, name, default=None):
+        return self._values.get(name, default)
+
+    def set(self, name, value):
+        self._values[name] = value
 
 
 # ------------------------------------------------------------------ structure
@@ -277,6 +367,33 @@ class TestTheAttestationIsSnapshotted(unittest.TestCase):
         declared = [o for o in self.fields["authority_basis"]["options"].split("\n") if o]
         self.assertEqual(sorted(declared), sorted([authority.OBSERVED, authority.TIER, authority.DELEGATE]))
 
+    def test_the_recorder_has_fields_of_its_own(self):
+        """Two people can appear on a submitted sign-off, and only under `Observed
+        Supervisor` are they the same one. Sharing one set of fields between them is
+        the defect v1.424.0 fixed."""
+        for name in (
+            "recorded_by_at_time",
+            "recorded_by_position_title",
+            "recorded_by_tier_at_time",
+        ):
+            with self.subTest(field=name):
+                self.assertIn(name, self.fields)
+                self.assertEqual(self.fields[name].get("read_only"), 1)
+
+    def test_field_order_and_fields_stay_in_step(self):
+        """Declared in one and not the other leaves a form that cannot render."""
+        doc = json.loads(SIGNOFF_JSON.read_text(encoding="utf-8"))
+        self.assertEqual(
+            sorted(f["fieldname"] for f in doc["fields"]), sorted(doc["field_order"])
+        )
+
+    def test_the_doctype_was_touched_so_it_resyncs(self):
+        """A DocType JSON whose `modified` is not newer than the row already on the
+        site is skipped by the importer, so three new fields would exist in the repo
+        and on no site. The snapshot would then write them nowhere and say nothing."""
+        doc = json.loads(SIGNOFF_JSON.read_text(encoding="utf-8"))
+        self.assertGreater(doc["modified"], "2026-09-11 17:00:00.000000")
+
 
 # ------------------------------------------------------------------ behaviour
 
@@ -286,6 +403,8 @@ class TestAuthorityBasis(unittest.TestCase):
         fake = sys.modules["frappe"]
         fake.db.positions.clear()
         fake.db.employees.clear()
+        fake.db.employees_by_name.clear()
+        fake.db.users.clear()
         fake.roles.clear()
         _rung("Junior Technician", "Technician", 1)
         _rung("Senior Technician", "Technician", 2)
@@ -377,6 +496,8 @@ class TestSignableLearnerUsers(unittest.TestCase):
         fake = sys.modules["frappe"]
         fake.db.positions.clear()
         fake.db.employees.clear()
+        fake.db.employees_by_name.clear()
+        fake.db.users.clear()
         fake.roles.clear()
         _rung("Junior Technician", "Technician", 1)
         _rung("Senior Technician", "Technician", 2)
@@ -405,6 +526,132 @@ class TestSignableLearnerUsers(unittest.TestCase):
 
     def test_no_position_means_nobody(self):
         self.assertEqual(authority.signable_learner_users("nobody@x"), [])
+
+
+class TestTheSnapshotNamesTheRightPerson(unittest.TestCase):
+    """The audit half, and the one that reaches an insurer.
+
+    `snapshot_positions` froze `supervisor_name_at_time` and both supervisor rung
+    fields from `frappe.session.user` until v1.424.0 — the login that pressed submit,
+    not the person the document names. Under `Manager Delegate`, the relayed-over-the-
+    radio workflow that arm exists for, `crew_qualification_roster` therefore printed
+    *Attested by <the typist>*, and nothing on the row disagreed because every
+    supervisor field held the same wrong person.
+
+    Swapping the two would not have been a fix: under `Position Tier` the recorder
+    signs on their own rung and the named supervisor is only where the request was
+    addressed, which is the exact inverse. So both are frozen and `authority_basis`
+    says which one attested. These assert the values, not the shape.
+    """
+
+    def setUp(self):
+        fake = sys.modules["frappe"]
+        fake.db.positions.clear()
+        fake.db.employees.clear()
+        fake.db.employees_by_name.clear()
+        fake.db.users.clear()
+        fake.roles.clear()
+        _rung("Junior Technician", "Technician", 1)
+        _rung("Senior Technician", "Technician", 2)
+        _rung("Project Manager", "Management", 4)
+        _place("junior@x", "Junior Technician", "Jim Junior")
+        self.senior = _place("senior@x", "Senior Technician", "Sam Senior")
+        self.pm = _place("pm@x", "Project Manager", "Pat Manager")
+        _login("typist@x", "Tina Typist")
+        fake.roles["typist@x"] = ["Training Manager"]
+
+    def test_the_delegate_case_freezes_the_supervisor_not_the_typist(self):
+        """The defect, stated as a value. A Training Manager typing up a verdict
+        relayed over the radio recorded it; the named supervisor attested it."""
+        doc = _SignoffDoc(user="junior@x", supervisor=self.senior, supervisor_user="senior@x")
+        authority.snapshot_positions(doc, "typist@x")
+        self.assertEqual(doc.get("authority_basis"), authority.DELEGATE)
+        self.assertEqual(doc.get("supervisor_name_at_time"), "Sam Senior")
+        self.assertEqual(doc.get("supervisor_position_title"), "Senior Technician")
+        self.assertEqual(doc.get("supervisor_tier_at_time"), 2)
+        self.assertNotEqual(doc.get("supervisor_name_at_time"), "Tina Typist")
+
+    def test_the_recorder_is_kept_rather_than_discarded(self):
+        """Fixing the attribution by throwing the recorder away would lose the other
+        half of the audit: who actually typed it."""
+        doc = _SignoffDoc(user="junior@x", supervisor=self.senior, supervisor_user="senior@x")
+        authority.snapshot_positions(doc, "typist@x")
+        self.assertEqual(doc.get("recorded_by_at_time"), "Tina Typist")
+
+    def test_the_tier_case_is_the_inverse_and_keeps_the_rung_that_granted_it(self):
+        """Prod shape exactly: the one Senior Technician is the `reports_to` of none
+        of the four Junior Technicians, so every request he signs is addressed to the
+        Project Manager. Here the RECORDER is the attester, and it is his rung — not
+        the addressee's — that the basis rests on. Freezing only the named supervisor
+        would leave a `Position Tier` basis beside two tiers that demonstrate no rank
+        difference at all."""
+        doc = _SignoffDoc(user="junior@x", supervisor=self.pm, supervisor_user="pm@x")
+        authority.snapshot_positions(doc, "senior@x")
+        self.assertEqual(doc.get("authority_basis"), authority.TIER)
+        self.assertEqual(doc.get("supervisor_name_at_time"), "Pat Manager")
+        self.assertEqual(doc.get("recorded_by_at_time"), "Sam Senior")
+        self.assertEqual(doc.get("recorded_by_position_title"), "Senior Technician")
+        self.assertGreater(
+            doc.get("recorded_by_tier_at_time"), doc.get("learner_tier_at_time")
+        )
+
+    def test_the_observed_case_is_one_person_recorded_twice(self):
+        doc = _SignoffDoc(user="junior@x", supervisor=self.senior, supervisor_user="senior@x")
+        authority.snapshot_positions(doc, "senior@x")
+        self.assertEqual(doc.get("authority_basis"), authority.OBSERVED)
+        self.assertEqual(doc.get("supervisor_name_at_time"), "Sam Senior")
+        self.assertEqual(doc.get("recorded_by_at_time"), "Sam Senior")
+
+    def test_a_supervisor_with_no_login_still_freezes_a_name_and_a_rung(self):
+        """`supervisor` is mandatory and is an Employee link; `supervisor_user` is
+        derived from it and is empty for an Employee with no `user_id`. Reaching the
+        rung through the login would record no rung for somebody who plainly has one,
+        and a blank name on a document that names them."""
+        emp = _hire("HR-EMP-nologin", None, "Senior Technician", "Sandy Nologin")
+        doc = _SignoffDoc(user="junior@x", supervisor=emp, supervisor_user=None)
+        authority.snapshot_positions(doc, "typist@x")
+        self.assertEqual(doc.get("supervisor_name_at_time"), "Sandy Nologin")
+        self.assertEqual(doc.get("supervisor_position_title"), "Senior Technician")
+        self.assertEqual(doc.get("supervisor_position"), "Senior Technician")
+
+    def test_the_learner_half_is_untouched(self):
+        """The change was to the supervisor half. Had it taken the learner snapshot
+        with it, every assertion above would still pass."""
+        doc = _SignoffDoc(user="junior@x", supervisor=self.senior, supervisor_user="senior@x")
+        authority.snapshot_positions(doc, "senior@x")
+        self.assertEqual(doc.get("learner_position"), "Junior Technician")
+        self.assertEqual(doc.get("learner_position_title"), "Junior Technician")
+        self.assertEqual(doc.get("learner_tier_at_time"), 1)
+
+    def test_a_refused_signer_still_returns_a_basis_of_none(self):
+        """`snapshot_positions` stamps before `_require_authority` decides. A refusal
+        throws afterwards so nothing persists — but the basis has to come back None
+        rather than the function failing on the way there."""
+        doc = _SignoffDoc(user="senior@x", supervisor=self.pm, supervisor_user="pm@x")
+        self.assertIsNone(authority.snapshot_positions(doc, "junior@x"))
+        self.assertEqual(doc.get("authority_basis"), "")
+        self.assertEqual(doc.get("recorded_by_at_time"), "Jim Junior")
+
+
+class TestTheSnapshotReadsTheDocumentNotTheSession(unittest.TestCase):
+    """Structural backstop for the class above. A future edit reintroducing
+    `_position_of_user(user)` as the supervisor source would have to delete an
+    assertion to get past it, rather than quietly passing one that never ran."""
+
+    def test_the_supervisor_rung_comes_off_the_document(self):
+        called = _calls(AUTHORITY, "snapshot_positions")
+        self.assertIn("_position_of_employee", called)
+        self.assertIn("_attester_name", called)
+
+    def test_the_frozen_name_is_not_read_from_the_session_user(self):
+        fn = next(
+            n
+            for n in ast.parse(AUTHORITY.read_text(encoding="utf-8")).body
+            if isinstance(n, ast.FunctionDef) and n.name == "snapshot_positions"
+        )
+        code = ast.unparse(fn).replace("'", '"')
+        at = code.index('"supervisor_name_at_time"')
+        self.assertNotIn("user", code[at : at + 60])
 
 
 if __name__ == "__main__":
