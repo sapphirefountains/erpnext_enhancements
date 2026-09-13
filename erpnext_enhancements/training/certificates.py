@@ -375,14 +375,42 @@ def expire_and_recertify():
 		)
 
 
+#: Both sweeps below share this, and the `is set` clause is the entire point.
+#:
+#: `expires_on` is NULLABLE on both doctypes and NULL means **never expires** --
+#: `_default_dates` only fills it when the course carries `certificate_valid_months`.
+#: Frappe wraps a comparison on a nullable column in an ifnull sentinel set to the
+#: MINIMUM of the type (`frappe/model/db_query.py`, `prepare_filter_condition`):
+#:
+#:     ifnull(`expires_on`, '0001-01-01') < '2026-09-13'
+#:
+#: so every never-expiring row matched, every time this ran. "No expiry" was turned
+#: into "expired", and `_expire_completions_and_reassign` then raised a
+#: recertification assignment telling the person to retake a course that had not
+#: lapsed. Found on 2026-09-13 with four rows wrong on prod and one spurious
+#: assignment outstanding; `patches/unexpire_never_expiring_training_records.py`
+#: repaired them.
+#:
+#: Note the direction of the failure, which is why nothing caught it: `>` and `>=` do
+#: NOT match NULL, `between` disables the sentinel outright, and `is set` / `is not
+#: set` are safe -- only `<`, `<=`, `!=` and `not in` have this shape. And it fails by
+#: doing MORE than asked, so the sweep looked like it was working.
+#:
+#: The list form is required rather than stylistic: two conditions on one field cannot
+#: both live in a filter dict.
+def _lapsed_filters(status):
+	return [
+		["docstatus", "=", 1],
+		["status", "=", status],
+		["expires_on", "is", "set"],
+		["expires_on", "<", nowdate()],
+	]
+
+
 def _expire_certificates():
 	if not frappe.db.exists("DocType", CERTIFICATE):
 		return 0
-	names = frappe.get_all(
-		CERTIFICATE,
-		filters={"docstatus": 1, "status": VALID, "expires_on": ["<", nowdate()]},
-		pluck="name",
-	)
+	names = frappe.get_all(CERTIFICATE, filters=_lapsed_filters(VALID), pluck="name")
 	for name in names:
 		frappe.db.set_value(CERTIFICATE, name, "status", EXPIRED, update_modified=False)
 	return len(names)
@@ -391,7 +419,7 @@ def _expire_certificates():
 def _expire_completions_and_reassign():
 	rows = frappe.get_all(
 		COMPLETION,
-		filters={"docstatus": 1, "status": "Valid", "expires_on": ["<", nowdate()]},
+		filters=_lapsed_filters("Valid"),
 		fields=["name", "course", "user"],
 	)
 	raised = 0
