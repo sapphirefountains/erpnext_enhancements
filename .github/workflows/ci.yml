@@ -412,6 +412,13 @@ jobs:
       # it, and a whitelist endpoint that dies loses a completed call's record.
       - name: No unguarded tuple-unpack of frappe.db.get_value
         run: python -m unittest erpnext_enhancements.tests.test_get_value_unpacking -v
+      # The won-opportunity nag has over-reported twice: 228 (the ifnull sentinel on a
+      # nullable won-date) and then 31, because it asked about ONE of the three fields
+      # that link an Opportunity to a Project. The honest figure is 11. Bench-free and
+      # own step, because `test_status_alerts.py` subclasses FrappeTestCase and so runs
+      # nowhere in CI.
+      - name: The unconverted-wins nag counts and links the same set
+        run: python -m unittest erpnext_enhancements.tests.test_unconverted_nag -v
       # RUNS the roster's print guard rather than reading it, and that distinction is
       # the whole reason this step exists. The previous defect on this report was a
       # print template that had never once been rendered: a double brace inside an HTML

@@ -296,6 +296,23 @@ def generate_predictive_maintenance_records():
 		if so_customer and frappe.db.get_value("Customer", so_customer, "custom_service_hold"):
 			continue
 
+		# ["Closed", "Completed"] is a TERMINAL-status test, not a denylist with a
+		# member missing. An audit on 2026-09-13 flagged the absence of "On Hold" --
+		# ERPNext's Sales Order Select is "" / Draft / On Hold / To Pay / To Deliver and
+		# Bill / To Bill / To Deliver / Completed / Cancelled / Closed -- and three
+		# independent reviews rejected it, correctly.
+		#
+		# On Hold is a credit and delivery hold on the ORDER; it is not a service
+		# suspension, and nothing in this app has ever treated it as one. The lever for
+		# pausing maintenance is `Customer.custom_service_hold`, checked three lines
+		# above and on the contract path too, and `stripe_payments/core/dunning.py` says
+		# so in words. `accounting_intake/matching.py` reached the same denylist
+		# independently and also omits On Hold. Draft and Cancelled cannot arrive here
+		# anyway: the query above takes `docstatus = 1` items, and cancelling a Sales
+		# Order writes docstatus 2 onto its children.
+		#
+		# Left as it is deliberately. Adding "On Hold" would invent a business rule that
+		# does not exist anywhere in this repo.
 		if so_status not in ["Closed", "Completed"] and so_project:
 			# Check for existing Draft record for this project + serial_no
 			if not frappe.db.exists("Sapphire Maintenance Record", {

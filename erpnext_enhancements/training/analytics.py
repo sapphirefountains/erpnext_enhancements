@@ -34,6 +34,16 @@ MANAGER_ROLES = {"System Manager", "Training Manager", "HR Manager"}
 
 # An assignment still owes work in these states; it is closed in the others. Both
 # sets are named so the "overdue" and "active" counts cannot drift apart.
+# The same four members as `OPEN_STATUSES`, spelled out rather than imported, and that
+# is deliberate after trying it the other way. Importing the controller drags in
+# `frappe.model.document`, and `tests/test_training_analytics.py` is bench-free with a
+# minimal frappe stub -- the import turned five passing tests into errors. A module kept
+# importable without a bench is worth more here than removing a literal.
+#
+# Membership is pinned instead: `tests/test_hr_timeoff_onboarding.py` asserts this set
+# equals `OPEN_STATUSES`, so it cannot drift even though it is written twice. That is the
+# half that actually mattered -- the copy in `hr_enhancements/onboarding.py` did drift,
+# and led with "Assigned", a status that has never existed.
 ACTIVE_ASSIGNMENT_STATUSES = {"Not Started", "In Progress", "Awaiting Sign-off", "Overdue"}
 CLOSED_ASSIGNMENT_STATUSES = {"Completed", "Waived", "Cancelled"}
 

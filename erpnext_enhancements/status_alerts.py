@@ -29,6 +29,8 @@ Every SMS recipient with a linked User also gets a Notification Log entry,
 giving an in-app audit trail of what was sent.
 """
 
+import json
+
 import frappe
 from frappe import _
 from frappe.utils import add_to_date, cint, get_url, get_url_to_form, getdate, now_datetime, today
@@ -184,7 +186,32 @@ def deliver_closed_won_alerts(opportunity):
 	)
 
 
-def _unconverted_list_url():
+def _drop_back_linked(opportunities):
+	"""Remove the ones a Project points AT.
+
+	``Project.custom_opportunity`` is a Link on the Project side, so no filter on
+	Opportunity can see it. 105 Projects carry one, against 76 Opportunities carrying
+	``custom_created_project`` -- it is the most-used of the three linkage paths and the
+	only one that needs a second query, which is presumably why it was the one left out.
+
+	One query for the whole batch rather than one per row: this runs daily against a
+	candidate set that was 228 rows before the date fix, and a per-row existence check
+	would have been 228 round trips to establish a number for an email.
+	"""
+	if not opportunities:
+		return opportunities
+	linked = set(
+		frappe.get_all(
+			"Project",
+			filters=[["custom_opportunity", "in", [opp.name for opp in opportunities]]],
+			pluck="custom_opportunity",
+			limit_page_length=0,
+		)
+	)
+	return [opp for opp in opportunities if opp.name not in linked]
+
+
+def _unconverted_list_url(names=None):
 	"""The list view showing EXACTLY the set the message counted.
 
 	The link used to be `/app/opportunity?status=Closed%20Won` — status alone, no
@@ -203,6 +230,15 @@ def _unconverted_list_url():
 	Read from origin/version-16 rather than the sibling develop checkout.
 	"""
 	from urllib.parse import urlencode
+
+	# By NAME, not by predicate. The set is decided partly in Python -- the
+	# `Project.custom_opportunity` back-link cannot be expressed as an Opportunity
+	# filter -- so a predicate link cannot reproduce it, and a link that shows a
+	# different number from the sentence above it is the exact defect this function
+	# already had once. Naming the rows is the only spelling that cannot drift.
+	if names:
+		query = urlencode({"name": json.dumps(["in", list(names)])})
+		return get_url("/app/opportunity?" + query)
 
 	query = urlencode(
 		{
@@ -254,17 +290,36 @@ def nag_unconverted_opportunities():
 	# means 31 is how an alert stops being read, and a backlog that old wants a report
 	# with a date range, not an hourly reminder. The list form is required rather than
 	# stylistic: two conditions on one field cannot both live in a filter dict.
+	# THREE fields can link an Opportunity to a Project in this app, and this asked
+	# about one of them. v1.426.5 fixed the date clause and took the count from 228 to
+	# 31; 20 of those 31 already had a project, recorded through a path this query never
+	# consulted. Measured 2026-09-13:
+	#
+	#     Opportunity.custom_created_project   76 rows   the one this asked about
+	#     Opportunity.custom_project           16 rows   never consulted
+	#     Project.custom_opportunity          105 rows   never consulted, and the MOST used
+	#
+	# Of the 31: 12 carry `custom_project`, 17 are the target of a `Project` back-link,
+	# 20 by either. The honest figure is **11**.
+	#
+	# The back-link is the awkward one and also the one that matters most, because it is
+	# the path with the most rows. It cannot be expressed as a filter on Opportunity at
+	# all -- the Link lives on Project -- so it is a second query and a set difference
+	# rather than a cleverer filter. That is the whole reason it was missed: the other
+	# two fit in the filter list and this one does not.
 	opportunities = frappe.get_all(
 		"Opportunity",
 		filters=[
 			["status", "=", "Closed Won"],
 			["custom_created_project", "is", "not set"],
+			["custom_project", "is", "not set"],
 			["custom_date_closed_won", "is", "set"],
 			["custom_date_closed_won", "<=", cutoff],
 		],
 		fields=["name", "customer_name", "party_name"],
 		order_by="custom_date_closed_won asc",
 	)
+	opportunities = _drop_back_linked(opportunities)
 	if not opportunities:
 		return
 
@@ -275,7 +330,7 @@ def nag_unconverted_opportunities():
 	noun = "opportunity" if len(labels) == 1 else "opportunities"
 	message = (
 		f"{len(labels)} won {noun} still waiting on a project: {shown}\n"
-		f"{_unconverted_list_url()}"
+		f"{_unconverted_list_url([opp.name for opp in opportunities])}"
 	)
 
 	_deliver(

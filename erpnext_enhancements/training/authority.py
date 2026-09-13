@@ -247,6 +247,15 @@ def snapshot_positions(doc, user):
 	# The attestation half, read off the DOCUMENT. `user` is the login pressing
 	# submit and is deliberately not consulted here -- see the module docstring.
 	supervisor_position = (
+		# The second arm is NOT dead, and an audit on 2026-09-13 claimed it was. Arm 1
+		# returns falsy whenever the Employee row exists but its `custom_position` is
+		# blank -- which is most of them, the field being days old (WI-072) -- so control
+		# reaches arm 2 on the ordinary path, constantly. It usually returns the same
+		# blank, because `supervisor_user` is derived from the row arm 1 just read.
+		#
+		# "Usually" is not "always": ERPNext's `validate_duplicate_user_id` only forbids
+		# a shared `user_id` among **Active** Employees, so a Left row may hold the same
+		# login as an Active one and the two arms can resolve differently. Keep both.
 		_position_of_employee(doc.get("supervisor")) or _position_of_user(doc.get("supervisor_user")) or ""
 	)
 	learner_position = _position_of_user(doc.get("user")) or ""
