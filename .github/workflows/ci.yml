@@ -431,6 +431,15 @@ jobs:
       # not something reading the file can tell you.
       - name: Roster print guard (executed, not grepped)
         run: node scripts/test_roster_print_guard.mjs
+      # The training player's URL is read BACK as the source of truth -- `start()` on
+      # every page load and the popstate handler both do queryParam("course") -- so a
+      # stale `?course=` is not cosmetic: refreshing the catalogue silently reopened the
+      # last course. `route()` emitted `course=` from state while `go("catalog")` never
+      # cleared it; `lesson=` was guarded by view and `course=` was not. Extracts the
+      # real route() and calls it once per view, because a table of view names passes a
+      # static check just as happily with the wrong members in it.
+      - name: Training player routing (executed, not grepped)
+        run: node scripts/test_training_route.mjs
       # Checkpoint completeness moved from validate to publish. BOTH halves are
       # asserted in that one suite on purpose: shipping the relaxation without the
       # publish gate lets a checkpoint with no correct option reach _split_lesson,

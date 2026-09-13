@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.427.1] - 2026-09-13
+
+### Fixed
+
+- **Leaving a course left `?course=` in the address bar, and the player reads its own
+  URL back.** Open `/training`, click a course, then press **All courses**: the
+  catalogue rendered but the URL stayed `/training?course=TRN-CRS-00002`.
+
+  `go("catalog")` sets `state.view` and clears the DOM; it does not clear
+  `state.courseName`, and `route()` emitted the course it was still holding.
+
+  That is not cosmetic, because **two code paths treat the URL as the source of truth**:
+  `start()` runs `queryParam("course")` on every page load, and the `popstate` handler
+  does the same on browser-back. So refreshing the catalogue silently reopened the last
+  course, and back landed on it instead of leaving it. The URL had become a second,
+  disagreeing answer to "which course is open".
+
+  Note the shape of the original — `lesson=` **was** guarded by view and `course=` was
+  not:
+
+      if (state.courseName) params.push("course=" + ...);                         // unguarded
+      if (state.lessonKey && state.view !== "catalog" && state.view !== "course")  // guarded
+
+  One half of the rule was written and the other assumed. Both lines read as deliberate,
+  which is why no static check would ever have flagged it.
+
+  The URL is now derived from the view rather than from leftover state, via an explicit
+  `COURSE_SCOPED_VIEWS` table. **The same staleness applied to four more views** — the
+  transcript, the sign-off queue, the feed, the directory and a person page are all
+  reached from the catalogue, are none of them about a course, and all of them kept a
+  stale `?course=`. All five "All courses" buttons route through the same `go("catalog")`,
+  so all of them are fixed together.
+
+### Added
+
+- **`scripts/test_training_route.mjs`** — extracts the real `route()` out of `player.js`
+  and calls it once per view, asserting the URL handed to `history.replaceState`. A test
+  that only asserted `COURSE_SCOPED_VIEWS` exists would pass just as happily on a table
+  with the wrong members in it. It also reproduces the original unguarded line in the
+  same harness, so the harness cannot pass vacuously; mutation-tested, and reverting the
+  fix fails four of its assertions.
+
 ## [1.427.0] - 2026-09-13
 
 The last six audit findings, adversarially verified. **Two were real.** Four were not, and
