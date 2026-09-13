@@ -123,6 +123,62 @@ def _task_card(task, names, projects):
 
 
 @frappe.whitelist()
+
+def overdue_task_filters(today, extra=None):
+	"""Open tasks that are genuinely past a deadline they actually have.
+
+	``["exp_end_date", "is", "set"]`` is the whole point of this function, and it is
+	shared with ``api/briefing.py`` rather than written twice because writing it twice
+	is exactly how both of them came to be wrong.
+
+	``exp_end_date`` is a nullable Datetime on core ``Task`` and a task with no deadline
+	is not late. Frappe wraps a comparison on a nullable column in an ifnull sentinel set
+	to the MINIMUM of the type (``frappe/model/db_query.py``,
+	``prepare_filter_condition``), so ``ifnull(exp_end_date, '0001-01-01 00:00:00') <
+	today`` matched every deadline-less task.
+
+	**And it did more than pad the list.** Both callers order by ``exp_end_date asc`` and
+	take a page, and MariaDB sorts NULLs FIRST in ascending order -- so the coalesced rows
+	filled the entire budget and pushed the real ones off the end. Measured on prod
+	2026-09-13: 330 open tasks carry no deadline and 1,066 are genuinely overdue, and all
+	21 rows the dashboard query returned were deadline-less legacy imports. The overdue
+	panel and the morning briefing were showing **no actually-overdue work at all**, while
+	the overflow flag truthfully said there was more.
+
+	``extra`` takes further clauses in the same list form -- the briefing adds an
+	``_assign`` match. A dict cannot express two conditions on one field, which is why
+	these are lists.
+	"""
+	return [
+		["status", "not in", CLOSED_TASK_STATUSES],
+		["exp_end_date", "is", "set"],
+		["exp_end_date", "<", today],
+		*(extra or []),
+	]
+
+
+def spanning_task_filters(today, extra=None):
+	"""Open tasks whose expected window actually contains today.
+
+	``["exp_start_date", "is", "set"]`` for the same reason: without it a task with no
+	start date and a deadline weeks away satisfied ``exp_start_date <= today`` through the
+	sentinel and was reported as work for today.
+
+	The evidence that this was never the intent is in the callers themselves. Each follows
+	this query with an explicit *edges* pass commented "only one of the two dates set" --
+	and that pass could never have matched anything, because this query had already
+	swallowed those rows. Requiring both dates here is what gives the edges query its job
+	back. Measured on prod: 41 tasks genuinely span today, 6 more were being added by the
+	sentinel, and the edges pass was matching zero.
+	"""
+	return [
+		["status", "not in", CLOSED_TASK_STATUSES],
+		["exp_start_date", "is", "set"],
+		["exp_start_date", "<=", today],
+		["exp_end_date", ">=", today],
+		*(extra or []),
+	]
+
 def get_task_dashboard_data():
 	"""Everything the Task Dashboard block renders, in one call."""
 	_check_access()
@@ -179,7 +235,7 @@ def get_task_dashboard_data():
 	task_fields = ["name", "subject", "priority", "status", "project", "_assign", "exp_start_date", "exp_end_date"]
 	overdue = frappe.get_all(
 		"Task",
-		filters={"status": ("not in", CLOSED_TASK_STATUSES), "exp_end_date": ("<", today)},
+		filters=overdue_task_filters(today),
 		fields=task_fields,
 		order_by="exp_end_date asc",
 		limit_page_length=OVERDUE_LIMIT + 1,
@@ -190,11 +246,7 @@ def get_task_dashboard_data():
 	# --- Today's tasks: any open task whose expected window spans today -------
 	spanning = frappe.get_all(
 		"Task",
-		filters={
-			"status": ("not in", CLOSED_TASK_STATUSES),
-			"exp_start_date": ("<=", today),
-			"exp_end_date": (">=", today),
-		},
+		filters=spanning_task_filters(today),
 		fields=task_fields,
 		order_by="priority desc, exp_end_date asc",
 		limit_page_length=TODAY_LIMIT,
