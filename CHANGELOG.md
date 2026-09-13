@@ -7,6 +7,142 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.426.0] - 2026-09-13
+
+### Removed
+
+- **The Google Chat integration and the ERPNext coworker chat product are gone**
+  ([ADR 0011](decisions/adr/0011-retire-google-chat-and-coworker-chat.md), which supersedes
+  ADR 0009 and both its addenda). 277 files, ~103,500 lines of Python, ~7,500 of browser
+  code, 23 DocTypes, 56 test suites and 58 CI steps.
+
+  Nikolas's call: the integration was buggy and troublesome. The bugs are on the record —
+  1.340.1/1.340.2 documents that **no subscription renewal this app ever issued had ever
+  succeeded** (sixteen consecutive failures apiece, `last_renewed` still equal to the create
+  date), and four subscriptions later found `DELETED` with no code path able to recreate them.
+  Those entries also correct the inbound outage to **~1.5 hours, not the ~24 that circulated**,
+  and the corrected figure is the one quoted here. 1.286.2 documents Triton's replies rendering
+  as `chatbot@sapphirefountains.com` in the native client.
+
+  **But the reason the coworker product went too is not that it was buggy.** ADR 0009 existed
+  to resolve one tension, which it stated plainly: *the work lives in ERPNext and the people
+  live in Google Chat.* The mirror was the answer to that. Remove the mirror and the
+  ERPNext-side chat product does not get smaller — it gets an audience of nobody, because the
+  audience was only ever reachable through the mirror. Staff have the Chat app on their phones
+  and will keep using it. So the choice was never "mirror or no mirror", it was "mirror, or no
+  ERPNext chat", and that is the choice this release makes.
+
+  **Chat was never enabled on production** (confirmed 2026-09-13, and consistent with how it
+  shipped: `enabled=0`, `dry_run_mode=1`, both relay switches off). Twenty-two tables existed
+  and stood empty. No message anyone wrote was destroyed, because none was ever written.
+
+- **What Triton loses, stated rather than buried.** `@triton` could be asked a question *in a
+  conversation* and answer with room context. The gated retrieval module, the semantic index
+  over transcripts, the rolling room/thread digests, the citation manifest, `Triton Invocation
+  Log` and the `Triton Cost` report all go with it. **The floating widget never had any of
+  that** — it was the in-room path that did — so the surface people actually use is unchanged.
+  Nothing replaces the retrieval half; citing ERPNext history again would be a new design over
+  documents rather than over messages.
+
+### Added
+
+- **`patches/delete_chat_module.py`** — the database half, which the framework does not do.
+  Two v16 behaviours decide its shape and neither is the intuitive one, both verified against
+  `origin/version-16` rather than the sibling `develop` checkouts:
+
+  `remove_orphan_doctypes()` runs in `post_schema_updates`, **after** all patches, and deletes
+  the orphaned DocType rows on its own — but its docstring is explicit that this is "supposed
+  to be non-destructive" and **it never drops a table**. Without this patch, 22 `tabChat*`
+  tables survive with no DocType describing them: invisible in the desk, invisible to a
+  fixture audit, and on a site where chat *had* been used, full of employee messages.
+
+  And deleting the `Chat Settings` **DocType** does not clear its `tabSingles` rows.
+  `delete_from_table` clears Singles only under `doctype != "DocType" and doctype == name` —
+  true when you delete the *document*, false when you delete the *DocType* — so the ~153 field
+  rows survive as an orphan settings object. They need raw SQL, and it has to be raw:
+  `tabSingles` has three columns and no `creation`, so `frappe.db.exists("Singles", {...})`
+  raises `OperationalError (1054)` on every site, every time.
+
+  **The patch deliberately does not "disable chat first".** That obvious opener —
+  `set_single_value("Chat Settings", "google_sync_enabled", 0)` — is a loaded gun on a Single:
+  Frappe synthesises a Single's defaults only while `tabSingles` holds no row for it, so on a
+  site that never materialised `Chat Settings` that one call **creates** the row and writes
+  `None` into every other field, taking `dry_run_mode` to 0 and `restrict_to_whitelist` to 0.
+  A patch written to make the integration safer would have made it live, on the deploy that
+  was removing it.
+
+  It also **prints the Google identifiers before deleting them**. `Chat Settings` was the only
+  place the Pub/Sub topic, both subscription names and the JWT audience URL were written down;
+  the repo has no other copy and the original provisioning runbook is not in this repository.
+  Safe to print — the design was keyless and the doctype carried zero Password fields.
+
+- **[`docs/google-chat-teardown.md`](docs/google-chat-teardown.md)** — the Google-side
+  checklist, because **none of that estate is under Terraform.** `grep -ril chat infra/
+  modules/` returns nothing and `infra/iam.tf` grants no `serviceAccountTokenCreator`
+  anywhere: every Pub/Sub topic, Workspace Events subscription, Chat app registration and IAM
+  binding was made by hand. Deleting the code changes nothing at Google, and `terraform plan`
+  shows no drift afterwards. The Pub/Sub subscriptions are the one item still costing money
+  while nothing drains them.
+
+- **`tests/test_chat_module_retirement.py`** — and most of its assertions are about what
+  **survived**, which is the point. Three things this deletion nearly took with it were all
+  silent:
+
+  `triton_widget.js` imported three modules from `public/js/chat/` and ships in the **global
+  Desk bundle**; deleting that directory wholesale makes esbuild fail to resolve, so
+  `bench build` fails — and the deploy runs `bench migrate && bench build`, in that order, so
+  the migrate has already committed. Those three moved to `public/js/triton/` instead
+  (`citations.js`, `markdown.js`, and `keys.js`, the one surviving function of `chat/dom.js`).
+
+  `triton_widget.css`'s `PHASE 3` block ran to end-of-file and looked deletable in one cut,
+  but ~60 lines in the middle of it are decision #7's `.ee-citation` / `.triton-source` rules
+  — Triton's own, live on every answer it streams. Cutting the block wholesale strips citation
+  styling off the surviving widget and **nothing fails**.
+
+  And `scripts/fuzz_url_safety.mjs` imports `isSafeUrl` from `citations.js` in a CI step with
+  no connection to chat at all.
+
+### Changed
+
+- **The floating bubble is single-surface again.** The tab switch, unread badge, expand
+  control and bubble-to-SPA handoff writer are out of `triton_widget.js`; opening it opens
+  Triton. ADR 0009's decision #8 — *extend the existing widget rather than adding a second
+  one* — is the one decision from that record that survives, and obeying it is exactly why
+  there was nothing tangled to unpick.
+
+- **The AI gate's chat denylist is removed** from `assistant_tools/_gate.py`. It was the only
+  control stopping `run_database_query` and `run_python_code` reading chat data, because raw
+  SQL never consults DocPerm — safe to remove *only* because the patch drops the tables. Its
+  own test asserted set equality against `chat/doctype/*/*.json`, so it had to go in the same
+  commit or fail the build against an empty directory. **The mechanism is documented in place
+  where it stood**, because the next sensitive table will need it: the refusal must sit at the
+  top of `_gated_execute`, above the confirm-flow bypass and above the settings check (a
+  refusal reachable only while a checkbox is ticked is not an invariant), and it must refuse on
+  *contact* rather than try to parse SQL.
+
+- `hooks.py` loses 16 scheduler jobs across 11 cron keys (ten of the keys no longer exist at
+  all), the app's only chat `doc_event`, six permission
+  hooks from each of the two registers, one `website_route_rules` entry, eight `after_install`
+  and eight `after_migrate` backstops, and `notification_skip_email_types`. Every removal
+  leaves a comment naming what went and why, because several of those blocks carry rules that
+  outlive chat — the duplicate-dict-key hazard in `scheduler_events`, the query-condition /
+  `has_permission` parity doctrine, and the `website_404` caching trap that the surviving
+  `/feedback` rule is now the sole user of.
+
+- `boot.py` drops `ee_chat` and `_chat_visible`; `api/integrations_health.py` drops the chat
+  tile, which would otherwise have kept rendering plausible state for a feature that no longer
+  exists (it read `Chat Settings` through `_single()` and never imported the module, so the
+  orphaned `tabSingles` rows would have fed it indefinitely).
+
+- `test_classic_builder_retirement.py` swapped its two canary boot keys: they were `ee_chat`
+  and `_chat_visible`, which this release deleted. A canary test whose canaries are removed by
+  the next change passes because it stopped checking anything — the exact failure it exists to
+  catch.
+
+- `test_hr_confined_space.py` no longer asserts the `*/10` cron has five jobs. That count was
+  a proxy for "the chat sweeps are still there" — an assertion about someone else's feature
+  wearing this test's name, which went red the day that feature was legitimately removed.
+
 ## [1.425.0] - 2026-09-13
 
 ### Fixed

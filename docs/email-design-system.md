@@ -116,11 +116,13 @@ the guard suite, not asserted in a comment.
 | `RULE` | `#dbe4ea` | Borders — never carries text | — |
 | `SURFACE` | `#f2f9fd` | Table tint — never carries text | — |
 
-**Three colours are banned and the build enforces it.** `#00a0dd` is the brand blue and
-may never be a text colour or a text-bearing background — 2.97:1, the same rule
-`scripts/test_chat_source_rules.js` enforces for the chat CSS. `#1E9E5A` (the old CTA
-green, 3.52:1 with white text) and `#00A1DE` (the old link blue, 2.90:1) both failed AA
-and were carried by all 13 hand-written Notification bodies.
+**Three colours are banned and the build enforces it** — `tests/test_email_design.py`,
+`BANNED_HEX`. `#00a0dd` is the brand blue and may never be a text colour or a text-bearing
+background — 2.97:1. That rule did not start here: it was first enforced for the chat CSS by
+`scripts/test_chat_source_rules.js`, which went with the chat module in v1.426.0, so the email
+suite is now the only place it is checked. `#1E9E5A` (the old CTA green, 3.52:1 with
+white text) and `#00A1DE` (the old link blue, 2.90:1) both failed AA and were carried
+by all 13 hand-written Notification bodies.
 
 Colour never carries meaning alone: Gmail and Outlook.com force-invert in dark mode, so
 every `callout` states its severity in words too. For the same reason the logo ships as
@@ -155,9 +157,9 @@ Tones: `primary`, `success`, `warning`, `danger`, `info`.
 
 **`prose()` and `code()` are not interchangeable.** Four senders used to emit their whole
 body as `<pre>`; two of them (offsite backup, call transcripts) really are machine
-output, and two (status alerts, chat governance) are human sentences that merely contain
-newlines. The old `status_alerts` markup said so itself with an inline
-`font-family:inherit` override on its `<pre>`.
+output, and two (status alerts, and the chat governance alert retired in v1.426.0) are
+human sentences that merely contain newlines. The old `status_alerts` markup said so
+itself with an inline `font-family:inherit` override on its `<pre>`.
 
 **Tables are four columns or fewer.** Five does not fit a phone even stacked. Three
 digests were trimmed to fit when they moved onto the system; if you need more columns,
@@ -286,7 +288,6 @@ All travel emails are gated by **Travel Settings → Send Travel Notifications**
 | Project start reminder | `project_enhancements/__init__.py` | `daily` | staff |
 | Awaiting-signature digest | `project_enhancements/esign/tasks.py` | weekly | staff |
 | Contract signed — staff | `project_enhancements/esign/lifecycle.py` | Signature completed | staff |
-| Chat governance alert | `chat/governance/alerts.py` | Governance events | staff |
 | Hand-off SLA digest | `process_steps.py` | cron `30 7 * * 5` | staff |
 | Hand-off escalation | `status_alerts.py` | Overdue step / meeting | staff |
 | Enhancement request update | `product_feedback/notify.py` | Status/decision change | staff |
@@ -326,7 +327,13 @@ be reverted by the next migrate rather than persisting — see the note in
 
 ### Deliberately outside the system
 
-- **Chat message/mention notifications** are never emailed at all
-  (`notification_skip_email_types`, ADR 0009 Decision #3).
+- **`notification_skip_email_types` is empty, and the empty list is the point.** It held
+  `["Chat Message", "Chat Mention"]` from v1.267.0 until the chat module was retired in
+  v1.426.0 ([ADR 0011](../decisions/adr/0011-retire-google-chat-and-coworker-chat.md)). The
+  hook is kept, empty and annotated in `hooks.py`, because it is the only lever that stops a
+  `Notification Log` type reaching email for **everybody** — it is consulted before the user's
+  own Notification Settings, so unlike a per-user default it cannot be re-enabled by the first
+  person who finds the checkbox. The next feature that fans out Notification Log rows will
+  want it.
 - **Stock ERPNext `Email Template` records** (7, e.g. Request For Quote, Leave Approval)
   are untouched framework defaults.

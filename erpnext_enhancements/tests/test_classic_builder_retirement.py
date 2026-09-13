@@ -177,11 +177,18 @@ class TestTheFlagIsGoneFromEveryLayer(unittest.TestCase):
 
     def test_boot_still_builds_its_other_keys(self):
         """The removal was surgical, not a truncation. If the helper deletion had taken a
-        neighbour with it, every assertion above would still pass."""
+        neighbour with it, every assertion above would still pass.
+
+        The canaries were ``ee_chat`` / ``_chat_visible`` until v1.426.0, when the chat
+        module was itself retired (ADR 0011) and they stopped existing. Swapped for two
+        keys that survive rather than dropped: a canary test whose canaries were deleted
+        by the next removal is a test that passes because it no longer checks anything,
+        which is the failure mode this class exists to catch.
+        """
         code = _py(BOOT_PY)
         self.assertIn("def boot_session", code)
-        self.assertIn("ee_chat", code)
-        self.assertIn("_chat_visible", code)
+        self.assertIn("ee_contract_esign", code)
+        self.assertIn("ee_fountain_move_url", code)
 
 
 class TestTheApiSurvives(unittest.TestCase):

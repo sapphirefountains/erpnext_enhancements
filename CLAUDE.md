@@ -1,6 +1,6 @@
 # Working in this repository
 
-`erpnext_enhancements` is Sapphire Fountains' custom Frappe app: ~94k lines of Python
+`erpnext_enhancements` is Sapphire Fountains' custom Frappe app: ~211k lines of Python
 across 40+ modules customising ERPNext for a fountain design, build, service and rental
 business. It runs on Frappe/ERPNext v16 and deploys from `main` to Google Cloud.
 
@@ -68,8 +68,13 @@ Verified, and all of them expensive to rediscover:
   the fifteen zeros (v1.277.3). Note the shape of it — saving a Single deletes and re-inserts
   every field row, so a page anyone actually uses self-heals on the next save, and the ones
   that bite are the settings for **dormant** features, where the first save is the one you
-  need and the one that fails. Ship a backfill patch with the fields; there are 20 Singles in
-  this app. See [`patches/backfill_chat_settings_defaults.py`](erpnext_enhancements/patches/backfill_chat_settings_defaults.py).
+  need and the one that fails. Ship a backfill patch with the fields; there are 23 Singles in
+  this app. Chat Settings and its backfill patch were both deleted with the chat module in
+  v1.426.0 (ADR 0011), so that example is history rather than a file you can open — copy the
+  shape from
+  [`patches/backfill_marketing_settings_defaults.py`](erpnext_enhancements/patches/backfill_marketing_settings_defaults.py),
+  which fills a field **only** where `tabSingles` has no row for it, never over a stored falsy
+  value: an unticked box and a deliberate `0` are not the same fact.
 - **On a *normal* doctype the same `default` reaches every existing row — the exact opposite
   — and a backfill patch written for the Single behaviour will silently match nothing.**
   Adding a column with a default is one `ALTER`, and MariaDB writes the default into every row

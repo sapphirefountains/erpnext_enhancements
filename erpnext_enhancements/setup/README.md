@@ -58,15 +58,18 @@ empty, and nothing in `bench migrate` rebuilds it (`SiteMigration.setUp`'s `frap
 deletes the key but does not call `setup_module_map`). A migrate that starts with a stale
 snapshot walks the *previous* release's module list and silently skips a module added in this
 one: no DocType imported, no table created, no `Module Def` made — and the migrate exits 0.
-That is how v1.261.0 shipped ten Chat DocTypes and installed none of them (2026-08-09).
+That is how v1.261.0 shipped ten DocTypes of the since-retired Chat module and installed none
+of them (2026-08-09).
 
 `before_migrate` is Frappe's `pre_schema_updates`, i.e. before **both** patch phases and before
 `sync_all()`. That is the only window in which rebuilding the map helps; `after_migrate` is a
 whole migrate too late. Deleting the cache key before calling `setup_module_map` is equally
 load-bearing — it re-reads the key first and only falls back to `modules.txt` when it is empty.
 
-Guarded in CI by `tests/test_module_installability.py`, and explained at length in
-[`chat/README.md`](../chat/README.md#the-module-map-trap-modulestxt-is-not-enough-on-an-installed-site).
+Guarded in CI by `tests/test_module_installability.py`. The long-form write-up of this trap
+lived in `chat/README.md` and went with that module when it was retired in v1.426.0
+([ADR 0011](../../decisions/adr/0011-retire-google-chat-and-coworker-chat.md)); the account
+above is now the whole of it, and the test is the part that was doing the work anyway.
 
 ## Why `document_locks.py` runs on `before_migrate`
 

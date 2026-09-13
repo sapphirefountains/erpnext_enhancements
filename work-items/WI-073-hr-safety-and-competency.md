@@ -125,10 +125,10 @@ test now fails the build if an `Issued Kit`-shaped doctype appears.
 
 **The same class of bug appeared three times in one day, twice in my own new code.** A repeated
 key in a Python dict literal silently replaces the earlier value: once in `hooks.py` (where it
-would have disabled four chat sweeps, caught by `test_hooks_integrity`), and once in an
-`or_filters` in `hazards.py` an hour later. Python warns about neither. Where a dict is built
-from a list of similar-shaped entries — scheduler crons, query filters — assume the duplicate
-is there and check for it.
+would have disabled four chat sweeps — since retired with the chat module in v1.426.0 — caught
+by `test_hooks_integrity`), and once in an `or_filters` in `hazards.py` an hour later. Python
+warns about neither. Where a dict is built from a list of similar-shaped entries — scheduler
+crons, query filters — assume the duplicate is there and check for it.
 
 ## Deliberately not built
 

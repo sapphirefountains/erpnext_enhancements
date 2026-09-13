@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 """Guard: no credential may exist in this repository — at HEAD **or anywhere in history**.
 
-ADR 0009 §G.2 and Phase 1 §4.4: the Google integration is deliberately **keyless**. The VM
-mints its own tokens through IAM Credentials `signJwt`, so there is no service-account JSON
-key to lose, and `Chat Settings` holds identifiers only — project ids, service-account
-*emails*, topic names, the audience URL. That design removes the credential; this script is
-what keeps it removed, because the design only holds until somebody in a hurry pastes a key
-file into the tree to "test it locally".
+**No credential belongs in this repository, and one of them genuinely exists.** Google Drive
+and Google Calendar share a service-account JSON key — the two modules build their clients from
+`google.oauth2.service_account`, reading the key through
+`drive_utils.get_service_account_info()`. It lives in a `Password` field on
+`Project Folder Google Drive Settings`, encrypted at rest and never in the tree, which is
+exactly the arrangement this script defends: the key is real, so "it is in the database, not
+the repo" is a property somebody has to keep true.
+
+(The retired Google Chat mirror was the opposite case — keyless by construction, with the VM
+minting its own tokens through IAM Credentials `signJwt`. That is why it never appears in this
+scanner's findings and why ADR 0011 could retire it with no credential to revoke. Do not
+generalise it to the other Google integrations.)
+
+This script is what keeps the rule enforced, because it only holds until somebody in a hurry
+pastes a key file into the tree to "test it locally".
 
 **History, not just HEAD, and that distinction is the whole point.** `git rm` does not
 un-publish anything. A key committed and reverted an hour later is still in the pack file,

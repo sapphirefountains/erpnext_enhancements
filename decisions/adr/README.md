@@ -35,12 +35,21 @@ one, so the history of the reasoning survives.
 | [0006](0006-ai-writes-need-desk-confirmation.md) | AI writes are confirmed in the desk, never by the model | Accepted |
 | [0007](0007-tolerate-mixed-indentation.md) | Tolerate mixed indentation rather than reformat | Accepted, temporary |
 | [0008](0008-global-assets-ship-as-bundles.md) | Global browser assets ship as esbuild bundles, not raw `/assets` paths | Accepted |
-| [0009](0009-erpnext-google-chat-triton.md) | Employee chat is a module in this app, mirrored to Google Chat, with Triton on `@triton` | Accepted |
-| [0009-A1](0009-addendum-1-phase-5-decisions.md) | Addendum: what Phase 5 decided, and where the build diverged from the plan | Accepted |
-| [0009-A2](0009-addendum-2-phase-6-decisions.md) | Addendum: Phase 6 — `Chat Audit Log` reinstated, the gate's two doors, and the governance policy the human answered | Accepted |
+| [0009](0009-erpnext-google-chat-triton.md) | Employee chat is a module in this app, mirrored to Google Chat, with Triton on `@triton` | **Superseded by [0011](0011-retire-google-chat-and-coworker-chat.md)** |
+| [0009-A1](0009-addendum-1-phase-5-decisions.md) | Addendum: what Phase 5 decided, and where the build diverged from the plan | **Superseded by [0011](0011-retire-google-chat-and-coworker-chat.md)** |
+| [0009-A2](0009-addendum-2-phase-6-decisions.md) | Addendum: Phase 6 — `Chat Audit Log` reinstated, the gate's two doors, and the governance policy the human answered | **Superseded by [0011](0011-retire-google-chat-and-coworker-chat.md)** |
 | [0010](0010-employee-feedback-to-tasks.md) | Employees file feedback in ERPNext; Triton proposes the tasks and ERPNext writes them | Accepted |
+| [0011](0011-retire-google-chat-and-coworker-chat.md) | Retire the Google Chat mirror and the coworker chat product; the Triton widget is the only chat surface | Accepted |
 
 0009 carries two appendices linked from the record itself — the widget behaviour inventory and
-the file-by-file implementation plan — and one **addendum**. The addendum is listed above
-because it is a decision record rather than a reference: 0009 is immutable, so the choices its
+the file-by-file implementation plan — and two **addenda**. The addenda are listed above
+because they are decision records rather than references: 0009 is immutable, so the choices its
 §I deferred to Phase 5 had to land somewhere that a reader of 0009 can find.
+
+**The whole 0009 family is superseded by [0011](0011-retire-google-chat-and-coworker-chat.md)
+as of v1.426.0, and the records stay exactly as written.** That is the convention working as
+intended rather than an exception to it: 0009 is a good statement of a real problem — the work
+lives in ERPNext and the people live in Google Chat — and its answer was built, shipped and
+then withdrawn for a product reason. Deleting it would erase the reasoning; 0011 records why it
+was withdrawn and what replaced it, which is nothing. Read 0009 for the problem, 0011 for the
+outcome, and do not treat anything in the 0009 family as instruction.

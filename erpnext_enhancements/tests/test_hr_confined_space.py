@@ -315,21 +315,31 @@ class TestTheLoneWorkerClockEscalates(unittest.TestCase):
                 self.assertIn(flag, body)
 
     def test_it_is_scheduled_often_enough_to_matter(self):
-        """Parsed, not string-matched. The job shares the ten-minute key with the
-        four chat sweeps -- a second `"*/10 * * * *"` entry would silently REPLACE
-        them, which `test_hooks_integrity` caught on the first run -- so the
-        assertion has to look inside the list rather than at a spelling."""
+        """Parsed, not string-matched, and that is the whole point of the test.
+
+        The job shared the ten-minute key with the four chat sweeps until v1.426.0
+        (ADR 0011 deleted them), and a second `"*/10 * * * *"` entry in the same dict
+        literal would have silently REPLACED all four -- Python does not warn on a
+        duplicate key, and `test_hooks_integrity` caught exactly that on the first run.
+        So the assertion looks INSIDE the list rather than at a spelling: it must keep
+        passing however many neighbours the key happens to have, and must fail if a
+        later edit converts the list back to a bare string or drops this entry.
+
+        It no longer asserts a neighbour COUNT. It used to require five, which was a
+        proxy for "the chat sweeps are still here" -- an assertion about somebody
+        else's feature, wearing this test's name, that went red the day that feature
+        was legitimately removed.
+        """
         tree = ast.parse(_text(HOOKS))
         events = {}
         for node in tree.body:
             if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "scheduler_events":
                 events = ast.literal_eval(node.value)
         jobs = (events.get("cron") or {}).get("*/10 * * * *") or []
+        self.assertIsInstance(jobs, list)
         self.assertIn(
             "erpnext_enhancements.hr_enhancements.lonework.sweep_overdue_sessions", jobs
         )
-        # And the neighbours it shares the key with are still there.
-        self.assertGreaterEqual(len(jobs), 5)
 
     def test_one_open_session_per_person(self):
         """Two open sessions means one of them is stale, and a stale session is a

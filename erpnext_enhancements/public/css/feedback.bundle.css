@@ -3,9 +3,11 @@
  * www/feedback.html through bundled_asset('feedback.bundle.css'). Same cache rationale as
  * the JS: raw /assets paths are immutable for a year with no content hash. ADR 0008.
  *
- * The accent tokens are lifted verbatim from chat.bundle.css, including the reasoning, which
- * is repeated rather than referenced because a copy that quietly drops the reasoning is a
- * copy somebody "simplifies" back to one token.
+ * The accent tokens were lifted verbatim from the chat SPA's bundle, including the reasoning,
+ * which was repeated rather than referenced because a copy that quietly drops the reasoning is
+ * a copy somebody "simplifies" back to one token. That turned out to be the right call: the
+ * chat bundle was deleted in v1.426.0 (ADR 0011) and this file lost nothing, because the
+ * argument travelled with the tokens instead of living at the other end of a link.
  *
  * Three things here are load-bearing rather than cosmetic:
  *

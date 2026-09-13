@@ -5,9 +5,10 @@ of writing it down.** `Purchase Order` is a normal doctype, so adding a column w
 `default` is one `ALTER` and MariaDB writes the default into every existing row as part of
 it. By the time this runs, all 157 orders already read `Created` — nothing is empty, and
 `where coalesce(custom_order_stage, '') = ''` would match zero rows, commit, and record
-itself in `tabPatch Log` as a success. That is not a hypothetical: it is exactly how
-`backfill_relay_auth_identity` failed silently in v1.280.3, and the field there had a
-`default` for the same reason this one does.
+itself in `tabPatch Log` as a success. That is not a hypothetical: it is exactly how a
+v1.280.3 backfill failed silently against a column whose field declared `"default": "USER"`
+— the same shape as this one. (That patch went with the chat module in v1.426.0; the lesson
+is in CLAUDE.md.)
 
 (The opposite storage model bites the opposite way — a `default` on a new field of a
 *Single* never reaches the existing row at all. Which trap you are in depends on the

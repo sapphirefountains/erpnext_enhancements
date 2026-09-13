@@ -349,23 +349,8 @@ override_doctype_class = {
 }
 
 doc_events = {
-	# Chat (ADR 0009 Phase 3). ONE hook, and it is deliberately here rather than a
-	# line inside `chat.sync.outbox.finalise_new_message`.
-	#
-	# The counter fan-out — "publish each OTHER member's new unread total to their
-	# own user room" — is what drives the room-list indicator and the floating
-	# bubble's badge on a desk page where no room's document room has been joined.
-	# It is a Phase 3 concern, and `finalise_new_message` is the subject of Phase 2's
-	# soak proof ("exactly once per genuinely new message, zero for echoes"). Adding
-	# to it would put a Phase 3 concern inside the thing the proof measures; additive
-	# wiring keeps that proof measuring what it was written to measure.
-	#
-	# It never raises: it runs in the inserting transaction's after_insert, where an
-	# exception destroys the message it exists to announce. A missing badge costs one
-	# refresh.
-	"Chat Message": {
-		"after_insert": "erpnext_enhancements.chat.api.readstate.announce_unread",
-	},
+	# The `Chat Message` after_insert unread fan-out was removed in v1.426.0 with the
+	# rest of the chat module (ADR 0011). It was the app's only chat doc_event.
 	"Task": {
 		"before_save": "erpnext_enhancements.script_migrations.task.calculate_project_elapsed_time",
 		# after_insert used to sync every Task into one shared Google Calendar
@@ -699,17 +684,13 @@ doc_events = {
 		# hook never sees. Compares the roles child table against
 		# get_doc_before_save() and returns immediately when unchanged; the sweep
 		# itself is enqueue_after_commit so it can never delay a login or a save.
-		# A LIST, because two features need the same event and neither owns it. Frappe runs
-		# every entry; the order is not significant since neither writes what the other reads.
 		#
-		# The second is Phase 6 §4.A.4: granting the chat oversight role hands somebody every
-		# conversation in the company, a System Manager can grant it to themselves, and that
-		# is precisely why the grant is recorded. `Has Role` is a child table of `User` and
-		# Frappe fires no event for a child row alone, so the parent's on_update is the only
-		# place a role change is observable.
+		# STILL A LIST with one entry, deliberately. It held two until v1.426.0, when the
+		# chat oversight-grant recorder went with the chat module (ADR 0011). Keeping the
+		# list shape means the next feature that needs this event appends a line rather
+		# than converting a string back into a list and getting the conversion wrong.
 		"on_update": [
 			"erpnext_enhancements.training.assignment.on_user_roles_changed",
-			"erpnext_enhancements.chat.governance.role_grants.on_user_roles_changed",
 		],
 	},
 	"Supplier": {
@@ -864,71 +845,18 @@ scheduler_events = {
 			# conversation stops happening. Fires only on the exact day.
 			"erpnext_enhancements.hr_enhancements.onboarding.nudge_new_hire_check_ins",
 		],
-		# ---- Chat sync engine (ADR 0009 Phase 2, v1.262.0) -------------------------------
-		# EVERY job below no-ops while `Chat Settings.enabled` is 0, which is how it ships.
-		# They are registered dormant on purpose: a scheduler entry added later, by hand, on
-		# the day chat goes live is the one that gets forgotten.
+		# The chat module owned 16 scheduler jobs across 11 cron keys here between v1.262.0 and
+		# v1.423.0 -- the Pub/Sub puller and inbound defer timer on `* * * * *`, the relay
+		# sweeper and digest summariser on `*/5`, provisioning/attachments/chunking/embedding
+		# on `*/10`, and nine daily or hourly governance, indexing and notification passes
+		# below. All sixteen went with the module in v1.426.0 (ADR 0011).
 		#
-		# The per-minute pair exists because this app CANNOT run a supervised worker. There is
-		# no Procfile in this repo -- the bench generates one on the VM and systemd runs honcho
-		# against it -- so ADR §G.4.2's recommended long-running streaming-pull consumer is not
-		# a change we can commit. The cron is its stated fallback, and the cost is up to a
-		# minute of latency on a coworker's message.
-		#
-		# `pull_inbound_events` takes a Redis lock and drains for a bounded slice of the
-		# minute, then returns; the next tick re-arms it. A deploy kills it mid-slice, which is
-		# survivable precisely because the puller commits the raw row BEFORE acking Pub/Sub --
-		# an unacked delivery is redelivered, an acked-but-uncommitted one is gone.
-		"* * * * *": [
-			"erpnext_enhancements.chat.sync.pubsub.pull_inbound_events",
-			# Two jobs in one entry, and the second is not just a lost-work sweeper: it is the
-			# defer TIMER. frappe.enqueue reaches no RQ scheduler and RQ's own scheduling lives
-			# in the queue Redis a deploy FLUSHDBs, so inbound._defer writes
-			# `Chat Inbound Event.available_at` and stops -- making THIS interval the real
-			# granularity of a defer. At ten minutes, a three-defer budget would be a
-			# thirty-minute worst case for one message.
-			"erpnext_enhancements.chat.sync.inbound.sweep_stuck_inbound_events",
-		],
-		# The outbox sweeper, and the reason the relay survives anything. The production deploy
-		# runs `redis-cli -p 11000 FLUSHDB`, so every queued-but-unrun job is destroyed on an
-		# ordinary successful release -- silently, because the enqueue already returned. Frappe
-		# v16 also wires no RQ retries at all. So the queue is a latency optimisation and THIS
-		# is the delivery guarantee: it re-drives `Pending` rows past `available_at` and returns
-		# `In Progress` rows whose lease expired (a crashed worker) to `Pending`.
-		"*/5 * * * *": [
-			"erpnext_enhancements.chat.sync.outbound.sweep_relay_jobs",
-			# chat Phase 5: the rolling summariser. APPENDED to this key rather than given a
-			# new one -- scheduler_events is one dict literal and a duplicate key silently
-			# replaces the earlier entry, which would have deleted the relay sweeper above.
-			#
-			# A five-minute BATCH over a dirty predicate, and never a per-message enqueue.
-			# The natural design -- enqueue per message with deduplicate=True so repeats
-			# collapse -- is silently broken: `deduplicate` drops the new enqueue when an
-			# existing job is QUEUED *or STARTED*, so a digest job that is currently running
-			# swallows every message arriving while it runs, which is exactly the set of
-			# messages that made the digest stale. In a busy room the job is always running,
-			# the drop is always happening, and the digest never advances. One ERROR line, a
-			# return, and for weeks it reads as "summaries are a bit behind".
-			#
-			# Five minutes plus the 15-minute dirty-age threshold is what bounds staleness at
-			# roughly twenty minutes.
-			"erpnext_enhancements.chat.indexing.digest.sweep_digests",
-		],
-		# Provisioning and attachments: both are prerequisite work for a relay that is already
-		# queued and waiting, so they are frequent but cheap -- each returns immediately when
-		# its table has nothing pending.
-		#
-		# The two Phase 5 indexing passes join them, and are SEPARATE jobs on purpose. Chunking
-		# is cheap, local and always correct; embedding is a paid external call that can fail,
-		# rate-limit or hang. Fused, an embedding outage stops the index advancing and a room's
-		# history silently stops being searchable AT ALL rather than only semantically. Split,
-		# chunk rows keep landing, the lexical tier keeps finding them, and the vectors backfill
-		# when the provider returns.
+		# WHAT SURVIVES THAT IS WORTH KNOWING: `scheduler_events` is ONE dict literal, and a
+		# repeated key in a dict literal does not warn -- the later entry silently REPLACES
+		# the earlier one. That is why the surviving jobs below are appended into existing
+		# keys rather than given their own, and it is a live hazard on the next addition, not
+		# a chat-specific one. `test_hooks_integrity` caught exactly that mistake once.
 		"*/10 * * * *": [
-			"erpnext_enhancements.chat.sync.provisioning.sweep_pending_provisioning",
-			"erpnext_enhancements.chat.sync.attachments.sweep_pending_attachments",
-			"erpnext_enhancements.chat.indexing.indexer.sweep_chunks",
-			"erpnext_enhancements.chat.indexing.indexer.sweep_embeddings",
 			# hr_enhancements (WI-073): lone-worker check-in. Three stages fifteen
 			# minutes apart -- chase the worker, then their supervisor, then the
 			# executives. It escalates ONCE per stage, because a sweep that re-sends
@@ -938,89 +866,19 @@ scheduler_events = {
 			#
 			# Added to this list rather than as a second "*/10 * * * *" key. A repeated
 			# key in a dict literal silently REPLACES the earlier one, so a new entry
-			# would have stopped all four chat sweeps above with no error anywhere.
-			# test_hooks_integrity caught exactly that.
+			# would have stopped the four chat sweeps that shared this key with no error
+			# anywhere. test_hooks_integrity caught exactly that. The chat sweeps are gone
+			# as of v1.426.0; the rule that caught it is not.
 			"erpnext_enhancements.hr_enhancements.lonework.sweep_overdue_sessions",
 		],
-		# Subscription renewal. An expired Workspace Events subscription is DELETED and cannot
-		# be renewed -- only recreated -- and the failure is completely silent, so this is the
-		# highest-consequence entry in this block. Hourly against a granted lifetime measured
-		# in days is deliberate over-frequency: the job is idempotent, the expiration reminders
-		# fire at T-12h and T-1h, and the cost of running it needlessly is one cheap read while
-		# the cost of missing it is total inbound loss until somebody notices.
-		#
-		# :25 and :50, NOT :20 and :40. Those two are QuickBooks' `cdc_poll` and
-		# `retry_failed_syncs`, and a duplicate key in a Python dict literal does not warn --
-		# the later entry silently REPLACES the earlier one. Reusing them would have deleted
-		# two live QuickBooks jobs, and nothing would have reported it. Caught by
-		# tests/test_hooks_integrity.py, which exists for exactly this.
-		"25 * * * *": ["erpnext_enhancements.chat.sync.subscriptions.renew_due_subscriptions"],
-		# The sweep that converts a missed renewal from data loss into lag: messages.list with
-		# `createTime >` the room's watermark, ingested through the SAME idempotent inbound path.
-		# Offset well clear of the renewal above so a renewal storm and a sweep do not contend
-		# for the same per-project read budget.
-		"50 * * * *": ["erpnext_enhancements.chat.sync.reconcile.reconcile_due_rooms"],
-		# Orphaned document rooms -- a linked document deleted or cancelled must not silently
-		# leave a Google space nobody owns.
-		"30 4 * * *": ["erpnext_enhancements.chat.sync.provisioning.sweep_orphaned_document_rooms"],
-		# chat Phase 4: retire push subscriptions nothing has been delivered to in 60 days.
-		#
-		# A minute nothing else uses -- scheduler_events is one dict literal, so a duplicate
-		# key silently REPLACES the earlier entry with no warning, and the QuickBooks hourly
-		# jobs already own :00/:20/:40 while chat owns :25/:50 and 4:30am.
-		#
-		# Needed because the push services only ever report a subscription gone (404/410) when
-		# the BROWSER deliberately unsubscribed. A phone that was wiped, reassigned, or simply
-		# never opened again is never mentioned by anyone -- so without this the table only
-		# grows, and every dead row in it costs one HTTPS request per notification to that
-		# person, forever. Deactivates rather than deletes, so a device that comes back is
-		# reactivated by its next registration and the history survives somebody asking why
-		# their phone stopped buzzing.
-		"45 3 * * *": ["erpnext_enhancements.chat.notifications.webpush.subscriptions.prune_stale"],
-		# chat Phase 5: the digest staleness alarm. Hourly at a minute nothing else owns --
-		# QuickBooks has :00/:20/:40, chat sync has :25/:50, and this takes :35.
-		#
-		# The failure it watches for is not an error, it is SILENCE. Every other failure in
-		# this package announces itself; a summariser that has quietly stopped produces no log
-		# line, no exception and no user complaint, because stale summaries keep answering.
-		# The first symptom otherwise is somebody noticing weeks later that Triton's answers
-		# stopped mentioning anything recent.
-		"35 * * * *": ["erpnext_enhancements.chat.indexing.digest.check_digest_staleness"],
-		# Nightly, and NIGHTLY rather than hourly on purpose: a chain break is a point in
-		# time, not a rate. Every row after it is suspect and every row before it is not, so
-		# checking twenty-four times a day finds the same break twenty-four times and tells
-		# nobody anything new. 03:10 is a quiet hour and an unused minute.
-		#
-		# It walks BOTH audit chains and records a break as a governance event — the audit log
-		# is what this system uses to say something happened, and "the audit log was tampered
-		# with" is something that happened.
-		#
-		# Delivery is §4.H's alert path as of v1.291.0 — one Chat Ops Alert per chain, at
-		# Critical, cleared when the chain verifies again. Before that the Error Log was the
-		# whole channel, which is necessary and NOT sufficient: nobody reads it unprompted.
-		"10 3 * * *": ["erpnext_enhancements.chat.audit.verify_all_chains"],
-		# Phase 6 §4.I, the drift census. Nightly and NOT hourly, and the minute is chosen to
-		# sit well clear of the :50 reconciliation sweep — not because they contend for a
-		# Google quota (this scan makes no Google call at all; every class it reports is
-		# answerable from ERPNext's own tables) but because a drift finding written while the
-		# sweep is mid-recovery describes a room that is being fixed as one that is broken.
-		#
-		# It refuses unless `Chat Settings.enabled` AND `drift_detection_enabled` are both on.
-		# The master switch matters as much as the feature switch: on a site where chat has
-		# never been turned on, no relay job and no inbound event has ever been written, so
-		# every class is vacuously empty and the scan would report a clean estate — a true
-		# answer that reads as reassurance about a mirror that does not exist.
-		"25 4 * * *": ["erpnext_enhancements.chat.governance.drift.run_drift_scan"],
-		# Phase 6 §4.F. Finishes deletions an already-written retirement mark authorises — it
-		# never advances a mark and never deletes a message, so it cannot destroy anything a
-		# human did not ask for. It exists for two cases: a mark moved by something other than
-		# `set_retirement_mark` (the field is read_only on the DocField, which is a form
-		# property and not a database constraint), and the ARCHIVED room — because the chunk
-		# sweep and the digest sweep both open `where is_archived = 0`, so archiving is
-		# otherwise the single action that makes a room's retired coverage permanent.
-		#
-		# A no-op on every site until something sets a mark, which nothing does today.
-		"40 4 * * *": ["erpnext_enhancements.chat.indexing.retire.sweep_retirement"],
+		# NOTE ON MINUTES, which outlived the entries that motivated it. Chat used to own
+		# :25, :50, :35, 03:10, 03:45, 04:25, 04:30 and 04:40 in this dict, chosen to sit
+		# clear of QuickBooks' :00/:20/:40. Ten of its eleven keys went with the module in
+		# v1.426.0 (ADR 0011) and those minutes are free again -- but the reason they were
+		# picked still binds anything added here: `scheduler_events` is one dict literal, a
+		# duplicate key does NOT warn, and the later entry silently REPLACES the earlier one.
+		# Reusing :20 or :40 would delete two live QuickBooks jobs and nothing would report
+		# it. tests/test_hooks_integrity.py exists for exactly this.
 		# Semi-monthly commission report — 07:00 site TZ, DAILY on purpose even
 		# though it only emails on the 1st and the 16th. The job also owns the
 		# saved date window on the "Brian's Closed Won" Report Builder report, and
@@ -1220,29 +1078,24 @@ extend_bootinfo = "erpnext_enhancements.boot.boot_session"
 # ---------------------------------------------------------------------------
 # Website routes.
 #
-# The chat SPA (ADR 0009 Phase 3) is a single shell at www/chat.html that serves
-# EVERY sub-path of /chat. The rule below is what makes a HARD REFRESH at
-# /chat/room/<room>?thread=<msg>&message=<msg> render that shell instead of
-# 404ing — and every deep-link acceptance criterion in Phase 3, every
-# notification link Phase 4 sends, and every `chat_message` citation Phase 5
-# resolves depends on it. Frappe v16 hands from_route to werkzeug's Rule
+# /feedback (ADR 0010) is one shell at www/feedback.html serving every sub-path, so a hard
+# refresh at /feedback/request/ER-2026-00001 renders it rather than 404ing. Every
+# notification product_feedback/notify.py sends links to exactly such a URL, so this rule is
+# what makes those links work at all. Frappe v16 hands from_route to werkzeug's Rule
 # verbatim, so the full converter set including <path:...> is available.
 #
 # TRAP, recorded because it is operational rather than visible in code: loading
-# /chat/room/X BEFORE this rule shipped caches that URL in the `website_404`
-# cache until Redis is flushed. A full deploy FLUSHDBs Redis and clears it; a
-# hotfix without a restart does not. So do not advertise the route to anybody
-# before the deploy carrying it has landed.
+# /feedback/request/X BEFORE this rule shipped caches that URL in the `website_404` cache
+# until Redis is flushed. A full deploy FLUSHDBs Redis and clears it; a hotfix without a
+# restart does not. So do not advertise a new route here to anybody before the deploy
+# carrying it has landed.
 #
-# The bare /chat path is matched by www/chat.html itself and needs no rule.
-#
-# /feedback works the same way (ADR 0010): one shell at www/feedback.html serving
-# every sub-path, so a hard refresh at /feedback/request/ER-2026-00001 renders it
-# rather than 404ing. Every notification product_feedback/notify.py sends links to
-# exactly such a URL, so this rule is what makes those links work at all — and the
-# same `website_404` trap above applies to it.
+# This list held a second, IDENTICALLY SHAPED rule for the chat SPA until v1.426.0
+# (ADR 0011). It is named here because the shapes are twins and the next person editing this
+# list is one careless line-delete away from taking /feedback's deep links down with it —
+# which would 404 every link in every enhancement-request notification, and cache those 404s
+# until the following full deploy.
 website_route_rules = [
-	{"from_route": "/chat/<path:chat_path>", "to_route": "chat"},
 	{"from_route": "/feedback/<path:feedback_path>", "to_route": "feedback"},
 ]
 
@@ -1354,39 +1207,15 @@ before_install = [
 
 # Run once, at the end of `bench install-app`.
 after_install = [
+	# WHY ANYTHING IS HERE AT ALL, kept because the reason is not chat-specific and the
+	# eight chat entries that used to demonstrate it went in v1.426.0 (ADR 0011):
 	# after_migrate does NOT run during install-app -- core runs before_install,
-	# after_install and after_sync only -- and install-app writes the whole of
-	# patches.txt to Patch Log as already-executed. So on a fresh site neither the
-	# composite indexes nor the Chat Settings singleton would exist until somebody
-	# happened to run a migrate. Both callables below are the same idempotent
-	# functions the after_migrate backstops use, and both are contractually
-	# forbidden from raising: a failure here must never abort an app install.
-	"erpnext_enhancements.patches.add_chat_indexes.ensure_chat_indexes",
-	"erpnext_enhancements.patches.default_chat_settings.ensure_chat_settings",
-	# Phase 2's composites, same shape and same reason as the line above it.
-	"erpnext_enhancements.patches.add_chat_phase2_indexes.ensure_chat_phase2_indexes",
-	# Phase 5's composites, plus the FULLTEXT index on Chat Context Chunk.body, which is
-	# the whole lexical half of retrieval -- the half that makes an exact invoice number
-	# findable at all. frappe.db.add_index cannot create a FULLTEXT index, so that one is
-	# raw DDL and exists only if this runs.
-	"erpnext_enhancements.patches.add_chat_phase5_indexes.ensure_chat_phase5_indexes",
-	# A `default` on a new field of a Single never reaches the row that already exists, so
-	# the Phase 5 dials read 0 on any pre-existing site and validation refused every save
-	# of the settings page. Fills missing rows only. Safe twice.
-	"erpnext_enhancements.patches.backfill_chat_settings_defaults.backfill_chat_settings_defaults",
-	# Splitting the bot User off the Google service-account field leaves the new field empty
-	# on every existing site, and _bot_user raises on empty by design. Freezes the old
-	# resolver's answer into data so the split does not take @triton down. Safe twice.
-	"erpnext_enhancements.patches.set_chat_bot_user.set_chat_bot_user",
-	# Phase 4's Notification Type records. Notification Log.type is a LINK on v16, so
-	# without these two rows every chat bell notification fails link validation on insert --
-	# one Error Log per message and a bell that never lights.
-	"erpnext_enhancements.patches.chat_phase4_notifications.ensure_chat_phase4_notifications",
-	# Chat log retention. Same shape, and needed here for a different reason than the
-	# others: the Chat Settings retention fields have held their defaults since Phase 1 and
-	# may never be saved again, so hanging the sync only off on_update would leave the
-	# `Logs To Clear` rows absent on every site that does not happen to edit the form.
-	"erpnext_enhancements.chat.retention.ensure_chat_log_retention",
+	# after_install and after_sync only -- and install-app writes the whole of patches.txt
+	# to Patch Log as already-executed. So anything a patch would have created on an
+	# existing site simply never exists on a fresh one unless it is ALSO named here, as the
+	# same idempotent callable the after_migrate backstop uses. Every entry in this list is
+	# contractually forbidden from raising: a failure here must never abort an app install.
+	#
 	# Desk tile artwork -- the same callable as the after_migrate entry below, and here
 	# for the usual reason: after_migrate does NOT run during `bench install-app`, so a
 	# fresh site would show grey letter avatars until somebody happened to run a migrate.
@@ -1562,87 +1391,16 @@ after_migrate = [
 	# skipped by the chrome filter and then re-enabled by a future migrate with a
 	# stale generator.
 	"erpnext_enhancements.enhancements_core.setup_print_formats.disable_superseded_print_formats",
-	# chat: re-assert the composite indexes and composite UNIQUE constraints that
-	# Frappe's DocType JSON cannot express (there is no first-class composite-index
-	# field, so `(room, seq)`, `(room, client_message_id)`, `(room, user)` and the rest
-	# exist ONLY because a patch created them). This is the same module the patch entry
-	# in patches.txt names, called deliberately a second time, because a patch is not
-	# guaranteed to run on a FRESH site: `bench install-app` marks an app's whole
-	# patches.txt as already-executed, so on a new bench the patch is skipped and never
-	# runs again -- and the failure is silent, because inserts succeed happily without a
-	# unique constraint until the day two of them should have collided.
-	# CONFIRMED 2026-08-09 from frappe version-16 source: install_app() calls
-	# set_all_patches_as_completed(name), which inserts a Patch Log row for every line in
-	# patches.txt without executing any of them. Still worth one SHOW INDEX FROM
-	# "tabChat Message" on the next fresh bench, since only the DB settles DDL.
-	# Safe either way: every index is checked against information_schema before any DDL,
-	# so on the normal migrate path (where the patch already ran) this is ~11 cheap reads
-	# and no writes. It is `ensure_chat_indexes`, not the patch's own `execute`, because
-	# the two want opposite failure behaviour: the patch runs once and SHOULD stop the
-	# migrate if a constraint cannot be created; a hook that raises here would brick
-	# every future deploy instead, so the backstop logs to the Error Log and returns.
-	# Position in this list does not matter -- after_migrate runs after model sync, so
-	# the tables exist by the time any of these do.
-	"erpnext_enhancements.patches.add_chat_indexes.ensure_chat_indexes",
-	# Same two-entry-point shape, same reason, for the dormancy seed -- and it is here
-	# because the index backstop is the ONLY thing that saved the 2026-08-09 deploy while
-	# `default_chat_settings`, which had no backstop, is still unseeded on prod.
-	# `Chat Settings` is a Single: Frappe synthesises its DocField defaults only while
-	# tabSingles holds NO row for it, so an unmaterialised Single reads correctly today
-	# and flips every unwritten field to None on the first partial write -- taking
-	# dry_run_mode and restrict_to_whitelist to 0, the unsafe direction for both.
-	# Blank-fill only, so an operator's deliberate tick is never clobbered, and it never
-	# raises. One get_singles_dict and no write on a healthy migrate.
-	"erpnext_enhancements.patches.default_chat_settings.ensure_chat_settings",
-	# chat Phase 2 (v1.262.0): same two-entry-point shape and the same reason as
-	# ensure_chat_indexes above. unique(message, revision_no) on Chat Message Revision and
-	# the crashed-worker sweep's (status, lease_expires_at) exist ONLY because a patch
-	# created them, and `bench install-app` marks the whole of patches.txt executed without
-	# running any of it. Checks information_schema before any DDL, so on the normal migrate
-	# path this is five cheap reads and no writes. Never raises -- a hook that raised here
-	# would brick every future deploy rather than report one bad constraint.
-	"erpnext_enhancements.patches.add_chat_phase2_indexes.ensure_chat_phase2_indexes",
-	# chat Phase 5 (v1.272.0): the retrieval composites, and one thing the other two index
-	# backstops do not carry. unique(room, first_seq) on Chat Context Chunk is correctness
-	# rather than speed -- the indexer is a retried background job, so two workers building
-	# the same chunk is scheduled rather than unlikely, and the result is the same
-	# conversation in the candidate set twice.
-	#
-	# The FULLTEXT index on Chat Context Chunk.body is why this specifically needs the
-	# after_migrate half. `VERIFY:` whether bench migrate drops a hand-added FULLTEXT index
-	# -- add it, migrate twice, SHOW INDEX. If it does, the lexical tier degrades INVISIBLY
-	# after every deploy: exact-string matching stops working and nothing raises. Re-creating
-	# it here makes the bad answer to that question a one-migrate window instead of forever.
-	"erpnext_enhancements.patches.add_chat_phase5_indexes.ensure_chat_phase5_indexes",
-	# A `default` on a new field of a Single never reaches the row that already exists, so
-	# the Phase 5 dials read 0 on any pre-existing site and validation refused every save
-	# of the settings page. Fills missing rows only. Safe twice.
-	"erpnext_enhancements.patches.backfill_chat_settings_defaults.backfill_chat_settings_defaults",
-	# Splitting the bot User off the Google service-account field leaves the new field empty
-	# on every existing site, and _bot_user raises on empty by design. Freezes the old
-	# resolver's answer into data so the split does not take @triton down. Safe twice.
-	"erpnext_enhancements.patches.set_chat_bot_user.set_chat_bot_user",
-	# chat Phase 4 (notifications): the two `Notification Type` records, plus the presence
-	# retune. Both need the after_migrate half specifically, for opposite reasons.
-	#
-	# The records, because `Notification Log.type` is a Link on v16 and inserting a row of an
-	# uninstalled type is a validation failure -- so a site that somehow reached Phase 4's
-	# code without this line would log one error per message and light no bell at all.
-	#
-	# The retune, because Frappe synthesises a Single's DocField defaults ONLY while tabSingles
-	# holds no row. Production's row exists and holds Phase 3's 30 s / 75 s (measured
-	# 2026-08-11), so changing the shipped default moves nothing there; the patch rewrites the
-	# stored pair to 20 s / 55 s, and only where it still equals what Phase 3 shipped. An
-	# operator's own number is left alone.
-	#
-	# Idempotent: two exists-checks and a get_singles_dict on a healthy migrate, no writes.
-	# Never raises.
-	"erpnext_enhancements.patches.chat_phase4_notifications.ensure_chat_phase4_notifications",
-	# Chat log retention. Same shape, and needed here for a different reason than the
-	# others: the Chat Settings retention fields have held their defaults since Phase 1 and
-	# may never be saved again, so hanging the sync only off on_update would leave the
-	# `Logs To Clear` rows absent on every site that does not happen to edit the form.
-	"erpnext_enhancements.chat.retention.ensure_chat_log_retention",
+	# The eight chat backstops that stood here from v1.261.0 went with the module in
+	# v1.426.0 (ADR 0011). THE PATTERN THEY DEMONSTRATED IS STILL THE HOUSE RULE and is
+	# why this list exists at all: a patch runs ONCE per site, recorded in `tabPatch Log`,
+	# so a patch that was skipped, half-applied, or recorded-without-running is never
+	# retried. An idempotent `ensure_*` callable named here runs on EVERY migrate and is
+	# the only thing that repairs such a site. That is not hypothetical -- it is how
+	# v1.261.0 shipped ten Chat DocTypes whose composite indexes did not exist, and how
+	# `default_chat_settings` sat unseeded on prod while its Patch Log row said otherwise.
+	# Anything here must be idempotent and must never raise: an after_migrate hook that
+	# raises aborts `bench migrate`, which on this repo is the deploy.
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
@@ -2025,26 +1783,10 @@ permission_query_conditions = {
 	# Manager, and nobody else.
 	"Policy Acknowledgement": "erpnext_enhancements.hr_enhancements.permissions.acknowledgement_query_conditions",
 	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_query_conditions",
-	# Chat (ADR 0009 §F.18): row-level scoping is MEMBERSHIP, not role. Chat Room is
-	# the only chat doctype carrying a DocPerm at all (`read` for "Chat User"), so it is
-	# the only one where this hook is the live gate -- the other three ship with an
-	# empty `permissions` array, which refuses everyone but Administrator before any
-	# hook is consulted. They are registered anyway, deliberately: the ADR's standing
-	# obligation is that the pair must already exist the day somebody adds a DocPerm row
-	# so they can look at a message in the desk, and these are the tested expression of
-	# the membership rule that the package's raw SQL reuses (permission hooks do NOT
-	# protect frappe.db.sql -- see chat/permissions.py's review checklist).
-	# Chat Room is active membership only; Chat Message / Chat Attachment additionally
-	# let a departed member read history up to their `left_seq` (CQ-10).
-	"Chat Room": "erpnext_enhancements.chat.permissions.chat_room_query",
-	"Chat Room Member": "erpnext_enhancements.chat.permissions.chat_room_member_query",
-	"Chat Message": "erpnext_enhancements.chat.permissions.chat_message_query",
-	"Chat Attachment": "erpnext_enhancements.chat.permissions.chat_attachment_query",
-	# Phase 6 §4.A: `Chat Auditor` holds read on both audit tables, which fires §F.18.4.
-	# These scope by ROLE rather than by room — a membership filter on an audit trail hides
-	# exactly the non-participant reads it exists to surface.
-	"Chat Audit Log": "erpnext_enhancements.chat.permissions.chat_audit_log_query",
-	"Chat Retrieval Audit": "erpnext_enhancements.chat.permissions.chat_retrieval_audit_query",
+	# Six chat entries stood here until v1.426.0 (ADR 0011) and are named in the comment
+	# below rather than left as a silent gap, because their absence changes the parity
+	# arithmetic this file states twice.
+	#
 	# Triton chat attachments are one person's private chat context. Owner-scoped, with the
 	# single-document twin below -- a query condition filters lists and says nothing about
 	# frappe.get_doc(), so shipping one without the other leaves the hole in whichever half
@@ -2086,22 +1828,18 @@ has_permission = {
 	"Safety Incident": "erpnext_enhancements.hr_enhancements.permissions.incident_has_permission",
 	"Policy Acknowledgement": "erpnext_enhancements.hr_enhancements.permissions.acknowledgement_has_permission",
 	"Onboarding Checklist": "erpnext_enhancements.hr_enhancements.permissions.onboarding_has_permission",
-	# Chat: the twin of every query condition above, and parity here is the house
-	# doctrine -- ten and ten before this block, four and four after it.
-	# "Chat Room" is not just the single-document gate: it IS the realtime security
-	# boundary (invariant I8). socket.io's `doc_subscribe` calls back into Python and
-	# runs the full document-level permission stack, including this hook, under the
-	# joining user's own session before it joins `doc:Chat Room/<name>`. Get it right
-	# and socket security is free; get it wrong and realtime leaks message bodies with
-	# every REST endpoint still locked down.
-	# On v16 a has_permission hook that returns None DENIES, so every path in these
-	# four returns an explicit bool, exception paths included.
-	"Chat Room": "erpnext_enhancements.chat.permissions.chat_room_has_permission",
-	"Chat Room Member": "erpnext_enhancements.chat.permissions.chat_room_member_has_permission",
-	"Chat Message": "erpnext_enhancements.chat.permissions.chat_message_has_permission",
-	"Chat Attachment": "erpnext_enhancements.chat.permissions.chat_attachment_has_permission",
-	"Chat Audit Log": "erpnext_enhancements.chat.permissions.chat_audit_log_has_permission",
-	"Chat Retrieval Audit": "erpnext_enhancements.chat.permissions.chat_retrieval_audit_has_permission",
+	# PARITY IS THE HOUSE DOCTRINE, and it is the thing to preserve here. Every entry in
+	# `permission_query_conditions` above must have a twin in this register, because a
+	# query condition filters LIST VIEWS and reports and says nothing whatever about
+	# `frappe.get_doc()` -- shipping one without the other leaves the hole in whichever
+	# half you skipped, which is exactly what left three Training doctypes readable by
+	# customers until v1.386.0. The two registers were at an exact ten-and-ten when ADR
+	# 0009 cited them; chat's six twins went with the module in v1.426.0 and the parity
+	# still holds. Check it when you add one.
+	#
+	# On v16 a has_permission hook that returns None DENIES, so every path in every hook
+	# named here returns an explicit bool, exception paths included.
+	#
 	# This one is doing more work than it looks like. Beyond refusing a direct read, it is
 	# what decides whether the MODEL may read an attached file at all:
 	# `fac_extract_file_content` resolves a Frappe file_url and then calls
@@ -2109,34 +1847,31 @@ has_permission = {
 	# lands here under the ERPNext identity the user linked to Triton. "Can Triton read this"
 	# and "can this person open it" are therefore the same boolean by construction, rather
 	# than two rules that have to be kept in step.
-	# Same v16 rule as the Chat block above: a hook returning None DENIES, so every path in
-	# it returns an explicit bool, exception paths included.
+	# Per the v16 rule stated at the top of this register: a hook returning None DENIES, so
+	# every path in it returns an explicit bool, exception paths included.
 	"Triton Chat Attachment": "erpnext_enhancements.ai_governance.permissions.triton_chat_attachment_has_permission",
 }
 
-# Chat notifications (ADR 0009 Phase 4) may NEVER be emailed, and this hook is what makes
-# that structural rather than a default somebody can undo.
+# `notification_skip_email_types` held ["Chat Message", "Chat Mention"] from v1.267.0 until
+# v1.426.0, when the chat module and its two `Notification Type` records went (ADR 0011).
+# Left empty rather than deleted, with the mechanism recorded, because the next feature that
+# fans out a Notification Log row will need it and the reasoning is not obvious:
 #
 # `Notification Log.after_insert` calls send_notification_email() whenever
 # is_email_notifications_enabled_for_type(for_user, type) is true. That predicate consults
 # get_skip_email_types() FIRST -- before it reads the user's own Notification Settings -- so a
 # type listed here cannot be emailed by anybody, including a user who has explicitly ticked it
-# on. A per-user default would have been defeated by the first person who re-enabled it.
-#
-# Decision #3 is "at most two notification surfaces, and neither is email". At the measured
-# volume the alternative is not a nuisance, it is an incident: 600 messages a day fanned out
-# to a ten-person room is 12,000 emails a day out of a mail domain with a reputation to lose.
+# on. A per-user default is defeated by the first person who re-enables it; this is not.
 #
 # Two consequences worth knowing rather than discovering:
-#   - Frappe's own hooks.py lists "Alert" here, so this MERGES to ["Alert", "Chat Message",
-#     "Chat Mention"] rather than replacing anything.
+#   - Frappe's own hooks.py lists "Alert" here, so this MERGES rather than replacing.
 #   - Registering a type here makes the desk's "enable email for all users" button THROW for
 #     it ("{0} never sends email, so it cannot be enabled for users."). That throw is the
-#     assertion we want, not a bug to work around.
+#     assertion you want, not a bug to work around.
 #
-# The names are keys, not labels: they must match the `Notification Type` records installed by
-# chat_phase4_notifications, and renaming one silently re-enables email for it.
-notification_skip_email_types = ["Chat Message", "Chat Mention"]
+# The names are keys, not labels: they must match the installed `Notification Type` records,
+# and renaming one silently re-enables email for it.
+notification_skip_email_types = []
 
 # `tabNotification Log` has grown untrimmed since this site was built, and nothing anywhere
 # was ever going to stop it.
@@ -2172,13 +1907,11 @@ notification_skip_email_types = ["Chat Message", "Chat Mention"]
 # helper is the only feasible way to clear thirteen months in one pass -- it copies the recent
 # rows into a new table and swaps them, rather than issuing a DELETE across most of a table.
 #
-# Deliberately NOT extended to the chat log tables. `Chat Relay Job` and `Chat Inbound Event`
-# both implement `clear_old_logs` and are both unregistered, so their retention is dead code
-# today -- but Chat Settings also carries `relay_job_retention_days` and
-# `inbound_event_retention_days`, and declaring a static number here while those fields claim
-# to control it would ship exactly the lying-settings-field trap Phase 4 just removed from the
-# presence constants. Wiring or removing those fields is chat work and does not belong in a
-# standalone repo fix.
+# `Chat Relay Job` and `Chat Inbound Event` were deliberately kept OUT of this dict while the
+# chat module existed, because Chat Settings carried retention fields that claimed to control
+# them and declaring a static number here would have made those fields lie. Both doctypes went
+# in v1.426.0. The rule they illustrated stands: do not declare a static retention here for a
+# table whose retention a settings field claims to own -- wire the field or remove it.
 default_log_clearing_doctypes = {"Notification Log": 90}
 
 ignore_links_on_delete = ["User Form Draft"]

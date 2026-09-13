@@ -46,48 +46,45 @@ desk; ask the assistant to check the action → it reports the created doc.
 Note: a desk-side "test tool" execution of a mutating FAC tool is gated too —
 any `_safe_execute` of a mutating tool counts as an assistant-channel write.
 
-## Chat denylist (v1.271.0) — the one refusal that no flag can switch off
+## Denylisting a sensitive doctype (the chat denylist, v1.271.0 – v1.423.0)
 
-Employee chat content is **unreadable through every generic FAC tool**, by every
-role, with the write gate on or off. `CHAT_DENYLIST_DOCTYPES` names every DocType
-under `chat/doctype/`, and the branch that reads it is the **first** thing
-`_gated_execute` does — above the confirm-flow bypass, above the settings check.
+There is **no denylist in `_gate.py` today**. `CHAT_DENYLIST_DOCTYPES` made employee chat
+content unreadable through every generic FAC tool, by every role, with the write gate on or
+off; it was removed with the chat module itself in v1.426.0
+([ADR 0011](../../decisions/adr/0011-retire-google-chat-and-coworker-chat.md)), because the
+twenty-three DocTypes it named no longer exist and a denylist over nothing is a claim that
+rots. The *design* survives as a comment block in `_gate.py`, deliberately, and this section
+is here for the same reason: the next sensitive table will need it, and its load-bearing
+details are not the ones you would reach for.
 
-**Why it is not just "withhold DocPerm".** That closes `get_document` and
-`list_documents` and does nothing to the third surface.
-`run_database_query`'s own stated security model is *"Restricted to SELECT
-statements only. Requires System Manager role for security"* — a role check and a
-read-only-SQL check. Raw SQL sits *underneath* DocPerm,
-`permission_query_conditions` and `has_permission`, so no Frappe permission
-mechanism touches it, and a System Manager would otherwise be one
-``select text, sender from `tabChat Message` `` away from every private message on
-the site, delivered into a model's context window. Note that
-`run_database_query` is exempt from *confirmation* (above) and is **not** exempt
-from this.
+**It is not enough to withhold DocPerm.** That closes `get_document` and `list_documents`
+and does nothing to the third surface. `run_database_query`'s own stated security model is
+*"Restricted to SELECT statements only. Requires System Manager role for security"* — a role
+check and a read-only-SQL check. Raw SQL sits *underneath* DocPerm,
+`permission_query_conditions` and `has_permission`, so no Frappe permission mechanism
+touches it, and a System Manager is otherwise one ``select …`` away from the whole table,
+delivered into a model's context window. Note that `run_database_query` is exempt from
+*confirmation* (above) and must **not** be exempt from a content denylist. So the refusal
+comes in two shapes, because the tools do: a **`doctype` argument** in the denylist, tested
+on *every* tool rather than a named list, so a tool added to FAC tomorrow that takes a
+`doctype` is covered the day it appears; and **free text** — `run_database_query`'s `query`
+and `run_python_code`'s `code`.
 
-Two shapes, because the tools come in two shapes:
+**And the refusal belongs at the top of `_gated_execute`** — above the confirm-flow bypass
+and above the `ai_write_gating_enabled` check. A refusal reachable only while a settings
+checkbox is ticked is not an invariant, and the shipped state of that checkbox is *off*.
+The free-text half refused on **contact** rather than trying to parse: case-fold, strip
+SQL comments, drop every non-word character, refuse if the table name survives as a
+contiguous needle.
+Attempting to allow "safe" queries loses to every quoting trick; refusing on contact does
+not. Over-refusal costs an analyst one rephrase; under-refusal costs the invariant silently.
 
-- **a `doctype` argument** in the denylist → refuse. Applied to *every* tool
-  rather than a named list, so a tool added to FAC tomorrow that takes a
-  `doctype` is covered the day it appears.
-- **free text** (`run_database_query`'s `query`, `run_python_code`'s `code`) →
-  case-fold, strip SQL comments, drop every non-word character, and refuse if any
-  chat table name survives as a contiguous needle. **Do not try to allow "safe"
-  queries.** The rule is coarse and absolute: over-refusal costs an analyst one
-  rephrase, under-refusal costs the invariant with no symptom at all.
-
-Every refusal names `chat.retrieval.gate.retrieve` — the one door, which runs as
-the asking person, derives the rooms they are in rather than accepting a room
-list, and records the read — and writes an `AI Action Log` row, so the attempt is
-evidence rather than silence.
-
-`tests/test_chat_mcp_denylist.py` asserts the denylist equals the filesystem by
-**set equality**, so a chat DocType added later fails the build by default rather
-than escaping the denylist silently. That is the same failure mode
-`test_every_registered_tool_is_classified` exists to prevent. It also asserts the
-branch ordering *on the source*, because a passing call cannot reveal it: both
-orders refuse while gating is on, and only one refuses while it is off — which is
-the shipped state.
+One test-shape worth reusing: the suite asserted the denylist equalled the filesystem by
+**set equality**, so a DocType added to the protected module later failed the build rather
+than escaping the denylist unnoticed — the same failure mode
+`test_every_registered_tool_is_classified` exists to prevent. It also asserted the branch
+*ordering* on the source, because a passing call cannot reveal it: both orders refuse while
+gating is on, and only one refuses while it is off.
 
 ## The FAC-optional invariant
 

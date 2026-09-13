@@ -29,8 +29,10 @@ The invariant this file asserts, therefore:
    `before_migrate` hook, plus its one-shot `pre_model_sync` twin — and does it in the one
    order that works: delete the cache key *first*, because `setup_module_map` re-reads that
    key and only falls back to `modules.txt` when it comes back empty;
-4. the two chat patches that burned their `Patch Log` entry doing nothing have a successor
-   that will actually run, and an `after_migrate` backstop each.
+(A fourth assertion — that the two spent chat bootstrap patches had a successor and an
+`after_migrate` backstop each — went in v1.426.0 with the chat module itself, ADR 0011. The
+`Chat` module no longer exists; the 2026-08-09 failure described above is still the reason
+this file exists, and is still reachable by the next module anyone adds.)
 
 Companion suites, deliberately separate: `test_doctype_modules.py` asserts each DocType's
 declared `module` against its directory; `test_hook_targets_resolve.py` asserts the dotted
@@ -52,8 +54,6 @@ MODULES_TXT = APP_DIR / "modules.txt"
 HOOKS_PY = APP_DIR / "hooks.py"
 PATCHES_TXT = APP_DIR / "patches.txt"
 MODULE_MAP_PY = APP_DIR / "setup" / "module_map.py"
-BOOTSTRAP_PY = APP_DIR / "patches" / "finish_chat_bootstrap.py"
-
 APP_NAME = "erpnext_enhancements"
 
 #: The every-migrate rebuild. Without it, model sync can be shown a module list from the
@@ -63,17 +63,6 @@ REFRESHER = f"{APP_NAME}.setup.module_map.refresh_app_module_map"
 #: The one-shot twin, in `[pre_model_sync]` — the only patch section that runs before
 #: `sync_all()`. `[post_model_sync]` would be a whole migrate too late.
 MAP_PATCH = f"{APP_NAME}.patches.refresh_module_map"
-
-#: The successor to the two patches that were logged as executed while doing nothing.
-BOOTSTRAP_PATCH = f"{APP_NAME}.patches.finish_chat_bootstrap"
-
-#: Idempotent `after_migrate` backstops. A patch is not guaranteed to run even once:
-#: `bench install-app` calls `set_all_patches_as_completed`, so on a fresh site every patch
-#: in `patches.txt` is written straight to `Patch Log` unexecuted.
-BACKSTOPS = (
-    f"{APP_NAME}.patches.add_chat_indexes.ensure_chat_indexes",
-    f"{APP_NAME}.patches.default_chat_settings.ensure_chat_settings",
-)
 
 
 def _scrub(name):
@@ -140,24 +129,6 @@ def _patch_sections():
             continue
         sections[current].append(line)
     return sections
-
-
-def _dotted_calls(path):
-    """Every ``a.b()``-style call target in a module, as dotted strings."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    calls = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        parts = []
-        target = node.func
-        while isinstance(target, ast.Attribute):
-            parts.append(target.attr)
-            target = target.value
-        if isinstance(target, ast.Name):
-            parts.append(target.id)
-            calls.add(".".join(reversed(parts)))
-    return calls
 
 
 def _function(path, name):
@@ -281,86 +252,6 @@ class TestEveryShippedModuleCanInstall(unittest.TestCase):
             "module_map.py calls setup_module_map before deleting the cached snapshot, so it "
             "re-reads the stale value and changes nothing.",
         )
-
-
-class TestTheDeadPatchesHaveASuccessor(unittest.TestCase):
-    """`add_chat_indexes` and `default_chat_settings` are spent on production.
-
-    Both are in `Patch Log` with `skipped = 0`, having guarded correctly and done nothing
-    against a schema that did not exist. `patch_handler.run_all` filters the pending list
-    against that table and has no re-run path.
-    """
-
-    def test_the_successor_patch_is_registered(self):
-        post = SECTIONS.get("post_model_sync", [])
-        self.assertTrue(
-            any(line.split()[0] == BOOTSTRAP_PATCH for line in post),
-            f"{BOOTSTRAP_PATCH} is not in [post_model_sync]. Without it the 11 composite "
-            f"indexes stay uncreated and the Chat Settings Single stays unmaterialised on "
-            f"every site whose Patch Log already names the originals.",
-        )
-
-    def test_it_calls_the_originals_rather_than_reimplementing_them(self):
-        calls = _dotted_calls(BOOTSTRAP_PY)
-        for expected in ("add_chat_indexes.execute", "default_chat_settings.execute"):
-            self.assertIn(
-                expected,
-                calls,
-                f"{BOOTSTRAP_PY.name} does not call {expected}(). It must delegate: a second "
-                f"copy of the index set or the dormancy defaults is a second definition of "
-                f"the contract, and they will diverge.",
-            )
-
-    def test_both_bootstrap_patches_have_an_after_migrate_backstop(self):
-        registered = _hook_list("after_migrate")
-        for target in BACKSTOPS:
-            self.assertIn(
-                target,
-                registered,
-                f"{target} is not in after_migrate. A patch is not guaranteed to run even "
-                f"once — `bench install-app` marks the whole patches.txt executed — so each "
-                f"of these needs an idempotent every-migrate twin.",
-            )
-
-    def test_the_backstops_cannot_raise(self):
-        """A raise in `after_migrate` does not report one bad default; it bricks the deploy.
-
-        Two static conditions, because the two backstops are shaped differently and both
-        shapes are correct: neither may contain a `raise`, and one that delegates to its
-        module's raising `execute()` must wrap it in a `try`. `ensure_chat_indexes` needs no
-        `try` because it never calls `execute()` — it shares `_create_all`, whose every DDL
-        call, probe and log is individually guarded.
-        """
-        for target in BACKSTOPS:
-            module_part, _, attribute = target.rpartition(".")
-            path = APP_DIR.parent.joinpath(*module_part.split(".")).with_suffix(".py")
-            self.assertTrue(path.exists(), f"{path} does not exist")
-            function = _function(path, attribute)
-            self.assertIsNotNone(function, f"{path.name} defines no {attribute}()")
-
-            raises = [node for node in ast.walk(function) if isinstance(node, ast.Raise)]
-            self.assertEqual(
-                raises,
-                [],
-                f"{attribute}() contains a raise. Every migrate is a deploy here, so an "
-                f"exception out of this hook stops the deploy pipeline until somebody edits "
-                f"hooks.py — it does not report one bad index or one bad default.",
-            )
-
-            delegates = any(
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "execute"
-                for node in ast.walk(function)
-            )
-            if delegates:
-                self.assertTrue(
-                    any(isinstance(node, ast.Try) for node in ast.walk(function)),
-                    f"{attribute}() calls the raising patch entry point execute() outside a "
-                    f"try/except, so the patch's deliberate 'stop the migrate' behaviour "
-                    f"leaks into the every-migrate hook.",
-                )
-
 
 if __name__ == "__main__":
     unittest.main()
