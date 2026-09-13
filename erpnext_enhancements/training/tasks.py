@@ -17,7 +17,7 @@ from frappe.utils import add_days, cint, getdate, nowdate, today
 
 from erpnext_enhancements.training import notifications
 from erpnext_enhancements.training.doctype.training_assignment.training_assignment import (
-	OPEN_STATUSES,
+	due_date_filters,
 )
 from erpnext_enhancements.training.doctype.training_settings.training_settings import is_enabled
 
@@ -34,12 +34,12 @@ def send_due_reminders():
 		return
 
 	horizon = add_days(nowdate(), DUE_SOON_DAYS)
+	# An optional library course carries no due date on purpose, so without the
+	# `is set` clause inside `due_date_filters` every one of them joined this digest
+	# and the learner was nudged about training nobody asked them to do.
 	rows = frappe.get_all(
 		"Training Assignment",
-		filters={
-			"status": ["in", OPEN_STATUSES],
-			"due_date": ["<=", horizon],
-		},
+		filters=due_date_filters("<=", horizon),
 		fields=["name", "user", "course", "course_title", "due_date", "last_reminder_on"],
 	)
 
@@ -123,12 +123,13 @@ def refresh_overdue_status():
 	if not is_enabled():
 		return
 
+	# Narrowed to the two states that can BECOME overdue, and guarded on `is set`:
+	# `TrainingAssignment._derive_overdue` already refuses to call a dateless
+	# assignment overdue, so without the clause this job spent every night undoing
+	# the controller's own answer on the same rows.
 	stale = frappe.get_all(
 		"Training Assignment",
-		filters={
-			"status": ["in", ("Not Started", "In Progress")],
-			"due_date": ["<", nowdate()],
-		},
+		filters=due_date_filters("<", nowdate(), ("Not Started", "In Progress")),
 		pluck="name",
 	)
 	for name in stale:

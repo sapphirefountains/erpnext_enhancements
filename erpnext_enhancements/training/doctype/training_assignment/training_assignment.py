@@ -29,6 +29,41 @@ OPEN_STATUSES = ("Not Started", "In Progress", "Awaiting Sign-off", "Overdue")
 CLOSED_STATUSES = ("Completed", "Waived", "Cancelled")
 
 
+def due_date_filters(operator, cutoff, statuses=OPEN_STATUSES):
+	"""Open assignments whose due date has actually passed ``cutoff``.
+
+	``["due_date", "is", "set"]`` is the entire point of this function, and it lives here
+	rather than in the three jobs that need it because ``due_date`` being optional is a
+	rule of *this doctype* — see :meth:`TrainingAssignment._default_due_date`:
+
+	    "Only Required courses carry a due date. Putting one on an optional library
+	     course would make it overdue and start chasing people over something nobody
+	     asked them to do."
+
+	Which is exactly what the three sweeps did, without ever putting a date on anything.
+	``due_date`` is nullable, and frappe wraps a comparison on a nullable column in an
+	ifnull sentinel set to the MINIMUM of the type (``frappe/model/db_query.py``,
+	``prepare_filter_condition``), so ``ifnull(due_date, '0001-01-01') < today`` is true
+	for every assignment on an optional course. They were marked Overdue, emailed a
+	"due soon" nudge, and counted as non-compliance on the HR dashboard.
+
+	**The controller had it right all along**, which is what makes this worth stating.
+	:meth:`_derive_overdue` guards the same rule with ``if not self.due_date: return`` —
+	in Python, where NULL behaves the way everyone expects. So saving an assignment left
+	it Not Started and the nightly sweep then flipped the same row to Overdue: the two
+	halves of one rule disagreeing because only one of them went through SQL.
+
+	``statuses`` narrows the open set — ``refresh_overdue_status`` wants only the two
+	states that can *become* overdue. The list form is required rather than stylistic:
+	two conditions on one field cannot both live in a filter dict.
+	"""
+	return [
+		["status", "in", tuple(statuses)],
+		["due_date", "is", "set"],
+		["due_date", operator, cutoff],
+	]
+
+
 class TrainingAssignment(Document):
 	def validate(self):
 		self._resolve_learner()

@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.426.4] - 2026-09-13
+
+### Fixed
+
+- **Three sweeps chased people over optional courses that carry no deadline on purpose.**
+  `TrainingAssignment._default_due_date` leaves `due_date` blank for anything not marked
+  Required, and states exactly what must not then happen:
+
+  > *"Only Required courses carry a due date. Putting one on an optional library course
+  > would make it overdue and start chasing people over something nobody asked them to do."*
+
+  All three did that without ever putting a date on anything. `due_date` is nullable, and
+  frappe wraps a comparison on a nullable column in an ifnull sentinel set to the *minimum*
+  of the type, so `ifnull(due_date, '0001-01-01') < today` is true for every optional-course
+  assignment:
+
+  | | |
+  |---|---|
+  | `training.tasks.refresh_overdue_status` | wrote them to **Overdue** |
+  | `training.tasks.send_due_reminders` | put them in the learner's nightly digest |
+  | `api.hr_dashboard.get_training_compliance` | counted them as **non-compliance** |
+
+  **The controller had it right all along.** `_derive_overdue` guards the same rule with
+  `if not self.due_date: return` — in Python, where NULL behaves the way everyone expects.
+  So saving an assignment left it Not Started and that night's sweep flipped the same row to
+  Overdue: two halves of one rule disagreeing because only one of them went through SQL.
+
+### Changed
+
+- **The predicate is built once, in the doctype that owns the rule.**
+  `due_date_filters(operator, cutoff, statuses)` sits in `training_assignment.py` beside
+  `_default_due_date` — the reason the column is nullable — and all three callers import it.
+  Three independent copies of one rule is how all three came to be wrong.
+
+- `api/hr_dashboard.py` no longer keeps its own duplicate of the doctype's open-status
+  tuple; the builder encapsulates it, so no caller needs to know that set at all.
+
+### Notes
+
+**Latent rather than live, and measured as such.** Every one of the 26 Training Assignments
+on prod carries a due date, because all of them are Required-course rows — so nothing was
+actually being chased. But **three Optional courses are Published with zero assignments**,
+and the first self-enrolment would have armed all three sweeps at once. This is the one
+finding in the series that was caught before it cost anything.
+
+**The sweeps themselves had no test.** `test_hr_module` asserts only that
+`tasks.send_due_reminders` is *scheduled*, never what it selects. The new suite is
+bench-free with its own CI step and runs the predicate — including a test that the
+controller and the sweep now return the same answer for every row, which is the property
+that was actually broken.
+
+**Not changed:** the `status in (...)` clauses. `in` does not carry the trap, and
+`Training Assignment.status` is `reqd` with a default besides.
+
 ## [1.426.3] - 2026-09-13
 
 ### Fixed
