@@ -17,10 +17,12 @@ Why it is worth a guard
 --------------------------------------------------------------------------------------
 
 The unpack is not the bug; **where the exception lands** is. ``tasks.py`` did this inside
-``generate_predictive_maintenance``, which runs from ``scheduler_events``. An uncaught
-exception there ends the whole job: every remaining item in the loop and every later step
-in the same task are skipped, and a scheduled job that dies this way leaves nothing a user
-would ever see. Nobody finds out until somebody asks why the visits stopped.
+``generate_predictive_maintenance_records``, which ``scheduler_events`` reaches through
+``predictive_maintenance_scheduling`` — both names verified against the running site, after
+the first version of this docstring invented a third. An uncaught exception there ends the
+whole job: every remaining item in the loop and every later step in the same task are
+skipped, and a scheduled job that dies this way leaves nothing a user would ever see.
+Nobody finds out until somebody asks why the visits stopped.
 
 The second one fixed alongside it, ``api/telephony.log_call_details``, is a whitelist
 endpoint taking ``reference_docname`` from its caller, so a deleted or mistyped Contact is
@@ -58,6 +60,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_get_value_unpacking
 """
 
 import ast
+import re
 import unittest
 from pathlib import Path
 
@@ -234,6 +237,56 @@ class TestTheGuardCannotPassVacuously(unittest.TestCase):
     def test_it_is_wired_into_ci(self):
         ci = (APP.parent / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("test_get_value_unpacking", ci)
+
+
+class TestTheNamesThisFileCitesAreReal(unittest.TestCase):
+    """A docstring that names a function nobody can find sends the next reader to the
+    wrong place, and nothing ever fails.
+
+    The first version of this file named ``generate_predictive_maintenance``. There is no
+    such function: it is ``generate_predictive_maintenance_records``, and
+    ``scheduler_events`` reaches it through ``predictive_maintenance_scheduling``. Both the
+    changelog entry and this docstring shipped with the invented name in v1.426.6, and
+    review did not catch it — calling it on the running site did, with an AttributeError
+    whose message suggested the real one.
+    """
+
+    CITED = ("generate_predictive_maintenance_records", "predictive_maintenance_scheduling")
+
+    def test_both_cited_functions_exist(self):
+        source = (APP / "tasks.py").read_text(encoding="utf-8")
+        for name in self.CITED:
+            with self.subTest(function=name):
+                self.assertIn(f"def {name}(", source)
+
+    def test_the_scheduler_really_reaches_the_fixed_function(self):
+        """The claim being made is about where an exception LANDS, so the wiring is the
+        claim. If the scheduler stopped calling it, the whole rationale would be stale."""
+        hooks = (APP / "hooks.py").read_text(encoding="utf-8")
+        self.assertIn("erpnext_enhancements.tasks.predictive_maintenance_scheduling", hooks)
+
+        tasks = (APP / "tasks.py").read_text(encoding="utf-8")
+        tree = ast.parse(tasks)
+        entry = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "predictive_maintenance_scheduling"
+        )
+        called = {
+            n.func.id
+            for n in ast.walk(entry)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
+        self.assertIn("generate_predictive_maintenance_records", called)
+
+    def test_this_docstring_does_not_use_the_invented_name(self):
+        doc = __doc__ or ""
+        self.assertIn("generate_predictive_maintenance_records", doc)
+        self.assertIsNone(
+            re.search(r"generate_predictive_maintenance(?!_records)", doc),
+            "the invented name is back in this file's docstring",
+        )
 
 
 if __name__ == "__main__":
