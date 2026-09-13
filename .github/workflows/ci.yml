@@ -359,6 +359,15 @@ jobs:
       # insurer that silently restates today over a past date is worse than no sheet.
       - name: HR audit roster (dates not statuses; leavers included)
         run: python -m unittest erpnext_enhancements.tests.test_hr_qualification_roster -v
+      # The maintenance sweeps had NO automated coverage of any kind before this:
+      # test_sapphire_maintenance and test_maintenance_sections both build real
+      # documents, so neither runs without a bench and neither is named in this file.
+      # Meanwhile `{"end_date": ["<", today]}` on a NULLABLE column force-expired
+      # fifteen of the site's sixteen contracts -- and `status = "Active"` gates both
+      # visit scheduling and recurring billing, so they stopped producing either.
+      # This suite is bench-free, installs its own frappe stub, and RUNS the sweeps.
+      - name: Maintenance expiry/billing filters (nullable columns)
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_expiry_filters -v
       # RUNS the roster's print guard rather than reading it, and that distinction is
       # the whole reason this step exists. The previous defect on this report was a
       # print template that had never once been rendered: a double brace inside an HTML

@@ -57,12 +57,25 @@ def generate_recurring_invoices(today=None):
 
     for name in frappe.get_all(
         "Sapphire Maintenance Contract",
-        filters={
-            "status": "Active",
-            "invoicing_frequency": ["in", RECURRING_FREQUENCIES],
-            "recurring_amount": [">", 0],
-            "next_billing_date": ["<=", today],
-        },
+        # `["next_billing_date", "is", "set"]` is load-bearing, not tidiness. The field
+        # is nullable and its own description says so: "Blank = not yet on recurring
+        # billing." Frappe wraps a comparison on a nullable column in an ifnull sentinel
+        # set to the MINIMUM of the type, so `ifnull(next_billing_date, '0001-01-01') <=
+        # today` matched every contract that had never been put on billing -- and
+        # `_bill_period` opens with `getdate(contract.next_billing_date)`, which returns
+        # TODAY for None, so it would have drafted an invoice for a period it invented.
+        #
+        # What kept this off the books was luck rather than design: `recurring_amount >
+        # 0` excludes NULL and zero (`>` does not match the sentinel), and every such
+        # contract on this site carries 0. It stops being luck the moment somebody fills
+        # in an amount before a start date.
+        filters=[
+            ["status", "=", "Active"],
+            ["invoicing_frequency", "in", RECURRING_FREQUENCIES],
+            ["recurring_amount", ">", 0],
+            ["next_billing_date", "is", "set"],
+            ["next_billing_date", "<=", today],
+        ],
         pluck="name",
     ):
         frappe.db.savepoint("recurring_billing")

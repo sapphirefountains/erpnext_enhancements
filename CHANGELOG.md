@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.426.2] - 2026-09-13
+
+### Fixed
+
+- **The daily scheduler had force-expired fifteen of the site's sixteen maintenance
+  contracts, and that stopped both visits and invoicing.**
+  `maintenance_renewal.expire_or_renew_contracts` filtered
+  `{"status": "Active", "end_date": ["<", today]}`. `end_date` is nullable, and the field's
+  own description states the invariant it was breaking:
+
+  > *"For a fixed year term this is derived from Start Date; the daily scheduler marks the
+  > contract Expired once it passes. **Blank never expires.**"*
+
+  Blank is exactly what `ifnull(end_date, '0001-01-01') < today` matches. A blank end date
+  also implies the term is not in `FIXED_YEAR_TERMS`, so `renewing` was False and every one
+  of them fell through to the `else` and was expired. Because `status = "Active"` gates
+  **both** revenue paths — visit scheduling in `tasks.py` and recurring billing in
+  `maintenance_billing.py` — those contracts silently stopped producing either.
+
+  Measured on prod: fifteen contracts entered by hand on 9–10 September, every one modified
+  on the 11th by `Administrator` (the scheduler identity), all sitting at `Expired` with
+  `end_date` NULL. The sixteenth — the only one with a real future end date — was correctly
+  untouched.
+
+- **`maintenance_billing.generate_recurring_invoices` had the same trap on
+  `next_billing_date`**, whose description reads *"Blank = not yet on recurring billing."*
+  `_bill_period` opens with `getdate(contract.next_billing_date)`, and `getdate(None)`
+  returns **today**, so a matched NULL row would have been invoiced for a period the code
+  invented. What kept this off the books was luck rather than design: `recurring_amount > 0`
+  excludes NULL and zero (`>` does not match the sentinel) and every affected contract
+  carries 0. It stops being luck the moment somebody enters an amount before a start date.
+
+- **`send_rate_change_notices` had it a third time**, on `rate_effective_date` — a
+  half-entered rate change (amount filled, date not) raised a notice to Accounts whose date
+  rendered through `formatdate(None)`. Not part of the pair, but the same defect one function
+  away in the same file, so it ships here rather than as a separate one-line release. The
+  sibling clause on `rate_notice_sent` shows the `is set` idiom was already known in that
+  very filter.
+
+### Added
+
+- **`patches/restore_force_expired_maintenance_contracts.py`** — puts the fifteen back to
+  `Active`.
+
+- **`tests/test_maintenance_expiry_filters.py`**, bench-free, with its own CI step.
+
+### Notes
+
+**Restoring to `Active` is a revert, not a guess.** The broken filter selected on
+`status = "Active"`, so every row it expired was *necessarily* Active immediately
+beforehand — a property of the query that did the damage, not an inference about intent.
+The predicate is that same rule (`status = "Expired"` **and** `end_date` unset), with
+`non_renewal_notice = 0` ANDed on as the one concession to human intent: if somebody
+deliberately ended a month-to-month contract, that flag is how they would have said so. All
+fifteen carry 0.
+
+**Restoring them bills nobody, and that was checked rather than hoped.** Recurring billing
+needs `invoicing_frequency in ("Monthly", "Quarterly", "Annually")` **and**
+`recurring_amount > 0`. Fourteen of the fifteen are `Per Visit`; the one Monthly contract
+carries 0.
+
+**These sweeps had no automated coverage of any kind.** `test_sapphire_maintenance` and
+`test_maintenance_sections` both build real documents, so neither runs without a bench and
+neither is named in `ci.yml` — which is why a filter that emptied the contract book went
+unnoticed. The new suite is bench-free, installs its own `frappe` stub, and **runs** the
+sweeps rather than reading them.
+
+**Its stub models the framework, not intuition,** and that is the load-bearing part. The
+Python-obvious answer for `None < date` is "no match", which is what production does *not*
+do. A stub that is more correct than the thing it stands in for hides that thing's behaviour
+exactly as thoroughly as one that mirrors a mistake — which is how v1.426.1's identical bug
+in `training/certificates.py` survived a correct test for months. Six mutations were run
+against this release; two initially survived, both because the mutation never applied (a
+tab/space mismatch in one anchor, an ambiguous anchor in the other), and re-running them
+properly is what made the pass mean anything.
+
 ## [1.426.1] - 2026-09-13
 
 ### Fixed

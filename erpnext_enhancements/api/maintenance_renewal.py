@@ -50,7 +50,26 @@ def expire_or_renew_contracts(today=None):
 
     for row in frappe.get_all(
         "Sapphire Maintenance Contract",
-        filters={"status": "Active", "end_date": ["<", today]},
+        # `["end_date", "is", "set"]` is the whole reason this is a list rather than a
+        # dict, and it is load-bearing. `end_date` is nullable and the field's own
+        # description states the invariant: "Blank never expires." Frappe wraps a
+        # comparison on a nullable column in an ifnull sentinel set to the MINIMUM of
+        # the type (`frappe/model/db_query.py`, `prepare_filter_condition`), so
+        # `ifnull(end_date, '0001-01-01') < today` matched precisely the contracts this
+        # file promises will never expire -- and a blank end date implies the term is
+        # not in FIXED_YEAR_TERMS, so `renewing` was False and every one of them fell
+        # to the `else` and was force-expired. `status = "Active"` then gates both
+        # revenue paths (visit scheduling in `tasks.py`, recurring billing in
+        # `maintenance_billing.py`), so they silently stopped producing either.
+        #
+        # Live on 2026-09-13: fifteen of the site's sixteen contracts, entered on the
+        # 9th and 10th and expired by the scheduler on the 11th. Repaired by
+        # `patches/restore_force_expired_maintenance_contracts.py`.
+        filters=[
+            ["status", "=", "Active"],
+            ["end_date", "is", "set"],
+            ["end_date", "<", today],
+        ],
         fields=["name", "end_date", "auto_renew", "non_renewal_notice", "initial_term", "customer"],
     ):
         try:
@@ -108,12 +127,18 @@ def send_rate_change_notices(today=None):
 
     for row in frappe.get_all(
         "Sapphire Maintenance Contract",
-        filters={
-            "status": "Active",
-            "scheduled_rate": [">", 0],
-            "rate_effective_date": ["<=", window_end],
-            "rate_notice_sent": ["is", "not set"],
-        },
+        # Same nullable-column trap as the expiry sweep above, and the third instance
+        # of it in this file: without `is set`, a half-entered rate change
+        # (scheduled_rate filled, effective date not yet) matched, and Accounts got a
+        # notice whose date rendered blank through `formatdate(None)`. The sibling
+        # clause on `rate_notice_sent` shows the idiom was already known here.
+        filters=[
+            ["status", "=", "Active"],
+            ["scheduled_rate", ">", 0],
+            ["rate_effective_date", "is", "set"],
+            ["rate_effective_date", "<=", window_end],
+            ["rate_notice_sent", "is", "not set"],
+        ],
         fields=["name", "customer", "scheduled_rate", "rate_effective_date"],
     ):
         try:
