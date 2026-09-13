@@ -874,3 +874,10 @@ erpnext_enhancements.patches.unexpire_never_expiring_training_records
 # visits and invoices. The filter gained an `is set` clause in the same release; this restores
 # the rows. Safe to re-run: it matches nothing once they are Active again.
 erpnext_enhancements.patches.restore_force_expired_maintenance_contracts
+# Two people held an open Training Assignment and neither the Training Learner role nor the
+# dedicated Role Profile, so the module had asked them for something it would not let them
+# reach. `roles.grant_learner_role` was always correct; it is only CALLED on Employee insert
+# and on gaining a user_id, so a direct grant wiped by populate_role_profile_roles (which
+# rebuilds roles from the profile union on every User save) was never re-made. This repairs
+# the rows; `tasks.sweep_learner_roles` runs daily so the hole cannot reopen.
+erpnext_enhancements.patches.grant_learner_role_to_assigned_users

@@ -233,6 +233,30 @@ class TheTwoSidesAgreeTest(unittest.TestCase):
         for name, reason in NOT_DIALLED_BY_THE_PLAYER.items():
             self.assertGreater(len(reason.strip()), 40, f"{name}'s reason is a placeholder")
 
+    def test_a_reason_is_not_also_a_caller(self):
+        """The other direction, and the one the subtraction above cannot see.
+
+        `test_no_endpoint_is_unreachable` computes a one-directional set
+        difference, so an endpoint listed here AND wired into the METHOD map
+        passes silently -- the excuse is simply never consulted. That is not a
+        hypothetical: `get_learner_bootstrap`'s reason says "called server-side,
+        not over HTTP: www/training.py imports it and runs it inside
+        get_context", which stops being true the moment a host without a
+        server-side template render has to dial it. A Desk Page is exactly that
+        host.
+
+        The failure shape is the one this whole module exists to catch: nothing
+        errors, and a sentence explaining why something is safe outlives the
+        arrangement that made it safe.
+        """
+        both = sorted(_method_map() & set(NOT_DIALLED_BY_THE_PLAYER))
+        self.assertEqual(
+            both,
+            [],
+            f"{both} are in the player's METHOD map AND in NOT_DIALLED_BY_THE_PLAYER. "
+            "Being dialled is the opposite of the claim; delete the entry.",
+        )
+
 
 class AskTheAuthorIsReachableTest(unittest.TestCase):
     """``training/qa.py`` shipped complete in v1.215.0 with **no caller anywhere**.

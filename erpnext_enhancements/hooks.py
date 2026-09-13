@@ -919,6 +919,15 @@ scheduler_events = {
 		"30 7 * * 5": ["erpnext_enhancements.process_steps.send_weekly_sla_digest"],
 	},
 	"daily": [
+		# training: re-grant Training Learner to anybody who owes a course and cannot
+		# open it. `roles.grant_learner_role` is correct and always was; it is only
+		# CALLED on Employee insert and on an Employee gaining a user_id, neither of
+		# which fires again for somebody who already exists. So a direct grant wiped
+		# by populate_role_profile_roles -- which rebuilds `roles` from the profile
+		# union on every User save -- was never re-made, and two people with a due
+		# course could not open it. Keyed on owing a course rather than on being an
+		# Employee, because the obligation is what needs the role.
+		"erpnext_enhancements.training.tasks.sweep_learner_roles",
 		# training: move assignments past their due date into Overdue. A separate
 		# pass rather than a side effect of the reminder job, because the status has
 		# to be right whether or not notifications are switched on — the compliance

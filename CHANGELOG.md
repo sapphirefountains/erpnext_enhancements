@@ -7,6 +7,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.428.0] - 2026-09-13
+
+Groundwork for moving the learner training player into the Desk (Training Phase 6, D0). Nothing
+user-facing changes here: this is the set of guards that make the programme's specific failure
+shapes impossible to reintroduce, plus three things that were already wrong.
+
+### Fixed
+
+- **Two people owed a course they could not open, and had for weeks.** Both hold an open
+  `Training Assignment`, both are active Employees with a login, and neither held the
+  `Training Learner` role or the dedicated Role Profile — so the module had asked them for
+  something it would not let them reach, and said nothing to anybody.
+
+  `roles.grant_learner_role` was never the problem; it handles both the profiled and
+  profile-less paths correctly and always has. The hole is in **when it is called**.
+  `training/assignment.py` calls it on Employee *insert* and on an Employee *gaining* a
+  `user_id`, and neither event fires again for somebody who already exists. `User.validate`
+  meanwhile rebuilds `roles` from the union of the user's Role Profiles on **every** save, so a
+  direct grant is one unrelated save away from being dropped — and both of these two carry four
+  or five unrelated profiles, which is exactly the shape that triggers it. Nothing swept, and a
+  missing role is not an error: it is a person who opens training and is told there is nothing
+  there.
+
+  New `training.tasks.sweep_learner_roles`, daily, plus a one-off
+  `grant_learner_role_to_assigned_users` patch for the rows that are wrong now. **Keyed on
+  owing a course, not on being an Employee** — that is the rule the writer applies, since the
+  assignment engine and a Training Manager pressing *New* both create the obligation, and the
+  obligation is what needs the role. An Employee-keyed sweep would miss a manually-assigned
+  contractor; a "has no role" sweep would grant it to the whole company. Deliberately *not*
+  gated on `auto_assign_enabled` the way `sweep_auto_assignments` is: a hand-made assignment
+  needs the role just as much as a rule-made one.
+
+- **Three bench-free test suites were running nowhere**, all green, all counted in the file
+  total, none of them asserting anything:
+  - `test_travel_ics` — nine plain pytest functions, named nowhere in `ci.yml`. This is the
+    exact shape CLAUDE.md already records for the QuickBooks suite: `python -m unittest`
+    collects nothing from a module of bare `def test_*` functions and still exits 0. Given its
+    own **pytest** step.
+  - `test_product_configurator_engine` — twenty-seven unittest tests, also named nowhere.
+  - `test_procurement_project` — ten tests that could not run at all: `procurement_project`
+    grew a `from frappe.utils import flt` after the suite's stub was written, and the stub is a
+    plain `ModuleType`, which the import system rejects with *"'frappe' is not a package"*. So
+    `setUpModule` raised before a single test executed. The stub now registers a real
+    `frappe.utils` submodule in `sys.modules`, and the suite gets its own step so that
+    registration cannot cross-talk with the other stubbed suites.
+
+- **`player.js` registered an anonymous `popstate` handler that `destroy()` could not remove.**
+  Harmless on `/training`, where the page is thrown away with the document — which is why it
+  never leaked and why nothing caught it. It stops being harmless the moment the player gains a
+  host that mounts and unmounts inside a long-lived document, and a Desk Page is exactly that:
+  frappe creates the page div once and never removes it. Named, and removed in `destroy()`.
+
+### Added
+
+- **`tests/test_suites_are_in_ci.py`** — every bench-free suite must be named in `ci.yml`. This
+  is the guard that found the three above. It cannot be a test *inside* each suite: several
+  modules here carry their own `test_it_is_wired_into_ci`, which is sound for a suite already
+  running and **circular** for one that is not — if the file is absent from `ci.yml`, CI never
+  runs the file, so the assertion inside it never executes.
+
+  The rule is measured rather than listed: a suite absent from `ci.yml` must **fail to import**.
+  That is the ground truth of "needs a bench", it cannot rot, and it cannot be satisfied by
+  filing a name in a dictionary. Two suites are exempted with reasons — both import cleanly and
+  self-skip every test without a bench, so a CI step would report green having asserted nothing.
+  It also pins the runner split, because that split is load-bearing and not stylistic.
+
+- **`TestNoPageShadowsAWorkspace`** in `tests/test_workspaces.py` — no Desk Page docname may
+  equal `slug(any Workspace name)`. `frappe.router.convert_to_standard_route` tests the first
+  path segment against `frappe.workspaces` **before** doctypes and before the page loader, and
+  discards every segment after it. `desk.js` keys that map as `slug(page.name)`. So a Page named
+  `training` beside a Workspace named `Training` never renders, and a deep link into it opens
+  the workspace having silently dropped the rest of the path.
+
+  What makes it a build gate rather than a comment is the per-user part:
+  `frappe.boot.allowed_workspaces` is permission-filtered, so the same URL is the workspace for
+  somebody who can see it and the page for somebody who cannot — one URL, two destinations, no
+  error in either. This is why the learner page will be `learn` and not `training`.
+
+- **An orphan check in `scripts/check_www_controllers.py`** — every `www/*.py` must have a
+  sibling template. The other half of the failure that script already exists for: frappe
+  resolves the *route* from the template and imports the controller beside it, so a controller
+  with no template is not a page at all — the URL 404s and `get_context()` never runs, with no
+  exception and no log line. Pairing is hyphen-insensitive in the same direction frappe reads
+  it, so `contract-sign.html` still satisfies `contract_sign.py`.
+
+- **An intersection guard on `NOT_DIALLED_BY_THE_PLAYER`** in `test_training_endpoint_surface`.
+  The existing check is a one-directional set difference, so an endpoint that is both listed
+  there *and* wired into the player's `METHOD` map passes silently with its excuse never
+  consulted. `get_learner_bootstrap`'s reason says it is "called server-side, not over HTTP" —
+  true only while the one host renders it into a template.
+
+- **A parse guard on `_transport_map()`** in `test_training_boot_wire`. It slices the source
+  between `var METHOD = {` and `var PREFIX`; reorder those two literals and `str.index` returns
+  the smaller offset second, the slice is empty, and every assertion computed as
+  `set(_transport_map()) - …` passes over an empty set. Its sibling
+  `test_training_heartbeat_wire` has carried this guard since it was written; this module did
+  not.
+
 ## [1.427.1] - 2026-09-13
 
 ### Fixed

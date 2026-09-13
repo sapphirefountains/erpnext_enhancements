@@ -3174,7 +3174,15 @@
 
 		// Only fires if something outside the player moves history. Re-rendering
 		// from the URL keeps that landing on the right view instead of a stale one.
-		window.addEventListener("popstate", function () {
+		//
+		// NAMED, and removed in destroy(), because a host that mounts and unmounts the
+		// player inside a long-lived document would otherwise leave one of these bound
+		// per mount, each holding the whole closure alive. On /training that could not
+		// happen -- the page is thrown away with the document -- so the anonymous
+		// handler this replaces never actually leaked. It would have the moment the
+		// player gained a second host, and a Desk Page is exactly that: frappe creates
+		// the page div once (views/container.js add_page) and never removes it.
+		function onPopState() {
 			if (b.history === false) return;
 			var course = queryParam("course");
 			if (!course) {
@@ -3182,7 +3190,8 @@
 				return;
 			}
 			openCourse(course, queryParam("lesson") || null);
-		});
+		}
+		window.addEventListener("popstate", onPopState);
 
 		function start() {
 			// Before anything else, and before any deep link. A course URL opened on
@@ -3216,6 +3225,7 @@
 				runTeardowns();
 				document.removeEventListener("visibilitychange", onVisibility);
 				window.removeEventListener("pagehide", flush);
+				window.removeEventListener("popstate", onPopState);
 				clear(rootEl);
 			},
 		};

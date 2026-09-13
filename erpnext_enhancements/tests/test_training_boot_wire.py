@@ -475,6 +475,41 @@ def _call_payloads():
     return sites
 
 
+class TestTheTransportExtractorParses(unittest.TestCase):
+    """Guards every set-difference below it — an empty map makes them all vacuous.
+
+    ``_transport_map`` slices the source between the literals ``var METHOD = {``
+    and ``var PREFIX``. That is fine while the two appear in that order and
+    becomes silently wrong if they are ever reordered: ``str.index`` would return
+    a smaller offset for ``var PREFIX``, the slice would be the empty string, the
+    regex would find nothing, and every assertion computed as
+    ``set(_transport_map()) - something`` would pass over an empty set.
+
+    Nothing about that reads as a failure. The suite goes green, and the contract
+    it exists to hold — that every endpoint the player dials is whitelisted and
+    correctly argued — stops being checked at all.
+
+    Its sibling ``test_training_heartbeat_wire.py`` has carried this guard since
+    it was written (``test_the_map_parses``); this module did not, and the
+    transport is about to move to its own file, which is exactly the edit that
+    reorders those two literals.
+    """
+
+    def test_the_map_is_not_empty(self):
+        self.assertGreater(
+            len(_transport_map()),
+            4,
+            "the METHOD map extracted as (nearly) empty -- check that "
+            "'var METHOD = {' still precedes 'var PREFIX' in the transport source",
+        )
+
+    def test_the_map_names_endpoints_we_recognise(self):
+        """Anti-vacuity of a different kind: a map that parsed but produced
+        nonsense would satisfy the count above."""
+        self.assertIn("getLesson", _transport_map())
+        self.assertEqual(_transport_map().get("getLesson"), "get_lesson")
+
+
 class TestTransportArguments(unittest.TestCase):
     """Every transport call must satisfy its endpoint's signature.
 

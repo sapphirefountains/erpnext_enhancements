@@ -1104,6 +1104,31 @@ jobs:
       # the SSE relay's per-frame loop.
       - name: Server-side URL boundary (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_url_safety.py -q
+      # Travel ICS (found unwired 2026-09-13 by tests/test_suites_are_in_ci.py, the
+      # suite added in the same release). Nine bench-free tests, green, and running
+      # NOWHERE: plain pytest functions, which `python -m unittest` collects nothing
+      # from -- the identical shape as the QuickBooks suite that broke unnoticed for
+      # weeks. Its own pytest step, per the rule at the top of this file.
+      - name: Travel ICS (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_travel_ics.py -q
+      # Product Configurator engine (found unwired the same way, same day). 27
+      # bench-free unittest tests, green, and named nowhere in this file.
+      - name: Product Configurator engine (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_product_configurator_engine -v
+      # PO header -> line Project cascade. Third suite the guard below found running
+      # nowhere: its own frappe stub had gone stale -- `procurement_project` grew a
+      # `from frappe.utils import flt` and the stub is a plain ModuleType, which the
+      # import system reports as "'frappe' is not a package", so setUpModule raised
+      # before a single test ran. Own step: it registers `frappe.utils` in
+      # sys.modules and must not cross-talk with the other stubbed suites.
+      - name: Procurement project cascade (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_procurement_project -v
+      # The guard that found both of the above: every bench-free suite must be named
+      # in this file. A suite absent from it is not skipped, it is INVISIBLE -- and
+      # the existing in-file "am I wired into CI" idiom cannot catch that, because a
+      # file CI never runs cannot assert anything about itself.
+      - name: Every bench-free suite is wired into CI
+        run: python -m unittest erpnext_enhancements.tests.test_suites_are_in_ci -v
       # The email design system (v1.331.0). Its own step and pytest-style, and — like the
       # URL boundary above — it installs no frappe stub at all, because
       # templates/emails/_components.html is forbidden from importing frappe and renders
