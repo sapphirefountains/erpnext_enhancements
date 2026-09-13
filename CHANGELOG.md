@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.426.7] - 2026-09-13
+
+### Fixed
+
+- **v1.426.6 named a function that does not exist.** Its changelog entry and
+  `tests/test_get_value_unpacking.py` both cited `generate_predictive_maintenance` as the
+  scheduled job the `get_value` unpack sat in. The function is
+  `generate_predictive_maintenance_records`, and `scheduler_events` reaches it through
+  `predictive_maintenance_scheduling` — two names, neither of them the one written down.
+
+  The fix itself was correct and is deployed; only the prose was wrong. But the prose is
+  the part a reader follows, and a name nobody can find sends them looking in the wrong
+  file while nothing ever fails. Review did not catch it. **Calling it on the running site
+  did**, with an `AttributeError` whose own message suggested the real name — which is the
+  same lesson as the release before it: the check that finds this class of error is the one
+  that executes the thing.
+
+### Added
+
+- **`TestTheNamesThisFileCitesAreReal`** — the cited functions must exist, the scheduler
+  must actually reach the fixed one (asserted through the AST of the entry point, not a
+  substring), and the invented name must not come back. Mutation-tested: restoring the bad
+  name fails the build.
+
+### Notes
+
+Everything in v1.426.6 was verified on the running site after deploy rather than from the
+version string, and this is what that verification turned up. The roster's aggregate
+finding now renders for real — the 2026-03-01 sheet returns *"10 people were employed on
+03-01-2026, and not one carries a credential, an attestation or a restriction on that
+date"*, a message that was unreachable from the day it was written.
+
+**`Installed Application.app_version` is not a deploy indicator.** It read `1.426.5` with
+`git_branch: UNVERSIONED` while the running code was already `1.426.6`. The live import is
+the answer; that row is a stale artefact.
+
+**Two measurement traps hit during that verification, both of which first read as "the fix
+did not ship".** `frappe.whitelisted` holds function **objects**, not dotted-name strings,
+so a membership test on strings returns False for everything including the control. And
+`@frappe.whitelist()` wraps the function, so `log_call_details.__code__` is the wrapper's —
+`__wrapped__` is needed to see the real one.
+
 ## [1.426.6] - 2026-09-13
 
 ### Fixed
@@ -51,8 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`tasks.py` unpacked `frappe.db.get_value` straight into three names inside a scheduled
   job.** `get_value` returns **None**, not a row of Nones, for a missing row, so
-  `a, b, c = ...` raises `TypeError` — confirmed on prod. In `generate_predictive_maintenance`
-  that ends the whole job: every remaining item and every later step skipped, with nothing a
+  `a, b, c = ...` raises `TypeError` — confirmed on prod. In
+  `generate_predictive_maintenance_records` that ends the whole job: every remaining item and every later step skipped, with nothing a
   user would ever see. Dormant (no submitted Sales Order Item on this site), but an item
   outliving its Sales Order is ordinary.
 
