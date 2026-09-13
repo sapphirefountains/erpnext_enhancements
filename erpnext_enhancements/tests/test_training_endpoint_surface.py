@@ -49,14 +49,6 @@ PAGE = APP / "public" / "js" / "training" / "transport.js"
 #: Whitelisted endpoints the player's ``METHOD`` map deliberately does not carry.
 #: Each needs a reason, and the reason has to survive somebody reading it.
 NOT_DIALLED_BY_THE_PLAYER = {
-    "get_learner_bootstrap": (
-        "Called server-side, not over HTTP: www/training.py imports it and runs it "
-        "inside get_context, so the shell renders with the learner's assigned "
-        "courses already in it. One round trip on purpose — the portal is opened on "
-        "phones on site. Declaring POST here changes nothing for that path (the "
-        "decorator gates HTTP dispatch, not a Python call) and keeps the rule "
-        "uniform if it is ever dialled directly."
-    ),
     "download_lesson_file": (
         "Fetched by the browser as an <img src> and as a PDF frame, not by the "
         "player's JSON transport, so it can never appear in the METHOD map. See "

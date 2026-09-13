@@ -191,6 +191,7 @@ def _install_stubs():
 		"erpnext_enhancements.training.doctype.training_settings.training_settings"
 	)
 	ts.is_enabled = lambda flag: True
+	ts.runtime_ready = lambda: True
 	sys.modules[
 		"erpnext_enhancements.training.doctype.training_settings.training_settings"
 	] = ts

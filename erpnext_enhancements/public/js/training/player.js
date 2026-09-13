@@ -657,8 +657,46 @@
 			);
 		}
 
+		// The one thing a learner part-way through a course wants, at the top of the
+		// first page they see.
+		//
+		// `b.resume` has been on the boot payload since the module shipped and is
+		// server-authoritative -- a learner starting on a phone at lunch and finishing
+		// on a laptop is put back exactly where they were. But the only control that
+		// used it lived on the COURSE view: the catalogue painted announcements,
+		// points, cohorts, live sessions, evaluations and submissions first, so
+		// somebody halfway through a lesson scrolled past six blocks and then clicked
+		// twice more to get back to it.
+		//
+		// Nothing new is fetched here. It is the data that was already in hand, put
+		// where the person who needs it is already looking.
+		function resumeBanner() {
+			var resume = b.resume;
+			if (!resume || !resume.course || !resume.lesson_key) return null;
+
+			var wrap = el("section", "tr-resume");
+			wrap.appendChild(el("p", "tr-resume-eyebrow", t("Pick up where you left off")));
+			wrap.appendChild(el("h2", "tr-resume-title", resume.course_title || resume.course));
+			// No lesson title here: `_resume` sends attempt, course, course_title and
+			// lesson_key, and nothing else. Rendering `resume.lesson_title` would have
+			// been a line that never draws -- the exact read-but-never-sent shape
+			// test_training_boundary_contract exists to catch.
+			wrap.appendChild(
+				button(t("Continue"), "tr-button tr-button-primary tr-resume-go", function () {
+					openCourse(resume.course, resume.lesson_key);
+				})
+			);
+			return wrap;
+		}
+
 		function renderCatalog() {
 			head.appendChild(el("h1", "tr-title", t("Your training")));
+
+			// Above the announcements, and above everything else. See resumeBanner:
+			// this is the only block on the page that is about what this person was
+			// already doing, and it was previously two views away.
+			var resume = resumeBanner();
+			if (resume) main.appendChild(resume);
 
 			// Announcements first — a pinned notice is the most important thing on the
 			// page. Author/manager-posted, scoped to everyone, a course, or a batch.

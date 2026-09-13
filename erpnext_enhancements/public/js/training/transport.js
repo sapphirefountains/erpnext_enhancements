@@ -69,6 +69,15 @@
 		// renames a method, this map is the whole fix — the player only knows the
 		// transport's function names.
 		var METHOD = {
+			// The boot payload. The portal page never dials this -- www/training.py
+			// imports get_learner_bootstrap and renders the result into the document, so
+			// the page paints in one round trip on a phone on site. A Desk Page has no
+			// server-side template render and must ask for it over HTTP.
+			//
+			// Deliberately NOT put on frappe.boot via extend_bootinfo: this does a dozen
+			// get_all reads, and bootinfo is paid for on every desk page load by every
+			// user, most of whom are not opening training.
+			bootstrap: "get_learner_bootstrap",
 			getLesson: "get_lesson",
 			heartbeat: "heartbeat",
 			openCheckpoint: "open_checkpoint",

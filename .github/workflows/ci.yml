@@ -755,6 +755,17 @@ jobs:
       # in the theme nobody tested.
       - name: Training desk theme (three-way palette, one declaration site)
         run: python -m unittest erpnext_enhancements.tests.test_training_desk_theme -v
+      # The learner Desk Page. It is a HOST for the existing player, and nothing at
+      # runtime would tell you if it quietly became a second player -- a fork renders
+      # perfectly and drifts one commit at a time. Two of these are correctness: the
+      # teardown on "hide" (frappe creates the page div once and never removes it, and
+      # there is no on_page_hide hook, so without it a <video> keeps downloading and the
+      # heartbeat keeps claiming watch time for a lesson nobody is looking at), and the
+      # route name (the router resolves segment 0 against workspaces before pages, and
+      # allowed_workspaces is per-user, so a page named after a workspace is one URL
+      # with two destinations).
+      - name: Training desk page (host not fork, teardown, route name)
+        run: python -m unittest erpnext_enhancements.tests.test_training_desk_page -v
       # Every dotted path in hooks.py must name something that exists. Frappe
       # resolves after_migrate at the very END of `bench migrate`, so a typo there
       # fails the deploy after every schema change has already been applied -- the

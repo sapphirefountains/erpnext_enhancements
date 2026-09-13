@@ -210,6 +210,49 @@
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
+/* -------------------------------------------------------- resume banner */
+
+/* The first thing on the catalogue, and the only block there that is about what
+   this person was already doing. `b.resume` has been on the boot payload since the
+   module shipped; until v1.429.0 the only control that used it was on the course
+   view, two clicks further in, under six other blocks. */
+.tr-resume {
+	margin: 0 0 16px;
+	padding: 16px 18px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	box-shadow: var(--tr-shadow);
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	align-items: flex-start;
+}
+
+.tr-resume-eyebrow {
+	margin: 0;
+	color: var(--tr-muted);
+	font-size: 0.8125rem;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+}
+
+.tr-resume-title {
+	margin: 0;
+	font-size: 1.125rem;
+	font-weight: 700;
+	letter-spacing: -0.01em;
+}
+
+/* The CTA carries the gradient identity, same as every other primary action. Its
+   appearance comes from .tr-button-primary; this only gives it room and a touch
+   floor, because on a phone this is the button the whole page exists to offer. */
+.tr-resume-go {
+	margin-top: 6px;
+	min-height: 44px;
+}
+
 /* -------------------------------------------------- reset against the host */
 
 /*

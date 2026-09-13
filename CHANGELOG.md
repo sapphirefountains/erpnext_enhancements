@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.429.0] - 2026-09-13
+
+Training Phase 6, D4. **The learner player has a door in the Desk.**
+
+### Added
+
+- **A Desk Page at `/desk/learn`** (`training/page/learn/`) mounting the *existing*
+  `TR.Player`. It is a host, not a second player: it builds the mount, loads the runtime
+  through `TR.loadAssets`, dials `get_learner_bootstrap` through the shared transport and
+  constructs `TR.Player(root, boot, transport)`. Every pixel below the page head is
+  rendered by the same files the portal loads. Forking the player is the most expensive
+  mistake available in this module and a Desk host is exactly where the temptation lives,
+  because `frappe.*` is right there — `tests/test_training_desk_page.py` (24 tests) pins
+  the seams.
+
+  It ships **System-Manager-only**. `learn.json`'s `roles` list is the staged-rollout
+  switch; adding `Training Learner` is D6, after a person has opened it on a real bench.
+
+- **Why the route is `learn` and not `training`.** `frappe.router` resolves the first path
+  segment against `frappe.workspaces` *before* doctypes and before the page loader, and
+  discards every segment after it. `desk.js` keys that map by `slug(page.name)`, and the
+  Training **workspace** is named "Training". A page named `training` would never render —
+  and since `allowed_workspaces` is permission-filtered, the same URL would be the
+  workspace for the fifteen learners and the page for anybody who cannot see it. One URL,
+  two destinations, no error in either.
+
+- **Deep links work from the first release, with a zero-line diff to `route()`.** The page
+  ships `boot.history = false` and passes the course and lesson through `boot.start` — the
+  pair `www/training_preview.html` already uses. The Desk router owns the URL; the player
+  neither reads nor writes it. Writing the address bar mid-session is D12, deliberately
+  last, so the riskiest change is nowhere near the release that has to be right.
+
+- **The resume banner** — the highest completion-per-line change available, and it fetches
+  nothing new. `b.resume` has been on the boot payload since the module shipped and is
+  server-authoritative, but the only control that used it lived on the *course* view: the
+  catalogue painted announcements, points, cohorts, live sessions, evaluations and
+  submissions first, so a learner halfway through a lesson scrolled past six blocks and
+  then clicked twice more to get back to it. It is now the first thing on the page.
+
+### Fixed
+
+- **`_runtime_ready()` gated the entire learner runtime on `portal_enabled`** — a checkbox
+  a Training Manager can untick, labelled "Learner Portal Enabled" and described as
+  controlling `/training`. Retiring that page would have made ticking it off the obvious
+  tidy-up, and it would have taken training away from all fifteen learners **in silence**:
+  every read endpoint answers a closed runtime with `_unavailable()` rather than an
+  exception, on purpose, so they would have seen "Training is not available yet" with
+  nothing in the Error Log.
+
+  There is now one gate, `training_settings.runtime_ready()`, reading `training_enabled`
+  alone; `api/training.py`, `training/qa.py` and `training/submissions.py` all go through
+  it instead of repeating the pair inline. `portal_enabled` keeps its job in
+  `training/portal.py` — customer-contact logins — and is relabelled **Customer Portal
+  Access** to say so. The **fieldname is unchanged**: a Single stores one row per
+  fieldname in `tabSingles`, so renaming it is a data patch, not a JSON edit.
+
+### Changed
+
+- `get_learner_bootstrap` joins the transport's `METHOD` map and leaves
+  `NOT_DIALLED_BY_THE_PLAYER`. Its excuse said it is "called server-side, not over HTTP:
+  `www/training.py` imports it and runs it inside `get_context`" — true of exactly one
+  host. The guard added in v1.428.0 for precisely this case now keeps the two lists from
+  overlapping.
+
+  Deliberately **not** put on `frappe.boot` via `extend_bootinfo`: it does a dozen
+  `get_all` reads, and bootinfo is paid for on every desk page load by every user, most of
+  whom are not opening training.
+
+- The page keeps the desk's own container rather than going full-bleed like the authoring
+  canvas. A builder wants the viewport; a learner page wants the header, breadcrumbs and
+  workspace sidebar, because that is what makes it read as part of ERPNext rather than as
+  an app embedded in it.
+
 ## [1.428.3] - 2026-09-13
 
 Training Phase 6, D3. The palette now answers "is it dark?" for two hosts that

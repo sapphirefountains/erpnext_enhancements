@@ -37,7 +37,7 @@ from frappe import _
 from frappe.utils import cint, get_url
 
 from erpnext_enhancements.training import notifications
-from erpnext_enhancements.training.doctype.training_settings.training_settings import is_enabled
+from erpnext_enhancements.training.doctype.training_settings.training_settings import runtime_ready
 
 SUBMISSION_DOCTYPE = "Training Submission"
 
@@ -66,7 +66,7 @@ def _learner():
 
 
 def _require_runtime():
-	if not (is_enabled("training_enabled") and is_enabled("portal_enabled")):
+	if not runtime_ready():
 		frappe.throw(_("Training is not available yet."))
 
 

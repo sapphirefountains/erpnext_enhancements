@@ -149,6 +149,9 @@ def _install_stubs():
 		"erpnext_enhancements.training.doctype.training_settings.training_settings"
 	)
 	ts.is_enabled = lambda flag: STATE["enabled"]
+	# The one learner-runtime gate (v1.429.0). It reads training_enabled alone --
+	# see training_settings.runtime_ready for why it stopped reading portal_enabled.
+	ts.runtime_ready = lambda: STATE["enabled"]
 	sys.modules[
 		"erpnext_enhancements.training.doctype.training_settings.training_settings"
 	] = ts

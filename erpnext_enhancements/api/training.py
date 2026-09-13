@@ -60,6 +60,7 @@ from erpnext_enhancements.training.doctype.training_assignment.training_assignme
 from erpnext_enhancements.training.doctype.training_settings.training_settings import (
     get_settings,
     is_enabled,
+    runtime_ready,
 )
 
 # How far a stored watch interval may miss a checkpoint's timestamp and still
@@ -98,7 +99,12 @@ def _learner():
 
 
 def _runtime_ready():
-    return is_enabled("training_enabled") and is_enabled("portal_enabled")
+    """Delegates to the one gate. See training_settings.runtime_ready for why this
+    no longer reads `portal_enabled`: that switch is labelled for, and now means,
+    the customer-portal apparatus -- and every read below answers a closed runtime
+    with a message rather than an error, so ticking it off would have taken
+    training away from all fifteen learners in silence."""
+    return runtime_ready()
 
 
 def _unavailable():

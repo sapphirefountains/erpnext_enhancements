@@ -1,0 +1,19 @@
+{
+ "content": "",
+ "creation": "2026-09-13 12:00:00.000000",
+ "doctype": "Page",
+ "modified": "2026-09-13 12:00:00.000000",
+ "module": "Training",
+ "name": "learn",
+ "owner": "Administrator",
+ "page_name": "learn",
+ "public": 0,
+ "roles": [
+  {
+   "role": "System Manager"
+  }
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Training"
+}

@@ -57,10 +57,10 @@
   },
   {
    "default": "0",
-   "description": "Allow learners to reach courses at /training. Turn this off to keep authoring internal while a first course is being built.",
+   "description": "Allow a customer contact to be given a login that reaches training. This does NOT gate staff: the learner runtime follows Training Enabled alone, because this switch used to take the whole runtime down while being labelled for one surface, and every read answers a closed runtime with a message rather than an error — so ticking it off removed training from every learner in silence. The fieldname is still portal_enabled; renaming it on a Single needs a data patch, not a JSON edit.",
    "fieldname": "portal_enabled",
    "fieldtype": "Check",
-   "label": "Learner Portal Enabled"
+   "label": "Customer Portal Access"
   },
   {
    "default": "0",
