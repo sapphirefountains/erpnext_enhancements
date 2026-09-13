@@ -564,6 +564,111 @@ class TestTheLeavingChecklistIsGenerated(unittest.TestCase):
         figures for ever and quietly makes the numbers wrong."""
         self.assertIn("Training Assignment", _fn("_open_work", ONBOARDING))
 
+    def test_the_open_statuses_are_imported_not_retyped(self):
+        """This assertion exists because the old one was not enough.
+
+        Until v1.427.0 this file checked only that the string "Training Assignment"
+        appeared in `_open_work`. It did, and the filter beside it was still wrong: the
+        status tuple was hand-written and led with **"Assigned"**, which has never been
+        an option on that Select. All three revisions the doctype JSON has ever had
+        carry the same seven options -- Not Started / In Progress / Awaiting Sign-off /
+        Completed / Overdue / Waived / Cancelled -- so the literal matched nothing, and
+        the real first state, "Not Started", was never asked for.
+
+        Measured on production 2026-09-13: the old tuple matched **0 of 26** assignments,
+        the canonical constant matches **20**. "Assigned" is a real status, but on
+        **Managed Device** -- which `_devices_held` reads eleven lines above this in the
+        same file, which is where the word came from.
+
+        Pinned as "imports the constant" rather than "contains these four strings",
+        because the defect was a copy existing at all.
+        """
+        body = _fn("_open_work", ONBOARDING)
+        self.assertIn("OPEN_STATUSES", body)
+        self.assertIn('["in", OPEN_STATUSES]', body)
+
+    def test_no_module_retypes_the_assignment_status_list(self):
+        """One definition, and three exceptions that each earn their place.
+
+        `OPEN_STATUSES` lives beside the doctype whose Select it describes. Five call
+        sites imported it; two retyped it. One of the two was wrong -- that is this
+        release -- and the other happened to be right, which is the whole argument for
+        having one definition rather than a convention.
+
+        The first draft of this test flagged three more files and all three were fine.
+        Recorded here rather than loosened away, because each is a different kind of
+        legitimate:
+
+        * ``patches/`` -- a patch is a frozen historical artefact. It must keep doing on
+          a fresh install exactly what it did the day it ran, so binding it to a constant
+          that may later change is the wrong direction. Excluded wholesale.
+        * ``training_completion_matrix.py`` -- the same four members in **precedence**
+          order ("the order they should win if somehow several rows exist"). Same set,
+          different purpose; importing the tuple would destroy the ordering. Its
+          membership is pinned against `OPEN_STATUSES` by the test below instead.
+        * ``training/signoff.py`` -- names **one** member (`AWAITING`), not the list, and
+          already carries a comment saying why.
+        * ``training/analytics.py`` -- converging this one was TRIED and reverted.
+          Importing the controller drags in `frappe.model.document`, and
+          `test_training_analytics` is bench-free with a minimal stub: the import turned
+          five passing tests into errors. Keeping a module importable without a bench is
+          worth more than removing a literal. Its membership is pinned below.
+
+        So the rule is narrow on purpose: a file that spells out the whole open set, is
+        not one of those, and does not import the constant.
+        """
+        app = Path(__file__).resolve().parents[1]
+        canonical = app / "training/doctype/training_assignment/training_assignment.py"
+        allowed = {
+            "training/report/training_completion_matrix/training_completion_matrix.py",
+            "training/signoff.py",
+            "training/analytics.py",
+        }
+        members = ('"Not Started"', '"In Progress"', '"Awaiting Sign-off"', '"Overdue"')
+
+        offenders = []
+        for path in sorted(app.rglob("*.py")):
+            if {"tests", "patches", "node_modules", "__pycache__"} & set(path.parts):
+                continue
+            if path == canonical:
+                continue
+            relative = path.relative_to(app).as_posix()
+            if relative in allowed:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if all(m in text for m in members) and "OPEN_STATUSES" not in text:
+                offenders.append(relative)
+        self.assertEqual(
+            offenders, [], f"these retype the Training Assignment open-status list: {offenders}"
+        )
+
+    def test_the_two_permitted_copies_still_hold_the_same_members(self):
+        """Both permitted copies keep their own form -- one ordered by precedence, one a
+        set for Python membership -- but neither may drift in MEMBERSHIP. That is the
+        half a shared constant would have protected, and the half that actually broke."""
+        app = Path(__file__).resolve().parents[1]
+
+        def tuple_constant(path, name):
+            """Read it out of the source. This suite is bench-free and importing the
+            controller pulls in `frappe`, which is not installed here."""
+            tree = ast.parse((app / path).read_text(encoding="utf-8"))
+            for node in tree.body:
+                if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", None) == name:
+                    return {e.value for e in node.value.elts}
+            raise AssertionError(f"{name} not found in {path}")
+
+        canonical = tuple_constant(
+            "training/doctype/training_assignment/training_assignment.py", "OPEN_STATUSES"
+        )
+        precedence = tuple_constant(
+            "training/report/training_completion_matrix/training_completion_matrix.py",
+            "OPEN_ASSIGNMENT_STATUSES",
+        )
+        analytics = tuple_constant("training/analytics.py", "ACTIVE_ASSIGNMENT_STATUSES")
+        self.assertEqual(precedence, canonical)
+        self.assertEqual(analytics, canonical)
+        self.assertEqual(len(canonical), 4)
+
     def test_every_derived_lookup_is_best_effort(self):
         """A missing module means fewer rows, never an exception — the fixed list
         alone is still worth raising."""

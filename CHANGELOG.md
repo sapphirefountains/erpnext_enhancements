@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.427.0] - 2026-09-13
+
+The last six audit findings, adversarially verified. **Two were real.** Four were not, and
+the four are written down where the code is, because an audit that only records its hits
+invites the next reader to re-open the same four.
+
+### Fixed
+
+- **A leaver's checklist asked for a training status that has never existed.**
+  `hr_enhancements/onboarding._open_work` filtered Training Assignment on a hand-written
+  tuple beginning `"Assigned"`. The Select is Not Started / In Progress / Awaiting Sign-off
+  / Completed / Overdue / Waived / Cancelled, and all three revisions the doctype JSON has
+  ever had carry that same list — `"Assigned"` is not a rename casualty, it was never a
+  Training Assignment status. It is a real status on **Managed Device**, which
+  `_devices_held` reads eleven lines above in the same file.
+
+  So the filter asked for the open set minus its most populous member, and "Not Started" is
+  the doctype default, what every creation path writes, and what `_derive_overdue` falls
+  back to. An optional course carries no `due_date` and therefore can *never* reach
+  Overdue — that whole class of row was structurally invisible, permanently, not within a
+  timing window.
+
+  Measured on production: the old tuple matched **0 of 26** assignments, the correct set
+  matches **20**. It failed by doing LESS than asked, which is the harder direction to
+  notice — `if not count: return []` is indistinguishable from "this leaver had no open
+  work", so the checklist simply came out one item shorter. The function's own docstring
+  names the consequence: the assignment "sits in the compliance figures for ever and
+  quietly makes the numbers wrong". Latent rather than live only because none of this
+  site's five leavers had an assignment; `ensure_checklist` is idempotent, so a wrong list
+  is never re-derived.
+
+  Fixed by importing `OPEN_STATUSES` — the canonical constant five other call sites already
+  imported, and this was the only place that retyped it.
+
+- **The won-opportunity nag consulted one of three linkage paths, and not the busiest.**
+  v1.426.5 took it from 228 to 31 by fixing the date clause. 20 of those 31 already had a
+  project. Measured 2026-09-13:
+
+  | path | rows | consulted before |
+  |---|---|---|
+  | `Opportunity.custom_created_project` | 76 | yes |
+  | `Opportunity.custom_project` | 16 | no |
+  | `Project.custom_opportunity` | 105 | no |
+
+  The honest figure is **11**. Note which one was missed: the back-link is a Link on the
+  *Project* side, so it cannot appear in a filter on Opportunity at all — it needs a second
+  query and a set difference. The two paths that fitted in the existing filter list are the
+  two that got consulted. **The awkward one and the missed one are the same one, and that
+  is not a coincidence.**
+
+  The deep link now names the rows (`?name=["in",[…]]`) rather than restating a predicate.
+  The set is decided partly in Python, so no predicate URL can reproduce it, and a link
+  that disagrees with the sentence above it is the exact defect v1.426.5 already fixed once.
+
+### Changed
+
+- **`tasks.py` and `training/authority.py` now record why they are right**, because both
+  were flagged and both survived. `["Closed", "Completed"]` is a *terminal-status* test,
+  not a denylist missing "On Hold": On Hold is a credit and delivery hold on the order, and
+  this app's lever for pausing maintenance is `Customer.custom_service_hold`, checked three
+  lines above on both paths and documented in `stripe_payments/core/dunning.py`. And the
+  `_position_of_user` fallback in `snapshot_positions` is not dead — arm 1 returns falsy
+  whenever `custom_position` is blank, which is most rows, so arm 2 is reached constantly;
+  it usually returns the same blank, but ERPNext only forbids a shared `user_id` among
+  *Active* Employees, so the two arms can differ.
+
+### Added
+
+- **`tests/test_unconverted_nag.py`** — bench-free, and it RUNS the helpers rather than
+  grepping them. `test_status_alerts.py` could not have caught this: it subclasses
+  `FrappeTestCase`, so it needs a bench and is named nowhere in `ci.yml`.
+- **Membership pins for the two permitted copies of the open-status list**, plus a repo
+  sweep for a third.
+
+### Notes
+
+**The status-list guard cried wolf on its first draft, for the third time in this series.**
+It flagged three more files and all three were fine, each for a different reason: a patch is
+a frozen historical artefact and must keep doing what it did the day it ran;
+`training_completion_matrix` holds the same four members in *precedence* order, where
+importing a tuple would destroy the ordering; and `training/signoff.py` names one member,
+not the list. All three are recorded as named exceptions rather than loosened away.
+
+**Converging the third copy was tried and reverted.** Making `training/analytics.py` import
+the constant drags in `frappe.model.document`, and `test_training_analytics` is bench-free
+with a minimal stub — the "improvement" turned five passing tests into errors. Keeping a
+module importable without a bench is worth more than removing a literal, so its membership
+is pinned instead.
+
+**A mutation harness poisoned its own bytecode cache, and every mutation reported KILLED
+anyway.** `if names:` → `if False:` is a same-LENGTH edit, and CPython invalidates a cached
+`.pyc` on (source mtime, source size) — restore the original within the same coarse
+timestamp and the size matches, so Python keeps serving the *mutant*. The suite then failed
+on unmutated source, which is how it was caught. Every mutation was re-run with the caches
+cleared around each one; all eight kills are from that clean run, not the first.
+
+**One finding was killed for the wrong reason and is still real.** The reviewers of the
+opportunity-linkage finding found the fix already present in the working tree — because it
+was being written while they read — and concluded the patch was redundant. Their own note
+settles it: *"I tried to break the underlying analysis against HEAD and could not."* An
+artefact of editing files mid-review, not a refutation.
+
 ## [1.426.7] - 2026-09-13
 
 ### Fixed

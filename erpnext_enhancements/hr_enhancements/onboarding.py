@@ -250,9 +250,31 @@ def _open_work(user):
 	if not user or not frappe.db.exists("DocType", "Training Assignment"):
 		return []
 	try:
+		# Imported, not spelled out. This tuple used to be hand-written here and led
+		# with **"Assigned"**, which has never been an option on
+		# `Training Assignment.status`. The Select is Not Started / In Progress /
+		# Awaiting Sign-off / Completed / Overdue / Waived / Cancelled, so the literal
+		# matched nothing and the real first state -- "Not Started" -- was not asked for
+		# at all. Measured on 2026-09-13: the old tuple matched **0 of 26** assignments
+		# on this site, the imported constant matches **20**.
+		#
+		# It failed by doing LESS than asked, which is the harder direction to notice:
+		# `if not count: return []` below is indistinguishable from "this leaver had no
+		# open work", so the checklist just came out one item shorter. The docstring
+		# above names the consequence exactly -- the assignment "sits in the compliance
+		# figures for ever and quietly makes the numbers wrong".
+		#
+		# `OPEN_STATUSES` is the canonical list and five other call sites already import
+		# it; this was the only place that retyped it. Imported inside the function to
+		# match `certificates.py`, which does the same to keep module import order free
+		# of cross-module coupling.
+		from erpnext_enhancements.training.doctype.training_assignment.training_assignment import (
+			OPEN_STATUSES,
+		)
+
 		count = frappe.db.count(
 			"Training Assignment",
-			{"user": user, "status": ["in", ("Assigned", "In Progress", "Awaiting Sign-off", "Overdue")]},
+			{"user": user, "status": ["in", OPEN_STATUSES]},
 		)
 		if not count:
 			return []
