@@ -845,11 +845,11 @@ scheduler_events = {
 			# conversation stops happening. Fires only on the exact day.
 			"erpnext_enhancements.hr_enhancements.onboarding.nudge_new_hire_check_ins",
 		],
-		# The chat sync engine owned nine scheduler entries here between v1.262.0 and
+		# The chat module owned 16 scheduler jobs across 11 cron keys here between v1.262.0 and
 		# v1.423.0 -- the Pub/Sub puller and inbound defer timer on `* * * * *`, the relay
 		# sweeper and digest summariser on `*/5`, provisioning/attachments/chunking/embedding
-		# on `*/10`, and five daily or hourly governance passes below. All nine went with the
-		# module in v1.426.0 (ADR 0011).
+		# on `*/10`, and nine daily or hourly governance, indexing and notification passes
+		# below. All sixteen went with the module in v1.426.0 (ADR 0011).
 		#
 		# WHAT SURVIVES THAT IS WORTH KNOWING: `scheduler_events` is ONE dict literal, and a
 		# repeated key in a dict literal does not warn -- the later entry silently REPLACES
@@ -873,7 +873,7 @@ scheduler_events = {
 		],
 		# NOTE ON MINUTES, which outlived the entries that motivated it. Chat used to own
 		# :25, :50, :35, 03:10, 03:45, 04:25, 04:30 and 04:40 in this dict, chosen to sit
-		# clear of QuickBooks' :00/:20/:40. Those eight entries went with the chat module in
+		# clear of QuickBooks' :00/:20/:40. Ten of its eleven keys went with the module in
 		# v1.426.0 (ADR 0011) and those minutes are free again -- but the reason they were
 		# picked still binds anything added here: `scheduler_events` is one dict literal, a
 		# duplicate key does NOT warn, and the later entry silently REPLACES the earlier one.

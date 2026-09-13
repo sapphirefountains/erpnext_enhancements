@@ -120,7 +120,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refusal reachable only while a checkbox is ticked is not an invariant), and it must refuse on
   *contact* rather than try to parse SQL.
 
-- `hooks.py` loses nine scheduler entries, the app's only chat `doc_event`, six permission
+- `hooks.py` loses 16 scheduler jobs across 11 cron keys (ten of the keys no longer exist at
+  all), the app's only chat `doc_event`, six permission
   hooks from each of the two registers, one `website_route_rules` entry, eight `after_install`
   and eight `after_migrate` backstops, and `notification_skip_email_types`. Every removal
   leaves a comment naming what went and why, because several of those blocks carry rules that

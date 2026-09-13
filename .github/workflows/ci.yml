@@ -1071,6 +1071,8 @@ jobs:
       # renderer is the widget's ONLY markdown path -- `frappe.markdown` was removed as an
       # unsanitised innerHTML sink -- and the citation renderer is decision #7's inline
       # `[[ref:N]]` rendering, which still runs on every answer Triton streams.
+      - name: Triton composer IME guard (bench-free, node)
+        run: node scripts/test_triton_keys.mjs
       - name: Triton markdown renderer (bench-free, node)
         run: node scripts/test_triton_markdown.mjs
       - name: Triton inline citation renderer (bench-free, node)

@@ -115,7 +115,7 @@ spends more assertions on what survived than on what went:
 
 | Trap | Why it is silent |
 |---|---|
-| `triton_widget.js` imported three modules from `public/js/chat/` | It ships in the **global Desk bundle**, and the deploy runs `bench migrate && bench build`. An unresolvable import fails the build *after* the migrate has committed. |
+| `triton_widget.js` imported **six** modules from the chat tree — three of which had to survive | It ships in the **global Desk bundle**, and the deploy runs `bench migrate && bench build`. An unresolvable import fails the build *after* the migrate has committed. |
 | ~60 lines of `.ee-citation` / `.triton-source` CSS sat **inside** the "PHASE 3" block that ran to end-of-file | Deleting the block in one cut strips inline-citation and sources-chip styling off every Triton answer. Nothing fails; it just looks wrong. |
 | `scripts/fuzz_url_safety.mjs` imports `isSafeUrl` from `citations.js` | A CI step with no connection to chat, broken by a tidy-up of chat. |
 
@@ -150,6 +150,14 @@ asserted set equality against `chat/doctype/*/*.json`, so it would have failed t
 against an empty directory. The mechanism is documented in place in `assistant_tools/_gate.py`
 for whoever needs it next — the refusal must sit above the settings check, and it must refuse
 on contact rather than try to parse SQL.
+
+**Two links in the 0009 family are now dangling, and are left that way on purpose.**
+`0009-A2` points at `docs/chat-phase6-plan.md` and `0010` points at a `chat_export_request.py`
+that this release deleted. Both records are **Accepted and therefore immutable** — the
+convention that makes this register worth keeping is that a record is never edited after the
+fact, and a broken relative link is a smaller cost than a precedent for quietly amending
+history. They are named here so a future reader finds the explanation rather than assuming
+rot.
 
 **What would have to change to revisit this.** The premise is that the people are in Google
 Chat and the work is in ERPNext. If staff ever move to a chat client ERPNext owns, or Google

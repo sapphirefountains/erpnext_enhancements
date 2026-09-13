@@ -405,7 +405,7 @@ import { renderMarkdown } from "../triton/markdown.js";
 		});
 		state.els.text.addEventListener("input", autoGrow);
 		// Registered AFTER the `input` listener, deliberately.
-		// scripts/test_triton_widget_guards.js:192-204 slices the source between the
+		// scripts/test_triton_widget_guards.js:193-205 slices the source between the
 		// `keydown` and `input` registrations to assert the IME rule, and calls
 		// process.exit(2) — a hard failure, not a soft red — if either marker moves. A
 		// third composer listener is only safe outside that pair.
