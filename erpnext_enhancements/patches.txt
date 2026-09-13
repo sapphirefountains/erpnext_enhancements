@@ -860,3 +860,10 @@ erpnext_enhancements.patches.backfill_leaving_checklists
 # never materialised the Single, set_single_value would CREATE the row and write None into
 # dry_run_mode and restrict_to_whitelist, which is the unsafe direction for both.
 erpnext_enhancements.patches.delete_chat_module
+# `expires_on` is NULLABLE on Training Certificate and Training Completion and NULL means
+# NEVER EXPIRES. Frappe wraps a comparison on a nullable column in an ifnull sentinel set to
+# the MINIMUM of the type, so `{"expires_on": ["<", nowdate()]}` matched every never-expiring
+# row -- "no expiry" became "expired", and the completion sweep then raised a recertification
+# assignment for a course that had not lapsed. Four rows wrong on prod plus one spurious
+# retake. The filters gained an `is set` clause in the same release; this repairs the data.
+erpnext_enhancements.patches.unexpire_never_expiring_training_records

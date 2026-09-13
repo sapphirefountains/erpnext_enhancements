@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.426.1] - 2026-09-13
+
+### Fixed
+
+- **"Never expires" was being turned into "expired", on every certification that had no
+  expiry date.** `certificates._expire_certificates` and `_expire_completions_and_reassign`
+  both filtered `{"expires_on": ["<", nowdate()]}`. `expires_on` is **nullable on both
+  doctypes and NULL means never expires** — `_default_dates` only fills it when the course
+  carries a validity or recertification interval. Frappe wraps a comparison on a nullable
+  column in an ifnull sentinel set to the *minimum* of the type
+  (`frappe/model/db_query.py`, `prepare_filter_condition`):
+
+  ```sql
+  ifnull(`expires_on`, '0001-01-01') < '2026-09-13'
+  ```
+
+  which every NULL row satisfies. So each nightly run marked every never-expiring
+  certificate and completion **Expired**, and the completion sweep then raised a
+  recertification assignment telling the holder to retake a course that had not lapsed.
+  Both filters now carry an `["expires_on", "is", "set"]` clause; the list form is required
+  rather than stylistic, because two conditions on one field cannot both live in a filter
+  dict.
+
+  Live on prod: `TRN-CMP-000003`, `TRN-CMP-000004`, `TRN-CERT-2026-00003` and
+  `TRN-CERT-2026-00004` all carried `expires_on = NULL` with `status = "Expired"`, plus one
+  outstanding retake (`TRN-ASG-000008`, raised 2026-09-12). Four of the five completions on
+  the site were wrong about their own validity.
+
+- **The stub in `tests/test_training_certificates.py` was wrong by being _more correct than
+  the framework_**, and that is why this shipped. Its filter engine answered
+  `value is None → no match` for `<` — the Python- and SQL-intuitive result, and the
+  opposite of what frappe does. `_matches` now models the ifnull fallback, and understands
+  the list filter form, without which the fixed filters would not have been exercised by a
+  single test in the file.
+
+### Added
+
+- **`patches/unexpire_never_expiring_training_records.py`** — restores every row carrying
+  `status = "Expired"` with no expiry date, and cancels the retakes raised against them.
+
+### Notes
+
+**A correct test had been sitting in the file the whole time.**
+`TestRecertification.test_a_completion_with_no_expiry_never_lapses` has asserted exactly the
+right behaviour since the sweep was written. It passed every run while production did the
+opposite, and it fails the moment the filter is reverted now that the stub is faithful. The
+test was right, the stub was wrong, and the bug shipped between them — so the new cases cover
+only what nothing covered: the certificate half, and the retake that reaches a person.
+
+**How it was found.** The Crew Qualification Roster (v1.425.0) derives every state from stored
+dates and reads no `status` column. Run against prod it reported two of these completions as
+*Passed — no expiry* while their stored status said Expired. That disagreement was the finding.
+The rule earned its keep on the first day it had data to run against.
+
+**The repair patch will not take one risk blind.** `_raise_recertification` sets
+`assignment_source = "Recertification"` on **both** of its branches — inserting a new
+assignment, and re-dating an existing open one — so the source field cannot distinguish a
+spurious row from a legitimate one whose due date merely moved, and cancelling the latter
+would take away work somebody is meant to do. The patch therefore only cancels an assignment
+still `Not Started`, and prints every name it touches and every one it leaves. On this site the
+single affected row was verified to be a fresh insert: every earlier assignment for that pair
+was already `Completed`, so there was no open row for the other branch to have found.
+
+**Direction of the trap, for the next person.** `<` and `<=` match NULL; `!=` and `not in`
+match NULL; `>` and `>=` do not; `between` disables the sentinel outright and is safe; `is
+set` / `is not set` are safe; `=` with a truthy value skips the wrap entirely. It fails by
+doing *more* than asked, so the sweep looked like it was working.
+
 ## [1.426.0] - 2026-09-13
 
 ### Removed

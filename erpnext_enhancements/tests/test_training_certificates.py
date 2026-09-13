@@ -118,32 +118,88 @@ def _compare(value, target):
 		return str(value) < str(target)
 
 
-def _matches(row, filters):
-	for key, condition in (filters or {}).items():
-		value = row.get(key)
-		if isinstance(condition, list | tuple):
-			operator, target = condition[0], condition[1]
-			if operator == "<":
-				if value is None or not _compare(value, target):
-					return False
-			elif operator == ">":
-				if value is None or not _compare(target, value):
-					return False
-			elif operator == "in":
-				if value not in target:
-					return False
-			elif operator == "!=":
-				if value == target:
-					return False
-			elif operator == "is":
-				if target == "not set" and value:
-					return False
-				if target == "set" and not value:
-					return False
+#: What frappe substitutes for a NULL, and the reason this stub was WRONG until
+#: v1.426.1 -- wrong by being **more correct than the framework**, which is the one
+#: kind of stub error no amount of green tests will surface.
+#:
+#: `frappe/model/db_query.py`, `prepare_filter_condition`, wraps a comparison on a
+#: nullable column in `ifnull(col, <minimum of the type>)`. This stub read
+#: `if value is None: return False` for `<` -- the Python and SQL-intuitive answer,
+#: and the opposite of what production does. So `_expire_certificates` passed every
+#: test in this file while, on prod, it marked every never-expiring certification
+#: Expired and raised a retake assignment for it.
+#:
+#: Empty string is a faithful single stand-in for every fallback this suite needs: it
+#: sorts below any real date string (so `<` matches a NULL and `>` does not, exactly
+#: like the framework) and it is itself the fallback frappe uses for text columns.
+NULL_FALLBACK = ""
+
+
+def _conditions(filters):
+	"""Both filter forms frappe accepts, normalised to (field, operator, value).
+
+	The list form is not a stylistic variant: two conditions on one field cannot both
+	live in a dict, which is precisely what the `is set` + `<` fix needs.
+	"""
+	if isinstance(filters, dict):
+		for key, condition in (filters or {}).items():
+			if isinstance(condition, list | tuple):
+				yield key, condition[0], condition[1]
 			else:
-				raise AssertionError(f"stub does not implement operator {operator!r}")
-		elif value != condition:
-			return False
+				yield key, "=", condition
+		return
+	for condition in filters or []:
+		if len(condition) == 4:
+			# [doctype, field, operator, value]
+			yield condition[1], condition[2], condition[3]
+		else:
+			yield condition[0], condition[1], condition[2]
+
+
+def _matches(row, filters):
+	for key, operator, target in _conditions(filters):
+		raw = row.get(key)
+		value = NULL_FALLBACK if raw is None else raw
+		if operator == "=":
+			# frappe skips the ifnull wrap for `=` with a truthy value.
+			if raw != target:
+				return False
+		elif operator == "<":
+			if not _compare(value, target):
+				return False
+		elif operator == "<=":
+			if not (value == target or _compare(value, target)):
+				return False
+		elif operator == ">":
+			if not _compare(target, value):
+				return False
+		elif operator == ">=":
+			if not (value == target or _compare(target, value)):
+				return False
+		elif operator == "in":
+			# frappe only coalesces an `in` list that contains a falsy value.
+			if raw not in target:
+				return False
+		elif operator == "not in":
+			if value in target:
+				return False
+		elif operator == "!=":
+			if value == target:
+				return False
+		elif operator == "is":
+			if target == "not set" and raw:
+				return False
+			if target == "set" and not raw:
+				return False
+		elif operator == "between":
+			# frappe sets can_be_null = False for `between`, so a NULL never matches.
+			low, high = target
+			if raw is None:
+				return False
+			if _compare(raw, low) or _compare(high, raw):
+				return False
+		else:
+			raise AssertionError(f"stub does not implement operator {operator!r}")
 	return True
 
 
@@ -926,6 +982,256 @@ class TestRecertification(_CertificateCase):
 		_completion(expires_on="2026-07-01")
 		certificates.expire_and_recertify()
 		self.assertEqual(_rows("Training Completion")[COMPLETION]["status"], "Valid")
+
+
+class TestNeverExpiringRecordsAreLeftAlone(_CertificateCase):
+	"""The nullable-column comparison trap. Live on prod until v1.426.1.
+
+	Both sweeps filtered ``{"expires_on": ["<", nowdate()]}``. ``expires_on`` is
+	nullable on both doctypes and **NULL means never expires** -- ``_default_dates``
+	only fills it when the course carries a validity or recertification interval.
+	Frappe wraps a comparison on a nullable column in ``ifnull(col, <minimum of the
+	type>)``, so every NULL row matched: "no expiry" became "expired", and the
+	completion sweep then told the holder to retake a course that had not lapsed.
+
+	**Every test in this file passed throughout**, because the stub answered
+	``value is None -> no match`` for ``<`` -- the Python-intuitive answer, and the
+	opposite of the framework. A stub that is *more correct than the thing it stands
+	in for* hides that thing's behaviour just as thoroughly as one that mirrors a
+	mistake. ``_matches`` now models the ifnull fallback, which is what makes the
+	assertions below mean anything.
+
+	Found by the Crew Qualification Roster, which derives from stored dates and reads
+	no status column: it reported two of these as passed while the stored status said
+	Expired, and the disagreement was the finding.
+
+	**The completion case was already asserted** --
+	``TestRecertification.test_a_completion_with_no_expiry_never_lapses`` has sat in
+	this file since the sweep was written, saying exactly the right thing. It is not
+	duplicated here. It passed every run while production did the opposite, and it
+	fails the moment the filter is reverted now that the stub is faithful. The test was
+	right, the stub was wrong, and the bug shipped between them; the cases below are
+	the ones nothing covered -- the certificate half, and the retake that reaches a
+	person.
+	"""
+
+	def test_no_retake_is_raised_for_a_course_that_never_lapses(self):
+		"""The half that reached a person. A spurious recertification assignment is a
+		dashboard row saying retake this by a date, for training that is still good."""
+		_completion(expires_on=None)
+		certificates.expire_and_recertify()
+		self.assertEqual(_assignments(), [])
+
+	def test_a_certificate_that_never_expires_is_not_expired(self):
+		_rows("Training Course")[COURSE].update(
+			{"certificate_valid_months": 0, "recertify_months": 0}
+		)
+		certificates.after_completion(_completion())
+		self.assertIsNone(_certificates()[0]["expires_on"], "fixture must have no expiry")
+		certificates.expire_and_recertify()
+		self.assertEqual(_certificates()[0]["status"], "Valid")
+
+	def test_a_genuinely_lapsed_completion_is_still_expired(self):
+		"""The vacuity guard, and it is not optional: a filter narrowed until it
+		matches nothing passes every assertion above while doing no work at all."""
+		_completion(expires_on="2026-07-01")
+		certificates.expire_and_recertify()
+		self.assertEqual(_rows("Training Completion")[COMPLETION]["status"], "Expired")
+		self.assertEqual(len(_assignments()), 1)
+
+	def test_a_genuinely_lapsed_certificate_is_still_expired(self):
+		certificates.after_completion(_completion())
+		_certificates()[0]["expires_on"] = "2026-07-01"
+		certificates.expire_and_recertify()
+		self.assertEqual(_certificates()[0]["status"], "Expired")
+
+	def test_the_expiry_boundary_is_unchanged(self):
+		"""Expiring TODAY is not yet lapsed -- `expires_on` is the last valid day."""
+		_completion(expires_on=TODAY)
+		certificates.expire_and_recertify()
+		self.assertEqual(_rows("Training Completion")[COMPLETION]["status"], "Valid")
+
+
+class TestTheStubModelsTheFrameworkRatherThanIntuition(unittest.TestCase):
+	"""Guards the guard. Every assertion in the class above depends on `_matches`
+	reproducing frappe's ifnull fallback; if it drifted back to Python semantics they
+	would all keep passing while testing nothing."""
+
+	def test_a_null_matches_a_less_than(self):
+		self.assertTrue(_matches({"expires_on": None}, {"expires_on": ["<", "2026-08-01"]}))
+
+	def test_a_null_does_not_match_a_greater_than(self):
+		self.assertFalse(_matches({"expires_on": None}, {"expires_on": [">", "2026-08-01"]}))
+
+	def test_a_null_matches_a_not_equal(self):
+		self.assertTrue(_matches({"status": None}, {"status": ["!=", "Active"]}))
+
+	def test_is_set_and_is_not_set_are_exact(self):
+		self.assertFalse(_matches({"expires_on": None}, {"expires_on": ["is", "set"]}))
+		self.assertTrue(_matches({"expires_on": "2026-01-01"}, {"expires_on": ["is", "set"]}))
+		self.assertTrue(_matches({"expires_on": None}, {"expires_on": ["is", "not set"]}))
+
+	def test_between_never_matches_a_null(self):
+		"""frappe sets can_be_null = False for `between`, so it is the one comparison
+		that is safe on a nullable column without an extra clause."""
+		self.assertFalse(
+			_matches({"expires_on": None}, {"expires_on": ["between", ("2026-01-01", "2026-12-31")]})
+		)
+
+	def test_the_list_filter_form_is_understood(self):
+		"""The fix needs two conditions on one field, which a dict cannot express. If
+		the stub silently ignored the list form, the fixed filters would not be
+		exercised by a single test in this file."""
+		row = {"docstatus": 1, "status": "Valid", "expires_on": None}
+		self.assertFalse(
+			_matches(
+				row,
+				[
+					["docstatus", "=", 1],
+					["status", "=", "Valid"],
+					["expires_on", "is", "set"],
+					["expires_on", "<", "2026-08-01"],
+				],
+			)
+		)
+		row["expires_on"] = "2026-07-01"
+		self.assertTrue(
+			_matches(
+				row,
+				[
+					["docstatus", "=", 1],
+					["status", "=", "Valid"],
+					["expires_on", "is", "set"],
+					["expires_on", "<", "2026-08-01"],
+				],
+			)
+		)
+
+
+class TestTheSweepFiltersSayIsSet(unittest.TestCase):
+	"""Structural backstop: the behavioural tests above run against a stub, so pin
+	that the shipped filters really carry the clause on both doctypes."""
+
+	def test_both_sweeps_go_through_one_filter_builder(self):
+		src = (
+			Path(__file__).resolve().parents[1] / "training/certificates.py"
+		).read_text(encoding="utf-8")
+		self.assertIn("def _lapsed_filters(", src)
+		self.assertIn('["expires_on", "is", "set"]', src)
+		self.assertIn("_lapsed_filters(VALID)", src)
+		self.assertIn('_lapsed_filters("Valid")', src)
+
+	def test_neither_sweep_still_carries_the_bare_comparison(self):
+		src = (
+			Path(__file__).resolve().parents[1] / "training/certificates.py"
+		).read_text(encoding="utf-8")
+		code = "\n".join(
+			line for line in src.splitlines() if not line.strip().startswith(("#", "#:"))
+		)
+		self.assertNotIn('"expires_on": ["<"', code)
+
+
+class TestTheRepairPatch(unittest.TestCase):
+	"""The data half. Four rows on prod carried `status = "Expired"` with no expiry
+	date at all, plus one retake assignment raised against one of them."""
+
+	@property
+	def _src(self):
+		return (
+			Path(__file__).resolve().parents[1]
+			/ "patches/unexpire_never_expiring_training_records.py"
+		).read_text(encoding="utf-8")
+
+	@property
+	def _code(self):
+		"""Executable source only. Every absence assertion below would otherwise
+		match the prose explaining the absence."""
+		import ast as _ast
+
+		tree = _ast.parse(self._src)
+		for node in _ast.walk(tree):
+			if not isinstance(
+				node, _ast.Module | _ast.ClassDef | _ast.FunctionDef | _ast.AsyncFunctionDef
+			):
+				continue
+			body = getattr(node, "body", None)
+			if (
+				body
+				and isinstance(body[0], _ast.Expr)
+				and isinstance(body[0].value, _ast.Constant)
+				and isinstance(body[0].value.value, str)
+			):
+				node.body = body[1:] or [_ast.Pass()]
+		return _ast.unparse(_ast.fix_missing_locations(tree)).replace("'", '"')
+
+	def test_it_is_registered_post_model_sync(self):
+		text = (
+			Path(__file__).resolve().parents[1] / "patches.txt"
+		).read_text(encoding="utf-8")
+		module = "erpnext_enhancements.patches.unexpire_never_expiring_training_records"
+		self.assertIn(module, text)
+		self.assertIn("[post_model_sync]", text[: text.index(module)])
+
+	def test_the_predicate_is_the_broken_filters_own_rule(self):
+		"""`status = Expired` AND `expires_on` unset. That pair is not circumstantial:
+		it is exactly the set the broken filter selected, and the certificate
+		controller guards its own expiry branch on `if self.expires_on`, so nothing
+		else can mint one."""
+		code = self._code
+		self.assertIn('["status", "=", EXPIRED]', code)
+		self.assertIn('["expires_on", "is", "not set"]', code)
+
+	def test_it_repairs_both_doctypes(self):
+		code = self._code
+		self.assertIn("COMPLETION", code)
+		self.assertIn("CERTIFICATE", code)
+
+	def test_it_does_not_go_through_the_doc_api(self):
+		"""Both are submitted, and `save()` on a submitted document is refused. The
+		sweep wrote these with db.set_value; so does the repair."""
+		code = self._code
+		self.assertIn("update_modified=False", code)
+		self.assertNotIn(".save(", code)
+		self.assertNotIn("frappe.get_doc(", code)
+
+	def test_it_only_cancels_an_assignment_nobody_has_started(self):
+		"""`_raise_recertification` sets assignment_source = Recertification on BOTH
+		its branches -- insert and re-date -- so the source field cannot tell a
+		spurious row from a legitimate one whose due date merely moved. Restricting
+		to `Not Started` is what makes the cancel safe."""
+		code = self._code
+		self.assertIn('"Not Started"', code)
+		at = code.index('assignment["status"] != "Not Started"')
+		self.assertIn("continue", code[at : at + 200])
+
+	def test_it_uses_the_doctypes_own_spelling_of_cancelled(self):
+		"""An off-options Select value makes a row unsaveable, and renaming an option
+		is a data migration of its own. This matches the doctype, not house style."""
+		import json as _json
+
+		doc = _json.loads(
+			(
+				Path(__file__).resolve().parents[1]
+				/ "training/doctype/training_assignment/training_assignment.json"
+			).read_text(encoding="utf-8")
+		)
+		options = next(
+			f["options"] for f in doc["fields"] if f["fieldname"] == "status"
+		).split("\n")
+		self.assertIn("Cancelled", options)
+		self.assertIn('CANCELLED = "Cancelled"', self._src)
+
+	def test_it_reports_what_it_touched_and_what_it_left(self):
+		"""A repair that silently changed four rows and left a fifth is indis-
+		tinguishable from one that found nothing."""
+		code = self._code
+		self.assertIn("restored", code)
+		self.assertIn("LEFT ALONE", self._src)
+
+	def test_it_cannot_abort_the_deploy(self):
+		code = self._code
+		self.assertGreaterEqual(code.count("except Exception"), 2)
+		self.assertIn("log_error", code)
 
 
 if __name__ == "__main__":
