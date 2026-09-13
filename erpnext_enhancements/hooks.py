@@ -78,6 +78,13 @@ doctype_js = {
 	# Training Signoff through the existing engine (evaluations.record_evaluation)
 	# rather than saving a verdict on the form. In public/js like the Course script
 	# above -- NOT the doctype-folder file (see the double-load note below).
+	# training (Phase 6 D6): the door, on the record that says you owe a course.
+	# This doctype had NO form script until v1.429.1 -- a learner could open the row
+	# telling them a course is due and there was nothing on it that would take them
+	# to it. Routes with frappe.set_route rather than an href: /app is a
+	# website_redirect to /desk in v16, so a hand-built link costs a full reload
+	# plus a hop and is not intercepted by the router.
+	"Training Assignment": ["public/js/training/training_assignment.js"],
 	"Training Evaluation": ["public/js/training/training_evaluation.js"],
 	# training: the Submission form's "Grade" button, which files a real grade
 	# through submissions.grade_submission (stamps grader, times it, mails the
@@ -323,6 +330,11 @@ doctype_list_js = {
 	# in beside it: start from a shape, or draft it with AI. Both land on the same
 	# unpublished Draft behind the same review gate.
 	"Training Course": "public/js/training/training_course_list.js",
+	# training (Phase 6 D6): "Open training", plus a real indicator per status.
+	# permission_query_conditions already scopes this list to the learner's own
+	# rows, so for the fifteen people holding Training Learner this list IS "what
+	# I owe" -- which is why the learner workspace links straight at it.
+	"Training Assignment": "public/js/training/training_assignment_list.js",
 	"File": "public/js/global_enhancements/file_list.js",
 	"Item": "public/js/item_list.js",
 	# procurement — the Order Stage pill: a real colour per stage (frappe's

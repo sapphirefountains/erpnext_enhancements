@@ -49,6 +49,20 @@ def doc():
     return json.loads(PAGE_JSON.read_text(encoding="utf-8"))
 
 
+def strip_comments(text):
+    """Comments out, before any assertion that something is ABSENT.
+
+    A comment naming a token is not a use of it, and the comment explaining why
+    something is absent nearly always names the thing -- `training_assignment.js`
+    says in prose that an `<a href="/app/...">` would not be intercepted by the
+    router, which is exactly the string the test below refuses to find. This repo
+    has been caught by that shape four times now.
+    """
+    text = re.sub(r"/[*].*?[*]/", "", text, flags=re.S)
+    keep = [line for line in text.splitlines() if not line.strip().startswith("//")]
+    return chr(10).join(keep)
+
+
 class TestItIsRegistered(unittest.TestCase):
     def test_every_file_is_there(self):
         for path in (PAGE_JSON, PAGE_JS, PAGE_CSS, PAGE_DIR / "__init__.py"):
@@ -79,24 +93,32 @@ class TestItIsRegistered(unittest.TestCase):
 
 
 class TestTheRolloutSwitch(unittest.TestCase):
-    """`roles` on the Page record is what decides who sees it, and it is being used
-    deliberately as the staged-rollout control: System Manager first, then
-    Training Learner once a person has opened it on a real bench.
+    """`roles` on the Page record decides who sees it, and it was used as the
+    staged-rollout control: System Manager only in v1.429.0, opened to learners in
+    v1.429.1 once the page existed and its tests were green.
 
-    It is show/hide, never a permission boundary — a Desk Page has no server
-    controller, and every endpoint the player dials re-checks. This test exists so
-    that flipping the switch is a deliberate edit with a test to update, rather than
-    something that happens by accident while editing something else.
+    It is show/hide, **never** a permission boundary — a Desk Page has no server
+    controller, and every endpoint the player dials re-checks for itself. WI-074
+    states the same rule for Desktop Icon. This test exists so that changing who can
+    see the learner surface is a deliberate edit with a test to update, rather than
+    something that happens on the way past.
     """
 
     def test_the_role_set_is_what_we_think_it_is(self):
         roles = sorted(row["role"] for row in doc().get("roles") or [])
         self.assertEqual(
             roles,
-            ["System Manager"],
-            "learn.json's roles changed. If this is the rollout switch being thrown, "
-            "update this test in the same commit and say so in the CHANGELOG.",
+            ["System Manager", "Training Author", "Training Learner", "Training Manager"],
+            "learn.json's roles changed. If this is deliberate, update this test in "
+            "the same commit and say so in the CHANGELOG.",
         )
+
+    def test_the_learner_role_is_there(self):
+        """Named separately because it is the one that matters: without it the page
+        exists, passes every other test here, and is invisible to all fifteen of the
+        people it was built for."""
+        roles = {row["role"] for row in doc().get("roles") or []}
+        self.assertIn("Training Learner", roles)
 
 
 class TestItIsAHostNotAPlayer(unittest.TestCase):
@@ -207,6 +229,82 @@ class TestTheChromeStaysOnItsOwnSideOfTheSeam(unittest.TestCase):
             c for c in classes if c.startswith("tl-") and f".{c}" not in css
         )
         self.assertEqual(missing, [], f"{missing} are rendered with no rule in learn.css")
+
+
+class TestTheDoorIsFindable(unittest.TestCase):
+    """A page nobody can find is the problem this programme exists to fix, restated.
+
+    The player was finished and reachable only from a link inside an email. Shipping
+    a second surface with the same property would be the same bug with a nicer
+    implementation, so the routes IN are asserted rather than assumed.
+    """
+
+    WORKSPACES = APP / "training" / "workspace"
+
+    def workspace(self, folder):
+        return json.loads((self.WORKSPACES / folder / f"{folder}.json").read_text(encoding="utf-8"))
+
+    def test_both_workspaces_shortcut_the_page(self):
+        for folder in ("training", "my_training"):
+            with self.subTest(folder):
+                shortcuts = self.workspace(folder).get("shortcuts") or []
+                pages = [s for s in shortcuts if s.get("type") == "Page" and s.get("link_to") == "learn"]
+                self.assertTrue(pages, f"{folder} has no Page shortcut to learn")
+
+    def test_the_learner_workspace_is_in_the_training_module(self):
+        """The module gate is what decides whether it appears at all: a workspace
+        vanishes silently unless the viewer holds a DocPerm on some non-child doctype
+        in its module, and `roles: []` does not mean everyone."""
+        self.assertEqual(self.workspace("my_training")["module"], "Training")
+
+    def test_the_learner_workspace_links_only_at_learner_records(self):
+        """It must not become a second authoring console. Every doctype it links is
+        one `permission_query_conditions` scopes to the learner's own rows."""
+        owned = {
+            "Training Assignment",
+            "Training Completion",
+            "Training Certificate",
+            "Training Submission",
+        }
+        links = {
+            row["link_to"]
+            for row in self.workspace("my_training").get("links") or []
+            if row.get("type") == "Link"
+        }
+        self.assertTrue(links)
+        self.assertEqual(links - owned, set(), f"{links - owned} are not learner-scoped")
+
+    def test_both_workspaces_bump_modified(self):
+        """Workspaces are TIMESTAMP-gated by the importer, unlike DocTypes, which are
+        hash-gated. A file that does not read newer than the stored row is skipped in
+        silence -- the failure that stranded this workspace's cards for five weeks."""
+        for folder in ("training", "my_training"):
+            with self.subTest(folder):
+                self.assertGreaterEqual(self.workspace(folder)["modified"], "2026-09-13")
+
+    def test_the_resync_patch_is_registered(self):
+        """Bumping `modified` is enough on a site whose rows are older; the patch is
+        what makes it land on a row somebody has rearranged in the Desk since."""
+        patches = (APP / "patches.txt").read_text(encoding="utf-8")
+        self.assertIn("resync_training_workspace_split", patches)
+
+    def test_the_assignment_form_and_list_are_registered(self):
+        """A form script hooks.py does not list never loads, which makes the button
+        true in the repo and absent in the desk."""
+        hooks = (APP / "hooks.py").read_text(encoding="utf-8")
+        self.assertIn("training/training_assignment.js", hooks)
+        self.assertIn("training/training_assignment_list.js", hooks)
+
+    def test_the_entry_points_route_rather_than_link(self):
+        """`/app` is a website_redirect to `/desk` in v16, so a hand-built href is not
+        intercepted by the router: it costs a full reload plus a redirect hop. Every
+        in-desk navigation goes through frappe.set_route."""
+        for name in ("training_assignment.js", "training_assignment_list.js"):
+            with self.subTest(name):
+                text = strip_comments((PLAYER_DIR / name).read_text(encoding="utf-8"))
+                self.assertIn('frappe.set_route("learn"', text)
+                self.assertNotIn('href="/app/', text)
+                self.assertNotIn('href="/desk/', text)
 
 
 if __name__ == "__main__":

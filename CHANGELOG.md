@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.429.1] - 2026-09-13
+
+Training Phase 6, D6 — **taken before D5 deliberately**. D5 retires `/training`, and
+doing that before the Desk page is visible to learners would leave them, for the length
+of one deploy, with no training surface at all. Opening the door comes first; closing the
+old one comes next.
+
+### Added
+
+- **The rollout switch is thrown.** `learn.json` gains Training Learner, Training Author
+  and Training Manager. The page shipped System-Manager-only in v1.429.0 precisely so this
+  could be a separate, reviewable line.
+
+- **The Training workspace splits in two.** `training.json` keeps the authoring and
+  reporting console and gains an **Open Training** Page shortcut; **My Training** is new
+  and is the learner's own — Open Training, What I owe, My certificates, and a card of the
+  four doctypes `permission_query_conditions` already scopes to their own rows.
+
+  The split is not cosmetic. `training.json` carries `roles: []`, which does **not** mean
+  "nobody" — it means no restriction beyond the module gate, and all fifteen Training
+  Learner holders hold read DocPerms on fourteen Training doctypes. So the authoring
+  console (*Record a session*, *My Drafts*, *Awaiting Review*) has been sitting in every
+  learner's sidebar all along, with no way to start a course from it. `My Training` is
+  what makes the sidebar tell the truth about who you are.
+
+- **Training Assignment gets a form script and a list script** — it had neither. A learner
+  could open the row telling them a course is due on 26 September and find nothing on it
+  that would take them there. The form's primary action reads *Start* / *Continue* /
+  *Review* from the status; the list gains **Open training** and a real per-status
+  indicator, because `guess_colour()` matches none of the seven names and rendered all of
+  them grey.
+
+  Both navigate with `frappe.set_route`, never an `href`. `/app` is a `website_redirect`
+  to `/desk` in v16, so a hand-built link is not intercepted by the router and costs a
+  full page reload plus a redirect hop.
+
+- **`patches/resync_training_workspace_split.py`.** Workspaces are **timestamp**-gated by
+  the importer — unlike DocTypes, which are hash-gated — so a file that does not read
+  newer than the stored row is skipped in silence. Both files carry a bumped `modified`,
+  which is enough on a site whose rows are older; the patch is what makes the change land
+  on a row somebody has since rearranged in the Desk. Never-raise, because `bench migrate`
+  is the deploy.
+
+### Examined and deliberately not built
+
+- **The awesomebar already finds the page, and no code was written for it.**
+  `bootinfo.page_info` is the permission-filtered set of pages the user may open, and
+  `search_utils.js` `get_pages` matches it on `title` — so typing "Training" finds
+  `/desk/learn` for exactly the people allowed to open it, and frappe's existing shortcut
+  for focusing the search bar is the keyboard entry. Building a custom search provider or
+  a bespoke key binding would have been a second implementation of something already
+  working.
+
+  One cosmetic consequence to look at on a bench: the page's title and the manager
+  workspace's label are both "Training", so both will list under that name for a manager.
+  It is a one-line change if it reads badly; it is not worth guessing at from here.
+
 ## [1.429.0] - 2026-09-13
 
 Training Phase 6, D4. **The learner player has a door in the Desk.**

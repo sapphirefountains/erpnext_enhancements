@@ -881,3 +881,8 @@ erpnext_enhancements.patches.restore_force_expired_maintenance_contracts
 # rebuilds roles from the profile union on every User save) was never re-made. This repairs
 # the rows; `tasks.sweep_learner_roles` runs daily so the hole cannot reopen.
 erpnext_enhancements.patches.grant_learner_role_to_assigned_users
+# The Training workspace splits in two: the authoring console keeps the name, and the
+# learner gets "My Training". Workspaces are TIMESTAMP-gated by the importer (unlike
+# DocTypes, which are hash-gated), so a row that reads newer than the file is skipped in
+# silence -- the failure that stranded this same workspace's cards for five weeks.
+erpnext_enhancements.patches.resync_training_workspace_split

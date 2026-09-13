@@ -11,6 +11,15 @@
  "roles": [
   {
    "role": "System Manager"
+  },
+  {
+   "role": "Training Manager"
+  },
+  {
+   "role": "Training Author"
+  },
+  {
+   "role": "Training Learner"
   }
  ],
  "standard": "Yes",
