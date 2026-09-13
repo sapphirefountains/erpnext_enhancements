@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.429.2] - 2026-09-13
+
+Training Phase 6, D5. **`/training` is retired as a rendering surface and kept as a
+redirect.**
+
+### Changed
+
+- **The portal shell is gone: 291 lines down to 26.** `www/training.html` no longer
+  mounts, styles or loads anything — the player lives in the Desk. What is left is the
+  route, and one paragraph for the people a redirect cannot help.
+
+  **The route is kept deliberately.** Six code paths have emailed `https://…/training`
+  since v1.208.0 — assignment and due/escalation digests, answered questions, sign-off
+  requests, graded submissions, evaluation invites — and every one of those messages is
+  still in somebody's inbox. Deleting the route would 404 all of them, and a 404 on a link
+  somebody was told to follow reads as the feature being gone. New mail points at
+  `/app/learn` and lands in the Desk through frappe's own `/app/(.*)` → `/desk/`
+  redirect, the same hop this app's other emailed desk links already take.
+
+- **It is not an unconditional redirect.** A user with no desk access sent to `/desk` gets
+  a login page, which is a worse answer than a sentence. `Training Learner` keeps
+  `desk_access = 0` — flipping it would turn every customer contact into a System User and
+  move the licensed-user count — so a customer contact holding only that role is a Website
+  User. There are none today; the branch exists so that if one is ever made, the failure
+  is a paragraph rather than a loop.
+
+- **`grant_portal_access` refuses, with the reason.** It minted a login for a surface that
+  no longer renders; minting it anyway is the worse failure, because a manager presses the
+  button, a welcome email goes out, a client sets a password, follows the link and is
+  bounced to a Desk they cannot enter — and nobody is told, least of all the person who
+  pressed it. **Refused rather than deleted:** it keeps its caller on the Contact form,
+  which keeps the no-uncalled-endpoint gate green and keeps the reason attached to the
+  button. Reinstating customer training is a product decision, and the apparatus under the
+  refusal is intact for when it is made.
+
+- The `portal_menu_items` Training entry is removed, and the HR workspace's **URL** tile to
+  `/training` becomes a **Page** shortcut — a URL tile would take a desk user out of the
+  app and straight back in through the redirect.
+
+### Removed
+
+- **`TestTheChromeRemovalSparesThePlayer`**, whose subject no longer exists — but its
+  reasoning is kept in the class that replaces it, because it is worth keeping. It pinned
+  two qualifiers in the old template's `{% block style %}`: `footer:not(.tr-bottom)` and
+  `main:not(.tr-view)`. A bare `footer { display: none !important }` hid the sticky action
+  bar — the element holding *Start the quiz*, *Finish this lesson* and the resume button —
+  so the one control that advances a course rendered and no learner could see or press it.
+  A Desk Page has no website chrome around it to remove, so no rule could over-reach; the
+  note stays because the next person to wrap the player in a host will reach for exactly
+  that `display: none`.
+
+### Fixed
+
+- `test_hr_module`'s learner-surface assertion required a **URL** shortcut, on the stated
+  reasoning that the surface "is a website page and must stay one — Training Learner has
+  `desk_access = 0` because customer contacts hold it". The role still has `desk_access = 0`
+  and still must; the premise under it had stopped being true. All fifteen Training Learner
+  holders are System Users, all 26 assignments belong to System Users, and the only four
+  Website Users are `chatbot@`, `sales@`, `info@` and Guest.
+
+### Added
+
+- **`tests/test_training_portal_retirement.py`** (14 tests). Every assertion is a pair —
+  something absent **and** its replacement present — because "no occurrences of
+  `/training`" is satisfied just as well by a file somebody emptied. Six senders, six links
+  into the Desk, counted.
+
+  Its own comment-stripper is worth a note: the obvious version also stripped
+  triple-quoted strings, on the usual "a comment naming a token is not a use of it"
+  reasoning. That was wrong here and quietly so — these senders build their HTML bodies
+  with f-strings that are themselves triple-quoted, so stripping "docstrings" removed five
+  of the six links the module counts, and the assertion went green having examined almost
+  nothing.
+
 ## [1.429.1] - 2026-09-13
 
 Training Phase 6, D6 — **taken before D5 deliberately**. D5 retires `/training`, and

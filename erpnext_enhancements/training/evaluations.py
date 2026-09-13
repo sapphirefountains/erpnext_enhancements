@@ -116,7 +116,7 @@ def notify_scheduled(doc):
 		f"""<p>A practical evaluation of your <b>{esc(course_title)}</b> competency has been booked"""
 		+ (f" for <b>{esc(when)}</b>" if when else "")
 		+ (f", at {esc(where)}" if where else "")
-		+ f""".</p><p><a href="{get_url('/training')}">Open your training</a></p>""",
+		+ f""".</p><p><a href="{get_url('/app/learn')}">Open your training</a></p>""",
 	)
 
 	if doc.evaluator_user:

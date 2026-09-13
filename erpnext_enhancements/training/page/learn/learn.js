@@ -78,7 +78,11 @@ class LearnPage {
 		this.wrapper = wrapper;
 		this.player = null;
 		this.booting = null;
+		// The mount, with the same boot line the portal shell rendered. Not cosmetic:
+		// the runtime is six files and a round trip away, and an empty bordered box is
+		// indistinguishable from a page that has failed.
 		this.root = $('<div id="training-root" class="tr-shell" aria-busy="true"></div>')
+			.append($('<div class="tr-boot"></div>').text(__("Loading training…")))
 			.appendTo($('<div class="tl-desk-surface"></div>').appendTo(page.body))
 			.get(0);
 

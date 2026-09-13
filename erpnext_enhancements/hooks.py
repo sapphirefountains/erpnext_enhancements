@@ -1938,11 +1938,11 @@ default_log_clearing_doctypes = {"Notification Log": 90}
 ignore_links_on_delete = ["User Form Draft"]
 
 portal_menu_items = [
-	# training: customers reach "how to operate your fountain" at /training -- the
-	# same mobile page the field crew uses, role-gated rather than duplicated into
-	# a second customer-only page. Added only now that the page actually exists; a
-	# dead menu item teaches people to ignore the menu.
-	{"title": "Training", "route": "/training", "role": "Training Learner"},
+	# The Training entry left in v1.429.2. Courses are taken in the Desk now, and
+	# `Training Learner` keeps desk_access = 0, so a customer contact holding it
+	# could not open the destination -- a menu item leading to a login page teaches
+	# people to ignore the menu, which was the reason the entry was held back until
+	# the page existed in the first place.
 	{"title": "Maintenance Records", "route": "/maintenance-records", "role": "Customer"},
 	{"title": "Pay Invoices", "route": "/pay", "role": "Customer"},
 ]

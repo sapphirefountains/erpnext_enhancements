@@ -1,69 +1,56 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Frappe web-page controller for the learner training player at ``/training``.
+"""``/training`` — a redirect into the Desk, and the last thing left of the portal.
 
-Chrome-free, mobile-first page where an assigned learner works through a course:
-video with watch telemetry, in-video checkpoints and end-of-lesson quizzes. It
-follows the traveler itinerary shell (``www/itinerary.py``), which in turn follows
-the Time Kiosk shell minus the PWA/service-worker layer — the player has no
-offline story on purpose, because progress that cannot reach the server is
-progress that cannot be defended in a compliance conversation.
+The learner player moved to :mod:`~erpnext_enhancements.training.page.learn` in
+v1.429.0. **This route is kept, and only, because six code paths have emailed
+``https://…/training`` since v1.208.0** — assignment and due/escalation digests
+(``training/notifications.py``), answered questions (``training/qa.py``), sign-off
+requests (``training/signoff.py``), graded submissions
+(``training/submissions.py``) and evaluation invites
+(``training/evaluations.py``). Every one of those messages is still in an inbox.
+Deleting the route would 404 all of them, and a 404 on a link somebody was told to
+follow reads as the feature being gone.
 
-Two things about this file are load-bearing:
+New mail points at ``/app/learn`` and lands in the Desk after frappe's own
+``/app/(.*)`` → ``/desk/\1`` redirect, which is the same hop this app's other
+emailed desk links already take.
 
-* **The filename must stay ``training.py``, underscored.** Frappe imports a web
-  page's controller by hyphen-to-underscore-ing the *template* basename, so a
-  hyphenated controller is never imported and ``get_context`` silently never
-  runs — no exception, no log line (``scripts/check_www_controllers.py`` guards
-  it; ``www/stripe-return.py`` was broken this way for months).
-* **It is a shell and nothing more.** Every learner-visible fact comes from the
-  one bootstrap call below, and every subsequent interaction goes back through
-  ``api.training`` over ``fetch``. The page must run for *Website Users* with
-  ``desk_access = 0`` (customer contacts holding Training Learner), so nothing
-  here — and nothing in the player scripts — may rely on the desk bundle or a
-  ``frappe.*`` global being present in the browser.
+**The filename must stay ``training.py``, underscored.** Frappe imports a web
+page's controller by hyphen-to-underscore-ing the *template* basename, so a
+hyphenated controller is never imported and ``get_context`` silently never runs —
+no exception, no log line. ``scripts/check_www_controllers.py`` guards it, and as
+of v1.428.0 also guards the other half: a controller with no sibling template is
+not a page at all, so the route would not exist and this redirect would never fire.
 
-Enablement (``training_enabled`` / ``portal_enabled``) is decided inside
-:func:`~erpnext_enhancements.api.training.get_learner_bootstrap`, not here: the
-same answer has to be given to the API callers that follow this page load, and
-one switch read in one place cannot drift from itself.
-
-Cache busting: raw ``/assets`` URLs are served 1-year-immutable, so
-``training.html`` appends ``?v={{ deploy_version }}`` to every mutable asset URL.
-The token comes from :mod:`erpnext_enhancements.utils.deploy` — the canonical
-home. (``itinerary.py`` still imports it from ``www.kiosk``, where it used to
-live; do not copy that import.)
+**Why this is not an unconditional redirect.** A user with no desk access sent to
+``/desk`` gets a login page, which is a worse answer than a sentence. Training
+Learner keeps ``desk_access = 0`` — flipping it would turn every customer contact
+into a System User and move the licensed-user count — so a customer contact
+holding only that role is a Website User. There are none today; the branch exists
+so that if one is ever created, the failure is a paragraph rather than a loop.
 """
 
 import frappe
 
-from erpnext_enhancements.api.training import get_learner_bootstrap
-from erpnext_enhancements.utils.deploy import get_deploy_version
-
-# Always render fresh per-user; never cache the authenticated shell.
+# Never cache: the answer depends on who is asking.
 no_cache = 1
 
 
 def get_context(context):
-	"""Route: ``/training`` (rendered by ``training.html``).
+	"""Route: ``/training``. Redirects into the Desk for anyone who can open it."""
+	user = frappe.session.user
 
-	Guests are redirected to ``/login?redirect-to=/training``. For an
-	authenticated user this exposes ``boot_json`` (the single learner bootstrap
-	payload, injected as ``window.TRAINING_BOOT``), ``csrf_token``
-	(``window.TRAINING_CSRF``, needed for every ``fetch`` the player makes) and
-	``deploy_version`` (asset cache-bust token).
-	"""
-	if frappe.session.user == "Guest":
-		frappe.local.flags.redirect_location = "/login?redirect-to=/training"
+	if not user or user == "Guest":
+		# Signed-out visitors are almost certainly following an old training email.
+		# Send them through login and on to the page they wanted.
+		frappe.local.flags.redirect_location = "/login?redirect-to=/app/learn"
 		raise frappe.Redirect
 
-	boot = get_learner_bootstrap()
+	if frappe.db.get_value("User", user, "user_type") == "System User":
+		frappe.local.flags.redirect_location = "/app/learn"
+		raise frappe.Redirect
 
 	context.no_cache = 1
-	context.boot_json = frappe.as_json(boot)
-	# Fall back to minting the token: without it every player POST 403s, and a
-	# bootstrap that stops returning the key would take the page down silently.
-	context.csrf_token = boot.get("csrf_token") or frappe.sessions.get_csrf_token()
-	context.deploy_version = get_deploy_version()
 	return context

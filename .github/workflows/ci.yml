@@ -766,6 +766,14 @@ jobs:
       # with two destinations).
       - name: Training desk page (host not fork, teardown, route name)
         run: python -m unittest erpnext_enhancements.tests.test_training_desk_page -v
+      # /training retired to a redirect. Both halves fail silently: delete the route
+      # and every training email ever sent 404s (six senders have emailed that URL
+      # since v1.208.0 and the messages are still in inboxes); keep the page and there
+      # are two learner surfaces drifting apart. Every assertion comes in a pair --
+      # something absent AND its replacement present -- because "no occurrences of
+      # /training" is satisfied just as well by a file somebody emptied.
+      - name: Training portal retirement (the route redirects, the links moved)
+        run: python -m unittest erpnext_enhancements.tests.test_training_portal_retirement -v
       # Every dotted path in hooks.py must name something that exists. Frappe
       # resolves after_migrate at the very END of `bench migrate`, so a typo there
       # fails the deploy after every schema change has already been applied -- the

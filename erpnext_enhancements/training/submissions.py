@@ -259,7 +259,7 @@ def grade_submission(submission, status, feedback=None, grade=None):
 			f"""
 				<p>Your submission on <b>{frappe.utils.escape_html(lesson_title)}</b> was {verdict}.</p>
 				{body_note}
-				<p><a href="{get_url('/training')}">Open your training</a></p>
+				<p><a href="{get_url('/app/learn')}">Open your training</a></p>
 			""",
 		)
 

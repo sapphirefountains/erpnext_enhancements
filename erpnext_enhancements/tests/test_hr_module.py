@@ -289,13 +289,37 @@ class TestTheWorkspaceHasNoDeadEnds(unittest.TestCase):
             )
             i = j
 
-    def test_the_learner_surface_is_a_url_not_a_doctype(self):
-        """`/training` is a website page and must stay one — Training Learner has
-        `desk_access = 0` because customer contacts hold it, and desk access would
-        move the licensed-user count. Workspace Links cannot be URLs, so this has to
-        be a shortcut."""
-        urls = [s for s in self.ws["shortcuts"] if s.get("type") == "URL"]
-        self.assertIn("/training", [s.get("url") for s in urls])
+    def test_the_learner_surface_is_a_page_shortcut(self):
+        """This asserted a **URL** shortcut to `/training` until v1.429.2, on the
+        reasoning that the learner surface "is a website page and must stay one —
+        Training Learner has `desk_access = 0` because customer contacts hold it".
+
+        The role still has `desk_access = 0` and still must: flipping it would turn
+        every customer contact into a System User and move the licensed-user count.
+        But the premise underneath it had stopped being true. Measured on prod:
+        **all fifteen Training Learner holders are System Users**, all 26 Training
+        Assignments belong to System Users, and the only four Website Users are
+        `chatbot@`, `sales@`, `info@` and Guest. The population the portal existed
+        for was zero, while the people who did hold the role had no desk door at all
+        and reached their courses only through a link in an email.
+
+        So the surface is a Desk Page now, and a URL tile here would take a learner
+        out of the app and straight back in through a redirect. Workspace *Links*
+        still cannot be URLs, which is why this is still a shortcut — only the type
+        changed."""
+        pages = [
+            s
+            for s in self.ws["shortcuts"]
+            if s.get("type") == "Page" and s.get("link_to") == "learn"
+        ]
+        self.assertTrue(pages, "the HR workspace has no Page shortcut to the learner page")
+
+    def test_no_shortcut_still_points_at_the_retired_portal(self):
+        """`/training` is a redirect now. A tile pointing at it works for a desk user
+        (out of the app and back in, one hop) and sends a Website User to a login
+        page — which is the shape this whole release exists to stop."""
+        urls = [s.get("url") for s in self.ws["shortcuts"] if s.get("type") == "URL"]
+        self.assertNotIn("/training", urls)
 
 
 # ------------------------------------------------------------------ the ladder

@@ -37,13 +37,21 @@ every migrate for ever.
 
 import frappe
 
-WORKSPACES = ("training", "my_training")
+# (module, workspace). The HR one is here because its "Open my training" tile was a
+# URL pointing at /training, which is now a redirect -- a desk user clicking it would
+# leave the app and come straight back, and a Website User would be sent to a login
+# page. It is a Page shortcut now.
+WORKSPACES = (
+	("training", "training"),
+	("training", "my_training"),
+	("hr_enhancements", "hr"),
+)
 
 
 def execute():
-	for name in WORKSPACES:
+	for module, name in WORKSPACES:
 		try:
-			frappe.reload_doc("training", "workspace", name, force=True)
+			frappe.reload_doc(module, "workspace", name, force=True)
 		except Exception:
 			# A workspace that will not import must not abort a migrate, and on this
 			# repo `bench migrate` IS the deploy: the release carries schema changes

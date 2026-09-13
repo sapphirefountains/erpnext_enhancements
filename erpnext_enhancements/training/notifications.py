@@ -152,7 +152,7 @@ def send_assigned(assignment):
 	body = f"""
 		<p>Hi {frappe.utils.escape_html(recipient.full_name)},</p>
 		<p>You have been assigned the training <b>{frappe.utils.escape_html(title)}</b>.{due}</p>
-		<p><a href="{get_url('/training')}">Open your training</a></p>
+		<p><a href="{get_url('/app/learn')}">Open your training</a></p>
 	"""
 	_send(recipient, _("Training assigned: {0}").format(title), body, doc.name)
 
@@ -184,7 +184,7 @@ def send_due_digest(user, assignments):
 		parts.append("<p>These are coming up:</p><ul>")
 		parts.extend(_course_line(a) for a in upcoming)
 		parts.append("</ul>")
-	parts.append(f'<p><a href="{get_url("/training")}">Open your training</a></p>')
+	parts.append(f'<p><a href="{get_url("/app/learn")}">Open your training</a></p>')
 
 	subject = (
 		_("Training overdue ({0})").format(len(overdue))

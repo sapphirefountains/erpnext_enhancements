@@ -216,9 +216,14 @@ class TestTheChromeStaysOnItsOwnSideOfTheSeam(unittest.TestCase):
         would ship desk-only chrome to the portal and the canvas."""
         invented = set(re.findall(r'class="([^"]*)"', code()))
         classes = {cls for group in invented for cls in group.split()}
-        # tr-shell is the mount point itself — the portal template owns the identical
-        # class, and player.css styles it. The host is allowed to build the mount.
-        stray = sorted(c for c in classes if c.startswith("tr-") and c != "tr-shell")
+        # The mount and its boot line. Both already have rules in player.css and both
+        # were rendered by the portal template before it became a redirect — the host
+        # took over the same two, it did not invent them. What this refuses is a NEW
+        # tr-* class, which would fail the player's two-way contract as "rendered but
+        # never styled", and whose obvious fix (add the rule to player.css) would ship
+        # desk-only chrome to the portal, the preview harness and the canvas.
+        mount = {"tr-shell", "tr-boot"}
+        stray = sorted(c for c in classes if c.startswith("tr-") and c not in mount)
         self.assertEqual(stray, [], f"{stray} are player classes invented by the host")
 
     def test_every_class_it_renders_has_a_rule(self):

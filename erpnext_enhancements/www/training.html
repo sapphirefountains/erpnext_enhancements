@@ -1,121 +1,26 @@
 {#
-  Learner training player shell (served at /training; controller: training.py).
+  /training — the redirect, and the sentence for the people a redirect cannot help.
 
-  Chrome-free mobile page following the traveler itinerary shell (itinerary.html),
-  which follows the Time Kiosk shell WITHOUT the PWA/service-worker layer. Its
-  jobs, and only these:
-    * load the player styles (css/training/player.css), the transport
-      (js/training/transport.js) and the four player scripts
-      (js/training/{blocks,video,quiz,player}.js, in that order — player.js
-      composes the other three);
-    * hand the server-computed boot payload to the front-end as
-      window.TRAINING_BOOT / TRAINING_CSRF / TRAINING_BUILD;
-    * construct TR.makeTransport with this page's CSRF token and hand the result
-      to the player.
+  This file was the learner player's shell for a year: 291 lines of mount point,
+  chrome-removal CSS and the fetch transport. The player now lives in the Desk
+  (training/page/learn/), and this route survives for one reason only — six code
+  paths have emailed https://…/training since v1.208.0, and every one of those
+  messages is still in somebody's inbox. Deleting the route would 404 all of them.
 
-  That last one is the seam, and it is deliberate. TR.Player takes
-  (rootEl, boot, transport) and knows nothing about window.TRAINING_BOOT or
-  about living in a www/ page, so the authoring preview can construct the same
-  player with an in-memory transport instead of forking it.
-
-  The endpoint names are NOT here any more. They moved to
-  js/training/transport.js in v1.428.1, when this page stopped being the only
-  host: a Desk Page has no template to hold them, and two copies of the same 25
-  names would drift. The one page-specific fact left in this file is where the
-  CSRF token comes from.
-
-  No frappe.call and no frappe.* globals anywhere in this page or in the player:
-  learners include customer Website Users with desk_access = 0, who never get the
-  desk bundle. Plain fetch() with an X-Frappe-CSRF-Token header.
-
-  Cache busting: raw /assets are served with a 1-year immutable Cache-Control, so
-  every mutable asset URL below carries ?v={{ deploy_version }} (see
-  training.py / utils/deploy.py::get_deploy_version).
+  Almost nobody renders this. `get_context` redirects anyone with desk access
+  before the template is reached, which on this site is every learner. What is
+  left below is for a Website User holding Training Learner — a customer contact,
+  of whom there are currently none — because the alternative is bouncing them into
+  a /desk they cannot open and letting them read the login page as the answer.
 #}
 {% extends "templates/web.html" %}
 
 {% block title %}Training{% endblock %}
 
-{% block head_include %}
-<meta name="theme-color" content="#00a0dd">
-<meta name="mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="/assets/erpnext_enhancements/css/training/player.css?v={{ deploy_version }}">
-{% endblock %}
-
-{# Best-effort removal of the website chrome; the CSS below is the real guarantee. #}
-{% block banner %}{% endblock %}
-{% block navbar %}{% endblock %}
-{% block header %}{% endblock %}
-{% block page_header %}{% endblock %}
-{% block footer %}{% endblock %}
-{% block footer_extension %}{% endblock %}
-{% block page_breadcrumbs %}{% endblock %}
-
-{% block style %}
-<style>
-  /* Hide the website chrome. `footer` is deliberately qualified: player.js builds
-     the sticky action bar as <footer class="tr-bottom"> — the element holding
-     "Start the quiz", "Finish this lesson", the resume button and the gate
-     reasons — and a bare `footer { display: none !important }` hid it. The
-     button rendered, and no learner could ever see it or press it. Nothing
-     erred; the one control that advances a course was simply invisible.
-     `main` is qualified for the same reason: main.tr-view is the player's own. */
-  .navbar, nav.navbar, .web-footer, footer:not(.tr-bottom), .footer,
-  .page-breadcrumbs, .breadcrumb-container,
-  .page-header, .page-content-wrapper > .page-header { display: none !important; }
-  body { background: var(--tr-bg, #f6f7f9); margin: 0; }
-  main:not(.tr-view), .main-section, #body, .page_content,
-  .page-content-wrapper, .container { padding: 0 !important; margin: 0 !important; max-width: none !important; }
-</style>
-{% endblock %}
-
-{# Mount point: player.js renders the whole learner UI into #training-root. #}
 {% block page_content %}
-<div id="training-root" class="tr-shell" aria-busy="true">
-  <div class="tr-boot">Loading training…</div>
+<div class="training-moved">
+  <h1>{{ _("Training has moved") }}</h1>
+  <p>{{ _("Courses are now taken inside the app, and this account cannot open it.") }}</p>
+  <p>{{ _("Ask your Sapphire Fountains contact to set your access up, and the link in your email will work again.") }}</p>
 </div>
-{% endblock %}
-
-{% block script %}
-<script>
-  // Server-injected boot payload (learner, assignments, course + lesson outline,
-  // settings, csrf). The player never reads these globals — the bootstrap at the
-  // bottom of this block passes them in.
-  window.TRAINING_BOOT = {{ boot_json | safe }};
-  window.TRAINING_CSRF = "{{ csrf_token }}";
-  window.TRAINING_BUILD = "{{ deploy_version }}";
-</script>
-<script src="/assets/erpnext_enhancements/js/training/transport.js?v={{ deploy_version }}"></script>
-<script src="/assets/erpnext_enhancements/js/training/blocks.js?v={{ deploy_version }}"></script>
-<script src="/assets/erpnext_enhancements/js/training/video.js?v={{ deploy_version }}"></script>
-<script src="/assets/erpnext_enhancements/js/training/quiz.js?v={{ deploy_version }}"></script>
-<script src="/assets/erpnext_enhancements/js/training/player.js?v={{ deploy_version }}"></script>
-<script>
-(function () {
-	"use strict";
-
-	// Everything that was here -- the METHOD map, PREFIX, the 20s deadline, the
-	// multipart upload and the synchronous sendBeacon -- moved to
-	// js/training/transport.js in v1.428.1, because a Desk Page has no template to
-	// hold it and two copies of the same 25 endpoint names is exactly the drift this
-	// module already has a name for. What is left is the only genuinely
-	// page-specific thing: where this host gets its CSRF token.
-	var root = document.getElementById("training-root");
-	if (
-		!window.TR ||
-		typeof window.TR.Player !== "function" ||
-		typeof window.TR.makeTransport !== "function"
-	) {
-		root.setAttribute("aria-busy", "false");
-		root.innerHTML = '<div class="tr-error">Training could not start. Please reload the page.</div>';
-		return;
-	}
-
-	// A constant here on purpose: this page renders its token once, server-side, and
-	// it cannot change without a reload. The Desk host passes a function instead.
-	var transport = window.TR.makeTransport({ csrf: window.TRAINING_CSRF });
-
-	window.TR.player = new window.TR.Player(root, window.TRAINING_BOOT, transport);
-})();
-</script>
 {% endblock %}

@@ -598,8 +598,7 @@ class TheClientStillPostsTest(unittest.TestCase):
         """``navigator.sendBeacon`` is always a POST, and the last heartbeat on
         pagehide goes through it. Named here because it is the one call that does
         not use ``call()``, so the assertion above does not cover it."""
-        src = (APP / "www" / "training.html").read_text(encoding="utf-8")
-        self.assertIn("sendBeacon", src)
+        self.assertIn("sendBeacon", PAGE.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

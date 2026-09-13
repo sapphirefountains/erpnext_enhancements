@@ -259,7 +259,7 @@ def answer_question_thread(thread, answer, is_public=0):
 		f"""
 			<p>Your question on <b>{frappe.utils.escape_html(lesson_title)}</b> has an answer:</p>
 			<blockquote>{frappe.utils.escape_html(text)}</blockquote>
-			<p><a href="{get_url('/training')}">Open your training</a></p>
+			<p><a href="{get_url('/app/learn')}">Open your training</a></p>
 		""",
 	)
 
