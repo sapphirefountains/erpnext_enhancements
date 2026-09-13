@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.426.3] - 2026-09-13
+
+### Fixed
+
+- **The overdue task panel and every morning briefing were showing no actually-overdue
+  work.** `api/task_dashboard.py` and `api/briefing.py` each filtered open tasks with
+  `{"exp_end_date": ("<", today)}`. `exp_end_date` is a nullable Datetime on core `Task`,
+  and frappe wraps a comparison on a nullable column in an ifnull sentinel set to the
+  *minimum* of the type, so `ifnull(exp_end_date, '0001-01-01 00:00:00') < today` matched
+  every task that simply had no deadline.
+
+  **It did much more than pad the list.** Both callers order by `exp_end_date asc` and take
+  a page, and MariaDB sorts NULLs **first** in ascending order — so the coalesced rows
+  filled the whole budget and pushed the real ones off the end.
+
+  Measured on prod before the fix: **330** open tasks carry no deadline, **1,066** are
+  genuinely overdue, and **all 21 rows the dashboard query returned had no deadline at
+  all** — old Zoho-imported items like *Identify Competitors* and *Create Concept Idea*.
+  Not one genuinely overdue task reached the 20-row panel, while `overdue_overflow`
+  truthfully reported there was more.
+
+- **"Today's tasks" was including work that does not start today.** The same trap on
+  `exp_start_date <= today` meant a task with no start date and a deadline weeks away
+  satisfied the condition through the sentinel. The evidence this was never the intent is
+  in the callers themselves: each follows that query with an explicit *edges* pass
+  commented "only one of the two dates set", which could never match anything because the
+  spanning query had already swallowed those rows. On prod the edges pass was matching
+  **zero**; 41 tasks genuinely span today and 6 more were being added by the sentinel.
+
+### Changed
+
+- **The predicate is built once and shared.** `overdue_task_filters` and
+  `spanning_task_filters` live in `task_dashboard` and are imported by `briefing`, which
+  already imported `CLOSED_TASK_STATUSES` from it. The two paths being independent
+  implementations of the same rule is precisely how both came to be wrong.
+
+### Notes
+
+**These queries had no automated coverage at all.** `test_briefing` and
+`test_wall_dashboard` both subclass `FrappeTestCase` and need a bench, so neither runs in
+CI — the same gap that hid the maintenance sweep in v1.426.2. The new suite is bench-free,
+has its own CI step, and runs the predicate against an engine that reproduces frappe's
+ifnull fallback rather than Python's intuition.
+
+**Two mutations survived the first pass and both taught something.** One hand-rolled the
+broken filter in the *list* form while the structural guard only looked for the dict
+spelling — a guard against duplication has to cover every way the thing can be spelled.
+The other exposed the opposite error in my own test: banning the field name outright
+flagged the edges pass, which names those fields legitimately with `=` and `is not set`.
+The guard is now scoped to the comparison operators, which are the only unsafe ones.
+
+**Not changed:** `status not in CLOSED_TASK_STATUSES` has the same shape (`not in` matches
+NULL through the sentinel), but `Task.status` carries a default and is never NULL in
+practice, so it is left alone rather than given a clause that would only add noise.
+
 ## [1.426.2] - 2026-09-13
 
 ### Fixed

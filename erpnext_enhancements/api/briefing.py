@@ -22,7 +22,12 @@ import frappe
 from frappe.utils import add_days, cint, now_datetime, nowdate
 
 from erpnext_enhancements import email_style
-from erpnext_enhancements.api.task_dashboard import CLOSED_TASK_STATUSES, STAFF_ROLES
+from erpnext_enhancements.api.task_dashboard import (
+	CLOSED_TASK_STATUSES,
+	STAFF_ROLES,
+	overdue_task_filters,
+	spanning_task_filters,
+)
 
 RETENTION_DAYS = 60
 TASK_LIMIT = 15
@@ -67,13 +72,12 @@ def _user_tasks(user, today):
 		"exp_end_date",
 	]
 
+	# Shared with the dashboard rather than restated, because restating it is how both
+	# copies came to report every deadline-less task as overdue -- and, ordered by
+	# `exp_end_date asc`, to push every genuinely overdue one off the end of the page.
 	overdue = frappe.get_all(
 		"Task",
-		filters={
-			"status": ("not in", CLOSED_TASK_STATUSES),
-			"exp_end_date": ("<", today),
-			"_assign": ("like", like),
-		},
+		filters=overdue_task_filters(today, [["_assign", "like", like]]),
 		fields=task_fields,
 		order_by="exp_end_date asc",
 		limit_page_length=TASK_LIMIT,
@@ -81,12 +85,7 @@ def _user_tasks(user, today):
 
 	spanning = frappe.get_all(
 		"Task",
-		filters={
-			"status": ("not in", CLOSED_TASK_STATUSES),
-			"exp_start_date": ("<=", today),
-			"exp_end_date": (">=", today),
-			"_assign": ("like", like),
-		},
+		filters=spanning_task_filters(today, [["_assign", "like", like]]),
 		fields=task_fields,
 		order_by="priority desc, exp_end_date asc",
 		limit_page_length=TASK_LIMIT,

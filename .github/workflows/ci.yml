@@ -368,6 +368,15 @@ jobs:
       # This suite is bench-free, installs its own frappe stub, and RUNS the sweeps.
       - name: Maintenance expiry/billing filters (nullable columns)
         run: python -m unittest erpnext_enhancements.tests.test_maintenance_expiry_filters -v
+      # `exp_end_date` is a nullable Datetime, so `("<", today)` matched every open task
+      # with NO deadline -- and because both callers order by `exp_end_date asc` and take
+      # a page, and MariaDB sorts NULLs FIRST, the coalesced rows filled the whole budget
+      # and pushed the genuinely overdue ones off the end. Prod had 330 deadline-less
+      # tasks against 1,066 real ones, and all 21 rows the query returned were the
+      # former. test_briefing and test_wall_dashboard both need a bench, so neither runs
+      # here -- which is why this had no coverage at all.
+      - name: Task overdue/today filters (nullable columns)
+        run: python -m unittest erpnext_enhancements.tests.test_task_overdue_filters -v
       # RUNS the roster's print guard rather than reading it, and that distinction is
       # the whole reason this step exists. The previous defect on this report was a
       # print template that had never once been rendered: a double brace inside an HTML
