@@ -132,6 +132,13 @@ APP_MUTATING = {
     # and nothing arbitrary executes -- so it lands on the fail-safe Medium band by
     # being in neither risk set, which is the honest classification.
     "publish_training_course",
+    # Open an editable draft of an EXISTING course. The gentlest write in this
+    # group -- no learner sees anything change, the live version stays live, and an
+    # unwanted draft is simply deleted -- but it is still a write on a live training
+    # record, and the failure worth a confirmation card is the boring one: opening a
+    # draft on the wrong course and editing it for an hour. Not HIGH_RISK, so it
+    # lands on the Medium band alongside publish, which is if anything generous.
+    "create_training_draft_version",
 }
 
 HIGH_RISK = {
