@@ -3,6 +3,20 @@
 
 """The scope, authored once and locked — WI-075 sub-phases B1 and B2.
 
+.. note::
+
+   The class below is ``ProjectScopeofWork`` — lower-case ``o`` in "of", which looks like a
+   typo and is not. Frappe resolves a controller with
+   ``classname = doctype.replace(" ", "").replace("-", "")``; it strips spaces and does **not**
+   title-case. So "Project Scope of Work" resolves to ``ProjectScopeofWork``, and a class named
+   ``ProjectScopeOfWork`` is invisible to it.
+
+   That is not a cosmetic mismatch. ``get_controller`` raises ``ImportError`` when the class is
+   absent, and ``remove_orphan_doctypes()`` — which runs on **every** ``bench migrate`` — passes
+   anything that raises to ``frappe.delete_doc(..., force=True)``. This DocType was created by
+   model sync and force-deleted in the same migrate, twice, on v1.452.1 and again on v1.452.2,
+   with nothing in the Error Log either time.
+
 Scope, contract terms, pricing and inspection standards have historically lived in four
 separate places, and when they disagree there is no single record either side can point to.
 This is that record: one submitted ``Project Scope of Work`` per project, carrying measurable
@@ -35,41 +49,10 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-
-def _criteria_rules():
-	"""Import the criterion rules lazily. **This is not a style choice.**
-
-	This controller lives in ``project_enhancements`` and the rules live in ``quality``. A
-	module-scope cross-module import cost this DocType its existence on the v1.452.1 deploy:
-	frappe's ``remove_orphan_doctypes()`` runs on every migrate, calls ``clear_controller_cache()``
-	and then ``get_controller()`` on every non-custom DocType, and **force-deletes any whose
-	controller raises ImportError or DoesNotExistError** ::
-
-	    except (ImportError, frappe.DoesNotExistError):
-	        orphan_doctypes.append(doctype)
-	    ...
-	    frappe.delete_doc("DocType", name, force=True, ignore_missing=True)
-
-	On the release that introduced the ``quality`` package, that import did not resolve during
-	the sweep, and this DocType was created by model sync at ~12:08 and deleted at 12:09:22 the
-	same migrate. Nothing failed the deploy, nothing reached the Error Log, and the table it had
-	just created stayed behind — MariaDB DDL auto-commits, so the schema survived the rollback
-	of the row. The only trace was a `Deleted Document` entry.
-
-	Note what made it survivable and what made it invisible: the module ships dormant, so the
-	missing DocType broke nothing, and ``Project.custom_scope_of_work`` was left as a Link to a
-	DocType that no longer existed — inert until somebody opened the picker.
-
-	Importing inside the call means the controller module itself has no cross-module dependency
-	to fail, so the sweep can always import it. The two ``quality`` controllers that import from
-	their own package survived the same migrate, which is why only this one is lazy.
-	"""
-	from erpnext_enhancements.quality import scope_criteria
-
-	return scope_criteria
+from erpnext_enhancements.quality import scope_criteria
 
 
-class ProjectScopeOfWork(Document):
+class ProjectScopeofWork(Document):
 	def validate(self):
 		self._mint_criterion_keys()
 		self._reject_duplicate_keys()
@@ -138,13 +121,13 @@ class ProjectScopeOfWork(Document):
 
 	def _mint_criterion_keys(self):
 		"""Give every criterion a stable identity before anything can point at it."""
-		_criteria_rules().mint_missing_keys(self.acceptance_criteria, frappe.generate_hash)
+		scope_criteria.mint_missing_keys(self.acceptance_criteria, frappe.generate_hash)
 
 	def _reject_duplicate_keys(self):
 		"""Two rows sharing a key is a couple of grid clicks away — Frappe's row-duplicate
 		action copies read-only fields too — and a downstream join would then resolve to
 		whichever row it read first."""
-		duplicates = _criteria_rules().duplicate_keys(self.acceptance_criteria)
+		duplicates = scope_criteria.duplicate_keys(self.acceptance_criteria)
 		if duplicates:
 			frappe.throw(
 				_("Two acceptance criteria share the same key: {0}. Delete the duplicated row and add a fresh one.").format(
@@ -167,7 +150,7 @@ class ProjectScopeOfWork(Document):
 				title=_("Nothing to inspect"),
 			)
 
-		problems = _criteria_rules().incomplete_rows(self.acceptance_criteria)
+		problems = scope_criteria.incomplete_rows(self.acceptance_criteria)
 		if problems:
 			lines = [
 				_("Row {0}: missing {1}").format(idx, ", ".join(missing))
