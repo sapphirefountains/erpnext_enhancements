@@ -359,6 +359,17 @@ jobs:
       # insurer that silently restates today over a past date is worse than no sheet.
       - name: HR audit roster (dates not statuses; leavers included)
         run: python -m unittest erpnext_enhancements.tests.test_hr_qualification_roster -v
+      # The four employee feedback requests shipped in v1.455.0. Each assertion pins a
+      # decision where the OBVIOUS edit is the wrong one and produces no error: a
+      # `default` on the new PO item status would stamp ~700 historical rows during the
+      # ALTER; a Custom Field named expected_delivery_date collides with the native v16
+      # one; Asset.asset_type defaulting to anything but "Existing Asset" makes the form
+      # unsaveable again via validate_gross_and_purchase_amount; an unguarded
+      # ItemQuickEntryForm subclass leaks fixed-asset defaults into every Item created
+      # later in the session; and moving the inspection completeness gates from
+      # before_submit to validate makes a half-walked checklist unsaveable.
+      - name: Feedback ER batch invariants (PO fields, Asset form, rental inspections)
+        run: python -m unittest erpnext_enhancements.tests.test_feedback_er_batch -v
       # The maintenance sweeps had NO automated coverage of any kind before this:
       # test_sapphire_maintenance and test_maintenance_sections both build real
       # documents, so neither runs without a bench and neither is named in this file.

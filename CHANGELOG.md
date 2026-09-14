@@ -7,6 +7,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.455.0] - 2026-09-14
+
+Four employee feedback requests from the portal, triaged against production and the ERPNext
+v16 source rather than against their AI work breakdowns. Five of the ten proposed tasks named
+fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
+
+### Added
+
+- **Per-item fulfillment status on Purchase Order** (ER-2026-312391).
+  `Purchase Order Item.custom_item_status` -- blank / Delayed / On the way / Received /
+  Different supplier -- in the item grid and editable after submit.
+- **Expected delivery dates on Purchase Order** (ER-2026-362239).
+  `Purchase Order.custom_expected_delivery_date` on the header, the **native** v16
+  `Purchase Order Item.expected_delivery_date` surfaced in the grid by Property Setter, and
+  `api/procurement.py::cascade_expected_delivery_date` to fill blank rows from the header.
+- **Rental pre-shipping and return checklists** (ER-2026-312370). Four DocTypes in
+  `asset_management/` -- `Rental Checklist Template` (+ item) and the submittable
+  `Rental Inspection` (+ item) -- plus `api/booking.py::generate_inspection`,
+  `resolve_checklist_template`, a Connections entry and two buttons on Asset Booking.
+- `patches/seed_rental_asset_setup.py` -- the `Rental Fountain Fleet` Asset Category and the
+  `Upstairs Rental Warehouse` Location (ER-2026-420503).
+- `tests/test_feedback_er_batch.py` -- 12 bench-free tests, wired into `ci.yml`.
+
+### Fixed
+
+- **The Asset form could not be saved at all, and no mandatory flag was why**
+  (ER-2026-420503, reported as blocking). `Asset.validate()` calls
+  `validate_gross_and_purchase_amount()`, which returns early **only** for
+  `asset_type == "Existing Asset"` and otherwise throws whenever
+  `net_purchase_amount != purchase_amount` -- and `purchase_amount` is hidden, read-only and
+  first written in `on_submit`. So on a new draft: leave the amount blank and
+  `validate_asset_values()` throws "mandatory"; type any amount and the other throws "should
+  be equal to purchase amount". **There was no value that saved.** Fixed with one Property
+  Setter defaulting `asset_type` to `Existing Asset`, which is also true -- these fountains
+  already exist and never came through a Purchase Receipt.
+- **An Item created inline from the Asset form saved, and then vanished from the field.**
+  `asset.js` filters `item_code` on `{is_fixed_asset: 1, is_stock_item: 0}`, and Frappe's Item
+  Quick Entry offers `is_fixed_asset` with a default of **0** -- so the Item was created
+  perfectly well and then failed the link filter, which the reporter saw as "after creating
+  the new item code it doesn't exist". `public/js/asset_management/asset_form.js` seeds the
+  dialog through a scoped `frappe.ui.form.ItemQuickEntryForm` subclass.
+- **`purchase_date` was mandatory and read-only simultaneously** on a plain new Asset
+  (`reqd: 1` plus a `read_only_depends_on` exempting only Existing/Composite assets) -- both
+  halves of "several fields won't accept any inputs" and "it's refusing to be saved", in one
+  field. Now editable, and mandatory only at submit, alongside `available_for_use_date`.
+
+### Notes
+
+- **Production had 0 Assets, 0 Asset Categories and 0 Locations**, and that is a closed loop
+  rather than four gaps. `Asset.location` is `reqd` and links to `Location`, so with no
+  Location record no Asset can be saved by anyone, ever. `Item.asset_category` is
+  `mandatory_depends_on: is_fixed_asset`, so with no Asset Category no Item can be a fixed
+  asset, so the `item_code` picker can never have a candidate. Relaxing mandatory flags does
+  not touch a single link in that chain -- which is why the seed patch exists and why no
+  amount of form configuration would have unblocked the report on its own.
+- **The seed records are a patch, not a fixture, on purpose.** `bench migrate` deletes and
+  re-inserts every fixture document from its JSON, so the depreciation accounts, finance books
+  and address that Finance fills in later would be silently reverted by an unrelated deploy.
+  `14000 - Rental Fountains - SF` already existed in the chart of accounts, correctly typed --
+  the accounting for this was set up long before the operational side was.
+  `accumulated_depreciation_account` is left blank deliberately: this site has **no** account
+  typed `Accumulated Depreciation` (`15000` is typed `Fixed Asset`), and wiring a mistyped
+  account to make a form submit is how a depreciation entry lands in the wrong place.
+  `enable_cwip_accounting` stays 0 because CWIP makes `validate_asset_values()` demand a
+  Purchase Receipt -- re-blocking the exact save this release unblocks.
+- **`Purchase Order Item.expected_delivery_date` already exists in stock ERPNext v16.** The
+  proposed task asked for a Custom Field with that fieldname, which Frappe rejects as a
+  duplicate. Only the header field is new; the item half is a Property Setter. And the field
+  is **not** `schedule_date` ("Required By", set on all 197 POs): Required By is when we need
+  the goods, Expected Delivery is when the supplier says they arrive.
+- **The delivery-date cascade is not the Required By cascade and must not become one.**
+  ERPNext already cascades `schedule_date` in `buying_controller.validate_schedule_date()`,
+  and does more than cascade it -- it pulls the header *up* to the earliest row and throws on
+  rows predating `transaction_date`. Ours fills blank rows only and never rolls up: an
+  order-level delivery expectation is the buyer's own statement, and inferring it from rows
+  would silently rewrite what they typed.
+- **`custom_item_status` ships with no default and no backfill patch,** and that is the
+  deliberate half. The proposed task asked for a patch "to initialize existing rows, being
+  careful of the MariaDB default gotcha" -- read the other way round: blank *is* "no status",
+  so the right value for every pre-existing row is empty, which a defaultless `ADD COLUMN`
+  already produces. A `default` would have made MariaDB stamp a fulfillment claim into every
+  existing item row during the ALTER (the v1.280.3 trap), and the backfill would then have
+  matched zero rows, committed, and recorded itself as successful.
+- **Asset Booking has no items child table and no status field.** Two of the four proposed
+  rental-checklist tasks were built on both: one wanted to populate the checklist "from the
+  Asset Booking reservations" (a booking holds one `asset` and no lines), and one wanted to
+  block transitions to "Dispatched" and "Returned" (neither value exists anywhere in this
+  app). Hence the `Rental Checklist Template` as the missing source of truth, and enforcement
+  moved onto the inspection's own sign-off, which is a real event -- the booking is submitted
+  when it is *made*, days before anything ships.
+- **A return reconciles against the pre-shipping sheet, not the template.** `qty_expected` on
+  a return is what was actually counted *out*: if three of four panels shipped, three coming
+  back is complete. Reconciling against the catalogue answers a different question than the
+  one the request asked.
+- **`generate_inspection` throws rather than returning an empty checklist,** and
+  `RentalChecklistTemplate` refuses a template with no rows. Same reasoning, twice: a checklist
+  with no rows submits clean and reads as "everything accounted for" -- a signed record
+  asserting a complete return on no evidence, and the strongest document in the room the day a
+  customer disputes a damage charge. Note the failure direction: it passes.
+- **The inspection's completeness gates are `before_submit`, not `validate`.** A crew member
+  fills the sheet over several minutes and saves as they go; refusing a half-filled draft would
+  repeat the exact mistake that produced ER-2026-420503. Draft is cheap, sign-off is strict.
+- **The Item quick-entry override is guarded on `frappe._from_link`.**
+  `frappe.ui.form.ItemQuickEntryForm` is resolved by name and stays loaded for the rest of the
+  session, so an unguarded subclass would quietly make every Item created anywhere afterwards
+  a non-stock fixed asset. `ControlLink.new_doc()` sets `_from_link` immediately before calling
+  `make_quick_entry`, which is what makes the guard possible.
+- **`tests/test_feedback_er_batch.py` failed on its own documentation the first time it ran** --
+  the docstring explaining why the cascade must never touch Required By names that field. An
+  absence assertion has to strip prose first; the suite now unparses the function body without
+  its docstring. Third occurrence of this shape in this repo.
+- ERPNext behaviour here was read from `git show origin/version-16:` rather than from the
+  sibling `../erpnext` working tree, which is on `develop` and reports `17.0.0-dev`.
+
 ## [1.454.0] - 2026-09-14
 
 ### Added
