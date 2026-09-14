@@ -11,28 +11,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **A graded quiz now names the correct answer — once naming it cannot buy anything.**
-  `grade_quiz` returns `per_question[].correct_option_keys` (or `accepted_text` for Short
-  Answer) when the learner has passed or has just used their last attempt, plus
-  `answers_revealed` so the player can speak for the case where it is still withheld.
-  `submit_quiz` supplies `final`, because only the endpoint holds the course's
-  `max_attempts` and the run count; the rule itself lives in `grading.py`, which is the
-  only module allowed to read the key.
+- **A graded quiz now names the correct answer, on every attempt.** `grade_quiz` returns
+  `per_question[].correct_option_keys` (or `accepted_text` for Short Answer) and the
+  explanation for every drawn question, whether the learner passed, failed, or left it
+  blank.
 
-  The gap this closes is a wiring one, not a policy one: `quiz.js` has carried the
-  "Correct answer:" line since it was written and has **never once had the data to draw
-  it**, because nothing has ever sent `correct_option_keys`. So a learner who failed a
-  confined-space quiz and then exhausted their three attempts was told which options were
-  wrong and never which one was right. `test_training_boundary_contract` had the
-  asymmetry on file the whole time, filed under "never leaves the server for a learner" —
-  a reason field doing what its own docstring warns about, recording a bug as intent.
+  The gap this closes is a wiring one: `quiz.js` has carried the "Correct answer:" line
+  since it was written and has **never once had the data to draw it**, because nothing has
+  ever sent `correct_option_keys`. So a learner who failed a confined-space quiz was told
+  which options were wrong and never which one was right — three times over, and then
+  out of attempts. `test_training_boundary_contract` had the asymmetry on file the whole
+  time, filed under "never leaves the server for a learner": a reason field doing exactly
+  what its own docstring warns about, recording a bug as intent.
 
-  While a retake is still available the reply carries neither field **and not the field
-  names either**. An empty `accepted_text: []` would be a shape saying an answer key was
-  in the room, and `test_training_grading` treats those names as leak markers precisely so
-  that a payload forwarding a whole key entry trips on the name alone. The per-*option*
-  explanations stay shut at every point: they say why each individual option is right or
-  wrong, which is `is_correct` written out in prose.
+  **Unconditionally, and that is the decision rather than an oversight.** The first cut
+  gated it on "passed, or no attempts left", which is the defensible-looking rule and the
+  wrong one: the review screen is the teaching moment — the one time somebody is looking
+  at a wrong answer of their own and asking why — and withholding there sends them back
+  into a retake no better informed. The cost was weighed and accepted: a learner can burn
+  one attempt to read the answers and come back with them, and `best` keeps the higher
+  score. That hole is smaller than a crew member who has failed the confined-space quiz
+  three times and still does not know when a space is permit-required. The gate is one
+  condition in `grade_quiz` if it ever needs to come back.
+
+  The explanation's old `answered` gate goes with it. It existed to stop a blank
+  submission harvesting the explanations, which protected nothing once the same reply
+  names the correct option outright — and it withheld the teaching from precisely the
+  question the learner could not attempt.
+
+  `is_correct`, `correct_text_answers` and the per-*option* explanations are still never
+  disclosed, at any point, by anything: the first is the raw child row and the last says
+  why each *individual* wrong option is wrong. `test_training_grading` treats all three as
+  leak markers by name, so a payload forwarding a whole key entry trips on the name alone,
+  and every other learner-facing function — the drawn quiz, the public lesson, the
+  checkpoints, the gates — is still walked for the full set.
 
 ### Fixed
 

@@ -33,10 +33,14 @@ implementation that quietly breaks it:
 * **A checkpoint cannot be answered from a position that was never watched.**
   :func:`grade_checkpoint` refuses unless the stored watch intervals cover the
   checkpoint's timestamp. Otherwise the questions can be farmed by seeking.
-* **Correct option keys never appear in a result.** Explanations are revealed after
-  an answer, because that is the teaching moment; *which option was right* is not,
-  because attempts are retryable and a failed run would otherwise hand over a
-  perfect second run.
+* **The answer key leaves this module through exactly one door.** :func:`grade_quiz`
+  names the correct options and the explanation on every graded run, because the
+  review screen is the teaching moment — see the note where those rows are built,
+  which records what that costs and why it was accepted. Every other function here
+  is answer-free, and ``is_correct``, ``correct_text_answers`` and the per-*option*
+  explanations never leave at all: the first is the raw child row and the last says
+  why each individual wrong option is wrong. ``test_training_grading`` walks the
+  return value of every public function in this module for all three by name.
 
 ``evaluate_gates`` is deliberately read-only — it is a decision, called on the
 completion path and potentially on every heartbeat, and a function that writes on
@@ -170,7 +174,7 @@ def draw_from_quiz(quiz, rng=None):
 	return drawn
 
 
-def grade_quiz(attempt, lesson_key, answers, run=None, final=False):
+def grade_quiz(attempt, lesson_key, answers, run=None):
 	"""Grade a submitted quiz run against the answer key alone.
 
 	``answers`` maps question name to the submitted option keys (or to typed text
@@ -179,10 +183,9 @@ def grade_quiz(attempt, lesson_key, answers, run=None, final=False):
 	is why the drawn set is recomputed here rather than inferred from the keys of
 	``answers``.
 
-	``final`` says this was the learner's last permitted attempt. It is the caller's
-	to know — only the endpoint has the course's ``max_attempts`` and the run count —
-	but what is *done* with it stays here, because this module is the only one
-	allowed to read the key. See the reveal rule below.
+	**A graded run names the correct answers, every time.** See the note where the
+	review rows are built: it is a deliberate choice about what these quizzes are
+	for, and it is the one place in this module where the key is allowed out.
 	"""
 	doc = _attempt(attempt)
 	lesson_name = _lesson_name(doc, lesson_key)
@@ -194,8 +197,6 @@ def grade_quiz(attempt, lesson_key, answers, run=None, final=False):
 	run = cint(run) or _current_run(doc, lesson_key)
 	drawn = draw_quiz(doc, lesson_key, run)
 
-	# Two passes, because the reveal rule below needs the verdict for the whole run
-	# and the verdict needs every question marked first.
 	earned = 0
 	possible = 0
 	graded = []
@@ -219,51 +220,46 @@ def grade_quiz(attempt, lesson_key, answers, run=None, final=False):
 	pass_score = cint(published_quiz.get("pass_score")) or _course_policy(lesson_name)["pass_score"]
 	passed = bool(possible) and score >= pass_score
 
-	# THE REVEAL RULE. The key is disclosed once knowing it can no longer buy the
-	# learner anything: they have passed, or `final` says there is no retake left.
-	# Until then it stays shut, because a run is retryable and naming the right
-	# option hands over the retake.
+	# THE ONE PLACE THE KEY IS ALLOWED OUT, and it is allowed out on every graded
+	# run: the correct options, the accepted text, and the explanation, whether the
+	# learner passed, failed, or left the question blank.
 	#
-	# It used to be shut unconditionally, and the review screen was the poorer for
-	# it: `quiz.js` has always had the "Correct answer:" line and never once had the
-	# data to draw it, so a learner who failed and then exhausted their attempts was
-	# told which options were wrong and never which one was right. On a compliance
-	# course that is the opposite of the point.
-	reveal = bool(passed or final)
-
+	# That is a decision about what these quizzes are for rather than a relaxation
+	# of the module's guarantee. The review screen is the teaching moment — it is
+	# the one time a learner is looking at a wrong answer of their own and asking
+	# why — and withholding there sends them back into a retake no better informed,
+	# which is how somebody fails a confined-space quiz three times learning
+	# nothing. The cost is real and was accepted knowingly: a learner can burn one
+	# attempt to read the answers and come back with them. They spend a permitted
+	# attempt to do it, `best` keeps the higher score, and a score obtained that way
+	# is worth less than a crew member who still does not know when a space is
+	# permit-required.
+	#
+	# `is_correct` and the per-OPTION explanations are NOT part of this and never
+	# leave the server: the first is the raw child-row field, the second says why
+	# each individual wrong option is wrong, which is the same fact spelled out.
+	# `test_training_grading` treats both names as leak markers for that reason.
 	per_question = []
 	for question, entry, points, answered, correct in graded:
 		is_text = (entry.get("type") or question.get("type")) == "Short Answer"
-		row = {
-			"question": question.get("question"),
-			"text": question.get("text"),
-			"type": question.get("type"),
-			"points": points,
-			"awarded": points if correct else 0,
-			"answered": answered,
-			"correct": correct,
-			# Still gated on `answered` while the key is shut: a per-question
-			# explanation says *why* an option is right, so a learner who submits a
-			# blank quiz would otherwise harvest the lot for free. Once `reveal` is
-			# true there is nothing left to harvest.
-			"explanation": entry.get("explanation") or "" if (answered or reveal) else "",
-		}
-		if reveal:
-			# ABSENT rather than present-and-empty while the key is shut, and that is
-			# not a style choice. `test_training_grading` treats the field *names*
-			# `accepted_text` and `is_correct` as leak markers in their own right —
-			# a payload carrying the name is a payload that forwarded a whole
-			# answer-key entry — so an empty `accepted_text: []` on a withheld run
-			# would weaken the one assertion in this app that guards the key. The
-			# boundary contract can still see both keys, because `grade_quiz` is a
-			# declared row builder and every dict literal in it is harvested.
-			row.update(
-				{
-					"correct_option_keys": [] if is_text else list(entry.get("correct") or []),
-					"accepted_text": list(entry.get("accepted_text") or []) if is_text else [],
-				}
-			)
-		per_question.append(row)
+		per_question.append(
+			{
+				"question": question.get("question"),
+				"text": question.get("text"),
+				"type": question.get("type"),
+				"points": points,
+				"awarded": points if correct else 0,
+				"answered": answered,
+				"correct": correct,
+				"explanation": entry.get("explanation") or "",
+				# Option KEYS, not text: they are the shuffled ones this learner was
+				# actually shown, so the player maps them back onto the options it
+				# drew. Sending the text would be a second spelling of the same fact
+				# for the two of them to disagree about.
+				"correct_option_keys": [] if is_text else list(entry.get("correct") or []),
+				"accepted_text": list(entry.get("accepted_text") or []) if is_text else [],
+			}
+		)
 
 	_record_quiz_run(doc, lesson_key, run, score)
 	_file_quiz_answers(doc, lesson_name, run, drawn, submitted, per_question)
@@ -276,9 +272,6 @@ def grade_quiz(attempt, lesson_key, answers, run=None, final=False):
 		"points_earned": earned,
 		"points_possible": possible,
 		"per_question": per_question,
-		# So the player can say "the answers appear once you pass or run out of
-		# attempts" rather than leaving a learner to conclude it never tells them.
-		"answers_revealed": reveal,
 	}
 
 

@@ -825,19 +825,6 @@
 			card.appendChild(
 				el("div", "tr-rev-key", t("Accepted") + ": " + entry.accepted_text.join(", "))
 			);
-		} else if (result && result.answers_revealed === false && entry.correct === false) {
-			// Withheld, and SAID to be withheld. The server holds the key back while a
-			// retake is still available, which is the right call — but silence about it
-			// reads as the app simply never telling you, and that is how it was
-			// reported. Only ever drawn on a question that was got wrong, and only when
-			// the server said the word: absence of the key is still never read as a hint.
-			card.appendChild(
-				el(
-					"div",
-					"tr-rev-mine tr-muted",
-					t("The correct answer is shown once you pass, or once you have no attempts left.")
-				)
-			);
 		}
 
 		if (entry.explanation) card.appendChild(setHtml(el("div", "tr-rev-why"), entry.explanation));

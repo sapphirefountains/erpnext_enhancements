@@ -1348,15 +1348,7 @@ def submit_quiz(attempt, lesson_key, answers):
     before = _lesson_progress(doc.name, lesson_key).get("quiz") or {}
     prior_runs = cint(before.get("runs"))
 
-    # Read BEFORE grading, because `grade_quiz` needs to know whether this run is
-    # the learner's last one in order to decide whether it may name the correct
-    # answers — and it is the count this very call is about to increment. Only the
-    # endpoint holds the course policy; only grading may touch the key. See the
-    # reveal rule in `training/grading.py`.
-    limit = cint(frappe.db.get_value("Training Course", doc.course, "max_attempts"))
-    final = bool(limit) and (prior_runs + 1) >= limit
-
-    result = grading.grade_quiz(doc, lesson_key, parsed, final=final) or {}
+    result = grading.grade_quiz(doc, lesson_key, parsed) or {}
     score = flt(result.get("score"))
 
     data = progress.load(doc.name)
@@ -1367,6 +1359,7 @@ def submit_quiz(attempt, lesson_key, answers):
         quiz["best"] = max(flt(quiz.get("best")), score)
     progress.save(doc.name, data, force=True)
 
+    limit = cint(frappe.db.get_value("Training Course", doc.course, "max_attempts"))
     runs = cint(quiz.get("runs"))
     attempts_left = max(limit - runs, 0) if limit else None
 

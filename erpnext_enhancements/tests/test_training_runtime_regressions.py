@@ -1225,20 +1225,27 @@ class TestAMultipleChoiceQuestionSaysItIsOne(unittest.TestCase):
         self.assertIn("tr-q-count", self._render())
         self.assertIn("selected", _fn_body(_quiz_js(), "function paint()"))
 
-    def test_the_review_says_when_the_answer_is_being_withheld(self):
-        """Silence about a deliberate withholding reads as the app never telling
-        you, which is the other half of how this was reported."""
+    def test_the_review_names_the_correct_option(self):
+        """The other half of how this was reported: told you were wrong, never told
+        what was right. `quiz.js` has carried this line since it was written and had
+        no data to draw it with until v1.445.0."""
         body = _fn_body(_quiz_js(), "function renderReview(entry, i, byId, numberOf, result)")
-        self.assertIn("answers_revealed === false", body)
         self.assertIn("correct_option_keys", body)
+        self.assertIn("Correct answer", body)
 
-    def test_the_server_sends_the_key_only_once_it_cannot_be_spent(self):
-        """The other side of the same seam: `grade_quiz` discloses on a pass or on a
-        final attempt, and `submit_quiz` is the one that knows which."""
-        grading_body = _gfn("grade_quiz")
-        self.assertIn("reveal = bool(passed or final)", grading_body)
-        self.assertIn("answers_revealed", grading_body)
-        self.assertIn("final=final", _fn("submit_quiz"))
+    def test_the_server_sends_the_key_on_every_graded_run(self):
+        """No attempt gate, and so no flag for the endpoint to plumb through for one.
+        A learner failing run 1 of 3 is told exactly what one on their last run is.
+
+        Pinned by the SIGNATURE rather than by asserting some token is absent from the
+        body: the comment explaining why a gate would be wrong necessarily names the
+        gate, so an absence assertion over this function would pass on its own prose.
+        Third time that trap has been hit in this repo.
+        """
+        body = _gfn("grade_quiz")
+        self.assertIn("def grade_quiz(attempt, lesson_key, answers, run=None):", body)
+        self.assertIn("correct_option_keys", body)
+        self.assertIn("accepted_text", body)
 
 
 # Runs LAST, deliberately: anything declared after this block is invisible to a

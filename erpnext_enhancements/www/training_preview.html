@@ -419,9 +419,6 @@
 				question: q.question, text: q.text, type: q.type, points: points,
 				awarded: correct ? points : 0, answered: answered, correct: correct,
 				explanation: entry.explanation || "",
-				// Always revealed in the preview. The gate on the real thing is "the
-				// learner can no longer retake"; an author is never in that position
-				// and is entitled to the key anyway -- it is already in `DRAFT.keys`.
 				correct_option_keys: isText ? [] : (entry.correct || []),
 				accepted_text: isText ? (entry.accepted_text || []) : []
 			});
@@ -432,7 +429,7 @@
 			score: score, passed: !!possible && score >= passScore, pass_score: passScore,
 			run: 1, points_earned: earned, points_possible: possible,
 			correct_count: correctCount, question_count: drawn.length,
-			per_question: per, answers_revealed: true,
+			per_question: per,
 			// No retry: the draw is fixed for the life of the page, so a "Try again"
 			// here would re-ask the same questions in the same order and look broken.
 			can_retry: false, attempts_left: null,
