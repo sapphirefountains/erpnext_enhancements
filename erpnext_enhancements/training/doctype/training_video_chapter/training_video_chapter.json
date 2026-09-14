@@ -1,0 +1,104 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-09-13 18:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "lesson",
+  "course_version",
+  "block_key",
+  "column_break_head",
+  "at_seconds",
+  "title"
+ ],
+ "fields": [
+  {
+   "fieldname": "lesson",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Lesson",
+   "options": "Training Lesson",
+   "reqd": 1,
+   "description": "The lesson this chapter belongs to. Chapters hang off (lesson, block_key) exactly as checkpoints do — Training Content Block is itself a child table, and Frappe has no grandchild tables."
+  },
+  {
+   "fieldname": "course_version",
+   "fieldtype": "Link",
+   "label": "Course Version",
+   "options": "Training Course Version",
+   "read_only": 1,
+   "description": "Denormalised from the lesson so a version's chapters can be found without a join."
+  },
+  {
+   "fieldname": "block_key",
+   "fieldtype": "Data",
+   "label": "Block Key",
+   "reqd": 1,
+   "description": "The video block. A STABLE key, never an idx: reordering blocks must not move a chapter onto a different video."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "at_seconds",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "At (Seconds)",
+   "reqd": 1,
+   "description": "Where the chapter starts. Seeking here earns no watch coverage — forward seek never has — so chapter-jumping cannot be used to pass a gated course."
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-13 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Video Chapter",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Training Author",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "at_seconds",
+ "sort_order": "ASC",
+ "states": [],
+ "track_changes": 1
+}

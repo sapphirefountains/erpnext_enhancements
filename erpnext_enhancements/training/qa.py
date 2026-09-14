@@ -50,7 +50,7 @@ from erpnext_enhancements.training.doctype.training_question_thread.training_que
 	ANSWERED,
 	HIDDEN,
 )
-from erpnext_enhancements.training.doctype.training_settings.training_settings import is_enabled
+from erpnext_enhancements.training.doctype.training_settings.training_settings import runtime_ready
 
 THREAD_DOCTYPE = "Training Question Thread"
 THREAD_ROUTE = "training-question-thread"
@@ -76,7 +76,7 @@ def _learner():
 
 
 def _require_runtime():
-	if not (is_enabled("training_enabled") and is_enabled("portal_enabled")):
+	if not runtime_ready():
 		frappe.throw(_("Training is not available yet."))
 
 
@@ -259,7 +259,7 @@ def answer_question_thread(thread, answer, is_public=0):
 		f"""
 			<p>Your question on <b>{frappe.utils.escape_html(lesson_title)}</b> has an answer:</p>
 			<blockquote>{frappe.utils.escape_html(text)}</blockquote>
-			<p><a href="{get_url('/training')}">Open your training</a></p>
+			<p><a href="{get_url('/app/learn')}">Open your training</a></p>
 		""",
 	)
 
@@ -284,7 +284,7 @@ def get_lesson_questions(course, lesson_key):
 	the author's answers, with nobody's name on the questions.
 	"""
 	user = _learner()
-	if not (is_enabled("training_enabled") and is_enabled("portal_enabled")):
+	if not runtime_ready():
 		return {"enabled": False, "mine": [], "public": []}
 
 	_visible_or_throw(user, course)

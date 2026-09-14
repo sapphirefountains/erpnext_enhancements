@@ -24,7 +24,18 @@ def _install_frappe_stub():
     frappe = types.ModuleType("frappe")
     frappe.whitelist = lambda *a, **kw: (lambda fn: fn)
     frappe.get_all = lambda *a, **kw: []
+    frappe.get_doc = lambda *a, **kw: None
+    # `frappe.utils` has to be a real submodule registered in sys.modules, not an
+    # attribute: `from frappe.utils import flt` is resolved by the import system,
+    # which looks for the submodule and reports "'frappe' is not a package"
+    # against a plain ModuleType. The module under test grew that import after
+    # this stub was written, so setUpModule raised before a single test ran --
+    # and because the suite was named nowhere in ci.yml, nothing reported it.
+    utils = types.ModuleType("frappe.utils")
+    utils.flt = lambda value, precision=None: float(value or 0)
+    frappe.utils = utils
     sys.modules["frappe"] = frappe
+    sys.modules["frappe.utils"] = utils
 
 
 def setUpModule():

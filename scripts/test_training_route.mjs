@@ -100,7 +100,7 @@ function routeWith(view, courseName, lessonKey, opts) {
 	const calls = [];
 	const sandbox = {
 		state: { view: view, courseName: courseName, lessonKey: lessonKey },
-		b: { history: options.history, route_base: "/training" },
+		b: { history: options.history, route_base: "/training", router: options.router },
 		window: {
 			location: { pathname: "/training", search: "" },
 			history: {
@@ -203,14 +203,66 @@ test("a sandboxed iframe refusing replaceState does not break the lesson", () =>
 	assert.doesNotThrow(() => routeWith("lesson", COURSE, LESSON, { throwOnReplace: true }));
 });
 
+// ------------------------------------------------------------------ the ADAPTER
+
+test("an injected router gets the state and the address bar is left alone", () => {
+	// The Desk host owns the URL. If route() also wrote it, the two would fight and
+	// the desk's own router would be the one that lost, silently.
+	const seen = [];
+	const { calls } = routeWith("lesson", COURSE, LESSON, {
+		router: { write: (next) => seen.push(next) },
+	});
+	assert.equal(calls.length, 0, "replaceState was called even though an adapter is present");
+	assert.equal(seen.length, 1);
+	assert.equal(seen[0].view, "lesson");
+	assert.equal(seen[0].course, COURSE);
+	assert.equal(seen[0].lesson, LESSON);
+});
+
+test("the adapter is consulted even when history is false", () => {
+	// The load-bearing combination: the Desk page keeps history:false so the player
+	// never READS the URL back, while the adapter still WRITES it. Conflating the two
+	// would leave the desk answering browser Back by running queryParam() against a
+	// route that has no query string.
+	const seen = [];
+	routeWith("course", COURSE, LESSON, {
+		history: false,
+		router: { write: (next) => seen.push(next) },
+	});
+	assert.equal(seen.length, 1, "history:false suppressed the adapter");
+	assert.equal(seen[0].course, COURSE);
+});
+
+test("the adapter gets null for a course when the view is not about one", () => {
+	const seen = [];
+	routeWith("catalog", COURSE, LESSON, { router: { write: (next) => seen.push(next) } });
+	assert.equal(seen[0].course, null, "the stale-course bug reached the adapter path");
+	assert.equal(seen[0].lesson, null);
+});
+
+test("an adapter that throws does not stop the lesson", () => {
+	assert.doesNotThrow(() =>
+		routeWith("lesson", COURSE, LESSON, {
+			router: {
+				write: () => {
+					throw new Error("frappe.set_route exploded");
+				},
+			},
+		})
+	);
+});
+
 // ------------------------------------------------------- the test cannot pass vacuously
 
 test("it would catch the original unguarded line", () => {
 	// Reproduce the bug in miniature against the SAME harness: if `course=` is emitted
 	// without consulting the view, the catalogue keeps the param.
+	// The guard moved into routeState() in v1.432.2, when the URL writer became an
+	// injected adapter. Same bug, one level up: drop the view check and the course
+	// survives into every view that is not about a course.
 	const broken = FRAGMENT.replace(
-		"if (inCourse && state.courseName) {",
-		"if (state.courseName) {"
+		"course: inCourse ? state.courseName : null,",
+		"course: state.courseName,"
 	);
 	assert.notEqual(broken, FRAGMENT, "the mutation anchor no longer matches route()");
 	const calls = [];

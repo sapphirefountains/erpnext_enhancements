@@ -41,19 +41,14 @@ from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]
 API = APP / "api" / "training.py"
-PAGE = APP / "www" / "training.html"
+# The transport moved out of www/training.html in v1.428.1, when the portal page
+# stopped being the only host. It is the file this module is about: the METHOD
+# map, the POST rule and the beacon path all live there now.
+PAGE = APP / "public" / "js" / "training" / "transport.js"
 
 #: Whitelisted endpoints the player's ``METHOD`` map deliberately does not carry.
 #: Each needs a reason, and the reason has to survive somebody reading it.
 NOT_DIALLED_BY_THE_PLAYER = {
-    "get_learner_bootstrap": (
-        "Called server-side, not over HTTP: www/training.py imports it and runs it "
-        "inside get_context, so the shell renders with the learner's assigned "
-        "courses already in it. One round trip on purpose — the portal is opened on "
-        "phones on site. Declaring POST here changes nothing for that path (the "
-        "decorator gates HTTP dispatch, not a Python call) and keeps the rule "
-        "uniform if it is ever dialled directly."
-    ),
     "download_lesson_file": (
         "Fetched by the browser as an <img src> and as a PDF frame, not by the "
         "player's JSON transport, so it can never appear in the METHOD map. See "
@@ -118,14 +113,18 @@ def _body(name):
 
 
 def _method_map():
-    """The endpoint names ``www/training.html`` can dial, from its ``METHOD`` map.
+    """The endpoint names the transport can dial, from its ``METHOD`` map.
 
     Read from the map's own braces rather than by grepping the file for identifiers:
-    the page mentions endpoint names in prose too, and a scan that cannot tell a
+    the file mentions endpoint names in prose too, and a scan that cannot tell a
     comment from a dispatch table is satisfied by deleting the comment.
     """
     src = PAGE.read_text(encoding="utf-8")
-    match = re.search(r"var METHOD = \{(.*?)\n\t\};", src, re.S)
+    # Anchored on the closing brace's own LINE rather than on a literal indent
+    # depth: the map is nested one level deeper inside TR.makeTransport than it
+    # was inside the template's IIFE, and an indent-depth anchor silently stops
+    # matching when the code it describes is merely re-nested.
+    match = re.search(r"var METHOD = \{(.*?)^\s*\};", src, re.S | re.M)
     assert match, "the METHOD map has moved or changed shape; re-derive this scan"
     body = re.sub(r"//.*$", "", match.group(1), flags=re.M)
     return set(re.findall(r':\s*"([a-z_]+)"', body))
@@ -232,6 +231,30 @@ class TheTwoSidesAgreeTest(unittest.TestCase):
     def test_every_reason_says_something(self):
         for name, reason in NOT_DIALLED_BY_THE_PLAYER.items():
             self.assertGreater(len(reason.strip()), 40, f"{name}'s reason is a placeholder")
+
+    def test_a_reason_is_not_also_a_caller(self):
+        """The other direction, and the one the subtraction above cannot see.
+
+        `test_no_endpoint_is_unreachable` computes a one-directional set
+        difference, so an endpoint listed here AND wired into the METHOD map
+        passes silently -- the excuse is simply never consulted. That is not a
+        hypothetical: `get_learner_bootstrap`'s reason says "called server-side,
+        not over HTTP: www/training.py imports it and runs it inside
+        get_context", which stops being true the moment a host without a
+        server-side template render has to dial it. A Desk Page is exactly that
+        host.
+
+        The failure shape is the one this whole module exists to catch: nothing
+        errors, and a sentence explaining why something is safe outlives the
+        arrangement that made it safe.
+        """
+        both = sorted(_method_map() & set(NOT_DIALLED_BY_THE_PLAYER))
+        self.assertEqual(
+            both,
+            [],
+            f"{both} are in the player's METHOD map AND in NOT_DIALLED_BY_THE_PLAYER. "
+            "Being dialled is the opposite of the claim; delete the entry.",
+        )
 
 
 class AskTheAuthorIsReachableTest(unittest.TestCase):
@@ -567,7 +590,7 @@ class TheClientStillPostsTest(unittest.TestCase):
         self.assertRegex(
             src,
             r"fetch\(PREFIX \+ method, \{\s*\n\s*method: \"POST\"",
-            "www/training.html's call() no longer posts — declaring the server "
+            "the transport's call() no longer posts — declaring the server "
             "POST-only would 405 every learner request",
         )
 
@@ -575,8 +598,7 @@ class TheClientStillPostsTest(unittest.TestCase):
         """``navigator.sendBeacon`` is always a POST, and the last heartbeat on
         pagehide goes through it. Named here because it is the one call that does
         not use ``call()``, so the assertion above does not cover it."""
-        src = (APP / "www" / "training.html").read_text(encoding="utf-8")
-        self.assertIn("sendBeacon", src)
+        self.assertIn("sendBeacon", PAGE.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

@@ -152,9 +152,65 @@ def send_assigned(assignment):
 	body = f"""
 		<p>Hi {frappe.utils.escape_html(recipient.full_name)},</p>
 		<p>You have been assigned the training <b>{frappe.utils.escape_html(title)}</b>.{due}</p>
-		<p><a href="{get_url('/training')}">Open your training</a></p>
+		<p><a href="{get_url('/app/learn')}">Open your training</a></p>
 	"""
 	_send(recipient, _("Training assigned: {0}").format(title), body, doc.name)
+	_raise_todo(doc, title)
+
+
+def _raise_todo(doc, title):
+	"""Put the course in the learner's own ToDo list, and ring the desk bell.
+
+	The email is the notification somebody reads once and archives. This is the one
+	that stays somewhere they already look: `frappe.desk.form.assign_to.add` creates
+	a **ToDo** (which is the desk's "assigned to me" list) *and* a **Notification
+	Log** entry (which is the bell), in one call, natively.
+
+	Three things make this careful rather than a one-liner:
+
+	* **It runs in the enqueued job, never in `after_insert`.** `assign_to.add` can
+	  `frappe.throw` -- if the assignee lacks read permission and
+	  `disable_document_sharing` is on, it refuses with "Missing Permission" -- and a
+	  throw inside `after_insert` would abort the insert. Losing the assignment
+	  because the ToDo could not be made would be exactly backwards: the row is the
+	  obligation, this is only how somebody hears about it.
+	* **It is idempotent by `assign_to`'s own hand.** The function collects
+	  `users_with_duplicate_todo` and skips them, so a re-drive after a deploy (which
+	  FLUSHDBs the queue redis and destroys pending jobs) makes no second ToDo.
+	* **`frappe.flags.mute_messages`.** `assign_to.add` `msgprint`s on a duplicate or
+	  a share, and a msgprint raised in a background job still rides out to whatever
+	  client is listening as `_server_messages`. A manager assigning a course would
+	  have seen "Already in the following Users ToDo list" pop over the form.
+
+	Deliberately not given a `description` beyond the course: the ToDo's own subject
+	links back to the assignment, and the assignment says everything else.
+	"""
+	if not doc.get("user"):
+		return
+	muted = frappe.flags.mute_messages
+	frappe.flags.mute_messages = True
+	try:
+		from frappe.desk.form.assign_to import add as assign_to_add
+
+		assign_to_add(
+			{
+				"doctype": "Training Assignment",
+				"name": doc.name,
+				"assign_to": [doc.user],
+				"description": _("Training: {0}").format(title),
+				"date": doc.get("due_date") or None,
+			}
+		)
+	except Exception:
+		# Never fatal. The learner has the email; a missing ToDo is a smaller loss
+		# than a logged exception would suggest, and the alternative -- letting this
+		# escape -- takes the email with it, because they share a job.
+		frappe.log_error(
+			f"Could not raise a ToDo for {doc.name}: {frappe.get_traceback()}",
+			"Training assignment",
+		)
+	finally:
+		frappe.flags.mute_messages = muted
 
 
 # ------------------------------------------------------------------ reminders
@@ -184,7 +240,7 @@ def send_due_digest(user, assignments):
 		parts.append("<p>These are coming up:</p><ul>")
 		parts.extend(_course_line(a) for a in upcoming)
 		parts.append("</ul>")
-	parts.append(f'<p><a href="{get_url("/training")}">Open your training</a></p>')
+	parts.append(f'<p><a href="{get_url("/app/learn")}">Open your training</a></p>')
 
 	subject = (
 		_("Training overdue ({0})").format(len(overdue))

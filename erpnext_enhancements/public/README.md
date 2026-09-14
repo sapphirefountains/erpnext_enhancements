@@ -166,6 +166,7 @@ See [`www/README.md`](../www/README.md) for the service-worker / offline side.
 
 ## Gotchas
 
+- **A versioned `/assets` file pulled at runtime goes through `TR.loadAssets` (`js/training/desk_assets.js`, imported by `erpnext_enhancements.bundle.js`) — never `frappe.require`.** `frappe.assets.extn()` derives the type by splitting the URL on `?` and taking the last segment, so a cache-busted `player.css?v=1.428.1` reports its extension as the version string and loads as neither css nor js. It fails by doing nothing, which on a stylesheet is an unstyled page rather than an error. The `?v=` token is mandatory and `TR.loadAssets` refuses a path without one: raw `/assets` are served year-immutable with no content hash, so an edit never reaches a device that already cached it — and the machine that would notice is the one whose cache is cold, i.e. the author's. This is the **third** copy of that loader and the last; the first was the classic Training Builder's `load_player` (deleted v1.422.0), the second `training_canvas.js`'s private `tc_load_asset` (folded in v1.428.2).
 - Comments App double-mount avoidance: the six doctypes whose form scripts call `render_comments_app` are intentionally absent from `COMMENT_APP_DOCTYPES`.
 - `kiosk.css` is the one CSS file **not** loaded via `hooks.py` (it's referenced by `www/kiosk.html`).
 - Many global monkey-patches (`KanbanView.refresh`, `FileView.setup_view`, `TreeView.get_tree_nodes`, `msgprint`/`show_alert`/`request.error`) are guarded by idempotency flags and **may need revisiting on Frappe upgrades**.

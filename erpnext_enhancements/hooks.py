@@ -78,6 +78,21 @@ doctype_js = {
 	# Training Signoff through the existing engine (evaluations.record_evaluation)
 	# rather than saving a verdict on the form. In public/js like the Course script
 	# above -- NOT the doctype-folder file (see the double-load note below).
+	# training (Phase 6 D6): the door, on the record that says you owe a course.
+	# This doctype had NO form script until v1.429.1 -- a learner could open the row
+	# telling them a course is due and there was nothing on it that would take them
+	# to it. Routes with frappe.set_route rather than an href: /app is a
+	# website_redirect to /desk in v16, so a hand-built link costs a full reload
+	# plus a hop and is not intercepted by the router.
+	"Training Assignment": ["public/js/training/training_assignment.js"],
+	# training (Phase 6 D9): "Preview as a learner" on one lesson. An author fixing a
+	# typo in a summary had no way to see the result short of opening the whole
+	# canvas and navigating back. Opens /training_preview rather than mounting a
+	# player in a dialog: the draft payload is built server-side by _split_lesson
+	# and no endpoint returns it as JSON, so an in-form player would mean rebuilding
+	# it in JavaScript -- the ~640 lines the classic builder carried and the canvas
+	# port deliberately did not.
+	"Training Lesson": ["public/js/training/training_lesson.js"],
 	"Training Evaluation": ["public/js/training/training_evaluation.js"],
 	# training: the Submission form's "Grade" button, which files a real grade
 	# through submissions.grade_submission (stamps grader, times it, mails the
@@ -323,6 +338,11 @@ doctype_list_js = {
 	# in beside it: start from a shape, or draft it with AI. Both land on the same
 	# unpublished Draft behind the same review gate.
 	"Training Course": "public/js/training/training_course_list.js",
+	# training (Phase 6 D6): "Open training", plus a real indicator per status.
+	# permission_query_conditions already scopes this list to the learner's own
+	# rows, so for the fifteen people holding Training Learner this list IS "what
+	# I owe" -- which is why the learner workspace links straight at it.
+	"Training Assignment": "public/js/training/training_assignment_list.js",
 	"File": "public/js/global_enhancements/file_list.js",
 	"Item": "public/js/item_list.js",
 	# procurement — the Order Stage pill: a real colour per stage (frappe's
@@ -669,6 +689,17 @@ doc_events = {
 			"erpnext_enhancements.hr_enhancements.onboarding.on_employee_update",
 		],
 	},
+	"Training Assignment": {
+		# training: tell the learner, however the row got here. notify_assigned had
+		# exactly two callers -- the auto-assign engine and api.training_author's
+		# assign_course -- and hooks.py named this doctype only in its two permission
+		# hooks. So a Training Manager pressing New on the list produced no email, no
+		# bell, no ToDo and no sign of any kind: the assignment existed, the learner
+		# was never told, and the first anybody knew was the overdue sweep some days
+		# later. A doc_event rather than a third explicit call, because the shape of
+		# that bug is "one more path that forgot".
+		"after_insert": "erpnext_enhancements.training.assignment.on_assignment_insert",
+	},
 	"Training Completion": {
 		# training: certificate issuance, badge awards and the "you passed" email ride the
 		# Completion submit rather than the endpoint, so a completion recorded by a manager
@@ -919,6 +950,15 @@ scheduler_events = {
 		"30 7 * * 5": ["erpnext_enhancements.process_steps.send_weekly_sla_digest"],
 	},
 	"daily": [
+		# training: re-grant Training Learner to anybody who owes a course and cannot
+		# open it. `roles.grant_learner_role` is correct and always was; it is only
+		# CALLED on Employee insert and on an Employee gaining a user_id, neither of
+		# which fires again for somebody who already exists. So a direct grant wiped
+		# by populate_role_profile_roles -- which rebuilds `roles` from the profile
+		# union on every User save -- was never re-made, and two people with a due
+		# course could not open it. Keyed on owing a course rather than on being an
+		# Employee, because the obligation is what needs the role.
+		"erpnext_enhancements.training.tasks.sweep_learner_roles",
 		# training: move assignments past their due date into Overdue. A separate
 		# pass rather than a side effect of the reminder job, because the status has
 		# to be right whether or not notifications are switched on — the compliance
@@ -1917,11 +1957,11 @@ default_log_clearing_doctypes = {"Notification Log": 90}
 ignore_links_on_delete = ["User Form Draft"]
 
 portal_menu_items = [
-	# training: customers reach "how to operate your fountain" at /training -- the
-	# same mobile page the field crew uses, role-gated rather than duplicated into
-	# a second customer-only page. Added only now that the page actually exists; a
-	# dead menu item teaches people to ignore the menu.
-	{"title": "Training", "route": "/training", "role": "Training Learner"},
+	# The Training entry left in v1.429.2. Courses are taken in the Desk now, and
+	# `Training Learner` keeps desk_access = 0, so a customer contact holding it
+	# could not open the destination -- a menu item leading to a login page teaches
+	# people to ignore the menu, which was the reason the entry was held back until
+	# the page existed in the first place.
 	{"title": "Maintenance Records", "route": "/maintenance-records", "role": "Customer"},
 	{"title": "Pay Invoices", "route": "/pay", "role": "Customer"},
 ]

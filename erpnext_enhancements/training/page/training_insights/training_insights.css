@@ -1,0 +1,169 @@
+/*
+ * Training Insights chrome. The class registry for training_insights.js: a class the
+ * JS invents with no rule here renders as an unstyled div.
+ *
+ * PREFIX IS `ti-`, alongside `tr-` (the learner render), `tc-` (the authoring
+ * canvas) and `tl-` (the learner Desk host).
+ *
+ * EVERY COLOUR COMES FROM FRAPPE, not from the Aurora palette. This is a manager's
+ * console, not a learner's reading surface: it should look like every other desk
+ * dashboard, it should follow the desk theme with no work of its own, and it should
+ * not pull player.css (46KB) to render six numbers and three tables. The one
+ * exception is the semantic red below, which is literal for the same reason the
+ * learner stylesheet keeps its answer colours literal — "overdue" must not become a
+ * different idea because somebody edited a palette.
+ */
+
+.ti-page {
+	padding: 8px 0 24px;
+}
+
+/* --------------------------------------------------------------- the numbers */
+
+.ti-tiles {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	margin-bottom: 8px;
+}
+
+.ti-tile {
+	flex: 1 1 150px;
+	min-width: 140px;
+	padding: 14px 16px;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 8px);
+	background: var(--card-bg);
+	text-align: left;
+	/* Reset the button the clickable variant is built from, so the two tiles are
+	   indistinguishable until you hover one. */
+	font: inherit;
+	color: inherit;
+}
+
+.ti-tile.is-clickable {
+	cursor: pointer;
+}
+
+.ti-tile.is-clickable:hover,
+.ti-tile.is-clickable:focus-visible {
+	border-color: var(--primary);
+}
+
+.ti-tile-value {
+	font-size: 1.75rem;
+	font-weight: 700;
+	line-height: 1.1;
+	color: var(--heading-color);
+}
+
+.ti-tile-label {
+	margin-top: 2px;
+	font-size: 0.8125rem;
+	color: var(--text-muted);
+}
+
+/* Literal, and only ever applied when the count is above zero — a red 0 reads as a
+   problem that is not there. */
+.ti-tile.is-bad .ti-tile-value,
+td.is-bad {
+	color: #e03636;
+}
+
+/* ---------------------------------------------------------------- the tables */
+
+.ti-section {
+	margin: 24px 0 8px;
+	font-size: 1rem;
+	font-weight: 600;
+	color: var(--heading-color);
+}
+
+/* Tables scroll inside their own box rather than pushing the page sideways: the
+   by-course table is six columns and the desk already spends width on a sidebar. */
+.ti-table-wrap {
+	overflow-x: auto;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 8px);
+	background: var(--card-bg);
+}
+
+.ti-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.875rem;
+}
+
+.ti-table th,
+.ti-table td {
+	padding: 8px 12px;
+	text-align: left;
+	border-bottom: 1px solid var(--border-color);
+	white-space: nowrap;
+}
+
+.ti-table th {
+	font-weight: 600;
+	color: var(--text-muted);
+	background: var(--bg-color);
+}
+
+.ti-table tbody tr:last-child td {
+	border-bottom: none;
+}
+
+.ti-link {
+	color: var(--primary);
+	cursor: pointer;
+}
+
+/* ------------------------------------------------------------------ the bars */
+
+.ti-bar {
+	position: relative;
+	min-width: 90px;
+	height: 18px;
+	border-radius: 9px;
+	background: var(--bg-color);
+	overflow: hidden;
+}
+
+.ti-bar-fill {
+	position: absolute;
+	inset: 0 auto 0 0;
+	background: var(--primary);
+	opacity: 0.25;
+}
+
+.ti-bar-text {
+	position: relative;
+	display: block;
+	line-height: 18px;
+	padding: 0 8px;
+	font-size: 0.75rem;
+	color: var(--text-color);
+}
+
+/* ----------------------------------------------------------------- the rest */
+
+.ti-recent {
+	margin: 0;
+	padding: 8px 12px 8px 28px;
+	font-size: 0.875rem;
+	color: var(--text-color);
+}
+
+.ti-empty {
+	padding: 24px;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 8px);
+	background: var(--card-bg);
+	color: var(--text-muted);
+	text-align: center;
+}
+
+.ti-meta {
+	margin-top: 16px;
+	font-size: 0.75rem;
+	color: var(--text-muted);
+}

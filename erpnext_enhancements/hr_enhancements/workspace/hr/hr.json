@@ -308,7 +308,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-10 12:00:00.000000",
+ "modified": "2026-09-13 16:30:00.000000",
  "modified_by": "Administrator",
  "module": "HR Enhancements",
  "name": "HR",
@@ -323,8 +323,8 @@
   {
    "color": "Blue",
    "label": "Open my training",
-   "type": "URL",
-   "url": "/training"
+   "link_to": "learn",
+   "type": "Page"
   },
   {
    "color": "Purple",

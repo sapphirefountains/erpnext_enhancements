@@ -308,31 +308,62 @@
 			complete: true,
 		};
 
+		// Where the player says where it is. THREE hosts answer that differently, so it
+		// is an injected adapter rather than a branch:
+		//
+		//   * `b.router` present -- the HOST owns the URL, in both directions. The Desk
+		//     page passes one that drives frappe.router, and drives the player back from
+		//     on_page_show. Nothing below runs, and neither does the popstate handler,
+		//     because the desk's own router already is the popstate handler.
+		//   * no router and `b.history === false` -- nothing touches the address bar at
+		//     all. The preview harness, and the Desk page before v1.432.2.
+		//   * neither -- the portal's own replaceState, unchanged since v1.427.1.
+		//
+		// The adapter is checked FIRST and independently of `b.history`, and that is the
+		// load-bearing part: it lets the Desk host keep `history: false` -- so this file
+		// never reads the URL back -- while still having the URL written. Writing and
+		// reading are two different jobs, and conflating them is how the desk would have
+		// ended up answering browser Back by running queryParam("course") against a route
+		// that has no query string, and landing on the catalogue every time.
+		function routeState() {
+			var inCourse = COURSE_SCOPED_VIEWS[state.view] === true;
+			return {
+				view: state.view,
+				course: inCourse ? state.courseName : null,
+				// The history STATE carries the lesson whenever we are inside a course; the
+				// URL below omits it on the outline view, which names a course and no single
+				// lesson. That asymmetry is original and deliberate -- do not tidy the two
+				// into agreement.
+				lesson: inCourse ? state.lessonKey : null,
+			};
+		}
+
 		function route() {
+			var next = routeState();
+
+			if (b.router && typeof b.router.write === "function") {
+				try {
+					b.router.write(next);
+				} catch (err) {
+					// Same contract as below: routing is a convenience and losing it must
+					// not stop the lesson.
+				}
+				return;
+			}
+
 			if (b.history === false || !window.history || !window.history.replaceState) return;
 			var base = b.route_base || window.location.pathname;
 			var params = [];
-			var inCourse = COURSE_SCOPED_VIEWS[state.view] === true;
-			if (inCourse && state.courseName) {
-				params.push("course=" + encodeURIComponent(state.courseName));
+			if (next.course) {
+				params.push("course=" + encodeURIComponent(next.course));
 			}
 			// `course` is the outline: it names the course but no single lesson.
-			if (inCourse && state.lessonKey && state.view !== "course") {
-				params.push("lesson=" + encodeURIComponent(state.lessonKey));
+			if (next.lesson && state.view !== "course") {
+				params.push("lesson=" + encodeURIComponent(next.lesson));
 			}
 			if (state.view === "quiz" || state.view === "results") params.push("view=" + state.view);
 			try {
-				window.history.replaceState(
-					{
-						tr: {
-							view: state.view,
-							course: inCourse ? state.courseName : null,
-							lesson: inCourse ? state.lessonKey : null,
-						},
-					},
-					"",
-					base + (params.length ? "?" + params.join("&") : "")
-				);
+				window.history.replaceState({ tr: next }, "", base + (params.length ? "?" + params.join("&") : ""));
 			} catch (err) {
 				// A sandboxed iframe (the builder preview) refuses replaceState.
 				// Routing is a convenience; losing it must not stop the lesson.
@@ -657,8 +688,46 @@
 			);
 		}
 
+		// The one thing a learner part-way through a course wants, at the top of the
+		// first page they see.
+		//
+		// `b.resume` has been on the boot payload since the module shipped and is
+		// server-authoritative -- a learner starting on a phone at lunch and finishing
+		// on a laptop is put back exactly where they were. But the only control that
+		// used it lived on the COURSE view: the catalogue painted announcements,
+		// points, cohorts, live sessions, evaluations and submissions first, so
+		// somebody halfway through a lesson scrolled past six blocks and then clicked
+		// twice more to get back to it.
+		//
+		// Nothing new is fetched here. It is the data that was already in hand, put
+		// where the person who needs it is already looking.
+		function resumeBanner() {
+			var resume = b.resume;
+			if (!resume || !resume.course || !resume.lesson_key) return null;
+
+			var wrap = el("section", "tr-resume");
+			wrap.appendChild(el("p", "tr-resume-eyebrow", t("Pick up where you left off")));
+			wrap.appendChild(el("h2", "tr-resume-title", resume.course_title || resume.course));
+			// No lesson title here: `_resume` sends attempt, course, course_title and
+			// lesson_key, and nothing else. Rendering `resume.lesson_title` would have
+			// been a line that never draws -- the exact read-but-never-sent shape
+			// test_training_boundary_contract exists to catch.
+			wrap.appendChild(
+				button(t("Continue"), "tr-button tr-button-primary tr-resume-go", function () {
+					openCourse(resume.course, resume.lesson_key);
+				})
+			);
+			return wrap;
+		}
+
 		function renderCatalog() {
 			head.appendChild(el("h1", "tr-title", t("Your training")));
+
+			// Above the announcements, and above everything else. See resumeBanner:
+			// this is the only block on the page that is about what this person was
+			// already doing, and it was previously two views away.
+			var resume = resumeBanner();
+			if (resume) main.appendChild(resume);
 
 			// Announcements first — a pinned notice is the most important thing on the
 			// page. Author/manager-posted, scoped to everyone, a course, or a batch.
@@ -3174,7 +3243,15 @@
 
 		// Only fires if something outside the player moves history. Re-rendering
 		// from the URL keeps that landing on the right view instead of a stale one.
-		window.addEventListener("popstate", function () {
+		//
+		// NAMED, and removed in destroy(), because a host that mounts and unmounts the
+		// player inside a long-lived document would otherwise leave one of these bound
+		// per mount, each holding the whole closure alive. On /training that could not
+		// happen -- the page is thrown away with the document -- so the anonymous
+		// handler this replaces never actually leaked. It would have the moment the
+		// player gained a second host, and a Desk Page is exactly that: frappe creates
+		// the page div once (views/container.js add_page) and never removes it.
+		function onPopState() {
 			if (b.history === false) return;
 			var course = queryParam("course");
 			if (!course) {
@@ -3182,7 +3259,8 @@
 				return;
 			}
 			openCourse(course, queryParam("lesson") || null);
-		});
+		}
+		window.addEventListener("popstate", onPopState);
 
 		function start() {
 			// Before anything else, and before any deep link. A course URL opened on
@@ -3216,6 +3294,7 @@
 				runTeardowns();
 				document.removeEventListener("visibilitychange", onVisibility);
 				window.removeEventListener("pagehide", flush);
+				window.removeEventListener("popstate", onPopState);
 				clear(rootEl);
 			},
 		};

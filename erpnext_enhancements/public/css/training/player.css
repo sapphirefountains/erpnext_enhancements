@@ -1,10 +1,25 @@
 /*
- * Learner training player styles (/training — www/training.html + js/training/*.js).
+ * Learner player styles. TWO hosts load this file: the portal page
+ * (www/training.html) and the Desk Page, plus the authoring canvas and the preview
+ * harness, which render lesson content with the learner's own renderer.
  *
- * Website pages carry no desk data-theme attribute, so theming follows the kiosk
- * and itinerary convention: a local --tr-* palette with a prefers-color-scheme
- * dark block (see public/css/kiosk/kiosk.css). Semantic answer colours stay
- * literal — "correct" must not shift with a palette edit.
+ * Theming is therefore three-way, not two — see the block above the dark palette.
+ * A website page carries no desk data-theme attribute and follows the kiosk and
+ * itinerary convention (a local --tr-* palette switched by prefers-color-scheme);
+ * the desk always stamps data-theme, having already resolved its own "automatic"
+ * mode. Honouring only the media query is what put a dark player inside a light
+ * desk, and that reads as the page being broken rather than as a disagreement
+ * about the theme.
+ *
+ * Semantic answer colours stay literal — "correct" must not shift with a palette
+ * edit, in either theme. That is why --tr-ok / --tr-bad inside .tr-quiz have no
+ * dark variant while the rest of the palette does; it is a decision, not an
+ * oversight, and it has been mistaken for one.
+ *
+ * --tr-* IS DECLARED IN THIS FILE AND NOWHERE ELSE. The canvas (tc-) and the desk
+ * host (tl-) both read these names and must never declare them: a second
+ * declaration site is how the authoring surface stops matching what the learner
+ * sees, which is the one thing the canvas exists to guarantee.
  *
  * The palette alone is not enough. Frappe's website stylesheet declares explicit
  * colours on h1-h6, a, strong, label and body, and an inherited colour loses to an
@@ -113,8 +128,29 @@
 	--tr-radius: 16px;
 }
 
+/*
+ * Dark, three ways, because the player now has two hosts that answer "is it dark?"
+ * differently.
+ *
+ *   1. The PORTAL page carries no data-theme attribute at all, so `:not([data-theme="light"])`
+ *      matches and prefers-color-scheme decides. Byte-identical to the behaviour
+ *      this file has always had.
+ *   2. The DESK stamps data-theme="light" or "dark" on <html> and ALWAYS stamps one:
+ *      theme_switcher.js resolves its own "automatic" mode through matchMedia before
+ *      setting the attribute. So the guard on the media block is what stops a learner
+ *      whose OS is dark and whose desk theme is light from getting a dark player
+ *      inside a light desk -- which is what happened before this, and read as the
+ *      page being broken rather than as a theme disagreement.
+ *   3. data-theme="dark" is the explicit desk choice and wins in both directions.
+ *
+ * The two dark blocks are deliberate duplicates: a media block and a plain rule
+ * cannot share one declaration list, and the alternative (a second layer of
+ * indirection through "source" variables) costs more to read than it saves to
+ * write. tests/test_training_desk_theme.py asserts they stay identical, which is
+ * the failure mode that matters -- one edited and the other not.
+ */
 @media (prefers-color-scheme: dark) {
-	:root {
+	:root:not([data-theme="light"]) {
 		--tr-bg: #0a0b14;
 		--tr-surface: #161829;
 		--tr-surface-alt: #1e2138;
@@ -138,6 +174,29 @@
 	}
 }
 
+:root[data-theme="dark"] {
+	--tr-bg: #0a0b14;
+	--tr-surface: #161829;
+	--tr-surface-alt: #1e2138;
+	--tr-text: #f0f1fa;
+	--tr-muted: #8b93b8;
+	--tr-border: #292b45;
+	--tr-accent: #8b5cf6;
+	--tr-accent-grad: linear-gradient(135deg, #a855f7 0%, #22d3ee 100%);
+	--tr-accent-soft: #241a40;
+	--tr-accent-text: #ffffff;
+	/* Lighter than the accent so a lesson link clears AA on the surface card
+	   (#a78bfa = 6.45:1 vs #8b5cf6's 4.14:1). --tr-cta-grad is inherited from
+	   :root; it is white-safe on either ground so it needs no dark variant. */
+	--tr-link: #a78bfa;
+	--tr-ok: #34d399;
+	--tr-ok-soft: #0e2e22;
+	--tr-warn: #fbbf24;
+	--tr-warn-soft: #332708;
+	--tr-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.42);
+	--tr-shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+
 .tr-shell {
 	max-width: 720px;
 	margin: 0 auto;
@@ -149,6 +208,108 @@
 	font-size: 16px;
 	line-height: 1.5;
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* -------------------------------------------------------- resume banner */
+
+/* The first thing on the catalogue, and the only block there that is about what
+   this person was already doing. `b.resume` has been on the boot payload since the
+   module shipped; until v1.429.0 the only control that used it was on the course
+   view, two clicks further in, under six other blocks. */
+.tr-resume {
+	margin: 0 0 16px;
+	padding: 16px 18px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	box-shadow: var(--tr-shadow);
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	align-items: flex-start;
+}
+
+.tr-resume-eyebrow {
+	margin: 0;
+	color: var(--tr-muted);
+	font-size: 0.8125rem;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+}
+
+.tr-resume-title {
+	margin: 0;
+	font-size: 1.125rem;
+	font-weight: 700;
+	letter-spacing: -0.01em;
+}
+
+/* The CTA carries the gradient identity, same as every other primary action. Its
+   appearance comes from .tr-button-primary; this only gives it room and a touch
+   floor, because on a phone this is the button the whole page exists to offer. */
+.tr-resume-go {
+	margin-top: 6px;
+	min-height: 44px;
+}
+
+/* ------------------------------------------------------------- video chapters */
+
+/* A clickable contents list under a lesson video. Only drawn for a real <video>:
+   an External Embed is a cross-origin iframe with no currentTime and no seek, so
+   the list would render and do nothing, which is worse than its absence.
+
+   Nothing here affects watch credit. A forward seek makes media time outrun wall
+   time and the two-clock sampler credits nothing for the span jumped over, so a
+   coverage gate cannot be passed by clicking through the chapters -- and jumping
+   BACK costs nothing either, because the per-second bitmap is idempotent. */
+.tr-video-chapters {
+	list-style: none;
+	margin: 8px 0 0;
+	padding: 0;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	overflow: hidden;
+}
+
+.tr-video-chapter + .tr-video-chapter {
+	border-top: 1px solid var(--tr-border);
+}
+
+.tr-video-chapter-go {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	width: 100%;
+	/* The touch floor, because on a phone this is a target beside a playing video
+	   and a mis-tap costs the learner their place. */
+	min-height: 44px;
+	padding: 10px 12px;
+	border: 0;
+	background: none;
+	color: var(--tr-text);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.tr-video-chapter-go:hover,
+.tr-video-chapter-go:focus-visible {
+	background: var(--tr-surface-alt);
+}
+
+/* Tabular so the times form a column rather than a ragged edge. */
+.tr-video-chapter-at {
+	flex: 0 0 auto;
+	min-width: 3.5em;
+	color: var(--tr-muted);
+	font-variant-numeric: tabular-nums;
+	font-size: 0.875rem;
+}
+
+.tr-video-chapter-title {
+	flex: 1 1 auto;
 }
 
 /* -------------------------------------------------- reset against the host */
@@ -2065,11 +2226,23 @@
 	line-height: 1.5;
 }
 
+/* The same three-way shape as the root palette above, for the two names the quiz's
+   injected fallback stylesheet reads. Kept in step with it by hand: a var cannot
+   reference the name it shadows, so these two literals have to be edited here and
+   in :root together. The semantic answer colours (--tr-ok / --tr-bad) are NOT
+   here on purpose -- see the note at the top of this file: "correct" must not
+   shift with a palette edit, and a learner who learns that green means right
+   should not have to relearn it in the dark. */
 @media (prefers-color-scheme: dark) {
-	:root .tr-quiz {
+	:root:not([data-theme="light"]) .tr-quiz {
 		--tr-bg: #0a0b14;
 		--tr-accent: #8b5cf6;
 	}
+}
+
+:root[data-theme="dark"] .tr-quiz {
+	--tr-bg: #0a0b14;
+	--tr-accent: #8b5cf6;
 }
 
 .tr-quiz,

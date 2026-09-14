@@ -162,12 +162,36 @@ def _grant_role(user_name):
 
 @frappe.whitelist()
 def grant_portal_access(contact, send_welcome_email=0):
-	"""Give a customer Contact a login that can reach ``/training``.
+	"""Refuse, with the reason. The surface this minted a login for no longer exists.
 
-	Deliberately **not** gated on ``training_enabled`` / ``portal_enabled``:
-	preparing access for a client before the switches are turned on is the normal
-	order of events, and refusing it would push somebody into doing it by hand.
+	Until v1.429.2 this created a Website User holding ``Training Learner`` so a
+	customer contact could open ``/training``. That page is now a redirect into the
+	Desk, and ``Training Learner`` keeps ``desk_access = 0`` on purpose — flipping it
+	would turn every customer contact into a System User and move the licensed-user
+	count, which is a billing decision and not a side effect anyone should trip over.
+
+	So the login this would mint can no longer reach anything. Minting it anyway is
+	the worse failure: a manager presses the button, a welcome email goes out, a
+	client sets a password, follows the link, and is bounced to a login page for a
+	Desk they cannot enter. Nobody is told, least of all the person who pressed it.
+
+	**Refused rather than deleted.** The function keeps its caller
+	(``training_portal_access.js`` on the Contact form), which is what keeps
+	``test_training_endpoint_surface``'s no-uncalled-endpoint gate green — and,
+	more to the point, keeps the *reason* attached to the button somebody will
+	eventually press. Customer training is a product decision that was made
+	deliberately; when it is made again, this docstring is where the work starts:
+	the apparatus below is intact.
 	"""
+	frappe.throw(
+		_(
+			"Customer training logins are switched off. Courses are now taken inside "
+			"the app, and the Training Learner role carries no desk access, so this "
+			"login could not open anything. Reinstating customer training is a "
+			"product decision -- see training/portal.py."
+		)
+	)
+
 	_require_manager()
 	if _in_maintenance_context():
 		return None

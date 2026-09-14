@@ -116,8 +116,79 @@ regardless of what any endpoint does.
 - `setup.py` — starter Training Categories (`after_migrate`, insert-only).
 - `workspace/training/` — the desk workspace.
 
+The learner runtime's front end lives in [`../public/js/training/`](../public/js/training/):
+`player.js` (shell, routing, the twelve views), `video.js` (watch telemetry and
+in-video checkpoints), `quiz.js`, `blocks.js` (one renderer per content block) and
+`transport.js` — the HTTP surface, and the **one** place the endpoint names appear.
+`transport.js` left `www/training.html` in v1.428.1, when the portal page stopped
+being the only host; all five are bound by the same rule, asserted in
+[`../tests/test_training_phase3_contracts.py`](../tests/test_training_phase3_contracts.py):
+**no `frappe.*`, ever**. A learner may be a Website User with `desk_access = 0`, who
+never loads the desk bundle — so `frappe.call`, `frappe.msgprint` and `__()` all work
+perfectly while a developer tests logged in as themselves, and throw a
+`ReferenceError` for every customer.
+
+`desk_assets.js` is the exception and is **not** part of that set: it is desk-only by
+definition (`TR.loadAssets`, the one versioned `/assets` loader the authoring canvas
+and the learner Desk Page share), and it is imported by the global desk bundle rather
+than by any page, because a Desk Page cannot load a helper before the helper exists.
+
 The Course form script is [`../public/js/training/training_course.js`](../public/js/training/training_course.js),
 wired via `doctype_js`.
+
+## Where a learner takes a course
+
+**`/desk/learn`** — a Desk Page ([`page/learn/`](page/learn/)) that mounts the *same*
+`TR.Player` the portal used to. It is a host, not a second player: it builds the mount,
+loads the runtime through `TR.loadAssets`, dials `get_learner_bootstrap` through the
+shared transport, and constructs `TR.Player(rootEl, boot, transport)`. Every pixel below
+the page head comes from the four player files.
+
+It moved there in v1.429.0 for a measured reason. **All fifteen Training Learner holders
+are System Users**, all 26 Training Assignments belong to System Users, and the only
+Website Users on the site are service accounts — so the population `/training` was built
+desk-free for was zero, while the people who did hold the role had no desk door at all and
+reached their courses only through a link in an email. 20 of 26 assignments sat at
+`Not Started`.
+
+**The route is `learn`, and it cannot be `training`.** `frappe.router` resolves the first
+path segment against `frappe.workspaces` *before* doctypes and before the page loader, and
+discards every segment after it; `desk.js` keys that map by `slug(page.name)`, and the
+Training **workspace** is named "Training". A page named `training` would never render —
+and because `allowed_workspaces` is permission-filtered, that one URL would be the
+workspace for the fifteen learners and the page for anybody who cannot see it. One URL,
+two destinations, no error in either. [`../tests/test_workspaces.py`](../tests/test_workspaces.py)
+fails the build on any Page docname that shadows a workspace slug.
+
+Deep links work — `/desk/learn/<COURSE>/<LESSON>` — and the player still does not write the
+address bar: the page passes `history: false` and the deep link arrives through
+`boot.start`, the same pair `www/training_preview.html` uses.
+
+`/training` is still a route and always will be: six senders have emailed it since
+v1.208.0 and those messages are still in inboxes. It redirects (`www/training.py`), and
+renders a sentence for anyone without desk access rather than bouncing them to a login
+page for a Desk they cannot enter.
+
+**Two workspaces, not one.** `workspace/training/` is the authoring and reporting console;
+`workspace/my_training/` is the learner's. The split is not cosmetic: `training.json`
+carries `roles: []`, which does **not** mean "nobody" — it means no restriction beyond the
+module gate, and every learner holds read DocPerms on fourteen Training doctypes. So the
+authoring console had been sitting in all fifteen sidebars with no way to start a course
+from it.
+
+**`/desk/training-insights`** ([`page/training_insights/`](page/training_insights/)) is the
+manager's console, and its numbers are clickable through to the lists they count.
+
+### The four CSS prefixes
+
+`tr-` is the learner render ([`../public/css/training/player.css`](../public/css/training/player.css)),
+`tc-` the authoring canvas, `tl-` the learner Desk host, `ti-` the insights page.
+**`--tr-*` is declared in `player.css` and nowhere else** (plus `quiz.js`'s injected
+fallback sheet), which is what lets the canvas inherit a palette fix for free — and is
+pinned by [`../tests/test_training_desk_theme.py`](../tests/test_training_desk_theme.py).
+The palette is switched three ways, because the two hosts disagree about what "dark" means:
+a website page carries no `data-theme` and follows `prefers-color-scheme`, while the Desk
+always stamps `data-theme`, having already resolved its own "automatic" mode.
 
 Endpoints live in [`../api/training_author.py`](../api/README.md) (authoring,
 publishing, assignment), [`../api/training.py`](../api/README.md) (the learner
@@ -358,13 +429,15 @@ Bench-free coverage: [`../tests/test_training_submissions.py`](../tests/test_tra
 
 ### Manager analytics (WI-071 Phase H)
 
-A read-only dashboard at **`/training_analytics`** (`www/training_analytics.py` +
-`.html`) for training managers: org-wide completion / overdue / awaiting-sign-off,
+A read-only dashboard at **`/desk/training-insights`**
+([`page/training_insights/`](page/training_insights/)) for training managers: org-wide completion / overdue / awaiting-sign-off,
 the Phase-F grading backlog, a by-course table with completion bars and average
 score, active-cohort progress, and recent completions. One whitelisted read,
 [`analytics.py`](analytics.py) `get_training_analytics`, is the single source; the
-page renders it server-side with autoescaped Jinja (on the page at first paint, no
-fetch). **Manager-only** — the {System Manager, Training Manager, HR Manager} set
+page renders the dict it returns and **computes nothing of its own** — "overdue" is a
+predicate, and a second implementation in JavaScript would be a second chance to get it
+wrong. It moved off `/training_analytics` in v1.431.0 (that route is now a redirect);
+it was a website page whose entire audience was desk users. **Manager-only** — the {System Manager, Training Manager, HR Manager} set
 that is unscoped in [`permissions.py`](permissions.py), because it reports across
 every learner; a non-manager gets a 404. The rollup is Python over guarded `get_all`
 reads, not SQL, on purpose: the *overdue* rule is a predicate (a `<`-on-a-nullable-date
@@ -473,6 +546,12 @@ Three roles, seeded insert-only by
 contact becomes a System User, which moves the licensed-user count and the bill.
 `tests/test_training_roles.py` pins it.
 
+That is why the role alone does not open `/desk/learn`: desk access comes from being a
+System User, which every learner on this site already is by virtue of their other roles.
+The role decides whether the page is *offered* — `learn.json`'s `roles` list — and the
+endpoints re-check for themselves, because a Desk Page has no server controller and its
+role list is show/hide, never a permission boundary.
+
 ### Granting the role is not `add_roles`
 
 `User.validate` calls `populate_role_profile_roles`, which — for any user holding
@@ -500,3 +579,21 @@ function, so the two cannot drift.
 = 0`. Authoring works with the switches off; nothing is emailed and no rule
 auto-assigns until they are turned on. Same staged-rollout contract as Travel
 Management.
+
+**The learner runtime follows `training_enabled` alone.** It used to read
+`training_enabled AND portal_enabled`, back when `/training` was the only learner surface
+and "the portal" and "the runtime" were the same thing. They stopped being the same thing
+when the runtime gained a Desk Page — and the field that would have taken it down is a
+checkbox a Training Manager can untick, which was still labelled for the surface that no
+longer renders. Every read endpoint answers a closed runtime with a *message* rather than
+an exception, on purpose, so ticking it off would have shown all fifteen learners
+"Training is not available yet" with nothing in the Error Log. One gate now:
+`training_settings.runtime_ready()`.
+
+`portal_enabled` keeps its real job — the customer-portal apparatus in
+[`portal.py`](portal.py) — and is relabelled **Customer Portal Access** to say so. The
+fieldname is unchanged: a Single stores one row per fieldname in `tabSingles`, so renaming
+it is a data patch and not a JSON edit. `grant_portal_access` itself **refuses** as of
+v1.429.2: it minted a login for a surface that no longer renders, and reinstating customer
+training is a product decision — the apparatus under the refusal is intact for when it is
+made.

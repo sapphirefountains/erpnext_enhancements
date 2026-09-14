@@ -265,7 +265,7 @@ class TrainingCanvas {
 	load_assets() {
 		if (this._assets) return this._assets;
 		const version = (frappe.boot.versions && frappe.boot.versions.erpnext_enhancements) || "0";
-		this._assets = Promise.all(TC_ASSETS.map((path) => tc_load_asset(path + "?v=" + encodeURIComponent(version)))).catch(
+		this._assets = TR.loadAssets(TC_ASSETS, version).catch(
 			(error) => {
 				this._assets = null;
 				throw error;
@@ -1293,6 +1293,7 @@ class TrainingCanvas {
 		// there either: `add_pin` seeded an empty question against a `reqd` field, so the
 		// insert was refused on a four-second autosave.
 		$box.append(this.timeline(lesson, block));
+		$box.append(this.chapters_editor(lesson, block));
 		if (this.ai_enabled) {
 			$('<button class="btn btn-default btn-xs" style="margin-top:6px"></button>')
 				.text(__("Suggest checkpoints with AI"))
@@ -2059,6 +2060,171 @@ class TrainingCanvas {
 	// filed under it, and the one place this file may mint anything is the transient
 	// "cp-" below, which is thrown away the moment a real key comes back.
 
+	// --------------------------------------------------------- video chapters
+	//
+	// NB `lesson.video_chapters`, not `lesson.chapters`: this class already uses
+	// `this.chapters` for `Training Chapter`, which groups LESSONS and has nothing
+	// to do with a timestamp inside a video. Two different ideas, one English word.
+	//
+	// A list editor, deliberately, and not a second timeline. Chapters and
+	// checkpoints look alike -- both are a timestamp on one video block -- and are
+	// authored for opposite reasons: a checkpoint INTERRUPTS and has to be placed
+	// against what is on screen at that second, which is what the timeline is for; a
+	// chapter is a table of contents, written in order, and reads better as a list
+	// than as pins an author has to hover to identify.
+	//
+	// Persisted the way checkpoints are -- `frappe.client` against the doctype, with
+	// DocPerms doing the gating -- rather than through the block table.
+	// `save_draft_version` replaces the block child table by position and refuses
+	// anything outside BLOCK_ALLOWED_FIELDS, so a chapter sent that way would be
+	// dropped silently and come back in `rejected`.
+	chapters_editor(lesson, block) {
+		const $wrap = $('<div class="tc-chapters"></div>');
+		$('<div class="tc-chapters-head"></div>').text(__("Chapters")).appendTo($wrap);
+
+		if (!block.block_key) {
+			// A block created this session has no stable key until the save returns, and
+			// a chapter keyed on a transient one would be stranded on the next load.
+			$('<div class="tc-muted"></div>')
+				.text(__("Save the lesson first — a chapter is keyed to this block."))
+				.appendTo($wrap);
+			return $wrap;
+		}
+
+		const $list = $('<ol class="tc-chapter-list"></ol>').appendTo($wrap);
+		// Keyed by block, so a write repaints ONE list. Never render_sheet(): a full
+		// re-render tears down the rich-text controls, so a save landing a second
+		// after the author started typing in a block would eat it -- the same reason
+		// after_checkpoint_write repaints pins rather than the sheet.
+		this._chapter_lists = this._chapter_lists || {};
+		this._chapter_lists[block.block_key] = { $list: $list, lesson: lesson, block: block };
+		this.paint_chapters(lesson, block);
+
+		$('<button class="btn btn-default btn-xs" style="margin-top:6px"></button>')
+			.text(__("Add a chapter"))
+			.on("click", () => this.add_chapter(lesson, block))
+			.appendTo($wrap);
+		return $wrap;
+	}
+
+	paint_chapters(lesson, block) {
+		const held = (this._chapter_lists || {})[block.block_key];
+		if (!held) return;
+		const $list = held.$list.empty();
+		const rows = this.chapters_for(lesson, block);
+		rows.forEach((row) => $list.append(this.chapter_row(lesson, block, row)));
+		if (!rows.length) {
+			$('<li class="tc-muted"></li>').text(__("No chapters yet.")).appendTo($list);
+		}
+	}
+
+	chapters_for(lesson, block) {
+		return ((lesson && lesson.video_chapters) || [])
+			.filter((row) => row.block_key === block.block_key)
+			.sort((a, b) => this.num(a.at_seconds) - this.num(b.at_seconds));
+	}
+
+	chapter_row(lesson, block, row) {
+		const $li = $('<li class="tc-chapter"></li>');
+
+		const $at = $('<input type="number" min="0" class="tc-chapter-at form-control input-xs" />').val(
+			this.num(row.at_seconds)
+		);
+		const $title = $('<input type="text" class="tc-chapter-title form-control input-xs" />').val(
+			row.title || ""
+		);
+		// `change`, not `input`: one write when the author leaves the field, rather
+		// than one per keystroke against a doctype that refuses duplicate timestamps.
+		const commit = () => {
+			row.at_seconds = Math.max(0, this.num($at.val()));
+			const title = ($title.val() || "").trim();
+			if (!title) {
+				// `title` is reqd on the doctype. Refuse here rather than send a save
+				// that comes back as a 500 the author has to read.
+				$title.val(row.title || "");
+				return;
+			}
+			row.title = title;
+			this.write_chapter(lesson, row);
+		};
+		$at.on("change", commit);
+		$title.on("change", commit);
+
+		$li.append($at).append($title);
+		$('<button class="btn btn-default btn-xs tc-chapter-del"></button>')
+			.text("×")
+			.attr("title", __("Delete this chapter"))
+			.on("click", () => this.delete_chapter(lesson, block, row))
+			.appendTo($li);
+		return $li;
+	}
+
+	add_chapter(lesson, block) {
+		const rows = this.chapters_for(lesson, block);
+		const last = rows.length ? this.num(rows[rows.length - 1].at_seconds) : -1;
+		const row = {
+			lesson: lesson.name,
+			block_key: block.block_key,
+			// One second past the last, so a second "Add" does not collide with the
+			// first on the doctype's duplicate-timestamp refusal.
+			at_seconds: last + 1,
+			title: __("New chapter"),
+		};
+		lesson.video_chapters = (lesson.video_chapters || []).concat([row]);
+		this.paint_chapters(lesson, block);
+		this.write_chapter(lesson, row);
+	}
+
+	write_chapter(lesson, row) {
+		const doc = {
+			doctype: "Training Video Chapter",
+			lesson: row.lesson || lesson.name,
+			block_key: row.block_key,
+			at_seconds: this.num(row.at_seconds),
+			title: row.title || "",
+		};
+		if (!row.name) {
+			return frappe
+				.call("frappe.client.insert", { doc })
+				.then((r) => {
+					const saved = (r && r.message) || {};
+					row.name = saved.name;
+					row.modified = saved.modified;
+					this.paint_status("saved");
+				})
+				.catch((error) => this.chapter_write_failed(error));
+		}
+		return frappe
+			.call("frappe.client.save", { doc: { ...doc, name: row.name, modified: row.modified } })
+			.then((r) => {
+				row.modified = ((r && r.message) || {}).modified;
+				this.paint_status("saved");
+			})
+			.catch((error) => this.chapter_write_failed(error));
+	}
+
+	delete_chapter(lesson, block, row) {
+		const drop = () => {
+			lesson.video_chapters = (lesson.video_chapters || []).filter((r) => r !== row);
+			this.paint_chapters(lesson, block);
+		};
+		if (!row.name) return drop();
+		frappe
+			.call("frappe.client.delete", { doctype: "Training Video Chapter", name: row.name })
+			.then(drop)
+			.catch((error) => this.chapter_write_failed(error));
+	}
+
+	chapter_write_failed(error) {
+		// Loud, not swallowed. A chapter that silently failed to save looks saved
+		// until the next reload, and the author has moved on by then.
+		this.paint_status("dirty");
+		frappe.show_alert({
+			message: __("That chapter did not save: {0}", [(error && error.message) || __("unknown error")]),
+			indicator: "red",
+		});
+	}
+
 	timeline(lesson, block) {
 		const duration = Math.max(1, this.num(block.video_duration_seconds));
 		const $wrap = $('<div class="tc-timeline-wrap"></div>');
@@ -2443,28 +2609,9 @@ class TrainingCanvas {
 	}
 }
 
-// Load a versioned /assets file by hand. NOT frappe.require: frappe.assets.extn()
-// derives the type by splitting on "?" and taking the last segment, so a
-// cache-busted "…/blocks.js?v=1.376.0" reports its extension as the version and
-// loads as neither css nor js. The version token itself is mandatory — raw
-// /assets are served immutable for a year (public/README.md). Same idiom as the
-// classic builder's load_player.
-function tc_load_asset(url) {
-	return new Promise((resolve, reject) => {
-		const is_css = url.split("?")[0].endsWith(".css");
-		const selector = is_css ? `link[data-tc-asset="${url}"]` : `script[data-tc-asset="${url}"]`;
-		if (document.querySelector(selector)) return resolve();
-		const el = document.createElement(is_css ? "link" : "script");
-		el.setAttribute("data-tc-asset", url);
-		if (is_css) {
-			el.rel = "stylesheet";
-			el.href = url;
-		} else {
-			el.async = false;
-			el.src = url;
-		}
-		el.onload = () => resolve();
-		el.onerror = () => reject(new Error(__("Could not load {0}", [url])));
-		document.head.appendChild(el);
-	});
-}
+// The versioned /assets loader now lives in public/js/training/desk_assets.js
+// (TR.loadAssets), imported by the global desk bundle so it exists before any
+// Desk Page script runs. It used to be a private tc_load_asset here -- the
+// second of three copies; the first was the classic builder's load_player,
+// deleted with that page in v1.422.0, and the learner Desk Page would have
+// been the fourth. The reasons it cannot be frappe.require moved with it.

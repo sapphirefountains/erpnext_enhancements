@@ -7,6 +7,786 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.433.0] - 2026-09-13
+
+Training Phase 6, D10. **Chaptered video** — a clickable contents list inside a lesson
+video.
+
+### Added
+
+- **`Training Video Chapter`** — a label and a timestamp, keyed by `(lesson, block_key)`.
+  It mirrors in-video **checkpoints** deliberately: a standalone doctype rather than a child
+  table, because `Training Content Block` is itself a child of `Training Lesson` and Frappe
+  has no grandchild tables; and joined on a stable `block_key` rather than an `idx`, so
+  reordering a lesson's blocks cannot move a chapter onto a different video.
+
+  The controller refuses two chapters at the same second in the same video. The list is
+  ordered by `at_seconds`, so a duplicate renders as two adjacent entries in an arbitrary
+  order that changes between reads — the author sees one order, the learner another, and
+  neither is wrong.
+
+- **Authoring on the canvas**, under the Video block, as a **list** rather than a second
+  timeline. Chapters and checkpoints look alike and are authored for opposite reasons: a
+  checkpoint *interrupts* and has to be placed against what is on screen at that second,
+  which is what the timeline is for; a chapter is a table of contents, written in order,
+  and reads better as a list than as pins an author has to hover to identify.
+
+  It saves through `frappe.client` against the doctype, the way checkpoints do — not
+  through the block table, because `save_draft_version` replaces that child table by
+  position and refuses anything outside `BLOCK_ALLOWED_FIELDS`, so a chapter sent that way
+  would be dropped silently and come back in `rejected`. And it repaints **only its own
+  list**: a full re-render tears down the rich-text controls, so a save landing a second
+  after the author started typing in a block would eat it — the same reason
+  `after_checkpoint_write` repaints pins rather than the sheet.
+
+- **The learner's contents list** in `video.js`, rendered under the coverage meter.
+  Clicking one sets `video.currentTime`, and resumes playback if the video was paused. A
+  seek the browser refuses — a video that has not loaded its metadata yet — is caught,
+  because an error thrown there would take the whole block render down.
+
+### The two things that make this honest, neither of which needed new code
+
+- **Seeking to a chapter earns no watch coverage.** `video.js` credits a media span only
+  when the media advance is consistent with elapsed wall time × rate, so a forward seek
+  credits nothing — the same property that makes `currentTime = 3600` typed into the
+  console worthless. A coverage-gated course therefore cannot be passed by clicking through
+  the contents, and **nobody had to remember to make that true**. Jumping *back* to re-hear
+  a sentence costs nothing either, because the per-second bitmap is idempotent.
+
+- **Chapters are public where checkpoints are not**, and that is the one place the mirror
+  stops. A checkpoint's options and per-option explanations live at `permlevel: 1` and only
+  a *count* ever reaches the browser, because shipping them hands over the answer. A
+  chapter is a label and a number: it has to reach the browser to be clickable, and there
+  is nothing in it to protect. So it goes straight into `public` with no `key` half —
+  an empty one would be ceremony that later invites somebody to put something real in it.
+
+### Deliberately not done
+
+- **No new endpoint.** Chapters ride the payload `get_lesson` already sends. A new
+  whitelisted read would be a new surface to permission, keep POST-only and rate-limit, for
+  data that was already in flight.
+
+- **No chapter editor on an External Embed block.** An embed is a cross-origin iframe with
+  no `currentTime` and no seek — the same reason checkpoints and coverage gating cannot
+  work there — so a chapter on one could never do anything. The honest way to say so is by
+  not offering it, which falls out of the editor living inside `video_editor()` rather than
+  being a check somebody has to remember.
+
+- The payload key is **`video_chapters`**, never `chapters`. `Training Chapter` groups
+  *lessons* and the canvas already holds `this.chapters` for it; one English word, two
+  unrelated ideas, and the payload is where that gets decided.
+
+## [1.432.2] - 2026-09-13
+
+Training Phase 6, D12 — the last phase, and deliberately so. **The address bar now
+follows the learner through the Desk.**
+
+### Added
+
+- **A router adapter on the boot payload**, injected by the host exactly as the transport
+  is. Three hosts answer "where am I?" differently, so it is a seam rather than a branch:
+
+  - `b.router` present — the **host** owns the URL in both directions. The Desk page passes
+    one that drives `frappe.router`, and drives the player back from `on_page_show`.
+  - no router and `history: false` — nothing touches the address bar. The preview harness.
+  - neither — the portal's own `replaceState`, **unchanged since v1.427.1**.
+
+  The default path is byte-for-byte what it was; `scripts/test_training_route.mjs` runs the
+  real `route()` for both and is 11 checks up to 15.
+
+- **The Desk page keeps `history: false` *and* writes the URL**, which is the load-bearing
+  part. Those are two different jobs: the flag stops the player *reading* the address bar,
+  and it must stay off, because `queryParam("course")` against a desk route that has no
+  query string returns nothing and would land a learner on the catalogue on every browser
+  Back. The adapter is therefore checked **first and independently** of the flag.
+
+- Inside the Desk the adapter **pushes** rather than replaces, so Back walks the views the
+  way it does everywhere else in ERPNext. The portal deliberately does the opposite —
+  `replaceState`, so Back means "leave the course" on a phone. That disagreement is exactly
+  why this is an adapter and not a setting.
+
+### The loop, and how it is stopped
+
+The player writes the URL and the URL drives the player, so the two close into a cycle:
+player moves → adapter → `frappe.set_route` → route change → `on_page_show` → `apply_route`
+→ player moves. One end has to stop, and `this.showing` — what the page last told the
+player to show — is read by **both** directions.
+
+Checking `frappe.get_route()` alone would not be enough: a `set_route` to where we already
+are still fires a route event, and that event arrives as a fresh `handle_route`. Both
+guards are in place; the adapter's decision logic is covered in node, but **the cycle
+itself can only be confirmed in a browser**, and that is the one item on this programme's
+bench list that is about correctness rather than appearance.
+
+### Changed
+
+- `router` joins `CLIENT_OPTIONS` in `test_training_boot_wire` and the `READ_BUT_NOT_SENT`
+  allowlist in `test_training_boundary_contract`, with the reason: the server has no
+  opinion about what the address bar says.
+
+- The node harness's mutation anchor moved with the guard it tests. It reproduced the
+  v1.427.1 bug by deleting `inCourse` from the `course=` line; that guard now lives in
+  `routeState()`, so the mutation deletes it there instead. Same bug, one level up — and
+  the test says so rather than silently testing nothing.
+
+## [1.432.1] - 2026-09-13
+
+Training Phase 6, D11. Documentation, and a note on what the canvas polish turned out to
+need.
+
+### Documentation
+
+- **`training/README.md`** gains a "Where a learner takes a course" section: the Desk Page,
+  why the route is `learn` and cannot be `training`, the two workspaces and why the split
+  is not cosmetic, the insights page, and the four CSS prefixes with the one-declaration-site
+  rule for `--tr-*`. The analytics section now describes the Desk page rather than the
+  retired website route.
+
+- The **Access** section says why the role alone does not open `/desk/learn` — desk access
+  comes from being a System User, and the Page's `roles` list is show/hide, never a
+  permission boundary — and **The switch** now records that the learner runtime follows
+  `training_enabled` alone, why `portal_enabled` stopped gating it, and that
+  `grant_portal_access` refuses.
+
+- **`www/README.md`** documents the two redirect routes, which it never mentioned even when
+  they were real pages, and states plainly that `/training_certificate` is **not** one of
+  them and must not become one.
+
+### Noted rather than built
+
+- **The canvas needed almost no polish, because it had already inherited it.** D2 moved it
+  onto the shared `TR.loadAssets`, and D3's palette work reaches it for free: its `tc-`
+  chrome reads `--tr-*` in sixty-nine places and declares none of them, so re-rooting the
+  palette onto `data-theme` fixed the authoring surface at the same time as the learner
+  one. That single-declaration-site property is exactly what the theme test now pins, and
+  it is the reason this phase is a docs release rather than a code one.
+
+## [1.432.0] - 2026-09-13
+
+Training Phase 6, D9. Previewing one lesson, and a guard on the one route that must
+**not** move.
+
+### Added
+
+- **"Preview as a learner" on the Training Lesson form.** That doctype had no form
+  script, so an author fixing a typo in a summary or ticking "required to finish" on a
+  block had no way to see the result short of opening the whole canvas and navigating
+  back to the lesson.
+
+  **It opens `/training_preview`, and does not mount a player in a dialog.** The obvious
+  version of this feature puts the player in a tab on the form — which would make a fourth
+  host of `TR.Player`, and would need the draft's learner payload as JSON. No endpoint
+  returns that: the preview builds it server-side with `training_author._split_lesson` and
+  renders it into the template. Getting it client-side means rebuilding it in JavaScript,
+  which is precisely the ~640 lines the classic builder carried (`preview_boot`,
+  `preview_lesson`, `preview_outline`, `preview_transport`, `preview_checkpoint`) whose
+  whole job was to re-derive a payload the server already derives correctly, and which the
+  canvas port deliberately did not carry over.
+
+  So what an author sees is the bytes publish would write, produced by the code that will
+  write them.
+
+- **A guard on the certificate verification route.** `/training_certificate?code=…` is the
+  **only guest-reachable training surface**, and two neighbouring website routes were
+  retired to redirects in this same programme. Retiring this one by the same reflex would
+  be a quiet disaster of a particular kind: an external auditor scanning the code on a
+  printed certificate would be bounced to a login page for a Desk they will never have an
+  account on. The certificate would still exist, the record would still be right, and the
+  one person the feature exists for could not check it.
+
+  The test pins that the code branch is answered **before** the Guest redirect — a session
+  check above it would send the auditor to `/login` with their code in the redirect — and
+  that the controller does not learn to redirect into the Desk.
+
+### Already delivered, noted here because it was in this phase's scope
+
+- **The transcript and certificates in the Desk** arrived with D4 and D6 and needed nothing
+  further. `get_my_transcript` was already wired to the player's "My record" view, which is
+  reachable at `/desk/learn/record`; and the **My Training** workspace links the learner's
+  own `Training Completion` and `Training Certificate` lists, which
+  `permission_query_conditions` already scopes to their own rows.
+
+## [1.431.0] - 2026-09-13
+
+Training Phase 6, D8. **The manager's half of the move.**
+
+### Added
+
+- **Training Insights at `/desk/training-insights`** (`training/page/training_insights/`),
+  replacing `www/training_analytics.html`. That was 233 lines of server-rendered Jinja at a
+  website route, manager-only, with no desk link and no workspace entry — a page for people
+  who live in the Desk that could only be reached by typing a URL nobody had a link to. It
+  now has a shortcut on the Training workspace, beside the learner page.
+
+- **The numbers are clickable.** A manager reading "7 overdue" and then hand-building the
+  filter to find out *who* is the difference between a dashboard and a report. Each tile
+  and each course row opens the set it counts.
+
+  Where a number has no honest filter it stays plain text. `learners` and
+  `certificates` are counts over different doctypes than the list a tile would open, and
+  a tile that says 4 and opens a list of 11 is worse than a tile that does not open at
+  all — the number stops being trustworthy, rather than the link stopping being useful.
+  `pending` submissions covers two statuses on the server, so its filter covers the same
+  two.
+
+### Changed
+
+- **It renders the rollup and computes nothing of its own.**
+  `training.analytics.get_training_analytics` is untouched and is still the single source.
+  That is deliberate: the rollup is Python over guarded `get_all` reads rather than SQL,
+  because **"overdue" is a predicate** — a `<` filter on a nullable date silently matches
+  NULLs through frappe's ifnull sentinel, which is how "no expiry" once became "expired"
+  across this module. A second implementation here, in JavaScript, would be a second
+  chance to get that wrong, and the test now refuses `due_date`, `getdate` and `Date.now`
+  in the page source for exactly that reason.
+
+- **No Aurora palette on this page, and no `player.css`.** That stylesheet is the
+  learner's reading surface; this is a manager's console, so it takes frappe's own tokens,
+  follows the desk theme with no work of its own, looks like every other desk dashboard,
+  and costs no extra asset load to render six numbers and three tables. Hence the `ti-`
+  prefix, alongside `tr-` (learner render), `tc-` (authoring canvas) and `tl-` (learner
+  desk host).
+
+- `/training_analytics` becomes a redirect. Unlike `/training` it was **never emailed**, so
+  keeping the route is politeness toward a bookmark rather than the necessity it is there.
+
+- The manager-role gate has not been relaxed, it has moved to the two places that can
+  enforce it: the Page record's `roles`, and `get_training_analytics`'s own
+  `_require_manager()` — which is the one that matters, because it guards the data rather
+  than the view. The two lists of the same three names now pin each other.
+
+### Deferred again, with the reason
+
+- **Standalone number cards.** They would need "overdue" expressed a second time as a
+  DocType filter, and the natural spelling — `due_date < today` — is precisely the
+  NULL-sweeping predicate `analytics.py` exists to avoid. A number card that quietly counts
+  every assignment with no due date is worse than no number card: it is a wrong number on a
+  dashboard, which is the one place people stop checking.
+
+## [1.430.0] - 2026-09-13
+
+Training Phase 6, D7. **Being given a course now reaches the person it is given to.**
+
+### Fixed
+
+- **A Desk-created Training Assignment notified nobody.** `notifications.notify_assigned`
+  had exactly two callers — the auto-assign engine and
+  `api.training_author.assign_course` — and `hooks.py` named `Training Assignment` only in
+  its two permission hooks. So a Training Manager pressing **New** on the list, or filling
+  a row in by hand, produced no email, no bell, no ToDo and no sign of any kind. The
+  assignment existed, the learner was never told, and the first anybody knew was the
+  overdue sweep at 06:40 some days later.
+
+  It is a `doc_event` (`after_insert`) now, and the two explicit calls are **removed**, so
+  there is exactly one path. Deliberately not a third caller: the shape of this bug is
+  "one more path that forgot", and another explicit call would have been a fourth path
+  waiting to be forgotten by whatever creates assignments next.
+
+  The handler is gated on the module switch and wrapped: a notification that fails must
+  not abort the insert. The row is the obligation; the email is only how somebody hears
+  about it.
+
+### Added
+
+- **The course lands in the learner's own ToDo list, and rings the desk bell.**
+  `frappe.desk.form.assign_to.add` creates a **ToDo** — the desk's "assigned to me" list —
+  *and* a **Notification Log** entry, in one native call. The email is the notification
+  somebody reads once and archives; this is the one that stays where they already look.
+
+  Three things make it careful rather than a one-liner:
+
+  - **It runs in the enqueued job, never in `after_insert`.** `assign_to.add` can
+    `frappe.throw` — if the assignee lacks read permission and `disable_document_sharing`
+    is on it refuses with "Missing Permission" — and a throw inside `after_insert` aborts
+    the insert. Losing the assignment because the ToDo could not be made would be exactly
+    backwards.
+  - **`frappe.flags.mute_messages`.** `assign_to.add` `msgprint`s on a duplicate or a
+    share, and a msgprint raised in a background job still rides out to whatever client is
+    listening as `_server_messages` — so a manager assigning a course would have watched
+    "Already in the following Users ToDo list" pop over the form.
+  - **Idempotent by `assign_to`'s own hand**, which collects `users_with_duplicate_todo`
+    and skips them. That matters here specifically: the prod deploy `FLUSHDB`s the queue
+    redis and destroys pending jobs, so this work has to survive being re-driven.
+
+  Its own failure is swallowed and logged, because it shares a job with the email — an
+  exception escaping would take the notification that actually reaches somebody with it.
+
+### Deferred, with the reason
+
+- **Number cards for overdue and completion** were part of this phase and are moved to D8.
+  They are counters over the same rollup the manager analytics page computes, and building
+  them here would mean two implementations of "how many are overdue" — which is the
+  question whose obvious SQL spelling silently sweeps in NULLs, and which
+  `training/analytics.py` already answers as a Python predicate for exactly that reason.
+
+## [1.429.2] - 2026-09-13
+
+Training Phase 6, D5. **`/training` is retired as a rendering surface and kept as a
+redirect.**
+
+### Changed
+
+- **The portal shell is gone: 291 lines down to 26.** `www/training.html` no longer
+  mounts, styles or loads anything — the player lives in the Desk. What is left is the
+  route, and one paragraph for the people a redirect cannot help.
+
+  **The route is kept deliberately.** Six code paths have emailed `https://…/training`
+  since v1.208.0 — assignment and due/escalation digests, answered questions, sign-off
+  requests, graded submissions, evaluation invites — and every one of those messages is
+  still in somebody's inbox. Deleting the route would 404 all of them, and a 404 on a link
+  somebody was told to follow reads as the feature being gone. New mail points at
+  `/app/learn` and lands in the Desk through frappe's own `/app/(.*)` → `/desk/`
+  redirect, the same hop this app's other emailed desk links already take.
+
+- **It is not an unconditional redirect.** A user with no desk access sent to `/desk` gets
+  a login page, which is a worse answer than a sentence. `Training Learner` keeps
+  `desk_access = 0` — flipping it would turn every customer contact into a System User and
+  move the licensed-user count — so a customer contact holding only that role is a Website
+  User. There are none today; the branch exists so that if one is ever made, the failure
+  is a paragraph rather than a loop.
+
+- **`grant_portal_access` refuses, with the reason.** It minted a login for a surface that
+  no longer renders; minting it anyway is the worse failure, because a manager presses the
+  button, a welcome email goes out, a client sets a password, follows the link and is
+  bounced to a Desk they cannot enter — and nobody is told, least of all the person who
+  pressed it. **Refused rather than deleted:** it keeps its caller on the Contact form,
+  which keeps the no-uncalled-endpoint gate green and keeps the reason attached to the
+  button. Reinstating customer training is a product decision, and the apparatus under the
+  refusal is intact for when it is made.
+
+- The `portal_menu_items` Training entry is removed, and the HR workspace's **URL** tile to
+  `/training` becomes a **Page** shortcut — a URL tile would take a desk user out of the
+  app and straight back in through the redirect.
+
+### Removed
+
+- **`TestTheChromeRemovalSparesThePlayer`**, whose subject no longer exists — but its
+  reasoning is kept in the class that replaces it, because it is worth keeping. It pinned
+  two qualifiers in the old template's `{% block style %}`: `footer:not(.tr-bottom)` and
+  `main:not(.tr-view)`. A bare `footer { display: none !important }` hid the sticky action
+  bar — the element holding *Start the quiz*, *Finish this lesson* and the resume button —
+  so the one control that advances a course rendered and no learner could see or press it.
+  A Desk Page has no website chrome around it to remove, so no rule could over-reach; the
+  note stays because the next person to wrap the player in a host will reach for exactly
+  that `display: none`.
+
+### Fixed
+
+- `test_hr_module`'s learner-surface assertion required a **URL** shortcut, on the stated
+  reasoning that the surface "is a website page and must stay one — Training Learner has
+  `desk_access = 0` because customer contacts hold it". The role still has `desk_access = 0`
+  and still must; the premise under it had stopped being true. All fifteen Training Learner
+  holders are System Users, all 26 assignments belong to System Users, and the only four
+  Website Users are `chatbot@`, `sales@`, `info@` and Guest.
+
+### Added
+
+- **`tests/test_training_portal_retirement.py`** (14 tests). Every assertion is a pair —
+  something absent **and** its replacement present — because "no occurrences of
+  `/training`" is satisfied just as well by a file somebody emptied. Six senders, six links
+  into the Desk, counted.
+
+  Its own comment-stripper is worth a note: the obvious version also stripped
+  triple-quoted strings, on the usual "a comment naming a token is not a use of it"
+  reasoning. That was wrong here and quietly so — these senders build their HTML bodies
+  with f-strings that are themselves triple-quoted, so stripping "docstrings" removed five
+  of the six links the module counts, and the assertion went green having examined almost
+  nothing.
+
+## [1.429.1] - 2026-09-13
+
+Training Phase 6, D6 — **taken before D5 deliberately**. D5 retires `/training`, and
+doing that before the Desk page is visible to learners would leave them, for the length
+of one deploy, with no training surface at all. Opening the door comes first; closing the
+old one comes next.
+
+### Added
+
+- **The rollout switch is thrown.** `learn.json` gains Training Learner, Training Author
+  and Training Manager. The page shipped System-Manager-only in v1.429.0 precisely so this
+  could be a separate, reviewable line.
+
+- **The Training workspace splits in two.** `training.json` keeps the authoring and
+  reporting console and gains an **Open Training** Page shortcut; **My Training** is new
+  and is the learner's own — Open Training, What I owe, My certificates, and a card of the
+  four doctypes `permission_query_conditions` already scopes to their own rows.
+
+  The split is not cosmetic. `training.json` carries `roles: []`, which does **not** mean
+  "nobody" — it means no restriction beyond the module gate, and all fifteen Training
+  Learner holders hold read DocPerms on fourteen Training doctypes. So the authoring
+  console (*Record a session*, *My Drafts*, *Awaiting Review*) has been sitting in every
+  learner's sidebar all along, with no way to start a course from it. `My Training` is
+  what makes the sidebar tell the truth about who you are.
+
+- **Training Assignment gets a form script and a list script** — it had neither. A learner
+  could open the row telling them a course is due on 26 September and find nothing on it
+  that would take them there. The form's primary action reads *Start* / *Continue* /
+  *Review* from the status; the list gains **Open training** and a real per-status
+  indicator, because `guess_colour()` matches none of the seven names and rendered all of
+  them grey.
+
+  Both navigate with `frappe.set_route`, never an `href`. `/app` is a `website_redirect`
+  to `/desk` in v16, so a hand-built link is not intercepted by the router and costs a
+  full page reload plus a redirect hop.
+
+- **`patches/resync_training_workspace_split.py`.** Workspaces are **timestamp**-gated by
+  the importer — unlike DocTypes, which are hash-gated — so a file that does not read
+  newer than the stored row is skipped in silence. Both files carry a bumped `modified`,
+  which is enough on a site whose rows are older; the patch is what makes the change land
+  on a row somebody has since rearranged in the Desk. Never-raise, because `bench migrate`
+  is the deploy.
+
+### Examined and deliberately not built
+
+- **The awesomebar already finds the page, and no code was written for it.**
+  `bootinfo.page_info` is the permission-filtered set of pages the user may open, and
+  `search_utils.js` `get_pages` matches it on `title` — so typing "Training" finds
+  `/desk/learn` for exactly the people allowed to open it, and frappe's existing shortcut
+  for focusing the search bar is the keyboard entry. Building a custom search provider or
+  a bespoke key binding would have been a second implementation of something already
+  working.
+
+  One cosmetic consequence to look at on a bench: the page's title and the manager
+  workspace's label are both "Training", so both will list under that name for a manager.
+  It is a one-line change if it reads badly; it is not worth guessing at from here.
+
+## [1.429.0] - 2026-09-13
+
+Training Phase 6, D4. **The learner player has a door in the Desk.**
+
+### Added
+
+- **A Desk Page at `/desk/learn`** (`training/page/learn/`) mounting the *existing*
+  `TR.Player`. It is a host, not a second player: it builds the mount, loads the runtime
+  through `TR.loadAssets`, dials `get_learner_bootstrap` through the shared transport and
+  constructs `TR.Player(root, boot, transport)`. Every pixel below the page head is
+  rendered by the same files the portal loads. Forking the player is the most expensive
+  mistake available in this module and a Desk host is exactly where the temptation lives,
+  because `frappe.*` is right there — `tests/test_training_desk_page.py` (24 tests) pins
+  the seams.
+
+  It ships **System-Manager-only**. `learn.json`'s `roles` list is the staged-rollout
+  switch; adding `Training Learner` is D6, after a person has opened it on a real bench.
+
+- **Why the route is `learn` and not `training`.** `frappe.router` resolves the first path
+  segment against `frappe.workspaces` *before* doctypes and before the page loader, and
+  discards every segment after it. `desk.js` keys that map by `slug(page.name)`, and the
+  Training **workspace** is named "Training". A page named `training` would never render —
+  and since `allowed_workspaces` is permission-filtered, the same URL would be the
+  workspace for the fifteen learners and the page for anybody who cannot see it. One URL,
+  two destinations, no error in either.
+
+- **Deep links work from the first release, with a zero-line diff to `route()`.** The page
+  ships `boot.history = false` and passes the course and lesson through `boot.start` — the
+  pair `www/training_preview.html` already uses. The Desk router owns the URL; the player
+  neither reads nor writes it. Writing the address bar mid-session is D12, deliberately
+  last, so the riskiest change is nowhere near the release that has to be right.
+
+- **The resume banner** — the highest completion-per-line change available, and it fetches
+  nothing new. `b.resume` has been on the boot payload since the module shipped and is
+  server-authoritative, but the only control that used it lived on the *course* view: the
+  catalogue painted announcements, points, cohorts, live sessions, evaluations and
+  submissions first, so a learner halfway through a lesson scrolled past six blocks and
+  then clicked twice more to get back to it. It is now the first thing on the page.
+
+### Fixed
+
+- **`_runtime_ready()` gated the entire learner runtime on `portal_enabled`** — a checkbox
+  a Training Manager can untick, labelled "Learner Portal Enabled" and described as
+  controlling `/training`. Retiring that page would have made ticking it off the obvious
+  tidy-up, and it would have taken training away from all fifteen learners **in silence**:
+  every read endpoint answers a closed runtime with `_unavailable()` rather than an
+  exception, on purpose, so they would have seen "Training is not available yet" with
+  nothing in the Error Log.
+
+  There is now one gate, `training_settings.runtime_ready()`, reading `training_enabled`
+  alone; `api/training.py`, `training/qa.py` and `training/submissions.py` all go through
+  it instead of repeating the pair inline. `portal_enabled` keeps its job in
+  `training/portal.py` — customer-contact logins — and is relabelled **Customer Portal
+  Access** to say so. The **fieldname is unchanged**: a Single stores one row per
+  fieldname in `tabSingles`, so renaming it is a data patch, not a JSON edit.
+
+### Changed
+
+- `get_learner_bootstrap` joins the transport's `METHOD` map and leaves
+  `NOT_DIALLED_BY_THE_PLAYER`. Its excuse said it is "called server-side, not over HTTP:
+  `www/training.py` imports it and runs it inside `get_context`" — true of exactly one
+  host. The guard added in v1.428.0 for precisely this case now keeps the two lists from
+  overlapping.
+
+  Deliberately **not** put on `frappe.boot` via `extend_bootinfo`: it does a dozen
+  `get_all` reads, and bootinfo is paid for on every desk page load by every user, most of
+  whom are not opening training.
+
+- The page keeps the desk's own container rather than going full-bleed like the authoring
+  canvas. A builder wants the viewport; a learner page wants the header, breadcrumbs and
+  workspace sidebar, because that is what makes it read as part of ERPNext rather than as
+  an app embedded in it.
+
+## [1.428.3] - 2026-09-13
+
+Training Phase 6, D3. The palette now answers "is it dark?" for two hosts that
+disagree about it.
+
+### Fixed
+
+- **A learner whose OS is dark and whose desk theme is light got a dark player inside a
+  light desk.** `player.css` switched on `prefers-color-scheme` alone, which is right for
+  the portal page (a website page carries no desk `data-theme`) and wrong in the Desk,
+  where `theme_switcher.js` stamps `data-theme="light"` or `"dark"` on `<html>` and
+  **always** stamps one — it resolves its own "automatic" mode through `matchMedia` first.
+
+  The palette is now switched three ways: `:root` for light, a
+  `:root:not([data-theme="light"])` guard inside the media query so the OS preference only
+  speaks when the desk has not, and `:root[data-theme="dark"]` for the explicit choice.
+  Portal behaviour is byte-identical to before — it matches the `:not()` in every case.
+
+  Nothing errored here either. It rendered, in the wrong palette, and read as the page
+  being broken rather than as a disagreement about the theme.
+
+### Added
+
+- **`tests/test_training_desk_theme.py`** (11 tests). The two dark blocks are deliberate
+  duplicates — a media block and a plain rule cannot share one declaration list — so the
+  failure that matters is one being edited and the other not, which is invisible until
+  somebody opens the page in the theme nobody tested. The suite pins them identical,
+  refuses an unguarded `:root` inside a dark media block, requires a `data-theme="dark"`
+  twin for every guarded media override, and asserts dark is a subset of light with an
+  allow-list for the names whose light value is already correct on a dark ground.
+
+  It also pins the property the Desk host is most likely to break: **`--tr-*` is declared
+  in `player.css` and, for its injected fallback sheet only, in `quiz.js` — nowhere else.**
+  That single declaration site is what lets the authoring canvas inherit a palette fix for
+  free, and a page stylesheet declaring `--tr-surface` "to match the desk" would make the
+  authoring surface stop matching what the learner sees, which is the one thing the canvas
+  exists to guarantee. Hence the `tl-` prefix reserved for desk chrome.
+
+### Examined and deliberately left alone
+
+- **The quiz's `--tr-ok` / `--tr-bad` have no dark variant, and that is a decision.** It
+  was reported as a bug — the root palette lightens `--tr-ok` for dark and the quiz's does
+  not — but the stylesheet has said since it was written that semantic answer colours stay
+  literal: "correct" must not shift with a palette edit, and a learner who has learnt that
+  green means right should not have to relearn it in the dark. The header now says so in
+  the same place the exception lives, because it has been mistaken for an oversight once
+  and would have been again.
+
+- **No `--tr-bottom-offset` bridge variable.** `.tr-bottom` is `position: sticky; bottom: 0`,
+  which sticks to its scroll container rather than the viewport, so the sticky action bar
+  may well be correct in the Desk as it stands. Adding a variable on a prediction is worse
+  than adding one on an observation; this waits for D4, where the real page can be looked
+  at.
+
+## [1.428.2] - 2026-09-13
+
+Training Phase 6, D2. One versioned-asset loader instead of a third private copy.
+
+### Changed
+
+- **`TR.loadAssets` (`public/js/training/desk_assets.js`)** replaces
+  `training_canvas.js`'s private `tc_load_asset`, and is imported by
+  `erpnext_enhancements.bundle.js` so it exists before any Desk Page script runs — a page
+  cannot load a helper before the helper exists, and every training desk surface needs
+  `player.css`, which lives outside all of their page folders.
+
+  This is the **third** copy of that loader. The first was the classic Training Builder's
+  `load_player`, deleted with the page in v1.422.0; the second is the one folded in here;
+  the learner Desk Page in D4 would have been the fourth. The reasons moved with it:
+  `frappe.require` cannot do this job, because `frappe.assets.extn()` derives the type by
+  splitting the URL on `?` and taking the last segment, so a cache-busted
+  `player.css?v=1.428.2` reports its extension as the version string and loads as neither
+  css nor js — failing by doing nothing, which on a stylesheet is an unstyled page rather
+  than an error.
+
+- **It now refuses a path with no `?v=` token** rather than loading it. Raw `/assets` are
+  served year-immutable with no content hash, so an unversioned URL works perfectly on a
+  cold cache and silently serves a year-old file to everybody else — and the one machine
+  that would notice is the author's, which is the one least likely to. The old helper
+  trusted its callers to append the token; both of them did, which is exactly how a rule
+  like that survives until it doesn't.
+
+  Also fixed in the move: the stylesheet test splits the query off first.
+  `".css?v=1".endsWith(".css")` is false, so a cache-busted stylesheet would have been
+  appended as a `<script>` — no error, no styles.
+
+### Documentation
+
+- The gotcha is written down in [`public/README.md`](erpnext_enhancements/public/README.md),
+  and [`training/README.md`](erpnext_enhancements/training/README.md) now names the five
+  files bound by the no-`frappe.*` rule and says why `desk_assets.js` is deliberately not
+  one of them.
+
+## [1.428.1] - 2026-09-13
+
+Training Phase 6, D1. A refactor with no behaviour change: the learner transport
+moves out of the portal template so a second host can load it.
+
+### Changed
+
+- **The transport left `www/training.html` for `public/js/training/transport.js`**
+  (`TR.makeTransport({csrf})`, 256 lines). The METHOD map, `PREFIX`, the 20-second
+  deadline, the `AbortSignal`/`AbortController` pair, the `_server_messages` unwrap, the
+  multipart upload and the synchronous `sendBeacon` all moved **verbatim, comments
+  included**; the template is 291 lines down to 121 and now holds one page-specific fact,
+  which is where its CSRF token comes from.
+
+  This was fine while there was exactly one host. The Desk Page in D4 has no template to
+  hold it, and copying it would give two hosts independently drifting maps of the same 25
+  endpoint names — the failure this module already has a name for. Doing it *first*, on
+  the live portal page and before any desk code exists, turns "delete the sole home of
+  seven separately-pinned contracts" into "the file no longer holds anything".
+
+  `csrf` is taken as a value **or** a function: the portal renders its token once,
+  server-side, and passes the constant; a Desk session can outlive the token it booted
+  with, so it will pass a closure.
+
+- **The transport is NOT switched to `frappe.call`, and will not be.** Reasons read out of
+  frappe v16 rather than assumed: `request.js` builds its ajax args from a fixed key list
+  with **no `timeout`**, and jQuery has no default — the 20s deadline is not decoration,
+  because the heartbeat holds a `flushing` latch released only when its promise settles, so
+  one socket dropped without a FIN stops every later beat for the life of the page and the
+  learner's coverage meter never moves again. `frappe.xcall` rejects with `r && r.message`,
+  which a `frappe.throw` does not carry (it sends `exc_type` and `_server_messages` on a
+  417), so every server refusal would collapse to "Something went wrong" and the
+  advisory-gates doctrine would die silently. And `sendBeacon` cannot use it at all.
+
+### Added
+
+- **`tests/test_training_transport.py`** (21 tests) — the home for the properties that are
+  the transport's own and that no other suite watches: the 20s deadline and its older-Safari
+  fallback, every call carrying the abort signal, the POST rule, the synchronous boolean
+  beacon (a Promise there is truthy, so `video.js` would drop every queued beat as
+  "delivered"), the un-set `Content-Type` on the multipart upload, and the
+  METHOD-above-PREFIX declaration order. The four suites that already assert things *about*
+  the transport keep their own independent extractors — the duplication is what makes them
+  independent observers, and this was not the release to spend it.
+
+- **The no-`frappe.*` rule now covers five files, not four.**
+  `test_training_phase3_contracts` extends `test_the_player_never_calls_frappe` and
+  `test_the_player_never_reaches_for_the_page_globals` to `transport.js`. It is not a player
+  file — the player receives it rather than importing it — but it runs in the same document
+  for the same `desk_access = 0` Website Users, and it is the file most likely to be
+  "improved" into `frappe.call` by somebody who only ever tests while logged into the Desk.
+
+### Fixed
+
+- **Ten suites' extractors repointed**, and two that broke for a subtler reason than the
+  path. `transport.js` lives in `public/js/training/`, which two scans glob wholesale — so
+  the file that *defines* `transport.uploadFile` was read as a file that *calls* it, and
+  `csrf` (an option off the transport's own settings object) was read as a key the player
+  expects on a server reply. Both scans now name the four player files explicitly, plus a
+  `training/page/*/*.js` glob for the Desk host that does not exist yet; a scan that
+  silently stops covering a caller is the failure `test_training_boot_wire` documents.
+
+- **`test_training_endpoint_surface`'s map extractor was anchored on an indent depth**
+  (`\n\t\};`). The map is nested one level deeper inside `TR.makeTransport` than it was
+  inside the template's IIFE, so the anchor stopped matching the moment the code it
+  describes was merely re-nested. Anchored on the closing brace's own line instead.
+
+- The parse guard added in v1.428.0 earned itself immediately: the first draft of
+  `transport.js` carried a header comment quoting the literal `var METHOD = {`, and the
+  extractors slice on raw text without stripping comments — so the slice began inside the
+  sentence explaining the rule and ended a few words later, yielding an empty map. Exactly
+  the failure the guard exists to make loud instead of silent.
+
+## [1.428.0] - 2026-09-13
+
+Groundwork for moving the learner training player into the Desk (Training Phase 6, D0). Nothing
+user-facing changes here: this is the set of guards that make the programme's specific failure
+shapes impossible to reintroduce, plus three things that were already wrong.
+
+### Fixed
+
+- **Two people owed a course they could not open, and had for weeks.** Both hold an open
+  `Training Assignment`, both are active Employees with a login, and neither held the
+  `Training Learner` role or the dedicated Role Profile — so the module had asked them for
+  something it would not let them reach, and said nothing to anybody.
+
+  `roles.grant_learner_role` was never the problem; it handles both the profiled and
+  profile-less paths correctly and always has. The hole is in **when it is called**.
+  `training/assignment.py` calls it on Employee *insert* and on an Employee *gaining* a
+  `user_id`, and neither event fires again for somebody who already exists. `User.validate`
+  meanwhile rebuilds `roles` from the union of the user's Role Profiles on **every** save, so a
+  direct grant is one unrelated save away from being dropped — and both of these two carry four
+  or five unrelated profiles, which is exactly the shape that triggers it. Nothing swept, and a
+  missing role is not an error: it is a person who opens training and is told there is nothing
+  there.
+
+  New `training.tasks.sweep_learner_roles`, daily, plus a one-off
+  `grant_learner_role_to_assigned_users` patch for the rows that are wrong now. **Keyed on
+  owing a course, not on being an Employee** — that is the rule the writer applies, since the
+  assignment engine and a Training Manager pressing *New* both create the obligation, and the
+  obligation is what needs the role. An Employee-keyed sweep would miss a manually-assigned
+  contractor; a "has no role" sweep would grant it to the whole company. Deliberately *not*
+  gated on `auto_assign_enabled` the way `sweep_auto_assignments` is: a hand-made assignment
+  needs the role just as much as a rule-made one.
+
+- **Three bench-free test suites were running nowhere**, all green, all counted in the file
+  total, none of them asserting anything:
+  - `test_travel_ics` — nine plain pytest functions, named nowhere in `ci.yml`. This is the
+    exact shape CLAUDE.md already records for the QuickBooks suite: `python -m unittest`
+    collects nothing from a module of bare `def test_*` functions and still exits 0. Given its
+    own **pytest** step.
+  - `test_product_configurator_engine` — twenty-seven unittest tests, also named nowhere.
+  - `test_procurement_project` — ten tests that could not run at all: `procurement_project`
+    grew a `from frappe.utils import flt` after the suite's stub was written, and the stub is a
+    plain `ModuleType`, which the import system rejects with *"'frappe' is not a package"*. So
+    `setUpModule` raised before a single test executed. The stub now registers a real
+    `frappe.utils` submodule in `sys.modules`, and the suite gets its own step so that
+    registration cannot cross-talk with the other stubbed suites.
+
+- **`player.js` registered an anonymous `popstate` handler that `destroy()` could not remove.**
+  Harmless on `/training`, where the page is thrown away with the document — which is why it
+  never leaked and why nothing caught it. It stops being harmless the moment the player gains a
+  host that mounts and unmounts inside a long-lived document, and a Desk Page is exactly that:
+  frappe creates the page div once and never removes it. Named, and removed in `destroy()`.
+
+### Added
+
+- **`tests/test_suites_are_in_ci.py`** — every bench-free suite must be named in `ci.yml`. This
+  is the guard that found the three above. It cannot be a test *inside* each suite: several
+  modules here carry their own `test_it_is_wired_into_ci`, which is sound for a suite already
+  running and **circular** for one that is not — if the file is absent from `ci.yml`, CI never
+  runs the file, so the assertion inside it never executes.
+
+  The rule is measured rather than listed: a suite absent from `ci.yml` must **fail to import**.
+  That is the ground truth of "needs a bench", it cannot rot, and it cannot be satisfied by
+  filing a name in a dictionary. Two suites are exempted with reasons — both import cleanly and
+  self-skip every test without a bench, so a CI step would report green having asserted nothing.
+  It also pins the runner split, because that split is load-bearing and not stylistic.
+
+- **`TestNoPageShadowsAWorkspace`** in `tests/test_workspaces.py` — no Desk Page docname may
+  equal `slug(any Workspace name)`. `frappe.router.convert_to_standard_route` tests the first
+  path segment against `frappe.workspaces` **before** doctypes and before the page loader, and
+  discards every segment after it. `desk.js` keys that map as `slug(page.name)`. So a Page named
+  `training` beside a Workspace named `Training` never renders, and a deep link into it opens
+  the workspace having silently dropped the rest of the path.
+
+  What makes it a build gate rather than a comment is the per-user part:
+  `frappe.boot.allowed_workspaces` is permission-filtered, so the same URL is the workspace for
+  somebody who can see it and the page for somebody who cannot — one URL, two destinations, no
+  error in either. This is why the learner page will be `learn` and not `training`.
+
+- **An orphan check in `scripts/check_www_controllers.py`** — every `www/*.py` must have a
+  sibling template. The other half of the failure that script already exists for: frappe
+  resolves the *route* from the template and imports the controller beside it, so a controller
+  with no template is not a page at all — the URL 404s and `get_context()` never runs, with no
+  exception and no log line. Pairing is hyphen-insensitive in the same direction frappe reads
+  it, so `contract-sign.html` still satisfies `contract_sign.py`.
+
+- **An intersection guard on `NOT_DIALLED_BY_THE_PLAYER`** in `test_training_endpoint_surface`.
+  The existing check is a one-directional set difference, so an endpoint that is both listed
+  there *and* wired into the player's `METHOD` map passes silently with its excuse never
+  consulted. `get_learner_bootstrap`'s reason says it is "called server-side, not over HTTP" —
+  true only while the one host renders it into a template.
+
+- **A parse guard on `_transport_map()`** in `test_training_boot_wire`. It slices the source
+  between `var METHOD = {` and `var PREFIX`; reorder those two literals and `str.index` returns
+  the smaller offset second, the slice is empty, and every assertion computed as
+  `set(_transport_map()) - …` passes over an empty set. Its sibling
+  `test_training_heartbeat_wire` has carried this guard since it was written; this module did
+  not.
+
 ## [1.427.1] - 2026-09-13
 
 ### Fixed

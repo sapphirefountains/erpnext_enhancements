@@ -449,5 +449,77 @@ class TestHubWidgets(unittest.TestCase):
                         1 if row.get("link_type") == "Report" else 0,
                     )
 
+
+def page_files():
+    return sorted(APP_ROOT.glob("*/page/*/*.json"))
+
+
+def slug(name):
+    """frappe.router.slug, ported.
+
+    ``router.js``::
+
+        slug(name) { return name.toLowerCase().replace(/ /g, "-"); }
+    """
+    return str(name or "").lower().replace(" ", "-")
+
+
+class TestNoPageShadowsAWorkspace(unittest.TestCase):
+    """A Desk Page whose docname equals a Workspace's slug is unreachable.
+
+    ``frappe.router.convert_to_standard_route`` tests the first path segment
+    against workspaces **before** doctypes and before the page loader, and
+    discards everything after it::
+
+        if (frappe.workspaces[route[0]]) {
+            route = ["Workspaces", frappe.workspaces[route[0]].name];
+        }
+
+    ``desk.js`` keys that map as ``frappe.workspaces[slug(page.name)]``. So a Page
+    named ``training`` alongside a Workspace named ``Training`` never renders, and
+    ``/desk/training/TRN-CRS-00002/l3`` opens the workspace having dropped both
+    trailing segments.
+
+    What makes it worth a build gate rather than a comment is the **per-user**
+    part: ``frappe.boot.allowed_workspaces`` is filtered by permission, so the
+    same URL is the workspace for somebody who can see it and the page for
+    somebody who cannot. One URL, two destinations, no error in either. Nothing
+    at runtime reports this — the page simply never appears for the people who
+    were meant to use it.
+    """
+
+    def test_the_scan_finds_both_halves(self):
+        """Anti-vacuity. Both globs returning nothing would pass every assertion
+        below without examining anything, and this file already globs one of the
+        two directories for its own tests."""
+        self.assertGreater(len(page_files()), 5, "no Page JSONs found; the glob is wrong")
+        self.assertGreater(
+            len(workspace_files()), 5, "no Workspace JSONs found; the glob is wrong"
+        )
+
+    def test_no_page_docname_equals_a_workspace_slug(self):
+        taken = {}
+        for path in workspace_files():
+            doc = load(path)
+            name = doc.get("name")
+            if name:
+                taken[slug(name)] = name
+
+        sep = chr(10) + "  "
+        clashes = []
+        for path in page_files():
+            doc = load(path)
+            if doc.get("doctype") != "Page":
+                continue
+            docname = doc.get("name") or ""
+            if docname in taken:
+                clashes.append(
+                    f"{path.relative_to(APP_ROOT)}: Page {docname!r} is shadowed by "
+                    f"Workspace {taken[docname]!r} -- rename the Page"
+                )
+
+        self.assertEqual(clashes, [], sep.join([""] + clashes))
+
+
 if __name__ == "__main__":
     unittest.main()

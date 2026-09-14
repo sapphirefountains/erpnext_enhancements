@@ -734,6 +734,65 @@ jobs:
       # there is a 404 the learner sees and CI does not.
       - name: Training endpoint surface (POST-only, and the player's dial map agrees)
         run: python -m unittest erpnext_enhancements.tests.test_training_endpoint_surface -v
+      # The transport's own contract. It left www/training.html in v1.429.0, when the
+      # portal page stopped being the only host -- four suites already assert things
+      # ABOUT it from their own angle, and this is the home for the properties that
+      # are its own and that nothing else watches: the 20s deadline (fetch has none,
+      # and one hung request freezes the heartbeat for the life of the page), the
+      # synchronous boolean sendBeacon (a Promise there is truthy, so video.js drops
+      # every queued beat as delivered), the un-set Content-Type on the multipart
+      # upload, and the METHOD-above-PREFIX declaration order that three other suites
+      # read as a text slice.
+      - name: Training transport (deadline, beacon, upload, declaration order)
+        run: python -m unittest erpnext_enhancements.tests.test_training_transport -v
+      # The learner palette, now that two hosts disagree about what "dark" means. The
+      # portal carries no data-theme and follows prefers-color-scheme; the desk always
+      # stamps data-theme, having already resolved its own "automatic" mode -- so
+      # honouring only the media query put a dark player inside a light desk for anyone
+      # whose OS is dark. The two dark blocks are deliberate duplicates (a media block
+      # and a plain rule cannot share a declaration list) and this pins them identical,
+      # because one edited and the other not is invisible until somebody opens the page
+      # in the theme nobody tested.
+      - name: Training desk theme (three-way palette, one declaration site)
+        run: python -m unittest erpnext_enhancements.tests.test_training_desk_theme -v
+      # The learner Desk Page. It is a HOST for the existing player, and nothing at
+      # runtime would tell you if it quietly became a second player -- a fork renders
+      # perfectly and drifts one commit at a time. Two of these are correctness: the
+      # teardown on "hide" (frappe creates the page div once and never removes it, and
+      # there is no on_page_hide hook, so without it a <video> keeps downloading and the
+      # heartbeat keeps claiming watch time for a lesson nobody is looking at), and the
+      # route name (the router resolves segment 0 against workspaces before pages, and
+      # allowed_workspaces is per-user, so a page named after a workspace is one URL
+      # with two destinations).
+      - name: Training desk page (host not fork, teardown, route name)
+        run: python -m unittest erpnext_enhancements.tests.test_training_desk_page -v
+      # /training retired to a redirect. Both halves fail silently: delete the route
+      # and every training email ever sent 404s (six senders have emailed that URL
+      # since v1.208.0 and the messages are still in inboxes); keep the page and there
+      # are two learner surfaces drifting apart. Every assertion comes in a pair --
+      # something absent AND its replacement present -- because "no occurrences of
+      # /training" is satisfied just as well by a file somebody emptied.
+      - name: Training portal retirement (the route redirects, the links moved)
+        run: python -m unittest erpnext_enhancements.tests.test_training_portal_retirement -v
+      # Being given a course has to reach the person it is given to. notify_assigned
+      # had exactly two callers and hooks.py named Training Assignment only in its two
+      # permission hooks, so a manager pressing New produced no email, no bell, no
+      # ToDo and no sign of any kind -- the first anybody knew was the overdue sweep
+      # days later. This pins that there is exactly ONE path (a doc_event, not a third
+      # explicit call), that it cannot abort the insert, and that the ToDo is raised
+      # from the enqueued job because assign_to.add can frappe.throw.
+      - name: Training assignment notice (one path, and it cannot break the insert)
+        run: python -m unittest erpnext_enhancements.tests.test_training_assignment_notice -v
+      # Chaptered video. The vertical mirrors in-video checkpoints -- standalone
+      # doctype keyed by (lesson, block_key), authored on the canvas, serialized at
+      # publish, read by video.js -- and stops mirroring at one place worth pinning:
+      # chapters are PUBLIC where checkpoints are not, because a chapter is a label
+      # and a number and has to reach the browser to be clickable. Also pins that no
+      # new endpoint was added (they ride the get_lesson payload) and that the editor
+      # is offered only on a real Video block, since an External Embed is a
+      # cross-origin iframe with no currentTime and no seek.
+      - name: Training video chapters (public payload, no new endpoint, real video only)
+        run: python -m unittest erpnext_enhancements.tests.test_training_video_chapters -v
       # Every dotted path in hooks.py must name something that exists. Frappe
       # resolves after_migrate at the very END of `bench migrate`, so a typo there
       # fails the deploy after every schema change has already been applied -- the
@@ -1104,6 +1163,31 @@ jobs:
       # the SSE relay's per-frame loop.
       - name: Server-side URL boundary (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_url_safety.py -q
+      # Travel ICS (found unwired 2026-09-13 by tests/test_suites_are_in_ci.py, the
+      # suite added in the same release). Nine bench-free tests, green, and running
+      # NOWHERE: plain pytest functions, which `python -m unittest` collects nothing
+      # from -- the identical shape as the QuickBooks suite that broke unnoticed for
+      # weeks. Its own pytest step, per the rule at the top of this file.
+      - name: Travel ICS (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_travel_ics.py -q
+      # Product Configurator engine (found unwired the same way, same day). 27
+      # bench-free unittest tests, green, and named nowhere in this file.
+      - name: Product Configurator engine (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_product_configurator_engine -v
+      # PO header -> line Project cascade. Third suite the guard below found running
+      # nowhere: its own frappe stub had gone stale -- `procurement_project` grew a
+      # `from frappe.utils import flt` and the stub is a plain ModuleType, which the
+      # import system reports as "'frappe' is not a package", so setUpModule raised
+      # before a single test ran. Own step: it registers `frappe.utils` in
+      # sys.modules and must not cross-talk with the other stubbed suites.
+      - name: Procurement project cascade (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_procurement_project -v
+      # The guard that found both of the above: every bench-free suite must be named
+      # in this file. A suite absent from it is not skipped, it is INVISIBLE -- and
+      # the existing in-file "am I wired into CI" idiom cannot catch that, because a
+      # file CI never runs cannot assert anything about itself.
+      - name: Every bench-free suite is wired into CI
+        run: python -m unittest erpnext_enhancements.tests.test_suites_are_in_ci -v
       # The email design system (v1.331.0). Its own step and pytest-style, and — like the
       # URL boundary above — it installs no frappe stub at all, because
       # templates/emails/_components.html is forbidden from importing frappe and renders

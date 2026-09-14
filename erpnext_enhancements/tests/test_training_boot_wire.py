@@ -39,7 +39,7 @@ PLAYER = JS_DIR / "player.js"
 
 # Keys the page's own bootstrap adds on the client side — options passed by
 # www/training.html or defaulted by the player, not fields the server sends.
-CLIENT_OPTIONS = {"translate", "route_base", "history", "view", "start"}
+CLIENT_OPTIONS = {"translate", "route_base", "history", "view", "start", "router"}
 
 
 def _player_code():
@@ -396,7 +396,7 @@ class TestTransportNamesExist(unittest.TestCase):
     """
 
     def test_every_mapped_method_is_whitelisted(self):
-        template = (APP / "www/training.html").read_text(encoding="utf-8")
+        template = (APP / "public/js/training/transport.js").read_text(encoding="utf-8")
         block = template[template.index("var METHOD = {") : template.index("var PREFIX")]
         mapped = set(re.findall(r':\s*"(\w+)"', block))
 
@@ -440,10 +440,30 @@ def _whitelisted_signatures():
 
 def _transport_map():
     """``{transportName: endpoint}`` from www/training.html."""
-    template = (APP / "www/training.html").read_text(encoding="utf-8")
+    template = (APP / "public/js/training/transport.js").read_text(encoding="utf-8")
     block = template[template.index("var METHOD = {") : template.index("var PREFIX")]
     return dict(re.findall(r'(\w+):\s*"(\w+)"', block))
 
+
+
+def _caller_files():
+    """Every file that DIALS the transport, in scan order.
+
+    The four player files, plus any Desk Page host under ``training/page/``.
+    Deliberately not a bare ``JS_DIR.glob("*.js")`` any more: that directory now
+    also holds ``transport.js``, which DEFINES ``transport.x`` rather than calling
+    it, and the call-site regexes below cannot tell the two apart. Globbing it in
+    would make every mapped method look called by construction, and
+    ``test_every_mapped_method_is_actually_called`` -- which exists because
+    ``finishAttempt`` was mapped and dialled by nothing, so a learner could finish
+    every lesson and the course would never complete -- would pass forever.
+
+    The page glob is here ahead of the page that will use it. A scan that silently
+    stops covering a caller is the failure this module documents.
+    """
+    player = [JS_DIR / name for name in ("player.js", "video.js", "quiz.js", "blocks.js")]
+    hosts = sorted((APP / "training" / "page").glob("*/*.js"))
+    return player + hosts
 
 def _call_payloads():
     """Every transport call site and the object-literal keys it passes.
@@ -452,7 +472,7 @@ def _call_payloads():
     player.js, and ``transport.name({ ... })`` inside video.js and quiz.js.
     """
     sites = []
-    for path in sorted(JS_DIR.glob("*.js")):
+    for path in _caller_files():
         src = path.read_text(encoding="utf-8")
         src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
         code = "\n".join(
@@ -473,6 +493,41 @@ def _call_payloads():
                 keys = set(re.findall(r"[{,]\s*([A-Za-z_]\w*)\s*:", code[start : end + 1]))
                 sites.append((path.name, name, keys))
     return sites
+
+
+class TestTheTransportExtractorParses(unittest.TestCase):
+    """Guards every set-difference below it — an empty map makes them all vacuous.
+
+    ``_transport_map`` slices the source between the literals ``var METHOD = {``
+    and ``var PREFIX``. That is fine while the two appear in that order and
+    becomes silently wrong if they are ever reordered: ``str.index`` would return
+    a smaller offset for ``var PREFIX``, the slice would be the empty string, the
+    regex would find nothing, and every assertion computed as
+    ``set(_transport_map()) - something`` would pass over an empty set.
+
+    Nothing about that reads as a failure. The suite goes green, and the contract
+    it exists to hold — that every endpoint the player dials is whitelisted and
+    correctly argued — stops being checked at all.
+
+    Its sibling ``test_training_heartbeat_wire.py`` has carried this guard since
+    it was written (``test_the_map_parses``); this module did not, and the
+    transport is about to move to its own file, which is exactly the edit that
+    reorders those two literals.
+    """
+
+    def test_the_map_is_not_empty(self):
+        self.assertGreater(
+            len(_transport_map()),
+            4,
+            "the METHOD map extracted as (nearly) empty -- check that "
+            "'var METHOD = {' still precedes 'var PREFIX' in the transport source",
+        )
+
+    def test_the_map_names_endpoints_we_recognise(self):
+        """Anti-vacuity of a different kind: a map that parsed but produced
+        nonsense would satisfy the count above."""
+        self.assertIn("getLesson", _transport_map())
+        self.assertEqual(_transport_map().get("getLesson"), "get_lesson")
 
 
 class TestTransportArguments(unittest.TestCase):
@@ -558,7 +613,7 @@ class TestTransportArguments(unittest.TestCase):
         page looking done.
         """
         called = set()
-        for path in sorted(JS_DIR.glob("*.js")):
+        for path in _caller_files():
             src = path.read_text(encoding="utf-8")
             src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
             code = "\n".join(
@@ -721,7 +776,7 @@ class TestHeartbeatIsShapedForItsEndpoint(unittest.TestCase):
 
     @staticmethod
     def _template():
-        return (APP / "www/training.html").read_text(encoding="utf-8")
+        return (APP / "public/js/training/transport.js").read_text(encoding="utf-8")
 
     def test_the_endpoint_still_takes_a_nested_payload(self):
         """If the server is ever flattened, this whole class is wrong and should

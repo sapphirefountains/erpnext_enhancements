@@ -15,8 +15,9 @@ separated emails rather than two competing ones in the same minute.
 import frappe
 from frappe.utils import add_days, cint, getdate, nowdate, today
 
-from erpnext_enhancements.training import notifications
+from erpnext_enhancements.training import notifications, roles
 from erpnext_enhancements.training.doctype.training_assignment.training_assignment import (
+	OPEN_STATUSES,
 	due_date_filters,
 )
 from erpnext_enhancements.training.doctype.training_settings.training_settings import is_enabled
@@ -188,3 +189,58 @@ def sweep_auto_assignments():
 				"Training assignment",
 			)
 	return created
+
+
+def sweep_learner_roles():
+	"""Re-grant ``Training Learner`` to anyone who owes a course and cannot open it.
+
+	**Two people on this site were in exactly that state**, and had been silently:
+	both hold one open assignment, both are Active Employees with a login, and
+	neither holds the role or the dedicated Role Profile — so the module had asked
+	them for something it would not let them reach.
+
+	The hole is in *when* the grant fires, not in how.
+	:func:`~erpnext_enhancements.training.roles.grant_learner_role` is correct and
+	handles both the profiled and profile-less paths — but ``assignment.py`` calls it
+	only on Employee **insert** and on an Employee **gaining** a ``user_id``. Neither
+	event fires again for somebody who already exists. So a grant that was once made
+	directly and then wiped by ``populate_role_profile_roles`` — which rebuilds
+	``roles`` from the profile union on *every* User save, and these two carry four
+	and five profiles — is never re-made. Nothing checked.
+
+	It is keyed on **owing a course**, not on being an Employee, because that is the
+	rule the writer applies: the assignment engine and a Training Manager pressing
+	*New* both create the obligation, and the obligation is what needs the role. An
+	Employee-keyed sweep would have missed a manually-assigned contractor, and a
+	sweep keyed on "has no role" would grant it to the whole company.
+
+	Deliberately **not** gated on ``auto_assign_enabled`` like
+	:func:`sweep_auto_assignments` is: a hand-made assignment needs the role just as
+	much as a rule-made one, and auto-assign being off says nothing about that.
+
+	Idempotent, and cheap on a steady state: one ``get_all`` plus one ``exists`` per
+	distinct learner with an open assignment, and ``grant_learner_role`` itself
+	returns False without writing when the role or profile is already held.
+
+	Website Users are skipped inside ``grant_learner_role`` — a customer contact gets
+	this when portal access is granted, deliberately, and never as a side effect.
+	"""
+	if not is_enabled("training_enabled"):
+		return 0
+
+	owed = frappe.get_all(
+		"Training Assignment",
+		filters={"status": ["in", OPEN_STATUSES]},
+		pluck="user",
+	)
+	granted = 0
+	for user in sorted({name for name in owed if name}):
+		if frappe.db.exists(
+			"Has Role", {"parent": user, "parenttype": "User", "role": roles.ROLE}
+		):
+			continue
+		if roles.grant_learner_role(user):
+			granted += 1
+	if granted:
+		frappe.db.commit()
+	return granted

@@ -354,7 +354,7 @@ def record_signoff(signoff, outcome, competency_notes=None, signature_image=None
 			<b>{frappe.utils.escape_html(frappe.db.get_value("Training Course", doc.course, "course_title") or doc.course or "")}</b>
 			as <b>{frappe.utils.escape_html(outcome)}</b>.</p>
 			<p>{frappe.utils.escape_html((doc.competency_notes or "").strip())}</p>
-			<p><a href="{get_url('/training')}">Open your training</a></p>
+			<p><a href="{get_url('/app/learn')}">Open your training</a></p>
 		""",
 	)
 

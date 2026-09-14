@@ -1016,3 +1016,57 @@
 	gap: 6px;
 	margin-top: 8px;
 }
+
+/* ----------------------------------------------------------- video chapters */
+
+/* The chapter list editor under a Video block. `tc-` because this is authoring
+   chrome; what a LEARNER sees is `.tr-video-chapters` in player.css, and the two
+   deliberately do not share rules — an author edits a table, a learner reads a
+   contents list.
+
+   It appears only inside video_editor(), so an External Embed block never offers
+   it. That is structural rather than a check: an embed is a cross-origin iframe
+   with no currentTime and no seek, so a chapter on one could never work, and the
+   honest place to say so is by not offering it. */
+.tc-chapters {
+	margin-top: 10px;
+	padding-top: 8px;
+	border-top: 1px solid var(--border-color, #e2e2e2);
+}
+
+.tc-chapters-head {
+	font-weight: 600;
+	font-size: 0.8125rem;
+	color: var(--text-muted, #6c7680);
+	margin-bottom: 4px;
+}
+
+.tc-chapter-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.tc-chapter {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 0;
+}
+
+/* Narrow and tabular: it holds seconds, and letting it size like the title makes
+   the titles start at a ragged left edge. */
+.tc-chapter-at {
+	flex: 0 0 5.5em;
+	font-variant-numeric: tabular-nums;
+}
+
+.tc-chapter-title {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.tc-chapter-del {
+	flex: 0 0 auto;
+	line-height: 1;
+}

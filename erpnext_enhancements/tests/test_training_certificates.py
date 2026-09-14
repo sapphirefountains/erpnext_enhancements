@@ -1234,5 +1234,45 @@ class TestTheRepairPatch(unittest.TestCase):
 		self.assertIn("log_error", code)
 
 
+class TestTheVerificationRouteSurvivedTheRetirement(unittest.TestCase):
+	"""``/training_certificate?code=…`` is the ONLY guest-reachable training surface,
+	and two neighbouring website routes were retired to redirects in the same
+	programme (``/training`` in v1.429.2, ``/training_analytics`` in v1.431.0).
+
+	Retiring this one by the same reflex would be a quiet disaster of a specific
+	kind: an external auditor scanning the code on a printed certificate would be
+	bounced to a login page for a Desk they will never have an account on. The
+	certificate would still exist, the record would still be right, and the one
+	person the verification feature exists for could not check it.
+
+	It prints initials and dates only, which is what makes guest access safe.
+	"""
+
+	APP = Path(__file__).resolve().parents[1]
+	CONTROLLER = APP / "www" / "training_certificate.py"
+
+	def test_the_route_still_exists(self):
+		self.assertTrue(self.CONTROLLER.is_file())
+		self.assertTrue((self.APP / "www" / "training_certificate.html").is_file())
+
+	def test_a_code_is_served_before_any_session_check(self):
+		"""The verification branch must come first. A guest check above it would
+		send the auditor to /login with their code in the redirect."""
+		source = self.CONTROLLER.read_text(encoding="utf-8")
+		verify_at = source.index("_verification_context(")
+		guest_at = source.index('frappe.session.user == "Guest"')
+		self.assertLess(
+			verify_at,
+			guest_at,
+			"the code branch must be answered before the Guest redirect",
+		)
+
+	def test_it_does_not_redirect_into_the_desk(self):
+		"""The pattern the other two routes took, and the one this must not."""
+		source = self.CONTROLLER.read_text(encoding="utf-8")
+		self.assertNotIn("/app/learn", source)
+		self.assertNotIn("/app/training-insights", source)
+
+
 if __name__ == "__main__":
 	unittest.main()

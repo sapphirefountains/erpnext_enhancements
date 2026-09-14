@@ -120,6 +120,7 @@ def _install_frappe_stub():
 		"erpnext_enhancements.training.doctype.training_settings.training_settings"
 	)
 	settings.is_enabled = lambda switch="training_enabled": True
+	settings.runtime_ready = lambda: True
 	sys.modules[
 		"erpnext_enhancements.training.doctype.training_settings.training_settings"
 	] = settings

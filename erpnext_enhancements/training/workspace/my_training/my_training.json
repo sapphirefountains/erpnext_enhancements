@@ -1,0 +1,97 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"mt_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your training</b></span>\",\"col\":12}},{\"id\":\"mt_sc_open\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Open Training\",\"col\":4}},{\"id\":\"mt_sc_due\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"What I owe\",\"col\":4}},{\"id\":\"mt_sc_record\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"My certificates\",\"col\":4}},{\"id\":\"mt_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"mt_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your record</b></span>\",\"col\":12}},{\"id\":\"mt_card_record\",\"type\":\"card\",\"data\":{\"card_name\":\"Your record\",\"col\":4}}]",
+ "creation": "2026-09-13 16:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "education",
+ "is_hidden": 0,
+ "label": "My Training",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Your record",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Courses I owe",
+   "link_count": 0,
+   "link_to": "Training Assignment",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Courses I have passed",
+   "link_count": 0,
+   "link_to": "Training Completion",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "My certificates",
+   "link_count": 0,
+   "link_to": "Training Certificate",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "My submitted work",
+   "link_count": 0,
+   "link_to": "Training Submission",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-09-13 16:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "My Training",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 60.5,
+ "shortcuts": [
+  {
+   "color": "Blue",
+   "label": "Open Training",
+   "link_to": "learn",
+   "type": "Page"
+  },
+  {
+   "color": "Orange",
+   "doc_view": "List",
+   "label": "What I owe",
+   "link_to": "Training Assignment",
+   "type": "DocType"
+  },
+  {
+   "color": "Green",
+   "doc_view": "List",
+   "label": "My certificates",
+   "link_to": "Training Certificate",
+   "type": "DocType"
+  }
+ ],
+ "title": "My Training"
+}

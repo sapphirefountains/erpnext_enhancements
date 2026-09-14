@@ -40,7 +40,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 APP = REPO_ROOT / "erpnext_enhancements"
 CSS = APP / "public/css/training/player.css"
 JS_DIR = APP / "public/js/training"
-TEMPLATE = APP / "www/training.html"
+# The mount lives in the Desk page host now. The portal template that used to own
+# it is a redirect as of v1.429.2 and renders no player at all.
+TEMPLATE = APP / "training/page/learn/learn.js"
 
 SCRIPTS = ("player.js", "blocks.js", "video.js", "quiz.js")
 
@@ -265,7 +267,11 @@ class TestNoDuplicateShell(unittest.TestCase):
     which is what produced the columns of one-word-per-line text.
     """
 
-    def test_the_template_owns_the_shell_class(self):
+    def test_the_host_owns_the_shell_class(self):
+        """Was the portal template until v1.429.2; the Desk page host builds the mount
+        now. The rule is unchanged and is the one that matters: exactly one element
+        carries `.tr-shell`, because it is a grid at >= 900px and nesting it inside
+        itself laid the inner grid out in one 260px column of the outer."""
         self.assertIn('class="tr-shell"', TEMPLATE.read_text(encoding="utf-8"))
 
     def test_the_player_does_not_build_a_second_one(self):
@@ -287,8 +293,8 @@ class TestNoDeadStylesheet(unittest.TestCase):
 
     # Styled deliberately without ever being emitted by the scanned sources.
     ALLOWED_UNUSED = {
-        # Set on <html>/<body> by the template's own inline style block, and used
-        # as a theming hook rather than rendered by the scripts.
+        # Built by the host rather than by the scripts: the Desk page creates the
+        # mount with this class, exactly as the portal template used to.
         "tr-shell",
     }
 
@@ -391,54 +397,29 @@ class TestHostThemeReset(unittest.TestCase):
                 self.fail(f"bare tag selector {stripped!r} leaks outside .tr-shell")
 
 
-class TestTheChromeRemovalSparesThePlayer(unittest.TestCase):
-    """The page hides the website chrome, and hid its own action bar with it.
+class TestTheChromeRemovalIsGone(unittest.TestCase):
+    """The block this used to guard was deleted with the portal shell (v1.429.2).
 
-    ``player.js`` builds the sticky action bar as ``<footer class="tr-bottom">``.
-    The template's chrome-removal block listed a bare ``footer`` at
-    ``display: none !important`` — so the element holding **Start the quiz**,
-    **Finish this lesson**, the resume button and the gate reasons was invisible
-    to every learner, on every lesson, since the page was written.
+    It pinned two qualifiers in the old template's `{% block style %}`:
+    `footer:not(.tr-bottom)` and `main:not(.tr-view)`. They mattered enormously. A
+    bare `footer { display: none !important }` hid the sticky action bar -- the
+    element holding "Start the quiz", "Finish this lesson" and the resume button --
+    so the one control that advances a course rendered, and no learner could see it
+    or press it. Nothing erred.
 
-    Nothing errored. The button rendered, with the right label, at zero height.
-    The one control that advances a course simply could not be seen or pressed,
-    and the reported symptom was "the quiz isn't visible" — which it was, in the
-    DOM, all along.
-
-    ``main`` is qualified for the same reason: ``main.tr-view`` is the player's.
+    None of that applies to a Desk Page: there is no website chrome around it to
+    remove, so there is no rule that could over-reach. The tests are not repointed,
+    because there is nothing to point them at -- but the reasoning is kept here
+    rather than deleted, because the next person to wrap the player in a host will
+    reach for exactly that `display: none`.
     """
 
-    @staticmethod
-    def _template():
-        return TEMPLATE.read_text(encoding="utf-8")
+    def test_the_portal_no_longer_carries_a_chrome_removal_block(self):
+        portal = (APP / "www/training.html").read_text(encoding="utf-8")
+        self.assertNotIn("display: none !important", portal)
 
-    @staticmethod
-    def _chrome_block():
-        text = TEMPLATE.read_text(encoding="utf-8")
-        start = text.index("{% block style %}")
-        return text[start : text.index("{% endblock %}", start)]
-
-    def test_the_block_is_found(self):
-        """Guards the assertions below from passing on an empty slice."""
-        self.assertIn("display: none !important", self._chrome_block())
-
-    def test_the_footer_rule_spares_the_action_bar(self):
-        block = self._chrome_block()
-        self.assertIn("footer:not(.tr-bottom)", block)
-        # A bare `footer` anywhere in the hide list puts it straight back.
-        hide = block[: block.index("display: none !important")]
-        self.assertNotRegex(
-            hide,
-            r"(^|[\s,])footer\s*[,{]",
-            "a bare `footer` selector hides the player's own action bar",
-        )
-
-    def test_the_main_rule_spares_the_view(self):
-        self.assertIn("main:not(.tr-view)", self._chrome_block())
-
-    def test_the_player_still_builds_those_elements(self):
-        """Both halves asserted together, so renaming the element in player.js
-        fails here rather than silently re-hiding the bar."""
+    def test_the_player_still_builds_the_elements_that_bug_hid(self):
+        """The half of the old assertion that still means something."""
         player = (JS_DIR / "player.js").read_text(encoding="utf-8")
         self.assertIn('el("footer", "tr-bottom")', player)
         self.assertIn('el("main", "tr-view")', player)

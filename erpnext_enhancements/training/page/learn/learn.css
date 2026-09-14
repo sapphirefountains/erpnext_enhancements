@@ -1,0 +1,78 @@
+/*
+ * Chrome for the learner Desk Page (/desk/learn). The class registry for learn.js:
+ * a class the JS invents that has no rule here renders as an unstyled div.
+ *
+ * PREFIX IS `tl-`, AND THAT IS NOT A STYLE CHOICE.
+ *
+ *   tr-  the learner render          public/css/training/player.css
+ *   tc-  the authoring chrome        training_canvas.css
+ *   tl-  this desk host's chrome     here
+ *
+ * `tests/test_training_player_css_contract.py` asserts BOTH directions across the
+ * player: every `tr-*` class the scripts emit must have a rule in player.css, and
+ * every rule in player.css must style something the scripts emit. A `tr-` class
+ * invented by this host would therefore fail the build as "rendered but never
+ * styled" — and moving its rule into player.css to satisfy that would ship desk-only
+ * chrome to the portal page, the preview harness and the authoring canvas, all three
+ * of which load that file.
+ *
+ * AND THIS FILE DECLARES NO `--tr-*`. It reads them. The palette has exactly one
+ * declaration site (player.css, plus quiz.js's injected fallback), which is what lets
+ * the authoring canvas inherit a palette fix for free — and re-declaring
+ * `--tr-surface` here "to match the desk" is precisely how the authoring surface
+ * would stop matching what a learner sees, which is the one thing the canvas exists
+ * to guarantee. `tests/test_training_desk_theme.py` fails the build on it.
+ *
+ * WHAT THIS FILE DELIBERATELY DOES NOT DO: it does not make the page full-bleed. The
+ * authoring canvas does (`training_canvas.css` defeats `.page-body .container` and
+ * `.layout-main-section`) because a builder wants the whole viewport. A learner page
+ * wants the opposite — the desk header, the breadcrumbs and the workspace sidebar are
+ * how it reads as part of ERPNext rather than as an app embedded in it. So the page
+ * keeps the desk's own container and the player's column centres inside it, exactly
+ * as it centres inside the portal page.
+ */
+
+/* The seam between desk chrome and the Aurora reading surface. Everything outside
+   this element is the desk's; everything inside it is the player's, unchanged from
+   what the portal serves. The background is the player's own rather than the desk's
+   so the lesson column reads as a document laid on the desk, which is also what
+   makes the two hosts look like the same product. */
+.tl-desk-surface {
+	background: var(--tr-bg);
+	border-radius: var(--tr-radius);
+	/* Vertical only. The horizontal inset is player.css's (.tr-shell pads 12px), and
+	   adding another here would narrow the reading column on a phone, where the desk
+	   already has very little to spare. */
+	padding: 16px 0;
+	min-height: 60vh;
+	/* Stated, not defaulted. The player's sticky action bar is
+	   `position: sticky; bottom: 0`, which sticks to its SCROLL CONTAINER -- so an
+	   `overflow` of anything but `visible` on this element would pin "Finish this
+	   lesson" to the bottom of this box instead of the screen, and on a phone that
+	   puts the one control that advances a course below the fold. The edit that
+	   would do it (`overflow: hidden`, to make the border-radius clip) looks like a
+	   styling nicety and reads as the button being missing. */
+	overflow: visible;
+}
+
+/* Boot and hard-failure states. The player owns every other pixel; these two exist
+   only for the window before it is mounted, and for when it cannot be. */
+.tl-error {
+	margin: 24px auto;
+	max-width: 560px;
+	padding: 16px 18px;
+	border: 1px solid var(--tr-border);
+	border-left: 3px solid #e03636;
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	color: var(--tr-text);
+	font-size: 16px;
+	line-height: 1.5;
+}
+
+/* The desk page head sits directly above the reading column; without this the title
+   and the first card are the same distance apart as two cards, and the page reads as
+   starting mid-scroll. */
+.tl-learn-page .page-head {
+	margin-bottom: 4px;
+}

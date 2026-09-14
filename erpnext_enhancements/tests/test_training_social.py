@@ -49,7 +49,7 @@ PERMISSIONS = APP / "training/permissions.py"
 HOOKS = APP / "hooks.py"
 RUNTIME = APP / "api/training.py"
 PLAYER = APP / "public/js/training/player.js"
-PAGE = APP / "www/training.html"
+PAGE = APP / "public/js/training/transport.js"
 COMPLETION_JSON = APP / "training/doctype/training_completion/training_completion.json"
 
 

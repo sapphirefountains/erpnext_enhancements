@@ -37,7 +37,12 @@ PLAYER_JS = APP / "public/js/training/player.js"
 VIDEO_JS = APP / "public/js/training/video.js"
 QUIZ_JS = APP / "public/js/training/quiz.js"
 BLOCKS_JS = APP / "public/js/training/blocks.js"
-TRAINING_HTML = APP / "www/training.html"
+# The fifth file bound by the no-frappe rule. Not a player file -- the player
+# receives it rather than importing it -- but it runs in the same document for
+# the same Website Users, and it is the file most likely to be 'improved' into
+# frappe.call by somebody who only ever tests while logged into the Desk.
+TRANSPORT_JS = APP / "public/js/training/transport.js"
+TRAINING_HTML = APP / "public/js/training/transport.js"
 RUNTIME_API = APP / "api/training.py"
 AUTHOR_API = APP / "api/training_author.py"
 
@@ -136,7 +141,7 @@ class TestPreviewTransportMatchesThePlayer(unittest.TestCase):
     def test_the_player_never_reaches_for_the_page_globals(self):
         """A single reference to window.TRAINING_BOOT would make the player
         unusable from the builder without touching it."""
-        for path in (PLAYER_JS, VIDEO_JS, QUIZ_JS, BLOCKS_JS):
+        for path in (PLAYER_JS, VIDEO_JS, QUIZ_JS, BLOCKS_JS, TRANSPORT_JS):
             self.assertNotIn("TRAINING_BOOT", _code(path), f"{path.name} reads the page global")
 
     def test_the_player_never_calls_frappe(self):
@@ -144,7 +149,7 @@ class TestPreviewTransportMatchesThePlayer(unittest.TestCase):
         frappe JS globals do not exist — frappe.call, frappe.msgprint and __()
         all work fine for a developer testing while logged in, and throw a
         ReferenceError for every customer."""
-        for path in (PLAYER_JS, VIDEO_JS, QUIZ_JS, BLOCKS_JS):
+        for path in (PLAYER_JS, VIDEO_JS, QUIZ_JS, BLOCKS_JS, TRANSPORT_JS):
             self.assertNotRegex(_code(path), r"\bfrappe\.\w", f"{path.name} uses a frappe global")
 
     @phase3

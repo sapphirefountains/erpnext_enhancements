@@ -37,7 +37,7 @@ from frappe import _
 from frappe.utils import cint, get_url
 
 from erpnext_enhancements.training import notifications
-from erpnext_enhancements.training.doctype.training_settings.training_settings import is_enabled
+from erpnext_enhancements.training.doctype.training_settings.training_settings import runtime_ready
 
 SUBMISSION_DOCTYPE = "Training Submission"
 
@@ -66,7 +66,7 @@ def _learner():
 
 
 def _require_runtime():
-	if not (is_enabled("training_enabled") and is_enabled("portal_enabled")):
+	if not runtime_ready():
 		frappe.throw(_("Training is not available yet."))
 
 
@@ -259,7 +259,7 @@ def grade_submission(submission, status, feedback=None, grade=None):
 			f"""
 				<p>Your submission on <b>{frappe.utils.escape_html(lesson_title)}</b> was {verdict}.</p>
 				{body_note}
-				<p><a href="{get_url('/training')}">Open your training</a></p>
+				<p><a href="{get_url('/app/learn')}">Open your training</a></p>
 			""",
 		)
 

@@ -57,6 +57,43 @@ def main() -> int:
 		)
 		return 1
 
+	# --------------------------------------------------------------- orphans
+	#
+	# The other half of the same failure. Frappe resolves a ROUTE from the
+	# template and then imports the controller beside it, so a controller with no
+	# template is not a page at all: the URL 404s and `get_context()` never runs.
+	# Identical symptom to the hyphen bug above -- no exception, no log line --
+	# and identically invisible in review, because the .py reads as a working
+	# page. Worth guarding now because retiring /training turns its controller
+	# into a redirect, and a redirect controller whose template was deleted is
+	# exactly this shape: the redirect silently never fires and every emailed
+	# link 404s.
+	#
+	# Pairing is hyphen-insensitive in the SAME direction frappe reads it: a
+	# template basename has its hyphens replaced by underscores, so
+	# `contract-sign.html` and `contract_sign.html` both name `contract_sign.py`.
+	templates = {
+		path.stem.replace("-", "_")
+		for suffix in ("*.html", "*.md")
+		for path in WWW.glob(suffix)
+	}
+	orphans = [path for path in controllers if path.stem not in templates]
+
+	if orphans:
+		print("\nweb page controllers with no template beside them:\n", file=sys.stderr)
+		for path in orphans:
+			print(f"  erpnext_enhancements/www/{path.name}", file=sys.stderr)
+			print(
+				f"    -> add www/{path.stem}.html (or .md), or delete the controller",
+				file=sys.stderr,
+			)
+		print(
+			"\nA controller without a template is not a page: the route does not "
+			"exist, so the URL 404s and get_context() never runs.\n",
+			file=sys.stderr,
+		)
+		return 1
+
 	print(f"www controller filenames OK ({len(controllers)} checked)")
 	return 0
 

@@ -85,3 +85,25 @@ def is_enabled(switch="training_enabled"):
 	if switch == "training_enabled":
 		return True
 	return bool(cint(getattr(settings, switch, 0)))
+
+
+def runtime_ready():
+	"""Is the learner runtime open for business?
+
+	**``training_enabled`` alone, and that is the point.** This used to read
+	``training_enabled and portal_enabled``, back when ``/training`` was the only
+	learner surface and "the portal" and "the runtime" were the same thing. They
+	stopped being the same thing when the runtime gained a Desk Page, and the field
+	that would have taken it down is a checkbox a Training Manager can untick,
+	labelled for the surface that no longer renders.
+
+	The failure mode is what makes this worth a named function rather than an edit:
+	every read endpoint answers a closed runtime with ``_unavailable()`` rather than
+	an exception, on purpose, so all fifteen learners would have been shown
+	"Training is not available yet" with nothing in the Error Log and nothing to
+	tell the person who unticked it that they had done anything at all.
+
+	``portal_enabled`` still gates the customer-portal apparatus in
+	``training/portal.py``, which is what it now means.
+	"""
+	return is_enabled("training_enabled")
