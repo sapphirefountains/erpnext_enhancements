@@ -1,8 +1,14 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"mt_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your training</b></span>\",\"col\":12}},{\"id\":\"mt_sc_open\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Open Training\",\"col\":4}},{\"id\":\"mt_sc_due\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"What I owe\",\"col\":4}},{\"id\":\"mt_sc_record\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"My certificates\",\"col\":4}},{\"id\":\"mt_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"mt_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your record</b></span>\",\"col\":12}},{\"id\":\"mt_card_record\",\"type\":\"card\",\"data\":{\"card_name\":\"Your record\",\"col\":4}}]",
+ "content": "[{\"id\":\"ee_chb_training_my_dashboard\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"My Training Dashboard\",\"col\":12}},{\"id\":\"mt_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your training</b></span>\",\"col\":12}},{\"id\":\"mt_sc_open\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Open Training\",\"col\":4}},{\"id\":\"mt_sc_due\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"What I owe\",\"col\":4}},{\"id\":\"mt_sc_record\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"My certificates\",\"col\":4}},{\"id\":\"mt_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"mt_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your record</b></span>\",\"col\":12}},{\"id\":\"mt_card_record\",\"type\":\"card\",\"data\":{\"card_name\":\"Your record\",\"col\":4}}]",
  "creation": "2026-09-13 16:00:00.000000",
+ "custom_blocks": [
+  {
+   "custom_block_name": "My Training Dashboard",
+   "label": "My Training Dashboard"
+  }
+ ],
  "docstatus": 0,
  "doctype": "Workspace",
  "for_user": "",
@@ -60,7 +66,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-13 16:00:00.000000",
+ "modified": "2026-09-13 23:50:00.000000",
  "modified_by": "Administrator",
  "module": "Training",
  "name": "My Training",

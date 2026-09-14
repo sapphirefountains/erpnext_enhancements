@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.436.0] - 2026-09-13
+
+Training Phase 6, D15 part two. **A learner dashboard**, and a manager's view of one
+person that deliberately carries no scores.
+
+### Added
+
+- **My Training dashboard** — a Custom HTML Block on the learner workspace, showing
+  this person's statistics and a live list of their **Required** and **Optional**
+  courses, each opening at `/desk/learn/<COURSE>`.
+
+  It is a Custom HTML Block rather than a Number Card or a Quick List for one
+  reason: those carry their filters on the widget, so they are identical for
+  everyone who opens the page. None of them can answer *"which courses does the
+  person looking at this owe"*. The Desk's own left sidebar has the same limit and
+  the same cause — it lists workspaces, which are places, not people.
+
+- **`training/dashboard.py`** — one read model, two whitelisted reads.
+  `get_my_dashboard()` answers about yourself; `get_person_dashboard(user)` answers
+  about somebody else, for a manager, and **builds no scores and no attempt
+  history**.
+
+  That exclusion lives in the **shape** of the response rather than in a filter:
+  the manager payload has no score keys to omit, so no future caller can pass an
+  argument that puts them back, and a call-graph test asserts `_scores` is reachable
+  from exactly one function. The reasoning is the module's own: showing a person
+  their own quiz history is feedback, showing it to their manager is assessment, and
+  this module already took that position when the team feed was built to carry no
+  number anyone could be judged by.
+
+  It defines nothing. "Open", "overdue" and "visible" are predicates owned by
+  `api/training.py` and imported from there, and every tile is counted off the same
+  rows the dashboard then draws — so a number and the list beneath it cannot
+  disagree, which is the failure this module had already shipped twice.
+
+- **"Training record" on the Employee form, and "Look up a person" on Training
+  Insights.** The dashboard's real gap: every number on the manager console is
+  aggregated by course, by cohort or org-wide, so a manager could read "7 overdue"
+  and open the list of assignment documents, but could not ask *how is this person
+  doing* about the technician whose form they already had open. Role-gated, and
+  drawn only when the Employee has a `user_id` — training records belong to a User,
+  and an entry point that opens an empty dialog reads as the data being missing.
+
+  The dialog loads on demand rather than shipping in the global bundle: a manager
+  opens it rarely and a learner never.
+
+### Fixed
+
+- **Three guards in this repo caught things I would otherwise have shipped**, and
+  each is worth more than the line it changed:
+
+  - `test_dashboard_widgets` refused the placement because it looked for every
+    workspace JSON under `kpi_dashboards/` — but workspaces live beside the module
+    that owns them, and `My Training` is a Training workspace. The test now resolves
+    the file across modules, and treats the KPI Cockpit as a department-dashboard
+    fixture rather than a universal one. **A learner's own page should not carry a
+    business-wide cockpit**; that is a different product on the same screen.
+  - The same test's message recorded something easy to get wrong and impossible to
+    see: **v16 builds a workspace's custom-block payload from the `custom_blocks`
+    child table, not from the `content` blob**, so a placement written into
+    `content` alone renders an empty space with no error anywhere. The shipped JSON
+    now carries both.
+  - An absence assertion matched the comment explaining the absence — the **seventh**
+    instance of that shape here, this time in a stylesheet, where the rule said "a
+    `var(--tr-surface)` here would resolve to nothing" and the test was looking for
+    `var(--tr-`.
+
+- **The workspace JSON's `modified` is bumped and a patch forces the reload.**
+  Workspaces are *timestamp*-gated by frappe's importer, unlike DocTypes, which are
+  hash-gated: a file that does not read newer than the stored row is skipped in
+  silence. That is what stranded this same workspace's cards for five weeks in
+  v1.379.0.
+
 ## [1.435.0] - 2026-09-13
 
 Training Phase 6, D15 part one. **A quiz can be written by hand**, and three counts

@@ -1,0 +1,169 @@
+/*
+ * My Training — the learner's dashboard widget.
+ *
+ * PREFIX IS `tmd-`. Every colour comes from frappe, because this lives on a
+ * workspace beside other desk widgets and must follow the desk theme with no work
+ * of its own. It must NOT reach for the Aurora palette: `--tr-*` is declared in
+ * player.css, which a workspace never loads, so a `var(--tr-surface)` here would
+ * resolve to nothing on the one page this file is used.
+ *
+ * The block renders inside a shadow root, so these rules reach nothing else on the
+ * page and nothing on the page reaches them — which is also why the frappe tokens
+ * below are inherited through the host rather than matched by selector.
+ */
+
+.tmd-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: var(--border-radius-md, 8px);
+    background: var(--card-bg, #fff);
+    color: var(--text-color, #1f272e);
+    font-size: 13px;
+}
+
+.tmd-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tmd-title {
+    font-weight: 600;
+    color: var(--heading-color, #1f272e);
+}
+
+.tmd-sub {
+    flex: 1;
+    font-size: 11px;
+    color: var(--text-muted, #7c7c7c);
+}
+
+.tmd-refresh {
+    border: 0;
+    background: transparent;
+    color: var(--text-muted, #7c7c7c);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.tmd-muted {
+    color: var(--text-muted, #7c7c7c);
+    line-height: 1.4;
+}
+
+/* ------------------------------------------------------------------- the tiles */
+
+.tmd-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.tmd-tile {
+    flex: 1 1 92px;
+    min-width: 88px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: var(--border-radius-md, 8px);
+    background: var(--bg-color, #f7f7f7);
+}
+
+.tmd-tile-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--heading-color, #1f272e);
+}
+
+.tmd-tile-label {
+    margin-top: 1px;
+    font-size: 11px;
+    color: var(--text-muted, #7c7c7c);
+}
+
+/* Literal, and applied only above zero — the same colour and the same reason as
+   the overdue tile on the manager console: "overdue" must not become a different
+   idea because somebody edited a palette. */
+.tmd-tile.is-bad .tmd-tile-value,
+.tmd-flag.is-bad {
+    color: #e03636;
+}
+
+/* --------------------------------------------------------------- the course rows */
+
+.tmd-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.tmd-section {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.tmd-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted, #7c7c7c);
+}
+
+.tmd-row {
+    display: block;
+    width: 100%;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: var(--border-radius-md, 8px);
+    background: transparent;
+    text-align: left;
+    /* Reset the button so a course reads as a row rather than as a control that
+       happens to sit in a list. */
+    font: inherit;
+    color: var(--text-color, #1f272e);
+    cursor: pointer;
+}
+
+.tmd-row:hover,
+.tmd-row:focus-visible {
+    background: var(--bg-color, #f7f7f7);
+}
+
+.tmd-row-title {
+    display: block;
+    line-height: 1.3;
+}
+
+.tmd-row-meta {
+    display: block;
+    margin-top: 1px;
+    font-size: 11px;
+    color: var(--text-muted, #7c7c7c);
+}
+
+.tmd-flag {
+    font-weight: 600;
+}
+
+.tmd-bar {
+    display: block;
+    position: relative;
+    margin-top: 4px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--bg-color, #f0f0f0);
+    overflow: hidden;
+}
+
+.tmd-bar-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: var(--primary, #2490ef);
+    opacity: 0.55;
+}

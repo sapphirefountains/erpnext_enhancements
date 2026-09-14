@@ -804,6 +804,16 @@ jobs:
       # once became "expired" here.
       - name: Training desk rail (class contract, role gate, no second read)
         run: python -m unittest erpnext_enhancements.tests.test_training_desk_nav -v
+      # The training dashboard. Two things are gated here and one of them is a
+      # DECISION rather than a bug: scores never reach a manager. What makes that
+      # durable is the shape -- get_person_dashboard does not build them, so there
+      # is no key to omit and no argument that can put them back. A filter would be
+      # one refactor away from leaking; an absent branch is not. The other is that
+      # nothing is counted twice: "open", "overdue" and "visible" are predicates
+      # owned by api/training.py, and this module has already shipped the cost of a
+      # second definition twice.
+      - name: Training dashboard (no scores to a manager, no second predicate)
+        run: python -m unittest erpnext_enhancements.tests.test_training_dashboard -v
       # Every dotted path in hooks.py must name something that exists. Frappe
       # resolves after_migrate at the very END of `bench migrate`, so a typo there
       # fails the deploy after every schema change has already been applied -- the

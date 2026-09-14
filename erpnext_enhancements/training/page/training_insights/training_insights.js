@@ -45,7 +45,24 @@ frappe.pages["training-insights"].on_page_load = function (wrapper) {
 	});
 	wrapper.training_insights = new TrainingInsights(page);
 	ti_mount_nav(page);
+
+	// The dashboard's own gap, and the one a manager actually arrives with. Every
+	// number on this page is aggregated by course, by cohort or org-wide: a manager
+	// who reads "7 overdue" can open the list of assignment documents, but there was
+	// no way to ask "how is Brian doing" and get an answer.
+	page.add_menu_item(__("Look up a person"), () => ti_person_lookup());
 };
+
+function ti_person_lookup() {
+	frappe.prompt(
+		{ fieldtype: "Link", options: "User", label: __("Person"), fieldname: "user", reqd: 1 },
+		(values) => {
+			if (window.TR && typeof TR.openPersonRecord === "function") TR.openPersonRecord(values.user);
+		},
+		__("Whose training record?"),
+		__("Open")
+	);
+}
 
 function ti_mount_nav(page) {
 	// This page had no dependency on TR at all before the rail. Guarded so that
