@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.446.0] - 2026-09-14
+
+### Added
+
+- **A `Quality` module** — the scaffold for WI-075, the programme that makes a quality failure
+  traceable to a contracted, measurable standard. Ships the module, the `Quality Control`
+  workspace and sidebar, a Desk tile, `Quality Settings`, and the roles and project type the
+  rest of the programme needs. **Nothing acts yet:** `quality_enabled` is off, there is no
+  inspection engine until sub-phases C and D, and this release changes nothing anybody sees.
+- **`Quality Settings`** (Single) — master switches, all shipping off or permissive. Its
+  backfill patch ships in this same release rather than after it, because a `default` on a new
+  field of a Single reaches no existing row, and the settings page for a *dormant* feature is
+  precisely the one that cannot self-heal on the next save: the first save you need is the one
+  that fails. `QualitySettings.validate` repairs a missing dial in place as a second defence.
+  Both fill only where `tabSingles` has no row, never over a stored falsy value — an unticked
+  box and a deliberate `0` are not the same fact.
+- **Five roles** — President, Production Manager, Account Executive, Quality Inspector,
+  Controller. The build spec's approval chain names all five and none existed. Created by
+  patch rather than `fixtures/role.json`, because fixture files import in alphabetical
+  filename order and `custom_docperm.json` lands before `role.json`.
+  **Note one live consequence.** `crm_enhancements/handoff.py:224` documents that
+  `Account Executive` is "a Select value on Process Step Template, not a real Role on this
+  site", and `_role_holder_emails` skips a Role that does not exist. Creating the Role arms
+  that path: a `Hand-Off Attendee Role` row naming it will now resolve to its holders and mail
+  them. Verified on production 2026-09-14 that this is **latent, not live** — all three
+  configured attendee rows use explicit group addresses (sales@, production@, billing@) with
+  `role` null — so hand-off attendee resolution is unchanged today. It becomes live the first
+  time somebody sets `role` on one of those rows.
+- **A `Products` Project Type**, which the Controls Fab inspection programme keys to.
+  "Controls Fab" exists nowhere on this site, and "Service" (354 projects) is what the spec
+  calls Maintenance. Rather than rename 354 live projects for vocabulary, the programme keys
+  on `project_type` as it actually is, plus this one value. The seven projects carrying the
+  `Products` *value stream* are deliberately not retyped — a value stream and a project type
+  are different axes, and rewriting live projects to make a new report look populated is a
+  person's decision, not a patch's.
+
+### Notes
+
+- **The workspace is `Quality Control`, not `Quality`.** ERPNext's `Quality Management` module
+  already owns a public workspace whose name and label are both `Quality`, plus the Desk tile
+  that goes with it. A Workspace's `name` *is* its `label`, and workspaces are timestamp-gated
+  by the importer while DocTypes are hash-gated — so a file at that docname would let whichever
+  side has the newer `modified` rewrite the row on every migrate, **including its `module`**,
+  silently re-homing a core workspace into this app and changing which DocPerms gate it. The
+  Desk tile key is `"Quality Control"` for the same reason: tiles are keyed by workspace label
+  and derive their roles from the same-named workspace.
+- **`Quality Settings` grants `read` widely on purpose.** A workspace vanishes *silently* for
+  anyone holding no DocPerm on a non-child DocType in its module — `Workspace.__init__` raises
+  `PermissionError` and `get_workspace_sidebar_items` swallows it. In this sub-phase
+  `Quality Settings` is the module's only non-child DocType, so it is the only thing keeping
+  the workspace visible to anybody but System Manager.
+- Core's `Quality Inspection` is **not** used and must not be — it is a Stock-module
+  incoming-materials record with required `reference_type`, `item_code` and `sample_size`, no
+  project, no milestone, no pass/fail and no photo. See
+  [ADR-0012](decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md). The
+  other seven core Quality DocTypes are reused and are linked from the new workspace.
+
+
 ## [1.445.0] - 2026-09-14
 
 ### Added

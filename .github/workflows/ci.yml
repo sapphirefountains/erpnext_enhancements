@@ -453,6 +453,15 @@ jobs:
       # appears. v1.146.0 shipped exactly that across seven widgets.
       - name: Workspace structure (content <-> child rows, WI-018)
         run: python -m unittest erpnext_enhancements.tests.test_workspaces -v
+      # The Quality module (WI-075) sits beside erpnext's own Quality Management, which owns
+      # a workspace named `Quality`, the Desk tile that goes with it, and 22 DocTypes. Every
+      # way of colliding with those is silent: workspaces are TIMESTAMP-gated (not hash-gated
+      # like DocTypes), so a file at core's docname does not conflict -- it rewrites core's
+      # row, `module` included, on whichever migrate has the newer stamp. Tiles are keyed by
+      # workspace LABEL and inherit that workspace's roles. And a Page sharing a workspace
+      # slug never renders, per-user, so it reads as a permissions bug. Nothing logs any of it.
+      - name: Quality module name collisions (workspace, tile, DocType, page slug)
+        run: python -m unittest erpnext_enhancements.tests.test_quality_naming_collisions -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk

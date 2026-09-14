@@ -1,0 +1,152 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"qc_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"qc_sc_ncr\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Non Conformances\",\"col\":4}},{\"id\":\"qc_sc_action\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Quality Actions\",\"col\":4}},{\"id\":\"qc_sc_settings\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Quality Settings\",\"col\":4}},{\"id\":\"qc_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"qc_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Quality</b></span>\",\"col\":12}},{\"id\":\"qc_card_fail\",\"type\":\"card\",\"data\":{\"card_name\":\"Failures and fixes\",\"col\":4}},{\"id\":\"qc_card_goals\",\"type\":\"card\",\"data\":{\"card_name\":\"Goals and review\",\"col\":4}},{\"id\":\"qc_card_setup\",\"type\":\"card\",\"data\":{\"card_name\":\"Setup\",\"col\":4}}]",
+ "creation": "2026-09-14 10:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "check",
+ "is_hidden": 0,
+ "label": "Quality Control",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Failures and fixes",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Non Conformance",
+   "link_count": 0,
+   "link_to": "Non Conformance",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Quality Action",
+   "link_count": 0,
+   "link_to": "Quality Action",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Goals and review",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Quality Goal",
+   "link_count": 0,
+   "link_to": "Quality Goal",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Quality Review",
+   "link_count": 0,
+   "link_to": "Quality Review",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Quality Meeting",
+   "link_count": 0,
+   "link_to": "Quality Meeting",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Quality Feedback",
+   "link_count": 0,
+   "link_to": "Quality Feedback",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Setup",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Quality Procedure",
+   "link_count": 0,
+   "link_to": "Quality Procedure",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Quality Settings",
+   "link_count": 0,
+   "link_to": "Quality Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-09-14 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Quality",
+ "name": "Quality Control",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 46,
+ "shortcuts": [
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Non Conformances",
+   "link_to": "Non Conformance",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Quality Actions",
+   "link_to": "Quality Action",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "label": "Quality Settings",
+   "link_to": "Quality Settings",
+   "type": "DocType"
+  }
+ ],
+ "title": "Quality Control"
+}

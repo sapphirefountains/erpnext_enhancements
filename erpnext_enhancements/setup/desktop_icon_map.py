@@ -116,6 +116,13 @@ TILES = {
 	# glyph is deliberately NOT `briefcase`: Executive Dashboard already owns that,
 	# and two tiles with one glyph is worse than either having no tile.
 	"Executive Hub": ("executive_hub", "compass", DASHBOARD),
+	# quality (WI-075). The key MUST be "Quality Control" and not "Quality": tiles are keyed
+	# by workspace LABEL, and erpnext's Quality Management module already owns a public
+	# workspace named `Quality` plus the Desktop Icon that goes with it. A "Quality" key here
+	# would stamp our artwork onto ERPNext's tile and derive its roles from ERPNext's
+	# workspace. `shield-check` is unused by any other tile; DELIVERY rose because an
+	# inspection is about the work itself, not about reporting on it.
+	"Quality Control": ("quality_control", "shield-check", DELIVERY),
 }
 
 # Where the generated artwork lives, relative to the app package, and the URL it is

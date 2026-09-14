@@ -892,3 +892,21 @@ erpnext_enhancements.patches.resync_training_workspace_split
 # the custom_blocks CHILD TABLE, not the content blob, so a content-only placement
 # renders an empty space with no error at all.
 erpnext_enhancements.patches.resync_my_training_dashboard
+# v1.444.0 (WI-075) -- the Quality module's first release. The five roles the build spec's
+# approval chain names exist nowhere on this site; they must be created before fixture sync
+# because fixture files import in ALPHABETICAL order, so custom_docperm.json lands before
+# role.json and a DocPerm naming a missing Role is dropped in silence. Note the docstring's
+# warning about Account Executive: creating it arms a handoff.py path that currently skips
+# because the Role does not exist. Verified latent on prod 2026-09-14.
+erpnext_enhancements.patches.seed_quality_roles
+# "Controls Fab" exists nowhere on this site, and "Service" (354 projects) is what the spec
+# calls Maintenance. Rather than rename 354 live projects for vocabulary, the inspection
+# programme keys on project_type as it is, plus this one new value. Insert-only; the seven
+# projects tagged with the Products VALUE STREAM are deliberately not retyped.
+erpnext_enhancements.patches.seed_products_project_type
+# Quality Settings is a Single, and a `default` on a new field of a Single reaches NO existing
+# row -- the opposite of a normal doctype, where the ALTER writes it into every row. The module
+# ships dormant, which is exactly the case that bites: a page nobody opens does not self-heal on
+# the next save, so the first save you need is the one that fails. Fills only where tabSingles
+# has no row, never over a stored falsy value.
+erpnext_enhancements.patches.backfill_quality_settings_defaults

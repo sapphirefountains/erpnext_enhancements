@@ -1446,6 +1446,14 @@ after_migrate = [
 	# `default_chat_settings` sat unseeded on prod while its Patch Log row said otherwise.
 	# Anything here must be idempotent and must never raise: an after_migrate hook that
 	# raises aborts `bench migrate`, which on this repo is the deploy.
+	#
+	# quality (WI-075): give the existing Quality Settings row the defaults its fields were
+	# declared with. Here AS WELL AS in patches.txt, for the house rule stated directly
+	# above -- a patch runs once per site and a skipped or recorded-without-running one is
+	# never retried, and this is the Single whose dormant settings page cannot be saved
+	# until its rows exist. Fills only where `tabSingles` has no row, so it never writes
+	# over a deliberate 0.
+	"erpnext_enhancements.patches.backfill_quality_settings_defaults.backfill_quality_settings_defaults",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
