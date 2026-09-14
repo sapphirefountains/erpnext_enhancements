@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.435.0] - 2026-09-13
+
+Training Phase 6, D15 part one. **A quiz can be written by hand**, and three counts
+start meaning what they say.
+
+### Added
+
+- **A quiz editor on the authoring canvas.** Until now a quiz question could not be
+  written by hand *anywhere in this app*. The canvas carried the four quiz settings
+  and a hint reading "Quiz questions themselves are still listed in the classic
+  builder" — a page **deleted in v1.422.0** — so the one sentence an author read
+  when looking for the editor pointed at a URL that 404s. The only code path that
+  created a `Training Question` was the AI drawer, behind a setting that ships off
+  and a Vertex client that is dead on production.
+
+  All four declared types (Single Choice, Multiple Choice, True-False, Short
+  Answer), options with correct answers, explanation, points, add / edit / remove.
+  The AI drafter now feeds the same editor rather than being a separate route.
+
+  **The read half was already on the wire.** `_builder_lesson` has always sent
+  `lesson.quiz` with each pool row's full body and every option including
+  `is_correct` — `get_builder_bootstrap` is documented as the one place in the
+  module that deliberately hands `is_correct` to a browser, *so that an editor could
+  exist*. The canvas set `quiz: []` on new lessons and never read it back.
+
+  **The write half is two paths, which is the server's design rather than an
+  inconvenience.** Pool membership (question, points, is_required, order) rides the
+  draft save, because `_apply_quiz` allowlists exactly those three fields. Question
+  *bodies* go through their own doctype, the way checkpoints and video chapters
+  already do — `_apply_quiz` refuses body fields and reports them in `rejected`.
+
+- **Editing a shared question is copy-on-write.** `_apply_quiz`'s docstring names
+  the trap: a `Training Question` is a shared document that can sit in another
+  course's pool, so editing its wording from one lesson would silently rewrite a
+  question somewhere else. Before changing one that more than one lesson names, the
+  author is asked, and the offered default is to take a copy for this lesson. A
+  failed usage count answers **1**, not 0 — the safe answer is the one that does not
+  silently fork a question somebody meant to edit.
+
+### Fixed
+
+- **A Required course that nobody had assigned vanished from the catalogue, and it
+  was live.** `get_learner_bootstrap` bucketed `assigned` / `completed` /
+  `weight == "Optional"`, so a Published, audience-matching, Required, unassigned,
+  uncompleted course matched **no arm at all** and was silently dropped — even
+  though `_visible_course_names` had deliberately just put it in scope. Measured on
+  production: `TRN-CRS-00005`, "Accounting in ERPNext", invisible to every learner.
+
+  This was the **third** instance of one shape. Each previous fix added the single
+  arm for the case in front of it and left the final branch conditional, so the next
+  uncovered combination fell through the same hole. The loop iterates the set of
+  courses this person may see, so the only correct final branch is an unconditional
+  one: a member of that set with no list is not filtered, it is lost.
+
+- **A ticked quiz with an empty pool made the lesson unsaveable, with no way out.**
+  `_validate_quiz` throws while `has_quiz` is set and the pool is empty, and the
+  canvas autosaves every 1200ms — so an author got a red dialog on every keystroke
+  and no surface on which to add a question. There is one now, and the empty state
+  names both ways out.
+
+- **A Triton-authored course carrying a quiz could never be published, by anyone.**
+  `author_course_from_spec` writes questions with `ai_generated: 1` and no reviewer;
+  `publish_version` refuses exactly that; and the only writer of `ai_reviewed_by`
+  always constructed a **new** question rather than marking an existing one. The
+  review gate had no door. Saving an edit in the new editor stamps the reviewer —
+  on save rather than on render, so it records somebody having actually changed or
+  confirmed the question rather than merely opened the panel it sits in.
+
+- **Two dashboard tiles counted one thing and opened another.** "In progress"
+  totalled four statuses server-side and drilled to a list filtered to two, so a
+  manager clicked 26 and got about 20. "Overdue" counted a predicate — not closed,
+  and either the status says Overdue *or* the due date has passed — but drilled on
+  the literal status column, which `refresh_overdue_status` writes once a day; for
+  up to 24 hours the tile was right and the list it opened was short by exactly the
+  assignments that had gone overdue since the sweep.
+
+  Neither is expressible as an AND-only list filter, and the obvious repair for the
+  second walks into this repo's documented coalesce trap: `due_date < today` on a
+  **nullable** column silently matches NULLs, which would drag every undated
+  assignment into a list of overdue ones. So the server now sends the membership it
+  counted, capped — and where the cap bites, the tile stops being a link rather than
+  becoming a misleading one. This is the same defect fixed for the submission tiles
+  in v1.433.0, in the tiles beside them.
+
+- **Three test-shape defects found by the repo's own guards**, each worth more than
+  the line it changed. An absence assertion matched the comment explaining the
+  absence (at least the fifth instance here, now stripped by a helper rather than a
+  regex at the call site). A block-type regex matched *any* identifier ending in
+  `type`, so the new `question_type ===` read as an undeclared block type. And both
+  new test classes were appended **after** the `__main__` guard, where running the
+  file directly would define them after `unittest.main()` had already collected —
+  caught by `test_test_collection`, which exists for precisely that.
+
 ## [1.434.0] - 2026-09-13
 
 Training Phase 6, D14. **The rail** — one sidebar across the module's Desk surfaces, and a

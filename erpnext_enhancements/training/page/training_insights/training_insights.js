@@ -74,17 +74,46 @@ frappe.pages["training-insights"].on_page_show = function (wrapper) {
 	if (wrapper.training_insights) wrapper.training_insights.refresh();
 };
 
-// tile key -> the Training Assignment list filter it opens. `null` means the number
-// is not a filter over one doctype and stays plain text: inventing a filter that
-// *looks* like the tile but selects a different set is worse than no link at all.
-const TI_DRILL = {
-	learners: null,
-	active: { status: ["in", ["Not Started", "In Progress"]] },
-	completed: { status: "Completed" },
-	overdue: { status: "Overdue" },
-	awaiting_signoff: { status: "Awaiting Sign-off" },
-	certificates: null,
-};
+// tile key -> the Training Assignment list filter it opens, given the payload.
+// `null` means the number is not a filter over one doctype and stays plain text:
+// inventing a filter that *looks* like the tile but selects a different set is
+// worse than no link at all.
+//
+// TWO OF THESE USED TO BREAK THAT RULE, in the tiles beside the submission ones
+// where it was written down.
+//
+//   `active` counted FOUR statuses server-side (ACTIVE_ASSIGNMENT_STATUSES: Not
+//   Started, In Progress, Awaiting Sign-off, Overdue) and opened a list filtered
+//   to two. A manager clicked 26 and got about 20. The server now sends the set it
+//   used, so the client cannot hold a stale copy of it.
+//
+//   `overdue` counted a PREDICATE -- not closed, AND (status is literally Overdue
+//   OR the due date has passed) -- and opened `status: "Overdue"`, which only
+//   `refresh_overdue_status` writes, once a day. So for up to 24 hours the tile was
+//   right and the list it opened was short by exactly the assignments that had gone
+//   overdue since the sweep. It cannot be fixed by filtering on the date instead:
+//   that is an OR across two fields where list filters AND, and `due_date < today`
+//   on a NULLABLE column silently matches NULLs as well, which would drag every
+//   undated assignment into a list of overdue ones. So the server sends the names.
+function ti_drill(key, data) {
+	const drill = (data && data.drill) || {};
+	if (key === "active") {
+		const statuses = drill.active_statuses;
+		return statuses && statuses.length ? { status: ["in", statuses] } : null;
+	}
+	if (key === "overdue") {
+		// Truncated means the server had more names than it will send, so any filter
+		// built from them selects a subset. The tile stops being a link rather than
+		// becoming a misleading one -- the same choice `learners` and `certificates`
+		// already make by being plain text.
+		if (drill.overdue_truncated) return null;
+		const names = drill.overdue || [];
+		return names.length ? { name: ["in", names] } : null;
+	}
+	if (key === "completed") return { status: "Completed" };
+	if (key === "awaiting_signoff") return { status: "Awaiting Sign-off" };
+	return null;
+}
 
 const TI_TILES = [
 	["learners", __("Learners")],
@@ -147,7 +176,7 @@ class TrainingInsights {
 			return;
 		}
 
-		this.render_tiles(data.totals || {});
+		this.render_tiles(data.totals || {}, data);
 		this.render_courses(data.by_course || []);
 		this.render_batches(data.by_batch);
 		this.render_submissions(data.submissions);
@@ -162,11 +191,11 @@ class TrainingInsights {
 		}
 	}
 
-	render_tiles(totals) {
+	render_tiles(totals, data) {
 		const $row = $('<div class="ti-tiles"></div>').appendTo(this.$body);
 		TI_TILES.forEach(([key, label]) => {
 			const value = frappe.utils.cint(totals[key]);
-			const filter = TI_DRILL[key];
+			const filter = ti_drill(key, data);
 			const $tile = $(
 				filter ? '<button type="button" class="ti-tile is-clickable"></button>' : '<div class="ti-tile"></div>'
 			);

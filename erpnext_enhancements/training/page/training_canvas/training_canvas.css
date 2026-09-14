@@ -1070,3 +1070,68 @@
 	flex: 0 0 auto;
 	line-height: 1;
 }
+
+/* ------------------------------------------------------------- the quiz pool */
+
+/* The hand-authoring surface that replaced a hint pointing at a deleted page.
+   It sits inside .tc-quizset, so it inherits that panel's surface and only has to
+   separate its own rows. */
+
+.tc-quizpool {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-top: 4px;
+}
+
+.tc-quizpool-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.tc-quizpool-count {
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+.tc-quizq {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 10px;
+	border-radius: 10px;
+	background: var(--tr-bg, #f7f6fb);
+	border: 1px solid var(--tr-border, #e2e0f0);
+}
+
+/* Literal amber rather than a token, and for the same reason the overdue colours
+   in this module are literal: "this has not been reviewed" is a fact about the
+   publish gate, not a theme decision, and it must not quietly become a different
+   idea because somebody edited a palette. */
+.tc-quizq-flag {
+	align-self: flex-start;
+	padding: 1px 8px;
+	border-radius: 9px;
+	background: var(--orange-50, #fff6e9);
+	color: var(--orange-700, #92400e);
+	font-size: 11px;
+	font-weight: 600;
+}
+
+.tc-quizq-del {
+	align-self: flex-start;
+}
+
+.tc-quizopt {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+/* The option text takes the room; the tick and the delete button keep theirs. */
+.tc-quizopt .form-control {
+	flex: 1;
+	min-width: 0;
+}

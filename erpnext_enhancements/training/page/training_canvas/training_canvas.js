@@ -669,6 +669,8 @@ class TrainingCanvas {
 		};
 		qcheck(__("Shuffle questions"), "quiz_shuffle_questions");
 		qcheck(__("Shuffle options"), "quiz_shuffle_options");
+		this.$quizpool = $('<div class="tc-quizpool"></div>').appendTo($quizbox);
+		this.paint_quiz_pool(lesson);
 		this.$lessonset.append($quizbox);
 		$quiz.on("change", paintQuiz);
 		paintQuiz();
@@ -690,8 +692,12 @@ class TrainingCanvas {
 			if ($drawer) this.$lessonset.append($drawer);
 		}
 
+		// The hint that used to live here read "Quiz questions themselves are still
+		// listed in the classic builder" -- a page DELETED in v1.422.0. It was the one
+		// sentence an author read when looking for the quiz editor, and it sent them
+		// to a URL that 404s. There is an editor now, so the sentence goes.
 		$('<div class="tc-hint"></div>')
-			.html(__("In-video checkpoints are placed on the video block's timeline. Quiz questions themselves are still listed in the classic builder."))
+			.text(__("In-video checkpoints are placed on the video block's timeline."))
 			.appendTo(this.$lessonset);
 
 		if (!ed) this.$lessonset.find("input, textarea, select").attr("disabled", "disabled");
@@ -703,6 +709,392 @@ class TrainingCanvas {
 		this.dirty_lesson(lesson)[field] = value;
 		this.mark_dirty();
 	}
+
+	// ------------------------------------------------------------ the quiz pool
+	//
+	// Until now there was no way to write a quiz question by hand ANYWHERE in this
+	// app. The canvas offered the four quiz *settings* and a hint pointing at a page
+	// deleted three releases earlier; the only code path that created a Training
+	// Question was the AI drawer, behind a setting that ships off.
+	//
+	// THE READ HALF WAS ALREADY ON THE WIRE. `_builder_lesson` sends `lesson.quiz`
+	// with each pool row's full body, type, explanation, provenance and every option
+	// INCLUDING `is_correct` -- `get_builder_bootstrap` is documented as the one
+	// place in the module that deliberately hands `is_correct` to a browser, so that
+	// an editor could exist. The canvas set `quiz: []` on new lessons and never read
+	// it back.
+	//
+	// THE WRITE HALF IS TWO PATHS, and that is the server's design rather than an
+	// inconvenience:
+	//   * POOL MEMBERSHIP (which question, points, is_required, order) rides the
+	//     draft save -- `_apply_quiz` allowlists exactly those three fields.
+	//   * THE QUESTION BODY goes through its own doctype, the way checkpoints and
+	//     video chapters already do. `_apply_quiz` refuses body fields and reports
+	//     them in `rejected`, and its docstring says why: a Training Question is a
+	//     SHARED document that can sit in another course's pool, so editing its
+	//     wording from here would silently rewrite a question somewhere else.
+	//
+	// WHICH IS WHY EDITING IS COPY-ON-WRITE. Before a change to a question used by
+	// more than one lesson, the author is asked, and the offered default is to take
+	// a copy for this lesson. Rewriting somebody else's course from a settings panel
+	// is not something a non-developer should be able to do by accident -- and it is
+	// exactly what a naive editor built on frappe.client.save would do.
+
+	quiz_rows(lesson) {
+		lesson.quiz = lesson.quiz || [];
+		return lesson.quiz;
+	}
+
+	paint_quiz_pool(lesson) {
+		if (!this.$quizpool) return;
+		const $box = this.$quizpool.empty();
+		const rows = this.quiz_rows(lesson);
+
+		const $head = $('<div class="tc-quizpool-head"></div>').appendTo($box);
+		$('<span class="tc-quizpool-count"></span>')
+			.text(rows.length ? __("{0} in the pool", [String(rows.length)]) : __("No questions yet"))
+			.appendTo($head);
+		if (this.editable()) {
+			$('<button class="btn btn-default btn-xs"></button>')
+				.text(__("Add a question"))
+				.on("click", () => this.add_quiz_question(lesson))
+				.appendTo($head);
+		}
+
+		if (!rows.length) {
+			// Named rather than generic, because an empty pool is not a neutral state:
+			// `TrainingLesson._validate_quiz` throws on save while the box above is
+			// ticked, so this sentence is the way out of a lesson that cannot be saved.
+			$('<div class="tc-muted"></div>')
+				.text(__("A ticked quiz with no questions cannot be saved. Add one, or untick the box above."))
+				.appendTo($box);
+			return;
+		}
+		rows.forEach((row) => $box.append(this.quiz_row(lesson, row)));
+	}
+
+	quiz_row(lesson, row) {
+		const $host = $('<div class="tc-quizq"></div>');
+		const ed = this.editable();
+		const touch = () => this.write_question(lesson, row);
+
+		if (this.num(row.ai_generated) && !row.ai_reviewed_by) {
+			// The publish gate refuses an ai_generated question with no reviewer, and
+			// until now the ONLY writer of `ai_reviewed_by` was the AI drawer's accept
+			// path -- which always constructs a NEW question rather than marking an
+			// existing one reviewed. So a Triton-authored course carrying a quiz could
+			// never be published by anybody. Saving an edit here stamps the reviewer.
+			$('<div class="tc-quizq-flag"></div>')
+				.text(__("AI-drafted, not yet reviewed"))
+				.appendTo($host);
+		}
+
+		const $q = $('<textarea class="form-control" rows="2"></textarea>')
+			.attr("placeholder", __("What are you asking?"))
+			.val(this.plain(row.question_text));
+		$q.on("change", () => {
+			row.question_text = $q.val();
+			touch();
+		});
+		$host.append($q);
+
+		const $type = $('<select class="form-control"></select>');
+		// The four the doctype declares and the player can render. Short Answer grades
+		// against `correct_text_answers`, so it hides the option list entirely.
+		["Single Choice", "Multiple Choice", "True-False", "Short Answer"].forEach((t) =>
+			$("<option></option>").attr("value", t).text(__(t)).appendTo($type)
+		);
+		$type.val(row.question_type || "Single Choice");
+		$type.on("change", () => {
+			row.question_type = $type.val();
+			this.normalise_question(row);
+			touch();
+			this.paint_quiz_pool(lesson);
+		});
+		$host.append($('<label class="tc-set"></label>').append($("<span></span>").text(__("Type")), $type));
+
+		if (row.question_type === "Short Answer") {
+			const $ans = $('<input type="text" class="form-control" />')
+				.attr("placeholder", __("Accepted answers, comma separated"))
+				.val(row.correct_text_answers || "");
+			$ans.on("change", () => {
+				row.correct_text_answers = $ans.val();
+				touch();
+			});
+			$host.append($('<label class="tc-set"></label>').append($("<span></span>").text(__("Answer")), $ans));
+		} else {
+			(row.options || []).forEach((opt, i) => $host.append(this.quiz_option(lesson, row, opt, i, touch)));
+			if (ed) {
+				$('<button class="btn btn-default btn-xs"></button>')
+					.text(__("Add option"))
+					.on("click", () => {
+						row.options = (row.options || []).concat([{ option_text: "", is_correct: 0 }]);
+						this.paint_quiz_pool(lesson);
+					})
+					.appendTo($host);
+			}
+		}
+
+		const $why = $('<textarea class="form-control" rows="2"></textarea>')
+			.attr("placeholder", __("Why is that the answer? Shown after grading."))
+			.val(this.plain(row.explanation));
+		$why.on("change", () => {
+			row.explanation = $why.val();
+			touch();
+		});
+		$host.append($why);
+
+		// Points is a POOL field, not a question field -- the same question can be
+		// worth more in one course than in another. It rides the draft save;
+		// everything above goes through the doctype.
+		const $pts = $('<input type="number" min="0" class="form-control" />').val(this.num(row.points) || 1);
+		$pts.on("change", () => {
+			row.points = this.num($pts.val());
+			this.set_lesson_quiz(lesson);
+		});
+		$host.append($('<label class="tc-set"></label>').append($("<span></span>").text(__("Points")), $pts));
+
+		if (ed) {
+			$('<button class="btn btn-default btn-xs tc-quizq-del"></button>')
+				.text(__("Remove from this lesson"))
+				.on("click", () => this.remove_quiz_question(lesson, row))
+				.appendTo($host);
+		}
+		if (!ed) $host.find("input, textarea, select, button").attr("disabled", "disabled");
+		return $host;
+	}
+
+	quiz_option(lesson, row, opt, index, touch) {
+		const $li = $('<div class="tc-quizopt"></div>');
+		const single = row.question_type !== "Multiple Choice";
+
+		const $ok = $('<input type="checkbox" />').prop("checked", !!this.num(opt.is_correct));
+		$ok.attr("title", __("Correct answer"));
+		$ok.on("change", () => {
+			opt.is_correct = $ok.prop("checked") ? 1 : 0;
+			// Enforced here so the author never meets the controller's throw -- the
+			// same courtesy the checkpoint pin inspector already extends.
+			if (single && opt.is_correct) {
+				(row.options || []).forEach((other, i) => {
+					if (i !== index) other.is_correct = 0;
+				});
+				this.paint_quiz_pool(lesson);
+			}
+			touch();
+		});
+		$li.append($ok);
+
+		const $text = $('<input type="text" class="form-control" />')
+			.attr("placeholder", __("Option text"))
+			.val(opt.option_text || "");
+		$text.on("change", () => {
+			opt.option_text = $text.val();
+			touch();
+		});
+		$li.append($text);
+
+		$('<button class="btn btn-default btn-xs"></button>')
+			.text("×")
+			.attr("title", __("Delete this option"))
+			.on("click", () => {
+				row.options = (row.options || []).filter((o, i) => i !== index);
+				touch();
+				this.paint_quiz_pool(lesson);
+			})
+			.appendTo($li);
+		return $li;
+	}
+
+	// True-False has exactly two options and they are not the author's to invent;
+	// Short Answer has none. Normalising on the type change stops an author leaving
+	// a half-converted question the grader cannot read.
+	normalise_question(row) {
+		if (row.question_type === "True-False") {
+			const correct = (row.options || []).findIndex((o) => this.num(o.is_correct) === 1);
+			row.options = [
+				{ option_text: __("True"), is_correct: correct === 0 ? 1 : 0 },
+				{ option_text: __("False"), is_correct: correct === 0 ? 0 : 1 },
+			];
+		} else if (row.question_type === "Short Answer") {
+			row.options = [];
+		} else if (!(row.options || []).length) {
+			row.options = [
+				{ option_text: "", is_correct: 1 },
+				{ option_text: "", is_correct: 0 },
+			];
+		}
+	}
+
+	// The stem and explanation are Text Editor fields, so what arrives is HTML. The
+	// editor is a textarea, so it shows text. Round-tripping raw HTML through a
+	// textarea would have an author editing markup they cannot see.
+	plain(html) {
+		if (!html) return "";
+		const box = document.createElement("div");
+		box.innerHTML = html;
+		return (box.textContent || "").trim();
+	}
+
+	add_quiz_question(lesson) {
+		if (!this.editable()) return;
+		const row = {
+			question_text: "",
+			question_type: "Single Choice",
+			explanation: "",
+			correct_text_answers: "",
+			points: 1,
+			is_required: 0,
+			options: [],
+		};
+		this.normalise_question(row);
+		this.quiz_rows(lesson).push(row);
+		this.paint_quiz_pool(lesson);
+		// Written immediately so the pool row has a question to name. An empty stem is
+		// legal on the doctype; an empty POOL is what makes the lesson unsaveable.
+		this.write_question(lesson, row);
+	}
+
+	remove_quiz_question(lesson, row) {
+		// Removed from THIS lesson's pool. The Training Question document is left
+		// alone, because it is shared and may sit in another course's pool -- and
+		// because a delete reaching beyond the screen you are on is something an
+		// author should have to go and do deliberately.
+		lesson.quiz = this.quiz_rows(lesson).filter((r) => r !== row);
+		this.set_lesson_quiz(lesson);
+		this.paint_quiz_pool(lesson);
+	}
+
+	// Pool membership, in order. Rides the draft save because `_apply_quiz`
+	// allowlists exactly these three fields and replaces the child table wholesale.
+	set_lesson_quiz(lesson) {
+		if (!this.editable()) return;
+		const rows = this.quiz_rows(lesson)
+			.filter((r) => r.question)
+			.map((r) => ({
+				question: r.question,
+				points: this.num(r.points) || 1,
+				is_required: this.num(r.is_required) || 0,
+			}));
+		this.dirty_lesson(lesson).quiz = rows;
+		this.mark_dirty();
+	}
+
+	write_question(lesson, row) {
+		if (!this.editable()) return Promise.resolve();
+		const body = {
+			doctype: "Training Question",
+			question_text: row.question_text || "",
+			question_type: row.question_type || "Single Choice",
+			explanation: row.explanation || "",
+			correct_text_answers: row.correct_text_answers || "",
+			difficulty: row.difficulty || "Medium",
+			options: (row.options || []).map((o) => ({
+				doctype: "Training Answer Option",
+				option_text: o.option_text || "",
+				is_correct: this.num(o.is_correct) || 0,
+				explanation: o.explanation || "",
+			})),
+		};
+		// Stamping the reviewer is what unblocks publish for an AI-drafted question.
+		// Set on SAVE rather than on render, so it records somebody having actually
+		// changed or confirmed the question rather than merely opened the panel.
+		if (this.num(row.ai_generated)) body.ai_reviewed_by = frappe.session.user;
+
+		if (!row.question) {
+			return frappe
+				.call("frappe.client.insert", { doc: body })
+				.then((r) => {
+					const saved = (r && r.message) || {};
+					row.question = saved.name;
+					row.name = saved.name;
+					row.modified = saved.modified;
+					this.set_lesson_quiz(lesson);
+					this.paint_status("saved");
+				})
+				.catch((error) => this.quiz_write_failed(error));
+		}
+		return this.shared_question_count(row).then((used) => {
+			if (used > 1) return this.fork_question(lesson, row, body, used);
+			return this.save_question(lesson, row, body);
+		});
+	}
+
+	save_question(lesson, row, body) {
+		return frappe
+			.call("frappe.client.save", { doc: { ...body, name: row.question, modified: row.modified } })
+			.then((r) => {
+				const saved = (r && r.message) || {};
+				row.modified = saved.modified;
+				row.ai_reviewed_by = saved.ai_reviewed_by || row.ai_reviewed_by;
+				this.paint_status("saved");
+			})
+			.catch((error) => this.quiz_write_failed(error));
+	}
+
+	// How many lesson pools name this question. A child-table count, because that
+	// child table IS the usage record. A failed count answers 1 -- the safe answer
+	// is the one that does NOT silently fork a question the author meant to edit.
+	shared_question_count(row) {
+		return frappe
+			.call("frappe.client.get_count", {
+				doctype: "Training Quiz Question",
+				filters: { question: row.question },
+			})
+			.then((r) => this.num((r && r.message) || 0))
+			.catch(() => 1);
+	}
+
+	fork_question(lesson, row, body, used) {
+		return new Promise((resolve) => {
+			const dialog = new frappe.ui.Dialog({
+				title: __("This question is used elsewhere"),
+				indicator: "orange",
+				fields: [
+					{
+						fieldtype: "HTML",
+						options: frappe.utils.escape_html(
+							__("It sits in {0} lesson pools. Editing it changes every one of them.", [String(used)])
+						),
+					},
+				],
+				primary_action_label: __("Copy it for this lesson"),
+				primary_action: () => {
+					dialog.hide();
+					const fresh = { ...body };
+					delete fresh.name;
+					resolve(
+						frappe
+							.call("frappe.client.insert", { doc: fresh })
+							.then((r) => {
+								const saved = (r && r.message) || {};
+								row.question = saved.name;
+								row.name = saved.name;
+								row.modified = saved.modified;
+								this.set_lesson_quiz(lesson);
+								this.paint_status("saved");
+							})
+							.catch((error) => this.quiz_write_failed(error))
+					);
+				},
+				secondary_action_label: __("Change it everywhere"),
+				secondary_action: () => {
+					dialog.hide();
+					resolve(this.save_question(lesson, row, body));
+				},
+			});
+			dialog.show();
+		});
+	}
+
+	quiz_write_failed(error) {
+		this.paint_status("error");
+		frappe.msgprint({
+			title: __("The question was not saved"),
+			indicator: "red",
+			message: (error && error.message) || __("Reload and try again."),
+		});
+	}
+
 
 	// ---------------------------------------------------------- lifecycle
 	new_draft() {

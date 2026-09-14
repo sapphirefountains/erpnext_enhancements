@@ -523,7 +523,26 @@ def get_learner_bootstrap():
             # neither branch -- not assigned any more, and not Optional -- so it fell
             # out of the catalogue for the one person entitled to look at it.
             finished.append(card)
-        elif course.weight == "Optional":
+        else:
+            # AND THE THIRD INSTANCE OF THE SAME SHAPE. This read
+            # `elif course.weight == "Optional"`, so a course that was Published,
+            # audience-matching, REQUIRED, not yet assigned and not yet completed
+            # matched no arm at all and was silently dropped -- even though
+            # `_visible_course_names` had deliberately just put it in scope. It was
+            # live on production.
+            #
+            # Note what keeps going wrong here: every fix so far has added ONE arm for
+            # the case in front of it and left the final branch conditional, so the
+            # next uncovered combination falls through the same hole. An `else` is the
+            # fix, because the loop is already iterating `names` -- the set of courses
+            # this person may see -- and the ONLY correct answer for a member of that
+            # set is "somewhere". A course that is visible and in none of the three
+            # lists is not filtered; it is lost.
+            #
+            # `library` is the right home rather than a fourth bucket: the player
+            # titles that section "Available to you", which is exactly true of a
+            # required course nobody has assigned yet, and the card carries `weight`
+            # so the client can badge it Required without the server pre-sorting it.
             library.append(card)
 
     # Undated assignments (optional courses that were still assigned by hand) sort
