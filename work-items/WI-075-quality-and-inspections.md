@@ -1,6 +1,6 @@
 # WI-075 — Scope that can be inspected, and failures that get re-checked
 
-**Status:** in progress — A through I shipped, v1.446.0 → v1.455.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445). Slice 1 is complete; I delivered the trigger engine but **not** the master checklists — see below.
+**Status:** in progress — A through J shipped, v1.446.0 → v1.457.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445). Slice 1 and Slice 2 are complete. I delivered the trigger engine; the master checklists followed as **strawmen seeded Draft** at Nik's request (v1.456.0), and J made a period review compute its own numbers (v1.457.0).
 **Branch:** `claude/quality-inspections-planning-691339` (off `main` at v1.443.0)
 **Tracked:** PRJ-00580, TASK-2026-02013 with a child per deliverable (A–N)
 **Decides:** [ADR-0012](../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md)

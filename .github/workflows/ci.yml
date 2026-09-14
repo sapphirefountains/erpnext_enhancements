@@ -556,6 +556,17 @@ jobs:
       # are the one set of numbers taken verbatim from a live Sapphire record.
       - name: Draft checklists (seeded Draft, never Active; every check has a standard)
         run: python -m unittest erpnext_enhancements.tests.test_draft_templates -v
+      # Goals and period reviews (WI-075 sub-phase J). Every failure guarded here reports GOOD
+      # news, which is why it is a test and not a comment. An empty period divides by zero and
+      # rounds up to a perfect score, so a quarter in which nobody inspected anything would
+      # report 100% first-pass yield. Half the metrics are better when smaller and core's
+      # objective row carries no direction, so the obvious comparison marks "NCRs raised: target
+      # 2" as failed every time the company does well. `target` is a Data field, so an
+      # unreadable one treated as zero marks a goal Passed forever. And ERPNext's own daily
+      # scheduler owns Daily/Weekly/Monthly/Quarterly -- generating those here too would put a
+      # second review beside every one it made, so review_due RAISES if asked about them.
+      - name: Quality goals (an empty period decides nothing, and fewer can be better)
+        run: python -m unittest erpnext_enhancements.tests.test_quality_goals -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk

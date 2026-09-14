@@ -423,6 +423,27 @@ doc_events = {
 	"Non Conformance": {
 		"on_update": "erpnext_enhancements.quality.critical_alerts.on_ncr_update",
 	},
+	# quality (WI-075 sub-phase J): a period review that computes its own numbers. ERPNext
+	# generates the review and copies the goal's objectives into it, then stops -- the actuals
+	# are blank and somebody types a verdict. This fills them in and re-derives the verdicts,
+	# then calls core's own set_status() again, because core already ran it before any actual
+	# existed. Never raises: a review with Open rows and a note saying why beats a lost save.
+	"Quality Review": {
+		"validate": "erpnext_enhancements.quality.reviews.on_review_validate",
+	},
+	# quality (WI-075 sub-phase J): a project goal may only meet or exceed the company-wide
+	# target for the same measure. No class override needed here, unlike Quality Action --
+	# core's QualityGoal.validate is literally `pass`. Enforcement is a Quality Settings dial
+	# (Off / Warn / Block) and ships on Warn.
+	"Quality Goal": {
+		"validate": "erpnext_enhancements.quality.reviews.on_goal_validate",
+	},
+	# quality (WI-075 sub-phase J): fill an empty meeting agenda from what the period actually
+	# holds -- failed reviews, open Critical NCRs, reopened fixes, overdue actions. Only when the
+	# agenda is empty, the same courtesy core extends to a review's objectives.
+	"Quality Meeting": {
+		"validate": "erpnext_enhancements.quality.reviews.on_meeting_validate",
+	},
 	# The `Chat Message` after_insert unread fan-out was removed in v1.426.0 with the
 	# rest of the chat module (ADR 0011). It was the app's only chat doc_event.
 	"Task": {
@@ -1017,6 +1038,13 @@ scheduler_events = {
 		# One digest per manager, and one milestone is mentioned again at most weekly.
 		# No-op while Quality Settings has the module or notifications off.
 		"erpnext_enhancements.quality.scheduling.sweep",
+		# quality (WI-075 sub-phase J): the Annual review cadence, which ERPNext cannot run.
+		# Its own daily quality_review.review() branches on Daily / Weekly / Monthly / Quarterly
+		# and has NO Annual branch, so an Annual goal generates nothing, forever, with no error.
+		# This handles Annual ONLY -- covering any of the other four would put a second review
+		# beside every one core made, on the same goal, the same day, and nobody comparing two
+		# identical reviews would guess why. goals.review_due RAISES if asked about one of them.
+		"erpnext_enhancements.quality.reviews.generate_annual_reviews",
 		# training: re-grant Training Learner to anybody who owes a course and cannot
 		# open it. `roles.grant_learner_role` is correct and always was; it is only
 		# CALLED on Employee insert and on an Employee gaining a user_id, neither of

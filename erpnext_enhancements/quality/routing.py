@@ -93,17 +93,21 @@ def _apply_verifications(doc):
 		status, priority, reopens, keep_claim = carry_forward.decide(
 			row.outcome, action.status, action.custom_priority, action.custom_reopen_count
 		)
+		changes = {
+			"status": status,
+			"custom_priority": priority,
+			"custom_reopen_count": reopens,
+			"custom_verification_result": (row.outcome or "").strip() or None,
+			"custom_verifying_inspection": doc.name if keep_claim else None,
+		}
+		# Stamped only on the transition that actually closes it (WI-075 sub-phase J). Without
+		# this, "days to close a corrective action" could only be guessed from `modified`, which
+		# any later edit moves -- so the metric would drift quietly upward for every action
+		# somebody reopened to add a note.
+		if status == lifecycle.ACTION_CLOSED:
+			changes["custom_closed_on"] = frappe.utils.now_datetime()
 		frappe.db.set_value(
-			"Quality Action",
-			action_name,
-			{
-				"status": status,
-				"custom_priority": priority,
-				"custom_reopen_count": reopens,
-				"custom_verification_result": (row.outcome or "").strip() or None,
-				"custom_verifying_inspection": doc.name if keep_claim else None,
-			},
-			update_modified=False,
+			"Quality Action", action_name, changes, update_modified=False
 		)
 
 

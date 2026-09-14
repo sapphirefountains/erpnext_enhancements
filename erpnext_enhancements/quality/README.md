@@ -62,6 +62,8 @@ question why it exists.**
 | `due.py` | Whether a milestone has come round, and why not. Frappe-free. The rule is **reached or passed**, never equality |
 | `scheduling.py` | The daily sweep that tells each project manager what is ready. It notices; it never generates |
 | `draft_catalog.py` | The **strawman** checklists, as data. Drafts to be corrected — seeded `Draft`, and a Draft template generates nothing |
+| `goals.py` | What a period review is allowed to conclude. Frappe-free. Reads a `Data` target, knows which way each metric runs, and returns **Open** whenever it cannot decide |
+| `reviews.py` | The half that queries: the seven metrics, the floor rule, the Annual cadence ERPNext cannot run, and the meeting agenda |
 
 Registered in [`../modules.txt`](../modules.txt), tiled from
 [`../setup/desktop_icon_map.py`](../setup/desktop_icon_map.py), and given a sidebar by
@@ -207,6 +209,66 @@ an inspection is a no-op rather than a second ratchet.
 An open punch-list item is structurally the same thing — raised against a standard, fixed by
 somebody, not actually done until it has been looked at again — so it is a Quality Action with
 `custom_punch_list` ticked and gets all of this for free.
+
+## What a period review is allowed to conclude
+
+ERPNext generates a `Quality Review` on a cadence and copies the goal's objectives into it, and
+then stops: the review arrives with targets and **blank actuals**, and somebody types a verdict.
+A metric nobody computes is a metric nobody trusts, so sub-phase J computes it — and most of the
+work is in refusing to compute it wrongly, because all three ways of getting this wrong report
+good news.
+
+**An empty period divides by zero and rounds up to perfect.** First-pass yield over a quarter
+with no inspections is *undefined*. The obvious implementation returns 100%, and that number is
+then the one on the wall. So every metric returns a **sample** alongside its value, and a sample
+of zero makes the verdict `Open` rather than a score.
+
+For a count metric the sample is the **activity level**, not the count. Zero non-conformances
+across fifty inspections is genuinely good news; zero across zero inspections is no news at all,
+and the two must not produce the same green tick. `open_punch_items` is the exception and carries
+no sample deliberately — it is a point-in-time count, and zero open items is meaningful whether or
+not the period was busy.
+
+**Half the metrics are better when smaller, and core's objective row carries no direction.**
+Compare actual against target the obvious way and "NCRs raised: target 2" reads as *failed* every
+time the company does well. So direction is not a per-row field anybody can mis-set: it comes from
+the metric definition in `goals.METRICS`, where it can be got right once. An unknown metric has no
+direction and is **not** defaulted — a default is the silent inversion.
+
+**`target` is a `Data` field.** Somebody will type `95%`, `<= 2`, `2 per project` or `two`. A
+target that cannot be read is not a target of zero, and treating it as zero would mark a
+lower-is-better goal Passed forever. `parse_target` returns `None`, the verdict is `Open`, and
+saving the goal says so out loud — otherwise its reviews would simply keep arriving Open with
+nobody told why.
+
+### The floor rule
+
+*A project goal may only meet or exceed the company-wide target for the same measure.* Matched on
+**metric**, never on the objective text — two people writing "first pass yield" and "First-Pass
+Yield" is not a disagreement about the standard. A metric the company has said nothing about is
+not a violation; inventing a floor from silence would block goals nobody objected to.
+`Quality Settings.company_floor_enforcement` is Off / Warn / Block and ships on **Warn**.
+
+No class override was needed here, unlike `Quality Action`: core's `QualityGoal.validate` is
+literally `pass`.
+
+### Why this app owns the Annual cadence, and only that one
+
+ERPNext's daily `quality_review.review()` branches on Daily, Weekly, Monthly and Quarterly and has
+**no Annual branch** — so adding `Annual` by Property Setter produces a goal that generates
+nothing, forever, with no error. `reviews.generate_annual_reviews` handles that one cadence.
+
+It handles **only** that one, and `goals.review_due` **raises** if asked about any of the other
+four rather than returning `False`. A `False` would be a correct-looking answer to a question this
+module must not be asked, and answering it is how a second review would come to sit beside every
+one core made, on the same goal, the same day. It also dedupes per goal per day, which core's own
+`create_review` does not.
+
+Two smaller things fixed while the tables were still empty: `Quality Meeting`'s autoname was
+`format:QA-MEET-{YY}-{MM}-{DD}` — **one meeting per calendar day, site-wide** — and now carries a
+counter; and `Quality Action` gained `custom_closed_on`, stamped on the transition that actually
+closes it, because days-to-close could otherwise only be guessed from `modified`, which any later
+edit moves.
 
 ## The strawman checklists, and the one field that makes them safe
 

@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.457.0] - 2026-09-14
+
+### Added
+
+- **A period review that computes its own numbers** (WI-075 sub-phase J). ERPNext generates a
+  `Quality Review` on a cadence and copies the goal's objectives into it, then stops: the review
+  arrives with targets and blank actuals and somebody types a verdict. Seven metrics are now
+  computed from the records sub-phases D through I create — first-pass yield, failed checks,
+  non-conformances raised, Critical non-conformances, open punch items, fixes that failed
+  re-verification, and average days to close an action.
+- **The company floor rule.** A project-specific goal may only meet or exceed the company-wide
+  target for the same measure. `Quality Settings.company_floor_enforcement` is Off / Warn / Block
+  and ships on **Warn**.
+- **The Annual review cadence**, which ERPNext cannot run — see the notes.
+- **An auto-built Quality Meeting agenda** from what the period actually holds: failed reviews,
+  open Critical non-conformances, fixes that were reopened, overdue corrective actions. Only when
+  the agenda is empty, and it never invents a heading — an empty period produces one line saying
+  the records hold nothing that needs the meeting.
+- `quality/goals.py` (frappe-free, 50 tests) and `quality/reviews.py`; 20 Custom Fields and 2
+  Property Setters.
+
+### Notes
+
+- **All three ways of getting a quality metric wrong report good news, which is why they are
+  tests and not comments.**
+  - **An empty period divides by zero and rounds up to perfect.** First-pass yield over a quarter
+    with no inspections is undefined; the obvious implementation returns 100%, and that number is
+    then the one on the wall. Every metric returns a **sample** alongside its value and a sample
+    of zero makes the verdict `Open`. For a count metric the sample is the *activity level*, not
+    the count — zero non-conformances across fifty inspections is good news, zero across zero
+    inspections is no news, and the two must not produce the same green tick.
+  - **Half the metrics are better when smaller**, and core's `Quality Goal Objective` carries no
+    direction. The obvious comparison marks "NCRs raised: target 2" as failed every time the
+    company does well. Direction comes from the metric definition, not from a per-row field
+    anybody can mis-set, and an unknown metric has **no** direction rather than a default —
+    a default is the silent inversion.
+  - **`target` is a `Data` field.** `95%`, `<= 2`, `2 per project` and `two` all get typed into
+    it. An unreadable target treated as zero would mark a lower-is-better goal Passed forever, so
+    it reads as `None`, the verdict is `Open`, and saving the goal says so out loud.
+  - Negative-tested: removing the empty-sample guard and defaulting the direction fails three
+    tests between them.
+- **This app owns the Annual cadence and only that one.** ERPNext's daily
+  `quality_review.review()` branches on Daily, Weekly, Monthly and Quarterly and has no Annual
+  branch, so an Annual goal would generate nothing, forever, with no error. `goals.review_due`
+  **raises** if asked about any of the other four rather than returning `False`: a `False` is a
+  correct-looking answer to a question this module must not be asked, and answering it is how a
+  second review would come to sit beside every one core made, on the same goal, the same day. The
+  sweep also dedupes per goal per day, which core's own `create_review` does not.
+- **The review's period ends the day before it was generated**, so a review reports the interval
+  that finished rather than one a day old — and the same inspection cannot land in two
+  consecutive periods depending on the hour the scheduler ran.
+- Core's `set_status()` is called **again** after the actuals land. It already ran during core's
+  own validate, before any actual existed, so without the second call the parent would keep the
+  verdict it reached on empty rows.
+- No class override was needed for `Quality Goal`: core's `QualityGoal.validate` is literally
+  `pass`, unlike `Quality Action`'s one-liner that had to be replaced in v1.451.0.
+- Adding `Annual` to the frequency options is **additive**, so it needs no empty-table guard —
+  a new option never invalidates a stored value. A test asserts the original five survive.
+
+### Fixed
+
+- **`Quality Meeting` could hold one meeting per calendar day, site-wide.** Its autoname was
+  `format:QA-MEET-{YY}-{MM}-{DD}`, so a second meeting on the same day collided on the name — and
+  with an Ad Hoc meeting type now offered, that is a plausible Tuesday. A counter is appended.
+  Changed now because the table is still empty and no record has to be renamed.
+- `Quality Action` gained `custom_closed_on`, stamped on the transition that actually closes it.
+  Days-to-close could otherwise only be guessed from `modified`, which any later edit moves — so
+  the metric would drift quietly upward for every action somebody reopened to add a note.
+
+
 ## [1.456.0] - 2026-09-14
 
 ### Added
