@@ -59,12 +59,12 @@ actually emitted, so a skipped/filtered parent can never orphan (and thereby
 hide) a rendered subtree.
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import frappe
 from frappe import _
 from frappe.model import default_fields, no_value_fields
-from frappe.utils import cint, cstr, flt, get_datetime
+from frappe.utils import cint, cstr, flt, get_datetime, getdate
 
 from erpnext_enhancements.utils.spreadsheet import build_payload
 
@@ -1030,8 +1030,92 @@ def _export_rows(tasks):
 	return data
 
 
+def _export_window(from_date, to_date):
+	"""Validate an inclusive day pair into the half-open ``[start, end)`` window.
+
+	Returns ``None`` when neither bound was given — the export then covers the
+	whole schedule, which is what every caller got before ranges existed.
+
+	The end is pushed forward one day on purpose. ``to_date`` is the last day a
+	person wants to SEE, and shaped ``end_date`` values are exclusive
+	(``_shape_row`` pushes a date-only end forward for the same reason), so a
+	window ending "31 Dec" has to run to 1 Jan 00:00 or it covers none of the
+	31st at all.
+	"""
+	if not from_date and not to_date:
+		return None
+	if not from_date or not to_date:
+		frappe.throw(_("An export date range needs both a start and an end date"))
+	try:
+		start = datetime.combine(getdate(from_date), datetime.min.time())
+		end = datetime.combine(getdate(to_date), datetime.min.time()) + timedelta(days=1)
+	except Exception:
+		frappe.throw(_("Invalid export date range"))
+	if end <= start:
+		frappe.throw(_("The export date range ends before it starts"))
+	return start, end
+
+
+def _filter_tasks_to_window(tasks, window):
+	"""Tasks overlapping ``window``, plus the ancestors of the ones that do.
+
+	The overlap test is strict at both ends because both ends are exclusive: a
+	task ending on the 1st does not reach into a window that starts on the 1st.
+
+	Ancestors are kept even when their own dates fall outside, for the same
+	reason ``_flatten_for_export`` emits orphans at the root — the Level column
+	is the only hierarchy a spreadsheet has, and a task indented under nothing
+	says less than a parent row whose dates happen to sit outside the range.
+
+	An UNDATED row is never tested for overlap, and the reason is a trap rather
+	than a preference. Composite mode's synthetic group rows (``G::``) carry a
+	label and children and no dates at all — and ``frappe.utils.get_datetime``
+	returns **now** for ``None`` rather than ``None``, so testing one would have
+	it silently claim to overlap whichever window happens to contain today, and
+	no window at all otherwise. Both answers are accidents of when the export
+	ran. Such a row reaches the file the only way it legitimately can: as an
+	ancestor of a row that really does overlap. (``get_datetime`` also returns
+	``None`` for an unparseable string, which would then ``TypeError`` on the
+	comparison below rather than raise inside the ``try`` — hence the explicit
+	check, even though ``_shape_row`` only ever emits ``strftime`` output.)
+
+	Note what this does NOT do: it filters the rows the chart query already
+	returned, so the ``limit`` cap (``MAX_ROWS``) still applies to the whole
+	schedule and not to the window. A range export of a project with more tasks
+	than the cap sees the same rows the chart does, no more.
+	"""
+	if not window:
+		return tasks
+	start, end = window
+	by_id = {task.get("id"): task for task in tasks}
+	keep = set()
+	for task in tasks:
+		if not task.get("start_date") or not task.get("end_date"):
+			continue
+		try:
+			task_start = get_datetime(task.get("start_date"))
+			task_end = get_datetime(task.get("end_date"))
+		except Exception:
+			continue
+		if task_start is None or task_end is None:
+			continue
+		if not (task_start < end and task_end > start):
+			continue
+		keep.add(task.get("id"))
+		# Walk up until an already-kept ancestor: whatever added that one walked
+		# the rest of its chain to the root already. The guard is for a parent
+		# cycle, which _flatten_for_export also defends against.
+		parent = task.get("parent")
+		guard = 0
+		while parent and parent in by_id and parent not in keep and guard < 200:
+			keep.add(parent)
+			parent = by_id[parent].get("parent")
+			guard += 1
+	return [task for task in tasks if task.get("id") in keep]
+
+
 @frappe.whitelist()
-def export_gantt_data(config, file_format="csv", title=None):
+def export_gantt_data(config, file_format="csv", title=None, from_date=None, to_date=None):
 	"""Return the chart's rows as a base64 CSV/XLSX payload.
 
 	Delegates wholesale to :func:`get_gantt_data`, so the export inherits every
@@ -1046,15 +1130,27 @@ def export_gantt_data(config, file_format="csv", title=None):
 	omits most of the schedule. The child row cap (``MAX_CHILD_ROWS``) still
 	applies, so this cannot become an unbounded query.
 
+	``from_date``/``to_date`` narrow the file to the tasks that touch that window
+	(see :func:`_filter_tasks_to_window`). They are applied to the shaped rows
+	rather than pushed into the query as filters, which is deliberate: the dates
+	a task is plotted at are not always the dates its columns hold — a row with
+	only an end gets a one-day bar back-dated from it, a date-only end is pushed
+	forward a day — so a SQL predicate on the raw columns would disagree with the
+	chart the file is supposed to match. The image/print exports window the same
+	way client-side, from the same inclusive day pair.
+
 	Args:
 		config: the same widget config passed to ``get_gantt_data``.
 		file_format: ``"csv"`` (default) or ``"xlsx"``. Anything else throws.
 		title: base filename; sanitised, defaults to "gantt".
+		from_date, to_date: inclusive day bounds, or neither for the whole
+			schedule. Supplying only one throws rather than guessing the other.
 
 	Returns:
 		``{filename, content_type, filecontent}`` — ``filecontent`` base64, so
 		it survives the JSON response; the client rebuilds a Blob and downloads
-		it without a second round trip. ``None`` when there is nothing to write.
+		it without a second round trip. ``None`` when there is nothing to write —
+		including when a date range matched no task at all.
 	"""
 	cfg = frappe.parse_json(config) or {}
 	if not isinstance(cfg, dict):
@@ -1066,6 +1162,7 @@ def export_gantt_data(config, file_format="csv", title=None):
 		cfg = dict(cfg)
 		cfg["children"] = children
 
+	window = _export_window(from_date, to_date)
 	data = get_gantt_data(cfg)
-	rows = _export_rows(data.get("tasks") or [])
+	rows = _export_rows(_filter_tasks_to_window(data.get("tasks") or [], window))
 	return build_payload(rows, file_format, title or "gantt", sheet_name=_("Gantt"))

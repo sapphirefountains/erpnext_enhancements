@@ -169,6 +169,15 @@
 	background: var(--fg-hover-color, rgba(0, 0, 0, 0.06));
 }
 
+/* The date-range entry opens a dialog rather than downloading something; the
+   rule separates "pick a format" from "pick a format AND a window". */
+.ee-gantt-export-sep {
+	margin-top: 4px;
+	padding-top: 8px;
+	border-top: 1px solid var(--border-color, #e2e2e2);
+	border-radius: 0 0 var(--border-radius-sm, 4px) var(--border-radius-sm, 4px);
+}
+
 /* ---- chart area -------------------------------------------------------- */
 
 .ee-gantt-chart-wrap {

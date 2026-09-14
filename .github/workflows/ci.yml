@@ -1496,6 +1496,22 @@ jobs:
       # half a pair, and a transposed pair -- save cleanly without it.
       - name: Address coordinate validation
         run: python -m unittest erpnext_enhancements.tests.test_address_coordinates -v
+      # The Gantt export's date range. Every failure mode is silent: a windowed
+      # export still produces a chart that still looks like a schedule, it is just
+      # wrong about which one. The sharpest is clamp-vs-clip -- a task running
+      # March-May, exported for April, must read as crossing both edges of the
+      # page; clamped to the window instead it reads as a task that starts on the
+      # 1st and ends on the 30th, which is a different fact stated with the same
+      # confidence. So bar geometry is kept TRUE and the overflow is hidden by a
+      # clipPath, which makes the inverse failure possible too (a bar appended to
+      # the unclipped group is drawn across the name column), and both directions
+      # are asserted. Plus the boundaries, where a shaped end_date is EXCLUSIVE and
+      # the {from,to} a person types is INCLUSIVE: every combination of those two
+      # conventions renders a plausible chart and only one is right. The CSV/XLSX
+      # half of the same window is in test_gantt_api.py and the two must agree, so
+      # the boundary cases are deliberately the same ones.
+      - name: Gantt export date range (clip, boundaries, dropped-row count)
+        run: node scripts/test_gantt_export_range.js
 
   # ---------------------------------------------------------------------------
   # Version sync — hard gate.

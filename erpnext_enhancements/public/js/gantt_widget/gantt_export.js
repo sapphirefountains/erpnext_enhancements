@@ -36,11 +36,22 @@
  * `getTaskByIndex` walks the rendered row list, not the whole tree), minus the
  * lazy-load placeholders. So it is "what I see", just not "what fits on screen".
  *
+ * DATE RANGE (`opts.range = { from, to }`, inclusive days): narrows BOTH ends
+ * of the job — the rows that reach the file AND the calendar the chart draws.
+ * A three-year build exported whole is a wall; what actually gets circulated is
+ * "the next six weeks". Rows falling entirely outside the window are dropped
+ * (their ancestors are kept, or the tree indents point at nothing), the time
+ * scale is the window verbatim, and a bar crossing an edge is CLIPPED with a
+ * continuation chevron rather than redrawn to fit — a task that started in
+ * March must not read as starting on day one of an April export.
+ *
  * Usage:
  *   const NS = erpnext_enhancements.gantt_export;
  *   await NS.export_png(widget, { title: "PRJ-0001", filename: "schedule" });
  *   await NS.export_svg(widget, { title: "PRJ-0001" });
  *   await NS.print(widget, { title: "PRJ-0001", subtitle: "Fountain rebuild" });
+ *   await NS.export_png(widget, { title: "PRJ-0001",
+ *                                 range: { from: "2026-04-01", to: "2026-06-30" } });
  */
 frappe.provide("erpnext_enhancements.gantt_export");
 
@@ -142,6 +153,12 @@ frappe.provide("erpnext_enhancements.gantt_export");
 	};
 
 	const ZOOM_ORDER = ["day", "week", "month", "quarter"];
+
+	// Serial for the timeline clipPath id. A fixed id would be fine in a
+	// standalone file but not in the print window, where a second chart on the
+	// same page would resolve `url(#...)` to the FIRST one's rectangle and clip
+	// itself to someone else's calendar.
+	let clip_seq = 0;
 
 	// The widget's zoom presets (ZOOM_PRESETS in gantt_widget.js) are named for
 	// the legacy frappe-gantt view modes and are finer-grained than anything
@@ -283,6 +300,11 @@ frappe.provide("erpnext_enhancements.gantt_export");
 				id: task.id,
 				text: task.text || "",
 				level: task.$level || 0,
+				// Tree parent, for the date-range filter: a row kept because it
+				// falls inside the window drags its ancestors in with it, so a
+				// narrowed export still reads as a tree instead of a pile of
+				// rows indented under nothing.
+				parent: task.parent == null || task.parent === 0 ? null : String(task.parent),
 				start: start,
 				// The API's end_date is EXCLUSIVE (a date-only end is pushed
 				// +1 day server-side). Keep the exclusive value for geometry
@@ -338,8 +360,19 @@ frappe.provide("erpnext_enhancements.gantt_export");
 			.map((l) => ({ source: String(l.source), target: String(l.target) }));
 	}
 
-	/** Overall [min start, max end) across rows, padded to whole days. */
-	function date_range(rows) {
+	/**
+	 * Overall [min start, max end) across rows, padded to whole days.
+	 *
+	 * An explicit `win` (from normalize_range) comes back verbatim and is NOT
+	 * padded to MIN_SPAN_DAYS: padding a DERIVED range adds calendar context
+	 * nobody asked for, but padding a REQUESTED one draws days outside the
+	 * range the header says the export covers. A one-day window is still
+	 * legible because MIN_TIMELINE_W stretches the day WIDTH, not the span.
+	 */
+	function date_range(rows, win) {
+		if (win) {
+			return { start: win.start, end: win.end };
+		}
 		let min = null;
 		let max = null;
 		rows.forEach((r) => {
@@ -366,6 +399,68 @@ frappe.provide("erpnext_enhancements.gantt_export");
 			end = add_days(end, extra - before);
 		}
 		return { start: start, end: end };
+	}
+
+	/**
+	 * Turn a caller's inclusive `{from, to}` day pair into the renderer's
+	 * half-open `[start, end)` window, or null when it is absent or unusable.
+	 *
+	 * `to` is the last day a person wants to SEE, so the window runs to the
+	 * morning after it — the same exclusive-end convention the API uses for
+	 * `end_date`, and the reason a range ending "31 Dec" covers the whole of
+	 * 31 December rather than none of it.
+	 */
+	function normalize_range(range) {
+		if (!range || !range.from || !range.to) {
+			return null;
+		}
+		const from = to_date(range.from);
+		const to = to_date(range.to);
+		if (!from || !to) {
+			return null;
+		}
+		const start = start_of_day(from);
+		const end = add_days(start_of_day(to), 1);
+		return end > start ? { start: start, end: end } : null;
+	}
+
+	/**
+	 * Rows that touch `win`, plus the ancestors of the ones that do.
+	 *
+	 * Overlap is strict at both ends because both ends are exclusive: a task
+	 * ending on the 1st does not reach into a window that starts on the 1st.
+	 *
+	 * Ancestors are kept even when their own dates fall outside the window.
+	 * The name column's indent is the only thing saying which phase a task
+	 * belongs to, and a child indented under a row that was dropped reads as
+	 * belonging to whatever happens to sit above it. Their bars are clipped
+	 * away by the window like any other, so keeping one costs a row and no ink.
+	 */
+	function filter_rows_to_range(rows, win) {
+		if (!win) {
+			return rows;
+		}
+		const by_id = {};
+		rows.forEach((r) => {
+			by_id[String(r.id)] = r;
+		});
+		const keep = new Set();
+		rows.forEach((r) => {
+			if (!(r.start < win.end && r.end > win.start)) {
+				return;
+			}
+			keep.add(String(r.id));
+			// Walk up until an already-kept ancestor: whatever added that one
+			// walked the rest of its chain to the root already. The guard is
+			// for a parent cycle, which nothing here can rule out.
+			let parent = r.parent;
+			let guard = 0;
+			while (parent && by_id[parent] && !keep.has(parent) && guard++ < 200) {
+				keep.add(parent);
+				parent = by_id[parent].parent;
+			}
+		});
+		return rows.filter((r) => keep.has(String(r.id)));
 	}
 
 	/**
@@ -558,12 +653,25 @@ frappe.provide("erpnext_enhancements.gantt_export");
 	 * Render rows to an <svg> element.
 	 *
 	 * opts: { title, subtitle, zoom, brand: {logo, company}, columns:[...],
-	 *         show_today, links }
-	 * Returns { svg, width, height, zoom, truncated }.
+	 *         show_today, links, range: {from, to}, total_rows }
+	 *
+	 * `range` sets the CALENDAR only — which days the time scale covers and
+	 * where bars get clipped. Choosing which rows go in is the caller's job
+	 * (see filter_rows_to_range, which `build` applies first): doing it here
+	 * too would leave the "the range matched nothing" case to be reported by
+	 * whoever is holding an empty chart, rather than by the code that knows
+	 * why it is empty. `total_rows` is what the caller started with, so the
+	 * header can say "12 of 240 rows" instead of quietly showing 12.
+	 *
+	 * Returns { svg, width, height, zoom, rows, total_rows, range_label }.
 	 */
 	function render_svg(rows, opts) {
 		opts = opts || {};
-		const range = date_range(rows);
+		const win = normalize_range(opts.range);
+		const range = date_range(rows, win);
+		// The window's end is exclusive; the label is for a person, so it names
+		// the last day actually covered.
+		const range_label = `${fmt_date(range.start)} – ${fmt_date(add_days(range.end, -1))}`;
 		const span = Math.max(1, day_span(range.start, range.end));
 		const max_w = opts.max_width || MAX_TIMELINE_W;
 		const requested_zoom = opts.zoom || "week";
@@ -633,9 +741,14 @@ frappe.provide("erpnext_enhancements.gantt_export");
 					el("text", { x: tx, y: PAD + 31, "font-size": 11, fill: C.muted }, opts.subtitle)
 				);
 			}
-			const meta = `${fmt_date(range.start)} – ${fmt_date(add_days(range.end, -1))}  ·  ${
-				rows.length
-			} ${rows.length === 1 ? "row" : "rows"}`;
+			// With a date range the row count on its own is a half-truth — the
+			// reader has no way to tell 12 rows of schedule from 12 rows left
+			// of 240 — so the total comes along whenever the window dropped any.
+			const counted =
+				opts.total_rows > rows.length
+					? __("{0} of {1} rows", [rows.length, opts.total_rows])
+					: `${rows.length} ${rows.length === 1 ? __("row") : __("rows")}`;
+			const meta = `${range_label}  ·  ${counted}`;
 			g.appendChild(
 				el("text", { x: width - PAD, y: PAD + 15, "font-size": 11, fill: C.muted, "text-anchor": "end" }, meta)
 			);
@@ -779,6 +892,20 @@ frappe.provide("erpnext_enhancements.gantt_export");
 
 		/* ---- rows ---- */
 		const body = el("g", {});
+		// Bars and arrows live in their own group so the timeline can CLIP
+		// them. With an export range a bar routinely starts before the window
+		// or runs past it, and its geometry is kept TRUE rather than clamped —
+		// a clamped bar would be indistinguishable from one that really does
+		// start on the first day of the range. Unclamped and unclipped it would
+		// be drawn straight across the name column or off the edge of the page,
+		// so the clip is what makes honest geometry safe to draw.
+		const clip_id = `ee-gantt-clip-${++clip_seq}`;
+		const defs = el("defs", {});
+		const clip = el("clipPath", { id: clip_id });
+		clip.appendChild(el("rect", { x: tx0, y: body_y, width: timeline_w, height: body_h }));
+		defs.appendChild(clip);
+		svg.appendChild(defs);
+		const bars = el("g", { "clip-path": `url(#${clip_id})` });
 		// Bar geometry per row id, so dependency arrows have endpoints to
 		// connect once every bar has been placed.
 		const geom = {};
@@ -835,12 +962,13 @@ frappe.provide("erpnext_enhancements.gantt_export");
 			const x2 = tx0 + day_span(range.start, r.end) * ppd;
 			const w = Math.max(2, x2 - x1);
 			const by = y + (ROW_H - BAR_H) / 2;
-			geom[r.id] = { x1: x1, x2: x1 + w, cy: y + ROW_H / 2 };
+			const cy = y + ROW_H / 2;
+			geom[r.id] = { x1: x1, x2: x1 + w, cy: cy };
+			const overdue = r.end < new Date() && (r.progress == null || r.progress < 1);
 
 			if (r.type === "milestone" || (w <= 3 && r.progress === null)) {
-				const cy = y + ROW_H / 2;
 				const s = 6;
-				body.appendChild(
+				bars.appendChild(
 					el("path", {
 						d: `M ${x1} ${cy - s} L ${x1 + s} ${cy} L ${x1} ${cy + s} L ${x1 - s} ${cy} Z`,
 						fill: C.milestone,
@@ -849,7 +977,7 @@ frappe.provide("erpnext_enhancements.gantt_export");
 			} else if (r.type === "project" || r.is_group) {
 				// Summary bar: a slim capped rule, so a parent never looks like
 				// scheduled work of its own.
-				body.appendChild(
+				bars.appendChild(
 					el("rect", { x: x1, y: by + 3, width: w, height: 6, fill: C.bar_group, rx: 2 })
 				);
 				// The two 2px end caps only read as caps when there is bar
@@ -858,16 +986,15 @@ frappe.provide("erpnext_enhancements.gantt_export");
 				// summary bar — which is exactly how a same-day project
 				// rendered before the scale fixes above.
 				if (w >= 10) {
-					body.appendChild(
+					bars.appendChild(
 						el("rect", { x: x1, y: by + 3, width: 2, height: 11, fill: C.bar_group })
 					);
-					body.appendChild(
+					bars.appendChild(
 						el("rect", { x: x1 + w - 2, y: by + 3, width: 2, height: 11, fill: C.bar_group })
 					);
 				}
 			} else {
-				const overdue = r.end < new Date() && (r.progress == null || r.progress < 1);
-				body.appendChild(
+				bars.appendChild(
 					el("rect", {
 						x: x1,
 						y: by,
@@ -881,7 +1008,7 @@ frappe.provide("erpnext_enhancements.gantt_export");
 					})
 				);
 				if (r.progress) {
-					body.appendChild(
+					bars.appendChild(
 						el("rect", {
 							x: x1,
 							y: by,
@@ -896,7 +1023,7 @@ frappe.provide("erpnext_enhancements.gantt_export");
 				if (w > 46) {
 					const t = fit_text(r.text, w - 10, 9);
 					if (t) {
-						body.appendChild(
+						bars.appendChild(
 							el(
 								"text",
 								{
@@ -911,15 +1038,56 @@ frappe.provide("erpnext_enhancements.gantt_export");
 					}
 				}
 			}
+
+			// Continuation chevrons. The clip hides everything outside the
+			// window silently, which is the one thing a windowed chart must not
+			// do: a task running from March to May, exported for April, would
+			// draw as filling April exactly. A chevron at the edge it crosses
+			// says the work carries on past the page. Drawn inside the clipped
+			// group so they can never stray into the name column, and in the
+			// bar's own colour so an overdue task keeps saying so.
+			if (win) {
+				const tone =
+					r.type === "milestone"
+						? C.milestone
+						: r.type === "project" || r.is_group
+							? C.bar_group
+							: overdue
+								? C.bar_late
+								: C.bar;
+				if (x1 < tx0) {
+					bars.appendChild(
+						el("path", {
+							d: `M ${tx0 + 7} ${cy - 5} L ${tx0 + 1} ${cy} L ${tx0 + 7} ${cy + 5} Z`,
+							fill: tone,
+						})
+					);
+				}
+				if (x1 + w > tx0 + timeline_w) {
+					const rx = tx0 + timeline_w;
+					bars.appendChild(
+						el("path", {
+							d: `M ${rx - 7} ${cy - 5} L ${rx - 1} ${cy} L ${rx - 7} ${cy + 5} Z`,
+							fill: tone,
+						})
+					);
+				}
+			}
 		});
 		svg.appendChild(body);
+		svg.appendChild(bars);
 
 		/* ---- dependency arrows ---- */
 		// Drawn AFTER the bars so an arrow is never hidden under one, and
-		// before the frame so the frame's rules still sit on top.
+		// before the frame so the frame's rules still sit on top. Clipped to
+		// the same window: with a date range an arrow's other end is routinely
+		// off-page, and an elbow drawn from x = -4,000 would otherwise cross
+		// the whole grid on its way in.
 		const links = (opts.links || []).filter((l) => geom[l.source] && geom[l.target]);
 		if (links.length && links.length <= MAX_LINKS) {
-			svg.appendChild(draw_links(links, geom));
+			const link_g = draw_links(links, geom);
+			link_g.setAttribute("clip-path", `url(#${clip_id})`);
+			svg.appendChild(link_g);
 		}
 
 		/* ---- frame + column rules (drawn last, over the row fills) ---- */
@@ -972,11 +1140,27 @@ frappe.provide("erpnext_enhancements.gantt_export");
 		svg.appendChild(frame);
 
 		/* ---- footer ---- */
+		// A windowed export must state its window somewhere, and the header band
+		// already does — so the footer only repeats it when there IS no band.
+		// That is the print case (export_utils supplies the page its own header,
+		// and two logos stacked look like a bug) and it is the case that matters
+		// most: a printed schedule handed to a customer with nothing saying what
+		// it covers reads as the whole project. Note the page footer carries the
+		// range too, and unlike this one it is not scaled down with the chart —
+		// print fits the SVG to the paper width, which on a wide chart shrinks
+		// 9px type past legibility.
+		const foot = [__("Generated {0}", [fmt_date(new Date())])];
+		if (win && !has_brand) {
+			foot.push(range_label);
+			if (opts.total_rows > rows.length) {
+				foot.push(__("{0} of {1} rows", [rows.length, opts.total_rows]));
+			}
+		}
 		svg.appendChild(
 			el(
 				"text",
 				{ x: gx, y: height - PAD + 2, "font-size": 9, fill: C.faint },
-				__("Generated {0}", [fmt_date(new Date())])
+				foot.join("  ·  ")
 			)
 		);
 		// Say so when the export is COARSER than what is on screen — otherwise a
@@ -994,7 +1178,15 @@ frappe.provide("erpnext_enhancements.gantt_export");
 			);
 		}
 
-		return { svg: svg, width: width, height: height, zoom: zoom, rows: rows.length };
+		return {
+			svg: svg,
+			width: width,
+			height: height,
+			zoom: zoom,
+			rows: rows.length,
+			total_rows: opts.total_rows || rows.length,
+			range_label: win ? range_label : "",
+		};
 	}
 
 	/* ------------------------------------------------------------------ *
@@ -1061,10 +1253,25 @@ frappe.provide("erpnext_enhancements.gantt_export");
 
 	async function build(widget, opts) {
 		opts = opts || {};
-		const rows = collect_rows(widget);
+		let rows = collect_rows(widget);
 		if (!rows.length) {
 			frappe.show_alert({ message: __("Nothing to export."), indicator: "orange" });
 			return null;
+		}
+		// Filtering here rather than in render_svg is what lets "the range
+		// matched nothing" be reported by the code that knows why the chart is
+		// empty, instead of by whoever ends up holding an empty one.
+		const win = normalize_range(opts.range);
+		const total_rows = rows.length;
+		if (win) {
+			rows = filter_rows_to_range(rows, win);
+			if (!rows.length) {
+				frappe.show_alert({
+					message: __("No tasks fall in that date range."),
+					indicator: "orange",
+				});
+				return null;
+			}
 		}
 		const brand = await U().build_brand(opts);
 		const widget_zoom = widget && widget.config && widget.config.zoom;
@@ -1076,15 +1283,33 @@ frappe.provide("erpnext_enhancements.gantt_export");
 			columns: opts.columns,
 			show_today: opts.show_today,
 			max_width: opts.max_width || MAX_W.vector,
+			range: opts.range,
+			total_rows: total_rows,
 			// Dependency arrows are drawn on screen by DHTMLX; without this
 			// they were silently absent from every export.
 			links: opts.links === false ? [] : collect_links(widget),
 		});
 	}
 
+	function iso_day(d) {
+		return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(
+			d.getDate()
+		).padStart(2, "0")}`;
+	}
+
+	/**
+	 * `<name>-<stamp>.<ext>`, where the stamp is the export RANGE when there is
+	 * one and today's date otherwise. Two windows of the same project pulled
+	 * the same afternoon would otherwise land on the same filename, and the
+	 * second would quietly become "…(1)" in the downloads folder — on files
+	 * whose whole difference is which weeks they cover.
+	 */
 	function out_filename(opts, extension) {
 		const u = U();
-		return `${u.safe_filename((opts && opts.filename) || (opts && opts.title), "gantt")}-${u.stamp()}.${extension}`;
+		const base = u.safe_filename((opts && opts.filename) || (opts && opts.title), "gantt");
+		const win = normalize_range(opts && opts.range);
+		const tail = win ? `${iso_day(win.start)}-${iso_day(add_days(win.end, -1))}` : u.stamp();
+		return `${base}-${tail}.${extension}`;
 	}
 
 	async function export_svg(widget, opts) {
@@ -1140,14 +1365,36 @@ frappe.provide("erpnext_enhancements.gantt_export");
 		svg.setAttribute("width", "100%");
 		svg.setAttribute("height", "auto");
 		svg.setAttribute("style", "max-width:100%;height:auto;");
+		const footer = [__("{0} rows · {1} view", [out.rows, out.zoom])];
+		if (out.range_label) {
+			footer.push(out.range_label);
+		}
 		U().print_document(svg_string(svg), {
 			title: opts.title || __("Gantt Chart"),
 			subtitle: opts.subtitle || "",
 			brand: await U().build_brand({}),
 			orientation: opts.orientation || "landscape",
 			margin: "10mm",
-			footer: __("{0} rows · {1} view", [out.rows, out.zoom]),
+			footer: footer.join(" · "),
 		});
+	}
+
+	/**
+	 * The span of the rows currently loaded, as an inclusive `{from, to}` pair
+	 * of "YYYY-MM-DD" strings — the shape `opts.range` takes, so a range picker
+	 * can open on the whole schedule and offer narrowings of something real.
+	 * Falls back to today .. today + 30 on an empty chart so the fields are
+	 * never blank.
+	 */
+	function chart_range(widget) {
+		const rows = collect_rows(widget);
+		const range = date_range(rows);
+		const last = add_days(range.end, -1);
+		const iso = (d) =>
+			`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+				d.getDate()
+			).padStart(2, "0")}`;
+		return { from: iso(range.start), to: iso(last >= range.start ? last : range.start) };
 	}
 
 	NS.collect_rows = collect_rows;
@@ -1156,6 +1403,9 @@ frappe.provide("erpnext_enhancements.gantt_export");
 	NS.svg_string = svg_string;
 	NS.svg_to_png = svg_to_png;
 	NS.date_range = date_range;
+	NS.normalize_range = normalize_range;
+	NS.filter_rows_to_range = filter_rows_to_range;
+	NS.chart_range = chart_range;
 	NS.build = build;
 	NS.export_svg = export_svg;
 	NS.export_png = export_png;
