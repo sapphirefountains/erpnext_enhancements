@@ -6,15 +6,25 @@ failure traceable to a contracted, measurable standard.
 Programme: [WI-075](../../work-items/WI-075-quality-and-inspections.md).
 Decision record: [ADR-0012](../../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md).
 
-**Status: sub-phases A through F — the loop closes.** Scope locks, an inspection generates
-frozen from the template plus that project's contracted criteria, a failed check raises a
-Non-Conformance and a corrective action, and an unverified fix is carried into the next
-inspection and re-checked before it may close. That last step is the one the whole design rests
-on: a self-reported fix and a re-inspected fix are different levels of confidence.
+**Status: sub-phases A through I — the loop closes and somebody is told it has.** Scope locks,
+an inspection generates frozen from the template plus that project's contracted criteria, a
+failed check raises a Non-Conformance and a corrective action, an unverified fix is carried into
+the next inspection and re-checked before it may close, a Critical failure pages three named
+people and records who saw it, there is a field tool a person can hold, and a daily sweep tells
+each project manager which milestones have come round. That re-check step is the one the whole
+design rests on: a self-reported fix and a re-inspected fix are different levels of confidence.
 
-Still to come: the Critical-NCR alert with per-recipient acknowledgement (G) and the field
-wizard (H). Generation is still a deliberate act — `trigger_basis` is read by nothing — and
-`quality_enabled` is **off**.
+Generation is still a **deliberate act**. The sweep reports that a milestone is due; it never
+creates an inspection. And `quality_enabled` is **off** — nothing in this module acts until it
+is ticked.
+
+Master checklists now exist for every milestone, but **as strawmen seeded `Draft`** — drafts to
+be corrected, which generate nothing until a person reads one and sets it Active. Until then
+every milestone but Build commissioning still reports *due and blocked*. See the strawman section
+below for what each set was drawn from.
+
+Still to come: the front-end chain — Change Orders, MSA rates, budget categories and the
+subcontractor scorecard.
 
 ## What this module is for
 
@@ -49,6 +59,11 @@ question why it exists.**
 | `page/inspection_wizard/` | The field tool: one frozen section at a time, every answer a tap. Talks only to `api/quality_wizard.py`, which is where the freeze is enforced |
 | `qualification.py` | Whether the person holding the clipboard is the one the template asked for. Frappe-free — and it has to be, because nothing downstream ever fails when this is wrong |
 | `inspector_advisory.py` | The frappe half of that: inline warning, timeline comment, manager email. Gate, then swallow — **never** throws |
+| `due.py` | Whether a milestone has come round, and why not. Frappe-free. The rule is **reached or passed**, never equality |
+| `scheduling.py` | The daily sweep that tells each project manager what is ready. It notices; it never generates |
+| `draft_catalog.py` | The **strawman** checklists, as data. Drafts to be corrected — seeded `Draft`, and a Draft template generates nothing |
+| `goals.py` | What a period review is allowed to conclude. Frappe-free. Reads a `Data` target, knows which way each metric runs, and returns **Open** whenever it cannot decide |
+| `reviews.py` | The half that queries: the seven metrics, the floor rule, the Annual cadence ERPNext cannot run, and the meeting agenda |
 
 Registered in [`../modules.txt`](../modules.txt), tiled from
 [`../setup/desktop_icon_map.py`](../setup/desktop_icon_map.py), and given a sidebar by
@@ -79,7 +94,7 @@ The key is `"Quality Control"` for that reason.
 `frappe.router` resolves the first path segment against workspaces *before* pages, so a Page
 sharing a workspace's slug never renders — and it fails per-user, because the workspace list is
 permission-filtered, which makes it look like a permissions bug. `tests/test_workspaces.py`
-fails the build on it. The inspection wizard, when it lands in H, is `inspection-wizard`.
+fails the build on it. The inspection wizard is `inspection-wizard` for exactly that reason.
 
 ## The module gate — why `Quality Settings` grants read so widely
 
@@ -194,6 +209,145 @@ an inspection is a no-op rather than a second ratchet.
 An open punch-list item is structurally the same thing — raised against a standard, fixed by
 somebody, not actually done until it has been looked at again — so it is a Quality Action with
 `custom_punch_list` ticked and gets all of this for free.
+
+## What a period review is allowed to conclude
+
+ERPNext generates a `Quality Review` on a cadence and copies the goal's objectives into it, and
+then stops: the review arrives with targets and **blank actuals**, and somebody types a verdict.
+A metric nobody computes is a metric nobody trusts, so sub-phase J computes it — and most of the
+work is in refusing to compute it wrongly, because all three ways of getting this wrong report
+good news.
+
+**An empty period divides by zero and rounds up to perfect.** First-pass yield over a quarter
+with no inspections is *undefined*. The obvious implementation returns 100%, and that number is
+then the one on the wall. So every metric returns a **sample** alongside its value, and a sample
+of zero makes the verdict `Open` rather than a score.
+
+For a count metric the sample is the **activity level**, not the count. Zero non-conformances
+across fifty inspections is genuinely good news; zero across zero inspections is no news at all,
+and the two must not produce the same green tick. `open_punch_items` is the exception and carries
+no sample deliberately — it is a point-in-time count, and zero open items is meaningful whether or
+not the period was busy.
+
+**Half the metrics are better when smaller, and core's objective row carries no direction.**
+Compare actual against target the obvious way and "NCRs raised: target 2" reads as *failed* every
+time the company does well. So direction is not a per-row field anybody can mis-set: it comes from
+the metric definition in `goals.METRICS`, where it can be got right once. An unknown metric has no
+direction and is **not** defaulted — a default is the silent inversion.
+
+**`target` is a `Data` field.** Somebody will type `95%`, `<= 2`, `2 per project` or `two`. A
+target that cannot be read is not a target of zero, and treating it as zero would mark a
+lower-is-better goal Passed forever. `parse_target` returns `None`, the verdict is `Open`, and
+saving the goal says so out loud — otherwise its reviews would simply keep arriving Open with
+nobody told why.
+
+### The floor rule
+
+*A project goal may only meet or exceed the company-wide target for the same measure.* Matched on
+**metric**, never on the objective text — two people writing "first pass yield" and "First-Pass
+Yield" is not a disagreement about the standard. A metric the company has said nothing about is
+not a violation; inventing a floor from silence would block goals nobody objected to.
+`Quality Settings.company_floor_enforcement` is Off / Warn / Block and ships on **Warn**.
+
+No class override was needed here, unlike `Quality Action`: core's `QualityGoal.validate` is
+literally `pass`.
+
+### Why this app owns the Annual cadence, and only that one
+
+ERPNext's daily `quality_review.review()` branches on Daily, Weekly, Monthly and Quarterly and has
+**no Annual branch** — so adding `Annual` by Property Setter produces a goal that generates
+nothing, forever, with no error. `reviews.generate_annual_reviews` handles that one cadence.
+
+It handles **only** that one, and `goals.review_due` **raises** if asked about any of the other
+four rather than returning `False`. A `False` would be a correct-looking answer to a question this
+module must not be asked, and answering it is how a second review would come to sit beside every
+one core made, on the same goal, the same day. It also dedupes per goal per day, which core's own
+`create_review` does not.
+
+Two smaller things fixed while the tables were still empty: `Quality Meeting`'s autoname was
+`format:QA-MEET-{YY}-{MM}-{DD}` — **one meeting per calendar day, site-wide** — and now carries a
+counter; and `Quality Action` gained `custom_closed_on`, stamped on the transition that actually
+closes it, because days-to-close could otherwise only be guessed from `modified`, which any later
+edit moves.
+
+## The strawman checklists, and the one field that makes them safe
+
+Sub-phases C and I both declined to seed checklists for anything but Build commissioning, and the
+reasoning has not changed: **a checklist carries the authority of the company that issued it**, an
+inspector works through it assuming somebody chose those items on purpose, and an invented one is
+indistinguishable from a real one right up until it fails to catch something.
+
+What changed is that a blank page turned out to be a worse starting point than a draft to argue
+with. The compromise is the `status` field that already existed:
+
+**Every strawman template is seeded `Draft`, and a Draft template generates nothing.**
+`generate_inspection` refuses a non-Active template; `scheduling._active_template_keys` counts
+only Active ones. So a milestone with only a strawman behind it keeps reporting *due and blocked*
+exactly as it did before. **Setting a template Active is the act of adopting it** — a deliberate
+act, by a named person who has read it. Nobody can be handed one of these by accident, and
+`tests/test_draft_templates.py` fails the build if the seed ever creates one Active.
+
+### Three of the four sets are not invented
+
+Each item records where it came from in `reference_standard`:
+
+| Set | Source |
+|---|---|
+| **Service** | Sapphire's own `Sapphire Maintenance Section` records, live on production since June. The chemistry ranges are theirs verbatim — pH 7.2–7.8, free chlorine 1.0–3.0 ppm, ORP 650–750 mV, alkalinity 80–120 ppm — and "GFCI protection verified" is mandatory here because it is mandatory there |
+| **Design** | The `Water Feature Design` model in `water_engineering`: status ladder, `blocker_count`, `issue_acks`, computed turnover against the code maximum, TDH against the selected pump. Every gate asks whether that record already says what it needs to say |
+| **Products** | The `Control Panel Design` model: NEMA rating, controller hardware, fuse and interlock schedules, control voltages, `safe_state_on_power_up` |
+| **Events** | **Nothing.** Read this set hardest |
+
+The four chemistry ranges are pinned by a test, so a later tidy-up cannot quietly turn a sourced
+draft into an invented one. And a test asserts that **no Events item carries a
+`reference_standard`** — a citation on an invented item would be a fabricated source, which is
+worse than no source at all.
+
+`Build — Pre-Final (Systems Startup)` is deliberately not re-seeded. It is Active and it is not a
+strawman: its six commissioning checks came from `docs/KPI_DASHBOARD_DESIGN.md`, written by
+somebody who knew the trade.
+
+## When a milestone comes round, and the equality bug that would have eaten inspections
+
+Sub-phase C seeded seventeen milestones each carrying a `trigger_basis`, and until sub-phase I
+**nothing read it**. A Build project could reach QA and sit there, and the pre-final commissioning
+check — the one `docs/KPI_DASHBOARD_DESIGN.md` calls the biggest fountain-specific gap — would come
+round only if somebody happened to remember.
+
+**The rule is "reached or passed", not equality, and that is not a refinement.**
+`Project.custom_build_status` is a Select somebody types into, not a workflow. A project can go
+from `Procurement` straight to `Ready for Install` in one save, and a trigger written as
+`current == "QA"` was never true at any moment a sweep looked. The commissioning check simply
+never comes up, and the record afterwards is indistinguishable from a project that has not got
+there yet.
+
+So a milestone is due once the project is at or beyond its trigger, and stays due until an
+inspection exists. **A project that skips a stage does not skip its inspection; it acquires an
+overdue one.** That also makes the answer computable at any time from current state, rather than
+depending on having observed a transition — which matters here, because a deploy `FLUSHDB`s the
+queue and any design that watched for transitions would lose the ones that happened during it.
+
+**A status that cannot be placed on the scale is reported, not swallowed.** Blank, renamed,
+legacy — answering "not due" would make the sweep report clean forever, on every project, with
+nothing to investigate. It comes back `unknown` and is surfaced alongside the due list.
+
+Three more things it says out loud that a tidier implementation would hide:
+
+- **A due milestone with no checklist is still reported**, flagged `blocked`. Only the Build
+  commissioning list has ever been written down; the rest are Sapphire's standard of care and live
+  in people's heads. A list that quietly omitted them would turn a gap in what the company has
+  recorded into a gap nobody can see.
+- **A calendar check that has never run is marked `first_time`.** It is genuinely due — nobody has
+  ever inspected it — but "we have never done this" is a different conversation from "this one is
+  overdue", and folding them together would page somebody about every Service project at once.
+- **A multi-day-only check on a project with no dates says so.** "Why is my mid-event check not
+  showing" deserves an answer, and "nobody recorded how long this event runs" is a different
+  problem from "the check does not apply".
+
+**It notices; it never acts.** The sweep reports that an inspection is due and does not generate
+one, for the same reason severity is never guessed: a generated inspection reads as though a
+person decided to inspect, and one that appeared on its own would be a draft nobody owns, aging in
+a list, looking like work in progress.
 
 ## The field wizard, and where the freeze is actually enforced
 

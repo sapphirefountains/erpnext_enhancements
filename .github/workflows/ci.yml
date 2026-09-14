@@ -547,6 +547,37 @@ jobs:
       # whole inspection on a bad signal, discovered after the inspector has left the site.
       - name: Inspection wizard (frozen rows stay frozen; a failed save is never silent)
         run: python -m unittest erpnext_enhancements.tests.test_inspection_wizard -v
+      # When an inspection is due (WI-075 sub-phase I). Sub-phase C seeded seventeen milestones
+      # carrying a trigger_basis and nothing read it; this is the engine that does. Two silent
+      # failures are guarded. `custom_build_status` is a Select somebody types into, not a
+      # workflow, so a project can jump Procurement -> Ready for Install in one save: an
+      # equality trigger was never true at any moment a sweep looked, the commissioning check
+      # never comes up, and afterwards it is indistinguishable from a project that has not got
+      # there yet. And a renamed or blank status cannot be placed on the scale at all -- calling
+      # that "not due" would make every sweep report clean forever, on every project.
+      - name: Inspection due (a skipped stage does not skip its inspection)
+        run: python -m unittest erpnext_enhancements.tests.test_inspection_due -v
+      # The strawman checklists. Two properties make seeding a draft checklist safe at all, and
+      # both are asserted here. Every template is created DRAFT -- a Draft template generates
+      # nothing, so a milestone keeps reporting due-and-blocked until a person reads it and sets
+      # it Active, which is what adoption means. And every check carries a pass standard and a
+      # verification method: the programme's own principle is that a criterion which cannot be
+      # inspected should not be in the contract, and a checklist row with no standard is the
+      # same failure on the other side of the wall. Also pins the four chemistry ranges, which
+      # are the one set of numbers taken verbatim from a live Sapphire record.
+      - name: Draft checklists (seeded Draft, never Active; every check has a standard)
+        run: python -m unittest erpnext_enhancements.tests.test_draft_templates -v
+      # Goals and period reviews (WI-075 sub-phase J). Every failure guarded here reports GOOD
+      # news, which is why it is a test and not a comment. An empty period divides by zero and
+      # rounds up to a perfect score, so a quarter in which nobody inspected anything would
+      # report 100% first-pass yield. Half the metrics are better when smaller and core's
+      # objective row carries no direction, so the obvious comparison marks "NCRs raised: target
+      # 2" as failed every time the company does well. `target` is a Data field, so an
+      # unreadable one treated as zero marks a goal Passed forever. And ERPNext's own daily
+      # scheduler owns Daily/Weekly/Monthly/Quarterly -- generating those here too would put a
+      # second review beside every one it made, so review_due RAISES if asked about them.
+      - name: Quality goals (an empty period decides nothing, and fewer can be better)
+        run: python -m unittest erpnext_enhancements.tests.test_quality_goals -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk

@@ -940,6 +940,16 @@ erpnext_enhancements.patches.seed_commissioning_section
 # somebody hand-edited in the Desk is newer forever, so the file loses silently from then on.
 # The JSON's `modified` is bumped alongside this; reload_doc(force=True) covers the rest.
 erpnext_enhancements.patches.resync_quality_control_workspace
+# The strawman checklists for every milestone that had no template -- Design, Events, Service,
+# Products and the three Build milestones sub-phase C left empty. Seeded DRAFT, and that is the
+# whole safety property: a Draft template generates nothing (generate_inspection refuses a
+# non-Active template, and the due sweep counts only Active ones), so a milestone keeps
+# reporting due-and-blocked until a person reads the template and sets it Active. Setting it
+# Active IS the act of adopting it. Three of the four sets are lifted from what this company
+# already wrote down -- Sapphire's own maintenance sections, Water Feature Design, Control Panel
+# Design -- and each item records where; Events is drafted from nothing and says so on the
+# record. Also creates 5 UOMs ERPNext does not ship (pH, ppm, mV, Volt, PSI). Insert-only.
+erpnext_enhancements.patches.seed_draft_inspection_templates
 # ER-2026-420503 -- the Asset form was reported as broken; the measured cause is that three
 # of its tables are empty. Asset.location is reqd and Location had 0 rows, so no Asset could
 # be saved by anyone; and with 0 Asset Categories no Item could be a fixed asset, so the
