@@ -1,6 +1,6 @@
 # WI-075 — Scope that can be inspected, and failures that get re-checked
 
-**Status:** in progress — A through G shipped, v1.446.0 → v1.453.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445)
+**Status:** in progress — A through H shipped, v1.446.0 → v1.454.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445). Slice 1 is complete.
 **Branch:** `claude/quality-inspections-planning-691339` (off `main` at v1.443.0)
 **Tracked:** PRJ-00580, TASK-2026-02013 with a child per deliverable (A–N)
 **Decides:** [ADR-0012](../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md)
@@ -193,6 +193,33 @@ Shipped in v1.453.0, with three things worth recording because they are not obvi
   comment on the record saying it reached nobody. An hourly retry that can never succeed would bury
   a real problem under its own noise; who holds the roles is a thing for a person to fix, and the
   comment is where they will see it.
+
+### The field wizard and the qualification check (sub-phase H, v1.454.0)
+
+**The wizard enforces nothing; the endpoint does.** `api/quality_wizard.py` accepts exactly four
+writable row fields -- `outcome`, `measured_value`, `notes`, `photo` -- and has no append path.
+That short list is where the freeze actually lives at runtime: a client that could write
+`min_value` could turn a failing measurement into a passing one from a phone, on site, with
+nothing in the diff to see, and a client that could append a row could add a check nobody
+contracted for. Asserted by name in `tests/test_inspection_wizard.py`, negative-tested by leaking
+`min_value` in and confirming the build fails.
+
+**A tier means nothing across job families.** `Position` carries `job_family` and an integer
+`tier`, so the obvious implementation of "is this inspector senior enough" compares tiers -- and a
+bare `tier >= tier` **passes** a tier-3 Designer as a qualified tier-2 Technician. The family gate
+runs first. Note the failure direction: it passes, so nobody investigates it. Where seniority is
+not modelled on either side it falls back to an exact name match, because an unmodelled hierarchy
+is unknown rather than flat.
+
+**Two silences that are deliberate.** A template with no requirements produces no finding, ever --
+warning on every unconfigured template is the fastest way to teach people to dismiss the warning.
+And an inspector with no Employee record is reported as *unknown*, not unqualified; those are
+different claims and only one of them is true.
+
+**Slice 1 is now complete**: scope locks, an inspection generates frozen, a failure raises an NCR
+and an action, the fix is re-verified at the next inspection, a Critical failure pages three
+people, and there is a tool a person can actually hold. Everything from I onward widens this to
+other project types or builds the front-end chain; none of it changes the chain above.
 
 ## Native-first check (ADR-0002)
 

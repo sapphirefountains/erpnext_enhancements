@@ -520,6 +520,22 @@ jobs:
       # that must not be filtered.
       - name: Critical NCR alerting (who is paged, and when they are chased again)
         run: python -m unittest erpnext_enhancements.tests.test_quality_alerting -v
+      # The advisory inspector-qualification check (WI-075 sub-phase H). It never blocks a save,
+      # which is exactly why it needs tests -- nothing downstream ever fails because it got the
+      # answer wrong, so a warning wrong in the QUIET direction is indistinguishable from one
+      # that is right. The load-bearing case: Position carries an integer tier, so the obvious
+      # implementation compares tiers, and a bare `tier >= tier` passes a tier-3 Designer as a
+      # qualified tier-2 Technician. It PASSES, so nobody investigates it.
+      - name: Inspector qualification (a tier means nothing across job families)
+        run: python -m unittest erpnext_enhancements.tests.test_inspector_qualification -v
+      # The field inspection wizard (WI-075 sub-phase H). Guards the freeze's last line of
+      # defence -- the server's row allowlist -- because a wizard that could write `min_value`
+      # could turn a failing measurement into a passing one from a phone, on site, with nothing
+      # in the diff. Plus the Visit Wizard's own scars: escaped Text Editor markup renders as
+      # visible tags while the panel still LOOKS populated, and a silent failed autosave loses a
+      # whole inspection on a bad signal, discovered after the inspector has left the site.
+      - name: Inspection wizard (frozen rows stay frozen; a failed save is never silent)
+        run: python -m unittest erpnext_enhancements.tests.test_inspection_wizard -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk
