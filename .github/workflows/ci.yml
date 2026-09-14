@@ -511,6 +511,15 @@ jobs:
       # item both answer it, with the second submitted silently overwriting the first verdict.
       - name: Carry-forward (a fix closes only when somebody looked at it again)
         run: python -m unittest erpnext_enhancements.tests.test_carry_forward -v
+      # Critical NCR alerting (WI-075 sub-phase G). Three failures that look like success from
+      # outside: an alert nobody received (a prod deploy FLUSHDBs the queue redis and destroys
+      # every pending job, so the acknowledgement row survives while the email never went);
+      # one person holding two of the three notified roles getting two emails and a
+      # half-finished acknowledgement, which on a nineteen-user site is the expected case and
+      # not an edge one; and a sweep that re-sends hourly until people filter the one message
+      # that must not be filtered.
+      - name: Critical NCR alerting (who is paged, and when they are chased again)
+        run: python -m unittest erpnext_enhancements.tests.test_quality_alerting -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk

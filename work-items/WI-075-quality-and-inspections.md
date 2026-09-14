@@ -1,6 +1,6 @@
 # WI-075 — Scope that can be inspected, and failures that get re-checked
 
-**Status:** in progress — A through F shipped, v1.446.0 → v1.452.0 (renumbered on rebase; `main` had taken 1.444/1.445)
+**Status:** in progress — A through G shipped, v1.446.0 → v1.453.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445)
 **Branch:** `claude/quality-inspections-planning-691339` (off `main` at v1.443.0)
 **Tracked:** PRJ-00580, TASK-2026-02013 with a child per deliverable (A–N)
 **Decides:** [ADR-0012](../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md)
@@ -177,6 +177,22 @@ acknowledgment timestamp. It is enqueued `after_commit` — a `doc_events` handl
 because `Document.hook`'s `compose` disables transaction control around handlers — **and** re-driven
 by a sweep, because a prod deploy `FLUSHDB`s the queue redis and destroys every pending job. An
 acknowledgment is a Desk action, never a tokenised link, so it is authenticated and attributable.
+
+Shipped in v1.453.0, with three things worth recording because they are not obvious from the design:
+
+- **The sweep has two passes, not one.** A row that was never notified and a Critical NCR that was
+  never dispatched at all are different failures — the first leaves evidence, the second leaves
+  none — so neither pass depends on the other having worked. The dispatch worker writes its rows
+  and stamps the document *before* sending, so a half-run worker leaves rows that openly say nobody
+  was reached.
+- **Nagging is capped at once per calendar day**, matching the hand-off escalation's by-date dedupe.
+  An hourly re-send trains people to filter the one message that must not be filtered.
+- **The no-recipient case is live today, and is deliberately not a retry loop.** The five roles were
+  created in v1.446.0 and nobody holds Production Manager or President yet, so on a project with no
+  `custom_project_owner` a Critical NCR resolves to zero recipients. It stamps anyway and writes a
+  comment on the record saying it reached nobody. An hourly retry that can never succeed would bury
+  a real problem under its own noise; who holds the roles is a thing for a person to fix, and the
+  comment is where they will see it.
 
 ## Native-first check (ADR-0002)
 
