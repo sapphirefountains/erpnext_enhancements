@@ -119,6 +119,20 @@
     return n < lo ? lo : n > hi ? hi : n;
   }
 
+  // Seconds as a clock: 42 -> "0:42", 3672 -> "1:01:12". Hand-rolled rather than
+  // Intl or a Date round-trip, because a Date built from seconds is a Date in a
+  // timezone, and a 70-minute video would read as "01:10" or "02:10" depending on
+  // where the learner is sitting.
+  function clockText(seconds) {
+    var total = Math.max(0, Math.floor(flt(seconds)));
+    var s = total % 60;
+    var m = Math.floor(total / 60) % 60;
+    var h = Math.floor(total / 3600);
+    var mm = h > 0 && m < 10 ? "0" + m : String(m);
+    var ss = s < 10 ? "0" + s : String(s);
+    return (h > 0 ? h + ":" : "") + mm + ":" + ss;
+  }
+
   function el(tag, className, text) {
     var node = document.createElement(tag);
     if (className) node.className = className;
@@ -404,6 +418,7 @@
    *   duration,                  // server-declared seconds; authoritative
    *   poster, title,
    *   checkpoints_enabled, min_coverage_percent,
+   *   chapters: [{ at, title }],   // optional, already ordered by `at`
    *   settings: { heartbeat_interval_seconds, max_playback_rate }
    * }
    *
@@ -523,6 +538,56 @@
     meter.appendChild(meterLabel);
     meter.setAttribute("role", "status");
     wrapper.appendChild(meter);
+
+    // ------------------------------------------------------------- chapters
+    //
+    // A clickable contents list under the video. Nothing here affects credit: a
+    // forward seek makes media time outrun wall time, so the two-clock sampler
+    // credits NOTHING for the span jumped over. That is not a rule added for
+    // chapters -- it is the same property that makes typing `currentTime = 3600`
+    // into the console worthless -- which is why a coverage-gated course cannot be
+    // passed by clicking through the contents.
+    //
+    // Backwards is different and deliberately unpunished: rewatching credits nothing
+    // NEW because the per-second bitmap is idempotent, so jumping back to re-hear a
+    // sentence costs the learner nothing.
+    //
+    // Only drawn for a real <video>. An External Embed is a cross-origin iframe with
+    // no `currentTime` and no seek, so the list would render and do nothing at all --
+    // which is worse than its absence, because it looks like a feature.
+    var chapters = spec.chapters;
+    if (chapters && chapters.length) {
+      var chapterList = el("ol", "tr-video-chapters");
+      chapterList.setAttribute("aria-label", "Chapters");
+      chapters.forEach(function (chapter) {
+        var at = Math.max(0, flt(chapter && chapter.at));
+        var item = el("li", "tr-video-chapter");
+        var button = el("button", "tr-video-chapter-go");
+        button.type = "button";
+        // Two nodes rather than one string: the time is tabular and the title is
+        // prose, and a screen reader reading "0:42Draining the basin" is the cost of
+        // concatenating them.
+        button.appendChild(el("span", "tr-video-chapter-at", clockText(at)));
+        button.appendChild(el("span", "tr-video-chapter-title", String((chapter && chapter.title) || "")));
+        button.addEventListener("click", function () {
+          try {
+            video.currentTime = at;
+          } catch (err) {
+            // A video that has not loaded its metadata yet refuses a seek. The next
+            // click, after `loadedmetadata`, works -- and a thrown error here would
+            // otherwise take the whole block render down.
+            return;
+          }
+          if (video.paused) {
+            var playing = video.play();
+            if (playing && typeof playing.catch === "function") playing.catch(function () {});
+          }
+        });
+        item.appendChild(button);
+        chapterList.appendChild(item);
+      });
+      wrapper.appendChild(chapterList);
+    }
 
     var noticeTimer = null;
     function showNotice(text, ms) {
@@ -1487,6 +1552,9 @@
         title: block.heading,
         checkpoints_enabled: block.checkpoints_enabled,
         min_coverage_percent: block.min_coverage,
+        // Absent on a block with none, which is most of them -- `_split_lesson`
+        // omits the key rather than sending an empty list.
+        chapters: block.chapters,
         // `{block_key: at_seconds}` for the next unanswered checkpoint in each
         // block, straight off `get_lesson`. Lets a checkpoint in the opening
         // seconds arm before the first heartbeat has had a chance to say so.

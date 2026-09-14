@@ -783,6 +783,16 @@ jobs:
       # from the enqueued job because assign_to.add can frappe.throw.
       - name: Training assignment notice (one path, and it cannot break the insert)
         run: python -m unittest erpnext_enhancements.tests.test_training_assignment_notice -v
+      # Chaptered video. The vertical mirrors in-video checkpoints -- standalone
+      # doctype keyed by (lesson, block_key), authored on the canvas, serialized at
+      # publish, read by video.js -- and stops mirroring at one place worth pinning:
+      # chapters are PUBLIC where checkpoints are not, because a chapter is a label
+      # and a number and has to reach the browser to be clickable. Also pins that no
+      # new endpoint was added (they ride the get_lesson payload) and that the editor
+      # is offered only on a real Video block, since an External Embed is a
+      # cross-origin iframe with no currentTime and no seek.
+      - name: Training video chapters (public payload, no new endpoint, real video only)
+        run: python -m unittest erpnext_enhancements.tests.test_training_video_chapters -v
       # Every dotted path in hooks.py must name something that exists. Frappe
       # resolves after_migrate at the very END of `bench migrate`, so a typo there
       # fails the deploy after every schema change has already been applied -- the

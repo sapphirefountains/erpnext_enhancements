@@ -580,6 +580,34 @@ def _split_lesson(lesson):
         _augment_interactive_block(payload, block)
         public["blocks"].append(payload)
 
+    # Chapters: a label and a timestamp per video block, straight into `public`.
+    #
+    # Unlike a checkpoint, there is nothing here to protect -- a chapter has to reach
+    # the browser to be clickable, and it carries no answer. Hence no `key` half and
+    # no permlevel; the split below exists for checkpoints precisely because theirs
+    # does carry one.
+    #
+    # One query for the lesson, indexed back onto blocks by `block_key`, rather than
+    # a query per block. Ordered by `at_seconds` here so the player never has to sort
+    # and cannot disagree with the author about the order.
+    chapters_by_block = {}
+    for row in frappe.get_all(
+        "Training Video Chapter",
+        filters={"lesson": lesson.name},
+        fields=["block_key", "at_seconds", "title"],
+        order_by="at_seconds asc",
+    ):
+        chapters_by_block.setdefault(row.block_key, []).append(
+            {"at": cint(row.at_seconds), "title": row.title or ""}
+        )
+    for payload in public["blocks"]:
+        rows = chapters_by_block.get(payload["block_key"])
+        # Absent rather than empty: `blocks.js` and `video.js` both treat a missing
+        # key as "this video has no chapters", and an empty list in every payload
+        # would put the word `chapters` on every block that will never have any.
+        if rows:
+            payload["chapters"] = rows
+
     for cp in frappe.get_all(
         "Training Checkpoint",
         filters={"lesson": lesson.name},
@@ -1410,15 +1438,58 @@ def _builder_lessons(course_version):
     )
     questions = _builder_questions(question_names)
     checkpoints = _builder_checkpoints(names)
+    chapters = _builder_video_chapters(names)
 
-    return [_builder_lesson(doc, questions, checkpoints.get(doc.name, [])) for doc in docs]
+    return [
+        _builder_lesson(doc, questions, checkpoints.get(doc.name, []), chapters.get(doc.name, []))
+        for doc in docs
+    ]
 
 
-def _builder_lesson(lesson, questions, checkpoints):
+def _builder_video_chapters(lesson_names):
+    """``{lesson: [chapter, ...]}`` for the canvas's chapter editor.
+
+    One query for the whole draft rather than one per lesson, and ordered here so the
+    canvas never has to agree with the server about what order a contents list is in.
+
+    Called `video_chapters` on the way out, never `chapters`: the canvas already uses
+    that word for `Training Chapter`, which groups LESSONS. Two different ideas share
+    one English word, and the payload is where that gets decided.
+    """
+    out = {}
+    if not lesson_names:
+        return out
+    for row in frappe.get_all(
+        "Training Video Chapter",
+        filters={"lesson": ["in", lesson_names]},
+        fields=["name", "lesson", "block_key", "at_seconds", "title", "modified"],
+        order_by="at_seconds asc",
+    ):
+        out.setdefault(row.lesson, []).append(
+            {
+                "name": row.name,
+                "lesson": row.lesson,
+                "block_key": row.block_key,
+                "at_seconds": cint(row.at_seconds),
+                "title": row.title or "",
+                # The optimistic-lock token, same as a checkpoint's: sent back on
+                # every save so a second author's edit is rejected rather than
+                # silently overwritten.
+                "modified": str(row.modified or ""),
+            }
+        )
+    return out
+
+
+def _builder_lesson(lesson, questions, checkpoints, video_chapters=None):
     return {
         "name": lesson.name,
         "lesson_key": lesson.lesson_key,
+        # The lesson's GROUPING label (Training Chapter). `video_chapters` below is a
+        # different idea entirely -- timestamps inside one video -- and the two are
+        # kept apart by name precisely because English gives them the same one.
         "chapter_key": lesson.chapter_key or "",
+        "video_chapters": video_chapters or [],
         "lesson_title": lesson.lesson_title,
         "summary": lesson.summary or "",
         "idx_in_chapter": cint(lesson.idx_in_chapter),

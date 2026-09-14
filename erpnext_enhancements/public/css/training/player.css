@@ -253,6 +253,65 @@
 	min-height: 44px;
 }
 
+/* ------------------------------------------------------------- video chapters */
+
+/* A clickable contents list under a lesson video. Only drawn for a real <video>:
+   an External Embed is a cross-origin iframe with no currentTime and no seek, so
+   the list would render and do nothing, which is worse than its absence.
+
+   Nothing here affects watch credit. A forward seek makes media time outrun wall
+   time and the two-clock sampler credits nothing for the span jumped over, so a
+   coverage gate cannot be passed by clicking through the chapters -- and jumping
+   BACK costs nothing either, because the per-second bitmap is idempotent. */
+.tr-video-chapters {
+	list-style: none;
+	margin: 8px 0 0;
+	padding: 0;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	overflow: hidden;
+}
+
+.tr-video-chapter + .tr-video-chapter {
+	border-top: 1px solid var(--tr-border);
+}
+
+.tr-video-chapter-go {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	width: 100%;
+	/* The touch floor, because on a phone this is a target beside a playing video
+	   and a mis-tap costs the learner their place. */
+	min-height: 44px;
+	padding: 10px 12px;
+	border: 0;
+	background: none;
+	color: var(--tr-text);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.tr-video-chapter-go:hover,
+.tr-video-chapter-go:focus-visible {
+	background: var(--tr-surface-alt);
+}
+
+/* Tabular so the times form a column rather than a ragged edge. */
+.tr-video-chapter-at {
+	flex: 0 0 auto;
+	min-width: 3.5em;
+	color: var(--tr-muted);
+	font-variant-numeric: tabular-nums;
+	font-size: 0.875rem;
+}
+
+.tr-video-chapter-title {
+	flex: 1 1 auto;
+}
+
 /* -------------------------------------------------- reset against the host */
 
 /*

@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.433.0] - 2026-09-13
+
+Training Phase 6, D10. **Chaptered video** — a clickable contents list inside a lesson
+video.
+
+### Added
+
+- **`Training Video Chapter`** — a label and a timestamp, keyed by `(lesson, block_key)`.
+  It mirrors in-video **checkpoints** deliberately: a standalone doctype rather than a child
+  table, because `Training Content Block` is itself a child of `Training Lesson` and Frappe
+  has no grandchild tables; and joined on a stable `block_key` rather than an `idx`, so
+  reordering a lesson's blocks cannot move a chapter onto a different video.
+
+  The controller refuses two chapters at the same second in the same video. The list is
+  ordered by `at_seconds`, so a duplicate renders as two adjacent entries in an arbitrary
+  order that changes between reads — the author sees one order, the learner another, and
+  neither is wrong.
+
+- **Authoring on the canvas**, under the Video block, as a **list** rather than a second
+  timeline. Chapters and checkpoints look alike and are authored for opposite reasons: a
+  checkpoint *interrupts* and has to be placed against what is on screen at that second,
+  which is what the timeline is for; a chapter is a table of contents, written in order,
+  and reads better as a list than as pins an author has to hover to identify.
+
+  It saves through `frappe.client` against the doctype, the way checkpoints do — not
+  through the block table, because `save_draft_version` replaces that child table by
+  position and refuses anything outside `BLOCK_ALLOWED_FIELDS`, so a chapter sent that way
+  would be dropped silently and come back in `rejected`. And it repaints **only its own
+  list**: a full re-render tears down the rich-text controls, so a save landing a second
+  after the author started typing in a block would eat it — the same reason
+  `after_checkpoint_write` repaints pins rather than the sheet.
+
+- **The learner's contents list** in `video.js`, rendered under the coverage meter.
+  Clicking one sets `video.currentTime`, and resumes playback if the video was paused. A
+  seek the browser refuses — a video that has not loaded its metadata yet — is caught,
+  because an error thrown there would take the whole block render down.
+
+### The two things that make this honest, neither of which needed new code
+
+- **Seeking to a chapter earns no watch coverage.** `video.js` credits a media span only
+  when the media advance is consistent with elapsed wall time × rate, so a forward seek
+  credits nothing — the same property that makes `currentTime = 3600` typed into the
+  console worthless. A coverage-gated course therefore cannot be passed by clicking through
+  the contents, and **nobody had to remember to make that true**. Jumping *back* to re-hear
+  a sentence costs nothing either, because the per-second bitmap is idempotent.
+
+- **Chapters are public where checkpoints are not**, and that is the one place the mirror
+  stops. A checkpoint's options and per-option explanations live at `permlevel: 1` and only
+  a *count* ever reaches the browser, because shipping them hands over the answer. A
+  chapter is a label and a number: it has to reach the browser to be clickable, and there
+  is nothing in it to protect. So it goes straight into `public` with no `key` half —
+  an empty one would be ceremony that later invites somebody to put something real in it.
+
+### Deliberately not done
+
+- **No new endpoint.** Chapters ride the payload `get_lesson` already sends. A new
+  whitelisted read would be a new surface to permission, keep POST-only and rate-limit, for
+  data that was already in flight.
+
+- **No chapter editor on an External Embed block.** An embed is a cross-origin iframe with
+  no `currentTime` and no seek — the same reason checkpoints and coverage gating cannot
+  work there — so a chapter on one could never do anything. The honest way to say so is by
+  not offering it, which falls out of the editor living inside `video_editor()` rather than
+  being a check somebody has to remember.
+
+- The payload key is **`video_chapters`**, never `chapters`. `Training Chapter` groups
+  *lessons* and the canvas already holds `this.chapters` for it; one English word, two
+  unrelated ideas, and the payload is where that gets decided.
+
 ## [1.432.2] - 2026-09-13
 
 Training Phase 6, D12 — the last phase, and deliberately so. **The address bar now
