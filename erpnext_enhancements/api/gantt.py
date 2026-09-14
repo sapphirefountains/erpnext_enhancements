@@ -1067,6 +1067,18 @@ def _filter_tasks_to_window(tasks, window):
 	is the only hierarchy a spreadsheet has, and a task indented under nothing
 	says less than a parent row whose dates happen to sit outside the range.
 
+	An UNDATED row is never tested for overlap, and the reason is a trap rather
+	than a preference. Composite mode's synthetic group rows (``G::``) carry a
+	label and children and no dates at all — and ``frappe.utils.get_datetime``
+	returns **now** for ``None`` rather than ``None``, so testing one would have
+	it silently claim to overlap whichever window happens to contain today, and
+	no window at all otherwise. Both answers are accidents of when the export
+	ran. Such a row reaches the file the only way it legitimately can: as an
+	ancestor of a row that really does overlap. (``get_datetime`` also returns
+	``None`` for an unparseable string, which would then ``TypeError`` on the
+	comparison below rather than raise inside the ``try`` — hence the explicit
+	check, even though ``_shape_row`` only ever emits ``strftime`` output.)
+
 	Note what this does NOT do: it filters the rows the chart query already
 	returned, so the ``limit`` cap (``MAX_ROWS``) still applies to the whole
 	schedule and not to the window. A range export of a project with more tasks
@@ -1078,10 +1090,14 @@ def _filter_tasks_to_window(tasks, window):
 	by_id = {task.get("id"): task for task in tasks}
 	keep = set()
 	for task in tasks:
+		if not task.get("start_date") or not task.get("end_date"):
+			continue
 		try:
 			task_start = get_datetime(task.get("start_date"))
 			task_end = get_datetime(task.get("end_date"))
 		except Exception:
+			continue
+		if task_start is None or task_end is None:
 			continue
 		if not (task_start < end and task_end > start):
 			continue

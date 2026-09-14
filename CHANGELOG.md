@@ -72,9 +72,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   halves of one feature disagreeing is the bug nobody would look for.
 
   The capability lives on the shared widget, so any embed gets it: `range: {from,
-  to}` on `export_image`/`print`/`export_data`, `widget.export_range_dialog()` for
-  the picker, `toolbar.export.date_range: false` to hide the entry. The Projects
-  Dashboard's portfolio Gantt owns its own toolbar markup and is unchanged.
+  to}` on `export_image`/`print`/`export_data`, `widget.export_range_dialog(meta)`
+  for the picker, `toolbar.export.date_range: false` to hide the entry.
+
+- **The same entry on the Projects Dashboard's portfolio Gantt.** That block owns
+  its own toolbar markup — switching on the widget's built-in toolbar would render
+  a second control row — so it drives `export_range_dialog(meta)` directly, passing
+  the `meta` its other exports already use (without it the file would be named
+  after the source doctype instead of `Portfolio-Gantt`).
+
+  It also **seeds the dialog from the board's own date-window filter**. The two
+  stay different things: the toolbar's "Next 90 days" decides which *projects*
+  load, the export range decides what the exported page covers — its calendar and
+  the child Tasks inside it, which that filter never touches. But someone who has
+  narrowed the board and then asks to export a range wants that window, and saying
+  it twice is the friction that gets a feature called fiddly. The seed runs to
+  `today + N - 1` so a 30-day window is thirty days and lands exactly on the
+  dialog's own "Next 30 days" preset rather than reading "Custom"; the board's own
+  comparison is a day wider, and what people read is the label on the screen.
+
+  Wiring the second surface is what turned up a trap in the first.
+  **`frappe.utils.get_datetime(None)` returns NOW, not `None`** — and composite
+  mode's synthetic group rows (`G::`, the Master Project headers) carry a label
+  and children and no dates at all. Date-testing one therefore had it claim to
+  overlap whichever window happened to contain today, and no other: a group header
+  appearing or vanishing from an export according to when the export ran. Undated
+  rows are now never tested; they reach the file the only way they legitimately
+  can, as an ancestor of a row that really does overlap. The sibling surprise is
+  worse and was one comparison away: **an unparseable string returns `None`**, and
+  `None < datetime` is a `TypeError` — outside the `try`, so it would have been a
+  500 rather than a skipped row. Both are pinned by tests, and the suite's
+  `get_datetime` stub was made faithful to both behaviours, because a stub that
+  raised where frappe returns let the existing garbage-date test pass on the
+  exception handler and never exercise the check that defends production.
 
 ## [1.440.0] - 2026-09-14
 

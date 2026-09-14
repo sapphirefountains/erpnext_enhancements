@@ -91,7 +91,9 @@
  *   w.export_data("csv"|"xlsx");            //   is re-rendered as vector SVG
  *                                           //   from the rows, NOT captured
  *                                           //   from the (virtualised) DOM
- *   w.export_range_dialog();                // pick a window + a format
+ *   w.export_range_dialog(meta);            // pick a window + a format; meta
+ *                                           //   overrides title/filename and
+ *                                           //   meta.range seeds the fields
  *   w.export_image("png", { range: { from: "2026-04-01", to: "2026-06-30" } });
  *   // other config keys (children, group_by, ...) may be mutated on
  *   // w.config followed by w.refresh()
@@ -831,7 +833,13 @@ frappe.provide("erpnext_enhancements.gantt");
 		 *
 		 * The dialog opens on the chart's OWN span, so every preset below is a
 		 * narrowing of something real and "Whole schedule" is a no-op rather
-		 * than a guess.
+		 * than a guess — unless `meta.range` seeds it, which is how a host with
+		 * its own on-screen date filter hands its window over as the starting
+		 * point. `meta` is the same override `export_data` takes (title,
+		 * subtitle, filename), for hosts that drive the widget from their own
+		 * toolbar and never configured `toolbar.export`: without it the
+		 * Projects Dashboard's portfolio export would be named after the source
+		 * doctype instead of "Portfolio-Gantt".
 		 *
 		 * The preset and the two date fields write to each other, and the way
 		 * they avoid fighting is that `sync_preset` DERIVES the preset from the
@@ -844,7 +852,7 @@ frappe.provide("erpnext_enhancements.gantt");
 		 * set and cleared synchronously here would already be down by then, and
 		 * the dialog would open reading "Custom".
 		 */
-		export_range_dialog() {
+		export_range_dialog(meta) {
 			const NS = erpnext_enhancements.gantt_export;
 			if (!NS || !NS.chart_range) {
 				frappe.show_alert({ message: __("Export is unavailable."), indicator: "red" });
@@ -852,6 +860,11 @@ frappe.provide("erpnext_enhancements.gantt");
 			}
 			const span = NS.chart_range(this);
 			const presets = ee_range_presets(span);
+			// A seed that is not one of the presets simply opens on Custom —
+			// sync_preset derives the label from the dates, so an unmatched
+			// pair needs no special case.
+			const seed = meta && meta.range && meta.range.from && meta.range.to ? meta.range : span;
+			const seed_preset = presets.find((p) => p.from === seed.from && p.to === seed.to);
 			const cfg = this._export_config();
 			const allowed = Array.isArray(cfg.formats) ? cfg.formats : null;
 			const formats = [
@@ -891,7 +904,10 @@ frappe.provide("erpnext_enhancements.gantt");
 						fieldname: "preset",
 						label: __("Range"),
 						options: presets.map((p) => ({ value: p.value, label: p.label })),
-						default: "full",
+						// Not "full" unconditionally: a seeded pair that matches
+						// no preset is Custom, and with no seed this resolves to
+						// "full" anyway, since that preset IS the chart's span.
+						default: seed_preset ? seed_preset.value : "custom",
 						onchange: apply_preset,
 					},
 					{ fieldtype: "Column Break" },
@@ -908,7 +924,7 @@ frappe.provide("erpnext_enhancements.gantt");
 						fieldname: "from_date",
 						label: __("From"),
 						reqd: 1,
-						default: span.from,
+						default: seed.from,
 						onchange: sync_preset,
 					},
 					{ fieldtype: "Column Break" },
@@ -917,7 +933,7 @@ frappe.provide("erpnext_enhancements.gantt");
 						fieldname: "to_date",
 						label: __("To"),
 						reqd: 1,
-						default: span.to,
+						default: seed.to,
 						onchange: sync_preset,
 					},
 					{
@@ -942,12 +958,15 @@ frappe.provide("erpnext_enhancements.gantt");
 					}
 					dialog.hide();
 					const format = values.format;
+					// `range` last: it is the choice just made, and it must win
+					// over whatever seeded the dialog.
+					const out = { ...(meta || {}), range: range };
 					const run =
 						format === "print"
-							? () => this.print({ range: range })
+							? () => this.print(out)
 							: format === "png" || format === "svg"
-								? () => this.export_image(format, { range: range })
-								: () => this.export_data(format, { range: range });
+								? () => this.export_image(format, out)
+								: () => this.export_data(format, out);
 					Promise.resolve()
 						.then(run)
 						.catch((e) => {

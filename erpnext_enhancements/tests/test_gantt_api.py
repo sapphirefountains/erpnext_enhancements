@@ -20,6 +20,11 @@ from datetime import datetime
 
 import pytest
 
+# Stand-in for "now" in the get_datetime stub below. Fixed rather than a real
+# clock: the trap it models is that frappe returns NOW for a None date, and a
+# test of that must not itself depend on when it runs.
+NOW = datetime(2026, 4, 15, 9, 30)
+
 
 class Row(dict):
 	"""frappe._dict stand-in: dict with attribute access."""
@@ -211,10 +216,21 @@ def install_frappe_stub():
 
 	frappe_utils = sys.modules.get("frappe.utils") or types.ModuleType("frappe.utils")
 
-	def get_datetime(value):
+	def get_datetime(value=None):
+		# Faithful to frappe.utils.get_datetime on both of its surprises, because
+		# both are load-bearing here: None returns NOW (not None), and an
+		# unparseable string returns None (it does not raise). A stub that raised
+		# instead would let the undated-row and unparseable-row branches of
+		# _filter_tasks_to_window pass on the exception handler and never
+		# exercise the checks that actually defend production.
+		if value is None:
+			return NOW
 		if isinstance(value, datetime):
 			return value
-		return datetime.fromisoformat(str(value))
+		try:
+			return datetime.fromisoformat(str(value))
+		except ValueError:
+			return None
 
 	def _flt(value=0, precision=None):
 		try:
@@ -1862,3 +1878,72 @@ def test_export_range_leaves_the_filename_to_the_caller(env):
 		base_config(), "csv", "PRJ-1-schedule-20260401-20260430", "2026-04-01", "2026-04-30"
 	)
 	assert payload["filename"] == "PRJ-1-schedule-20260401-20260430-2026-01-15.csv"
+
+
+def test_export_range_never_date_tests_an_undated_row(env):
+	"""Composite mode's synthetic group rows carry a label and children and no
+	dates. They must not be tested for overlap, because
+	``frappe.utils.get_datetime(None)`` returns **now** rather than None — so an
+	undated row tested naively claims to overlap whichever window contains today
+	and no other, which is an accident of when the export ran. It reaches the
+	file as an ancestor instead."""
+	_frappe, gantt = env
+	window = gantt._export_window("2026-04-01", "2026-04-30")
+	group = {"id": "G::MP-A", "text": "MP-A", "parent": 0}  # no start_date/end_date
+	child = {
+		"id": "P::P1",
+		"text": "Fountain A",
+		"start_date": "2026-04-05 00:00",
+		"end_date": "2026-04-06 00:00",
+		"parent": "G::MP-A",
+	}
+	kept = [t["id"] for t in gantt._filter_tasks_to_window([group, child], window)]
+	assert kept == ["G::MP-A", "P::P1"]
+
+	# ...and with no surviving child it does not appear at all, rather than
+	# riding in on a date it never had.
+	far = dict(child, start_date="2026-08-05 00:00", end_date="2026-08-06 00:00")
+	assert gantt._filter_tasks_to_window([group, far], window) == []
+
+
+def test_export_range_skips_a_row_whose_dates_cannot_be_parsed(env):
+	"""get_datetime returns None for an unparseable string, which would TypeError
+	on the comparison rather than raise inside the try."""
+	_frappe, gantt = env
+	window = gantt._export_window("2026-04-01", "2026-04-30")
+	bad = {"id": "X", "text": "X", "start_date": "garbage", "end_date": "garbage", "parent": 0}
+	good = {
+		"id": "Y",
+		"text": "Y",
+		"start_date": "2026-04-05 00:00",
+		"end_date": "2026-04-06 00:00",
+		"parent": 0,
+	}
+	assert [t["id"] for t in gantt._filter_tasks_to_window([bad, good], window)] == ["Y"]
+
+
+def test_export_range_on_a_composite_config_keeps_the_group_and_project_above_a_task(env):
+	"""The portfolio Gantt (Master Project -> Project -> Task) is the composite
+	case, and it is the one where the ancestor walk has to cross THREE id
+	namespaces — G:: group, P:: root, C:: child. Windowed to the days only "Pour"
+	covers, the file must still carry the group row and its project above it,
+	and nothing else."""
+	frappe, gantt = env
+	calls = []
+	frappe.get_list = _composite_get_list(calls)
+	payload = gantt.export_gantt_data(composite_config(), "csv", "Portfolio", "2026-01-07", "2026-01-08")
+	body = base64.b64decode(payload["filecontent"]).decode("utf-8-sig")
+	lines = [line.split(",") for line in body.splitlines()[1:]]
+	assert [line[1].strip() for line in lines] == ["MP-A", "Fountain A", "Dig", "Pour"]
+	# ...and the Level column still describes the nesting, so the indent means
+	# something after the filter.
+	assert [line[0] for line in lines] == ["0", "1", "2", "3"]
+
+
+def test_export_range_on_a_composite_config_drops_a_group_with_no_surviving_child(env):
+	"""A window nothing under MP-A touches must not leave the group row behind as
+	a header over nothing -- which is exactly what would happen if the undated
+	group row were date-tested and get_datetime(None) handed it "now"."""
+	frappe, gantt = env
+	frappe.get_list = _composite_get_list([])
+	assert gantt.export_gantt_data(composite_config(), "csv", "Portfolio", "2027-06-01", "2027-06-30") is None

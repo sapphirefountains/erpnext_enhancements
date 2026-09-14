@@ -432,6 +432,17 @@
                 subtitle: gantt_export_subtitle(),
                 filename: 'Portfolio-Gantt',
             };
+            // "Date range…" opens the widget's picker instead of exporting; the
+            // format is chosen inside it. Nothing to disable — the dialog owns
+            // the wait, and freezing the toolbar behind a modal would only
+            // leave it frozen if somebody dismissed the dialog.
+            if (kind === 'range') {
+                portfolio_gantt_widget.export_range_dialog({
+                    ...meta,
+                    range: gantt_export_seed_range(),
+                });
+                return;
+            }
             $root.find('#ganttExportDropdown').prop('disabled', true);
             try {
                 const NS = erpnext_enhancements.gantt_export;
@@ -712,6 +723,30 @@
         if (gantt_date_window) parts.push(__("next {0} days", [gantt_date_window]));
         if (gantt_at_risk) parts.push(__("at risk only"));
         return parts.length ? parts.join(" · ") : __("All active projects");
+    }
+
+    // What the export range dialog opens on, when the board's own date window
+    // is set.
+    //
+    // The two are different things and stay different: the toolbar's "Next 90
+    // days" decides which PROJECTS load (an overlap filter in the query, see
+    // gantt_filters), while the export range decides what the exported page
+    // covers — its calendar, and the child Tasks inside it, which that filter
+    // never touches. But somebody who has narrowed the board to the next 90
+    // days and then asks to export a range wants that same window, and having
+    // to say so twice is the friction that gets a feature called fiddly.
+    //
+    // `to` is today + N - 1, so a 30-day window is thirty days and matches the
+    // dialog's own "Next 30 days" preset exactly — the picker then opens on
+    // that preset rather than on "Custom". The board filter's own comparison is
+    // `<= today + N`, one day wider; what people read is the label on the
+    // screen, and changing what the board shows is not this change's business.
+    // 180 and 365 have no matching preset and open as Custom, which is honest.
+    function gantt_export_seed_range() {
+        const days = parseInt(gantt_date_window, 10);
+        if (!days) return null;
+        const today = frappe.datetime.get_today();
+        return { from: today, to: frappe.datetime.add_days(today, days - 1) };
     }
 
     function gantt_widget_config() {
