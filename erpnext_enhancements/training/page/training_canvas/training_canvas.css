@@ -663,11 +663,20 @@
 	font-size: 1rem;
 	line-height: 1;
 	cursor: pointer;
-	opacity: 0;
+	/* VISIBLE, if faint. It was `opacity: 0` until hover, which made the primary
+	   authoring action on the whole page invisible -- and the empty-lesson message
+	   says "Add a block below the line above", pointing at something nobody could
+	   see. A non-developer opening this for the first time had no way to discover
+	   that a lesson is built by pressing something between the blocks. 0.35 keeps
+	   it quiet between blocks an author is reading, and hover still brings it up. */
+	opacity: 0.35;
 	transition: opacity 0.14s ease, transform 0.14s ease;
 }
 
-.tc-addline:hover .tc-addbtn {
+.tc-addline:hover .tc-addbtn,
+/* And fully visible when it has keyboard focus, or tabbing through the sheet
+   moves an invisible highlight. */
+.tc-addbtn:focus-visible {
 	opacity: 1;
 }
 
@@ -1137,4 +1146,48 @@
 .tc-quizopt .form-control {
 	flex: 1;
 	min-width: 0;
+}
+
+/* ------------------------------------------------------------ narrow screens */
+
+/* There were ZERO media queries in this file. `.tc-app` is a fixed
+   `calc(100vh - 115px)` and `.tc-rail` a fixed 248px column, so on a tablet the
+   lesson list took a third of the width from the thing being written, and in
+   portrait there was barely a column left to write in.
+
+   What makes that an inconsistency rather than a preference: this page's own
+   `visibilitychange` handler exists because "a tablet locking its screen" was
+   anticipated — so the script assumed a tablet while the stylesheet assumed one
+   could not happen.
+
+   991.98px is frappe's own `media-breakpoint-down` value, and the `.98` matters
+   for the same reason it does on the learner rail: written as 991 it leaves a
+   fractional gap that browser zoom lands in routinely. */
+@media (max-width: 991.98px) {
+	.tc-app {
+		/* Let the page scroll instead of trapping everything in one viewport-high
+		   box. On a short screen the fixed height put the toolbar, the rail and the
+		   sheet into three competing scroll areas. */
+		height: auto;
+		min-height: calc(100vh - 115px);
+	}
+
+	.tc-main {
+		flex-direction: column;
+	}
+
+	.tc-rail {
+		flex: 0 0 auto;
+		width: auto;
+		/* Capped rather than free: the lesson list is navigation, and a course with
+		   forty lessons would otherwise push the sheet entirely off the screen. */
+		max-height: 34vh;
+		border-right: 0;
+		border-bottom: 1px solid var(--border-color, #e2e2e2);
+	}
+
+	/* The add button stops being a hover affordance when there is no hover. */
+	.tc-addbtn {
+		opacity: 1;
+	}
 }

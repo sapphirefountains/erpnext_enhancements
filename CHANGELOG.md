@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.438.0] - 2026-09-13
+
+Training Phase 6, D15 part four. **The canvas can be used by somebody without a
+mouse, on a tablet, and without leaving it to say what kind of course this is.**
+
+### Added
+
+- **Course settings on the canvas.** Title, **Required vs Optional weight**,
+  category, summary, estimated minutes, passing score, max attempts, minimum video
+  coverage, require-checkpoints-answered and self-enrolment — all Desk-form only
+  until now, so an author building a course had to leave the authoring surface to
+  say what kind of course it is.
+
+  `weight` is the field that joins the two halves of this work item: Required vs
+  Optional is exactly what the learner dashboard sorts on, and it was being set
+  somewhere the author never went.
+
+  `status` is deliberately **not** writable from the panel. Publishing and retiring
+  have their own endpoints and their own gates, and publish asks the Minor-Edit vs
+  Material-Change question explicitly because a Material Change marks existing
+  completions `Superseded` and raises retake assignments. A settings panel able to
+  flip `status` would be a way to do that by accident.
+
+### Fixed
+
+- **The rich-text toolbar did nothing from a keyboard, for two separate reasons,
+  and fixing either alone would have left it broken.** The action hung off
+  `mousedown`, which does not fire for a keyboard — so Bold, Italic, both headings,
+  both lists, Link and Clear were focusable, looked interactive and were inert. And
+  the editable's `blur` handler hid the toolbar, so tabbing *to* it removed the
+  buttons on the way. The `mousedown` + `preventDefault` stays, because it is what
+  stops the selection collapsing under a mouse; the action moves to `click`, the
+  hide is deferred and cancelled when focus lands in the toolbar, and the caret
+  position is remembered so a command has something to apply to.
+
+- **A lesson could not be selected without a mouse.** Rail rows were plain `<div>`s
+  with click handlers, no `tabindex` and no `role`. They get both — rather than
+  becoming `<button>`s, because the row *contains* a delete button and a button
+  inside a button is invalid HTML that browsers repair by moving the inner one out.
+
+- **The canvas had zero media queries across 1,072 lines**, with `.tc-app` fixed at
+  `calc(100vh - 115px)` and a 248px rail, while the page's own `visibilitychange`
+  handler exists because *"a tablet locking its screen"* was anticipated. The script
+  assumed a tablet; the stylesheet assumed one could not happen.
+
+- **The primary authoring action was invisible.** The `+` between blocks was
+  `opacity: 0` until hover — and the empty-lesson message says "Add a block below
+  the line above", pointing at something nobody could see. A non-developer opening
+  the canvas had no way to discover that a lesson is built by pressing something
+  between the blocks.
+
+- **Deleting a block asks first.** Deleting a *lesson* has always confirmed;
+  deleting a block did not, though it is just as unrecoverable — there is no undo
+  and the next autosave writes the shorter list.
+
+- **Publish is offered only to somebody who may publish.** `publish_version` calls
+  `_require_manager()`, so a Training Author could open the dialog, choose a change
+  type, write release notes, press Publish and get "Not permitted". `can_publish`
+  has ridden the bootstrap all along precisely so a client could decide this, and
+  nothing read it. The item starts hidden rather than absent, because the menu is
+  built before the first read returns.
+
 ## [1.437.0] - 2026-09-13
 
 Training Phase 6, D15 part three. **An author can upload a video.**

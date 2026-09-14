@@ -149,10 +149,20 @@ class TrainingCanvas {
 		this.build_chrome();
 		this.page.set_secondary_action(__("Reload"), () => this.reload());
 		this.page.add_menu_item(__("Preview as a learner"), () => this.open_preview());
+		this.page.add_menu_item(__("Course settings…"), () => this.open_course_settings());
 		this.page.add_menu_item(__("Chapters…"), () => this.open_chapters());
 		this.page.add_menu_item(__("New draft version"), () => this.new_draft());
 		this.page.add_menu_item(__("Submit for review"), () => this.submit_for_review());
-		this.page.add_menu_item(__("Publish…"), () => this.publish());
+		// Offered only to somebody who may actually do it. `publish_version` calls
+		// `_require_manager()`, so a Training Author could open the dialog, choose a
+		// change type, write release notes, press Publish -- and get "Not permitted".
+		// `can_publish` has been on the bootstrap all along, precisely so the client
+		// could decide this, and nothing read it.
+		// Added now and HIDDEN until the bootstrap says otherwise. The menu is built
+		// before the first read returns, so gating on a flag that does not exist yet
+		// would hide Publish from everybody, including the managers it is for.
+		this.$publish = this.page.add_menu_item(__("Publish…"), () => this.publish());
+		if (this.$publish) $(this.$publish).parent().attr("hidden", "hidden");
 
 		// The autosave debounce is 1200ms, so a tab closed a second after the last
 		// keystroke loses it. The browser prompt is the only thing between the author
@@ -298,9 +308,23 @@ class TrainingCanvas {
 		this.version = data.version || null;
 		this.readiness = data.readiness || null;
 		this.ai_enabled = !!data.ai_enabled;
+		// `publish_version` calls `_require_manager()`, so a Training Author could
+		// open the dialog, choose a change type, write release notes, press Publish
+		// and get "Not permitted". `can_publish` has ridden the bootstrap all along,
+		// precisely so a client could decide this, and nothing read it.
+		this.can_publish = !!data.can_publish;
+		if (this.$publish) {
+			const item = $(this.$publish).parent();
+			if (this.can_publish) item.removeAttr("hidden");
+			else item.attr("hidden", "hidden");
+		}
 		this.ai_drafts = { kind: null, lesson: null, block_key: null, items: [], message: "", busy: false };
 		this.chapters = data.chapters || [];
 		this.video_assets = data.video_assets || [];
+		// Sent by get_builder_bootstrap all along and never stored. The course
+		// settings panel offers these as a Select rather than a Link control, so it
+		// cannot offer a category this site does not have.
+		this.categories = data.categories || [];
 		this.lessons = (data.lessons || []).map((lesson) => {
 			lesson.blocks = lesson.blocks || [];
 			return lesson;
@@ -399,8 +423,12 @@ class TrainingCanvas {
 
 	lesson_row(lesson) {
 		const id = lesson.name || lesson.__temp;
+		// `role` and `tabindex` rather than a <button>: the row CONTAINS a delete
+		// button, and a button inside a button is invalid HTML that browsers repair
+		// by moving the inner one out. Without these it was a plain <div> with a
+		// click handler -- selecting a lesson was impossible without a mouse.
 		const $row = $(`
-			<div class="tc-rail-row ${id === this.lesson_name ? "is-current" : ""}" data-lesson="${frappe.utils.escape_html(id)}">
+			<div class="tc-rail-row ${id === this.lesson_name ? "is-current" : ""}" role="button" tabindex="0" data-lesson="${frappe.utils.escape_html(id)}">
 				<span class="tc-rail-title"></span>
 				<button class="tc-rail-del" title="${__("Delete lesson")}" aria-label="${__("Delete lesson")}">🗑</button>
 			</div>
@@ -408,6 +436,14 @@ class TrainingCanvas {
 		$row.find(".tc-rail-title").text(lesson.lesson_title || __("Untitled lesson"));
 		$row.on("click", (e) => {
 			if ($(e.target).closest(".tc-rail-del").length) return;
+			this.select_lesson(id);
+		});
+		$row.on("keydown", (e) => {
+			// Enter and Space are what `role="button"` promises. Space also scrolls the
+			// page by default, which is why it is prevented rather than merely handled.
+			if (e.key !== "Enter" && e.key !== " ") return;
+			if ($(e.target).closest(".tc-rail-del").length) return;
+			e.preventDefault();
 			this.select_lesson(id);
 		});
 		$row.find(".tc-rail-del").on("click", () => this.remove_lesson(lesson));
@@ -1292,6 +1328,129 @@ class TrainingCanvas {
 	}
 
 
+	// ------------------------------------------------------- course settings
+	//
+	// The canvas showed the course name as static text. Title, Required vs Optional
+	// weight, category, passing score, max attempts, minimum video coverage,
+	// recertification — all Desk-form only, so an author building a course had to
+	// leave the authoring surface to say what kind of course it is.
+	//
+	// `weight` is the field that joins the two halves of this work item: Required vs
+	// Optional is exactly what the learner dashboard sorts on, and it was being set
+	// somewhere the author never went.
+	//
+	// `status` is NOT here. Publishing and retiring have their own endpoints and
+	// their own gates, and publish asks the Minor-Edit vs Material-Change question
+	// explicitly because a Material Change marks existing completions Superseded and
+	// raises retakes. A settings panel that could flip it would be a way to do that
+	// by accident.
+
+	open_course_settings() {
+		if (!this.course) return;
+		const course = this.course;
+		const ed = this.editable();
+		const categories = (this.categories || []).map((row) => row.name);
+
+		const dialog = new frappe.ui.Dialog({
+			title: __("Course settings"),
+			fields: [
+				{ fieldname: "course_title", fieldtype: "Data", label: __("Title"), reqd: 1 },
+				{
+					fieldname: "weight",
+					fieldtype: "Select",
+					label: __("Weight"),
+					// The two the doctype declares. An off-options Select value makes the
+					// row UNSAVEABLE and no ignore_* flag bypasses _validate_selects, so
+					// this list is the doctype's or nothing.
+					options: ["Required", "Optional"].join("\n"),
+					description: __("Required courses are what the learner dashboard counts."),
+				},
+				{
+					fieldname: "category",
+					fieldtype: "Select",
+					label: __("Category"),
+					// Read off the bootstrap rather than a Link control, so the dialog
+					// cannot offer a category that this site does not have.
+					options: [""].concat(categories).join("\n"),
+				},
+				{ fieldname: "estimated_minutes", fieldtype: "Int", label: __("Estimated minutes") },
+				{ fieldtype: "Column Break" },
+				{ fieldname: "passing_score", fieldtype: "Int", label: __("Passing score (%)") },
+				{ fieldname: "max_attempts", fieldtype: "Int", label: __("Max attempts") },
+				{
+					fieldname: "min_video_coverage",
+					fieldtype: "Int",
+					label: __("Minimum video coverage (%)"),
+					description: __("Waived entirely for any video whose length was typed in rather than measured."),
+				},
+				{
+					fieldname: "require_checkpoints_answered",
+					fieldtype: "Check",
+					label: __("Require in-video checkpoints answered"),
+				},
+				{ fieldname: "allow_self_enrollment", fieldtype: "Check", label: __("Learners may enrol themselves") },
+				{ fieldtype: "Section Break" },
+				{ fieldname: "summary", fieldtype: "Small Text", label: __("Summary"), description: __("Shown on the course card.") },
+			],
+			primary_action_label: __("Save"),
+			primary_action: (values) => this.save_course_settings(dialog, values),
+		});
+
+		dialog.set_values({
+			course_title: course.course_title || "",
+			weight: course.weight || "Optional",
+			category: course.category || "",
+			estimated_minutes: this.num(course.estimated_minutes),
+			passing_score: this.num(course.passing_score),
+			max_attempts: this.num(course.max_attempts),
+			min_video_coverage: this.num(course.min_video_coverage),
+			require_checkpoints_answered: this.num(course.require_checkpoints_answered),
+			allow_self_enrollment: this.num(course.allow_self_enrollment),
+			summary: course.summary || "",
+		});
+		if (!ed) {
+			// A published course with no open draft is read-only everywhere else on
+			// this page; the settings panel should not be the one door that is not.
+			dialog.disable_primary_action();
+			dialog.fields.forEach((field) => {
+				const control = dialog.get_field(field.fieldname);
+				if (control && control.df) control.df.read_only = 1;
+			});
+			dialog.refresh();
+		}
+		dialog.show();
+	}
+
+	save_course_settings(dialog, values) {
+		dialog.disable_primary_action();
+		frappe
+			.call({
+				method: "erpnext_enhancements.api.training_author.update_course_settings",
+				args: { course: this.course.name, patch: JSON.stringify(values) },
+			})
+			.then((r) => {
+				const state = (r && r.message) || {};
+				if (state.course) {
+					this.course = state.course;
+					this.render();
+				}
+				// Reported rather than dropped, the same contract the draft save keeps:
+				// a field silently ignored is a field the author believes they set.
+				this.report_rejected(state.rejected);
+				dialog.hide();
+				frappe.show_alert({ message: __("Course settings saved."), indicator: "green" }, 4);
+			})
+			.catch((error) => {
+				dialog.enable_primary_action();
+				frappe.msgprint({
+					title: __("Not saved"),
+					indicator: "red",
+					message: (error && error.message) || __("Try again."),
+				});
+			});
+	}
+
+
 	// ---------------------------------------------------------- lifecycle
 	new_draft() {
 		if (!this.course) return;
@@ -1546,7 +1705,23 @@ class TrainingCanvas {
 				body.setAttribute("spellcheck", "false");
 				body.classList.add("tc-rich");
 				body.addEventListener("focus", () => this.show_rt_toolbar(body));
-				body.addEventListener("blur", () => this.hide_rt_toolbar());
+				// Remembered continuously, because the toolbar acts on a selection that
+				// will already be gone by the time a keyboard user reaches a button.
+				body.addEventListener("keyup", () => this.remember_rt_selection());
+				body.addEventListener("mouseup", () => this.remember_rt_selection());
+				body.addEventListener("blur", () => {
+					this.remember_rt_selection();
+					// DEFERRED, and cancelled when focus landed in the toolbar. Tabbing from
+					// the text to the toolbar fires blur first, so hiding immediately took
+					// the buttons away from the keyboard user who was on their way to them --
+					// which is the other half of why this toolbar was unusable without a
+					// mouse, and the half that would have survived fixing the click handler.
+					setTimeout(() => {
+						const bar = this.$rt && this.$rt.get(0);
+						if (bar && bar.contains(document.activeElement)) return;
+						this.hide_rt_toolbar();
+					}, 0);
+				});
 				body.addEventListener("input", () => {
 					block.content = body.innerHTML;
 					this.dirty_blocks(lesson);
@@ -1571,10 +1746,24 @@ class TrainingCanvas {
 	// ------------------------------------------------------ rich text toolbar
 	build_rt_toolbar($bar) {
 		this.$rt = $bar;
+		// TWO EVENTS, AND BOTH ARE LOAD-BEARING.
+		//
+		// `mousedown` + preventDefault is why this works with a mouse at all: without
+		// it, pressing a button moves focus out of the contenteditable and the
+		// selection collapses before the command can apply. That part was right.
+		//
+		// But the ACTION hung off mousedown too, and mousedown does not fire for a
+		// keyboard. So every button here was focusable, looked interactive and did
+		// nothing on Enter or Space -- Bold, Italic, both headings, both lists, Link
+		// and Clear, all inert for anybody not using a mouse. The action moves to
+		// `click`, which fires for both, and the remembered range covers the keyboard
+		// case, where focus has already left the text by the time the button is hit.
 		const cmd = (label, title, action) =>
-			$(`<button class="tc-rt-btn" title="${title}" aria-label="${title}">${label}</button>`)
-				.on("mousedown", (e) => {
+			$(`<button type="button" class="tc-rt-btn" title="${title}" aria-label="${title}">${label}</button>`)
+				.on("mousedown", (e) => e.preventDefault())
+				.on("click", (e) => {
 					e.preventDefault();
+					this.restore_rt_selection();
 					action();
 				})
 				.appendTo($bar);
@@ -1590,6 +1779,27 @@ class TrainingCanvas {
 			if (url) document.execCommand("createLink", false, url);
 		});
 		cmd("✕", __("Clear formatting"), () => document.execCommand("removeFormat"));
+	}
+
+	// Where the caret was when the editable last held it. Tabbing to the toolbar
+	// moves focus off the text, and a command applied with no selection either
+	// does nothing or applies to whatever the browser decides is current.
+	remember_rt_selection() {
+		const selection = window.getSelection && window.getSelection();
+		if (!selection || !selection.rangeCount || !this._rt_target) return;
+		const range = selection.getRangeAt(0);
+		if (this._rt_target.contains(range.commonAncestorContainer)) this._rt_range = range.cloneRange();
+	}
+
+	restore_rt_selection() {
+		const selection = window.getSelection && window.getSelection();
+		if (!selection || !this._rt_target) return;
+		const current = selection.rangeCount ? selection.getRangeAt(0) : null;
+		if (current && this._rt_target.contains(current.commonAncestorContainer)) return;
+		this._rt_target.focus();
+		if (!this._rt_range) return;
+		selection.removeAllRanges();
+		selection.addRange(this._rt_range);
 	}
 
 	show_rt_toolbar(body) {
@@ -2307,6 +2517,15 @@ class TrainingCanvas {
 	}
 
 	remove_block(lesson, block) {
+		if (!this.editable()) return;
+		// Deleting a LESSON has always confirmed; deleting a block did not, though it
+		// is just as unrecoverable -- there is no undo, and the next autosave writes
+		// the shorter block list. A paragraph somebody spent ten minutes on went on a
+		// single click with no way back.
+		frappe.confirm(__("Delete this block? There is no undo."), () => this.drop_block(lesson, block));
+	}
+
+	drop_block(lesson, block) {
 		if (!this.editable()) return;
 		lesson.blocks = lesson.blocks.filter((b) => b !== block);
 		this.dirty_blocks(lesson);

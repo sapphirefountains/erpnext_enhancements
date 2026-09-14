@@ -1255,5 +1255,164 @@ class TestTheQuizPoolIsAuthorableByHand(unittest.TestCase):
         self.assertEqual(missing, [], f"{missing} render unstyled")
 
 
+class TestTheCanvasCanBeDrivenFromAKeyboard(unittest.TestCase):
+    """Four failures, all verified in source, all of which locked somebody out of
+    authoring entirely rather than merely inconveniencing them."""
+
+    def css(self):
+        return (CANVAS_JS.parent / "training_canvas.css").read_text(encoding="utf-8")
+
+    def test_the_toolbar_acts_on_click_not_only_mousedown(self):
+        """`mousedown` + preventDefault is why the toolbar works with a mouse at all
+        — without it the contenteditable loses its selection before the command can
+        apply. But the ACTION hung off mousedown too, and mousedown does not fire
+        for a keyboard: every button was focusable, looked interactive and did
+        nothing on Enter or Space."""
+        code = _canvas()
+        self.assertIn('.on("mousedown", (e) => e.preventDefault())', code)
+        self.assertIn('.on("click", (e) => {', code)
+
+    def test_the_toolbar_survives_being_tabbed_to(self):
+        """The other half, and the half that would have outlived fixing the click
+        handler: the body's `blur` hid the toolbar, and tabbing from the text to the
+        toolbar fires blur first — so the buttons vanished on the way to them."""
+        code = _canvas()
+        self.assertIn("bar.contains(document.activeElement)", code)
+
+    def test_the_selection_is_remembered_across_that_move(self):
+        """A command applied with no selection either does nothing or applies to
+        whatever the browser decides is current."""
+        code = _canvas()
+        self.assertIn("remember_rt_selection()", code)
+        self.assertIn("restore_rt_selection()", code)
+        self.assertIn("cloneRange()", code)
+
+    def test_a_lesson_can_be_selected_without_a_mouse(self):
+        """Rail rows were plain `<div>`s with click handlers, no tabindex and no
+        role. `role`/`tabindex` rather than a `<button>` because the row CONTAINS a
+        delete button, and a button inside a button is invalid HTML that browsers
+        repair by moving the inner one out."""
+        code = _canvas()
+        self.assertIn('role="button" tabindex="0"', code)
+        self.assertIn('$row.on("keydown"', code)
+
+    def test_space_is_prevented_as_well_as_handled(self):
+        """Space scrolls the page by default, so handling it without preventing it
+        selects the lesson and jumps the view."""
+        code = _canvas()
+        start = code.index('$row.on("keydown"')
+        self.assertIn("e.preventDefault()", code[start : start + 400])
+
+
+class TestTheCanvasWorksOnATablet(unittest.TestCase):
+    def css(self):
+        return (CANVAS_JS.parent / "training_canvas.css").read_text(encoding="utf-8")
+
+    def test_there_is_a_media_query_at_all(self):
+        """There were ZERO across 1,072 lines, while the page's own
+        `visibilitychange` handler exists because "a tablet locking its screen" was
+        anticipated — the script assumed a tablet and the stylesheet assumed one
+        could not happen."""
+        self.assertIn("@media (max-width: 991.98px)", self.css())
+
+    def test_the_rail_stops_being_a_fixed_column(self):
+        css = self.css()
+        block = css[css.index("@media (max-width: 991.98px)") :]
+        self.assertIn("flex-direction: column", block)
+        self.assertIn("width: auto", block)
+
+    def test_the_breakpoint_matches_the_one_the_learner_rail_uses(self):
+        """frappe's own `media-breakpoint-down` value. Written as 991 it leaves a
+        fractional gap that browser zoom lands in routinely."""
+        self.assertNotIn("@media (max-width: 991px)", self.css())
+
+
+class TestTheFrictionsThatCompound(unittest.TestCase):
+    def css(self):
+        return (CANVAS_JS.parent / "training_canvas.css").read_text(encoding="utf-8")
+
+    def test_the_add_button_is_visible_without_hovering(self):
+        """It was `opacity: 0` until hover, so the primary authoring action on the
+        page was invisible — and the empty-lesson message says "Add a block below
+        the line above", pointing at something nobody could see."""
+        css = self.css()
+        rule = css[css.index(".tc-addbtn {") : css.index("}", css.index(".tc-addbtn {"))]
+        self.assertNotIn("opacity: 0;", rule)
+        self.assertIn("opacity: 0.35", rule)
+
+    def test_it_is_fully_visible_when_focused(self):
+        self.assertIn(".tc-addbtn:focus-visible", self.css())
+
+    def test_deleting_a_block_asks_first(self):
+        """Deleting a LESSON has always confirmed; deleting a block did not, though
+        it is just as unrecoverable — there is no undo and the next autosave writes
+        the shorter list."""
+        code = _canvas()
+        start = code.index("\tremove_block(lesson, block) {")
+        body = code[start : code.index("\tdrop_block(lesson, block) {", start)]
+        self.assertIn("frappe.confirm", body)
+
+    def test_publish_is_offered_only_to_somebody_who_may_publish(self):
+        """`publish_version` calls `_require_manager()`, so a Training Author could
+        open the dialog, choose a change type, write release notes, press Publish
+        and get "Not permitted". `can_publish` had ridden the bootstrap all along
+        and nothing read it."""
+        code = _canvas()
+        self.assertIn("this.can_publish = !!data.can_publish;", code)
+        self.assertIn("this.$publish", code)
+
+    def test_the_publish_item_starts_hidden_rather_than_absent(self):
+        """The menu is built before the first read returns, so gating on a flag that
+        does not exist yet would hide Publish from everybody — including the
+        managers it is for."""
+        code = _canvas()
+        self.assertIn('if (this.$publish) $(this.$publish).parent().attr("hidden", "hidden");', code)
+
+
+class TestTheCourseIsEditableOnTheCanvas(unittest.TestCase):
+    def test_the_panel_exists_and_is_reachable(self):
+        code = _canvas()
+        self.assertIn("\topen_course_settings() {", code)
+        self.assertIn('add_menu_item(__("Course settings…")', code)
+
+    def test_weight_is_offered_because_the_dashboard_sorts_on_it(self):
+        """Required vs Optional is exactly what the learner dashboard splits on, and
+        it was being set on a Desk form the author never opened."""
+        code = _canvas()
+        start = code.index("\topen_course_settings() {")
+        body = code[start : code.index("\tsave_course_settings(", start)]
+        self.assertIn('fieldname: "weight"', body)
+        self.assertIn('["Required", "Optional"]', body)
+
+    def test_status_is_not_writable_from_the_panel(self):
+        """Publishing and retiring have their own endpoints and their own gates, and
+        publish asks Minor-Edit vs Material-Change explicitly because a Material
+        Change marks existing completions Superseded and raises retakes."""
+        author = AUTHOR_PY.read_text(encoding="utf-8")
+        allowed = re.search(r"COURSE_ALLOWED_FIELDS = frozenset\((.*?)\)\n", author, re.S).group(1)
+        self.assertNotIn('"status"', allowed)
+        self.assertNotIn('"current_version"', allowed)
+        self.assertIn('"weight"', allowed)
+
+    def test_every_editable_field_round_trips_on_the_bootstrap(self):
+        """A field the panel can write but the bootstrap does not send opens as a
+        blank box beside a value that already exists, and the first save clears it."""
+        author = AUTHOR_PY.read_text(encoding="utf-8")
+        allowed = set(
+            re.findall(r'"([a-z_]+)"', re.search(r"COURSE_ALLOWED_FIELDS = frozenset\((.*?)\)\n", author, re.S).group(1))
+        )
+        payload = author[author.index('"course": {') : author.index('"version": version,')]
+        missing = sorted(f for f in allowed if f'"{f}"' not in payload)
+        self.assertEqual(missing, [], f"{missing} are writable but never sent back")
+
+    def test_refusals_are_reported_rather_than_dropped(self):
+        """The same contract `save_draft_version` keeps: a field silently ignored is
+        a field the author believes they set."""
+        author = AUTHOR_PY.read_text(encoding="utf-8")
+        start = author.index("def update_course_settings(")
+        body = author[start : start + 2200]
+        self.assertIn("rejected.append(_refusal(", body)
+
+
 if __name__ == "__main__":
     unittest.main()
