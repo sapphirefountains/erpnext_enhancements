@@ -237,9 +237,27 @@
 		function renderQuestion(question, i) {
 			var card = el("section", "tr-q");
 			card.setAttribute("data-qid", question.id);
+			var multi = question.type === MULTI;
 
 			var num = el("div", "tr-q-num");
 			num.appendChild(el("span", null, t("Question") + " " + (i + 1)));
+			// How many answers to give, said on the question itself rather than left
+			// to be inferred from the shape of the tick boxes. A Multiple Choice
+			// question is graded on the EXACT set — a subset scores zero — and until
+			// this chip existed the only thing distinguishing one on screen was a grey
+			// hint and a 4px difference in border-radius. A learner who read it as
+			// "pick the best answer", picked one of the three correct options and was
+			// marked wrong has no way to tell that from the right answer being absent,
+			// and that is exactly how it gets reported.
+			if (question.type !== SHORT) {
+				num.appendChild(
+					el(
+						"span",
+						"tr-q-kind" + (multi ? " is-multi" : ""),
+						multi ? t("Select all that apply") : t("Select one")
+					)
+				);
+			}
 			if (question.points > 1) {
 				num.appendChild(el("span", "tr-q-points", question.points + " " + t("pts")));
 			}
@@ -264,8 +282,17 @@
 				return card;
 			}
 
-			var multi = question.type === MULTI;
-			if (multi) card.appendChild(el("div", "tr-q-hint", t("Choose every answer that applies.")));
+			// Says what the grader actually does, which the old wording ("Choose every
+			// answer that applies.") left the learner to guess at.
+			if (multi) {
+				card.appendChild(
+					el(
+						"div",
+						"tr-q-hint",
+						t("More than one answer can be right. Tick every one that applies — a partly-right answer is marked wrong.")
+					)
+				);
+			}
 
 			var group = el("div", "tr-q-options");
 			group.setAttribute("role", multi ? "group" : "radiogroup");
@@ -315,6 +342,10 @@
 			});
 
 			card.appendChild(group);
+			// Live count, painted below the options. The chip says how many to pick;
+			// this says how many you have, which is the half a learner cannot see on a
+			// long question without scrolling back up through it.
+			if (multi) card.appendChild(el("div", "tr-q-hint tr-q-count"));
 			return card;
 		}
 
@@ -365,6 +396,14 @@
 					var on = picked.indexOf(nodes[k].getAttribute("data-key")) !== -1;
 					nodes[k].setAttribute("aria-checked", on ? "true" : "false");
 					nodes[k].classList.toggle("is-on", on);
+				}
+
+				var counter = card.querySelector(".tr-q-count");
+				if (counter) {
+					counter.textContent = picked.length
+						? picked.length + " " + t("selected")
+						: t("Nothing selected yet");
+					counter.classList.toggle("tr-q-count-on", picked.length > 0);
 				}
 
 				var dot = dotButtons[i];
@@ -786,6 +825,19 @@
 			card.appendChild(
 				el("div", "tr-rev-key", t("Accepted") + ": " + entry.accepted_text.join(", "))
 			);
+		} else if (result && result.answers_revealed === false && entry.correct === false) {
+			// Withheld, and SAID to be withheld. The server holds the key back while a
+			// retake is still available, which is the right call — but silence about it
+			// reads as the app simply never telling you, and that is how it was
+			// reported. Only ever drawn on a question that was got wrong, and only when
+			// the server said the word: absence of the key is still never read as a hint.
+			card.appendChild(
+				el(
+					"div",
+					"tr-rev-mine tr-muted",
+					t("The correct answer is shown once you pass, or once you have no attempts left.")
+				)
+			);
 		}
 
 		if (entry.explanation) card.appendChild(setHtml(el("div", "tr-rev-why"), entry.explanation));
@@ -822,8 +874,15 @@
 		".tr-q-num{display:flex;gap:.5rem;align-items:center;font-size:.8125rem;",
 		"text-transform:uppercase;letter-spacing:.04em;color:var(--tr-muted-c)}",
 		".tr-q-points{margin-left:auto;text-transform:none;letter-spacing:0}",
+		".tr-q-kind{margin-left:.5rem;padding:.0625rem .5rem;border-radius:999px;font-size:.6875rem;",
+		"font-weight:600;text-transform:none;letter-spacing:0;border:1px solid var(--tr-line);",
+		"color:var(--tr-muted-c)}",
+		".tr-q-kind.is-multi{border-color:var(--tr-accent);color:var(--tr-accent);",
+		"background:rgba(124,58,237,.1)}",
 		".tr-q-text{margin:.5rem 0 .75rem;font-size:1.0625rem}",
 		".tr-q-hint{font-size:.8125rem;color:var(--tr-muted-c);margin-bottom:.5rem}",
+		".tr-q-count{margin:.5rem 0 0;font-variant-numeric:tabular-nums}",
+		".tr-q-count-on{color:var(--tr-accent);font-weight:600}",
 		".tr-q-broken{color:var(--tr-bad)}",
 		".tr-q-options{display:flex;flex-direction:column;gap:.5rem}",
 		".tr-opt{display:flex;gap:.75rem;align-items:flex-start;min-height:44px;padding:.625rem .75rem;",
@@ -835,6 +894,12 @@
 		'.tr-opt[role="checkbox"] .tr-opt-mark{border-radius:.25rem}',
 		".tr-opt.is-on .tr-opt-mark{border-color:var(--tr-accent);background:var(--tr-accent);",
 		"box-shadow:inset 0 0 0 3px var(--tr-bg)}",
+		// No tick on a selected checkbox, deliberately, however much one would help
+		// tell it from a radio: player.css says it outright next to the same rule —
+		// "nothing green, nothing with a tick, because 'I chose this' must not be
+		// readable as 'and it was right'". The single-vs-multiple distinction is
+		// carried by the chip, the hint and the live count instead, all of which say
+		// it in words.
 		".tr-opt-text{flex:1 1 auto}",
 		".tr-input{width:100%;min-height:44px;font-size:16px;padding:.5rem .75rem;",
 		"border:1px solid var(--tr-line);border-radius:.5rem;background:var(--tr-bg);color:inherit}",

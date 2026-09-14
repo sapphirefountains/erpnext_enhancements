@@ -117,13 +117,30 @@ def draw_quiz(attempt, lesson_key, run):
 	"""
 	doc = _attempt(attempt)
 	lesson_name = _lesson_name(doc, lesson_key)
-	public = public_lesson(lesson_name)
-	quiz = public.get("quiz") or {}
+	quiz = public_lesson(lesson_name).get("quiz") or {}
 	if not cint(quiz.get("enabled")):
 		return []
+	return draw_from_quiz(quiz, _rng(doc, lesson_key, run))
+
+
+def draw_from_quiz(quiz, rng=None):
+	"""One run drawn out of a published quiz payload. **The only shuffler.**
+
+	Split out of :func:`draw_quiz` so the authoring preview can draw from a *draft*
+	lesson — which has no attempt to seed from and no published row to read — without
+	a second implementation of the draw. That matters more than the six lines it
+	saves: the classic builder rebuilt the learner payload in JavaScript, the two
+	drifted, and an author ended up previewing something no learner would ever see.
+	One draw, both callers.
+
+	``rng`` defaults to an unseeded ``Random`` for the preview's benefit. Every
+	learner-facing caller passes :func:`_rng`, because a learner who refreshes
+	mid-quiz and gets a different order has, from where they are sitting, watched the
+	application lose their answers.
+	"""
+	rng = rng or random.Random()
 
 	questions = list(quiz.get("questions") or [])
-	rng = _rng(doc, lesson_key, run)
 	if cint(quiz.get("shuffle_questions")):
 		rng.shuffle(questions)
 
@@ -153,7 +170,7 @@ def draw_quiz(attempt, lesson_key, run):
 	return drawn
 
 
-def grade_quiz(attempt, lesson_key, answers, run=None):
+def grade_quiz(attempt, lesson_key, answers, run=None, final=False):
 	"""Grade a submitted quiz run against the answer key alone.
 
 	``answers`` maps question name to the submitted option keys (or to typed text
@@ -161,6 +178,11 @@ def grade_quiz(attempt, lesson_key, answers, run=None):
 	calculated, a question that was not drawn — is discarded before grading, which
 	is why the drawn set is recomputed here rather than inferred from the keys of
 	``answers``.
+
+	``final`` says this was the learner's last permitted attempt. It is the caller's
+	to know — only the endpoint has the course's ``max_attempts`` and the run count —
+	but what is *done* with it stays here, because this module is the only one
+	allowed to read the key. See the reveal rule below.
 	"""
 	doc = _attempt(attempt)
 	lesson_name = _lesson_name(doc, lesson_key)
@@ -172,9 +194,11 @@ def grade_quiz(attempt, lesson_key, answers, run=None):
 	run = cint(run) or _current_run(doc, lesson_key)
 	drawn = draw_quiz(doc, lesson_key, run)
 
+	# Two passes, because the reveal rule below needs the verdict for the whole run
+	# and the verdict needs every question marked first.
 	earned = 0
 	possible = 0
-	per_question = []
+	graded = []
 	for question in drawn:
 		name = question.get("question")
 		entry = (key.get("quiz") or {}).get(name) or {}
@@ -186,21 +210,7 @@ def grade_quiz(attempt, lesson_key, answers, run=None):
 		if correct:
 			earned += points
 
-		per_question.append(
-			{
-				"question": name,
-				"text": question.get("text"),
-				"type": question.get("type"),
-				"points": points,
-				"awarded": points if correct else 0,
-				"answered": answered,
-				"correct": correct,
-				# Revealed only for a question the learner actually attempted, and
-				# never accompanied by the correct option keys — the run is
-				# retryable, so naming the right option hands over the retake.
-				"explanation": entry.get("explanation") or "" if answered else "",
-			}
-		)
+		graded.append((question, entry, points, answered, correct))
 
 	score = flt(100.0 * earned / possible, 2) if possible else 0.0
 	# The pass mark comes from the published snapshot, not the live lesson row: a
@@ -208,6 +218,52 @@ def grade_quiz(attempt, lesson_key, answers, run=None):
 	published_quiz = public_lesson(lesson_name).get("quiz") or {}
 	pass_score = cint(published_quiz.get("pass_score")) or _course_policy(lesson_name)["pass_score"]
 	passed = bool(possible) and score >= pass_score
+
+	# THE REVEAL RULE. The key is disclosed once knowing it can no longer buy the
+	# learner anything: they have passed, or `final` says there is no retake left.
+	# Until then it stays shut, because a run is retryable and naming the right
+	# option hands over the retake.
+	#
+	# It used to be shut unconditionally, and the review screen was the poorer for
+	# it: `quiz.js` has always had the "Correct answer:" line and never once had the
+	# data to draw it, so a learner who failed and then exhausted their attempts was
+	# told which options were wrong and never which one was right. On a compliance
+	# course that is the opposite of the point.
+	reveal = bool(passed or final)
+
+	per_question = []
+	for question, entry, points, answered, correct in graded:
+		is_text = (entry.get("type") or question.get("type")) == "Short Answer"
+		row = {
+			"question": question.get("question"),
+			"text": question.get("text"),
+			"type": question.get("type"),
+			"points": points,
+			"awarded": points if correct else 0,
+			"answered": answered,
+			"correct": correct,
+			# Still gated on `answered` while the key is shut: a per-question
+			# explanation says *why* an option is right, so a learner who submits a
+			# blank quiz would otherwise harvest the lot for free. Once `reveal` is
+			# true there is nothing left to harvest.
+			"explanation": entry.get("explanation") or "" if (answered or reveal) else "",
+		}
+		if reveal:
+			# ABSENT rather than present-and-empty while the key is shut, and that is
+			# not a style choice. `test_training_grading` treats the field *names*
+			# `accepted_text` and `is_correct` as leak markers in their own right —
+			# a payload carrying the name is a payload that forwarded a whole
+			# answer-key entry — so an empty `accepted_text: []` on a withheld run
+			# would weaken the one assertion in this app that guards the key. The
+			# boundary contract can still see both keys, because `grade_quiz` is a
+			# declared row builder and every dict literal in it is harvested.
+			row.update(
+				{
+					"correct_option_keys": [] if is_text else list(entry.get("correct") or []),
+					"accepted_text": list(entry.get("accepted_text") or []) if is_text else [],
+				}
+			)
+		per_question.append(row)
 
 	_record_quiz_run(doc, lesson_key, run, score)
 	_file_quiz_answers(doc, lesson_name, run, drawn, submitted, per_question)
@@ -220,6 +276,9 @@ def grade_quiz(attempt, lesson_key, answers, run=None):
 		"points_earned": earned,
 		"points_possible": possible,
 		"per_question": per_question,
+		# So the player can say "the answers appear once you pass or run out of
+		# attempts" rather than leaving a learner to conclude it never tells them.
+		"answers_revealed": reveal,
 	}
 
 

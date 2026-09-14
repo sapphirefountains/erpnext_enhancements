@@ -68,12 +68,29 @@ Three mechanisms, each a per-course toggle:
 > Label it "watched" wherever it appears on screen. A manager should not discover
 > this nuance during a disciplinary conversation.
 
-Grading is entirely server-side. Correct answers never reach the browser: the
-learner-facing payload is materialized at publish into
-`Training Lesson.published_content_json` with `is_correct` stripped, and the key
-lives in `answer_key_json` at **`permlevel: 1`**. Learner roles hold no DocPerm at
-all on the content doctypes, so `/api/resource/Training Question` 403s them
-regardless of what any endpoint does.
+Grading is entirely server-side. The learner-facing payload is materialized at
+publish into `Training Lesson.published_content_json` with `is_correct` stripped,
+and the key lives in `answer_key_json` at **`permlevel: 1`**. Learner roles hold no
+DocPerm at all on the content doctypes, so `/api/resource/Training Question` 403s
+them regardless of what any endpoint does.
+
+**The key is disclosed in exactly one place and under exactly one rule.** A graded
+run names the correct options — `per_question[].correct_option_keys`, or
+`accepted_text` for Short Answer — only once knowing them cannot buy the learner
+anything: they passed, or that was their last permitted attempt. `grade_quiz`
+decides it (`reveal = passed or final`) because this module is the only one allowed
+to read the key; `submit_quiz` supplies `final`, because only the endpoint holds the
+course's `max_attempts` and the run count. While the run is still retryable the
+reply carries neither field *and does not carry the field names either* — an empty
+`accepted_text: []` would be a shape that says an answer key was in the room, and
+`test_training_grading` treats the names themselves as leak markers for that reason.
+The per-**option** explanations are never disclosed at any point: they say why each
+individual option is right or wrong, which is `is_correct` in prose.
+
+Until v1.445.0 the rule was "never", and the cost was not theoretical — `quiz.js`
+has always carried the "Correct answer:" line and never once had the data to draw
+it, so a learner who failed a compliance quiz and then ran out of attempts was told
+which options were wrong and never which one was right.
 
 ## Files
 
@@ -338,7 +355,11 @@ Asset with poster and coverage gate; **Image Hotspots** attaches a diagram and p
 Every one of the twelve block types can be added from the `+` menu. **In-video checkpoints**
 are placed here too, on a timeline under the video block, with a pin inspector for the
 question and its options (v1.413.0) — and a draft can be **previewed as a learner** through
-the real player (v1.415.0).
+the real player (v1.415.0). The preview's quiz is the **draft's own**, drawn server-side by
+`grading.draw_from_quiz` and graded against the draft's key (v1.445.0); before that,
+`startQuiz`/`submitQuiz` were the two transport methods that never switched out of the
+canned fixture, so every previewed course asked the same three questions about draining a
+basin and marked them against an answer key belonging to a different course.
 
 **Video is authored end to end here as of v1.417.0.** **Add a video from Drive…** registers a
 Training Video Asset through `register_video_asset`, which **probes** the real length from

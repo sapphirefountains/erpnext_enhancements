@@ -349,6 +349,97 @@
 		return map;
 	}
 
+	// The draft quiz, drawn by the SERVER and handed over in `quiz_draws` — one run
+	// per lesson key, produced by the same `grading.draw_from_quiz` the learner
+	// runtime calls. Nothing here shuffles, slices to `questions_to_ask`, or rebuilds
+	// an option list; doing any of that in the page is how the two implementations
+	// drift, and a preview that drifts is a preview of a course nobody will take.
+	//
+	// THIS IS THE BUG THIS BLOCK EXISTS TO CLOSE. `startQuiz` and `submitQuiz` used
+	// to return the canned `QUIZ`/`KEY` above in BOTH modes, while `getCourse` and
+	// `getLesson` right beside them switched to the draft. So an author previewing
+	// their own course read their own lesson and was then asked three questions about
+	// draining a basin, graded against an answer key belonging to a different course.
+	function draftQuiz(lessonKey) {
+		return ((DRAFT.quiz_draws || {})[lessonKey]) || [];
+	}
+
+	function draftQuizKey(lessonKey) {
+		return (((DRAFT.keys || {})[lessonKey]) || {}).quiz || {};
+	}
+
+	function draftPassScore(lessonKey) {
+		var lesson = draftLessons()[lessonKey] || {};
+		var quiz = lesson.quiz || {};
+		return Number(quiz.pass_score) || Number((DRAFT.gates || {}).passing_score) || 0;
+	}
+
+	// `grading._normalise_text`: trim, lowercase, collapse runs of whitespace. The
+	// accepted answers were already lowercased at publish, so this is the only side
+	// that has to move.
+	function normaliseText(value) {
+		return String(value == null ? "" : value).trim().toLowerCase().split(/\s+/).join(" ");
+	}
+
+	// `grading._matches_key`, and deliberately as strict: a Multiple Choice answer
+	// that is a SUBSET of the correct options is wrong, not partly right. An author
+	// checking their own quiz needs the grader to be the one learners will meet.
+	function draftMatches(entry, submitted) {
+		var mine = submitted || [];
+		if (entry.type === "Short Answer") {
+			var typed = normaliseText(isArrayish(mine) ? mine[0] : mine);
+			return !!typed && (entry.accepted_text || []).indexOf(typed) !== -1;
+		}
+		var want = (entry.correct || []).slice().sort().join(" ");
+		var got = (isArrayish(mine) ? mine : [mine]).slice().sort().join(" ");
+		return want.length > 0 && want === got;
+	}
+
+	function isArrayish(value) {
+		return Object.prototype.toString.call(value) === "[object Array]";
+	}
+
+	function gradeDraftQuiz(args) {
+		var lessonKey = (args && args.lesson_key) || "";
+		var answers = (args && args.answers) || {};
+		var drawn = draftQuiz(lessonKey);
+		var qkey = draftQuizKey(lessonKey);
+		var passScore = draftPassScore(lessonKey);
+
+		var earned = 0, possible = 0, correctCount = 0, per = [];
+		drawn.forEach(function (q) {
+			var entry = qkey[q.question] || {};
+			var points = Number(entry.points) || Number(q.points) || 1;
+			possible += points;
+			var answered = Object.prototype.hasOwnProperty.call(answers, q.question);
+			var correct = answered ? draftMatches(entry, answers[q.question]) : false;
+			if (correct) { earned += points; correctCount++; }
+			var isText = (entry.type || q.type) === "Short Answer";
+			per.push({
+				question: q.question, text: q.text, type: q.type, points: points,
+				awarded: correct ? points : 0, answered: answered, correct: correct,
+				explanation: entry.explanation || "",
+				// Always revealed in the preview. The gate on the real thing is "the
+				// learner can no longer retake"; an author is never in that position
+				// and is entitled to the key anyway -- it is already in `DRAFT.keys`.
+				correct_option_keys: isText ? [] : (entry.correct || []),
+				accepted_text: isText ? (entry.accepted_text || []) : []
+			});
+		});
+
+		var score = possible ? Math.round((earned / possible) * 1000) / 10 : 0;
+		return {
+			score: score, passed: !!possible && score >= passScore, pass_score: passScore,
+			run: 1, points_earned: earned, points_possible: possible,
+			correct_count: correctCount, question_count: drawn.length,
+			per_question: per, answers_revealed: true,
+			// No retry: the draw is fixed for the life of the page, so a "Try again"
+			// here would re-ask the same questions in the same order and look broken.
+			can_retry: false, attempts_left: null,
+			message: "Preview grading. Nothing is recorded — reload the page for a fresh shuffle."
+		};
+	}
+
 
 	// ---- the transport: one method per api.training reply the player dials ----
 
@@ -403,8 +494,28 @@
 		heartbeatBeacon: function () { return true; },
 		openCheckpoint: function () { return {}; },
 		answerCheckpoint: function () { return { correct: true, explanation: "" }; },
-		startQuiz: function () { return QUIZ; },
-		submitQuiz: function (args) { return gradeQuiz(args && args.answers); },
+		startQuiz: function (args) {
+			if (DRAFT) {
+				var key = (args && args.lesson_key) || "";
+				var lesson = draftLessons()[key] || {};
+				return {
+					enabled: true,
+					run: 1,
+					questions: draftQuiz(key),
+					pass_score: draftPassScore(key),
+					// The preview keeps no attempt, so there is no count to spend and
+					// nothing honest to say about one. `quiz.js` treats a null as
+					// silence and simply omits the line.
+					attempts_left: null,
+					lesson_key: lesson.lesson_key || key
+				};
+			}
+			return QUIZ;
+		},
+		submitQuiz: function (args) {
+			if (DRAFT) return gradeDraftQuiz(args);
+			return gradeQuiz(args && args.answers);
+		},
 		completeLesson: function (args) {
 			var key = (args && args.lesson_key) || "l1";
 			return { ok: true, coverage: 100, next_lesson_key: key === "l1" ? "l2" : null };

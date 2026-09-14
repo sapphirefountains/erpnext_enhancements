@@ -1167,6 +1167,80 @@ class TestTheSignOffQueueShowsItsAge(unittest.TestCase):
         self.assertIn("daysUntil(row.signed_on)", body)
 
 
+QUIZ_JS = APP / "public/js/training/quiz.js"
+
+
+def _quiz_js():
+    """quiz.js with comments stripped.
+
+    Stripped for the PRESENCE assertions below, which is the direction that catches
+    people out: a comment naming the string you are looking for makes the assertion
+    pass while the code emits nothing. This module's own notes are full of the
+    phrases being searched for, so an unstripped read would have tested itself.
+    """
+    src = QUIZ_JS.read_text(encoding="utf-8")
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    return "\n".join(line for line in src.splitlines() if not line.strip().startswith("//"))
+
+
+class TestAMultipleChoiceQuestionSaysItIsOne(unittest.TestCase):
+    """Reported as "sometimes the right answer isn't among the options".
+
+    It always was. Every published question was checked against its own answer key
+    and the correct option is present in all of them, and `draw_quiz` rebuilds the
+    whole option list before it shuffles. What was missing was the *instruction*: a
+    Multiple Choice question is graded on the exact set, so ticking one of three
+    correct options scores zero for the question — and on screen the only things
+    distinguishing it from a single-choice question were a line of grey hint text
+    and a 4px difference in the corner radius of the tick boxes.
+
+    From the learner's chair, "I picked the right answer and it said I was wrong"
+    and "the right answer wasn't there" are the same experience.
+    """
+
+    def _render(self):
+        return _fn_body(_quiz_js(), "function renderQuestion(question, i)")
+
+    def test_the_question_says_how_many_answers_to_give(self):
+        body = self._render()
+        self.assertIn("tr-q-kind", body)
+        self.assertIn("Select all that apply", body)
+        # The single-choice case is labelled too. A badge that appears only on the
+        # unusual question teaches nobody what its absence means.
+        self.assertIn("Select one", body)
+
+    def test_the_hint_says_what_the_grader_actually_does(self):
+        """"Choose every answer that applies" describes the input. It does not say
+        that getting two of three right scores zero, which is the part people act
+        on."""
+        self.assertIn("a partly-right answer is marked wrong", self._render())
+
+    def test_the_grader_really_does_demand_the_exact_set(self):
+        """Pins the sentence above to the code it describes. If `_matches_key` ever
+        starts awarding partial credit, the hint becomes a lie and this fails."""
+        body = _gfn("_matches_key")
+        self.assertIn("sorted(set(", body)
+
+    def test_a_running_count_is_painted(self):
+        self.assertIn("tr-q-count", self._render())
+        self.assertIn("selected", _fn_body(_quiz_js(), "function paint()"))
+
+    def test_the_review_says_when_the_answer_is_being_withheld(self):
+        """Silence about a deliberate withholding reads as the app never telling
+        you, which is the other half of how this was reported."""
+        body = _fn_body(_quiz_js(), "function renderReview(entry, i, byId, numberOf, result)")
+        self.assertIn("answers_revealed === false", body)
+        self.assertIn("correct_option_keys", body)
+
+    def test_the_server_sends_the_key_only_once_it_cannot_be_spent(self):
+        """The other side of the same seam: `grade_quiz` discloses on a pass or on a
+        final attempt, and `submit_quiz` is the one that knows which."""
+        grading_body = _gfn("grade_quiz")
+        self.assertIn("reveal = bool(passed or final)", grading_body)
+        self.assertIn("answers_revealed", grading_body)
+        self.assertIn("final=final", _fn("submit_quiz"))
+
+
 # Runs LAST, deliberately: anything declared after this block is invisible to a
 # direct `python <file>` run, while CI's `python -m unittest <module>` still
 # collects it. That divergence hid 211 tests across ten suites (v1.416.0), and it

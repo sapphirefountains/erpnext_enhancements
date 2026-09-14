@@ -959,6 +959,60 @@ class TestThePreviewIsASecondModeNotAThirdTransport(unittest.TestCase):
         self.assertNotIn("frappe.call", body)
         self.assertNotIn("/api/method/", body)
 
+    def test_every_content_method_actually_switches_to_the_draft(self):
+        """The bug this enumerates rather than spot-checks.
+
+        `getCourse` and `getLesson` switched to the draft; `startQuiz` and `submitQuiz`,
+        four lines below them in the same object literal, did not — they returned the
+        canned `QUIZ` and graded against the canned `KEY` in both modes. So an author
+        previewing their own course read their own lesson, was then asked three
+        questions about draining a basin, and was marked against an answer key
+        belonging to a different course entirely. Nothing threw; the quiz simply
+        belonged to somebody else.
+
+        Enumerated, because the next method added to this transport will be added the
+        same way: written for the canned mode and forgotten in the draft one.
+        """
+        html = self.PREVIEW_HTML.read_text(encoding="utf-8")
+        body = _strip_js_comments(html[html.rindex("<script>") : html.rindex("</script>")])
+        transport = body[body.index("var transport = {") :]
+        for method in ("getCourse", "getLesson", "startQuiz", "submitQuiz"):
+            at = transport.index(method + ": function")
+            self.assertIn(
+                "DRAFT",
+                transport[at : at + 900],
+                f"{method} serves content and never looks at DRAFT, so draft mode "
+                "silently gets the canned fixture",
+            )
+
+    def test_the_draft_quiz_is_drawn_by_the_real_shuffler(self):
+        """One draw, server-side, shared with the learner runtime.
+
+        `grading.draw_from_quiz` is the function `draw_quiz` delegates to, so the
+        author sees the questions_to_ask slice and both shuffles behave exactly as a
+        learner will meet them. A JS reimplementation here would be the classic
+        builder's 640 lines growing back one function at a time.
+        """
+        src = self.PREVIEW_PY.read_text(encoding="utf-8")
+        self.assertIn("draw_from_quiz", src)
+        self.assertIn("quiz_draws", src)
+
+        html = self.PREVIEW_HTML.read_text(encoding="utf-8")
+        body = _strip_js_comments(html[html.rindex("<script>") : html.rindex("</script>")])
+        self.assertIn("quiz_draws", body)
+        # Math.random in the script would mean the page had started drawing its own.
+        self.assertNotIn("Math.random", body)
+
+    def test_the_drawn_quiz_stays_out_of_the_lesson_payload(self):
+        """`lessons` has to stay byte-for-byte what publish writes, or the preview is
+        a preview of something no learner will ever be served. The draw rides beside
+        it, keyed by lesson_key, the same way the answer key does."""
+        src = self.PREVIEW_PY.read_text(encoding="utf-8")
+        at = src.index("def _draft_payload(")
+        body = src[at:]
+        self.assertIn('draws[public["lesson_key"]]', body)
+        self.assertNotIn('public["quiz"]["draw"]', body)
+
     def test_the_page_says_when_it_is_previewing_a_draft(self):
         """A preview that silently shows different content from the canned workbench,
         with nothing on screen distinguishing them, is a preview of the wrong thing half

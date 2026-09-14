@@ -2382,6 +2382,35 @@
 	letter-spacing: 0.04em;
 }
 
+/* "Select one" / "Select all that apply", beside the question number.
+
+   Load-bearing rather than decorative. A Multiple Choice question is graded on
+   the EXACT set — tick two of the three right answers and the whole question
+   scores zero — and before this badge the only thing telling a learner apart from
+   a single-choice question was a grey line of hint text and a 4px difference in
+   the corner radius of the tick boxes. Somebody who reads it as "pick the best
+   answer", picks one of the correct options and is marked wrong cannot tell that
+   from the right answer being missing, and reports it as the latter.
+
+   So the multi variant is the one that carries the accent; "Select one" stays
+   quiet, because that is the case nobody gets wrong. */
+.tr-quiz .tr-q-kind {
+	padding: 2px 8px;
+	border-radius: 999px;
+	border: 1px solid var(--tr-border);
+	color: var(--tr-muted);
+	font-size: 0.7rem;
+	font-weight: 700;
+	text-transform: none;
+	letter-spacing: 0;
+}
+
+.tr-quiz .tr-q-kind.is-multi {
+	border-color: var(--tr-accent);
+	background: var(--tr-accent-soft);
+	color: var(--tr-accent);
+}
+
 /* Only rendered when a question is worth more than one point, so it should
    read as a badge rather than as part of the "QUESTION 3" label. */
 .tr-quiz .tr-q-points {
@@ -2410,6 +2439,25 @@
 	margin-bottom: 8px;
 	color: var(--tr-muted);
 	font-size: 0.85rem;
+}
+
+/* The running count under a multi-select question's options. Carries .tr-q-hint
+   too, so it only overrides the margin: the hint sits ABOVE the options and this
+   sits below them, which is where the answer being counted is.
+
+   It exists because the chip says how many to pick and nothing said how many you
+   had — and on a four-option question that has scrolled the first option off a
+   phone screen, that is the half you cannot see. */
+.tr-quiz .tr-q-count {
+	margin: 8px 0 0;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Accented only once there is something to count, so "Nothing selected yet"
+   stays quiet rather than reading as a warning. */
+.tr-quiz .tr-q-count-on {
+	color: var(--tr-accent);
+	font-weight: 650;
 }
 
 /* Carries .tr-q-hint as well, so it only has to overrule the colour: an
