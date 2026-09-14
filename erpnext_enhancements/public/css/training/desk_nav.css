@@ -1,0 +1,272 @@
+/*
+ * The Training rail — chrome for TR.deskNav, shared by every Desk surface in the
+ * module. The class registry for desk_nav.js: a class the script invents with no
+ * rule here renders as an unstyled div, which is not an error and which only a
+ * human looking at the page can see. tests/test_training_desk_nav.py fails the
+ * build on it.
+ *
+ * PREFIX IS `tn-`, alongside `tr-` (the learner render), `tc-` (the authoring
+ * canvas), `tl-` (the learner desk host) and `ti-` (the manager dashboard). Note
+ * the grep trap: an unanchored search for `tn-` also matches every Bootstrap
+ * `btn-` in the repo. Anchor on the leading dot here, or on `\btn-` in a test.
+ *
+ * EVERY COLOUR COMES FROM FRAPPE, and the token list is deliberately the same
+ * eight `training_insights.css` uses. This is desk chrome: it must follow the desk
+ * theme with no work of its own, in all four states (light/dark x desk/portal),
+ * and it must not pull the Aurora palette — `--tr-*` has exactly one declaration
+ * site and this file neither declares nor reads one. The rail sits OUTSIDE
+ * `.tl-desk-surface`, which is the seam: everything inside that element is the
+ * player's and unchanged from what the portal serves; everything outside it,
+ * including this, is the desk's.
+ *
+ * WHY THE WIDTH IS STATED RATHER THAN INHERITED. frappe's own
+ * `.layout-side-section` is sized for the FORM sidebar: `min-width:
+ * var(--form-sidebar-width)` and, under the xl breakpoint, `min-width: calc(38vw -
+ * var(--sidebar-width))`. Inheriting that would hand 38% of a tablet to a nav.
+ * And `.layout-main` is `display: flex; flex-direction: row` at EVERY width — it
+ * does not stack on its own — so the narrow-screen rules below are what stop the
+ * rail sitting beside the player on a phone, which is the device the player was
+ * built for.
+ */
+
+/* -------------------------------------------------------------- the container */
+
+.tn-host .layout-side-section {
+	min-width: 0;
+	flex: 0 0 232px;
+	width: 232px;
+	/* frappe's own rule puts a border on the LEFT of this element, which is its
+	   outer edge when the sidebar is on the left. The seam belongs between the rail
+	   and the page. */
+	border-left: 0;
+	border-right: 1px solid var(--border-color);
+	padding-right: 12px;
+	margin-right: 4px;
+	align-self: flex-start;
+	position: sticky;
+	top: var(--page-head-height, 60px);
+}
+
+/* Without this the main column keeps its intrinsic width and a long lesson title
+   or a wide table pushes the rail off the layout instead of scrolling inside it. */
+.tn-host .layout-main-section-wrapper {
+	flex: 1;
+	min-width: 0;
+}
+
+.tn-rail {
+	padding: 8px 0 16px;
+	font-size: 0.8125rem;
+}
+
+/* Scoped to the disclosure rather than written bare: `summary` and the body are
+   generic enough names that an unscoped rule would reach any other rail somebody
+   adds beside this one. */
+.tn-nav > .tn-nav-summary {
+	display: none;
+}
+
+.tn-nav > .tn-nav-body {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+
+/* ------------------------------------------------------------------ a section */
+
+.tn-section {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.tn-section-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 0 8px 4px;
+}
+
+.tn-section-title {
+	margin: 0;
+	font-size: 0.6875rem;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.tn-count {
+	min-width: 18px;
+	padding: 0 6px;
+	border-radius: 9px;
+	background: var(--bg-color);
+	font-size: 0.6875rem;
+	line-height: 18px;
+	text-align: center;
+	color: var(--text-muted);
+}
+
+.tn-empty {
+	margin: 0;
+	padding: 2px 8px 4px;
+	color: var(--text-muted);
+	line-height: 1.4;
+}
+
+/* --------------------------------------------------------------------- a link */
+
+.tn-link {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 5px 8px;
+	border-radius: var(--border-radius-md, 8px);
+	color: var(--text-color);
+	text-decoration: none;
+}
+
+.tn-link:hover,
+.tn-link:focus-visible {
+	background: var(--bg-color);
+	color: var(--text-color);
+	text-decoration: none;
+}
+
+.tn-link.is-active {
+	background: var(--bg-color);
+	color: var(--heading-color);
+	font-weight: 600;
+}
+
+.tn-link-label {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+/* ----------------------------------------------------------- an assigned course */
+
+.tn-courses {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.tn-course-item {
+	display: block;
+}
+
+.tn-course {
+	display: block;
+	width: 100%;
+	padding: 6px 8px;
+	border: 0;
+	border-radius: var(--border-radius-md, 8px);
+	background: transparent;
+	text-align: left;
+	/* Reset the button, so a course reads as a row in the rail rather than as a
+	   control that happens to be in it. */
+	font: inherit;
+	color: var(--text-color);
+	cursor: pointer;
+}
+
+.tn-course:hover,
+.tn-course:focus-visible {
+	background: var(--bg-color);
+}
+
+.tn-course.is-active {
+	background: var(--bg-color);
+}
+
+.tn-course.is-active .tn-course-title {
+	color: var(--heading-color);
+	font-weight: 600;
+}
+
+.tn-course-title {
+	line-height: 1.3;
+	/* Two lines, then ellipsis. A course title is written to be read on a card and
+	   several run past forty characters; truncating to one line loses the half that
+	   distinguishes "Pump Maintenance — Annual" from "Pump Maintenance — Monthly". */
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.tn-course-meta {
+	display: block;
+	margin-top: 1px;
+	font-size: 0.6875rem;
+	color: var(--text-muted);
+}
+
+/* Literal, and applied only when the date has actually passed — the same colour
+   and the same reason as the overdue tile on the dashboard: "overdue" must not
+   become a different idea because somebody edited a palette. */
+.tn-course-meta.is-bad {
+	color: #e03636;
+}
+
+.tn-course-bar {
+	display: block;
+	position: relative;
+	margin-top: 4px;
+	height: 4px;
+	border-radius: 2px;
+	background: var(--bg-color);
+	overflow: hidden;
+}
+
+.tn-course-bar-fill {
+	position: absolute;
+	inset: 0 auto 0 0;
+	background: var(--primary);
+	opacity: 0.55;
+}
+
+/* ------------------------------------------------------------- narrow screens */
+
+/* `.layout-main` is a flex row at every width in frappe, so this is what stacks
+   the rail above the page instead of beside it — and the <details> ships closed at
+   this width, so the cost to the player is one line. */
+@media (max-width: 991px) {
+	.tn-host .layout-main {
+		flex-direction: column;
+	}
+
+	.tn-host .layout-side-section {
+		flex: none;
+		width: auto;
+		position: static;
+		border-right: 0;
+		border-bottom: 1px solid var(--border-color);
+		padding-right: 0;
+		margin-right: 0;
+	}
+
+	.tn-rail {
+		padding: 4px 0 8px;
+	}
+
+	.tn-nav > .tn-nav-summary {
+		display: block;
+		padding: 6px 8px;
+		border-radius: var(--border-radius-md, 8px);
+		color: var(--text-color);
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.tn-nav > .tn-nav-body {
+		padding-top: 8px;
+	}
+}

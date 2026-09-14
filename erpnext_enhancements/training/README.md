@@ -160,9 +160,13 @@ workspace for the fifteen learners and the page for anybody who cannot see it. O
 two destinations, no error in either. [`../tests/test_workspaces.py`](../tests/test_workspaces.py)
 fails the build on any Page docname that shadows a workspace slug.
 
-Deep links work — `/desk/learn/<COURSE>/<LESSON>` — and the player still does not write the
-address bar: the page passes `history: false` and the deep link arrives through
-`boot.start`, the same pair `www/training_preview.html` uses.
+Deep links work — `/desk/learn/<COURSE>/<LESSON>` — in both directions. The page passes
+`history: false`, so the player never *reads* the address bar (the Desk router owns Back,
+and the page answers it in `on_page_show`), and it passes a **router adapter**, through
+which the player *writes* it. Reading and writing are two jobs; conflating them into one
+flag is how the Desk would have ended up answering browser Back by running
+`queryParam("course")` against a route that has no query string. The preview harness passes
+`history: false` and no adapter, which is the third arrangement of the same two switches.
 
 `/training` is still a route and always will be: six senders have emailed it since
 v1.208.0 and those messages are still in inboxes. It redirects (`www/training.py`), and
@@ -179,10 +183,48 @@ from it.
 **`/desk/training-insights`** ([`page/training_insights/`](page/training_insights/)) is the
 manager's console, and its numbers are clickable through to the lists they count.
 
-### The four CSS prefixes
+### The rail
+
+Both Desk pages are two-column, and the left column is the same nav on each:
+[`../public/js/training/desk_nav.js`](../public/js/training/desk_nav.js) +
+[`../public/css/training/desk_nav.css`](../public/css/training/desk_nav.css), mounted with
+`TR.deskNav({page, active})` and loaded through `TR.loadAssets` on its own chain — chrome
+and page fail independently, so a rail that will not load costs the sidebar and not the
+lesson.
+
+It carries **My Trainings** (the courses assigned to *you*, with due date and progress,
+each opening at `/desk/learn/<COURSE>`), the learner views, and a role-gated **Manage**
+section. Three things about it are load-bearing:
+
+- **It names no endpoint.** The list is the `assigned` array from the
+  `get_learner_bootstrap` payload the player already fetched, handed over by `setLearner`.
+  A `frappe.db.get_list` for open assignments would be a second, client-side answer to
+  "which courses are mine" — and "open" and "overdue" are *predicates* defined in
+  `api/training._open_assignments`, which is exactly the kind of filter that once turned
+  "no expiry" into "expired" here. `/desk/training-insights` holds no learner payload, so
+  its rail offers My Trainings as a **door** rather than a list; `null` and `[]` are
+  deliberately different states.
+- **The Manage links are gated against the Page documents themselves.** `MANAGER_ROLES`
+  must equal `training-insights.json`'s roles and `AUTHOR_ROLES` `training-canvas.json`'s,
+  asserted in [`../tests/test_training_desk_nav.py`](../tests/test_training_desk_nav.py).
+  A link offered to somebody the Page refuses lands them on "Not permitted", which reads as
+  broken rather than as not theirs. A learner gets no Manage heading at all, not an empty one.
+- **It stacks under 992px.** frappe lays `.layout-main` out as `display: flex;
+  flex-direction: row` at *every* width — it does not stack on its own — so without the
+  media block the rail would sit beside the player on a phone, which is the device
+  `player.css` says the learner surface was built for. Below that breakpoint the rail is a
+  closed `<details>` costing one line, and its `open` follows the viewport rather than
+  remembering a choice.
+
+The Desk's own left sidebar could not do this job: it lists **workspaces**, so it can offer
+"My Training" as a destination and can never show the three courses one person owes.
+
+### The five CSS prefixes
 
 `tr-` is the learner render ([`../public/css/training/player.css`](../public/css/training/player.css)),
-`tc-` the authoring canvas, `tl-` the learner Desk host, `ti-` the insights page.
+`tc-` the authoring canvas, `tl-` the learner Desk host, `ti-` the insights page, `tn-` the
+shared rail. One grep trap in that last one: an unanchored search for `tn-` also matches
+every Bootstrap `btn-` in the repo, so anchor on `tn-` or on the leading dot.
 **`--tr-*` is declared in `player.css` and nowhere else** (plus `quiz.js`'s injected
 fallback sheet), which is what lets the canvas inherit a palette fix for free — and is
 pinned by [`../tests/test_training_desk_theme.py`](../tests/test_training_desk_theme.py).
