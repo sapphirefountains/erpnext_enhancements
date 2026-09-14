@@ -53,8 +53,15 @@ Locking refuses a scope with no criteria, and refuses any criterion missing a cr
 pass standard or a verification method. Those blank-checks are Python, not SQL: under PAD SPACE
 collation `<> ''` treats `"   "` as present, and that check would report clean forever.
 
-**Nothing consumes this yet.** WI-075 sub-phase B2 adds the hand-off step and the anchor that
-drive it; until then the record is inert by design.
+Locking stamps `Project.custom_scope_of_work` and `custom_scope_locked_on`, and cancelling
+clears them. That mirror swallows and logs rather than raising — a failure to stamp must not
+undo a lock — and uses `frappe.db.set_value`, never `doc.save()`, because Project carries heavy
+`on_update` hooks and a wildcard `after_save`.
+
+**It is deliberately not a hand-off step.** That was considered and declined for now on blast
+radius: the record needs a Project so it cannot precede step 3, anywhere but last means
+renumbering steps 707 live rows already carry, and `hand_off_sla_compliance` hardcodes
+`LAUNCH_STEP_NUMBER = 7`. The step, if it comes, is its own change.
 
 
 ## Projects Dashboard

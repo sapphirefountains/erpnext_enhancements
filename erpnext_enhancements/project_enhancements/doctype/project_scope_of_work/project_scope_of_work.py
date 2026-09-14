@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""The scope, authored once and locked — WI-075 sub-phase B1.
+"""The scope, authored once and locked — WI-075 sub-phases B1 and B2.
 
 Scope, contract terms, pricing and inspection standards have historically lived in four
 separate places, and when they disagree there is no single record either side can point to.
@@ -13,16 +13,22 @@ rather than restate.
 ``docstatus`` — the framework already has exactly one boolean for "this document is final", and
 a second one would only ever be wrong.
 
-Inert on purpose, for now
--------------------------
+Not a hand-off step, deliberately
+---------------------------------
 
-Nothing consumes this yet. Sub-phase B2 wires it into the hand-off engine — a new step, a new
-anchor, and the renumbering of the existing step 7 — and that is deliberately a separate change
-so the schema can be reviewed without also reviewing an edit to the engine that 707 live
-``Project Process Step`` rows already run through.
+B2 wires this to the Project and stops there. Locking a scope stamps
+``Project.custom_scope_of_work`` and ``custom_scope_locked_on`` — and touches nothing else.
 
-So this file has no ``on_submit``. When B2 adds one, it goes *there* and not here, and it
-swallows-and-logs rather than letting a mirroring failure undo a lock the user just performed.
+The obvious alternative was a new step in the 7-step hand-off tracker, which is how the rest
+of this process is modelled. It was considered and **declined for now** (Nik, 2026-09-14), on
+the blast radius rather than the idea: the record links to a Project so it cannot precede step
+3, inserting it anywhere earlier than last means renumbering steps that 707 live
+``Project Process Step`` rows already carry, and ``hand_off_sla_compliance`` hardcodes
+``LAUNCH_STEP_NUMBER = 7`` and would quietly stop computing the launch deadline. None of that
+is hard; it is simply not worth buying before anyone has locked a real scope and found out
+where the step belongs.
+
+So the step, if it comes, is its own change against a quieter diff. Nothing here assumes it.
 """
 
 import frappe
@@ -47,13 +53,57 @@ class ProjectScopeOfWork(Document):
 		self.locked_by = frappe.session.user
 		self.status = "Locked"
 
+	def on_submit(self):
+		self._mirror_onto_project()
+
 	def on_cancel(self):
 		# `status` is allow_on_submit so it can move without a new revision. A cancelled scope
 		# is superseded rather than back to Draft: the draft it came from is gone, and calling
 		# it Draft would invite somebody to treat it as still in play.
 		self.status = "Superseded"
+		self._mirror_onto_project(clear=True)
 
 	# ------------------------------------------------------------------ helpers
+
+	def _mirror_onto_project(self, clear=False):
+		"""Stamp (or clear) the Project's pointer at its locked scope.
+
+		Swallows and logs rather than raising. A failure to mirror must not undo a lock the
+		user just performed: the authoritative record is this document, the Project fields are
+		a convenience for everything that reads a Project without wanting to join. Same shape
+		as ``crm_enhancements.handoff._mirror_onto_project``, and for the same reason.
+
+		Written with ``frappe.db.set_value`` and never ``doc.save()``. WI-057 states why:
+		Project carries heavy ``on_update`` hooks and a wildcard ``'*'`` ``after_save`` that
+		fires ``global_triton_sync`` on every ORM save. ``update_modified=False`` because this
+		is a read-only stamp — bumping the Project's timestamp would make it look edited to
+		every concurrent editor and to anything that syncs on ``modified``.
+		"""
+		try:
+			if not self.project or not frappe.db.exists("Project", self.project):
+				return
+			# has_column takes a DOCTYPE and prefixes "tab" itself, and raises
+			# TableMissingError on an unknown table rather than returning False. Passing
+			# "tabProject" here would be a guaranteed crash dressed up as a guard.
+			if not frappe.db.has_column("Project", "custom_scope_of_work"):
+				return
+
+			frappe.db.set_value(
+				"Project",
+				self.project,
+				{
+					"custom_scope_of_work": None if clear else self.name,
+					"custom_scope_locked_on": None if clear else self.locked_on,
+				},
+				update_modified=False,
+			)
+		except Exception:
+			# No bare re-raise: a re-raise out of here would publish this frame's locals to
+			# the Error Log, and the scope body is customer contract text.
+			frappe.log_error(
+				title="Project Scope of Work: could not mirror onto Project",
+				message=f"scope={self.name} project={self.project} clear={clear}\n\n{frappe.get_traceback()}",
+			)
 
 	def _mint_criterion_keys(self):
 		"""Give every criterion a stable identity before anything can point at it."""

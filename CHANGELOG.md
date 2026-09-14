@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.448.0] - 2026-09-14
+
+### Added
+
+- **Locking a Scope of Work now stamps its Project.** Two read-only Custom Fields on Project —
+  `custom_scope_of_work` and `custom_scope_locked_on` — so anything reading a Project can see
+  the scope it is delivered against without joining. Cancelling the scope clears them.
+  WI-075 sub-phase B2.
+
+### Notes
+
+- **This is the whole of B2, on purpose.** The obvious alternative was a new step in the
+  7-step hand-off tracker, which is how the rest of this process is modelled. Declined for now
+  on blast radius, not on the idea: the record links to a Project so it cannot precede step 3;
+  inserting it anywhere but last means renumbering steps that 707 live `Project Process Step`
+  rows already carry; and `hand_off_sla_compliance` hardcodes `LAUNCH_STEP_NUMBER = 7`, so a
+  renumber would quietly stop it computing the launch deadline on the Friday report. None of
+  that is hard — it is just not worth buying before anyone has locked a real scope and found
+  out where the step belongs. The step, if it comes, is its own change against a quieter diff.
+- The mirror **swallows and logs rather than raising**: a failure to stamp the Project must not
+  undo a lock the user just performed. The scope document is authoritative; the Project fields
+  are a convenience.
+- Written with `frappe.db.set_value`, never `doc.save()`. WI-057 states why: Project carries
+  heavy `on_update` hooks and a wildcard `'*'` `after_save` firing `global_triton_sync` on
+  every ORM save. `update_modified=False`, because a read-only stamp should not make the
+  Project look edited to every concurrent editor.
+- The guard is `frappe.db.has_column("Project", ...)` — a **DocType** name, not `"tabProject"`.
+  It prefixes `tab` itself and raises `TableMissingError` on an unknown table rather than
+  returning False, so the table-name form is a guaranteed crash dressed up as a guard.
+
+
 ## [1.447.0] - 2026-09-14
 
 ### Added
