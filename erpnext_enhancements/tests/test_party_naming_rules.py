@@ -17,6 +17,11 @@ repo, so bench-free code is the only code that runs on every push.
 2. *Out of scope is silence, not a pass.* An internal Project is not badly named; it is a
    different kind of record. 101 of 644 Projects are internal, and flagging them would be the
    fastest way to get the whole thing dismissed.
+3. *A party has more than one name, and the one stored is not the one shown.* A Project
+   stores the Customer's docname; the Desk renders the Customer's label. 125 of 1,662
+   Customers have drifted apart, which flagged 14 records — 5 Projects, 3 Opportunities and
+   6 Addresses — for a difference nothing on their form could explain. See
+   ``test_a_stale_customer_docname_is_not_a_naming_defect``.
 
 Every fixture is a verbatim record read from ERPNext Production on 19 August 2026.
 """
@@ -38,9 +43,23 @@ PROJECTS = [
 	 "project_type": "Build", "customer": "Hess Construction LLC"},
 	{"name": "PRJ-00758", "project_name": "West Jordan - Splash Pad Controller Servive 8/17/26",
 	 "project_type": "Service", "customer": "West Jordan Parks and Recreation"},
-	# Named for the site / general contractor rather than for who pays.
+	# Named for the site rather than for who pays, and it matches NEITHER of the customer's
+	# names. The genuine shape of party_prefix_mismatch; 49 customer-facing Projects reach it.
+	{"name": "PRJ-00159", "project_name": "Myers Mortuary - Fountain",
+	 "project_type": "Build", "customer": "Anderson Wahlen & Associates",
+	 "customer_name": "Anderson Wahlen & Associates"},
+	# Looks identical to the row above and is not a defect: the customer's docname is stale
+	# (`CEM Aquatics`) and its label is `Landmark Aquatic - CEM`, so `Landmark` is a correct
+	# shortening. This record was this module's flagship example of a site-named project
+	# until the label was read; it is the reason party_names exists.
 	{"name": "PRJ-00756", "project_name": "Landmark - Millcreek Commons Phase 2 Controller",
-	 "project_type": "Build", "customer": "CEM Aquatics"},
+	 "project_type": "Build", "customer": "CEM Aquatics",
+	 "customer_name": "Landmark Aquatic - CEM"},
+	# The record the bug was reported on. The form shows a Customer of `Robert Carey
+	# Residence`; the row stores `BJ Carey`.
+	{"name": "PRJ-00706", "project_name": "Robert Carey Residence - Water Feature",
+	 "project_type": "Build", "customer": "BJ Carey",
+	 "customer_name": "Robert Carey Residence"},
 	# No separator at all.
 	{"name": "PRJ-00752", "project_name": "Sonnenburg Reflection Pool & Runnel Falls",
 	 "project_type": "Build", "customer": "Sonnenburg"},
@@ -67,6 +86,10 @@ ADDRESSES = [
 	 "address_type": "Billing", "party": "Charles Cunniffe Architects"},
 	{"name": "HOME-Billing-1", "address_title": "HOME", "address_type": "Billing",
 	 "party": "Chelsea Damon"},
+	# Titled with the linked Customer's DOCNAME while the link's title has since been edited.
+	# Six live Addresses; the title is a correct name for the party, not a defect.
+	{"name": "CEM Aquatics - Billing", "address_title": "CEM Aquatics",
+	 "address_type": "Billing", "party": "Landmark Aquatic - CEM", "party_alias": "CEM Aquatics"},
 	# No link at all — 442 live records. Out of scope: nothing to name it after.
 	{"name": "Orphan-Billing", "address_title": "Orphan", "address_type": "Billing", "party": ""},
 ]
@@ -91,6 +114,18 @@ class EvidenceTest(unittest.TestCase):
 	def test_every_severity_is_one_of_the_three(self):
 		for code, severity in rules.SEVERITY.items():
 			self.assertIn(severity, rules.SEVERITIES, code)
+
+	def test_the_label_leads_every_doctypes_party_fields(self):
+		"""party_of shows the first one and suggestions are built from it, so the recognisable
+		name has to come first. Reversing any of these would put a docname on a form banner."""
+		expected = {
+			"Project": "customer_name",
+			"Opportunity": "customer_name",
+			"Address": "party",
+		}
+		for doctype, first in expected.items():
+			self.assertEqual(rules.DOCTYPES[doctype]["party_fields"][0], first, doctype)
+			self.assertGreater(len(rules.DOCTYPES[doctype]["party_fields"]), 1, doctype)
 
 	def test_every_configured_doctype_declares_a_shape_and_a_field(self):
 		for doctype, config in rules.DOCTYPES.items():
@@ -139,8 +174,10 @@ class PartyMatchTest(unittest.TestCase):
 
 	def test_acronyms_and_surnames_are_still_reported(self):
 		"""A judgement, not an oversight. A rule loose enough to accept these would also accept
-		'Landmark' for 'CEM Aquatics', and the site-named projects are the defect this exists
-		to find."""
+		a site name for the contractor who pays, and the site-named projects are the defect this
+		exists to find. `Carey Residence` vs `BJ Carey` looks like a false positive and is
+		not one — PRJ-00706 passes via party_names, because that customer is also recorded as
+		`Robert Carey Residence`. Loosening this function would be the wrong repair."""
 		self.assertFalse(rules.party_matches("LHM", "Larry H Miller Corp"))
 		self.assertFalse(rules.party_matches("SLC Parks & Rec", "Salt Lake County Parks & Recreation"))
 		self.assertFalse(rules.party_matches("Carey Residence", "BJ Carey"))
@@ -270,7 +307,30 @@ class ProjectCheckTest(unittest.TestCase):
 		self.assertEqual(self._check("PRJ-00758"), set())
 
 	def test_a_site_named_project_is_flagged(self):
-		self.assertIn(rules.PARTY_PREFIX_MISMATCH, self._check("PRJ-00756"))
+		"""Matches neither of the customer's names, which is the genuine shape."""
+		self.assertIn(rules.PARTY_PREFIX_MISMATCH, self._check("PRJ-00159"))
+
+	def test_a_stale_customer_docname_is_not_a_naming_defect(self):
+		"""The reported bug. PRJ-00706's form shows `Robert Carey Residence` and its row
+		stores `BJ Carey`, so checking the column alone reported a mismatch that nothing on
+		the form could explain. 14 records were flagged for this: 5 Projects, 3 Opportunities
+		and 6 Addresses."""
+		self.assertEqual(self._check("PRJ-00706"), set())
+
+	def test_the_flagship_site_named_example_was_itself_a_false_positive(self):
+		"""PRJ-00756 was cited in this module's EVIDENCE as *the* live case of a project named
+		for the general contractor. Its customer's label is `Landmark Aquatic - CEM`, so
+		`Landmark` is a correct shortening and only the stale docname disagreed."""
+		self.assertEqual(self._check("PRJ-00756"), set())
+
+	def test_a_project_whose_customer_label_was_never_supplied(self):
+		"""attach_customer_labels leaves customer_name empty when no Customer row came back.
+		The docname is still a name, so the check still works rather than going silent."""
+		found = codes_of(rules.check("Project", {
+			"project_name": "Hess Construction - Colony 256", "project_type": "Build",
+			"customer": "Hess Construction LLC", "customer_name": "",
+		}))
+		self.assertEqual(found, set())
 
 	def test_no_separator(self):
 		found = self._check("PRJ-00752")
@@ -336,9 +396,20 @@ class ProjectCheckTest(unittest.TestCase):
 		self.assertNotIn(rules.PARTY_PREFIX_MISMATCH, found)
 
 	def test_the_suggestion_is_usable_as_typed(self):
-		row = next(r for r in PROJECTS if r["name"] == "PRJ-00756")
+		row = next(r for r in PROJECTS if r["name"] == "PRJ-00159")
 		fix = next(f for f in rules.check("Project", row) if f["code"] == rules.PARTY_PREFIX_MISMATCH)
-		self.assertEqual(fix["suggestion"], "CEM Aquatics - Millcreek Commons Phase 2 Controller")
+		self.assertEqual(fix["suggestion"], "Anderson Wahlen & Associates - Fountain")
+
+	def test_the_suggestion_uses_the_label_not_the_stale_docname(self):
+		"""`BJ Carey - ...` would be advice to type a name nobody in the business uses."""
+		fix = next(
+			f for f in rules.check("Project", {
+				"project_name": "Poolside Cabana Feature", "project_type": "Build",
+				"customer": "BJ Carey", "customer_name": "Robert Carey Residence",
+			})
+			if f["code"] == rules.SEPARATOR_MISSING
+		)
+		self.assertEqual(fix["suggestion"], "Robert Carey Residence - ")
 
 
 class AddressCheckTest(unittest.TestCase):
@@ -385,6 +456,12 @@ class AddressCheckTest(unittest.TestCase):
 		"""`HOME-Billing-1` is frappe's duplicate suffix, not a wrong type."""
 		self.assertNotIn(rules.ADDRESS_TYPE_STALE, self._check("HOME-Billing-1"))
 
+	def test_an_address_titled_with_the_links_docname_passes(self):
+		"""Six live Addresses. `link_title` and `link_name` disagree on 99 Address links, and
+		either is a correct thing to title the record with."""
+		found = self._check("CEM Aquatics - Billing")
+		self.assertNotIn(rules.PARTY_PREFIX_MISMATCH, found)
+
 	def test_an_unlinked_address_is_out_of_scope(self):
 		"""442 live records. There is no party to name them after, so there is nothing to
 		judge — the missing link is the caller's finding to report, not this one's."""
@@ -418,10 +495,36 @@ class OpportunityCheckTest(unittest.TestCase):
 			"title": "Ore - Courtyard Fountain Refit", "party_name": "Ore Designs, Inc.",
 		})), set())
 
-	def test_the_link_is_preferred_over_the_label(self):
-		"""party_name and customer_name disagree on records where the party was renamed."""
+	def test_both_names_are_accepted_when_the_link_and_the_label_disagree(self):
+		"""They disagree on every record whose party was renamed after it was created, and a
+		title built from either is correct. 24 live Opportunities were flagged for this."""
 		row = {"title": "Acme - Thing", "party_name": "Acme Holdings", "customer_name": "Something Else"}
-		self.assertEqual(rules.party_of("Opportunity", row), "Acme Holdings")
+		self.assertEqual(rules.party_names("Opportunity", row), ("Something Else", "Acme Holdings"))
+		self.assertNotIn(rules.PARTY_PREFIX_MISMATCH, codes_of(rules.check("Opportunity", row)))
+		other = dict(row, title="Something - Thing")
+		self.assertNotIn(rules.PARTY_PREFIX_MISMATCH, codes_of(rules.check("Opportunity", other)))
+
+	def test_the_label_is_what_gets_displayed(self):
+		"""party_of feeds the form banner and the report's Party column. A row reading
+		`CRM-LEAD-2025-00184` for a party the Desk calls `Cactus & Tropicals` describes a
+		record nobody can find."""
+		row = {"title": "Cactus & Tropicals", "party_name": "CRM-LEAD-2025-00184",
+		       "customer_name": "Cactus & Tropicals"}
+		self.assertEqual(rules.party_of("Opportunity", row), "Cactus & Tropicals")
+
+	def test_an_opportunity_against_a_lead_is_not_compared_to_a_document_id(self):
+		"""party_name can be a Lead docname. Comparing a title against `CRM-LEAD-2025-00184`
+		is a mismatch by construction — it can never pass, however the record is named."""
+		self.assertNotIn(rules.PARTY_PREFIX_MISMATCH, codes_of(rules.check("Opportunity", {
+			"title": "Cactus & Tropicals", "party_name": "CRM-LEAD-2025-00184",
+			"customer_name": "Cactus & Tropicals",
+		})))
+
+	def test_a_party_with_one_name_is_named_once(self):
+		"""The usual case. Deduplicated, so no message ever reads "X, also recorded as X"."""
+		row = {"title": "Ore - Refit", "party_name": "Ore Designs, Inc.",
+		       "customer_name": "Ore Designs, Inc."}
+		self.assertEqual(rules.party_names("Opportunity", row), ("Ore Designs, Inc.",))
 
 
 class AuditTest(unittest.TestCase):
@@ -431,7 +534,7 @@ class AuditTest(unittest.TestCase):
 		self.assertNotIn("PRJ-00749", names, "an internal project must not appear at all")
 		self.assertNotIn("PRJ-00629", names)
 		self.assertIn("PRJ-00754", names)
-		self.assertEqual(len(rows), 5, "five of nine fixtures are customer-facing")
+		self.assertEqual(len(rows), 7, "seven of eleven fixtures are customer-facing")
 
 	def test_collisions_are_found_in_one_pass(self):
 		rows = [
@@ -455,7 +558,7 @@ class AuditTest(unittest.TestCase):
 
 	def test_summarise_counts_only_in_scope_rows(self):
 		summary = rules.summarise(rules.audit("Project", PROJECTS))
-		self.assertEqual(summary["in_scope_rows"], 5)
+		self.assertEqual(summary["in_scope_rows"], 7)
 		self.assertEqual(summary["normalisation"], rules.NORMALISATION)
 
 	def test_no_check_raises_on_any_live_record(self):

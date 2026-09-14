@@ -63,6 +63,29 @@ about a name its author can see in front of them is a check people stop reading.
 :data:`_SEPARATOR_RE`, where the live counts behind each row of that table are recorded.
 
 --------------------------------------------------------------------------------------
+A party has more than one name, and comparing against the wrong one invents defects
+--------------------------------------------------------------------------------------
+
+A Project stores ``customer`` — the Customer's **docname**. The Desk does not show you that:
+it renders the link's title, ``customer_name``. The two agree right up until somebody renames
+the customer, because a docname is frozen at insert while the label is edited freely. **125 of
+1,662 live Customers have already drifted apart this way** (2026-09-14).
+
+So PRJ-00706 is called ``Robert Carey Residence - Water Feature``, its Customer field reads
+``Robert Carey Residence`` on screen, and the guard reported ``party_prefix_mismatch`` —
+because the row stores ``BJ Carey``. There is nothing on that form a person could look at to
+see why. **Fourteen records carried the finding for exactly this reason** — 5 Projects, 3
+Opportunities and 6 Addresses — and the class is worse than the count suggests, because on
+Opportunity ``party_name`` can be a *Lead* docname (``CRM-LEAD-2025-00184``), so the title was
+compared against a document ID and could never have passed. Most of the rest are hidden behind
+:data:`SEPARATOR_MISSING`, which returns before the prefix is ever judged; they would surface
+the moment somebody fixed the separator.
+
+The rule is therefore **a party answers to every name it is recorded under**, and matching
+any one of them is correct — see :func:`party_names` and :func:`matches_any`. The label leads
+the list, so what gets *displayed* and *suggested* is the name a person would recognise.
+
+--------------------------------------------------------------------------------------
 What "matches the party" means, and why it is not equality
 --------------------------------------------------------------------------------------
 
@@ -151,30 +174,37 @@ CUSTOMER_FACING_PROJECT_TYPES: Final[frozenset[str]] = frozenset(
 
 #: The doctypes this module knows, and what to read on each.
 #:
-#: ``party_fields`` is ordered — the first one with a value wins. Opportunity carries both
-#: ``party_name`` (the link) and ``customer_name`` (the label), and they disagree on records
-#: where the party was renamed, so the link is asked first.
+#: ``party_fields`` lists **every name the party legitimately goes by**, the one a person
+#: would recognise first. All of them are accepted by :func:`party_names`; the leading one is
+#: what :func:`party_of` displays and what suggestions are built from. See the module
+#: docstring for why a party has more than one name at all.
+#:
+#: Project is the odd one: it stores only ``customer``, the docname, and has no
+#: ``customer_name`` column. :func:`party_naming.attach_customer_labels` supplies one, the
+#: same way Address's ``party`` is supplied from Dynamic Link.
 DOCTYPES: Final[dict[str, dict]] = {
 	"Project": {
 		"field": "project_name",
 		"label": "Project Name",
 		"shape": SHAPE_PARTY_QUALIFIER,
-		"party_fields": ("customer",),
+		# customer_name is supplied by the caller; customer is the docname on the row.
+		"party_fields": ("customer_name", "customer"),
 		"party_label": "Customer",
 	},
 	"Opportunity": {
 		"field": "title",
 		"label": "Title",
 		"shape": SHAPE_PARTY_QUALIFIER,
-		"party_fields": ("party_name", "customer_name"),
+		"party_fields": ("customer_name", "party_name"),
 		"party_label": "Party",
 	},
 	"Address": {
 		"field": "address_title",
 		"label": "Address Title",
 		"shape": SHAPE_PARTY_ONLY,
-		# Supplied by the caller from Dynamic Link rather than a column on the row.
-		"party_fields": ("party",),
+		# Both supplied by the caller from Dynamic Link rather than columns on the row:
+		# party is the link's title, party_alias its docname.
+		"party_fields": ("party", "party_alias"),
 		"party_label": "Linked party",
 	},
 }
@@ -248,11 +278,18 @@ EVIDENCE: Final[dict[str, str]] = {
 		"which is how a check loses the room. The remedy is the suggestion, as typed."
 	),
 	PARTY_PREFIX_MISMATCH: (
-		"what comes before the separator is not the linked party, even allowing a shortening "
-		"of it. The live case is 'Landmark - Millcreek Commons Phase 2 Controller' against a "
-		"customer of 'CEM Aquatics' — named for the site or the general contractor rather "
-		"than for who pays. Known false-positive class: a party whose legal name shares no "
-		"leading word with the name everybody uses for them."
+		"what comes before the separator is none of the party's names, even allowing a "
+		"shortening. 49 customer-facing Projects, 2 Opportunities and 57 Addresses, and the "
+		"shape is 'Myers Mortuary - Fountain' against a customer of 'Anderson Wahlen & "
+		"Associates' — named for the site rather than for who pays. Far more records would "
+		"qualify but never reach this check: 363 Projects stop at separator_missing first. "
+		"Note the plural: a party answers to its docname AND its current label, and matching "
+		"either is correct. This finding used to cite 'Landmark - Millcreek Commons Phase 2 "
+		"Controller' against a customer of 'CEM Aquatics' as its flagship example, and that "
+		"record is not a defect at all — the customer's label is 'Landmark Aquatic - CEM', so "
+		"'Landmark' is a correct shortening and only the stale docname disagreed. Known "
+		"false-positive class that remains: a party whose every recorded name shares no "
+		"leading word with what people actually call them."
 	),
 	QUALIFIER_MISSING: "there is a separator but nothing after it.",
 	QUALIFIER_VAGUE: (
@@ -326,11 +363,14 @@ def _significant(value: str | None) -> tuple[str, ...]:
 def party_matches(candidate: str | None, party: str | None) -> bool:
 	"""Is ``candidate`` the party, allowing either to be a shortening of the other?
 
+	**One name.** A party usually answers to several, and the question a caller wants answered
+	is almost always :func:`matches_any`. This is the single-name half of it.
+
 	**Words, not characters, and that is the whole design.** A character-prefix test passes
 	``O`` against ``Ore Designs, Inc.`` and would wave through any name that happens to start
 	with the same letter. Comparing word sequences means ``West Jordan`` matches
 	*West Jordan Parks and Recreation* and ``Ore`` matches *Ore Designs, Inc.*, while
-	``Landmark`` against *CEM Aquatics* fails as it should.
+	``Orem Palisades Splash Pad`` against *CEM Aquatics* fails as it should.
 
 	Symmetric, because both over- and under-specification are recognisable: somebody writing
 	``Hess Construction LLC`` where the customer is recorded as ``Hess Construction`` has not
@@ -339,9 +379,15 @@ def party_matches(candidate: str | None, party: str | None) -> bool:
 	**What it still refuses, on purpose.** An acronym is not derivable from the name it
 	stands for — ``LHM`` against *Larry H Miller Corp*, ``SLC Parks & Rec`` against *Salt Lake
 	County Parks & Recreation* — and neither is a surname against a full name, ``Carey
-	Residence`` against *BJ Carey*. Both are reported. That is a judgement rather than an
-	oversight: a rule loose enough to accept them would also accept ``Landmark`` for *CEM
-	Aquatics*, and the site-named projects are the defect this check exists to find.
+	Residence`` against *BJ Carey*. Both are reported, and that is a judgement rather than an
+	oversight: a rule loose enough to accept them would also accept a site name for the
+	contractor who pays, and the site-named projects — 49 of them reach this check, and many
+	more sit behind :data:`SEPARATOR_MISSING` — are the defect this check exists to find.
+
+	The *Carey* pair is worth knowing for a second reason. It looks like a false positive and
+	it is not one: PRJ-00706 passes, but through :func:`party_names` rather than through here,
+	because that customer is **also** recorded as ``Robert Carey Residence``. Loosening this
+	function to make that record pass would have been the wrong repair to the right complaint.
 	"""
 	left, right = _significant(candidate), _significant(party)
 	if not left or not right:
@@ -458,14 +504,39 @@ def in_scope(doctype: str, facts: dict) -> bool:
 	return True
 
 
-def party_of(doctype: str, facts: dict) -> str:
-	"""The party this record should be named after, or ''."""
+def party_names(doctype: str, facts: dict) -> tuple[str, ...]:
+	"""Every name the party legitimately goes by, best first, deduplicated.
+
+	**Not one string.** A Customer has a docname *and* a ``customer_name``, and once anybody
+	renames the customer the two stop agreeing: 125 of 1,662 live Customers are in that state
+	(2026-09-14). The Desk shows the title, the Project row stores the docname, and a name
+	built from either is correct — so both are accepted and the finding is only made when the
+	record matches **none** of them.
+
+	Deduplicated under :data:`NORMALISATION` so the usual case, where the two agree, yields
+	one name and no message ever reads "X, also known as X".
+	"""
 	config = DOCTYPES.get(doctype) or {}
+	seen: set[str] = set()
+	out: list[str] = []
 	for field in config.get("party_fields", ()):
 		value = (facts.get(field) or "").strip()
-		if value:
-			return value
-	return ""
+		key = normalise(value)
+		if value and key not in seen:
+			seen.add(key)
+			out.append(value)
+	return tuple(out)
+
+
+def party_of(doctype: str, facts: dict) -> str:
+	"""The name to *show* for this record's party, or ''. The first of :func:`party_names`.
+
+	The one a person would recognise, which is why the label leads ``party_fields`` — a
+	report column or a form banner reading ``BJ Carey`` for a customer the Desk calls
+	``Robert Carey Residence`` describes a record nobody can find.
+	"""
+	names = party_names(doctype, facts)
+	return names[0] if names else ""
 
 
 # --- the checks ----------------------------------------------------------------
@@ -488,7 +559,7 @@ def check(doctype: str, facts: dict) -> list[dict]:
 		return []
 
 	value = facts.get(config["field"])
-	party = party_of(doctype, facts)
+	parties = party_names(doctype, facts)
 	out: list[dict] = []
 
 	if not (value or "").strip():
@@ -508,7 +579,7 @@ def check(doctype: str, facts: dict) -> list[dict]:
 	if "  " in body:
 		out.append(finding(DOUBLE_SPACE, f"{config['label']} contains a double space."))
 
-	if not party:
+	if not parties:
 		out.append(
 			finding(
 				PARTY_MISSING,
@@ -518,13 +589,26 @@ def check(doctype: str, facts: dict) -> list[dict]:
 		)
 
 	if config["shape"] == SHAPE_PARTY_ONLY:
-		out.extend(_check_party_only(doctype, facts, body, party, config))
+		out.extend(_check_party_only(doctype, facts, body, parties, config))
 	else:
-		out.extend(_check_party_qualifier(body, party, config))
+		out.extend(_check_party_qualifier(body, parties, config))
 	return out
 
 
-def _check_party_qualifier(body: str, party: str, config: dict) -> list[dict]:
+def matches_any(candidate: str | None, parties) -> bool:
+	"""Does ``candidate`` name any one of the party's names? See :func:`party_names`."""
+	return bool(parties) and any(party_matches(candidate, party) for party in parties)
+
+
+def _party_phrase(parties) -> str:
+	"""How to name the party in a message when it answers to more than one name."""
+	if len(parties) > 1:
+		others = ", ".join(repr(name) for name in parties[1:])
+		return f"{parties[0]!r} (also recorded as {others})"
+	return f"{parties[0]!r}"
+
+
+def _check_party_qualifier(body: str, parties, config: dict) -> list[dict]:
 	"""``<Party> - <what we are doing>``. Project and Opportunity."""
 	out: list[dict] = []
 	head, tail = split(body)
@@ -536,7 +620,7 @@ def _check_party_qualifier(body: str, party: str, config: dict) -> list[dict]:
 				SEPARATOR_MISSING,
 				f"{config['label']} needs '{config['party_label'].lower()} - what we are doing "
 				f"for them', separated by {SEPARATOR!r}.",
-				suggestion=f"{party}{SEPARATOR}" if party else None,
+				suggestion=f"{parties[0]}{SEPARATOR}" if parties else None,
 			)
 		)
 		# Without a separator there is no prefix to judge and no qualifier to describe, so
@@ -565,22 +649,23 @@ def _check_party_qualifier(body: str, party: str, config: dict) -> list[dict]:
 			finding(QUALIFIER_VAGUE, f"{tail!r} does not say what we are doing.", segment=tail)
 		)
 
-	if party and not party_matches(head, party):
+	if parties and not matches_any(head, parties):
 		out.append(
 			finding(
 				PARTY_PREFIX_MISMATCH,
-				f"{head!r} is not {party!r}, even allowing a shortening of it. If this is the "
-				"site or the general contractor rather than who pays, put the party first and "
-				"the site in the description.",
+				f"{head!r} is not {_party_phrase(parties)}, even allowing a shortening of it. "
+				"If this is the site or the general contractor rather than who pays, put the "
+				"party first and the site in the description.",
 				found=head,
-				expected=party,
-				suggestion=f"{party} - {tail}" if tail else None,
+				expected=parties[0],
+				expected_any=list(parties),
+				suggestion=f"{parties[0]}{SEPARATOR}{tail}" if tail else None,
 			)
 		)
 	return out
 
 
-def _check_party_only(doctype: str, facts: dict, body: str, party: str, config: dict) -> list[dict]:
+def _check_party_only(doctype: str, facts: dict, body: str, parties, config: dict) -> list[dict]:
 	"""``<Party>`` alone — the framework appends the qualifier. Address."""
 	out: list[dict] = []
 
@@ -598,15 +683,16 @@ def _check_party_only(doctype: str, facts: dict, body: str, party: str, config: 
 		# otherwise every such record collects a second, redundant finding.
 		body = head
 
-	if party and not party_matches(body, party):
+	if parties and not matches_any(body, parties):
 		out.append(
 			finding(
 				PARTY_PREFIX_MISMATCH,
-				f"{body!r} is not {party!r}. An Address should be titled with the party it "
-				"belongs to; the site or the room goes in the address lines.",
+				f"{body!r} is not {_party_phrase(parties)}. An Address should be titled with "
+				"the party it belongs to; the site or the room goes in the address lines.",
 				found=body,
-				expected=party,
-				suggestion=party,
+				expected=parties[0],
+				expected_any=list(parties),
+				suggestion=parties[0],
 			)
 		)
 

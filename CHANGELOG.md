@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.443.0] - 2026-09-14
+
+### Fixed
+
+- **The naming guard compared names against the Customer's *docname*, which is not the name
+  the form shows.** Reported on PRJ-00706: the Project is called `Robert Carey Residence -
+  Water Feature`, its Customer field reads `Robert Carey Residence` on screen, and the guard
+  said `party_prefix_mismatch`. The row stores `BJ Carey`. Nothing on that form could have
+  explained the finding.
+
+  A Customer docname is frozen at insert; `customer_name` is edited freely. **125 of 1,662
+  live Customers have drifted apart**, and Project has no `customer_name` column at all — it
+  stores only the link. So the check was reading a name that in 7.5% of cases nobody in the
+  business uses any more.
+
+  **The rule is now that a party answers to every name it is recorded under**, and matching
+  any one of them is correct (`party_names()`, `matches_any()`). The label leads the list, so
+  what gets displayed in the form banner, the report's Party column and every `suggestion` is
+  the name a person would recognise — previously an Opportunity against a Lead showed
+  `CRM-LEAD-2025-00184` as its party, and a suggestion could read `BJ Carey - …`.
+
+  `party_naming.attach_customer_labels()` supplies the Project's label the same way
+  `attach_address_parties()` already supplied an Address's party; Address now also keeps the
+  link's docname as an accepted alias, which 99 Address links need and 6 were failing on.
+
+  **Replayed over every live record, 14 findings clear and none appear**: Projects 54 → 49,
+  Opportunities 5 → 2, Addresses 63 → 57. Project naming compliance moves 20.5% → 21.2%, so
+  the nightly `project_naming_compliance_pct` snapshot will step up once.
+
+  **The module's own flagship example of a real defect was one of the false positives.**
+  `PARTY_PREFIX_MISMATCH`'s evidence cited `Landmark - Millcreek Commons Phase 2 Controller`
+  against a customer of `CEM Aquatics` as *the* live case of a project named for the general
+  contractor rather than for who pays — quoted in the module docstring, in `party_matches()`,
+  and pinned by a test fixture asserting it must be flagged. That customer's label is
+  `Landmark Aquatic - CEM`; `Landmark` is a correct shortening of it and only the stale
+  docname disagreed. The evidence, the docstrings and the fixture are corrected, and the true
+  positive they now cite (`Myers Mortuary - Fountain` against `Anderson Wahlen & Associates`,
+  where docname and label agree) was picked because it cannot be undone by the same mistake.
+
+  Two counts in this area were also wrong and are re-measured: `party_prefix_mismatch` reaches
+  49 Projects, not the 247 whose prefix fails to match, because 363 stop at
+  `separator_missing` first and the check returns before the prefix is judged.
+
 ## [1.442.0] - 2026-09-14
 
 ### Changed
