@@ -26,8 +26,8 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   `asset_management/` -- `Rental Checklist Template` (+ item) and the submittable
   `Rental Inspection` (+ item) -- plus `api/booking.py::generate_inspection`,
   `resolve_checklist_template`, a Connections entry and two buttons on Asset Booking.
-- `patches/seed_rental_asset_setup.py` -- an Asset Category for the rental fleet and a
-  Location for the yard (ER-2026-420503).
+- `patches/seed_rental_asset_setup.py` -- the `Rental Fountain Fleet` Asset Category and the
+  `Upstairs Rental Warehouse` Location (ER-2026-420503).
 - `tests/test_feedback_er_batch.py` -- 12 bench-free tests, wired into `ci.yml`.
 
 ### Fixed

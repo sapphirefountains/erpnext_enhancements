@@ -71,7 +71,7 @@ FIXED_ASSET_ACCOUNT = "14000 - Rental Fountains - SF"
 #: costs nothing and saves a lookup later.
 DEPRECIATION_EXPENSE_ACCOUNT = "5203 - Depreciation - SF"
 
-LOCATION = "Sapphire Fountains Yard"
+LOCATION = "Upstairs Rental Warehouse"
 
 
 def execute() -> None:
@@ -119,7 +119,7 @@ def seed_asset_category() -> bool:
 
 
 def seed_location() -> bool:
-	"""Create the yard Location. Returns True if it wrote one.
+	"""Create the rental store Location. Returns True if it wrote one.
 
 	``Location`` needs only ``location_name``; the address and the map polygon are for
 	whoever knows the site, not for this file.
