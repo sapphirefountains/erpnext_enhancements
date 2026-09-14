@@ -63,7 +63,7 @@ depreciates is a Finance policy question, and this patch has no business answeri
 
 import frappe
 
-ASSET_CATEGORY = "Rental Fountain"
+ASSET_CATEGORY = "Rental Fountain Fleet"
 #: Already present in the chart of accounts, ``account_type = "Fixed Asset"``, non-group.
 FIXED_ASSET_ACCOUNT = "14000 - Rental Fountains - SF"
 #: Optional, and correctly typed (``account_type = "Depreciation"``). Unused until
