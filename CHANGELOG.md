@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.451.0] - 2026-09-14
+
+### Added
+
+- **A failed check now becomes a Non-Conformance and a corrective action.** One NCR per failed
+  check, not per inspection - each traces to a different contracted standard and each closes
+  separately, and grouping them would make the thing an NCR is *for* impossible. Raised on
+  submit, not on validate: an inspection in progress has failures in it that are about to be
+  corrected on the spot. WI-075 sub-phase E.
+- **25 Custom Fields and the two lifecycles the build spec describes.**
+  `Non Conformance` gains project, severity, responsible party, subcontractor, source, the
+  inspection and frozen check that raised it, the Scope of Work it traces to, and its corrective
+  action; its status becomes Open -> Action Assigned -> PM Resolved -> Verified -> Closed.
+  `Quality Action` gains a subject (core has none at all), project, source type, an NCR link
+  (core links Review and Feedback but **not** NCR - a real gap), owner, due date, priority, the
+  `punch_list` and `client_visible` flags, and the verification fields; its status becomes
+  Open -> In Progress -> PM Resolved -> Verified at Next Inspection -> Closed.
+
+### Notes
+
+- **The `Quality Action` Property Setter and `override_doctype_class` are one indivisible
+  change and must never be split across releases.** ERPNext's entire `QualityAction.validate`,
+  verified against `origin/version-16`, is one line that writes `"Completed"` whenever the
+  resolutions table is empty. An empty resolutions table is *exactly* what a punch-list item is,
+  so under core every punch item would be born closed. And once the Property Setter replaces
+  `Open / Completed` with the five-state lifecycle, that literal is no longer an option - so
+  `_validate_selects` raises on **every** save of the doctype, not only on ones this app makes.
+  `tests/test_quality_lifecycle.py` asserts both halves are present, and was negative-tested:
+  removing the hook entry, or drifting the vocabulary away from the fixture, fails the build.
+- **`PM Resolved`, never `Closed`, when the resolutions are done.** A self-reported fix and a
+  re-inspected fix are different levels of confidence, and only the second may close the record.
+  A Verified or Closed action is never moved by an edit to its child table - editing a child
+  table is not confirmation that somebody re-inspected the work.
+- **Severity is not guessed.** Every NCR is raised `Minor` and a person sets it. Minor/Major/
+  Critical is a judgement about consequence and nothing in a checklist row carries that: a
+  failed nozzle-pattern check might be cosmetic or might be why the feature cannot be handed
+  over. A wrong Critical pages three people, a wrong Minor hides a real problem, and an
+  auto-assigned severity reads as though somebody assessed it.
+- **`N/A` does not raise an NCR.** The failing set is explicit rather than "anything that is not
+  Pass", so a check that did not apply to the job is not a finding against anybody.
+- Routing is idempotent on the result row's frozen `source_key`, so re-submitting an amended
+  inspection does not raise a second NCR for a check that already has one. It never raises:
+  losing a signed inspection to protect its follow-up would be the wrong trade.
+- Both patches run **`pre_model_sync`**, and the ordering is the point: fixtures - and therefore
+  the Property Setters that narrow these Selects - are applied *after* patches, so a stored
+  value must be remapped while the old options are still in force. Production held **zero rows**
+  in both tables on 2026-09-14, so they remap nothing today; they log their counts anyway,
+  because a patch that matched nothing commits and writes its `tabPatch Log` row
+  indistinguishably from one that did the work. Neither raises.
+
+
 ## [1.450.0] - 2026-09-14
 
 ### Added

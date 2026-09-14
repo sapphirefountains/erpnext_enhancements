@@ -6,12 +6,12 @@ failure traceable to a contracted, measurable standard.
 Programme: [WI-075](../../work-items/WI-075-quality-and-inspections.md).
 Decision record: [ADR-0012](../../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md).
 
-**Status: sub-phases A through D.** The scaffold, the criterion-identity rules, the authoring
-layer, and the generated inspection itself — merged from a master template and a locked Scope of
-Work, and frozen. What is missing is what happens to a failure: sub-phase E raises a
-Non-Conformance and a Quality Action from one, F carries unverified fixes into the next
-inspection. Generation is still a deliberate act — `trigger_basis` is read by nothing — and
-`quality_enabled` is **off**.
+**Status: sub-phases A through E.** The scaffold, the criterion-identity rules, the authoring
+layer, the generated and frozen inspection, and the routing that turns a failed check into a
+Non-Conformance and a corrective action. What is missing is the second half of closure: sub-phase
+F carries an unverified fix into the next inspection and re-checks it, which is what stops "we
+fixed it" being taken on faith. Generation is still a deliberate act — `trigger_basis` is read
+by nothing — and `quality_enabled` is **off**.
 
 ## What this module is for
 
@@ -29,6 +29,9 @@ question why it exists.**
 | `workspace/quality_control/` | The `Quality Control` workspace — **not** `Quality`; see below |
 | `doctype/quality_settings/` | The Single holding every master switch. Dormant by default |
 | `catalog.py` | The milestone catalog and the Commissioning checks, as data. Frappe-free so CI can read it and sub-phase D can reuse it |
+| `lifecycle.py` | The NCR and Quality Action state machines, defined once so the Property Setter fixture and the code that writes a status cannot drift |
+| `overrides/quality_action.py` | Replaces core's one-line `validate`. **Inseparable from the status Property Setter** |
+| `routing.py` | A failed check becomes an NCR and a Quality Action |
 | `merge.py` | **The centre of the module.** Merging a master template with a project's contracted criteria, the content hash that freezes the result, and what counts as a failure. Frappe-free, so the freeze is asserted on every push |
 | `doctype/project_quality_inspection/` + `inspection_result/` | The generated inspection. Its rows are copies, never links |
 | `stable_keys.py` | Row identity — the `*_key` that criteria, checks and (in D) results all join on. Minted once, never regenerated |
@@ -129,6 +132,31 @@ around, and both are recorded here so nobody rediscovers them the hard way:
 - **`Quality Review.goal` must stay required.** Core's validate calls
   `frappe.get_doc("Quality Goal", self.goal)` whenever `reviews` is empty, so relaxing `reqd`
   turns an ordinary save into a lookup of the empty string.
+
+## Extending core's Quality Action: why two changes are one change
+
+`Quality Action`'s status Property Setter and `override_doctype_class["Quality Action"]` ship
+together and must never be separated. ERPNext's entire controller for that doctype is one line:
+
+    def validate(self):
+        self.status = "Open" if any([d.status == "Open" for d in self.resolutions]) else "Completed"
+
+`any([])` is `False`, so an action with **no resolution rows** saves as `Completed` — and an
+action with no resolution rows is exactly what a punch-list item is. Every punch item would be
+born closed, which is the opposite of the two-step closure this module exists to provide.
+
+Worse, once the Property Setter replaces `Open / Completed` with the five-state lifecycle, that
+same line writes a literal the field no longer offers. `_validate_selects` raises, and **every**
+save of the doctype fails — including saves that have nothing to do with this app.
+
+So the decision lives in [`lifecycle.py`](lifecycle.py), which imports no `frappe` and is
+asserted on every push, and the override is a thin class that calls it. `derive_action_status`
+differs from core in three deliberate ways: a terminal status is never moved by a child-table
+edit; an empty resolutions table means *no information*, not *done*; and nothing outside the
+option list is ever written, including core's own `"Completed"`, which is mapped to `Closed` so
+a row arriving with it becomes saveable rather than raising forever.
+
+`Non Conformance` needed no override — core ships it with no controller logic at all.
 
 ## Settings
 

@@ -371,9 +371,28 @@ doctype_css = {
 # Override standard doctype classes (from task_enhancements)
 override_doctype_class = {
 	"Task": "erpnext_enhancements.task_enhancements.doctype.task.task.Task",
+	# quality (WI-075 sub-phase E). NOT an optimisation -- a precondition, and it must never be
+	# separated from the `Quality Action-status-options` Property Setter that ships with it.
+	# ERPNext's entire QualityAction controller is one line:
+	#     self.status = "Open" if any([d.status == "Open" for d in self.resolutions]) else "Completed"
+	# Two consequences. `any([])` is False, so an action with NO resolution rows -- which is
+	# exactly what a punch-list item is -- saves as Completed, and every punch item would be
+	# born closed. And once the Property Setter replaces Open/Completed with the five-state
+	# lifecycle, that line writes a literal the field no longer offers, so _validate_selects
+	# raises on EVERY save of the doctype, not only on ones this app makes. See ADR-0012.
+	"Quality Action": "erpnext_enhancements.quality.overrides.quality_action.QualityAction",
 }
 
 doc_events = {
+	# quality (WI-075 sub-phase E): a failed check becomes a Non-Conformance and a corrective
+	# action. on_submit and not validate -- an inspection in progress has failures in it that
+	# are about to be corrected on the spot, and raising an NCR per keystroke would make the
+	# NCR list unusable. One NCR per FAILED CHECK, not per inspection, because each traces to a
+	# different contracted standard and each closes separately. Never raises: losing a signed
+	# inspection to protect its follow-up would be the wrong trade.
+	"Project Quality Inspection": {
+		"on_submit": "erpnext_enhancements.quality.routing.route_failures",
+	},
 	# The `Chat Message` after_insert unread fan-out was removed in v1.426.0 with the
 	# rest of the chat module (ADR 0011). It was the app's only chat doc_event.
 	"Task": {

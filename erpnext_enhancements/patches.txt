@@ -30,6 +30,17 @@ erpnext_enhancements.patches.refresh_module_map
 # a third DocType and the collision would still stand. Idempotent from the DB state.
 erpnext_enhancements.patches.rename_plaid_settings_doctype
 
+# v1.449.0 (WI-075 sub-phase E) -- BOTH run pre_model_sync, and the ordering is the point:
+# fixtures (and therefore the Property Setters that narrow these Selects) are applied AFTER
+# patches, so a stored value must be remapped while the old options are still in force. A
+# value outside a Select's options makes the row permanently unsaveable and no ignore_* flag
+# bypasses _validate_selects. Prod held ZERO rows in both tables on 2026-09-14, so today these
+# remap nothing -- they ship because the window closes at first use, and because another site
+# or an older restore may not be empty. Both log their counts: a patch that matched nothing
+# commits and writes its Patch Log row indistinguishably from one that did the work.
+erpnext_enhancements.patches.migrate_quality_status_values
+erpnext_enhancements.patches.guard_quality_selects_empty
+
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
 # v1.38.0 Workforce module: reassign Time Kiosk doctypes/pages out of Enhancements Core
