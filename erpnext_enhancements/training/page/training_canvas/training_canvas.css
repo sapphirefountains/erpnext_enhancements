@@ -244,7 +244,10 @@
 	animation: tc-pulse 0.8s ease infinite;
 }
 
-.tc-status.is-conflict .tc-pip {
+/* Both red, and deliberately the same red: from an author's seat 'out of date'
+   and 'not saved' are one fact -- what you are looking at is not what is stored. */
+.tc-status.is-conflict .tc-pip,
+.tc-status.is-error .tc-pip {
 	background: #e03636;
 }
 

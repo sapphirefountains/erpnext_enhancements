@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.437.0] - 2026-09-13
+
+Training Phase 6, D15 part three. **An author can upload a video.**
+
+### Added
+
+- **Browser-to-bucket video upload** (`training/video_upload.py`, plus the canvas
+  control). Pick a file, watch a progress bar, done.
+
+  Until now an author with an MP4 on their laptop could not get it into a lesson at
+  all. They needed a Google account, a Drive upload, and then a Drive-admin action
+  most of them cannot perform themselves — sharing the file with
+  `erpnext-drive@…iam.gserviceaccount.com`, a requirement that appeared **nowhere on
+  screen** and lived only in `docs/training-video-drive-runbook.md`.
+
+  **The obvious build does not work, and that is why this one looks the way it
+  does.** Frappe enforces a 25 MB default ceiling *twice* — `get_max_file_size()`
+  and again in `File.check_max_file_size` — and streams the whole body through a
+  gunicorn worker synchronously. So pointing `frappe.ui.FileUploader` at a video,
+  the way Image and PDF already upload, fails on any real one, and a raised limit
+  only converts the failure into a worker held for minutes. The bytes therefore go
+  **browser → GCS** on a signed URL, and this app is never in the data path.
+
+  Two things the browser is deliberately not trusted for: the **object name** is
+  minted server-side (a name from the client is an arbitrary write path into the
+  bucket), and the **size is re-read from GCS** on completion, because the client
+  already reported a size once and that number decided whether the upload was
+  allowed at all.
+
+- **The duration is read from the file before it is sent**, which closes a hole
+  rather than adding a feature. `_probe_drive_video` swallows every exception and
+  returns `{}`, landing an asset with `duration_seconds = 1` and
+  `duration_source = Manual` — and grading **waives the video-coverage gate
+  entirely** for a Manual duration. One orange modal at registration, and after
+  that a course that silently requires no watching. A browser reading
+  `HTMLMediaElement.duration` off the very file it is about to upload cannot fail
+  that way, so an uploaded asset is `Probed`, and a file whose length cannot be
+  read is refused instead of stored.
+
+- **`Training Settings.max_video_mb` finally does something.** It has existed with
+  a default of 300 and was read by **zero lines** of Python or JavaScript, so there
+  has never been a size ceiling anywhere in the upload path. It is now the limit,
+  enforced before a byte is sent and again on the server.
+
+- **`gcs_media.generate_signed_url` can sign extra headers**, sorted and declared,
+  which is what makes a resumable-upload start signable. A plain GET passes none
+  and gets the host-only canonical request it always had.
+
+### Fixed
+
+- **The canvas status line can say "not saved".** It had four states and no failure
+  one, which was fine while everything went through the draft save — the quiz
+  editor and the upload both write through their own doctype, so a failure there
+  left the sheet looking clean with nothing to say otherwise. It also takes an
+  override now, because a 300 MB upload showing "Saving…" for four minutes is
+  indistinguishable from a hang.
+
+- **A CORS refusal says what it is.** The bucket must allow this origin and expose
+  the `Location` header; a browser reports the failure as status 0 with no detail,
+  so the one sentence an author can act on is written into the client rather than
+  left to guesswork.
+
 ## [1.436.0] - 2026-09-13
 
 Training Phase 6, D15 part two. **A learner dashboard**, and a manager's view of one

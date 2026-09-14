@@ -814,6 +814,16 @@ jobs:
       # second definition twice.
       - name: Training dashboard (no scores to a manager, no second predicate)
         run: python -m unittest erpnext_enhancements.tests.test_training_dashboard -v
+      # Uploading a video without putting it through the site. The obvious build does
+      # NOT work: frappe enforces a 25MB ceiling twice and streams the body through a
+      # gunicorn worker synchronously, so pointing FileUploader at a video fails on any
+      # real one and would take the site down for the ones it accepted. These pin that
+      # the bytes go browser -> bucket, that the two things a browser is not trusted
+      # for stay untrusted (the object name is minted server-side; the size is re-read
+      # from GCS), and that a zero duration is refused -- because duration_source
+      # 'Manual' makes grading waive the video-coverage gate ENTIRELY.
+      - name: Training video upload (browser to bucket, nothing through a worker)
+        run: python -m unittest erpnext_enhancements.tests.test_training_video_upload -v
       # Every dotted path in hooks.py must name something that exists. Frappe
       # resolves after_migrate at the very END of `bench migrate`, so a typo there
       # fails the deploy after every schema change has already been applied -- the

@@ -1096,6 +1096,202 @@ class TrainingCanvas {
 	}
 
 
+	// ----------------------------------------------------------- video upload
+	//
+	// An author with an MP4 on their laptop could not get it into a lesson at all.
+	// They had to own a Google account, upload to Drive, then obtain a Drive-admin
+	// action most of them cannot perform themselves — sharing the file with the
+	// SERVICE ACCOUNT, a requirement that appeared nowhere on screen and lived only
+	// in a runbook — and finally paste the link back here.
+	//
+	// THE BYTES NEVER TOUCH THE SITE. The server signs a short-lived URL; this
+	// talks to Google Cloud Storage directly. Frappe's own uploader was not an
+	// option: it enforces a 25MB ceiling twice and streams the whole body through a
+	// gunicorn worker synchronously, so the obvious build fails on any real video
+	// and would take the site down for the ones it accepted.
+	//
+	// THE DURATION IS READ BEFORE THE UPLOAD, off the very file about to be sent.
+	// That is an upgrade rather than a shortcut: the Drive probe swallows every
+	// exception and lands `duration_source = Manual`, for which grading WAIVES the
+	// video-coverage gate entirely — one orange modal at registration, and after
+	// that a course that silently requires no watching. A file whose duration a
+	// browser cannot read is a file there is no point uploading.
+	//
+	// XHR rather than fetch, for the same reason `upload()` above uses it: fetch has
+	// no upload-progress event, and a 300MB upload with no progress bar is
+	// indistinguishable from a hang.
+
+	video_upload_ready() {
+		// Asked once per canvas session and remembered. The answer is about the
+		// SITE (is a bucket and a signing key configured), not about this lesson.
+		if (this._upload_ready) return Promise.resolve(this._upload_ready);
+		return frappe
+			.call("erpnext_enhancements.training.video_upload.upload_preflight")
+			.then((r) => {
+				this._upload_ready = (r && r.message) || { enabled: false };
+				return this._upload_ready;
+			})
+			.catch(() => ({ enabled: false }));
+	}
+
+	pick_video(lesson, block) {
+		if (!this.editable()) return;
+		this.video_upload_ready().then((ready) => {
+			if (!ready.enabled) {
+				// Said in words, before a file is chosen. Dropping 200MB and then
+				// meeting a CORS failure is not a message anybody can act on.
+				frappe.msgprint({
+					title: __("Uploads are not set up"),
+					indicator: "orange",
+					message: ready.message || __("Ask an administrator to configure training video storage."),
+				});
+				return;
+			}
+			const input = document.createElement("input");
+			input.type = "file";
+			input.accept = (ready.accepts || ["video/mp4"]).join(",");
+			input.addEventListener("change", () => {
+				const file = input.files && input.files[0];
+				if (file) this.upload_video(lesson, block, file, ready);
+			});
+			input.click();
+		});
+	}
+
+	// Reads HTMLMediaElement.duration without downloading anything: the object URL
+	// points at the local file. Resolves 0 when the browser cannot decode it, which
+	// the caller treats as a refusal rather than a default.
+	read_duration(file) {
+		return new Promise((resolve) => {
+			const url = URL.createObjectURL(file);
+			const probe = document.createElement("video");
+			probe.preload = "metadata";
+			const done = (seconds) => {
+				URL.revokeObjectURL(url);
+				resolve(Math.round(seconds) || 0);
+			};
+			probe.onloadedmetadata = () => done(probe.duration);
+			probe.onerror = () => done(0);
+			probe.src = url;
+		});
+	}
+
+	upload_video(lesson, block, file, ready) {
+		const cap = (ready && ready.max_mb) || 0;
+		if (cap && file.size > cap * 1024 * 1024) {
+			// Checked here as well as on the server, purely so the author hears it
+			// instantly rather than after the round trip. The server's check is the
+			// one that counts.
+			frappe.msgprint({
+				title: __("That video is too big"),
+				indicator: "orange",
+				message: __("{0} MB is the limit on this site.", [String(cap)]),
+			});
+			return;
+		}
+
+		this.read_duration(file).then((seconds) => {
+			if (!seconds) {
+				frappe.msgprint({
+					title: __("That file will not play"),
+					indicator: "orange",
+					message: __("The browser could not read its length, so learners could not play it either."),
+				});
+				return;
+			}
+			this.paint_status("saving");
+			frappe
+				.call("erpnext_enhancements.training.video_upload.start_video_upload", {
+					filename: file.name,
+					content_type: file.type,
+					size_bytes: file.size,
+				})
+				.then((r) => {
+					const start = (r && r.message) || {};
+					if (!start.url) throw new Error(__("The upload could not be started."));
+					return this.gcs_session(start, file).then((session) => this.gcs_put(session, file, start));
+				})
+				.then((start) =>
+					frappe.call("erpnext_enhancements.training.video_upload.finish_video_upload", {
+						object_name: start.object_name,
+						title: file.name,
+						duration_seconds: seconds,
+						content_type: start.content_type,
+					})
+				)
+				.then((r) => {
+					const asset = (r && r.message) || {};
+					if (!asset.name) throw new Error(__("The upload finished but the video was not registered."));
+					this.video_assets = (this.video_assets || []).concat([asset]);
+					this.video_registered(lesson, block, asset);
+					this.paint_status("saved");
+					frappe.show_alert({ message: __("Video uploaded."), indicator: "green" }, 4);
+				})
+				.catch((error) => this.upload_failed(error));
+		});
+	}
+
+	// Step one of a resumable upload: POST the signed URL with the exact headers
+	// that were signed, and read the session URI out of `Location`. The header must
+	// go back byte-identical -- it is part of the canonical request, and Google
+	// answers a mismatch with a 403 that says nothing about which header was wrong.
+	gcs_session(start, file) {
+		return new Promise((resolve, reject) => {
+			const xhr = new XMLHttpRequest();
+			xhr.open("POST", start.url, true);
+			Object.keys(start.headers || {}).forEach((name) => {
+				xhr.setRequestHeader(name, start.headers[name]);
+			});
+			xhr.onload = () => {
+				const location = xhr.getResponseHeader("Location");
+				if (xhr.status >= 200 && xhr.status < 300 && location) {
+					resolve(location);
+					return;
+				}
+				// The likeliest cause by far, and the one nobody guesses.
+				reject(
+					new Error(
+						xhr.status === 0
+							? __("The storage bucket refused the browser. Its CORS rules need this site's address, and must expose the Location header.")
+							: __("Storage answered {0} when starting the upload.", [String(xhr.status)])
+					)
+				);
+			};
+			xhr.onerror = () =>
+				reject(new Error(__("The storage bucket refused the browser. Check its CORS rules.")));
+			xhr.send(null);
+		});
+	}
+
+	gcs_put(session, file, start) {
+		return new Promise((resolve, reject) => {
+			const xhr = new XMLHttpRequest();
+			xhr.open("PUT", session, true);
+			xhr.setRequestHeader("Content-Type", start.content_type);
+			xhr.upload.onprogress = (event) => {
+				if (!event.lengthComputable) return;
+				const done = Math.round((event.loaded / event.total) * 100);
+				this.paint_status("saving", __("Uploading {0}%", [String(done)]));
+			};
+			xhr.onload = () => {
+				if (xhr.status >= 200 && xhr.status < 300) resolve(start);
+				else reject(new Error(__("Storage answered {0} during the upload.", [String(xhr.status)])));
+			};
+			xhr.onerror = () => reject(new Error(__("The upload was interrupted.")));
+			xhr.send(file);
+		});
+	}
+
+	upload_failed(error) {
+		this.paint_status("error");
+		frappe.msgprint({
+			title: __("The video was not uploaded"),
+			indicator: "red",
+			message: (error && error.message) || __("Try again."),
+		});
+	}
+
+
 	// ---------------------------------------------------------- lifecycle
 	new_draft() {
 		if (!this.course) return;
@@ -1694,6 +1890,13 @@ class TrainingCanvas {
 			const $d = this.render_ai_drawer(lesson);
 			if ($d && this.ai_drafts.kind === "checkpoint") $box.append($d);
 		}
+		// Upload first, and Drive second: the order is the recommendation. Drive
+		// needs a Google account AND an admin action nobody can see from here;
+		// upload needs a file.
+		$('<button class="btn btn-default btn-xs" style="margin-top:6px"></button>')
+			.text(__("Upload a video…"))
+			.on("click", () => this.pick_video(lesson, block))
+			.appendTo($box);
 		$('<button class="btn btn-default btn-xs" style="margin-top:6px"></button>')
 			.text(__("Add a video from Drive…"))
 			.on("click", () => this.register_drive_video(lesson, block))
@@ -2994,10 +3197,24 @@ class TrainingCanvas {
 		if (!this.$lessonset.prop("hidden")) this.render_lesson_settings();
 	}
 
-	paint_status(kind) {
-		const label = { saved: __("Saved"), dirty: __("Editing…"), saving: __("Saving…"), conflict: __("Out of date") };
-		this.$status.removeClass("is-dirty is-saving is-conflict").addClass(kind === "saved" ? "" : "is-" + kind);
-		this.$status.find(".tc-status-text").text(label[kind] || "");
+	// `text` overrides the standing label for a transient one -- an upload's
+	// percentage, say. Without it a 300MB upload shows "Saving…" for four
+	// minutes, which is indistinguishable from a hang.
+	paint_status(kind, text) {
+		const label = {
+			saved: __("Saved"),
+			dirty: __("Editing…"),
+			saving: __("Saving…"),
+			conflict: __("Out of date"),
+			// Added with the quiz editor and the video upload, both of which write
+			// through their own doctype rather than the draft save -- so a failure
+			// there leaves the sheet clean and had nothing to say so with.
+			error: __("Not saved"),
+		};
+		this.$status
+			.removeClass("is-dirty is-saving is-conflict is-error")
+			.addClass(kind === "saved" ? "" : "is-" + kind);
+		this.$status.find(".tc-status-text").text(text || label[kind] || "");
 	}
 }
 

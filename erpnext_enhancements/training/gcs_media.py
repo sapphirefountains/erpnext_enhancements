@@ -121,7 +121,7 @@ def _encode_path(object_name):
 	return "/".join(urllib.parse.quote(part, safe="") for part in object_name.split("/"))
 
 
-def generate_signed_url(object_name, expires_in=None, method="GET", now=None):
+def generate_signed_url(object_name, expires_in=None, method="GET", now=None, headers=None):
 	"""A V4 signed URL for one object, or ``None`` if signing is not configured.
 
 	``now`` is injectable purely so the tests can pin a timestamp; nothing in
@@ -156,8 +156,16 @@ def generate_signed_url(object_name, expires_in=None, method="GET", now=None):
 	# Header names in the canonical request must be lowercase and sorted; here
 	# there is only one, but the signed-headers string must agree with it
 	# exactly or the signature silently fails to match.
-	canonical_headers = f"host:{GCS_HOST}\n"
-	signed_headers = "host"
+	# `headers` exists for the resumable-upload start, which is a POST carrying
+	# `x-goog-resumable: start`. That header is part of what is signed, so the
+	# browser has to send it back byte-identical -- and when it does not, Google
+	# answers 403 at the moment of use with nothing that says why. A GET passes
+	# none and gets the host-only canonical request it always had.
+	to_sign = {"host": GCS_HOST}
+	for name, value in (headers or {}).items():
+		to_sign[str(name).strip().lower()] = str(value).strip()
+	canonical_headers = "".join(f"{k}:{to_sign[k]}\n" for k in sorted(to_sign))
+	signed_headers = ";".join(sorted(to_sign))
 
 	query = {
 		"X-Goog-Algorithm": SIGNING_ALGORITHM,
@@ -636,3 +644,37 @@ def test_connection():
 		"range_ok": bool(ranged and ranged.get("ok")),
 		"message": _("Bucket, key, signing, playback and byte-range seeking all check out."),
 	}
+
+
+def object_size(object_name):
+	"""The real byte length of one object, or ``None`` if it is not there.
+
+	Exists so ``finish_video_upload`` can check what actually landed instead of
+	believing the browser. The client has already been trusted to report a size
+	once, at the start of the upload, and that number decided whether the upload
+	was allowed at all — believing it a second time would make the ceiling
+	advisory rather than enforced.
+
+	A HEAD rather than a GET: the point is the ``Content-Length`` header, and
+	pulling 300 MB through a worker to measure it would recreate the exact problem
+	browser-direct upload exists to avoid.
+
+	Returns ``None`` for every failure — not configured, not found, network gone —
+	because the caller's only sensible response to all of them is the same, and it
+	already has a sentence for it.
+	"""
+	url = generate_signed_url(object_name, expires_in=120, method="HEAD")
+	if not url:
+		return None
+	try:
+		import requests
+
+		response = requests.head(url, timeout=20)
+		if response.status_code != 200:
+			return None
+		return cint(response.headers.get("Content-Length"))
+	except Exception:
+		# Deliberately quiet. A missing object is an ordinary outcome here (the
+		# upload did not finish), not an incident worth an Error Log entry per
+		# abandoned upload.
+		return None
