@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.454.0] - 2026-09-14
+## [1.455.0] - 2026-09-14
 
 Four employee feedback requests from the portal, triaged against production and the ERPNext
 v16 source rather than against their AI work breakdowns. Five of the ten proposed tasks named
@@ -120,6 +120,69 @@ fields or behaviour that does not exist; the corrected tasks are on PRJ-00580.
   its docstring. Third occurrence of this shape in this repo.
 - ERPNext behaviour here was read from `git show origin/version-16:` rather than from the
   sibling `../erpnext` working tree, which is on `develop` and reports `17.0.0-dev`.
+
+## [1.454.0] - 2026-09-14
+
+### Added
+
+- **The field inspection wizard** (WI-075 sub-phase H). A Desk Page at
+  `/app/inspection-wizard?inspection=QIR-…` that walks a generated inspection one frozen section
+  at a time — every answer a tap, every measurement one numeric field with its contracted range
+  printed beside it. Without the argument it lists the drafts assigned to whoever is signed in.
+  Modelled directly on `sapphire_maintenance`'s Visit Wizard: bootstrap once, autosave a
+  field-allowlisted patch with optimistic locking, submit server-side.
+- `api/quality_wizard.py` — `get_inspection_bootstrap`, `save_inspection`, `finish_inspection`,
+  `get_open_inspections`.
+- **The advisory inspector-qualification check.** When a master template names a
+  `required_position` or `required_course` the inspector does not have, they get an inline
+  warning, the inspection gets a timeline comment and their manager gets an email — and the save
+  goes through. Gated on `Quality Settings.advisory_inspector_qualification`, which ships off.
+- `quality/qualification.py` (frappe-free, 26 tests) and `quality/inspector_advisory.py`.
+- `patches/resync_quality_control_workspace.py` — the workspace gains a **Run an inspection**
+  shortcut, and workspaces are timestamp-gated.
+
+### Notes
+
+- **The server allowlist is where the freeze is actually enforced.** An `Inspection Result` row
+  carries two kinds of field: the answers (`outcome`, `measured_value`, `notes`, `photo`) and the
+  frozen ones copied from the master template at generation, which are the standard being
+  inspected against. Only the first four are writable from the wizard, and there is **no append
+  path** for rows. A wizard that could write `min_value` could turn a failing measurement into a
+  passing one from a phone, on site, with nothing in the diff to see; a row it could append could
+  be a check nobody contracted for. `tests/test_inspection_wizard.py` asserts the allowlist is
+  exactly those four and that no frozen field has leaked in — negative-tested by adding
+  `min_value` and confirming the build fails.
+- **A tier means nothing across job families, and the missing check fails by passing.** `Position`
+  carries `job_family` and an integer `tier`, so the obvious implementation compares tiers — and a
+  bare `tier >= tier` passes a tier-3 Designer as a qualified tier-2 Technician. The family gate
+  runs first. Where seniority is not modelled on either side it falls back to an exact name match,
+  because an unmodelled hierarchy is not a flat one; it is an unknown one.
+- **A template with no requirements produces no finding, ever.** Absence of a requirement is not a
+  failed requirement, and warning on every unconfigured template is the fastest way to teach
+  people to dismiss the warning — which costs the real ones too. Separately, an inspector with no
+  Employee record is reported as *unknown* rather than unqualified: two different claims, only one
+  of them true.
+- **Why advisory rather than a gate**, recorded here because the reasoning is about this company
+  and not about software: two Senior Technicians, no Masters, one Project Manager. A hard gate
+  would routinely stop an inspection being *recorded* rather than stop unqualified work being
+  done, and an inspection that happened and was never written down is worse than one written down
+  by the wrong person — the second at least leaves a trail somebody can question.
+- The wizard displays `out_of_range` rather than re-deriving it. The controller computes it in
+  `validate`; two implementations of the same arithmetic is one more than can stay correct.
+- Required and photo-required rows are chipped in the UI. Both reach the `before_submit` gate
+  whether or not anybody saw them, and a checklist that only says what it wanted once you try to
+  finish is a checklist that lied — the inspector has usually left the site by then.
+- A failed autosave restores the pending patch, says so, and retries; closing the tab with
+  unsaved answers warns. A silent failed autosave loses a whole inspection on a bad signal.
+- Text Editor guidance renders through the page's own sanitiser and **never**
+  `frappe.utils.xss_sanitise`, whose default strategies escape `<`, `>`, `"`, `'` and `/` — the
+  panel still looks populated while the inspector reads literal `<ul><li><b>` tags. That shipped
+  once on the maintenance side and survived review; both wizards now fail the build on it.
+- The Page is named `inspection-wizard`. A Desk Page named `quality` or `quality-control` would
+  never render — the router resolves the first path segment against workspaces before pages.
+- **Nothing changes on prod when this deploys.** `quality_enabled` and
+  `advisory_inspector_qualification` both ship off.
+
 
 ## [1.453.0] - 2026-09-14
 

@@ -46,6 +46,9 @@ question why it exists.**
 | `alerting.py` | Who a Critical NCR reaches and when it reaches them again. Frappe-free, so the one decision that must not be wrong — whether somebody was actually told — is asserted on every push |
 | `critical_alerts.py` | The database and mail half of that: the dispatch worker, the hourly re-drive sweep, and the acknowledgement write |
 | `doctype/ncr_acknowledgment/` | One row per person the alert reached. Every field read-only — an acknowledgement anybody could type into a grid is not evidence |
+| `page/inspection_wizard/` | The field tool: one frozen section at a time, every answer a tap. Talks only to `api/quality_wizard.py`, which is where the freeze is enforced |
+| `qualification.py` | Whether the person holding the clipboard is the one the template asked for. Frappe-free — and it has to be, because nothing downstream ever fails when this is wrong |
+| `inspector_advisory.py` | The frappe half of that: inline warning, timeline comment, manager email. Gate, then swallow — **never** throws |
 
 Registered in [`../modules.txt`](../modules.txt), tiled from
 [`../setup/desktop_icon_map.py`](../setup/desktop_icon_map.py), and given a sidebar by
@@ -191,6 +194,60 @@ an inspection is a no-op rather than a second ratchet.
 An open punch-list item is structurally the same thing — raised against a standard, fixed by
 somebody, not actually done until it has been looked at again — so it is a Quality Action with
 `custom_punch_list` ticked and gets all of this for free.
+
+## The field wizard, and where the freeze is actually enforced
+
+`/app/inspection-wizard?inspection=QIR-…` walks a generated inspection one frozen section at a
+time, on a phone, in front of the fountain. Without the argument it lists the drafts assigned to
+whoever is signed in. It is modelled directly on `sapphire_maintenance`'s Visit Wizard — bootstrap
+once, autosave a field-allowlisted patch with optimistic locking, submit server-side — because a
+second half-different convention for the same job is how one of them ends up unmaintained.
+
+**The allowlist in `api/quality_wizard.py` is the freeze's last line of defence, and it is short
+on purpose.** An `Inspection Result` row carries two kinds of field: the *answers* — outcome,
+measurement, notes, photo — and the *frozen* ones copied from the master template at generation,
+which are the standard being inspected against. Only the first kind is writable. A wizard that
+could write `min_value` could turn a failing measurement into a passing one from a phone, on
+site, with nothing in the diff to see. `tests/test_inspection_wizard.py` asserts the allowlist is
+exactly those four fields and that no frozen field has leaked into it, and was negative-tested by
+adding `min_value` and confirming the build fails.
+
+There is also **no append path** for result rows. Every row was frozen at generation; one that
+could be added could be a check nobody contracted for, or a quiet replacement for one the
+inspector could not answer.
+
+Three smaller things the wizard does on purpose:
+
+- **The contracted range is printed beside every measurement.** An inspector who cannot see the
+  bound is guessing at what "passes" means, which is the whole gap this programme exists to close.
+- **`out_of_range` is displayed, never re-derived.** The controller computes it in `validate`;
+  two implementations of the same arithmetic is one more than can stay correct.
+- **Required and photo-required rows are chipped before submit.** Both reach the `before_submit`
+  gate whether or not anybody saw them, and a checklist that only says what it wanted once you
+  try to finish is a checklist that lied.
+
+## The inspector qualification check, and the comparison it must never make
+
+A master template may name a `required_position` and a `required_course`. When the inspector has
+neither, they get an inline warning, the inspection gets a timeline comment, and their manager
+gets an email — and **the save goes through**. The decision is in the work item: two Senior
+Technicians, no Masters, one Project Manager, so a hard gate would routinely stop an inspection
+being *recorded* rather than stop unqualified work being done. An inspection that happened and was
+never written down is worse than one written down by the wrong person, because the second at
+least leaves a trail somebody can question.
+
+`Position` is a tree carrying `job_family` and an integer `tier`, so seniority is already modelled
+and is not reinvented here: **within one job family a higher tier satisfies a lower one.** Across
+families it means nothing — tier 3 Designer and tier 3 Technician are both threes and nothing
+follows from that. So the family gate runs *before* the tier comparison, and note the direction
+the missing gate fails in: a bare `tier >= tier` **passes** a Designer as a qualified Technician,
+and a check that passes is a check nobody investigates.
+
+Two things it deliberately does not say. A template with no requirements produces no finding,
+ever — absence of a requirement is not a failed requirement, and warning on every unconfigured
+template is the fastest way to teach people to dismiss the warning. And an inspector with no
+Employee record is reported as *unknown*, not as unqualified; those are different claims and only
+one of them is true.
 
 ## The Critical alert, and why "we sent it" is not the claim being made
 

@@ -406,6 +406,12 @@ doc_events = {
 	# different contracted standard and each closes separately. Never raises: losing a signed
 	# inspection to protect its follow-up would be the wrong trade.
 	"Project Quality Inspection": {
+		# quality (WI-075 sub-phase H): warn when the template asked for a qualification the
+		# inspector does not have. ADVISORY and never throws -- the company has two Senior
+		# Technicians and no Masters, so a hard gate would routinely stop an inspection being
+		# RECORDED rather than stop unqualified work. Gated on
+		# `Quality Settings.advisory_inspector_qualification`, which ships off.
+		"validate": "erpnext_enhancements.quality.inspector_advisory.warn_unqualified_inspector",
 		"on_submit": "erpnext_enhancements.quality.routing.on_submit",
 	},
 	# quality (WI-075 sub-phase G): a Critical NCR pages the PM, Production Manager and

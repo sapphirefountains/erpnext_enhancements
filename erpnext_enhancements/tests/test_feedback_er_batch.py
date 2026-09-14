@@ -1,4 +1,4 @@
-"""Invariants for the four feedback requests shipped together in v1.454.0.
+"""Invariants for the four feedback requests shipped together in v1.455.0.
 
 ER-2026-312391 (per-item PO status), ER-2026-362239 (expected delivery dates),
 ER-2026-420503 (the Asset form), ER-2026-312370 (rental inspections).
