@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.445.0] - 2026-09-14
+
+### Added
+
+- **A graded quiz now names the correct answer, on every attempt.** `grade_quiz` returns
+  `per_question[].correct_option_keys` (or `accepted_text` for Short Answer) and the
+  explanation for every drawn question, whether the learner passed, failed, or left it
+  blank.
+
+  The gap this closes is a wiring one: `quiz.js` has carried the "Correct answer:" line
+  since it was written and has **never once had the data to draw it**, because nothing has
+  ever sent `correct_option_keys`. So a learner who failed a confined-space quiz was told
+  which options were wrong and never which one was right — three times over, and then
+  out of attempts. `test_training_boundary_contract` had the asymmetry on file the whole
+  time, filed under "never leaves the server for a learner": a reason field doing exactly
+  what its own docstring warns about, recording a bug as intent.
+
+  **Unconditionally, and that is the decision rather than an oversight.** The first cut
+  gated it on "passed, or no attempts left", which is the defensible-looking rule and the
+  wrong one: the review screen is the teaching moment — the one time somebody is looking
+  at a wrong answer of their own and asking why — and withholding there sends them back
+  into a retake no better informed. The cost was weighed and accepted: a learner can burn
+  one attempt to read the answers and come back with them, and `best` keeps the higher
+  score. That hole is smaller than a crew member who has failed the confined-space quiz
+  three times and still does not know when a space is permit-required. The gate is one
+  condition in `grade_quiz` if it ever needs to come back.
+
+  The explanation's old `answered` gate goes with it. It existed to stop a blank
+  submission harvesting the explanations, which protected nothing once the same reply
+  names the correct option outright — and it withheld the teaching from precisely the
+  question the learner could not attempt.
+
+  `is_correct`, `correct_text_answers` and the per-*option* explanations are still never
+  disclosed, at any point, by anything: the first is the raw child row and the last says
+  why each *individual* wrong option is wrong. `test_training_grading` treats all three as
+  leak markers by name, so a payload forwarding a whole key entry trips on the name alone,
+  and every other learner-facing function — the drawn quiz, the public lesson, the
+  checkpoints, the gates — is still walked for the full set.
+
+### Fixed
+
+- **"Preview as a learner" showed the author somebody else's quiz.** `/training_preview`
+  grew a draft mode in v1.415.0, and `getCourse`/`getLesson` were switched over to it —
+  but `startQuiz` and `submitQuiz`, four lines below them in the same object literal, were
+  not. They returned the canned demo `QUIZ` and graded against the canned `KEY` in *both*
+  modes. An author previewing their own course therefore read their own lesson, was asked
+  three questions about draining a fountain basin, and was marked against an answer key
+  belonging to a different course entirely. Nothing threw and nothing looked broken; the
+  quiz simply belonged to someone else, which on the one screen whose entire job is to
+  show an author what they have built is the worst available failure.
+
+  The draw now happens **on the server**, in `_draft_payload`, through the same
+  `grading.draw_from_quiz` the learner runtime calls — split out of `draw_quiz` for this
+  and passed an rng rather than an attempt, since a draft has no attempt to seed from. Not
+  reimplemented in the page: the classic builder rebuilt the learner payload in JavaScript
+  in roughly 640 lines, the two drifted, and a shim then made a broken runtime look fine
+  to the author and broken to every learner. The drawn run rides beside `lessons` as
+  `quiz_draws`, keyed by lesson key, so `lessons` stays byte-for-byte what publish writes.
+  `test_training_canvas` now **enumerates** the transport's content methods and fails if
+  any one of them never looks at `DRAFT`, because the next method added here will be added
+  the same way this one was.
+
+- **A multiple-choice question now says it is one.** Reported as "sometimes the quiz won't
+  display the right answer among the randomized incorrect answers". It always did: every
+  published question was checked against its own key, `draw_quiz` rebuilds the entire
+  option list before it shuffles, and replaying the deployed draw 4,320 times across every
+  published lesson produced no draw missing its answer. What was missing was the
+  *instruction*. A Multiple Choice question is graded on the **exact set** — tick one of
+  three correct options and the question scores zero — and on screen the only things
+  distinguishing it from a single-choice question were a line of grey hint text and a 4px
+  difference in the corner radius of the tick boxes. Eight of the thirteen quiz-carrying
+  lessons hold exactly one such question, which is where the "sometimes" came from.
+
+  Each question now carries a badge — `Select all that apply` in the accent colour, or a
+  quiet `Select one` — the hint says what the grader actually does ("a partly-right answer
+  is marked wrong") instead of describing the input, and a multi-select question paints a
+  running `2 selected` under its options. Deliberately **no tick mark on a chosen
+  checkbox**, however much it would help tell one from a radio: `player.css` rules that out
+  in as many words next to the same rule, because "I chose this" must not be readable as
+  "and it was right".
+
+  From the learner's chair, "I picked the right answer and it said I was wrong" and "the
+  right answer wasn't there" are the same experience, and only one of them gets reported.
+
 ## [1.444.0] - 2026-09-14
 
 ### Added

@@ -62,6 +62,22 @@ FORBIDDEN_MARKERS = (
 	"__secret_text__",
 )
 
+# The subset that stays forbidden in `grade_quiz`, which DELIBERATELY discloses the
+# key on every graded run. Naming the right option is the whole point of that reply;
+# forwarding the raw child row is still not. `is_correct` and `correct_text_answers`
+# are doctype field names that no published payload has ever carried, and
+# `__SECRET_ANSWER__` is the per-OPTION explanation, which says why each individual
+# option is right or wrong and is never disclosed anywhere.
+#
+# Every OTHER learner-facing function stays held to the full list above — the drawn
+# quiz, the public lesson, the checkpoints, the gates. Grading is the exception, and
+# it is one function.
+FORBIDDEN_EVEN_WHEN_REVEALED = (
+	"is_correct",
+	"correct_text_answers",
+	"__SECRET_ANSWER__",
+)
+
 ATTEMPT = "TRN-ATT-000001"
 VERSION = "TRN-CRS-00001-V1"
 COURSE = "TRN-CRS-00001"
@@ -507,12 +523,12 @@ def _walk_strings(value):
 		yield str(value)
 
 
-def _assert_answer_free(case, payload, what):
+def _assert_answer_free(case, payload, what, markers=FORBIDDEN_MARKERS):
 	haystack = list(_walk_strings(payload))
-	for marker in FORBIDDEN_MARKERS:
+	for marker in markers:
 		case.assertNotIn(marker, haystack, f"{marker!r} reached the learner via {what}")
 	blob = json.dumps(payload, default=str)
-	for marker in FORBIDDEN_MARKERS:
+	for marker in markers:
 		case.assertNotIn(marker, blob, f"{marker!r} reached the learner via {what} (serialized)")
 
 
@@ -546,20 +562,28 @@ class TestNothingLearnerFacingCarriesAnAnswer(unittest.TestCase):
 		for run in range(1, 4):
 			_assert_answer_free(self, grading.draw_quiz(self.attempt, LESSON_KEY, run), "draw_quiz")
 
-	def test_graded_quiz_is_answer_free_when_everything_is_wrong(self):
-		"""The dangerous direction: a wrong answer is where an implementation is
-		tempted to say what the right one was."""
+	def test_a_graded_run_names_the_answers_but_never_the_raw_key(self):
+		"""`grade_quiz` is the one function here that discloses, and it discloses on
+		every run — wrong, right, or not attempted at all.
+
+		What it discloses is bounded, and that is what these three assertions pin.
+		The correct option keys and the accepted text are the point of the review
+		screen. The doctype's own `is_correct` and the per-OPTION explanations are
+		not: the first is the raw child row, the second says why each individual
+		wrong option is wrong. Neither has ever left the server and neither starts
+		now.
+		"""
 		drawn = grading.draw_quiz(self.attempt, LESSON_KEY, 1)
-		answers = {q["question"]: ["nonsense"] for q in drawn}
-		_assert_answer_free(self, grading.grade_quiz(self.attempt, LESSON_KEY, answers), "grade_quiz")
-
-	def test_graded_quiz_is_answer_free_when_everything_is_right(self):
-		_assert_answer_free(
-			self, grading.grade_quiz(self.attempt, LESSON_KEY, _perfect_answers(self.attempt, self.key)), "grade_quiz"
-		)
-
-	def test_graded_quiz_is_answer_free_when_nothing_was_answered(self):
-		_assert_answer_free(self, grading.grade_quiz(self.attempt, LESSON_KEY, {}), "grade_quiz")
+		for label, answers in (
+			("everything wrong", {q["question"]: ["nonsense"] for q in drawn}),
+			("everything right", _perfect_answers(self.attempt, self.key)),
+			("nothing answered", {}),
+		):
+			with self.subTest(label):
+				result = grading.grade_quiz(self.attempt, LESSON_KEY, answers)
+				_assert_answer_free(
+					self, result, f"grade_quiz ({label})", FORBIDDEN_EVEN_WHEN_REVEALED
+				)
 
 	def test_next_checkpoint_is_answer_free(self):
 		_assert_answer_free(
@@ -699,9 +723,47 @@ class TestDrawQuiz(unittest.TestCase):
 			for option in question["options"]:
 				self.assertEqual(sorted(option.keys()), ["option_key", "text"])
 
+	def test_every_draw_contains_the_correct_option(self):
+		"""Reported from the field as "sometimes the right answer isn't among the
+		options". Stated the other way round, as the invariant: whatever the shuffle
+		does, the key's own option must be one of the ones on offer.
+
+		Swept over many attempts and runs rather than asserted once, because the
+		complaint was "sometimes" — a single draw would pass on nearly any bug that
+		could produce it.
+		"""
+		for seed in range(25):
+			attempt = _attempt(shuffle_seed=f"seed-{seed}")
+			for run in range(1, 4):
+				for question in grading.draw_quiz(attempt, LESSON_KEY, run):
+					entry = self.key["quiz"][question["question"]]
+					if entry["type"] == "Short Answer":
+						continue
+					offered = {o["option_key"] for o in question["options"]}
+					self.assertTrue(
+						set(entry["correct"]) <= offered,
+						f"{question['question']} drew without its answer on run {run}",
+					)
+
 	def test_a_lesson_without_a_quiz_draws_nothing(self):
 		_publish_lesson(questions=[], has_quiz=0)
 		self.assertEqual(grading.draw_quiz(self.attempt, LESSON_KEY, 1), [])
+
+	def test_the_draw_can_be_taken_without_an_attempt(self):
+		"""The seam the authoring preview uses: a draft has no attempt to seed from,
+		and rather than grow a second shuffler in the page, it calls this with an rng
+		of its own. Unseeded is legal and is what a caller with nothing to be
+		deterministic about should get."""
+		quiz = self.public["quiz"]
+		drawn = grading.draw_from_quiz(quiz)
+		self.assertEqual(len(drawn), len(quiz["questions"]))
+		self.assertEqual(
+			sorted(q["question"] for q in drawn),
+			sorted(q["question"] for q in quiz["questions"]),
+		)
+		for question in drawn:
+			for option in question["options"]:
+				self.assertEqual(sorted(option.keys()), ["option_key", "text"])
 
 
 # ---------------------------------------------------------------- grade_quiz
@@ -783,18 +845,47 @@ class TestGradeQuiz(unittest.TestCase):
 		result = self._grade({"TRN-Q-000006": "   "})
 		self.assertFalse(self._row(result, "TRN-Q-000006")["correct"])
 
-	def test_explanations_appear_only_for_questions_that_were_answered(self):
+	def test_explanations_appear_for_every_drawn_question(self):
+		"""Gated on `answered` until v1.445.0, to stop a blank submission harvesting
+		the explanations. That gate protected nothing once the same reply started
+		naming the correct option outright, and it withheld the teaching from exactly
+		the question a learner could not attempt."""
 		result = self._grade({"TRN-Q-000001": ["optB"]})
 		self.assertTrue(self._row(result, "TRN-Q-000001")["explanation"])
-		self.assertEqual(self._row(result, "TRN-Q-000002")["explanation"], "")
+		self.assertTrue(self._row(result, "TRN-Q-000002")["explanation"])
 
-	def test_the_review_screen_never_names_the_right_option(self):
-		"""A run is retryable, so naming the correct option hands over the retake."""
+	def test_a_wrong_answer_is_told_which_option_was_right(self):
+		"""By KEY, which is what the player can turn back into text.
+
+		The keys are the shuffled ones the learner actually saw, so `quiz.js` maps
+		them onto the options it drew. Sending the text instead would be a second
+		spelling of the same fact for the two of them to disagree about.
+		"""
 		result = self._grade({"TRN-Q-000001": ["optB"]})
-		for row in result["per_question"]:
-			self.assertNotIn("correct_options", row)
-			self.assertNotIn("answer", row)
-			self.assertIsInstance(row["correct"], bool)
+		row = self._row(result, "TRN-Q-000001")
+		self.assertFalse(row["correct"])
+		self.assertEqual(row["correct_option_keys"], ["optA"])
+		# Short Answer discloses its accepted list instead, and never option keys.
+		short = self._row(result, "TRN-Q-000006")
+		self.assertEqual(short["correct_option_keys"], [])
+		self.assertIn("safety goggles", short["accepted_text"])
+
+	def test_the_first_attempt_discloses_as_much_as_the_last(self):
+		"""No gate on attempts, deliberately: see the note in `grade_quiz`. A learner
+		who fails run 1 with two retakes in hand is told the same thing as one who has
+		just spent their last."""
+		answers = {"TRN-Q-000001": ["optB"]}
+		_set_progress(quiz={"runs": 0, "best": 0.0})
+		first = self._row(self._grade(answers), "TRN-Q-000001")
+		_set_progress(quiz={"runs": 2, "best": 0.0})
+		last = self._row(self._grade(answers), "TRN-Q-000001")
+		self.assertEqual(first["correct_option_keys"], last["correct_option_keys"])
+		self.assertEqual(first["explanation"], last["explanation"])
+
+	def test_an_unanswered_question_is_explained_too(self):
+		"""The review is the teaching moment, and a question somebody could not even
+		attempt is the one they most need the explanation for."""
+		self.assertTrue(self._row(self._grade({}), "TRN-Q-000001")["explanation"])
 
 	def test_the_pass_mark_comes_from_the_published_snapshot(self):
 		_publish_lesson(questions=_six_questions(), pass_score=40)

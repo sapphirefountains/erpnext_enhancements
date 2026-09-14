@@ -28,6 +28,8 @@ admin roles, plus anyone on a developer-mode site. A plain learner gets a 404 â€
 reported as missing rather than forbidden, because a 403 would confirm the route.
 """
 
+import random
+
 import frappe
 from frappe.utils import cint, flt
 
@@ -93,6 +95,7 @@ def _draft_payload(course=None):
 		return None
 
 	from erpnext_enhancements.api.training_author import _split_lesson
+	from erpnext_enhancements.training.grading import draw_from_quiz
 
 	if not (ALLOWED_ROLES & set(frappe.get_roles())):
 		return None
@@ -117,12 +120,27 @@ def _draft_payload(course=None):
 		order_by="chapter_key asc, idx_in_chapter asc, creation asc",
 	)
 
-	lessons, keys, toc, minutes = [], {}, [], 0
+	# One seed per page load, so a lesson's draw is stable while the author walks
+	# around the preview and a reload gives them a fresh shuffle to look at. That is
+	# as close as this harness gets to an attempt, which is what normally seeds it.
+	seed = frappe.generate_hash(length=16)
+
+	lessons, keys, draws, toc, minutes = [], {}, {}, [], 0
 	for name in names:
 		lesson = frappe.get_doc("Training Lesson", name)
 		public, key = _split_lesson(lesson)
 		lessons.append(public)
 		keys[public["lesson_key"]] = key
+		# Drawn HERE, by the real shuffler, and kept OUT of `public` â€” which has to
+		# stay byte-for-byte the payload publish writes, or this stops being a preview
+		# of anything. `draw_from_quiz` is the same function the learner runtime calls;
+		# reimplementing the draw in the page is what produced the bug this fixes.
+		quiz = public.get("quiz") or {}
+		draws[public["lesson_key"]] = (
+			draw_from_quiz(quiz, random.Random(f"{seed}|{public['lesson_key']}"))
+			if cint(quiz.get("enabled"))
+			else []
+		)
 		minutes += cint(lesson.estimated_minutes)
 		# Row-for-row what `_materialize_lessons` writes into `toc_json`, minus the
 		# `lesson` docname -- which `_public_toc` strips before a learner sees it, and
@@ -185,5 +203,9 @@ def _draft_payload(course=None):
 			# classic builder's own note means by "test this checkpoint tests nothing".
 			# It is the reason the gate above is stricter than the page's.
 			"keys": keys,
+			# One drawn quiz run per lesson key, beside the keys rather than inside
+			# the lesson, for the reason given at the draw: `lessons` is what publish
+			# writes and nothing may be smuggled into it.
+			"quiz_draws": draws,
 		}
 	)

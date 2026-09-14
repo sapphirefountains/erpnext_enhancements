@@ -247,11 +247,13 @@ READ_BUT_NOT_SENT = {
     # this app builds. `fail()` uses it to tell a PermissionError apart from a
     # network failure, which are two different things to say to somebody.
     "exc_type": "frappe's error envelope, not a field api/training.py builds",
-    # Answer-key fields the server deliberately never sends. The player reads them
-    # only in the builder-preview shape, where the author is allowed to see them.
-    "correct_options": "answer key; served to authors in preview, never to learners",
-    "correct_option_keys": "answer key; served to authors in preview, never to learners",
-    "accepted_text": "answer key for Short Answer; never leaves the server for a learner",
+    # `correct_option_keys` and `accepted_text` USED to sit here, on the reasoning
+    # that the answer key never leaves the server. `grade_quiz` now sends both —
+    # empty while the run is retryable, filled once the learner has passed or run
+    # out of attempts — so they are no longer asymmetric and the entries would be
+    # stale. `correct_options` is the odd one out and stays: it is only the dead
+    # half of a `||` fallback in `renderReview`, and nothing has ever sent it.
+    "correct_options": "dead `||` fallback beside correct_option_keys; nothing sends this spelling",
     "option_text": "the runtime sends `text`; `option_text` is the doctype field the preview uses",
     # DOM and language properties that collide with a binder name.
     "href": "a DOM property on an anchor, not a reply key",

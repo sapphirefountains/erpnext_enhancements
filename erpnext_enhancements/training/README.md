@@ -68,12 +68,35 @@ Three mechanisms, each a per-course toggle:
 > Label it "watched" wherever it appears on screen. A manager should not discover
 > this nuance during a disciplinary conversation.
 
-Grading is entirely server-side. Correct answers never reach the browser: the
-learner-facing payload is materialized at publish into
-`Training Lesson.published_content_json` with `is_correct` stripped, and the key
-lives in `answer_key_json` at **`permlevel: 1`**. Learner roles hold no DocPerm at
-all on the content doctypes, so `/api/resource/Training Question` 403s them
-regardless of what any endpoint does.
+Grading is entirely server-side. The learner-facing payload is materialized at
+publish into `Training Lesson.published_content_json` with `is_correct` stripped,
+and the key lives in `answer_key_json` at **`permlevel: 1`**. Learner roles hold no
+DocPerm at all on the content doctypes, so `/api/resource/Training Question` 403s
+them regardless of what any endpoint does.
+
+**The key is disclosed in exactly one place: `grade_quiz`, on every graded run.**
+The review screen names the correct options (`per_question[].correct_option_keys`,
+or `accepted_text` for Short Answer) and carries the explanation, whether the
+learner passed, failed, or left the question blank. Nothing else discloses — the
+drawn quiz, the public lesson, the checkpoints and the gates are all still
+answer-free, and `test_training_grading` walks every one of them for the sentinels.
+
+Two things stay behind the line even there, and `is_correct` /
+`correct_text_answers` / the per-**option** explanations are treated as leak markers
+by name for it: the raw child row, and the text saying why each *individual* wrong
+option is wrong. A learner is told which option was right, never walked through the
+others.
+
+This is a product decision (v1.445.0), taken knowingly. The review screen is the
+teaching moment — the one time somebody is looking at a wrong answer of their own
+and asking why — so gating it behind "you passed" or "you have no attempts left"
+sends people back into a retake no better informed. The cost is that a learner can
+spend one of their attempts reading the answers and return with them. `best` keeps
+the higher score, so that is a real hole; it was judged smaller than a crew member
+who has failed a confined-space quiz three times and still does not know when a
+space is permit-required. If that trade ever needs revisiting, the gate is one
+condition in `grade_quiz` and the endpoint has `max_attempts` and the run count to
+feed it.
 
 ## Files
 
@@ -338,7 +361,11 @@ Asset with poster and coverage gate; **Image Hotspots** attaches a diagram and p
 Every one of the twelve block types can be added from the `+` menu. **In-video checkpoints**
 are placed here too, on a timeline under the video block, with a pin inspector for the
 question and its options (v1.413.0) — and a draft can be **previewed as a learner** through
-the real player (v1.415.0).
+the real player (v1.415.0). The preview's quiz is the **draft's own**, drawn server-side by
+`grading.draw_from_quiz` and graded against the draft's key (v1.445.0); before that,
+`startQuiz`/`submitQuiz` were the two transport methods that never switched out of the
+canned fixture, so every previewed course asked the same three questions about draining a
+basin and marked them against an answer key belonging to a different course.
 
 **Video is authored end to end here as of v1.417.0.** **Add a video from Drive…** registers a
 Training Video Asset through `register_video_asset`, which **probes** the real length from

@@ -33,10 +33,14 @@ implementation that quietly breaks it:
 * **A checkpoint cannot be answered from a position that was never watched.**
   :func:`grade_checkpoint` refuses unless the stored watch intervals cover the
   checkpoint's timestamp. Otherwise the questions can be farmed by seeking.
-* **Correct option keys never appear in a result.** Explanations are revealed after
-  an answer, because that is the teaching moment; *which option was right* is not,
-  because attempts are retryable and a failed run would otherwise hand over a
-  perfect second run.
+* **The answer key leaves this module through exactly one door.** :func:`grade_quiz`
+  names the correct options and the explanation on every graded run, because the
+  review screen is the teaching moment — see the note where those rows are built,
+  which records what that costs and why it was accepted. Every other function here
+  is answer-free, and ``is_correct``, ``correct_text_answers`` and the per-*option*
+  explanations never leave at all: the first is the raw child row and the last says
+  why each individual wrong option is wrong. ``test_training_grading`` walks the
+  return value of every public function in this module for all three by name.
 
 ``evaluate_gates`` is deliberately read-only — it is a decision, called on the
 completion path and potentially on every heartbeat, and a function that writes on
@@ -117,13 +121,30 @@ def draw_quiz(attempt, lesson_key, run):
 	"""
 	doc = _attempt(attempt)
 	lesson_name = _lesson_name(doc, lesson_key)
-	public = public_lesson(lesson_name)
-	quiz = public.get("quiz") or {}
+	quiz = public_lesson(lesson_name).get("quiz") or {}
 	if not cint(quiz.get("enabled")):
 		return []
+	return draw_from_quiz(quiz, _rng(doc, lesson_key, run))
+
+
+def draw_from_quiz(quiz, rng=None):
+	"""One run drawn out of a published quiz payload. **The only shuffler.**
+
+	Split out of :func:`draw_quiz` so the authoring preview can draw from a *draft*
+	lesson — which has no attempt to seed from and no published row to read — without
+	a second implementation of the draw. That matters more than the six lines it
+	saves: the classic builder rebuilt the learner payload in JavaScript, the two
+	drifted, and an author ended up previewing something no learner would ever see.
+	One draw, both callers.
+
+	``rng`` defaults to an unseeded ``Random`` for the preview's benefit. Every
+	learner-facing caller passes :func:`_rng`, because a learner who refreshes
+	mid-quiz and gets a different order has, from where they are sitting, watched the
+	application lose their answers.
+	"""
+	rng = rng or random.Random()
 
 	questions = list(quiz.get("questions") or [])
-	rng = _rng(doc, lesson_key, run)
 	if cint(quiz.get("shuffle_questions")):
 		rng.shuffle(questions)
 
@@ -161,6 +182,10 @@ def grade_quiz(attempt, lesson_key, answers, run=None):
 	calculated, a question that was not drawn — is discarded before grading, which
 	is why the drawn set is recomputed here rather than inferred from the keys of
 	``answers``.
+
+	**A graded run names the correct answers, every time.** See the note where the
+	review rows are built: it is a deliberate choice about what these quizzes are
+	for, and it is the one place in this module where the key is allowed out.
 	"""
 	doc = _attempt(attempt)
 	lesson_name = _lesson_name(doc, lesson_key)
@@ -174,7 +199,7 @@ def grade_quiz(attempt, lesson_key, answers, run=None):
 
 	earned = 0
 	possible = 0
-	per_question = []
+	graded = []
 	for question in drawn:
 		name = question.get("question")
 		entry = (key.get("quiz") or {}).get(name) or {}
@@ -186,21 +211,7 @@ def grade_quiz(attempt, lesson_key, answers, run=None):
 		if correct:
 			earned += points
 
-		per_question.append(
-			{
-				"question": name,
-				"text": question.get("text"),
-				"type": question.get("type"),
-				"points": points,
-				"awarded": points if correct else 0,
-				"answered": answered,
-				"correct": correct,
-				# Revealed only for a question the learner actually attempted, and
-				# never accompanied by the correct option keys — the run is
-				# retryable, so naming the right option hands over the retake.
-				"explanation": entry.get("explanation") or "" if answered else "",
-			}
-		)
+		graded.append((question, entry, points, answered, correct))
 
 	score = flt(100.0 * earned / possible, 2) if possible else 0.0
 	# The pass mark comes from the published snapshot, not the live lesson row: a
@@ -208,6 +219,47 @@ def grade_quiz(attempt, lesson_key, answers, run=None):
 	published_quiz = public_lesson(lesson_name).get("quiz") or {}
 	pass_score = cint(published_quiz.get("pass_score")) or _course_policy(lesson_name)["pass_score"]
 	passed = bool(possible) and score >= pass_score
+
+	# THE ONE PLACE THE KEY IS ALLOWED OUT, and it is allowed out on every graded
+	# run: the correct options, the accepted text, and the explanation, whether the
+	# learner passed, failed, or left the question blank.
+	#
+	# That is a decision about what these quizzes are for rather than a relaxation
+	# of the module's guarantee. The review screen is the teaching moment — it is
+	# the one time a learner is looking at a wrong answer of their own and asking
+	# why — and withholding there sends them back into a retake no better informed,
+	# which is how somebody fails a confined-space quiz three times learning
+	# nothing. The cost is real and was accepted knowingly: a learner can burn one
+	# attempt to read the answers and come back with them. They spend a permitted
+	# attempt to do it, `best` keeps the higher score, and a score obtained that way
+	# is worth less than a crew member who still does not know when a space is
+	# permit-required.
+	#
+	# `is_correct` and the per-OPTION explanations are NOT part of this and never
+	# leave the server: the first is the raw child-row field, the second says why
+	# each individual wrong option is wrong, which is the same fact spelled out.
+	# `test_training_grading` treats both names as leak markers for that reason.
+	per_question = []
+	for question, entry, points, answered, correct in graded:
+		is_text = (entry.get("type") or question.get("type")) == "Short Answer"
+		per_question.append(
+			{
+				"question": question.get("question"),
+				"text": question.get("text"),
+				"type": question.get("type"),
+				"points": points,
+				"awarded": points if correct else 0,
+				"answered": answered,
+				"correct": correct,
+				"explanation": entry.get("explanation") or "",
+				# Option KEYS, not text: they are the shuffled ones this learner was
+				# actually shown, so the player maps them back onto the options it
+				# drew. Sending the text would be a second spelling of the same fact
+				# for the two of them to disagree about.
+				"correct_option_keys": [] if is_text else list(entry.get("correct") or []),
+				"accepted_text": list(entry.get("accepted_text") or []) if is_text else [],
+			}
+		)
 
 	_record_quiz_run(doc, lesson_key, run, score)
 	_file_quiz_answers(doc, lesson_name, run, drawn, submitted, per_question)
