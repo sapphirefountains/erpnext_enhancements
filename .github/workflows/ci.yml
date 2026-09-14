@@ -459,6 +459,17 @@ jobs:
       # classification that lets a one-way door through without a confirmation.
       - name: Training publish tool (change types cannot drift, gated as one-way)
         run: python -m unittest erpnext_enhancements.tests.test_training_publish_tool -v
+      # create_training_draft_version -- the rung between authoring and publishing.
+      # Without it nothing could open a draft of a course that ALREADY EXISTS, so
+      # correcting a published course meant editing the live version's lessons in
+      # place: frappe permits it (a Training Lesson is a plain document) and the
+      # module forbids it, because learners are reading that version. The clone is
+      # what must not be reinvented -- create_draft_version preserves lesson_key,
+      # block_key and the checkpoint keys, and a hand-built copy mints fresh ones,
+      # silently stranding every resume position, checkpoint and video chapter,
+      # because all of them join on the key rather than on an index.
+      - name: Training draft tool (delegates the clone, gates the write)
+        run: python -m unittest erpnext_enhancements.tests.test_training_draft_tool -v
       # The four draft courses' stale content. Asserts the REPLACEMENT TABLE, because the
       # content itself lives only in tabTraining Content Block on prod. The Expense Claim
       # assertion is deliberately not 'must not appear' -- the correction names it in order to

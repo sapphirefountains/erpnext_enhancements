@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.440.0] - 2026-09-14
+
+### Added
+
+- **`create_training_draft_version`** — the missing rung in the authoring ladder.
+  `draft_course_spec` proposes, `author_training_course` builds a **new** course, and
+  `publish_training_course` makes a draft live. Nothing could open a draft of a course
+  that **already exists**, so an assistant asked to correct a published course had two
+  options and both were wrong: edit the live version's lessons in place, or stop and
+  ask a human to press a button.
+
+  The first is the dangerous one, because **frappe permits it**. A Training Lesson is
+  a plain document, so `update_document` would happily rewrite a version learners are
+  reading and whose completions state exactly what somebody passed. That rule lives in
+  the module's design and not in the data model, which is precisely why a tool must
+  not leave the door open.
+
+  **The clone is the part that must not be reinvented.** `create_draft_version`
+  preserves `lesson_key`, `block_key` and the checkpoint and chapter keys. A
+  hand-built copy — `create_document` on a Training Course Version, then copying rows
+  — produces an empty shell and then fresh keys, which silently strands every
+  in-flight resume position, every in-video checkpoint and every video chapter,
+  because all of them join on the key rather than on an index. Nothing errors; the
+  learner simply restarts the course.
+
+  Gated (`_gate.APP_MUTATING`) but deliberately **not** `HIGH_RISK`: no learner sees
+  anything change, the live version stays live, an unwanted draft is simply deleted,
+  and it cannot supersede a completion, assign anything or freeze a table of contents
+  — those all belong to publishing. Marking the safest write in the group destructive
+  would put a scary card in front of it and teach people to click through them.
+
+  An already-open draft is **returned rather than raised**. `create_draft_version`
+  throws in that case, which reads as a failure and is not one: the caller wanted an
+  editable draft of this course and there is one. It never opens a second, because two
+  drafts both claim the same next version number and the second to publish would
+  overwrite the first author's work.
+
+- **`tests/test_training_draft_tool.py`** (16 checks), wired into `ci.yml`. Its
+  absence assertions run against the **call graph**, not the source text — the tool's
+  `description` is executable code that legitimately names `publish_training_course`
+  and the stable keys, so substring matching flagged the tool's own documentation as
+  an implementation.
+
 ## [1.439.1] - 2026-09-14
 
 Docs only. No executable change.

@@ -2016,6 +2016,17 @@ assistant_tools = [
 	# last inch. APP_MUTATING and Medium risk: it is a one-way door that freezes lesson
 	# titles permanently and can fan assignments out to everyone.
 	"erpnext_enhancements.assistant_tools.publish_training_course.PublishTrainingCourse",
+	# create_training_draft_version is the rung BETWEEN authoring and publishing,
+	# and its absence had a concrete cost: nothing could open a draft of a course
+	# that already exists, so correcting a published course meant either editing the
+	# live version's lessons in place -- which frappe permits, since a Training
+	# Lesson is a plain document, and which the module forbids because learners are
+	# reading that version -- or stopping to ask a human to press a button.
+	# create_document cannot stand in: it makes an empty Training Course Version
+	# with no lessons, and hand-copying the rows mints fresh lesson_key/block_key
+	# values, which strands every resume position, checkpoint and video chapter,
+	# because all of them join on the key rather than on an index.
+	"erpnext_enhancements.assistant_tools.create_training_draft_version.CreateTrainingDraftVersion",
 	"erpnext_enhancements.assistant_tools.maintenance_day_board.MaintenanceDayBoard",
 	"erpnext_enhancements.assistant_tools.maintenance_contract_status.MaintenanceContractStatus",
 	"erpnext_enhancements.assistant_tools.maintenance_visit_history.MaintenanceVisitHistory",
