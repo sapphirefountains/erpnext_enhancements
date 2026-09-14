@@ -189,23 +189,26 @@ An open punch-list item is structurally the same thing — raised against a stan
 somebody, not actually done until it has been looked at again — so it is a Quality Action with
 `custom_punch_list` ticked and gets all of this for free.
 
-## One thing this module cost us on its first deploy
+## One thing this module cost us on its first two deploys
 
 `Project Scope of Work` was created by model sync and then **force-deleted in the same
-migrate**, because its controller imported `erpnext_enhancements.quality.scope_criteria` at
-module scope and that import did not resolve during frappe's `remove_orphan_doctypes()` sweep.
-That function imports every non-custom DocType's controller and force-deletes any that raises
-`ImportError`. Nothing failed the deploy; nothing reached the Error Log.
+migrate** — twice, on v1.452.1 and again on v1.452.2 — because its controller class was named
+`ProjectScopeOfWork` and Frappe was looking for `ProjectScopeofWork`.
 
-The table it had already created survived — MariaDB DDL auto-commits — so production was left
-with a 26-column `tabProject Scope of Work`, no DocType row, and `Project.custom_scope_of_work`
-pointing at a Link target that no longer existed.
+Frappe resolves a controller with `doctype.replace(" ", "").replace("-", "")`. It strips
+spaces; it does not title-case. "of" was lower case in the DocType name, so it stays lower case
+in the class name. `get_controller` raises `ImportError` when the class is missing, and
+`remove_orphan_doctypes()` passes anything that raises to `frappe.delete_doc(..., force=True)`.
 
-That controller now imports inside the method. The rule, and it is narrow because ~15 existing
-controllers import from this app at module scope quite safely: **a DocType controller must not
-import at module scope from a module that does not already exist in production.** The two
-controllers in this package that import from `quality` survived the same migrate, because by
-then the package had been pulled in from inside itself.
+Neither deploy failed. Nothing reached the Error Log. The table survived both times — MariaDB
+DDL auto-commits — so production held a 26-column `tabProject Scope of Work` with no DocType
+row, and `Project.custom_scope_of_work` pointing at a Link target that did not exist.
+
+The first fix attempt was wrong: the cross-module import in that controller was blamed, made
+lazy, and the DocType was deleted again on the very next deploy. The check that "proved" the
+import was fine had asked for the class name *we* chose rather than the one Frappe derives —
+which is the whole lesson, and is what `tests/test_doctype_controller_names.py` now asserts for
+every DocType in the app.
 
 ## Settings
 

@@ -177,24 +177,24 @@ Verified, and all of them expensive to rediscover:
   `tests/test_hr_qualification_roster.py` now fails the build on a double brace anywhere in
   that file, and checks every identifier the compiled template would read against what
   `render_grid` actually passes.
-- **A DocType controller that fails to import is `force`-deleted, silently, by `bench migrate`.**
-  `remove_orphan_doctypes()` runs on every migrate: it calls `clear_controller_cache()`, then
-  `get_controller()` on every non-custom DocType, and anything raising `ImportError` or
-  `DoesNotExistError` is passed to `frappe.delete_doc(..., force=True)`. Nothing fails the
-  deploy and nothing reaches the Error Log. v1.452.1 lost `Project Scope of Work` this way on
-  the release that introduced it — model sync created it at ~12:08, the sweep deleted it at
-  12:09:22, and the only trace was a `Deleted Document` row. **The table it had already created
-  stayed behind**, because MariaDB DDL auto-commits and survives the rollback of the row that
-  caused it, so the site was left with a 26-column table, no DocType, and a Custom Field on
-  Project that was a Link to something that no longer existed. Note the shape: the module ships
-  dormant, so nothing broke and nobody would have noticed. The trigger was a **cross-module**
-  import at module scope — a controller in `project_enhancements` importing from `quality`, a
-  package introduced in that same release; the two `quality` controllers importing from their
-  own package survived the same migrate. Roughly fifteen controllers import from this app at
-  module scope and are fine, so the rule is narrow: **a DocType controller must not import, at
-  module scope, from a module that does not already exist in production.** Import it inside the
-  method instead. `override_doctype_class` entries are skipped by the sweep entirely, which is
-  the only reason `Quality Action` was never at risk.
+- **A DocType controller that fails to import is `force`-deleted, silently, by `bench migrate`
+  — and the commonest way to fail is a one-letter class name.** Frappe resolves a controller
+  with `classname = doctype.replace(" ", "").replace("-", "")`. It strips characters and does
+  **not** title-case, so `Project Scope of Work` resolves to **`ProjectScopeofWork`** — lower
+  case `o`, because "of" was lower case in the DocType name. A class called
+  `ProjectScopeOfWork` is invisible to it, `get_controller` raises `ImportError`, and
+  `remove_orphan_doctypes()` — which runs on *every* migrate — passes anything that raises to
+  `frappe.delete_doc(..., force=True)`. So the DocType is created by model sync and
+  force-deleted in the same migrate. That happened twice here, v1.452.1 and v1.452.2, and each
+  time the deploy exited 0, the version string read correctly, and nothing reached the Error
+  Log; the only trace was a `Deleted Document` row. **The table survives**, because MariaDB DDL
+  auto-commits and outlives the rollback of the row that caused it — production was left with a
+  26-column `tabProject Scope of Work`, no DocType, and a Custom Field on Project that was a
+  Link to something that no longer existed. It also resists the obvious check: importing the
+  controller by hand looks fine, because you ask for the class name *you* chose rather than the
+  one Frappe derives. `tests/test_doctype_controller_names.py` fails the build on it now, and
+  111 child tables plus 144 other doctypes were clean — this is a one-letter trap, not a
+  widespread one. `override_doctype_class` entries are skipped by the sweep entirely.
 - **Merging to `main` does more than deploy this app's code.** The prod deploy `FLUSHDB`s
   **both** redis instances — `:13000` and `:11000` — and restarts the bench. The `:11000`
   flush destroys every queued background job, silently, whether or not it had anything to

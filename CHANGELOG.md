@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.452.3] - 2026-09-14
+
+### Fixed
+
+- **`Project Scope of Work` was force-deleted by two consecutive deploys. This is the actual
+  cause, and v1.452.2 was the wrong fix.** Frappe resolves a controller with
+  `classname = doctype.replace(" ", "").replace("-", "")` — it strips spaces and does **not**
+  title-case — so "Project Scope of Work" resolves to `ProjectScopeofWork`, lower-case `o`.
+  The class was `ProjectScopeOfWork`, `getattr` returned `None`, `get_controller` raised
+  `ImportError`, and `remove_orphan_doctypes()` passed it to
+  `frappe.delete_doc(..., force=True)` — on every migrate, silently.
+- `tests/test_doctype_controller_names.py` now asserts the derived class name exists for every
+  DocType this app ships, and was negative-tested by restoring the bad spelling. 144 non-child
+  doctypes and 111 child tables were otherwise clean: this is a one-letter trap, not a
+  widespread one.
+
+### Changed
+
+- v1.452.2's lazy import in that controller is reverted. It was justified by a diagnosis that
+  turned out to be wrong, and about fifteen other controllers import from this app at module
+  scope quite safely. The CLAUDE.md gotcha and the module README that carried the wrong
+  explanation are rewritten to the real one.
+
+### Notes
+
+- **How the wrong diagnosis survived a check.** The controller was imported by hand to prove it
+  was fine, and it was — but the check asked for `ProjectScopeOfWork`, the name *we* chose,
+  rather than `ProjectScopeofWork`, the name Frappe derives. The import genuinely worked; the
+  question was wrong. The second deletion, on the deploy that shipped the "fix", is what
+  exposed it.
+- Neither deploy failed, both reported the new version string, and nothing reached the Error
+  Log. The only trace either time was a row in `Deleted Document`. The table survived both —
+  MariaDB DDL auto-commits and outlives the rollback of the row that caused it — so production
+  held a 26-column table with no DocType, and `Project.custom_scope_of_work` as a Link to a
+  target that did not exist. Verified inert throughout: Project meta loaded all 227 fields and
+  projects opened normally.
+
+
 ## [1.452.2] - 2026-09-14
 
 ### Fixed

@@ -451,6 +451,14 @@ jobs:
       # child tables (the data) are joined by label and nothing keeps them in sync,
       # so a block with no row renders an empty div and a row with no block never
       # appears. v1.146.0 shipped exactly that across seven widgets.
+      # A one-letter class-name mismatch gets a DocType FORCE-DELETED on every migrate, with
+      # nothing in the Error Log and the table left behind. Frappe resolves a controller as
+      # doctype.replace(" ","").replace("-","") -- it strips spaces and does NOT title-case, so
+      # "Project Scope of Work" wants `ProjectScopeofWork`, lower-case o. get_controller raises
+      # ImportError when the class is absent and remove_orphan_doctypes() force-deletes anything
+      # that raises. Cost this repo two consecutive deploys (v1.452.1, v1.452.2).
+      - name: DocType controller class names (Frappe strips spaces, it does not title-case)
+        run: python -m unittest erpnext_enhancements.tests.test_doctype_controller_names -v
       - name: Workspace structure (content <-> child rows, WI-018)
         run: python -m unittest erpnext_enhancements.tests.test_workspaces -v
       # The Quality module (WI-075) sits beside erpnext's own Quality Management, which owns
