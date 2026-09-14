@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.442.0] - 2026-09-14
+
+### Changed
+
+- **The party naming guard now distinguishes "no separator" from "a separator typed
+  wrongly".** It was reported as a complaint that the guard says `FIX —
+  separator_missing` too often and must be demanding an em dash. It never was: the em
+  dash in that banner is `party_naming_advisor.js` punctuation (`Naming: {verdict} —
+  {summary}`), and the separator has always been ` - `. But the complaint was pointing
+  at something real underneath it.
+
+  The old test was `if SEPARATOR not in body`, which answers *no* to three quite
+  different names and called all three `separator_missing`:
+
+  | Name | What it actually is |
+  | --- | --- |
+  | `CEM Daybreak Splash Pad` | no separator at all — correct as it stood |
+  | `Candi Wadsworth- Fountain Installation 4-Tier` | a separator, spaced wrongly |
+  | `Ana Mendez-Law Event` | not a separator; the hyphen belongs to the name |
+
+  The middle row is now `separator_malformed`, with a suggestion that keeps the
+  qualifier (`Candi Wadsworth - Fountain Installation 4-Tier`). The old path emitted
+  `separator_missing` with a suggestion of `<party> - `, which both told the author
+  something they could see was untrue and threw away what the job was. En and em
+  dashes land in the same bucket — the house style is a plain hyphen, and a name that
+  used a dash is told to rewrite it rather than told it has none.
+
+  **A bare, unspaced hyphen is still not a separator, and that is the load-bearing
+  half.** The rule is whitespace on at least one side of the dash. Splitting on
+  `Ana Mendez-Law Event` would invent a party called `Ana Mendez` and a qualifier
+  called `Law` — a false finding on a correct name, which for an advisory check is the
+  one failure that can't be afforded. 18 Projects, 4 Opportunities and 16 Addresses
+  carry such a hyphen and every one of them is a hyphenated party name: *Big-D
+  Construction*, *Sarah Henley-Busse*, *Flo-Tech*, *C-Mech Engineering*,
+  *Harris-Dudley Co.*, *2023 MLS All-Star Week*.
+
+  **What this does not do is quieten the guard**, and the measurement is the reason to
+  say so plainly. Of 552 customer-facing Projects, 345 carry no dash of any kind and
+  187 are already compliant; of 839 Opportunities, 785 carry none. Those 1,130 records
+  are what makes `separator_missing` common, the finding is correct on every one of
+  them, and no change to the separator rule moves that number — only renaming the
+  records does. This change moves 2 Projects out of the wrong bucket and stops the
+  next paste from Word or Google Docs landing in it, both of which autocorrect a
+  spaced hyphen into an en dash as you type.
+
+  `separator_form()` is the new three-way judgement and `split()` now splits on a
+  malformed separator too, so the party prefix and the qualifier are read from what
+  the author meant. `tests/test_party_naming_rules.py` gains a `SeparatorTest` class
+  covering all three answers against verbatim production values (56 tests, up from
+  43).
+
 ## [1.441.0] - 2026-09-14
 
 ### Added

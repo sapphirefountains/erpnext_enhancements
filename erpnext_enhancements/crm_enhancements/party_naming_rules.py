@@ -43,6 +43,26 @@ Two consequences of that ``autoname`` worth knowing before anyone proposes a ren
   a rename, and renames ripple through every Dynamic Link and linked document.
 
 --------------------------------------------------------------------------------------
+What counts as the separator, and the three answers rather than two
+--------------------------------------------------------------------------------------
+
+The separator is `` - `` — a **plain hyphen with a space either side**, never an en or em
+dash. Asking "does the value contain `` - ``" is one question too few, though, because it
+answers *no* to three quite different names and only one of them is the defect:
+
+============================================ ==========================================
+``CEM Daybreak Splash Pad``                  no separator at all — :data:`SEPARATOR_MISSING`
+``Candi Wadsworth- Fountain Installation``   a separator, spaced wrongly — :data:`SEPARATOR_MALFORMED`
+``Ana Mendez-Law Event``                     not a separator; that hyphen is part of the name
+============================================ ==========================================
+
+Telling the middle one it has no separator is false, and a check that says something false
+about a name its author can see in front of them is a check people stop reading. So
+:func:`separator_form` distinguishes the three, and the rule that does it is simply
+**whitespace on at least one side of the dash**. See :data:`DASHES` and
+:data:`_SEPARATOR_RE`, where the live counts behind each row of that table are recorded.
+
+--------------------------------------------------------------------------------------
 What "matches the party" means, and why it is not equality
 --------------------------------------------------------------------------------------
 
@@ -80,6 +100,29 @@ SEVERITY_ORDER: Final[dict[str, int]] = {STOP: 0, FIX: 1, NOTE: 2, VERDICT_PASS:
 #: these names are prose rather than a segment list. `` - `` with the spaces: a bare hyphen
 #: is ambiguous against hyphenated party names (*Ana Mendez-Law* is one word, not two).
 SEPARATOR: Final[str] = " - "
+
+#: Dashes that get typed or pasted where the hyphen in :data:`SEPARATOR` was meant. A plain
+#: hyphen is the house style and the only one that passes; the rest are here so a name that
+#: *has* a separator is told to rewrite it rather than told it has none.
+#:
+#: Word and Google Docs both autocorrect a spaced hyphen into an en dash as you type, and a
+#: title pasted from either carries it in looking identical at a glance. Measured on
+#: production 2026-09-14: every one of the 552 customer-facing Projects, 839 Opportunities
+#: and 1,020 Addresses uses a plain hyphen or no dash at all — **no live record uses one of
+#: these**, and the list is here to keep it that way rather than to excuse existing data.
+DASHES: Final[str] = "-‐‑‒–—−"
+
+#: Every dash with the whitespace around it. :func:`separator_match` then keeps only those
+#: with whitespace on at least one side, which is what separates a separator from a hyphen
+#: doing its ordinary job inside a word.
+#:
+#: **A bare, unspaced hyphen is deliberately not a separator.** 18 Projects, 4 Opportunities
+#: and 16 Addresses contain one, and reading them is the whole argument: *Ana Mendez-Law*,
+#: *Big-D Construction*, *Sarah Henley-Busse*, *Flo-Tech*, *C-Mech Engineering*,
+#: *Harris-Dudley Co.*, *2023 MLS All-Star Week*. Splitting on those would invent a party
+#: called ``Ana Mendez`` and a qualifier called ``Law`` — a false finding on a correct name,
+#: which is the one failure this module cannot afford.
+_SEPARATOR_RE = re.compile(r"(?P<before>\s*)(?P<dash>[" + DASHES + r"])(?P<after>\s*)")
 
 # --- the two shapes ------------------------------------------------------------
 
@@ -153,6 +196,7 @@ VAGUE_QUALIFIERS: Final[frozenset[str]] = frozenset(
 VALUE_MISSING: Final[str] = "value_missing"
 PARTY_MISSING: Final[str] = "party_missing"
 SEPARATOR_MISSING: Final[str] = "separator_missing"
+SEPARATOR_MALFORMED: Final[str] = "separator_malformed"
 PARTY_PREFIX_MISMATCH: Final[str] = "party_prefix_mismatch"
 QUALIFIER_MISSING: Final[str] = "qualifier_missing"
 QUALIFIER_VAGUE: Final[str] = "qualifier_vague"
@@ -166,6 +210,7 @@ SEVERITY: Final[dict[str, str]] = {
 	VALUE_MISSING: FIX,
 	PARTY_MISSING: FIX,
 	SEPARATOR_MISSING: FIX,
+	SEPARATOR_MALFORMED: FIX,
 	PARTY_PREFIX_MISMATCH: FIX,
 	QUALIFIER_MISSING: FIX,
 	QUALIFIER_VAGUE: FIX,
@@ -190,9 +235,17 @@ EVIDENCE: Final[dict[str, str]] = {
 		"which no amount of renaming fixes."
 	),
 	SEPARATOR_MISSING: (
-		"the value carries no ' - ', so it cannot express party-and-qualifier. Spaced on "
-		"purpose: a bare hyphen is ambiguous against hyphenated party names like "
-		"'Ana Mendez-Law'."
+		"the value carries no separator at all, so it cannot express party-and-qualifier. "
+		"Note what this does NOT mean: a bare unspaced hyphen does not count, because it is "
+		"ambiguous against hyphenated party names like 'Ana Mendez-Law'. A hyphen that is "
+		"doing the job but spaced or drawn wrongly is separator_malformed instead."
+	),
+	SEPARATOR_MALFORMED: (
+		"there is a separator and it is not written ' - ' — a space missing on one side "
+		"('Candi Wadsworth- Fountain Installation'), or an en/em dash where the house style "
+		"is a plain hyphen. Distinct from separator_missing on purpose: the name has the "
+		"right shape and telling its author they omitted the separator is simply untrue, "
+		"which is how a check loses the room. The remedy is the suggestion, as typed."
 	),
 	PARTY_PREFIX_MISMATCH: (
 		"what comes before the separator is not the linked party, even allowing a shortening "
@@ -297,13 +350,53 @@ def party_matches(candidate: str | None, party: str | None) -> bool:
 	return longer[: len(shorter)] == shorter
 
 
+#: :func:`separator_form` answers one of these three.
+SEP_CANONICAL: Final[str] = "canonical"
+SEP_MALFORMED: Final[str] = "malformed"
+SEP_NONE: Final[str] = "none"
+
+
+def separator_match(value: str | None):
+	"""The first dash in ``value`` that is acting as a separator, or ``None``.
+
+	Acting as a separator means **whitespace on at least one side**. That single condition is
+	what keeps *Ana Mendez-Law* and *Flo-Tech* whole while still recognising the separator in
+	``Candi Wadsworth- Fountain Installation``, where somebody dropped a space.
+	"""
+	for match in _SEPARATOR_RE.finditer((value or "").strip()):
+		if match.group("before") or match.group("after"):
+			return match
+	return None
+
+
+def separator_form(value: str | None) -> str:
+	"""Is the separator absent, written our way, or written some other way?
+
+	Canonical is a plain hyphen with whitespace on **both** sides. Extra whitespace is not
+	judged here — that is :data:`DOUBLE_SPACE`'s business, and reporting ``Foo  -  Bar``
+	twice would describe one defect as two.
+	"""
+	match = separator_match(value)
+	if not match:
+		return SEP_NONE
+	# Read off :data:`SEPARATOR` rather than written out again, so the house style is
+	# declared in exactly one place and the two cannot drift apart.
+	if match.group("dash") == SEPARATOR.strip() and match.group("before") and match.group("after"):
+		return SEP_CANONICAL
+	return SEP_MALFORMED
+
+
 def split(value: str | None) -> tuple[str, str]:
-	"""``(before, after)`` the first separator. ``after`` is '' when there is none."""
+	"""``(before, after)`` the first separator. ``after`` is '' when there is none.
+
+	Splits on a malformed separator too, so the party prefix and the qualifier are judged on
+	what the author meant rather than on the whole string.
+	"""
 	text = (value or "").strip()
-	if SEPARATOR not in text:
+	match = separator_match(text)
+	if not match:
 		return text, ""
-	head, _sep, tail = text.partition(SEPARATOR)
-	return head.strip(), tail.strip()
+	return text[: match.start()].strip(), text[match.end() :].strip()
 
 
 # --- findings ------------------------------------------------------------------
@@ -435,19 +528,35 @@ def _check_party_qualifier(body: str, party: str, config: dict) -> list[dict]:
 	"""``<Party> - <what we are doing>``. Project and Opportunity."""
 	out: list[dict] = []
 	head, tail = split(body)
+	form = separator_form(body)
 
-	if SEPARATOR not in body:
+	if form == SEP_NONE:
 		out.append(
 			finding(
 				SEPARATOR_MISSING,
 				f"{config['label']} needs '{config['party_label'].lower()} - what we are doing "
-				f"for them', separated by ' - '.",
-				suggestion=f"{party} - " if party else None,
+				f"for them', separated by {SEPARATOR!r}.",
+				suggestion=f"{party}{SEPARATOR}" if party else None,
 			)
 		)
 		# Without a separator there is no prefix to judge and no qualifier to describe, so
 		# the checks below would each report the same defect a second time.
 		return out
+
+	# Reported only when there is something on both sides. 'Foo -' has a separator missing
+	# its trailing space, but the finding worth making about it is that nothing follows —
+	# and "put a space after the hyphen" is advice about a space that has nothing to go
+	# before it.
+	if form == SEP_MALFORMED and head and tail:
+		out.append(
+			finding(
+				SEPARATOR_MALFORMED,
+				f"{config['label']} separates the two halves with "
+				f"{separator_match(body).group(0)!r}. The separator is {SEPARATOR!r} — a "
+				"plain hyphen with a space either side.",
+				suggestion=f"{head}{SEPARATOR}{tail}",
+			)
+		)
 
 	if not tail:
 		out.append(finding(QUALIFIER_MISSING, "There is a separator but nothing after it."))

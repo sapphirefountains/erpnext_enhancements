@@ -180,6 +180,86 @@ class ProjectScopeTest(unittest.TestCase):
 		self.assertTrue(rules.in_scope("Project", {"project_type": "Events"}))
 
 
+class SeparatorTest(unittest.TestCase):
+	"""Three answers, not two: absent, present-but-written-wrong, and not-a-separator.
+
+	The middle one is why this class exists. Asking "is ' - ' in the value" reports
+	`Candi Wadsworth- Fountain Installation` as having no separator, which its author can
+	see is untrue — and a check that says something false about a name in front of somebody
+	is a check they stop reading.
+
+	Every value below is a verbatim production record (2026-09-14) except where marked.
+	"""
+
+	def test_the_house_separator(self):
+		self.assertEqual(
+			rules.separator_form("Hess Construction - Colony 256 Cascading Pillar"),
+			rules.SEP_CANONICAL,
+		)
+
+	def test_the_declared_separator_is_the_one_that_passes(self):
+		"""The house style is declared once, in SEPARATOR, and separator_form reads it off
+		rather than writing it out again. This pins the two together."""
+		self.assertEqual(rules.separator_form(f"Party{rules.SEPARATOR}Qualifier"), rules.SEP_CANONICAL)
+		self.assertEqual(rules.split(f"Party{rules.SEPARATOR}Qualifier"), ("Party", "Qualifier"))
+
+	def test_a_missing_space_is_a_separator_written_wrongly(self):
+		"""Both live Projects in this state. The old rule called these separator_missing."""
+		self.assertEqual(
+			rules.separator_form("Candi Wadsworth- Fountain Installation 4-Tier"),
+			rules.SEP_MALFORMED,
+		)
+		self.assertEqual(
+			rules.separator_form("1 Rain Curtain 4 Pillars -July 4th Red, White, & Blue"),
+			rules.SEP_MALFORMED,
+		)
+
+	def test_an_en_or_em_dash_is_a_separator_written_wrongly(self):
+		"""No live record uses one. Word and Google Docs autocorrect a spaced hyphen into an
+		en dash as you type, so the way in is a paste and it looks right at a glance."""
+		for value in ("Hess Construction – Colony 256", "Hess Construction — Colony 256"):
+			self.assertEqual(rules.separator_form(value), rules.SEP_MALFORMED, value)
+
+	def test_a_bare_hyphen_inside_a_name_is_not_a_separator(self):
+		"""The one failure this module cannot afford. Splitting these would invent a party
+		called `Ana Mendez` and a qualifier called `Law`: a false finding on a correct name.
+		18 Projects, 4 Opportunities and 16 Addresses contain a hyphen like this."""
+		for value in (
+			"Ana Mendez-Law Event",
+			"Mayflower-Deer Valley Pool Controller",
+			"Big-D Construction St. George",
+			"Sarah Henley-Busse",
+			"Flo-Tech",
+			"Harris-Dudley Co.",
+			"2023 MLS All-Star Week Lounge Fountain",
+		):
+			self.assertEqual(rules.separator_form(value), rules.SEP_NONE, value)
+			self.assertEqual(rules.split(value), (value, ""), value)
+
+	def test_no_dash_at_all(self):
+		"""345 of 552 customer-facing Projects and 785 of 839 Opportunities. This is the bulk
+		of what the guard reports, and for these separator_missing is simply correct."""
+		self.assertEqual(rules.separator_form("CEM Daybreak Splash Pad"), rules.SEP_NONE)
+
+	def test_extra_spaces_are_not_the_separators_problem(self):
+		"""`Foo  -  Bar` is a double space, which DOUBLE_SPACE already reports. Calling the
+		separator malformed as well would describe one defect as two."""
+		self.assertEqual(rules.separator_form("Hess Construction  -  Colony 256"), rules.SEP_CANONICAL)
+
+	def test_a_malformed_separator_still_splits(self):
+		"""So the party prefix and the qualifier are judged on what the author meant."""
+		self.assertEqual(
+			rules.split("Candi Wadsworth- Fountain Installation"),
+			("Candi Wadsworth", "Fountain Installation"),
+		)
+
+	def test_the_first_separator_wins_not_a_later_hyphen(self):
+		self.assertEqual(
+			rules.split("Candi Wadsworth - Fountain Installation 4-Tier"),
+			("Candi Wadsworth", "Fountain Installation 4-Tier"),
+		)
+
+
 class ProjectCheckTest(unittest.TestCase):
 	def _check(self, name):
 		row = next(r for r in PROJECTS if r["name"] == name)
@@ -212,6 +292,48 @@ class ProjectCheckTest(unittest.TestCase):
 			"customer": "Hess Construction LLC",
 		}))
 		self.assertIn(rules.QUALIFIER_VAGUE, found)
+
+	def test_a_malformed_separator_is_not_reported_as_a_missing_one(self):
+		found = codes_of(rules.check("Project", {
+			"project_name": "Candi Wadsworth- Fountain Installation 4-Tier",
+			"project_type": "Build", "customer": "Candi Wadsworth",
+		}))
+		self.assertIn(rules.SEPARATOR_MALFORMED, found)
+		self.assertNotIn(rules.SEPARATOR_MISSING, found)
+		# The two halves were read correctly, so the party is not also flagged.
+		self.assertNotIn(rules.PARTY_PREFIX_MISMATCH, found)
+
+	def test_the_malformed_suggestion_keeps_the_qualifier(self):
+		"""The old path suggested `<party> - `, which throws away what the job was."""
+		fix = next(
+			f for f in rules.check("Project", {
+				"project_name": "Candi Wadsworth- Fountain Installation 4-Tier",
+				"project_type": "Build", "customer": "Candi Wadsworth",
+			})
+			if f["code"] == rules.SEPARATOR_MALFORMED
+		)
+		self.assertEqual(fix["suggestion"], "Candi Wadsworth - Fountain Installation 4-Tier")
+
+	def test_nothing_after_the_separator_is_one_finding_not_two(self):
+		"""`Foo -` has a separator missing its trailing space, but the useful thing to say is
+		that nothing follows it. "Put a space after the hyphen" is advice about a space with
+		nothing to go before it."""
+		found = codes_of(rules.check("Project", {
+			"project_name": "Hess Construction -", "project_type": "Build",
+			"customer": "Hess Construction LLC",
+		}))
+		self.assertIn(rules.QUALIFIER_MISSING, found)
+		self.assertNotIn(rules.SEPARATOR_MALFORMED, found)
+
+	def test_a_hyphenated_customer_is_not_split_apart(self):
+		"""`Ana Mendez-Law` is one party. The finding is that the name carries no qualifier,
+		not that `Law Event` is the wrong party."""
+		found = codes_of(rules.check("Project", {
+			"project_name": "Ana Mendez-Law Event", "project_type": "Events",
+			"customer": "Ana Mendez-Law",
+		}))
+		self.assertIn(rules.SEPARATOR_MISSING, found)
+		self.assertNotIn(rules.PARTY_PREFIX_MISMATCH, found)
 
 	def test_the_suggestion_is_usable_as_typed(self):
 		row = next(r for r in PROJECTS if r["name"] == "PRJ-00756")
