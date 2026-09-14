@@ -1,6 +1,6 @@
 # WI-075 — Scope that can be inspected, and failures that get re-checked
 
-**Status:** in progress — A through J shipped, v1.446.0 → v1.457.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445). Slice 1 and Slice 2 are complete. I delivered the trigger engine; the master checklists followed as **strawmen seeded Draft** at Nik's request (v1.456.0), and J made a period review compute its own numbers (v1.457.0).
+**Status:** in progress — A through J shipped, v1.446.0 → v1.458.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445). Slice 1 and Slice 2 are complete. I delivered the trigger engine; the master checklists followed as **strawmen seeded Draft** at Nik's request (v1.457.0), and J made a period review compute its own numbers (v1.458.0).
 **Branch:** `claude/quality-inspections-planning-691339` (off `main` at v1.443.0)
 **Tracked:** PRJ-00580, TASK-2026-02013 with a child per deliverable (A–N)
 **Decides:** [ADR-0012](../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md)
@@ -221,7 +221,7 @@ and an action, the fix is re-verified at the next inspection, a Critical failure
 people, and there is a tool a person can actually hold. Everything from I onward widens this to
 other project types or builds the front-end chain; none of it changes the chain above.
 
-### Sub-phase I did not deliver what it was scoped as, and this is why (v1.455.0)
+### Sub-phase I did not deliver what it was scoped as, and this is why (v1.456.0)
 
 **Scoped as:** milestones and master templates for Design, Events, Service and Products.
 

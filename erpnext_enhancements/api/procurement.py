@@ -97,3 +97,36 @@ def save_item_link(item_code, supplier, url):
         item_doc.save(ignore_permissions=True) # Allow User to save even if they don't have Item write access
 
     return True
+
+
+def cascade_expected_delivery_date(doc, method=None):
+    """``before_validate`` hook for Purchase Order: fill blank item delivery dates.
+
+    ER-2026-362239 asked for a delivery expectation on the order *and* per item, "in
+    case one item in the order gets delayed more than the others". So the header value
+    is a starting point, not a truth: it fills rows that have said nothing, and never
+    touches a row that carries its own date.
+
+    **This is not the Required By cascade, and must not become it.** ERPNext already
+    cascades ``schedule_date`` in ``buying_controller.validate_schedule_date()``, and
+    does more than cascade it — it pulls the header *up* to the earliest row
+    (``self.schedule_date = min(...)``) and throws on any row that predates
+    ``transaction_date``. Required By is when we need the goods; Expected Delivery is
+    when the supplier says they will arrive. Two facts, two fields, and the second had
+    nowhere to live until now.
+
+    **One direction only.** No roll-up from the rows: unlike Required By, where
+    earliest-wins is a real constraint on the order, an order-level delivery expectation
+    is the buyer's own statement, and inferring it from the rows would silently rewrite
+    what they typed.
+
+    Runs as ``before_validate`` so it lands ahead of Frappe's mandatory check, matching
+    ``procurement_project.cascade_project_to_items`` alongside it.
+    """
+    header_date = doc.get("custom_expected_delivery_date")
+    if not header_date:
+        return
+
+    for row in doc.get("items") or []:
+        if not row.get("expected_delivery_date"):
+            row.expected_delivery_date = header_date

@@ -415,7 +415,7 @@ footer {{
 
 <div class="wrap">
 <header class="masthead">
-  <p class="eyebrow">WI-075 · Quality &amp; Inspections · v1.456.0</p>
+  <p class="eyebrow">WI-075 · Quality &amp; Inspections · v1.457.0</p>
   <h1>Strawman Inspection Checklists</h1>
   <p class="standfirst">{total_checks} proposed checks across {len(DRAFT_TEMPLATES)} templates,
   drafted so there is something to argue with instead of a blank page. None of them is Sapphire's

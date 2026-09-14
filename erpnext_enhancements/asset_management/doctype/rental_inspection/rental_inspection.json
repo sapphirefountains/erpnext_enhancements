@@ -1,0 +1,177 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:RI-{YYYY}-{MM}-{#####}",
+ "creation": "2026-09-14 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "asset_booking",
+  "direction",
+  "asset",
+  "column_break_head",
+  "inspected_by",
+  "inspection_datetime",
+  "row_source",
+  "items_section",
+  "items",
+  "findings_section",
+  "has_damage",
+  "has_shortfall",
+  "column_break_findings",
+  "overall_notes",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "asset_booking",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Asset Booking",
+   "options": "Asset Booking",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "description": "Pre-shipping is the record of what left the yard. Return is reconciled against it.",
+   "fieldname": "direction",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Direction",
+   "options": "Pre-shipping\nReturn",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "asset_booking.asset",
+   "fieldname": "asset",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Asset",
+   "options": "Asset",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "inspected_by",
+   "fieldtype": "Link",
+   "label": "Inspected By",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "inspection_datetime",
+   "fieldtype": "Datetime",
+   "label": "Inspected At",
+   "reqd": 1
+  },
+  {
+   "description": "Where these rows came from, recorded at generation so a dispute can tell a template from a hand-typed list.",
+   "fieldname": "row_source",
+   "fieldtype": "Data",
+   "label": "Rows From",
+   "read_only": 1
+  },
+  {
+   "fieldname": "items_section",
+   "fieldtype": "Section Break",
+   "label": "Components"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "label": "Components",
+   "options": "Rental Inspection Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "findings_section",
+   "fieldtype": "Section Break",
+   "label": "Findings"
+  },
+  {
+   "default": "0",
+   "description": "Set automatically when any row is Damaged or Missing.",
+   "fieldname": "has_damage",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Damage Found",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set automatically when anything came back short of what went out.",
+   "fieldname": "has_shortfall",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Shortfall",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_findings",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "overall_notes",
+   "fieldtype": "Small Text",
+   "label": "Overall Notes"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Rental Inspection",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-09-14 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Asset Management",
+ "name": "Rental Inspection",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Operations Team",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "title_field": "asset",
+ "track_changes": 1
+}

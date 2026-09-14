@@ -1,6 +1,6 @@
 """Seed the strawman inspection checklists — **as Drafts, which can generate nothing**.
 
-v1.456.0, WI-075 sub-phase I follow-up.
+v1.457.0, WI-075 sub-phase I follow-up.
 
 Sub-phases C and I both declined to seed these, and the reasoning has not changed: a checklist
 carries the authority of the company that issued it, and an invented one is indistinguishable

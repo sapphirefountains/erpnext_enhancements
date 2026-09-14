@@ -1,0 +1,52 @@
+{
+ "actions": [],
+ "creation": "2026-09-14 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "component",
+  "qty_expected",
+  "notes"
+ ],
+ "fields": [
+  {
+   "columns": 5,
+   "fieldname": "component",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Component",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "default": "1",
+   "description": "How many of this component leave the yard with the fountain.",
+   "fieldname": "qty_expected",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Qty Expected",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "columns": 4,
+   "description": "What to look at on this component — the part a new crew member would not know.",
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Inspection Notes"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-14 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Asset Management",
+ "name": "Rental Checklist Template Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

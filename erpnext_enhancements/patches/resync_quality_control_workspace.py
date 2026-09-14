@@ -1,6 +1,6 @@
 """Force the Quality Control desk workspace to re-sync from its app JSON.
 
-v1.454.0 adds a **Run an inspection** shortcut pointing at the new `inspection-wizard` Page, so
+v1.456.0 adds a **Run an inspection** shortcut pointing at the new `inspection-wizard` Page, so
 the field tool is reachable from the desk rather than only by typing the URL. Without this patch
 that edit would very likely never arrive.
 

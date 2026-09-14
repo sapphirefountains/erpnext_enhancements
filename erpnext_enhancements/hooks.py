@@ -110,6 +110,15 @@ doctype_js = {
 	# Password renders as a single-line masked input that mangles a multi-line key
 	# on paste.
 	"Project Folder Google Drive Settings": ["public/js/google_drive/drive_settings.js"],
+	# ER-2026-420503: an Item created inline from Asset.item_code saved fine and then
+	# disappeared from the field, because asset.js filters that link on is_fixed_asset=1
+	# and the Item Quick Entry dialog defaults that box to 0. This seeds the dialog --
+	# and it is loaded HERE, on the Asset form only, because it subclasses the global
+	# frappe.ui.form.ItemQuickEntryForm; the subclass additionally checks
+	# frappe._from_link so that Item quick entries elsewhere in the same session (the
+	# class stays loaded) are untouched. Also warns when Location or fixed-asset Items
+	# are still empty, which is the rest of why the form looked broken.
+	"Asset": ["public/js/asset_management/asset_form.js"],
 	"Opportunity": [
 		"public/js/opportunity.js",
 		"public/js/crm_enhancements/opportunity.js",
@@ -588,7 +597,16 @@ doc_events = {
 		# blank ones before the mandatory check runs. Desk saves are already
 		# handled client-side (public/js/purchase_order_project.js); this covers
 		# the REST API, data import and Material-Request-mapped documents.
-		"before_validate": "erpnext_enhancements.procurement_project.cascade_project_to_items",
+		"before_validate": [
+			"erpnext_enhancements.procurement_project.cascade_project_to_items",
+			# ER-2026-362239: push the header's expected delivery date into item rows
+			# that have none. NOT the Required By cascade -- ERPNext already does that
+			# one in buying_controller.validate_schedule_date(), and does more than
+			# cascade it (the header is pulled up to the earliest row). Required By is
+			# when we need it; Expected Delivery is when the supplier says it lands.
+			# Fills blanks only: a per-item override is the whole point of the request.
+			"erpnext_enhancements.api.procurement.cascade_expected_delivery_date",
+		],
 		# Two independent submit gates, in this order deliberately:
 		#   1. WI-066 separation of duties — the person who raised the Material
 		#      Request may not submit the PO that fills it. NON-waivable: no role
