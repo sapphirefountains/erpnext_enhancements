@@ -12,7 +12,8 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/master_project/master_project.py` | Master Project controller; rollup of member Projects + Tasks | `MasterProject.get_projects_and_tasks` | Doctype controller |
 | `doctype/master_project/master_project.js` | Read-only Projects/Tasks rollup tables on the form | `render_projects_table`, `render_tasks_table` | Doctype form script |
 | `doctype/project_notes`, `project_stakeholder`, `{build,design,rent,service}_customer_requests`, `{build,design,rent,service}_deliverables` | Project child tables ported from DB-only custom DocTypes (v0.7.0) so fresh installs can import the Custom Field fixtures that reference them | stub controllers | synced on migrate |
-| `doctype/project/project.py` | List-view grouping + printable Project Brief data | `get_project_grouping_option`, `get_project_brief_data` | Whitelisted (client scripts) |
+| `doctype/project/project.py` | List-view grouping + printable Project Brief data (the half that is the same for every job) | `get_project_grouping_option`, `get_project_brief_data` | Whitelisted (client scripts) |
+| `project_brief.py` | The half of the Project Brief that depends on the *kind* of work — one section per line of work the job involves (Design / Build / Products / Service / Events), returned as render-neutral blocks. See [Project Brief sections](#project-brief-sections-v14440) | `brief_sections`, `applicable_types` | Called by `get_project_brief_data` |
 | `doctype/project/project.js` | Health banner + reminder button (the Schedule-tab Gantt it used to render in `custom_gantt_chart_html` is now the embeddable widget — `public/js/project_enhancements/project_gantt_widget.js`) | two `frappe.ui.form.on("Project", {refresh})` handlers | `doctype_js["Project"]` |
 | `doctype/project/project_list.js` | Project list-view tweaks | — | list view |
 | `doctype/address/address.js` | Live full-address build + Google Maps embed; attaches the global Places autocomplete to `address_line1` (widget: `public/js/global_enhancements/address_autocomplete.js`) and records the picked place in `custom_google_place_id` / `custom_latitude` / `custom_longitude`. The coordinates are **user-editable** (v1.207.0) for sites the address cannot locate; `custom_location_source` records whether the point came from Google (discarded when the address text is edited) or was typed (kept) | Address form handlers | `doctype_js["Address"]` |
@@ -173,6 +174,72 @@ superseded originals (DOC-0032/0034/0099/0100/0102) are deliberately NOT templat
   sanitised) and the executed PDF emailed after signing (`esign/lifecycle._print_wrapper`).
   Do not re-declare `.ct-*` rules anywhere else; all three copies that once existed had
   drifted into showing the customer a different document from the one staff printed.
+
+## Project Brief sections (v1.444.0)
+
+The **Project Brief** (View ▸ Project Brief on the Project form) used to be one fixed
+sheet for every job — Sapphire's scanned paper template, pre-filled. A Design job and an
+Events job got the same page, so the four times that run an Events job were not on it and
+neither were the design phase fees. `project_brief.py` adds a section per line of work the
+job involves; `public/js/project_enhancements/project_brief.js` renders and prints them.
+
+**Which sections a job gets is not `project_type` alone, and that is the load-bearing
+detail.** `project_type` (labelled "Project Stage") is one Link; `custom_value_stream` is a
+Table MultiSelect holding several. The brief takes the **union**, narrowed to the five
+streams that have content, `project_type` first. Both sources are needed:
+
+- **Products is a Value Stream and has never been a Project Type.** The
+  [`seed_delivery_and_products_categories`](../patches/seed_delivery_and_products_categories.py)
+  patch created the Project Type `Delivery` but only the *value streams* `Delivery` and
+  `Products`. All 7 Products jobs on prod are `project_type = "Design"`, so keyed on
+  `project_type` alone a Products brief could not exist.
+- **A job routinely spans streams.** 21 jobs are stage Design carrying a Build stream, 6
+  are the reverse, 7 are stage Design carrying Products. One value would drop half the brief.
+
+| Section | Project's own fields | From a linked document |
+|---|---|---|
+| **Design** | scope + deliverables tables, hours budget | design retainer, the three phase fees and their calendar days, scope of work (Project Contract, `owner`/`architect`/`sow`) |
+| **Build** | scope + deliverables, build status, production start/complete, quality sign-off, bid cost, materials budget, T&M | mobilization / substantial / final / anticipated completion, working hours, site access (Project Contract, `owner`/`sow`/`msa`); open Purchase Orders |
+| **Products** | contract value, payment received + method | purchase-order item lines, Product Configurations, invoiced/outstanding totals |
+| **Service** | scope + deliverables | plan, status, term, visit frequency, invoicing, recurring amount, next billing, seasonal months, covered features, last 5 visits (**Sapphire Maintenance Contract**, not the Project Contract's maintenance section — that is the signable paper, this is the live agreement the scheduler drives) |
+| **Events** | delivery / setup / event / take-down datetimes, each with its notes; scheduling notes | rental dates, the fee schedule, security deposit, equipment list (Project Contract, `rental`) |
+
+Four things worth knowing before editing it:
+
+- **Blocks are data, not markup.** Each section is a list of `fields` / `list` / `text` /
+  `table` blocks and the client renders them. Values travel unformatted with a `format`
+  name beside them, so dates and currency come out in the *reader's* settings.
+- **There are two kinds of empty.** A block of the Project's own fields renders even when
+  every value is blank — the printed brief is a fillable form, and an Events sheet with
+  four blank date slots is the sheet somebody writes the setup time onto. A block of a
+  *linked document's* fields disappears when that document is absent: no `rental` contract
+  means no rental agreement, and nine blank currency lines would invent one. All 16 Project
+  Contracts on prod are `maintenance`, so this is live, not theoretical.
+
+  **With one bound: a linked-document block may only disappear when its section keeps a
+  Project-sourced block either way.** Every stream gets a section on a Project nobody has
+  filled in yet — that is the point of a brief specific to the kind of job. Events keeps its
+  four dates and Build its production line, so "Rental Terms" and "Construction Schedule" are
+  free to drop. **Design and Service have no fields of their own on Project at all**, so
+  their blocks are the section's anchor and stay `fillable=True`, printing as a blank design
+  fee schedule and a blank agreement form — the case for 338 of the 354 Service jobs on prod.
+  `test_every_stream_gets_a_section_on_an_empty_project` holds the whole rule, so a
+  `fillable=False` on the wrong block fails the build instead of silently deleting a section.
+- **A contract is matched to its section by template, with no fallback.** Project Contract
+  carries every template's fields and fills only its own, so a `maintenance` contract under
+  an Events heading would print another agreement's zeros as this job's rental terms.
+- **Every cross-doctype read is gated on `frappe.has_permission` and swallows its own
+  errors.** `frappe.get_all` ignores permissions (`get_list` is the checked one), and the
+  brief now carries contract fees, committed PO value and maintenance terms — so
+  `get_project_brief_data` also gained an explicit `check_permission("read")` on the
+  Project, which it had never had. A reader without Purchase Order read gets a section
+  short, not somebody else's numbers.
+
+Covered by [`tests/test_project_brief_sections.py`](../tests/test_project_brief_sections.py)
+(bench-free, own frappe stub, own CI step), which runs the builders rather than reading
+them and checks every fieldname they read against the JSON that defines it — a renamed
+Custom Field otherwise blanks a brief line forever and looks exactly like a project nobody
+filled in.
 
 ## Master Project
 

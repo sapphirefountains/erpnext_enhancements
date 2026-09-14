@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.444.0] - 2026-09-14
+
+### Added
+
+- **The Project Brief is now specific to the kind of job it is.** It was one fixed sheet for
+  every project — Sapphire's scanned paper template, pre-filled — so a Design job and an
+  Events job got the same page. The four times that actually run an Events job (delivery,
+  setup, event, take-down) were not on it, and neither were the design phase fees, the
+  maintenance visit frequency, or the rental equipment list. All of that lives on the
+  Project already; none of it reached the sheet somebody carries to a site.
+
+  The brief now prints a section per line of work the job involves — **Design, Build,
+  Products, Service, Events** — built by the new
+  `project_enhancements/project_brief.py` and rendered by the existing
+  `public/js/project_enhancements/project_brief.js`. Each section pairs the Project's own
+  fields with the linked document that carries the rest: the Project Contract's design fee
+  schedule, construction dates or rental terms; the **Sapphire Maintenance Contract**'s
+  plan, term, frequency, covered features and last five visits; the purchase-order lines
+  buying a Products job's parts. The shared header gained a line naming the streams, and
+  the brief's description now falls through to the Scope tab's **Detailed Scope
+  Description** — the field people actually fill in (210 of 354 Service jobs) — before the
+  catch-all notes.
+
+  **Which sections a job gets is not `project_type` alone, and that is the whole trick.**
+  `project_type` (labelled "Project Stage") is one Link; `custom_value_stream` is a Table
+  MultiSelect holding several. The brief takes the union, narrowed to those five, with the
+  declared stage leading. Both sources are load-bearing:
+
+  - **Products is a Value Stream and has never been a Project Type.** The
+    `seed_delivery_and_products_categories` patch created the Project Type `Delivery` but
+    only the *value streams* `Delivery` and `Products` — the asymmetry is in its own
+    docstring. All 7 Products jobs on prod are `project_type = "Design"`. Keyed on
+    `project_type` alone, the Products brief this release adds could not exist.
+  - **A job routinely spans streams.** 21 jobs are stage Design carrying a Build stream, 6
+    are the reverse, 7 are stage Design carrying Products. Picking one value drops half the
+    brief, silently, on a sheet that still looks complete. PRJ-00759 gets three sections.
+
+  Two rules keep the sheet honest, and both are about *emptiness*. A block of the Project's
+  own fields renders even when every value is blank, because the printed brief is a fillable
+  form — an Events sheet with four blank date slots is the sheet somebody writes the setup
+  time onto, exactly as the paper original did for fee and contingency. A block of a **linked
+  document's** fields disappears when that document is not there: no `rental` contract means
+  the job has no rental agreement, and nine blank currency lines under "Rental Terms" would
+  invent one. That is live rather than theoretical — all 16 Project Contracts on prod are
+  `maintenance`.
+
+  The second rule is bounded by the first: **a linked-document block may only disappear when
+  its section keeps a Project-sourced block either way**, because every stream has to get a
+  section on a Project nobody has filled in yet — a brief specific to the kind of job has to
+  say what kind of job it is precisely on the jobs that need it most. Events keeps its four
+  dates and Build its production line, so those two are free to drop. Design and Service have
+  no fields of their own on Project at all, so their blocks are their section's anchor and
+  render blank: a blank design fee schedule, and a blank agreement form — the case for 338 of
+  the 354 Service jobs on prod. `test_every_stream_gets_a_section_on_an_empty_project` holds
+  the whole rule, so a `fillable=False` on the wrong block fails the build rather than
+  silently deleting a section from every unfilled project of that kind.
+
+  For the same reason a contract is matched to its section **by template with no fallback**:
+  Project Contract carries every template's fields and fills only its own, so "most recent
+  contract" would print a maintenance agreement's zeros as this job's rental terms.
+
+  Covered by `tests/test_project_brief_sections.py` — bench-free, its own frappe stub, its
+  own CI step. It runs the builders rather than reading them, and checks every fieldname
+  they read against the JSON that defines it: a renamed Custom Field otherwise blanks a
+  brief line forever and looks exactly like a project nobody filled in.
+
+### Fixed
+
+- **`get_project_brief_data` had no permission check.** It is `@frappe.whitelist()` and
+  login-only, and frappe does not apply document permissions to whitelisted functions, so
+  any authenticated user could read a project's customer address and default contact by
+  guessing a project name. It now calls `check_permission("read")` on the Project — the
+  same gate its sibling `procurement_project.get_receivable_purchase_orders` has always
+  had. This release made it urgent rather than merely wrong: the brief now also carries
+  contract fees, committed purchase-order value and maintenance terms. Each cross-doctype
+  lookup is separately gated on `frappe.has_permission` for that doctype, because
+  `frappe.get_all` ignores permissions (`get_list` is the checked one) — so a reader
+  without Purchase Order access gets a section short rather than somebody else's numbers.
+
+- **"Open Purchase Orders" on the Build section excludes fully-received orders.** A
+  delivered order sits at status `To Bill`, which passes a status test on its own;
+  PRJ-00759 carries three. The section uses status **and** `per_received`, the same rule
+  `get_receivable_purchase_orders` uses. The Products section deliberately does not filter:
+  it asks what was bought for the job, and a delivered order is the best answer to that.
+
+
 ## [1.443.0] - 2026-09-14
 
 ### Fixed

@@ -15,6 +15,24 @@
  * This is display-only: nothing is saved. Template fields that have no source
  * in the system (PM, Tech Lead, contract type, fee/contingency, etc.) render
  * as blank slots so the brief works as a fillable form, matching the original.
+ *
+ * Everything above is the half of the brief that is the same for every job. The
+ * other half arrives in `sections` -- one per line of work the job involves
+ * (Design, Build, Products, Service, Events), each a list of blocks in one of
+ * four shapes. `render_block` is the whole vocabulary:
+ *
+ *   fields  label/value lines, each optionally with a note. Rendered even when
+ *           every value is empty -- an Events sheet with four blank date slots
+ *           is the sheet somebody writes the setup time onto.
+ *   list    bulleted lines (customer requests, deliverables).
+ *   text    a paragraph (scope of work, scheduling notes).
+ *   table   a grid, with a footnote when the server truncated it.
+ *
+ * The server sends values unformatted with a `format` name beside them, so a
+ * date renders in the reader's own date format and a currency in the site's,
+ * rather than in whatever the server picked. Which section a job gets, and why
+ * it can be more than one, is decided server-side --
+ * `project_enhancements/project_brief.py` has the reasoning.
  */
 
 frappe.ui.form.on("Project", {
@@ -87,16 +105,143 @@ function fmt_money(value) {
 	return format_currency(value);
 }
 
+/** A datetime; `str_to_user` keeps the time whenever the string carries one. */
+function fmt_datetime(value) {
+	if (!value) {
+		return '<span class="sf-blank"></span>';
+	}
+	return frappe.datetime.str_to_user(value);
+}
+
+function fmt_percent(value) {
+	// 0% is a fact here (nothing received yet), not a missing value, so only
+	// null/undefined/"" falls through to the blank slot.
+	if (value === null || value === undefined || value === "") {
+		return '<span class="sf-blank"></span>';
+	}
+	return frappe.utils.escape_html(String(Math.round(Number(value) || 0))) + "%";
+}
+
+/** The `format` names the server sends, mapped to the renderer for each. */
+const FORMATTERS = {
+	text: slot,
+	date: fmt_date,
+	datetime: fmt_datetime,
+	currency: fmt_money,
+	percent: fmt_percent,
+};
+
+function fmt_value(value, format_name) {
+	return (FORMATTERS[format_name] || slot)(value);
+}
+
 /** An unchecked / checked box matching the printed template. */
 function checkbox(label, checked) {
 	const mark = checked ? "&#9632;" : "&#9633;"; // filled vs empty square
 	return `<span class="sf-check">${mark} ${frappe.utils.escape_html(label)}</span>`;
 }
 
+/** A label/value block: the fillable skeleton, blanks included. */
+function render_fields_block(block) {
+	const rows = (block.rows || [])
+		.map(function (row) {
+			// Newlines survive as line breaks: the delivery note on a real Events
+			// job is a shipping address typed over three lines, and flattened to
+			// one it is a paragraph nobody reads off a clipboard.
+			const note = row.note
+				? `<div class="sf-row-note">${frappe.utils
+						.escape_html(String(row.note))
+						.replace(/\n/g, "<br>")}</div>`
+				: "";
+			return `<div class="sf-row">
+				<div class="sf-row-label">${frappe.utils.escape_html(row.label || "")}</div>
+				<div class="sf-row-value">${fmt_value(row.value, row.format)}${note}</div>
+			</div>`;
+		})
+		.join("");
+	return `<div class="sf-block"><div class="sf-block-title">${frappe.utils.escape_html(
+		block.title || ""
+	)}</div><div class="sf-rows">${rows}</div></div>`;
+}
+
+function render_list_block(block) {
+	const items = (block.items || [])
+		.map((item) => `<li>${frappe.utils.escape_html(String(item)).replace(/\n/g, "<br>")}</li>`)
+		.join("");
+	return `<div class="sf-block"><div class="sf-block-title">${frappe.utils.escape_html(
+		block.title || ""
+	)}</div><ul class="sf-bullets">${items}</ul></div>`;
+}
+
+function render_text_block(block) {
+	const text = frappe.utils.escape_html(String(block.text || "")).replace(/\n/g, "<br>");
+	return `<div class="sf-block"><div class="sf-block-title">${frappe.utils.escape_html(
+		block.title || ""
+	)}</div><div class="sf-block-text">${text}</div></div>`;
+}
+
+function render_table_block(block) {
+	const columns = block.columns || [];
+	const head = columns
+		.map((col) => `<th>${frappe.utils.escape_html(col.label || "")}</th>`)
+		.join("");
+	const body = (block.rows || [])
+		.map(function (row) {
+			const cells = columns
+				.map((col, index) => `<td>${fmt_value(row[index], col.format)}</td>`)
+				.join("");
+			return `<tr>${cells}</tr>`;
+		})
+		.join("");
+	// The server caps long lists; say so rather than letting a partial sheet read
+	// as the whole list.
+	const more = block.truncated
+		? `<div class="sf-note-small">${__("and {0} more", [block.truncated])}</div>`
+		: "";
+	return `<div class="sf-block sf-block-wide"><div class="sf-block-title">${frappe.utils.escape_html(
+		block.title || ""
+	)}</div><table class="sf-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>${more}</div>`;
+}
+
+const BLOCK_RENDERERS = {
+	fields: render_fields_block,
+	list: render_list_block,
+	text: render_text_block,
+	table: render_table_block,
+};
+
+function render_block(block) {
+	const renderer = BLOCK_RENDERERS[block && block.kind];
+	return renderer ? renderer(block) : "";
+}
+
+/** One "<Stream> Details" section per line of work the job involves. */
+function build_sections_html(sections) {
+	if (!sections || !sections.length) {
+		return "";
+	}
+	return sections
+		.map(function (section) {
+			const blocks = (section.blocks || []).map(render_block).join("");
+			return `<div class="sf-section sf-type-section">
+				<div class="sf-section-title">${frappe.utils.escape_html(section.title || "")} ${__("Details")}</div>
+				<div class="sf-blocks">${blocks}</div>
+			</div>`;
+		})
+		.join("");
+}
+
 function build_brief_html(d) {
 	const address = (d.address_lines && d.address_lines.length)
 		? d.address_lines.map((l) => frappe.utils.escape_html(l)).join("<br>")
 		: '<span class="sf-blank"></span>';
+
+	// What kind of job this is, on the sheet. Falls back to the stage alone when
+	// the job is one the type-specific sections do not cover (Internal, Overhead).
+	const streams = (d.work_streams && d.work_streams.length ? d.work_streams : [d.project_stage])
+		.filter(Boolean)
+		.map((s) => frappe.utils.escape_html(String(s)))
+		.join(" &middot; ");
 
 	const description = d.description
 		? frappe.utils.escape_html(d.description).replace(/\n/g, "<br>")
@@ -115,6 +260,7 @@ function build_brief_html(d) {
 		</div>
 		<div class="sf-title">
 			<div class="sf-brief-title">Project Brief</div>
+			<div class="sf-streams">${streams || '<span class="sf-blank"></span>'}</div>
 			<div class="sf-date"><span class="sf-label">Date</span> ${fmt_date(d.brief_date)}</div>
 		</div>
 	</div>
@@ -148,6 +294,12 @@ function build_brief_html(d) {
 		<div class="sf-section-title">Description</div>
 		<div class="sf-description">${description}</div>
 	</div>
+
+	<!-- What this job actually is: one section per line of work it involves.
+	     Placed with the description rather than after the contract terms,
+	     because it is the continuation of "what are we doing here". Empty for
+	     an Internal or untyped job, which leaves the sheet as it always was. -->
+	${build_sections_html(d.sections)}
 
 	<!-- Contacts -->
 	<div class="sf-section">
@@ -246,6 +398,27 @@ function brief_styles() {
 .sf-brief .sf-blank { display: inline-block; min-width: 90px; border-bottom: 1px solid var(--border-color); height: 1em; vertical-align: bottom; }
 .sf-brief .sf-blank-sm { display: inline-block; min-width: 36px; border-bottom: 1px solid var(--border-color); height: 1em; vertical-align: bottom; }
 .sf-brief .sf-blank-line { display: block; border-bottom: 1px solid var(--border-color); height: 1.6em; margin-bottom: 6px; }
+.sf-brief .sf-streams { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #2f6fb0; margin-top: 4px; }
+/* Blocks flow in two columns and reflow to one when the dialog is narrow; a
+   table block always claims the full width, since six columns in half of one
+   is unreadable. */
+.sf-brief .sf-blocks { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; align-items: start; }
+.sf-brief .sf-block-wide { grid-column: 1 / -1; }
+.sf-brief .sf-block-title { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); margin-bottom: 4px; }
+.sf-brief .sf-row { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; border-bottom: 1px dotted var(--border-color); }
+.sf-brief .sf-row-label { flex: 0 0 46%; font-style: italic; color: var(--text-muted); }
+.sf-brief .sf-row-value { flex: 1 1 auto; font-weight: 600; min-width: 0; }
+.sf-brief .sf-row-note { font-weight: 400; font-style: italic; color: var(--text-muted); font-size: 11px; }
+.sf-brief .sf-bullets { margin: 0; padding-left: 18px; }
+.sf-brief .sf-bullets li { margin-bottom: 3px; }
+.sf-brief .sf-block-text { white-space: pre-wrap; }
+.sf-brief .sf-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.sf-brief .sf-table th { text-align: left; font-style: italic; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color); padding: 2px 6px 2px 0; }
+.sf-brief .sf-table td { padding: 2px 6px 2px 0; border-bottom: 1px dotted var(--border-color); vertical-align: top; }
+@media (max-width: 720px) {
+  .sf-brief .sf-blocks { grid-template-columns: 1fr; }
+  .sf-brief .sf-grid-2, .sf-brief .sf-grid-3 { grid-template-columns: 1fr; }
+}
 @media print {
   .sf-brief { color: #1a1a1a; background: #fff; }
   .sf-brief .sf-label { color: #666; }
@@ -255,6 +428,16 @@ function brief_styles() {
   .sf-brief .sf-note-small { color: #777; }
   .sf-brief .sf-blank, .sf-brief .sf-blank-sm { border-bottom-color: #999; }
   .sf-brief .sf-blank-line { border-bottom-color: #bbb; }
+  /* Keep a section whole on one page where it fits: a rental fee schedule split
+     across a page break is how a number gets read against the wrong heading. */
+  .sf-brief .sf-type-section { break-inside: avoid; page-break-inside: avoid; }
+  .sf-brief .sf-block { break-inside: avoid; page-break-inside: avoid; }
+  .sf-brief .sf-row-label { color: #666; }
+  .sf-brief .sf-row-note { color: #777; }
+  .sf-brief .sf-row { border-bottom-color: #ddd; }
+  .sf-brief .sf-block-title { color: #444; }
+  .sf-brief .sf-table th { color: #666; border-bottom-color: #999; }
+  .sf-brief .sf-table td { border-bottom-color: #ddd; }
 }
 </style>`;
 }
