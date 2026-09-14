@@ -209,6 +209,28 @@ class AssetFormTest(unittest.TestCase):
 			"purchase_date's static reqd must be cleared, or mandatory_depends_on never gets a say",
 		)
 
+	def test_cost_center_has_a_default(self):
+		"""The fifth blocker, and the only one that static analysis could not have found.
+
+		`Asset.validate_cost_center()` throws unless the Asset carries a cost centre or
+		the Company has a depreciation cost centre — and this site had neither. It is
+		invisible in `asset.json` because the field is not `reqd`; the requirement lives
+		in the controller and depends on company configuration, so it only appears when
+		you actually insert an Asset.
+
+		A `default` rather than a client script on purpose: `Document.insert()` calls
+		`_set_defaults()`, so this reaches API and script-created Assets too, not just
+		the desk form.
+
+		**Scope caveat, deliberate:** this defaults EVERY Asset to the rentals cost
+		centre, not just rental ones. Today that is right for 100% of them (all ten
+		Assets are the rental fleet, and there is one Asset Category). Revisit when a
+		second category appears — the value is editable, so it is a starting point.
+		"""
+		prop = self.props.get("Asset-cost_center-default")
+		self.assertIsNotNone(prop, "Asset.cost_center must default, or a hand-made Asset cannot save")
+		self.assertEqual(prop["value"], "CL140 - Rentals - SF")
+
 	def test_seed_patch_is_registered(self):
 		"""Location had zero rows, and Asset.location is reqd — nothing else matters until this runs."""
 		self.assertIn(

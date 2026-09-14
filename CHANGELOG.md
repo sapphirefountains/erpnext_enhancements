@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `before_submit` demanding a condition on every row, the crew's options were to delete the
   row or to mark a component Missing that was never in the crate -- **filing a false
   shortfall on the one document whose purpose is to be evidence.**
+- **A `default` on `Asset.cost_center`** (`CL140 - Rentals - SF`) -- the fifth blocker on the
+  ER-2026-420503 form, and the only one static analysis could not have found. Creating the
+  ten real rental Assets surfaced it: `Asset.validate_cost_center()` throws unless the Asset
+  carries a cost centre or the Company has a depreciation cost centre, and this site had
+  **neither**. It is invisible in `asset.json` because the field is not `reqd` -- the
+  requirement lives in the controller and depends on company configuration.
 
 ### Notes
 
@@ -39,6 +45,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No data migration: adding an option to a Select leaves existing rows alone (unlike
   *renaming* one, which freezes every row holding the old value), and there are zero Rental
   Inspections on production in any case.
+- **The cost-centre default is a `default`, not a client script,** because
+  `Document.insert()` calls `_set_defaults()` -- so it reaches API and script-created Assets
+  as well as the desk form. `CL140 - Rentals - SF` already existed, alongside
+  `14000 - Rental Fountains - SF` in the chart of accounts: the accounting side of the rental
+  business was set up long before the operational side, on both the account and the cost
+  centre.
+- **It defaults EVERY Asset to the rentals cost centre, not only rental ones**, and that is a
+  deliberate trade rather than an oversight. All ten Assets on this site are the rental fleet
+  and there is exactly one Asset Category, so it is correct for 100% of them today, and a
+  `default` is a starting value the user can change rather than a constraint. The alternative
+  -- setting `Company.depreciation_cost_center` -- fixes it for every asset at once but is a
+  company-wide accounting decision that belongs to Finance, not to this change. **Revisit
+  this when a second Asset Category appears.**
 
 ## [1.455.0] - 2026-09-14
 
