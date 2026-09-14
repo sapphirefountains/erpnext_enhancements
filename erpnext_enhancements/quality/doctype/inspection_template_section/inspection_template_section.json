@@ -1,0 +1,61 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 1,
+ "allow_rename": 0,
+ "creation": "2026-09-14 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "section",
+  "section_type",
+  "column_break_row",
+  "location_note"
+ ],
+ "fields": [
+  {
+   "columns": 4,
+   "fieldname": "section",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Section",
+   "options": "Inspection Section",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fetch_from": "section.section_type",
+   "fieldname": "section_type",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_row",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 4,
+   "description": "Where on site this section is carried out, if it is not obvious. Copied onto the inspection at generation.",
+   "fieldname": "location_note",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Location note"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-14 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Quality",
+ "name": "Inspection Template Section",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -40,6 +40,7 @@ one, so the history of the reasoning survives.
 | [0009-A2](0009-addendum-2-phase-6-decisions.md) | Addendum: Phase 6 — `Chat Audit Log` reinstated, the gate's two doors, and the governance policy the human answered | **Superseded by [0011](0011-retire-google-chat-and-coworker-chat.md)** |
 | [0010](0010-employee-feedback-to-tasks.md) | Employees file feedback in ERPNext; Triton proposes the tasks and ERPNext writes them | Accepted |
 | [0011](0011-retire-google-chat-and-coworker-chat.md) | Retire the Google Chat mirror and the coworker chat product; the Triton widget is the only chat surface | Accepted |
+| [0012](0012-project-inspections-do-not-use-quality-inspection.md) | Build project inspections on our own record, not ERPNext's Quality Inspection | Accepted |
 
 0009 carries two appendices linked from the record itself — the widget behaviour inventory and
 the file-by-file implementation plan — and two **addenda**. The addenda are listed above

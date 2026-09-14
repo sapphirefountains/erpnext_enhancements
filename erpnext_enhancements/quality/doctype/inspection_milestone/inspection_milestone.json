@@ -1,0 +1,206 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:milestone_name",
+ "creation": "2026-09-14 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "milestone_name",
+  "project_type",
+  "milestone_key",
+  "milestone_title",
+  "column_break_head",
+  "sequence",
+  "gate_kind",
+  "disabled",
+  "section_trigger",
+  "trigger_basis",
+  "trigger_value",
+  "column_break_trigger",
+  "interval_days",
+  "multi_day_only",
+  "section_about",
+  "description"
+ ],
+ "fields": [
+  {
+   "description": "The docname. Convention is \"<Project stage> — <Milestone>\", e.g. \"Build — Pre-Final (Systems Startup)\".",
+   "fieldname": "milestone_name",
+   "fieldtype": "Data",
+   "label": "Milestone name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "description": "Keyed to Project.project_type as it exists today. \"Service\" is what the build spec calls Maintenance; \"Products\" carries Controls Fab.",
+   "fieldname": "project_type",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Project stage",
+   "options": "Project Type",
+   "reqd": 1
+  },
+  {
+   "description": "Stable slug. Code and seeds match on this, never on the title, so the title can be reworded without orphaning anything.",
+   "fieldname": "milestone_key",
+   "fieldtype": "Data",
+   "label": "Milestone key",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "milestone_title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Milestone",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Order within the project stage.",
+   "fieldname": "sequence",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Sequence",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "default": "Physical Checklist",
+   "description": "Design milestones are review gates rather than physical pass/fail checklists — but a deficiency still runs through the same NCR and Quality Action machinery.",
+   "fieldname": "gate_kind",
+   "fieldtype": "Select",
+   "label": "Gate kind",
+   "options": "Physical Checklist\nReview Gate",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "disabled",
+   "fieldtype": "Check",
+   "label": "Disabled"
+  },
+  {
+   "fieldname": "section_trigger",
+   "fieldtype": "Section Break",
+   "label": "When it fires"
+  },
+  {
+   "default": "Manual",
+   "description": "Nothing reads this yet. Sub-phase D is what generates an inspection from a milestone; until then every inspection is raised by hand whatever this says.",
+   "fieldname": "trigger_basis",
+   "fieldtype": "Select",
+   "label": "Trigger basis",
+   "options": "Manual\nBuild Status\nCalendar Interval",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.trigger_basis=='Build Status'",
+   "description": "The value of Project.custom_build_status that opens this milestone.",
+   "fieldname": "trigger_value",
+   "fieldtype": "Data",
+   "label": "Trigger value"
+  },
+  {
+   "fieldname": "column_break_trigger",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.trigger_basis=='Calendar Interval'",
+   "description": "Days between recurring checks. Calendar-driven rather than project-stage driven, which is why Service needs its own scheduling.",
+   "fieldname": "interval_days",
+   "fieldtype": "Int",
+   "label": "Interval (days)",
+   "non_negative": 1
+  },
+  {
+   "default": "0",
+   "description": "Skip this milestone on a single-day job. Only the mid-event spot check uses it.",
+   "fieldname": "multi_day_only",
+   "fieldtype": "Check",
+   "label": "Multi-day jobs only"
+  },
+  {
+   "fieldname": "section_about",
+   "fieldtype": "Section Break",
+   "label": "About"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-14 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Quality",
+ "name": "Inspection Milestone",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Project Manager"
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production Team"
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Operations Team"
+  }
+ ],
+ "sort_field": "sequence",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "milestone_name",
+ "track_changes": 1
+}

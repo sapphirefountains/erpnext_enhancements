@@ -453,6 +453,56 @@ jobs:
       # appears. v1.146.0 shipped exactly that across seven widgets.
       - name: Workspace structure (content <-> child rows, WI-018)
         run: python -m unittest erpnext_enhancements.tests.test_workspaces -v
+      # The Quality module (WI-075) sits beside erpnext's own Quality Management, which owns
+      # a workspace named `Quality`, the Desk tile that goes with it, and 22 DocTypes. Every
+      # way of colliding with those is silent: workspaces are TIMESTAMP-gated (not hash-gated
+      # like DocTypes), so a file at core's docname does not conflict -- it rewrites core's
+      # row, `module` included, on whichever migrate has the newer stamp. Tiles are keyed by
+      # workspace LABEL and inherit that workspace's roles. And a Page sharing a workspace
+      # slug never renders, per-user, so it reads as a permissions bug. Nothing logs any of it.
+      - name: Quality module name collisions (workspace, tile, DocType, page slug)
+        run: python -m unittest erpnext_enhancements.tests.test_quality_naming_collisions -v
+      # Acceptance-criterion identity (WI-075 sub-phase B1). Every downstream record in the
+      # quality chain -- template row, inspection result, NCR, Quality Action -- joins on
+      # `criterion_key`, so the property that matters is that a key, once minted, NEVER
+      # changes. Re-minting on every save looks completely normal in a diff and in a smoke
+      # test, and only shows itself when somebody inserts a criterion mid-list a year later
+      # and a closed NCR silently repoints at a different standard.
+      - name: Scope acceptance criteria (stable keys, inspectable rows)
+        run: python -m unittest erpnext_enhancements.tests.test_scope_criteria -v
+      # The inspection milestone catalog (WI-075 sub-phase C). Build and Products milestones
+      # fire on values of the EXISTING Project.custom_build_status Select. Rename one of those
+      # options and the trigger stops matching -- silently, because a trigger that matches
+      # nothing is indistinguishable from a milestone that has not come round yet. Pins every
+      # trigger value against the live options in the fixture that owns them.
+      - name: Inspection milestones (triggers match the live build statuses)
+        run: python -m unittest erpnext_enhancements.tests.test_inspection_milestones -v
+      # THE freeze (WI-075 sub-phase D). An inspection that already happened must not change
+      # because the template it came from changed the following week. An implementation that
+      # re-reads the master at render looks completely normal -- the form populates, the checks
+      # are right -- until somebody tightens a tolerance and last year's passes quietly become
+      # failures, or its failures quietly become passes, with nothing in any log. Asserted by
+      # mutating the source after generation and demanding the rows and their hash are untouched.
+      - name: Inspection merge and freeze (a template edit cannot reach a generated inspection)
+        run: python -m unittest erpnext_enhancements.tests.test_inspection_merge -v
+      # The NCR / Quality Action state machines (WI-075 sub-phase E). Two total-but-invisible
+      # failures. A status vocabulary lives in a Property Setter's options string AND in the
+      # Python that writes a status, with nothing keeping them in sync -- and a value outside a
+      # Select's options makes the row permanently unsaveable by anybody. Separately, ERPNext's
+      # QualityAction.validate is one line writing "Completed" whenever resolutions is empty,
+      # which is exactly what a punch-list item is: under core every punch item is born closed,
+      # and once the Property Setter lands that literal is not an option so EVERY save raises.
+      # The override and the Property Setter are one indivisible change; this asserts both.
+      - name: Quality lifecycle (Select options match the code; the Action override is wired)
+        run: python -m unittest erpnext_enhancements.tests.test_quality_lifecycle -v
+      # Carry-forward and re-verification (WI-075 sub-phase F) -- the mechanism that stops
+      # "we fixed it" being taken on faith. Every failure mode here is quiet: a fix that
+      # closes without being looked at turns the two-step closure into one step wearing a
+      # longer name; an escalation that ratchets twice on a cancelled-and-resubmitted
+      # inspection moves the one field nobody audits; and two inspections carrying the same
+      # item both answer it, with the second submitted silently overwriting the first verdict.
+      - name: Carry-forward (a fix closes only when somebody looked at it again)
+        run: python -m unittest erpnext_enhancements.tests.test_carry_forward -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk

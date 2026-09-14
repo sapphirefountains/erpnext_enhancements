@@ -1,0 +1,161 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-09-14 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "section_master",
+  "quality_enabled",
+  "column_break_master",
+  "notifications_enabled",
+  "section_inspection",
+  "carry_forward_enabled",
+  "advisory_inspector_qualification",
+  "column_break_inspection",
+  "advisory_note",
+  "section_ncr",
+  "critical_ack_sla_hours",
+  "column_break_ncr",
+  "company_floor_enforcement"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_master",
+   "fieldtype": "Section Break",
+   "label": "Module"
+  },
+  {
+   "default": "0",
+   "description": "Off until the inspection chain is built and the team has been trained. Nothing in the module acts while this is unticked.",
+   "fieldname": "quality_enabled",
+   "fieldtype": "Check",
+   "label": "Quality module enabled"
+  },
+  {
+   "fieldname": "column_break_master",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Master switch for every email and timeline comment this module sends.",
+   "fieldname": "notifications_enabled",
+   "fieldtype": "Check",
+   "label": "Notifications enabled"
+  },
+  {
+   "fieldname": "section_inspection",
+   "fieldtype": "Section Break",
+   "label": "Inspections"
+  },
+  {
+   "default": "1",
+   "description": "Carry any open <b>PM Resolved</b> Quality Action for the project into its next inspection, so a self-reported fix is re-checked before it can close.",
+   "fieldname": "carry_forward_enabled",
+   "fieldtype": "Check",
+   "label": "Carry unverified fixes into the next inspection"
+  },
+  {
+   "default": "0",
+   "description": "Warn when an inspector lacks the credential or course the template asks for.",
+   "fieldname": "advisory_inspector_qualification",
+   "fieldtype": "Check",
+   "label": "Check inspector qualifications"
+  },
+  {
+   "fieldname": "column_break_inspection",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "advisory_inspector_qualification",
+   "fieldname": "advisory_note",
+   "fieldtype": "HTML",
+   "label": "Advisory note",
+   "options": "<p class=\"text-muted small\">This check is <b>advisory and never blocks a save</b>. The company has two Senior Technicians and no Masters, so a hard gate would stop an inspection being <i>recorded</i> rather than stop unqualified work happening.</p>"
+  },
+  {
+   "fieldname": "section_ncr",
+   "fieldtype": "Section Break",
+   "label": "Non-conformance"
+  },
+  {
+   "default": "24",
+   "description": "How long a Critical NCR may sit unacknowledged before the recipients are nagged again.",
+   "fieldname": "critical_ack_sla_hours",
+   "fieldtype": "Int",
+   "label": "Critical acknowledgement SLA (hours)",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "column_break_ncr",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Warn",
+   "description": "A project-specific Quality Goal may only meet or exceed the company-wide target for that metric. <b>Warn</b> until the team has lived with the rule.",
+   "fieldname": "company_floor_enforcement",
+   "fieldtype": "Select",
+   "label": "Company floor enforcement",
+   "options": "Off\nWarn\nBlock"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-09-14 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Quality",
+ "name": "Quality Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Quality Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Executive Team"
+  },
+  {
+   "read": 1,
+   "role": "Production Team"
+  },
+  {
+   "read": 1,
+   "role": "Operations Team"
+  },
+  {
+   "read": 1,
+   "role": "Design Team"
+  },
+  {
+   "read": 1,
+   "role": "Sales Team"
+  },
+  {
+   "read": 1,
+   "role": "Project Manager"
+  }
+ ],
+ "quick_entry": 0,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

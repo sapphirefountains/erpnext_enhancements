@@ -7,6 +7,360 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.452.1] - 2026-09-14
+
+### Changed
+
+- Version references inside the WI-075 series now name the versions it actually shipped. The
+  branch was renumbered +2 minor on rebase, because `main` took 1.444.0 and 1.445.0 for the
+  Project Brief and quiz-answer work while this was being built. Patch docstrings, `patches.txt`
+  comments, the module README headings and the work item all said the old numbers.
+  Docs only; no executable behaviour changes.
+  Note what was deliberately **not** rewritten: `project_enhancements/README.md`'s
+  "Project Brief sections (v1.444.0)" is `main`'s own reference and is correct as it stands, and
+  every historical citation in these files — the v1.280.3 backfill that logged a success while
+  matching nothing, the v1.395.0 half-installed deploy, the v1.277.3 unsaveable settings page —
+  points at a real release and would have become fiction if shifted with the rest.
+
+
+## [1.452.0] - 2026-09-14
+
+### Added
+
+- **An unverified fix is now carried into the next inspection and re-checked.** A Quality Action
+  reaching `PM Resolved` is claimed by the next inspection generated for its project, appears
+  there as a row to answer, and closes only when somebody standing in front of the work says it
+  holds. WI-075 sub-phase F - the mechanism the whole programme is built on.
+- **The punch list, for free.** An open punch-list item is structurally identical to an action
+  awaiting re-verification, so it *is* a Quality Action with `custom_punch_list` ticked and
+  inherits this machinery rather than living in a spreadsheet somebody has to remember to check.
+  Carried rows show a `[Punch]` prefix so an inspector can see which is which.
+
+### Notes
+
+- **Pass closes it. Fail reopens to `In Progress`, escalates the priority one step, counts the
+  reopen, and releases the claim so the next inspection carries it again.** Not back to `Open`:
+  somebody has already worked on this and pretending otherwise loses that. No answer decides
+  nothing and also releases the claim.
+- **The escalation happens exactly once per verification.** A Fail releases the claim, and the
+  verifier only acts on an action this inspection still holds the claim for - so a
+  cancelled-and-resubmitted inspection is a no-op rather than a second ratchet. Priority is
+  precisely the field nobody audits, so a double-step would not be noticed.
+- **The claim is a stamp written in the same transaction as generation, not a query run later.**
+  Without it, two inspections generated the same morning both carry the same item, both answer
+  it, and the second one submitted silently overwrites the first one's verdict. It is
+  synchronous rather than enqueued for a related reason: a prod deploy `FLUSHDB`s the queue
+  redis and destroys every pending job, so a claim living in a background job could vanish
+  between generating an inspection and answering it.
+- **Carried rows are deliberately not mandatory.** A mandatory row cannot be left blank, so an
+  inspection at the pump vault would be unsubmittable because a fix in the plant room could not
+  be checked from there - and the spec is explicit that sign-off must not be blocked from moving
+  a project forward. Nothing is lost: an unanswered carried item releases its claim and is
+  carried again. The pressure to answer comes from the item never going away, not from a locked
+  form.
+- **There is no `N/A` on a carried row.** "Not applicable" on a re-verification reads as neither
+  closed nor failed and the item would sit forever. Leaving the row blank is the honest escape
+  hatch, and it is the one that keeps carrying the item.
+- A failed re-verification owes a photo; a passed one does not. It is the failure that gets
+  argued about later.
+- The claim query carries **no date comparison**. A `<` on a nullable datetime silently matches
+  every NULL row through Frappe's coalesce sentinel - and "resolved a while ago" is not the rule
+  anyway. The rule is "resolved and not yet re-checked".
+
+
+## [1.451.0] - 2026-09-14
+
+### Added
+
+- **A failed check now becomes a Non-Conformance and a corrective action.** One NCR per failed
+  check, not per inspection - each traces to a different contracted standard and each closes
+  separately, and grouping them would make the thing an NCR is *for* impossible. Raised on
+  submit, not on validate: an inspection in progress has failures in it that are about to be
+  corrected on the spot. WI-075 sub-phase E.
+- **25 Custom Fields and the two lifecycles the build spec describes.**
+  `Non Conformance` gains project, severity, responsible party, subcontractor, source, the
+  inspection and frozen check that raised it, the Scope of Work it traces to, and its corrective
+  action; its status becomes Open -> Action Assigned -> PM Resolved -> Verified -> Closed.
+  `Quality Action` gains a subject (core has none at all), project, source type, an NCR link
+  (core links Review and Feedback but **not** NCR - a real gap), owner, due date, priority, the
+  `punch_list` and `client_visible` flags, and the verification fields; its status becomes
+  Open -> In Progress -> PM Resolved -> Verified at Next Inspection -> Closed.
+
+### Notes
+
+- **The `Quality Action` Property Setter and `override_doctype_class` are one indivisible
+  change and must never be split across releases.** ERPNext's entire `QualityAction.validate`,
+  verified against `origin/version-16`, is one line that writes `"Completed"` whenever the
+  resolutions table is empty. An empty resolutions table is *exactly* what a punch-list item is,
+  so under core every punch item would be born closed. And once the Property Setter replaces
+  `Open / Completed` with the five-state lifecycle, that literal is no longer an option - so
+  `_validate_selects` raises on **every** save of the doctype, not only on ones this app makes.
+  `tests/test_quality_lifecycle.py` asserts both halves are present, and was negative-tested:
+  removing the hook entry, or drifting the vocabulary away from the fixture, fails the build.
+- **`PM Resolved`, never `Closed`, when the resolutions are done.** A self-reported fix and a
+  re-inspected fix are different levels of confidence, and only the second may close the record.
+  A Verified or Closed action is never moved by an edit to its child table - editing a child
+  table is not confirmation that somebody re-inspected the work.
+- **Severity is not guessed.** Every NCR is raised `Minor` and a person sets it. Minor/Major/
+  Critical is a judgement about consequence and nothing in a checklist row carries that: a
+  failed nozzle-pattern check might be cosmetic or might be why the feature cannot be handed
+  over. A wrong Critical pages three people, a wrong Minor hides a real problem, and an
+  auto-assigned severity reads as though somebody assessed it.
+- **`N/A` does not raise an NCR.** The failing set is explicit rather than "anything that is not
+  Pass", so a check that did not apply to the job is not a finding against anybody.
+- Routing is idempotent on the result row's frozen `source_key`, so re-submitting an amended
+  inspection does not raise a second NCR for a check that already has one. It never raises:
+  losing a signed inspection to protect its follow-up would be the wrong trade.
+- Both patches run **`pre_model_sync`**, and the ordering is the point: fixtures - and therefore
+  the Property Setters that narrow these Selects - are applied *after* patches, so a stored
+  value must be remapped while the old options are still in force. Production held **zero rows**
+  in both tables on 2026-09-14, so they remap nothing today; they log their counts anyway,
+  because a patch that matched nothing commits and writes its `tabPatch Log` row
+  indistinguishably from one that did the work. Neither raises.
+
+
+## [1.450.0] - 2026-09-14
+
+### Added
+
+- **`Project Quality Inspection` and `Inspection Result` — the generated, frozen inspection.**
+  An inspection is merged from two halves: the master template (what Sapphire checks on every
+  job of this type) and the project's contracted acceptance criteria (what was promised on *this*
+  job), and the merged rows are **copied** onto the record rather than linked to.
+  WI-075 sub-phase D.
+- **`api/quality_inspection.generate_inspection(project, milestone)`** — resolves the Active
+  template and the locked Scope of Work, merges, hashes, and writes a draft. It refuses four
+  things out loud rather than quietly: a second open inspection for the same milestone; a Draft
+  or Retired template; an empty inspection (one with nothing in it submits as a clean pass); and
+  a merge with duplicate provenance.
+- **`inspect_at_milestone` on `Scope Acceptance Criterion`** — which inspection checks this
+  promise. A criterion naming no milestone appears on **no** inspection, so the generator counts
+  those, writes them onto the record's `generation_note` and returns them to the caller. A
+  contracted promise that quietly never gets inspected is the exact failure this programme
+  exists to end, so it is never filtered away in silence.
+
+### Notes
+
+- **The freeze is the point, and it is asserted rather than described.** A later edit to a
+  master template — or to a reusable section inside it — cannot reach an inspection that has
+  already been generated. `tests/test_inspection_merge.py` proves it by mutating the source
+  after generation and demanding the rows and their hash are untouched: rewording a check,
+  tightening a tolerance, deleting a check, adding one, and editing the locked scope.
+  This matters because the failure is invisible. An implementation that re-reads the master at
+  render looks completely normal — the form populates, the checks are right — until somebody
+  tightens a tolerance and last year's passed inspections quietly become failures, or its
+  failures quietly become passes. Nothing logs it.
+- **There is no `fetch_from` on a single result field, and that absence is load-bearing.** One
+  would silently un-freeze the snapshot the moment somebody edited the source, and would look
+  entirely ordinary in a diff.
+- **`snapshot_hash` is the authoritative provenance**, not `Project Inspection Template.revision`.
+  The revision cannot see a change made *inside* a referenced section; the hash is taken over
+  the rows that actually landed. It is order-sensitive (the order an inspector works through
+  checks is part of what was inspected), excludes presentation (moving a location note is not a
+  different inspection), and normalises numeric shape (Frappe returns `0`, `0.0` or `Decimal`
+  depending on how a row was loaded, and a hash that moved with that would report every
+  unaltered inspection as altered). The literal is pinned in the test suite.
+- **`outcome` is Data, not a Select**, because a Select's options are fixed per field and these
+  vary per row — the same reason `Sapphire Maintenance Result.selection` is Data. Answers are
+  validated in Python against the row's own frozen options: under PAD SPACE collation `"Pass "`
+  compares equal to `"Pass"`, so a padded answer would otherwise be accepted and the failure
+  count would depend on invisible whitespace.
+- **`N/A` is not a failure.** The failing set is explicit rather than "anything that is not
+  Pass", which would raise a non-conformance for a check that did not apply to the job. A row
+  that both reads `Fail` and is out of range counts **once** — double-counting would inflate the
+  failure rate that first-pass yield is computed from.
+- **A photo is demanded only on a check that failed.** Requiring one on every passing check
+  trains people to attach anything, which is worse than not asking.
+- `inspection_date` deliberately has **no default**: a date that fills itself in records when
+  the form was opened, not when somebody stood in front of the feature.
+- Nothing raises an NCR from a failure yet — that is sub-phase E — and nothing carries open
+  fixes forward, which is F. `Carried Action` is already in the `source` vocabulary because
+  adding a Select option once rows exist is a data migration, not an edit.
+
+
+## [1.449.0] - 2026-09-14
+
+### Added
+
+- **The inspection authoring layer** — `Inspection Milestone`, `Inspection Section` +
+  `Inspection Section Item`, `Project Inspection Template` + `Inspection Template Section`.
+  A section is a top-level reusable record that templates point at, rather than a table copied
+  into each of them, because **Frappe has no grandchild tables**: a template cannot own sections
+  that own checks. The same shape `sapphire_maintenance` arrived at, for the same reason.
+  WI-075 sub-phase C.
+- **The milestone catalog, all five project stages.** Build, Design (review gates rather than
+  physical checklists), Products (carrying Controls Fab), Events (including the multi-day-only
+  mid-event check) and Service — which is what the build spec calls Maintenance, and is
+  deliberately not renamed across 354 live projects for vocabulary.
+- **The Commissioning section, and the Build pre-final template that carries it.** Fill, leak,
+  flow, electrical/GFCI, nozzle pattern and light function — `docs/KPI_DASHBOARD_DESIGN.md`
+  calls this "the biggest fountain-specific gap", and these six are its own proposed list. Once
+  they are being recorded, KPI #10 First-Pass Yield stops being Manual and becomes a query.
+- **A stable `item_key` on every check**, minted once and never regenerated, so a generated
+  inspection's recorded result cannot be repointed by reordering or rewording the source row.
+  Row identity now lives in `quality/stable_keys.py`, shared by acceptance criteria and checks —
+  the same idea in both places rather than two near-copies.
+
+### Notes
+
+- **Only Commissioning is seeded. The other Build milestones get a row and no template, on
+  purpose.** Their checklists are Sapphire's own standard of care and nobody has written them
+  down. Seeding plausible-sounding invented checks would be worse than seeding nothing: a
+  checklist carries the authority of the company that issued it, an inspector works through it
+  assuming somebody chose those items deliberately, and an invented one is indistinguishable
+  from a real one right up until it fails to catch something. Those milestones stand visibly
+  empty until whoever runs Build fills them in.
+- **Build and Products triggers name values of the existing `Project.custom_build_status`
+  Select** rather than a parallel state machine. Renaming one of those options would stop the
+  trigger matching *silently* — a trigger that matches nothing looks exactly like a milestone
+  that has not come round yet. `tests/test_inspection_milestones.py` pins every trigger value
+  against the live options in the fixture that owns them, and fails the build on a rename.
+- **`Project Inspection Template.revision` is coarse, and says so.** It bumps when the
+  template's own composition changes, and cannot see a change made *inside* a referenced
+  section. The authoritative provenance is the content hash a generated inspection will store
+  over its own merged rows (sub-phase D) — a version number that looks authoritative and is not
+  is worse than none, because people stop checking it.
+- Nothing generates an inspection yet; that is sub-phase D. A milestone is a declaration of
+  intent that a person acts on, and `trigger_basis` is read by nothing.
+
+
+## [1.448.1] - 2026-09-14
+
+### Changed
+
+- WI-075's work item records what actually shipped: A, B1 and B2 (v1.444.0 → v1.446.0), B
+  split into schema and wiring, and the decision to leave the hand-off step out for now.
+  Docs only; no executable behaviour changes.
+
+
+## [1.448.0] - 2026-09-14
+
+### Added
+
+- **Locking a Scope of Work now stamps its Project.** Two read-only Custom Fields on Project —
+  `custom_scope_of_work` and `custom_scope_locked_on` — so anything reading a Project can see
+  the scope it is delivered against without joining. Cancelling the scope clears them.
+  WI-075 sub-phase B2.
+
+### Notes
+
+- **This is the whole of B2, on purpose.** The obvious alternative was a new step in the
+  7-step hand-off tracker, which is how the rest of this process is modelled. Declined for now
+  on blast radius, not on the idea: the record links to a Project so it cannot precede step 3;
+  inserting it anywhere but last means renumbering steps that 707 live `Project Process Step`
+  rows already carry; and `hand_off_sla_compliance` hardcodes `LAUNCH_STEP_NUMBER = 7`, so a
+  renumber would quietly stop it computing the launch deadline on the Friday report. None of
+  that is hard — it is just not worth buying before anyone has locked a real scope and found
+  out where the step belongs. The step, if it comes, is its own change against a quieter diff.
+- The mirror **swallows and logs rather than raising**: a failure to stamp the Project must not
+  undo a lock the user just performed. The scope document is authoritative; the Project fields
+  are a convenience.
+- Written with `frappe.db.set_value`, never `doc.save()`. WI-057 states why: Project carries
+  heavy `on_update` hooks and a wildcard `'*'` `after_save` firing `global_triton_sync` on
+  every ORM save. `update_modified=False`, because a read-only stamp should not make the
+  Project look edited to every concurrent editor.
+- The guard is `frappe.db.has_column("Project", ...)` — a **DocType** name, not `"tabProject"`.
+  It prefixes `tab` itself and raises `TableMissingError` on an unknown table rather than
+  returning False, so the table-name form is a guaranteed crash dressed up as a guard.
+
+
+## [1.447.0] - 2026-09-14
+
+### Added
+
+- **`Project Scope of Work`** (submittable) and **`Scope Acceptance Criterion`** — the record
+  that ends "scope existed in more than one version". One locked scope per project, carrying
+  measurable acceptance criteria that the Statement of Work and the inspection template both
+  read from rather than restate. WI-075 sub-phase B1.
+  **Submit is the lock** — no separate approval flag to fall out of step with `docstatus`.
+  Locking refuses a scope with no criteria, and refuses criteria missing a criterion, a pass
+  standard or a verification method: a scope nobody can inspect against is the thing this
+  record exists to prevent.
+- **`criterion_key`** — stable identity on every criterion, minted once and never regenerated.
+  The inspection template row, the inspection result, the NCR and the Quality Action will all
+  join on it, never on row order, so inserting a criterion mid-list a year later cannot
+  silently repoint a closed NCR at a different standard. The precedent is `block_key` in
+  Training, and the reason is the same one its README gives.
+
+### Notes
+
+- **Nothing consumes this yet, on purpose.** Sub-phase B2 wires it into the hand-off engine —
+  a new step, a new anchor, and the renumbering of the existing step 7 — and that is a separate
+  change so the schema can be reviewed without also reviewing an edit to an engine that 707
+  live `Project Process Step` rows already run through.
+- The logic lives in `quality/scope_criteria.py`, which imports no `frappe`, rather than in the
+  DocType controller. There is no Frappe integration-test job in CI, so that split is what lets
+  `tests/test_scope_criteria.py` run on every push. It sits under `quality/` rather than beside
+  the DocType because `project_enhancements/__init__.py` imports `frappe` at module scope,
+  which would put it out of reach however pure it was — the same split `utils/url_safety.py`
+  makes, for the same reason.
+- Blank-checks on criteria are done in Python, not SQL. Under MariaDB's default PAD SPACE
+  collation `WHERE pass_standard <> ''` treats `"   "` as present, so the obvious SQL form of
+  that check reports clean on data that is genuinely blank. Note the failure direction: it
+  passes.
+- At most one locked scope per project is enforced in `before_submit` and not by a unique
+  index: a cancelled or amended row keeps its name and its `project`, so a database constraint
+  would refuse the legitimate re-lock after an amendment. `docstatus = 1` is the real predicate.
+
+
+## [1.446.0] - 2026-09-14
+
+### Added
+
+- **A `Quality` module** — the scaffold for WI-075, the programme that makes a quality failure
+  traceable to a contracted, measurable standard. Ships the module, the `Quality Control`
+  workspace and sidebar, a Desk tile, `Quality Settings`, and the roles and project type the
+  rest of the programme needs. **Nothing acts yet:** `quality_enabled` is off, there is no
+  inspection engine until sub-phases C and D, and this release changes nothing anybody sees.
+- **`Quality Settings`** (Single) — master switches, all shipping off or permissive. Its
+  backfill patch ships in this same release rather than after it, because a `default` on a new
+  field of a Single reaches no existing row, and the settings page for a *dormant* feature is
+  precisely the one that cannot self-heal on the next save: the first save you need is the one
+  that fails. `QualitySettings.validate` repairs a missing dial in place as a second defence.
+  Both fill only where `tabSingles` has no row, never over a stored falsy value — an unticked
+  box and a deliberate `0` are not the same fact.
+- **Five roles** — President, Production Manager, Account Executive, Quality Inspector,
+  Controller. The build spec's approval chain names all five and none existed. Created by
+  patch rather than `fixtures/role.json`, because fixture files import in alphabetical
+  filename order and `custom_docperm.json` lands before `role.json`.
+  **Note one live consequence.** `crm_enhancements/handoff.py:224` documents that
+  `Account Executive` is "a Select value on Process Step Template, not a real Role on this
+  site", and `_role_holder_emails` skips a Role that does not exist. Creating the Role arms
+  that path: a `Hand-Off Attendee Role` row naming it will now resolve to its holders and mail
+  them. Verified on production 2026-09-14 that this is **latent, not live** — all three
+  configured attendee rows use explicit group addresses (sales@, production@, billing@) with
+  `role` null — so hand-off attendee resolution is unchanged today. It becomes live the first
+  time somebody sets `role` on one of those rows.
+- **A `Products` Project Type**, which the Controls Fab inspection programme keys to.
+  "Controls Fab" exists nowhere on this site, and "Service" (354 projects) is what the spec
+  calls Maintenance. Rather than rename 354 live projects for vocabulary, the programme keys
+  on `project_type` as it actually is, plus this one value. The seven projects carrying the
+  `Products` *value stream* are deliberately not retyped — a value stream and a project type
+  are different axes, and rewriting live projects to make a new report look populated is a
+  person's decision, not a patch's.
+
+### Notes
+
+- **The workspace is `Quality Control`, not `Quality`.** ERPNext's `Quality Management` module
+  already owns a public workspace whose name and label are both `Quality`, plus the Desk tile
+  that goes with it. A Workspace's `name` *is* its `label`, and workspaces are timestamp-gated
+  by the importer while DocTypes are hash-gated — so a file at that docname would let whichever
+  side has the newer `modified` rewrite the row on every migrate, **including its `module`**,
+  silently re-homing a core workspace into this app and changing which DocPerms gate it. The
+  Desk tile key is `"Quality Control"` for the same reason: tiles are keyed by workspace label
+  and derive their roles from the same-named workspace.
+- **`Quality Settings` grants `read` widely on purpose.** A workspace vanishes *silently* for
+  anyone holding no DocPerm on a non-child DocType in its module — `Workspace.__init__` raises
+  `PermissionError` and `get_workspace_sidebar_items` swallows it. In this sub-phase
+  `Quality Settings` is the module's only non-child DocType, so it is the only thing keeping
+  the workspace visible to anybody but System Manager.
+- Core's `Quality Inspection` is **not** used and must not be — it is a Stock-module
+  incoming-materials record with required `reference_type`, `item_code` and `sample_size`, no
+  project, no milestone, no pass/fail and no photo. See
+  [ADR-0012](decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md). The
+  other seven core Quality DocTypes are reused and are linked from the new workspace.
+
+
 ## [1.445.0] - 2026-09-14
 
 ### Added

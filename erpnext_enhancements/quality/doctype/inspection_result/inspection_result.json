@@ -1,0 +1,212 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 1,
+ "allow_rename": 0,
+ "creation": "2026-09-14 13:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "label",
+  "acceptance_criteria",
+  "outcome",
+  "column_break_answer",
+  "measured_value",
+  "uom",
+  "out_of_range",
+  "section_evidence",
+  "notes",
+  "photo",
+  "section_frozen",
+  "source",
+  "source_key",
+  "section_title",
+  "column_break_frozen",
+  "sequence",
+  "check_type",
+  "method",
+  "is_mandatory",
+  "requires_photo",
+  "min_value",
+  "max_value",
+  "options",
+  "location_note",
+  "non_conformance"
+ ],
+ "fields": [
+  {
+   "columns": 3,
+   "fieldname": "label",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Check",
+   "read_only": 1
+  },
+  {
+   "columns": 3,
+   "fieldname": "acceptance_criteria",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Passes when",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "description": "Validated against this row's own answer options, which is why it is Data rather than a Select — a Select cannot vary its options by row.",
+   "fieldname": "outcome",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Result"
+  },
+  {
+   "fieldname": "column_break_answer",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 1,
+   "depends_on": "eval:doc.check_type=='Measurement'",
+   "fieldname": "measured_value",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Measured"
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Data",
+   "label": "UOM",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Computed from the frozen min and max. A reading outside them is a finding whatever the inspector selected.",
+   "fieldname": "out_of_range",
+   "fieldtype": "Check",
+   "label": "Out of range",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_evidence",
+   "fieldtype": "Section Break",
+   "label": "Evidence"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "photo",
+   "fieldtype": "Attach Image",
+   "label": "Photo"
+  },
+  {
+   "collapsible": 1,
+   "description": "Copied at generation and never re-read. A later edit to the template or the section this came from cannot reach this row — that is the whole point of the snapshot.",
+   "fieldname": "section_frozen",
+   "fieldtype": "Section Break",
+   "label": "Frozen at generation"
+  },
+  {
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "label": "Source",
+   "options": "Master Template\nProject Addendum\nCarried Action",
+   "read_only": 1
+  },
+  {
+   "description": "Provenance only. Never resolved to fetch the current value of anything.",
+   "fieldname": "source_key",
+   "fieldtype": "Data",
+   "label": "Source key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_title",
+   "fieldtype": "Data",
+   "label": "Section",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_frozen",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sequence",
+   "fieldtype": "Int",
+   "label": "Sequence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "check_type",
+   "fieldtype": "Data",
+   "label": "Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "method",
+   "fieldtype": "Data",
+   "label": "Verification method",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_mandatory",
+   "fieldtype": "Check",
+   "label": "Mandatory",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "requires_photo",
+   "fieldtype": "Check",
+   "label": "Photo required",
+   "read_only": 1
+  },
+  {
+   "fieldname": "min_value",
+   "fieldtype": "Float",
+   "label": "Min",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_value",
+   "fieldtype": "Float",
+   "label": "Max",
+   "read_only": 1
+  },
+  {
+   "fieldname": "options",
+   "fieldtype": "Small Text",
+   "label": "Answer options",
+   "read_only": 1
+  },
+  {
+   "fieldname": "location_note",
+   "fieldtype": "Small Text",
+   "label": "Location",
+   "read_only": 1
+  },
+  {
+   "description": "Raised in sub-phase E when this row fails.",
+   "fieldname": "non_conformance",
+   "fieldtype": "Link",
+   "label": "Non Conformance",
+   "options": "Non Conformance",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-14 13:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Quality",
+ "name": "Inspection Result",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -6,7 +6,7 @@ This plan was built against the **live systems on 14 July 2026** (production `er
 
 Companion documents:
 - [`decisions/OPEN-DECISIONS.md`](decisions/OPEN-DECISIONS.md) — the 7 business decisions **with their 14 Jul 2026 resolutions** (OD-1 No-JDH · OD-2 follow-Utah-law/branch-b w/ CPA written confirmation as sign-off gate · OD-3 rename Rent→Events · OD-4 branch a · OD-5 Jan 1 committed, sooner if possible · OD-6 bulk delete · OD-7 no surcharge at launch)
-- [`work-items/`](work-items/) — 70 self-contained work items (WI-001 … WI-070; WI-061 ON HOLD per OD-1)
+- [`work-items/`](work-items/) — the migration work items WI-001 … WI-070 (WI-061 ON HOLD per OD-1), indexed in §6 below, plus the app-code programmes WI-071 onwards, which are **deliberately not in that index**: §6 is migration-scoped, and the programmes cross-link each other instead.
 
 ---
 
