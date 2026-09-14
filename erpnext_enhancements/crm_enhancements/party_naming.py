@@ -27,6 +27,22 @@ Addresses with no link at all — 442 of 1,011 — have no party to be named aft
 **out of scope rather than failing**. They are counted separately and reported as their own
 number, because "this address belongs to nobody" is a real finding and a different one from
 "this address is badly named".
+
+--------------------------------------------------------------------------------------
+Project needs a join too, and for a reason that is easy to miss
+--------------------------------------------------------------------------------------
+
+``Project.customer`` is the Customer's **docname**, and Project has no ``customer_name``
+column to go with it. A docname is frozen at insert; ``customer_name`` is edited freely — so
+the moment anybody renames a customer the two stop agreeing, and **125 of 1,662 live
+Customers have already drifted** (2026-09-14).
+
+That matters because the Desk shows the *label*. PRJ-00706 displays a Customer of
+``Robert Carey Residence`` and stores ``BJ Carey``, so checking the name against the column
+reported a mismatch that nothing on the form could explain.
+:func:`attach_customer_labels` supplies the label as a fact, exactly the way
+:func:`attach_address_parties` supplies an Address's party, and
+:func:`party_naming_rules.party_names` then accepts either name.
 """
 
 import frappe
@@ -67,12 +83,41 @@ def read_rows(doctype):
 	]
 	if doctype == "Address":
 		attach_address_parties(rows)
+	elif doctype == "Project":
+		attach_customer_labels(rows)
 
 	return rows, {
 		"total": total,
 		"visible": len(rows),
 		"permission_filtered": len(rows) < total,
 	}
+
+
+def attach_customer_labels(rows):
+	"""Set ``customer_name`` on each Project row from the Customer it links to.
+
+	Project stores only the docname. See the module docstring for why that is not the same
+	string as the label — 125 live Customers over.
+
+	One query for the whole set, the same shape as :func:`attach_address_parties` and for the
+	same reason. ``frappe.get_all`` rather than ``get_list`` because this reads a *label for a
+	link the caller can already see*: the Desk renders that title on the form itself, so there
+	is nothing here a reader of the Project did not already have.
+	"""
+	wanted = sorted({(row.get("customer") or "").strip() for row in rows} - {""})
+	labels = {}
+	if wanted:
+		labels = {
+			row["name"]: (row.get("customer_name") or "")
+			for row in frappe.get_all(
+				"Customer", filters={"name": ["in", wanted]}, fields=["name", "customer_name"]
+			)
+		}
+	for row in rows:
+		# Left empty rather than defaulted to the docname: party_names dedupes anyway, and an
+		# empty fact says "no label was found", which is a different thing from "they agree".
+		row["customer_name"] = labels.get((row.get("customer") or "").strip(), "")
+	return rows
 
 
 def attach_address_parties(rows):
@@ -90,21 +135,28 @@ def attach_address_parties(rows):
 		filters={"parenttype": "Address", "parent": ["in", names]},
 		fields=["parent", "link_doctype", "link_name", "link_title"],
 	)
-	# {address: {doctype: label}} — the last link of a given doctype wins, which does not
-	# matter because two Customer links on one address are already a different problem.
+	# {address: {doctype: (title, docname)}} — the last link of a given doctype wins, which
+	# does not matter because two Customer links on one address are already a different
+	# problem. Both names are kept: 99 of these links have a docname that differs from the
+	# title, and six Addresses are titled with the docname, which is not a defect.
 	by_address = {}
 	for link in links:
+		name = link.get("link_name") or ""
 		by_address.setdefault(link["parent"], {})[link["link_doctype"]] = (
-			link.get("link_title") or link.get("link_name") or ""
+			link.get("link_title") or name,
+			name,
 		)
 
 	for row in rows:
 		found = by_address.get(row.get("name")) or {}
 		row["party"] = ""
+		row["party_alias"] = ""
 		row["party_doctype"] = ""
 		for doctype in rules.ADDRESS_PARTY_DOCTYPES:
-			if found.get(doctype):
-				row["party"] = found[doctype]
+			title, docname = found.get(doctype) or ("", "")
+			if title:
+				row["party"] = title
+				row["party_alias"] = docname
 				row["party_doctype"] = doctype
 				break
 		row["link_count"] = len(found)
@@ -159,9 +211,9 @@ def audit_doctype(doctype, severity=None, code=None):
 def check_record(doctype=None, name=None):
 	"""Check one saved record. Read-only, advisory, writes nothing.
 
-	Reads only the record in hand plus, for an Address, its links — **no corpus read**, which
-	is what makes it cheap enough for a form to call on every refresh. Duplicate detection
-	needs the whole set and therefore belongs to the report, not here.
+	Reads only the record in hand, plus one row: an Address's links, or a Project's Customer
+	label. **No corpus read**, which is what makes it cheap enough for a form to call on every
+	refresh. Duplicate detection needs the whole set and therefore belongs to the report.
 	"""
 	doctype = (doctype or "").strip()
 	name = (name or "").strip()
@@ -176,6 +228,8 @@ def check_record(doctype=None, name=None):
 	row = {"name": name, **values}
 	if doctype == "Address":
 		attach_address_parties([row])
+	elif doctype == "Project":
+		attach_customer_labels([row])
 
 	scoped = rules.in_scope(doctype, row)
 	findings = rules.check(doctype, row) if scoped else []

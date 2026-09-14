@@ -123,6 +123,12 @@ def _message(doctype, result):
 		  "by character. Duplicates are grouped by: <i>{0}</i>."
 		  ).format(summary.get("normalisation") or "")
 	)
+	notes.append(
+		_("A party answers to more than one name: the record it links to has a document name "
+		  "<i>and</i> a current title, and renaming the party changes only the second. A record "
+		  "matching <b>either</b> is correct, and the <b>Party it belongs to</b> column shows "
+		  "the title — the name you see on the form.")
+	)
 
 	if corpus.get("permission_filtered"):
 		notes.append(
