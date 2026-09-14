@@ -6,15 +6,22 @@ failure traceable to a contracted, measurable standard.
 Programme: [WI-075](../../work-items/WI-075-quality-and-inspections.md).
 Decision record: [ADR-0012](../../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md).
 
-**Status: sub-phases A through F — the loop closes.** Scope locks, an inspection generates
-frozen from the template plus that project's contracted criteria, a failed check raises a
-Non-Conformance and a corrective action, and an unverified fix is carried into the next
-inspection and re-checked before it may close. That last step is the one the whole design rests
-on: a self-reported fix and a re-inspected fix are different levels of confidence.
+**Status: sub-phases A through I — the loop closes and somebody is told it has.** Scope locks,
+an inspection generates frozen from the template plus that project's contracted criteria, a
+failed check raises a Non-Conformance and a corrective action, an unverified fix is carried into
+the next inspection and re-checked before it may close, a Critical failure pages three named
+people and records who saw it, there is a field tool a person can hold, and a daily sweep tells
+each project manager which milestones have come round. That re-check step is the one the whole
+design rests on: a self-reported fix and a re-inspected fix are different levels of confidence.
 
-Still to come: the Critical-NCR alert with per-recipient acknowledgement (G) and the field
-wizard (H). Generation is still a deliberate act — `trigger_basis` is read by nothing — and
-`quality_enabled` is **off**.
+Generation is still a **deliberate act**. The sweep reports that a milestone is due; it never
+creates an inspection. And `quality_enabled` is **off** — nothing in this module acts until it
+is ticked.
+
+Still to come: master checklists for anything but Build commissioning, which is a question of
+whose standard of care gets written down rather than a build (see the sweep section below), then
+the front-end chain — Change Orders, MSA rates, budget categories and the subcontractor
+scorecard.
 
 ## What this module is for
 
@@ -49,6 +56,8 @@ question why it exists.**
 | `page/inspection_wizard/` | The field tool: one frozen section at a time, every answer a tap. Talks only to `api/quality_wizard.py`, which is where the freeze is enforced |
 | `qualification.py` | Whether the person holding the clipboard is the one the template asked for. Frappe-free — and it has to be, because nothing downstream ever fails when this is wrong |
 | `inspector_advisory.py` | The frappe half of that: inline warning, timeline comment, manager email. Gate, then swallow — **never** throws |
+| `due.py` | Whether a milestone has come round, and why not. Frappe-free. The rule is **reached or passed**, never equality |
+| `scheduling.py` | The daily sweep that tells each project manager what is ready. It notices; it never generates |
 
 Registered in [`../modules.txt`](../modules.txt), tiled from
 [`../setup/desktop_icon_map.py`](../setup/desktop_icon_map.py), and given a sidebar by
@@ -79,7 +88,7 @@ The key is `"Quality Control"` for that reason.
 `frappe.router` resolves the first path segment against workspaces *before* pages, so a Page
 sharing a workspace's slug never renders — and it fails per-user, because the workspace list is
 permission-filtered, which makes it look like a permissions bug. `tests/test_workspaces.py`
-fails the build on it. The inspection wizard, when it lands in H, is `inspection-wizard`.
+fails the build on it. The inspection wizard is `inspection-wizard` for exactly that reason.
 
 ## The module gate — why `Quality Settings` grants read so widely
 
@@ -194,6 +203,48 @@ an inspection is a no-op rather than a second ratchet.
 An open punch-list item is structurally the same thing — raised against a standard, fixed by
 somebody, not actually done until it has been looked at again — so it is a Quality Action with
 `custom_punch_list` ticked and gets all of this for free.
+
+## When a milestone comes round, and the equality bug that would have eaten inspections
+
+Sub-phase C seeded seventeen milestones each carrying a `trigger_basis`, and until sub-phase I
+**nothing read it**. A Build project could reach QA and sit there, and the pre-final commissioning
+check — the one `docs/KPI_DASHBOARD_DESIGN.md` calls the biggest fountain-specific gap — would come
+round only if somebody happened to remember.
+
+**The rule is "reached or passed", not equality, and that is not a refinement.**
+`Project.custom_build_status` is a Select somebody types into, not a workflow. A project can go
+from `Procurement` straight to `Ready for Install` in one save, and a trigger written as
+`current == "QA"` was never true at any moment a sweep looked. The commissioning check simply
+never comes up, and the record afterwards is indistinguishable from a project that has not got
+there yet.
+
+So a milestone is due once the project is at or beyond its trigger, and stays due until an
+inspection exists. **A project that skips a stage does not skip its inspection; it acquires an
+overdue one.** That also makes the answer computable at any time from current state, rather than
+depending on having observed a transition — which matters here, because a deploy `FLUSHDB`s the
+queue and any design that watched for transitions would lose the ones that happened during it.
+
+**A status that cannot be placed on the scale is reported, not swallowed.** Blank, renamed,
+legacy — answering "not due" would make the sweep report clean forever, on every project, with
+nothing to investigate. It comes back `unknown` and is surfaced alongside the due list.
+
+Three more things it says out loud that a tidier implementation would hide:
+
+- **A due milestone with no checklist is still reported**, flagged `blocked`. Only the Build
+  commissioning list has ever been written down; the rest are Sapphire's standard of care and live
+  in people's heads. A list that quietly omitted them would turn a gap in what the company has
+  recorded into a gap nobody can see.
+- **A calendar check that has never run is marked `first_time`.** It is genuinely due — nobody has
+  ever inspected it — but "we have never done this" is a different conversation from "this one is
+  overdue", and folding them together would page somebody about every Service project at once.
+- **A multi-day-only check on a project with no dates says so.** "Why is my mid-event check not
+  showing" deserves an answer, and "nobody recorded how long this event runs" is a different
+  problem from "the check does not apply".
+
+**It notices; it never acts.** The sweep reports that an inspection is due and does not generate
+one, for the same reason severity is never guessed: a generated inspection reads as though a
+person decided to inspect, and one that appeared on its own would be a draft nobody owns, aging in
+a list, looking like work in progress.
 
 ## The field wizard, and where the freeze is actually enforced
 

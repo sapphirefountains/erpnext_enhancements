@@ -1,6 +1,6 @@
 # WI-075 — Scope that can be inspected, and failures that get re-checked
 
-**Status:** in progress — A through H shipped, v1.446.0 → v1.454.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445). Slice 1 is complete.
+**Status:** in progress — A through I shipped, v1.446.0 → v1.455.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445). Slice 1 is complete; I delivered the trigger engine but **not** the master checklists — see below.
 **Branch:** `claude/quality-inspections-planning-691339` (off `main` at v1.443.0)
 **Tracked:** PRJ-00580, TASK-2026-02013 with a child per deliverable (A–N)
 **Decides:** [ADR-0012](../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md)
@@ -220,6 +220,36 @@ different claims and only one of them is true.
 and an action, the fix is re-verified at the next inspection, a Critical failure pages three
 people, and there is a tool a person can actually hold. Everything from I onward widens this to
 other project types or builds the front-end chain; none of it changes the chain above.
+
+### Sub-phase I did not deliver what it was scoped as, and this is why (v1.455.0)
+
+**Scoped as:** milestones and master templates for Design, Events, Service and Products.
+
+**Delivered:** the trigger engine. The milestones already existed — sub-phase C seeded all
+seventeen, covering all five project stages. What C did not do was make any of them fire: every
+milestone carries a `trigger_basis` and **nothing in the codebase read it**, which the catalog
+said about itself (*"needs its own scheduling — which sub-phase I owns"*). A Build project could
+reach QA and sit there, and the pre-final commissioning check would happen only if somebody
+remembered.
+
+**The design decision inside it.** Due-ness is "reached or passed", never equality.
+`custom_build_status` is a Select somebody types into, not a workflow, so a project can jump
+`Procurement` → `Ready for Install` in one save and an equality trigger was never true at any
+moment a sweep looked. The inspection is lost with nothing to see afterwards. Under the real rule
+a project that skips a stage acquires an *overdue* inspection instead. An unplaceable status
+— blank, renamed, legacy — reports as `unknown` rather than "not due", because the latter makes
+the sweep read clean forever on every project.
+
+**Not delivered, deliberately: the master checklists.** Only the Build commissioning list has ever
+been written down. The Design review gates, the Events setup and teardown checks, the Service pre-
+and post-service checks and the Controls Fab panel checks are Sapphire's own standard of care, and
+an invented checklist carries the authority of a real one right up until it fails to catch
+something — the same reasoning that limited C's seeding. Those milestones now report as **due and
+blocked**, which is the honest state and is visible on the Project form rather than hidden.
+
+**This is the open question, and it is a conversation rather than a build:** whose checklists are
+those four sets, and who writes them down? Until somebody does, the engine will keep correctly
+reporting that an inspection is due and that nobody has said what it consists of.
 
 ## Native-first check (ADR-0002)
 

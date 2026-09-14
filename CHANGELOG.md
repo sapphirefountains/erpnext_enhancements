@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.455.0] - 2026-09-14
+
+### Added
+
+- **Inspection milestones now actually come round** (WI-075 sub-phase I). Sub-phase C seeded
+  seventeen milestones each carrying a `trigger_basis`, and **nothing read it** — a Build project
+  could reach QA and sit there, and the pre-final commissioning check would happen only if
+  somebody remembered. `quality/due.py` decides whether a milestone is due; `quality/scheduling.py`
+  runs daily and tells each project manager what is ready on their jobs.
+- `api/quality_due.py` — `get_project_milestones`, `get_my_due_inspections` — and an
+  **Inspection milestones** button on the Project form showing every milestone with its state.
+
+### Notes
+
+- **The rule is "reached or passed", not equality, and that is not a refinement.**
+  `Project.custom_build_status` is a Select somebody types into, not a workflow. A project can go
+  from `Procurement` straight to `Ready for Install` in one save, and a trigger written as
+  `current == "QA"` was never true at any moment a sweep looked — the commissioning check never
+  comes up and the record afterwards is indistinguishable from a project that has not got there
+  yet. So a milestone is due once the project is at or beyond its trigger and stays due until an
+  inspection exists: **a project that skips a stage acquires an overdue inspection rather than
+  skipping one.** Negative-tested by downgrading the comparison to equality, which fails four
+  tests.
+- **A status that cannot be placed on the scale is reported, not swallowed.** Blank, renamed or
+  legacy values return `unknown` rather than "not due". The alternative makes the sweep report
+  clean forever, on every project, with nothing to investigate — the same failure direction as a
+  trailing-space check written in SQL.
+- **A due milestone with no checklist is still reported**, flagged `blocked`. Only the Build
+  commissioning list has ever been written down; the rest are Sapphire's own standard of care and
+  live in people's heads. A list that quietly omitted them would turn a gap in what the company
+  has recorded into a gap nobody can see, which is the failure this whole programme exists to end.
+- **It notices; it never acts.** The sweep reports that an inspection is due and does not generate
+  one, for the same reason severity is never guessed: a generated inspection reads as though a
+  person decided to inspect, and one that appeared on its own is a draft nobody owns, aging in a
+  list, looking like work in progress.
+- A calendar check that has never run is marked `first_time`. It is genuinely due, but "we have
+  never inspected this" is a different conversation from "this one is overdue", and folding them
+  together would page somebody about every Service project at once the day this is switched on.
+- Only a **submitted** inspection restarts a calendar cadence, and a **cancelled** one never marks
+  a milestone done. An abandoned draft would otherwise buy another ninety days of silence.
+- The status scale is read from `Project.custom_build_status` meta rather than copied into the
+  module. A copy would be a second definition of the company's build sequence that nothing keeps
+  in step with the first, and the drift would be silent; a test fails the build on a hardcoded
+  option name.
+- One digest per manager per sweep rather than one email per project, and a milestone is mentioned
+  again at most weekly. The due list is the durable record and is always there to read; the email
+  is only the prompt, and a daily prompt about something already decided is how a mailbox rule
+  gets written.
+- `critical_alerts._project_manager` is now the public `project_manager_user`, so the rule "the PM
+  is `custom_project_owner` → `Employee.user_id`" has one definition rather than two.
+- **Nothing changes on prod when this deploys.** `quality_enabled` and `notifications_enabled`
+  both ship off, and the sweep returns immediately while they are.
+
+### Known gap
+
+- **Master checklists still exist only for Build commissioning.** Sub-phase I was planned as
+  "milestones and master templates for Design, Events, Service and Products"; the milestones were
+  already seeded in C, and the templates are not a build problem. The Design review gates, the
+  Events setup and teardown checks, the Service pre- and post-service checks and the Controls Fab
+  panel checks are Sapphire's standard of care, nobody has written them down, and an invented
+  checklist carries the authority of a real one right up until it fails to catch something. Those
+  milestones therefore report as **due and blocked**, which is the honest state and is visible on
+  the Project form rather than hidden.
+
+
 ## [1.454.0] - 2026-09-14
 
 ### Added

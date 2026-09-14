@@ -536,6 +536,16 @@ jobs:
       # whole inspection on a bad signal, discovered after the inspector has left the site.
       - name: Inspection wizard (frozen rows stay frozen; a failed save is never silent)
         run: python -m unittest erpnext_enhancements.tests.test_inspection_wizard -v
+      # When an inspection is due (WI-075 sub-phase I). Sub-phase C seeded seventeen milestones
+      # carrying a trigger_basis and nothing read it; this is the engine that does. Two silent
+      # failures are guarded. `custom_build_status` is a Select somebody types into, not a
+      # workflow, so a project can jump Procurement -> Ready for Install in one save: an
+      # equality trigger was never true at any moment a sweep looked, the commissioning check
+      # never comes up, and afterwards it is indistinguishable from a project that has not got
+      # there yet. And a renamed or blank status cannot be placed on the scale at all -- calling
+      # that "not due" would make every sweep report clean forever, on every project.
+      - name: Inspection due (a skipped stage does not skip its inspection)
+        run: python -m unittest erpnext_enhancements.tests.test_inspection_due -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk
