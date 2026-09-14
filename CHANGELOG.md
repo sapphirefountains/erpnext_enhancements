@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.449.0] - 2026-09-14
+
+### Added
+
+- **The inspection authoring layer** — `Inspection Milestone`, `Inspection Section` +
+  `Inspection Section Item`, `Project Inspection Template` + `Inspection Template Section`.
+  A section is a top-level reusable record that templates point at, rather than a table copied
+  into each of them, because **Frappe has no grandchild tables**: a template cannot own sections
+  that own checks. The same shape `sapphire_maintenance` arrived at, for the same reason.
+  WI-075 sub-phase C.
+- **The milestone catalog, all five project stages.** Build, Design (review gates rather than
+  physical checklists), Products (carrying Controls Fab), Events (including the multi-day-only
+  mid-event check) and Service — which is what the build spec calls Maintenance, and is
+  deliberately not renamed across 354 live projects for vocabulary.
+- **The Commissioning section, and the Build pre-final template that carries it.** Fill, leak,
+  flow, electrical/GFCI, nozzle pattern and light function — `docs/KPI_DASHBOARD_DESIGN.md`
+  calls this "the biggest fountain-specific gap", and these six are its own proposed list. Once
+  they are being recorded, KPI #10 First-Pass Yield stops being Manual and becomes a query.
+- **A stable `item_key` on every check**, minted once and never regenerated, so a generated
+  inspection's recorded result cannot be repointed by reordering or rewording the source row.
+  Row identity now lives in `quality/stable_keys.py`, shared by acceptance criteria and checks —
+  the same idea in both places rather than two near-copies.
+
+### Notes
+
+- **Only Commissioning is seeded. The other Build milestones get a row and no template, on
+  purpose.** Their checklists are Sapphire's own standard of care and nobody has written them
+  down. Seeding plausible-sounding invented checks would be worse than seeding nothing: a
+  checklist carries the authority of the company that issued it, an inspector works through it
+  assuming somebody chose those items deliberately, and an invented one is indistinguishable
+  from a real one right up until it fails to catch something. Those milestones stand visibly
+  empty until whoever runs Build fills them in.
+- **Build and Products triggers name values of the existing `Project.custom_build_status`
+  Select** rather than a parallel state machine. Renaming one of those options would stop the
+  trigger matching *silently* — a trigger that matches nothing looks exactly like a milestone
+  that has not come round yet. `tests/test_inspection_milestones.py` pins every trigger value
+  against the live options in the fixture that owns them, and fails the build on a rename.
+- **`Project Inspection Template.revision` is coarse, and says so.** It bumps when the
+  template's own composition changes, and cannot see a change made *inside* a referenced
+  section. The authoritative provenance is the content hash a generated inspection will store
+  over its own merged rows (sub-phase D) — a version number that looks authoritative and is not
+  is worse than none, because people stop checking it.
+- Nothing generates an inspection yet; that is sub-phase D. A milestone is a declaration of
+  intent that a person acts on, and `trigger_basis` is read by nothing.
+
+
 ## [1.448.1] - 2026-09-14
 
 ### Changed

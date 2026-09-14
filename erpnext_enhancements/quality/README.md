@@ -6,11 +6,12 @@ failure traceable to a contracted, measurable standard.
 Programme: [WI-075](../../work-items/WI-075-quality-and-inspections.md).
 Decision record: [ADR-0012](../../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md).
 
-**Status: sub-phases A and B1.** This module ships its scaffold — the module itself, the
-`Quality Control` workspace, `Quality Settings`, and the roles and project type the rest of the
-programme needs — plus `scope_criteria.py`, the criterion-identity rules that
-`Project Scope of Work` consumes. The inspection engine lands in C and D. `quality_enabled` is
-**off**, and nothing here acts while it is.
+**Status: sub-phases A, B and C.** The scaffold, the criterion-identity rules that
+`Project Scope of Work` consumes, and the inspection **authoring** layer — milestones, reusable
+sections of checks, and master templates. What is still missing is the thing that reads them:
+sub-phase D generates an inspection from a milestone and freezes it. Until then a milestone is a
+declaration of intent that a person acts on, `trigger_basis` is read by nothing, and
+`quality_enabled` is **off**.
 
 ## What this module is for
 
@@ -27,6 +28,11 @@ question why it exists.**
 | `module_def/quality.json` | The `Module Def`. Needed as a file so the module has an identity of its own rather than appearing only as a side effect of a DocType import |
 | `workspace/quality_control/` | The `Quality Control` workspace — **not** `Quality`; see below |
 | `doctype/quality_settings/` | The Single holding every master switch. Dormant by default |
+| `catalog.py` | The milestone catalog and the Commissioning checks, as data. Frappe-free so CI can read it and sub-phase D can reuse it |
+| `stable_keys.py` | Row identity — the `*_key` that criteria, checks and (in D) results all join on. Minted once, never regenerated |
+| `doctype/inspection_milestone/` | Where in a project's life an inspection is due |
+| `doctype/inspection_section/` + `inspection_section_item/` | A reusable block of checks. Top-level rather than a table on the template, because **Frappe has no grandchild tables** |
+| `doctype/project_inspection_template/` + `inspection_template_section/` | The Master: the company's standard of care for one milestone |
 | `scope_criteria.py` | Acceptance-criterion identity — the `criterion_key` every downstream record joins on. Imports no `frappe`, so it is testable without a bench; consumed by `Project Scope of Work` over in `project_enhancements` |
 
 Registered in [`../modules.txt`](../modules.txt), tiled from

@@ -910,3 +910,16 @@ erpnext_enhancements.patches.seed_products_project_type
 # the next save, so the first save you need is the one that fails. Fills only where tabSingles
 # has no row, never over a stored falsy value.
 erpnext_enhancements.patches.backfill_quality_settings_defaults
+# v1.447.0 (WI-075 sub-phase C) -- the inspection milestone catalog: where in a project's life
+# an inspection is due, for all five project stages. Catalog only; sub-phase D is what reads a
+# milestone and generates an inspection. Build and Products triggers name values of the
+# EXISTING Project.custom_build_status Select rather than inventing a parallel state machine,
+# which means a renamed status option silently stops them matching -- pinned by a test.
+erpnext_enhancements.patches.seed_inspection_milestones
+# The Commissioning section (fill, leak, flow, electrical/GFCI, nozzle pattern, light) and the
+# Build pre-final template that carries it. KPI_DASHBOARD_DESIGN.md calls this "the biggest
+# fountain-specific gap" and the six checks are its own proposed list, so they are seeded.
+# The other Build milestones get NO template on purpose: their checklists are Sapphire's
+# standard of care and nobody has written them down, and an invented checklist carries the
+# authority of a real one right up until it fails to catch something.
+erpnext_enhancements.patches.seed_commissioning_section

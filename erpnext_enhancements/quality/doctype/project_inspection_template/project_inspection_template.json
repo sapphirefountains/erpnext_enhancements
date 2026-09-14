@@ -1,0 +1,207 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:template_name",
+ "creation": "2026-09-14 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "template_name",
+  "project_type",
+  "milestone",
+  "column_break_head",
+  "status",
+  "revision",
+  "quality_procedure",
+  "section_sections",
+  "sections",
+  "section_inspector",
+  "required_position",
+  "column_break_inspector",
+  "required_course",
+  "inspector_note",
+  "section_guidance",
+  "safety_instructions",
+  "wrapup_instructions"
+ ],
+ "fields": [
+  {
+   "description": "The docname. Convention is \"<Project stage> — <Milestone>\", matching the milestone it serves.",
+   "fieldname": "template_name",
+   "fieldtype": "Data",
+   "label": "Template name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fetch_from": "milestone.project_type",
+   "fieldname": "project_type",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Project stage",
+   "options": "Project Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "milestone",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Milestone",
+   "options": "Inspection Milestone",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Draft",
+   "description": "Only an Active template is used when an inspection is generated.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Draft\nActive\nRetired",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Bumped whenever this template's own composition changes. Coarse and human-facing: a change made <i>inside</i> a referenced Section does not move it. The authoritative provenance is the content hash a generated inspection stores over its own merged rows.",
+   "fieldname": "revision",
+   "fieldtype": "Int",
+   "label": "Revision",
+   "read_only": 1
+  },
+  {
+   "description": "The SOP this template enforces, if one is written.",
+   "fieldname": "quality_procedure",
+   "fieldtype": "Link",
+   "label": "Quality Procedure",
+   "options": "Quality Procedure"
+  },
+  {
+   "fieldname": "section_sections",
+   "fieldtype": "Section Break",
+   "label": "Sections"
+  },
+  {
+   "description": "The company's baseline standard of care for this milestone, in the order an inspector works through it. A project's own contracted acceptance criteria are merged in on top when an inspection is generated.",
+   "fieldname": "sections",
+   "fieldtype": "Table",
+   "label": "Sections",
+   "options": "Inspection Template Section"
+  },
+  {
+   "fieldname": "section_inspector",
+   "fieldtype": "Section Break",
+   "label": "Who may sign this off"
+  },
+  {
+   "fieldname": "required_position",
+   "fieldtype": "Link",
+   "label": "Required position",
+   "options": "Position"
+  },
+  {
+   "fieldname": "column_break_inspector",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "required_course",
+   "fieldtype": "Link",
+   "label": "Required course",
+   "options": "Training Course"
+  },
+  {
+   "fieldname": "inspector_note",
+   "fieldtype": "HTML",
+   "label": "Inspector note",
+   "options": "<p class=\"text-muted small\">These are <b>advisory</b>. An inspector who does not hold them is warned and can still sign off, because the company has two Senior Technicians and no Masters — a hard gate would stop an inspection being <i>recorded</i> rather than stop unqualified work. Nothing reads these until sub-phase H.</p>"
+  },
+  {
+   "fieldname": "section_guidance",
+   "fieldtype": "Section Break",
+   "label": "Guidance"
+  },
+  {
+   "fieldname": "safety_instructions",
+   "fieldtype": "Text Editor",
+   "label": "Safety instructions"
+  },
+  {
+   "fieldname": "wrapup_instructions",
+   "fieldtype": "Text Editor",
+   "label": "Wrap-up instructions"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-14 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Quality",
+ "name": "Project Inspection Template",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Project Manager"
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production Team"
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Operations Team"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "template_name",
+ "track_changes": 1
+}

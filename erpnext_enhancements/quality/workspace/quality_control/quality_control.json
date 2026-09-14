@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"qc_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"qc_sc_ncr\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Non Conformances\",\"col\":4}},{\"id\":\"qc_sc_action\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Quality Actions\",\"col\":4}},{\"id\":\"qc_sc_settings\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Quality Settings\",\"col\":4}},{\"id\":\"qc_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"qc_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Quality</b></span>\",\"col\":12}},{\"id\":\"qc_card_fail\",\"type\":\"card\",\"data\":{\"card_name\":\"Failures and fixes\",\"col\":4}},{\"id\":\"qc_card_goals\",\"type\":\"card\",\"data\":{\"card_name\":\"Goals and review\",\"col\":4}},{\"id\":\"qc_card_setup\",\"type\":\"card\",\"data\":{\"card_name\":\"Setup\",\"col\":4}}]",
+ "content": "[{\"id\":\"qc_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"qc_sc_ncr\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Non Conformances\",\"col\":4}},{\"id\":\"qc_sc_action\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Quality Actions\",\"col\":4}},{\"id\":\"qc_sc_settings\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Quality Settings\",\"col\":4}},{\"id\":\"qc_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"qc_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Quality</b></span>\",\"col\":12}},{\"id\":\"qc_card_insp\",\"type\":\"card\",\"data\":{\"card_name\":\"Inspections\",\"col\":4}},{\"id\":\"qc_card_fail\",\"type\":\"card\",\"data\":{\"card_name\":\"Failures and fixes\",\"col\":4}},{\"id\":\"qc_card_goals\",\"type\":\"card\",\"data\":{\"card_name\":\"Goals and review\",\"col\":4}},{\"id\":\"qc_card_setup\",\"type\":\"card\",\"data\":{\"card_name\":\"Setup\",\"col\":4}}]",
  "creation": "2026-09-14 10:00:00.000000",
  "docstatus": 0,
  "doctype": "Workspace",
@@ -11,6 +11,44 @@
  "is_hidden": 0,
  "label": "Quality Control",
  "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Inspections",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Inspection Milestone",
+   "link_count": 0,
+   "link_to": "Inspection Milestone",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Inspection Section",
+   "link_count": 0,
+   "link_to": "Inspection Section",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Project Inspection Template",
+   "link_count": 0,
+   "link_to": "Project Inspection Template",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
   {
    "hidden": 0,
    "is_query_report": 0,
@@ -116,7 +154,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-14 10:00:00.000000",
+ "modified": "2026-09-14 12:30:00.000000",
  "modified_by": "Administrator",
  "module": "Quality",
  "name": "Quality Control",

@@ -470,6 +470,13 @@ jobs:
       # and a closed NCR silently repoints at a different standard.
       - name: Scope acceptance criteria (stable keys, inspectable rows)
         run: python -m unittest erpnext_enhancements.tests.test_scope_criteria -v
+      # The inspection milestone catalog (WI-075 sub-phase C). Build and Products milestones
+      # fire on values of the EXISTING Project.custom_build_status Select. Rename one of those
+      # options and the trigger stops matching -- silently, because a trigger that matches
+      # nothing is indistinguishable from a milestone that has not come round yet. Pins every
+      # trigger value against the live options in the fixture that owns them.
+      - name: Inspection milestones (triggers match the live build statuses)
+        run: python -m unittest erpnext_enhancements.tests.test_inspection_milestones -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk
