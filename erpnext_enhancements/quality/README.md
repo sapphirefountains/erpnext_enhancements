@@ -43,6 +43,9 @@ question why it exists.**
 | `doctype/inspection_section/` + `inspection_section_item/` | A reusable block of checks. Top-level rather than a table on the template, because **Frappe has no grandchild tables** |
 | `doctype/project_inspection_template/` + `inspection_template_section/` | The Master: the company's standard of care for one milestone |
 | `scope_criteria.py` | Acceptance-criterion identity — the `criterion_key` every downstream record joins on. Imports no `frappe`, so it is testable without a bench; consumed by `Project Scope of Work` over in `project_enhancements` |
+| `alerting.py` | Who a Critical NCR reaches and when it reaches them again. Frappe-free, so the one decision that must not be wrong — whether somebody was actually told — is asserted on every push |
+| `critical_alerts.py` | The database and mail half of that: the dispatch worker, the hourly re-drive sweep, and the acknowledgement write |
+| `doctype/ncr_acknowledgment/` | One row per person the alert reached. Every field read-only — an acknowledgement anybody could type into a grid is not evidence |
 
 Registered in [`../modules.txt`](../modules.txt), tiled from
 [`../setup/desktop_icon_map.py`](../setup/desktop_icon_map.py), and given a sidebar by
@@ -188,6 +191,47 @@ an inspection is a no-op rather than a second ratchet.
 An open punch-list item is structurally the same thing — raised against a standard, fixed by
 somebody, not actually done until it has been looked at again — so it is a Quality Action with
 `custom_punch_list` ticked and gets all of this for free.
+
+## The Critical alert, and why "we sent it" is not the claim being made
+
+`Critical` is the one severity that pages people: the PM, the Production Manager and the
+President, each with their own acknowledgement row. The build spec asks for it per recipient,
+and the distinction is the whole feature — *the alert was sent* is a fact about a mail queue,
+while *the President has seen this* is a fact about the company, and only the second is worth
+having.
+
+Three failure modes shape the design, and all three look like success from outside:
+
+**An alert nobody received.** Merging to `main` `FLUSHDB`s the queue redis and destroys every
+pending background job, silently. So an enqueue is never evidence. The dispatch worker writes
+its acknowledgement rows and stamps the document *before* a single email goes out, and stamps
+`notified_on` on a row only after that row's send succeeds — so a worker killed halfway leaves
+rows that openly say nobody was reached. `renag_due` treats a row with no `notified_on` as due
+**immediately**, which is what makes the hourly sweep a re-drive rather than a nag. The sweep
+also re-dispatches a Critical NCR that was never stamped at all, which is the case where the
+enqueue died before the worker ever ran. Neither pass depends on the other having worked.
+
+**One person, two emails.** On a site with nineteen enabled users, one person holding two of
+the three roles is the expected case, not an edge case. `dedupe_recipients` gives them one row
+labelled with the first reason they qualified, because two rows mean two emails and an
+acknowledgement that can be half-done.
+
+**A nag that becomes noise.** A recipient is chased at most once per calendar day, matching the
+hand-off escalation's by-date dedupe. An hourly re-send trains people to filter exactly the
+message that must not be filtered, and a filtered Critical alert is worse than no alert.
+
+Two more choices worth knowing. **Acknowledging happens in the Desk, never from a link in the
+email** — a tokenised link can be fetched by a mail scanner or a link preview, and the resulting
+timestamp would claim the President read this when a security appliance opened it. And
+**somebody who was never notified is refused**, rather than recorded: an acknowledgement from a
+person nobody told is a green tick with nothing behind it, on the one record here whose entire
+purpose is to be evidence.
+
+When no recipient resolves at all — nobody holds the roles, the project has no owner — the
+document is stamped anyway and a comment says so on the record. The alternative is an hourly
+retry that can never succeed, burying a real problem under its own noise. A Critical
+non-conformance that can reach nobody is a fact about the role assignments, and it belongs where
+whoever opens the NCR will see it.
 
 ## One thing this module cost us on its first two deploys
 

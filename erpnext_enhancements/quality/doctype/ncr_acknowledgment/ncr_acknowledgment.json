@@ -1,0 +1,107 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 0,
+ "allow_rename": 0,
+ "creation": "2026-09-14 19:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "user",
+  "role_label",
+  "column_break_who",
+  "notified_on",
+  "acknowledged_on",
+  "section_break_detail",
+  "last_reminded_on",
+  "reminder_count",
+  "column_break_detail",
+  "note"
+ ],
+ "fields": [
+  {
+   "columns": 3,
+   "description": "Resolved when the alert was sent, not when the rule was written -- role holders change.",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Recipient",
+   "options": "User",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "description": "Why this person was told. Stored as text rather than a Role link because it records the reason at the time.",
+   "fieldname": "role_label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Notified as",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_who",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 2,
+   "description": "Empty means the email has not gone out. The hourly sweep treats that as due immediately -- a deploy can destroy a queued job.",
+   "fieldname": "notified_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Notified on",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "acknowledged_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Acknowledged on",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_detail",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "last_reminded_on",
+   "fieldtype": "Datetime",
+   "label": "Last reminded on",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "reminder_count",
+   "fieldtype": "Int",
+   "label": "Reminders sent",
+   "non_negative": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_detail",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Optional. What the recipient said when they acknowledged.",
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Acknowledgement note",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-14 19:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Quality",
+ "name": "NCR Acknowledgment",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

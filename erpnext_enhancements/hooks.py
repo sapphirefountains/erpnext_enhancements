@@ -320,6 +320,12 @@ doctype_js = {
 	# fountain_move — triage actions (retry / spam) and jump-to-created-record
 	"Fountain Move Request": "public/js/crm_enhancements/fountain_move_request.js",
 	"Fountain Move Invite": "public/js/crm_enhancements/fountain_move_invite.js",
+	# quality (WI-075 sub-phase G): the Acknowledge button on a Critical non-conformance, and
+	# who is still silent. Keyed here because `Non Conformance` is ERPNext's DocType -- the
+	# Quality DocTypes this app OWNS must never appear in this dict, since frappe already loads
+	# <module>/doctype/<name>/<name>.js and doctype_js appends to the same string with no
+	# dedupe, so a top-level `const` becomes a SyntaxError and the form loses every button.
+	"Non Conformance": "public/js/quality/non_conformance.js",
 }
 
 doctype_list_js = {
@@ -392,6 +398,17 @@ doc_events = {
 	# inspection to protect its follow-up would be the wrong trade.
 	"Project Quality Inspection": {
 		"on_submit": "erpnext_enhancements.quality.routing.on_submit",
+	},
+	# quality (WI-075 sub-phase G): a Critical NCR pages the PM, Production Manager and
+	# President, with an acknowledgement row per person. `on_update` and not `after_insert`,
+	# because routing.py raises every NCR Minor on purpose -- severity is a judgement about
+	# consequence that no checklist row carries -- so the alert has to fire on the SAVE where a
+	# person decides this one is Critical. Idempotent on `custom_critical_alert_sent_on`.
+	# The handler only enqueues, with enqueue_after_commit=True: `Document.hook`'s compose
+	# increments frappe.db._disable_transaction_control around a doc_events handler, so it
+	# cannot commit, and a worker starting before the commit would read the old severity.
+	"Non Conformance": {
+		"on_update": "erpnext_enhancements.quality.critical_alerts.on_ncr_update",
 	},
 	# The `Chat Message` after_insert unread fan-out was removed in v1.426.0 with the
 	# rest of the chat module (ADR 0011). It was the app's only chat doc_event.
@@ -1095,6 +1112,14 @@ scheduler_events = {
 		# idempotent, so re-running a partially-run submission is safe. Same durability story
 		# as product_feedback.sweep_stalled_breakdowns below.
 		"erpnext_enhancements.api.maintenance_workflow.resweep_stalled_maintenance_submissions",
+		# quality (WI-075 sub-phase G): re-drive Critical NCR alerts and chase the ones nobody
+		# has acknowledged. Two independent passes, because they fail independently -- an alert
+		# whose enqueue a deploy FLUSHDB destroyed was never sent at all, while a listed
+		# recipient who was never reached has a row saying otherwise. Hourly so a destroyed
+		# enqueue costs at most an hour; a recipient is still nagged at most once per calendar
+		# day, because an hourly re-send trains people to filter exactly the message that must
+		# not be filtered. No-op while Quality Settings has the module or notifications off.
+		"erpnext_enhancements.quality.critical_alerts.sweep",
 		"erpnext_enhancements.ai_governance.tasks.expire_stale_pending_actions",
 		# fountain_move: delete photos uploaded by someone who never submitted the
 		# form. Without this the guest upload endpoint doubles as free storage.

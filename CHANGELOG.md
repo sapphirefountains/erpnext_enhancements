@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.453.0] - 2026-09-14
+
+### Added
+
+- **A Critical non-conformance now pages the PM, the Production Manager and the President, and
+  records who actually saw it** (WI-075 sub-phase G). The build spec asks for acknowledgement
+  *per recipient*, and that is the whole feature: "the alert was sent" is a fact about a mail
+  queue, while "the President has seen this" is a fact about the company, and only the second
+  one is worth having. New child DocType `NCR Acknowledgment` (one row per person, every field
+  read-only), two Custom Fields on `Non Conformance` (`custom_acknowledgments`,
+  `custom_critical_alert_sent_on`), an Acknowledge button on the form, and two whitelisted
+  endpoints in `api/quality_ncr.py`.
+- `quality/alerting.py` — who is paged, who is a duplicate, and when a chase is due. Imports
+  only `datetime`, so the one decision that must not be silently wrong is asserted on every
+  push rather than left until somebody next runs a bench. 27 tests, wired into `ci.yml`.
+- An hourly sweep (`quality/critical_alerts.sweep`) with two independent passes: re-dispatch a
+  Critical NCR that was never alerted at all, and chase a recipient who was listed but never
+  reached or is past the acknowledgement SLA.
+
+### Notes
+
+- **Why the sweep exists, and why it is a re-drive rather than a nag.** A prod deploy
+  `FLUSHDB`s the queue redis on `:11000` and destroys every pending background job, silently —
+  the confirmed cause of a batch of Drive folders that were never created. So an enqueue is
+  never evidence anybody was told. The dispatch worker writes its acknowledgement rows and
+  stamps the document **before** any email goes out, and stamps `notified_on` on a row only
+  after that row's send succeeds; a worker killed halfway therefore leaves rows that openly say
+  nobody was reached, and `renag_due` treats a row with no `notified_on` as due *immediately*.
+  The second pass covers the case where the enqueue died before the worker ran at all, which no
+  row would record.
+- **One person holding two of the three roles gets one email, not two.** On a site with
+  nineteen enabled users that is the expected case rather than an edge case, and two rows would
+  mean an acknowledgement that can be half-done. The row is labelled with the first reason they
+  qualified.
+- **A recipient is chased at most once per calendar day**, matching the hand-off escalation's
+  by-date dedupe. An hourly re-send trains people to filter exactly the message that must not
+  be filtered, and a filtered Critical alert is worse than no alert.
+- **Acknowledging happens in the Desk, never from a link in the email.** A tokenised
+  acknowledge link can be fetched by a mail scanner, a link-preview service or a forwarded
+  copy, and the resulting timestamp would claim the President read this when a security
+  appliance opened it. One extra click buys a signed-in human looking at the record.
+- **Somebody who was never notified is refused, not recorded.** An acknowledgement from a
+  person nobody told is a reassuring green tick with nothing behind it, on the one record in
+  this module whose entire purpose is to be evidence.
+- **When no recipient resolves at all**, the document is stamped anyway and a comment says so
+  on the record. The alternative is an hourly retry that can never succeed, burying a real
+  problem under its own noise — and today this is the live case, because the five roles were
+  created in v1.446.0 and nobody holds Production Manager or President yet.
+- The `Non Conformance` handler only enqueues. A `doc_events` handler **cannot commit** —
+  `Document.hook`'s `compose` increments `frappe.db._disable_transaction_control` around it —
+  so the dispatch is `enqueue_after_commit=True`, and a worker starting before the commit would
+  otherwise read the old severity.
+- `doctype_js` is used here because `Non Conformance` is ERPNext's DocType. It must never be
+  used for a DocType this app owns: frappe already loads `<module>/doctype/<name>/<name>.js`
+  and `doctype_js` appends to the same string with no dedupe, so a top-level `const` becomes a
+  SyntaxError and the form loses every button.
+- **Nothing changes on prod when this deploys.** `Quality Settings.quality_enabled` and
+  `notifications_enabled` both ship off, and every entry point checks them first.
+
+
 ## [1.452.3] - 2026-09-14
 
 ### Fixed
