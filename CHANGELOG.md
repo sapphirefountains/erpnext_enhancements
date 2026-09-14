@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.432.1] - 2026-09-13
+
+Training Phase 6, D11. Documentation, and a note on what the canvas polish turned out to
+need.
+
+### Documentation
+
+- **`training/README.md`** gains a "Where a learner takes a course" section: the Desk Page,
+  why the route is `learn` and cannot be `training`, the two workspaces and why the split
+  is not cosmetic, the insights page, and the four CSS prefixes with the one-declaration-site
+  rule for `--tr-*`. The analytics section now describes the Desk page rather than the
+  retired website route.
+
+- The **Access** section says why the role alone does not open `/desk/learn` — desk access
+  comes from being a System User, and the Page's `roles` list is show/hide, never a
+  permission boundary — and **The switch** now records that the learner runtime follows
+  `training_enabled` alone, why `portal_enabled` stopped gating it, and that
+  `grant_portal_access` refuses.
+
+- **`www/README.md`** documents the two redirect routes, which it never mentioned even when
+  they were real pages, and states plainly that `/training_certificate` is **not** one of
+  them and must not become one.
+
+### Noted rather than built
+
+- **The canvas needed almost no polish, because it had already inherited it.** D2 moved it
+  onto the shared `TR.loadAssets`, and D3's palette work reaches it for free: its `tc-`
+  chrome reads `--tr-*` in sixty-nine places and declares none of them, so re-rooting the
+  palette onto `data-theme` fixed the authoring surface at the same time as the learner
+  one. That single-declaration-site property is exactly what the theme test now pins, and
+  it is the reason this phase is a docs release rather than a code one.
+
 ## [1.432.0] - 2026-09-13
 
 Training Phase 6, D9. Previewing one lesson, and a guard on the one route that must

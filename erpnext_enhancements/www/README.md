@@ -139,3 +139,24 @@ A **standalone** async tool (at the repo root, `../../sync_time_kiosk.py`) that 
 
 - **Background Sync is unsupported on iOS** — the worker degrades to page-driven flush (on every `enqueue`/`flush`/app-resume); `ensureSync()` swallows the unsupported case.
 - Reliable tracking requires the app **in the foreground** (browsers suspend timers and revoke geolocation when backgrounded) and the site served over **HTTPS** (localhost exempt).
+
+## The two training routes are redirects, not pages
+
+`training.py` and `training_analytics.py` render nothing. The learner player is a Desk
+Page (`training/page/learn/`) and the manager dashboard is another
+(`training/page/training_insights/`); both website routes survive only so that existing
+links keep working.
+
+`/training` is the one that matters: six senders have emailed it since v1.208.0 —
+assignment and due/escalation digests, answered questions, sign-off requests, graded
+submissions, evaluation invites — and those messages are still in inboxes. Deleting the
+route would 404 all of them.
+
+Neither redirects unconditionally. A user with no desk access sent to `/desk` gets a login
+page, which is a worse answer than a sentence, so both render one paragraph for that case.
+
+**`/training_certificate` is not one of these and must not become one.** It is the only
+guest-reachable training surface: an external auditor scans the code printed on a
+certificate, and it deliberately prints initials and dates only.
+`tests/test_training_certificates.py` fails the build if that route learns to redirect
+into the Desk, or if the code branch stops being answered before the Guest check.
