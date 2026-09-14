@@ -64,6 +64,7 @@
  *         subtitle: "Fountain rebuild",
  *         filename: "PRJ-0001-schedule",
  *         formats: ["print", "png", "svg", "csv", "xlsx"],
+ *         date_range: false,                //   hide the "Date range…" entry
  *       },
  *     },
  *     group_by: "custom_master_project",    // optional: composite grouping
@@ -90,6 +91,8 @@
  *   w.export_data("csv"|"xlsx");            //   is re-rendered as vector SVG
  *                                           //   from the rows, NOT captured
  *                                           //   from the (virtualised) DOM
+ *   w.export_range_dialog();                // pick a window + a format
+ *   w.export_image("png", { range: { from: "2026-04-01", to: "2026-06-30" } });
  *   // other config keys (children, group_by, ...) may be mutated on
  *   // w.config followed by w.refresh()
  *
@@ -103,6 +106,13 @@
  * `config.order_by` on the next fetch; the server re-validates it, and row
  * order is what the grid renders (there is no client-side sort), so within
  * each branch of the tree siblings appear in the order the query returned.
+ *
+ * EXPORT RANGE: every export surface takes an optional inclusive
+ * `range: {from, to}` and narrows to the tasks that touch it. Images and print
+ * window client-side in gantt_export.js (and clip bars that cross an edge);
+ * CSV/XLSX send the pair to `export_gantt_data`, which applies it to the same
+ * permission-checked rows the chart was drawn from — the client never posts
+ * rows back. The toolbar's "Date range…" entry is just a picker over that.
  *
  * EDITING is per-embed opt-in via `config.editable` ({ dates, progress }) and
  * DEFAULT-DENY per row: dhtmlx's global `config.readonly` stays true and only
@@ -192,6 +202,59 @@ frappe.provide("erpnext_enhancements.gantt");
 	const LABEL_CHAR_PX = 7;
 	const LABEL_PADDING_PX = 14;
 	const cstr_len = (value) => (value == null ? 0 : String(value).length);
+
+	/* ------------------------------------------------------------------ *
+	 * Export date-range presets
+	 * ------------------------------------------------------------------ */
+
+	function ee_iso_day(d) {
+		return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+			d.getDate()
+		).padStart(2, "0")}`;
+	}
+
+	/**
+	 * Presets for the export range dialog, given the chart's own inclusive
+	 * `{from, to}` span.
+	 *
+	 * Dates are built from the browser's LOCAL clock rather than
+	 * frappe.datetime, deliberately: the renderer's today marker and its
+	 * overdue test both use `new Date()`, and a preset that disagreed with the
+	 * red line drawn on the page it produces would be its own bug report.
+	 *
+	 * "Remaining" never ends before it starts — on a project that finished last
+	 * year it collapses to today..today and the export honestly reports nothing
+	 * in range, instead of throwing on an inverted window.
+	 */
+	function ee_range_presets(span) {
+		const today = new Date();
+		today.setHours(0, 0, 0, 0);
+		const day = (n) => {
+			const d = new Date(today);
+			d.setDate(d.getDate() + n);
+			return ee_iso_day(d);
+		};
+		const month_start = ee_iso_day(new Date(today.getFullYear(), today.getMonth(), 1));
+		const month_end = ee_iso_day(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+		const q = Math.floor(today.getMonth() / 3) * 3;
+		const quarter_start = ee_iso_day(new Date(today.getFullYear(), q, 1));
+		const quarter_end = ee_iso_day(new Date(today.getFullYear(), q + 3, 0));
+		const iso_today = ee_iso_day(today);
+		return [
+			{ value: "full", label: __("Whole schedule"), from: span.from, to: span.to },
+			{
+				value: "remaining",
+				label: __("Remaining (from today)"),
+				from: iso_today,
+				to: span.to > iso_today ? span.to : iso_today,
+			},
+			{ value: "next_30", label: __("Next 30 days"), from: iso_today, to: day(29) },
+			{ value: "next_90", label: __("Next 90 days"), from: iso_today, to: day(89) },
+			{ value: "this_month", label: __("This month"), from: month_start, to: month_end },
+			{ value: "this_quarter", label: __("This quarter"), from: quarter_start, to: quarter_end },
+			{ value: "custom", label: __("Custom"), from: null, to: null },
+		];
+	}
 
 	let lib_promise = null;
 
@@ -699,15 +762,11 @@ frappe.provide("erpnext_enhancements.gantt");
 				{ key: "xlsx", label: __("Excel data"), run: () => this.export_data("xlsx") },
 			];
 			const allowed = Array.isArray(cfg.formats) ? cfg.formats : null;
-
-			items.forEach((item) => {
-				if (allowed && !allowed.includes(item.key)) {
-					return;
-				}
+			const add_item = (label, run, extra_class) => {
 				const row = document.createElement("button");
 				row.type = "button";
-				row.className = "ee-gantt-export-item";
-				row.textContent = item.label;
+				row.className = `ee-gantt-export-item${extra_class ? " " + extra_class : ""}`;
+				row.textContent = label;
 				row.addEventListener("click", async () => {
 					wrap.classList.remove("open");
 					// Image/print work can take a beat on a large chart; disable
@@ -716,7 +775,7 @@ frappe.provide("erpnext_enhancements.gantt");
 					const original = btn.textContent;
 					btn.textContent = __("Working…");
 					try {
-						await item.run();
+						await run();
 					} catch (e) {
 						// eslint-disable-next-line no-console
 						console.error("erpnext_enhancements.gantt export:", e);
@@ -727,7 +786,22 @@ frappe.provide("erpnext_enhancements.gantt");
 					}
 				});
 				menu.appendChild(row);
+			};
+
+			items.forEach((item) => {
+				if (allowed && !allowed.includes(item.key)) {
+					return;
+				}
+				add_item(item.label, item.run);
 			});
+
+			// The range picker is NOT one of `formats` — it is a different way
+			// to reach the same five, so a host that narrows the format list
+			// keeps it (and gets a dialog offering only the formats it allowed).
+			// Opt out with `toolbar.export.date_range === false`.
+			if (cfg.date_range !== false) {
+				add_item(__("Date range…"), () => this.export_range_dialog(), "ee-gantt-export-sep");
+			}
 
 			btn.addEventListener("click", () => wrap.classList.toggle("open"));
 			wrap.appendChild(btn);
@@ -746,25 +820,168 @@ frappe.provide("erpnext_enhancements.gantt");
 			};
 		}
 
-		/** Download the chart as a PNG or SVG file. */
-		export_image(format) {
+		/**
+		 * Export a slice of the calendar instead of the whole schedule.
+		 *
+		 * A three-year build exported whole is a wall of bars; what people
+		 * circulate is "the next six weeks" or "what Q3 looks like". The range
+		 * narrows both ends of the job — the rows that reach the file and the
+		 * calendar the chart draws — so the output is a readable page rather
+		 * than the same wall with a box drawn on it.
+		 *
+		 * The dialog opens on the chart's OWN span, so every preset below is a
+		 * narrowing of something real and "Whole schedule" is a no-op rather
+		 * than a guess.
+		 *
+		 * The preset and the two date fields write to each other, and the way
+		 * they avoid fighting is that `sync_preset` DERIVES the preset from the
+		 * dates rather than latching a flag: it looks for the preset whose pair
+		 * matches, and falls back to Custom. That converges in one step (a
+		 * frappe control fires no change event when the value is unchanged) and
+		 * it does not care about ordering — which matters, because v16's
+		 * FieldGroup applies `default:` through `set_value`, so the date fields'
+		 * onchange fires a microtask AFTER this function has returned. A flag
+		 * set and cleared synchronously here would already be down by then, and
+		 * the dialog would open reading "Custom".
+		 */
+		export_range_dialog() {
+			const NS = erpnext_enhancements.gantt_export;
+			if (!NS || !NS.chart_range) {
+				frappe.show_alert({ message: __("Export is unavailable."), indicator: "red" });
+				return;
+			}
+			const span = NS.chart_range(this);
+			const presets = ee_range_presets(span);
+			const cfg = this._export_config();
+			const allowed = Array.isArray(cfg.formats) ? cfg.formats : null;
+			const formats = [
+				{ value: "print", label: __("Print / Save as PDF") },
+				{ value: "png", label: __("PNG image") },
+				{ value: "svg", label: __("SVG (vector)") },
+				{ value: "csv", label: __("CSV data") },
+				{ value: "xlsx", label: __("Excel data") },
+			].filter((f) => !allowed || allowed.includes(f.value));
+			if (!formats.length) {
+				return;
+			}
+
+			const apply_preset = () => {
+				const chosen = presets.find((p) => p.value === dialog.get_value("preset"));
+				if (!chosen || !chosen.from) {
+					return; // "Custom" leaves whatever is in the fields
+				}
+				dialog.set_value("from_date", chosen.from);
+				dialog.set_value("to_date", chosen.to);
+			};
+			const sync_preset = () => {
+				const from = dialog.get_value("from_date");
+				const to = dialog.get_value("to_date");
+				const match = presets.find((p) => p.from && p.from === from && p.to === to);
+				const want = match ? match.value : "custom";
+				if (dialog.get_value("preset") !== want) {
+					dialog.set_value("preset", want);
+				}
+			};
+
+			const dialog = new frappe.ui.Dialog({
+				title: __("Export Date Range"),
+				fields: [
+					{
+						fieldtype: "Select",
+						fieldname: "preset",
+						label: __("Range"),
+						options: presets.map((p) => ({ value: p.value, label: p.label })),
+						default: "full",
+						onchange: apply_preset,
+					},
+					{ fieldtype: "Column Break" },
+					{
+						fieldtype: "Select",
+						fieldname: "format",
+						label: __("Format"),
+						options: formats,
+						default: formats[0].value,
+					},
+					{ fieldtype: "Section Break" },
+					{
+						fieldtype: "Date",
+						fieldname: "from_date",
+						label: __("From"),
+						reqd: 1,
+						default: span.from,
+						onchange: sync_preset,
+					},
+					{ fieldtype: "Column Break" },
+					{
+						fieldtype: "Date",
+						fieldname: "to_date",
+						label: __("To"),
+						reqd: 1,
+						default: span.to,
+						onchange: sync_preset,
+					},
+					{
+						fieldtype: "HTML",
+						fieldname: "hint",
+						options: `<p class="text-muted small">${__(
+							"Tasks that fall entirely outside the range are left out; a bar that crosses an edge is clipped and marked with an arrow."
+						)}</p>`,
+					},
+				],
+				primary_action_label: __("Export"),
+				primary_action: (values) => {
+					const range = { from: values.from_date, to: values.to_date };
+					if (!range.from || !range.to) {
+						frappe.msgprint(__("Pick both a start and an end date."));
+						return;
+					}
+					// ISO strings, so a lexical compare is a date compare.
+					if (range.to < range.from) {
+						frappe.msgprint(__("The end of the range is before its start."));
+						return;
+					}
+					dialog.hide();
+					const format = values.format;
+					const run =
+						format === "print"
+							? () => this.print({ range: range })
+							: format === "png" || format === "svg"
+								? () => this.export_image(format, { range: range })
+								: () => this.export_data(format, { range: range });
+					Promise.resolve()
+						.then(run)
+						.catch((e) => {
+							// eslint-disable-next-line no-console
+							console.error("erpnext_enhancements.gantt export:", e);
+							frappe.show_alert({ message: __("Export failed."), indicator: "red" });
+						});
+				},
+			});
+			dialog.show();
+		}
+
+		/**
+		 * Download the chart as a PNG or SVG file. `extra` overrides anything
+		 * from `toolbar.export` — it is how the range dialog passes `range`.
+		 */
+		export_image(format, extra) {
 			const NS = erpnext_enhancements.gantt_export;
 			if (!NS) {
 				frappe.show_alert({ message: __("Export is unavailable."), indicator: "red" });
 				return;
 			}
-			const meta = this._export_meta();
+			const meta = { ...this._export_meta(), ...(extra || {}) };
 			return format === "svg" ? NS.export_svg(this, meta) : NS.export_png(this, meta);
 		}
 
 		/** Open the branded print view (the working path to a PDF on this host). */
-		print() {
+		print(extra) {
 			const NS = erpnext_enhancements.gantt_export;
 			if (!NS) {
 				frappe.show_alert({ message: __("Export is unavailable."), indicator: "red" });
 				return;
 			}
-			return NS.print(this, this._export_meta());
+			return NS.print(this, { ...this._export_meta(), ...(extra || {}) });
 		}
 
 		/**
@@ -779,11 +996,25 @@ frappe.provide("erpnext_enhancements.gantt");
 			// `meta` lets a host with its own toolbar (the Projects Dashboard
 			// block) name the file without configuring toolbar.export.
 			const resolved = { ...this._export_meta(), ...(meta || {}) };
+			const range = resolved.range || {};
+			const windowed = !!(range.from && range.to);
 			const args = {
 				config: this._server_config(),
 				file_format: format === "xlsx" ? "xlsx" : "csv",
-				title: resolved.filename,
+				// The server appends today's date to the filename, which does
+				// not distinguish two windows pulled the same afternoon — so
+				// the window goes in the base name, matching what the image
+				// exports do with their own stamp.
+				title: windowed
+					? `${resolved.filename}-${range.from.replace(/-/g, "")}-${range.to.replace(/-/g, "")}`
+					: resolved.filename,
 			};
+			// The window is applied SERVER-side, to the same permission-checked
+			// rows the chart was drawn from — the client never sends rows back.
+			if (windowed) {
+				args.from_date = range.from;
+				args.to_date = range.to;
+			}
 			// open_url_post posts through a generated form, so the browser
 			// handles the response as a download; frappe.call would buffer the
 			// bytes into JS and need a manual Blob dance.

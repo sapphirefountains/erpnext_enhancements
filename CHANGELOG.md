@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.441.0] - 2026-09-14
+
+### Added
+
+- **A date range on the Project Gantt's export.** The Schedule tab's Export dropdown
+  grows a **Date range…** entry: presets (whole schedule, remaining from today, next
+  30/90 days, this month, this quarter), From/To dates, and a format — all five
+  outputs, Print / PNG / SVG / CSV / Excel. It exists because a three-year fountain
+  build exported whole is a wall of bars, and what anybody actually circulates is
+  "the next six weeks" or "what Q3 looks like".
+
+  **The range narrows both ends of the job**, and it has to. Windowing only the
+  calendar leaves two hundred empty rows for tasks that finished last spring;
+  filtering only the rows leaves the same three-year axis with bars huddled in one
+  corner. So the rows that fall entirely outside are dropped **and** the time scale
+  becomes the window verbatim — no `MIN_SPAN_DAYS` padding, which is right for a
+  range the renderer derived and wrong for one a person typed, since padding draws
+  days outside what the header says the export covers.
+
+  **Bars keep their true geometry and are clipped, never clamped.** A task running
+  March–May, exported for April, is drawn at its real coordinates — genuinely at
+  x = -900 — and the overflow is hidden by a `clipPath` over the timeline. Clamping
+  it to the window instead would render it as a task that *starts on 1 April and
+  ends on the 30th*: a different fact, presented with exactly the same confidence,
+  on a page somebody hands to a customer. A crossed edge gets a continuation
+  chevron in the bar's own colour so the page says so rather than implying
+  otherwise. The clip creates the inverse failure — a bar appended to the
+  *unclipped* group is drawn straight across the name column and off the paper —
+  and both directions are asserted in CI.
+
+  **Dropping rows silently is the other half of the same failure**, so the header
+  band and the footer both carry the window and an "N of M rows" count: a reader has
+  no way to tell twelve rows of schedule from twelve rows left of two hundred and
+  forty. The footer repeats neither when the band is there and both when it is
+  not — which is Print, the one output likely to be handed to a customer and the
+  one where export_utils drops the band in favour of the page's own letterhead. Filenames carry the window instead of today's date —
+  two windows of the same project pulled the same afternoon would otherwise collide
+  and the second would quietly become "…(1)".
+
+  **Ancestors of an in-window row are kept even when their own dates are outside.**
+  The name column's indent is the only thing saying which phase a task belongs to,
+  and a child indented under a row that was dropped reads as belonging to whatever
+  happens to sit above it. Their bars are clipped away like any other, so keeping
+  one costs a row and no ink.
+
+  CSV/XLSX window **server-side**: `export_gantt_data` takes an inclusive
+  `from_date`/`to_date` pair and applies it to the same permission-checked rows the
+  chart was drawn from — the client never posts rows back. It filters the *shaped*
+  rows rather than pushing a predicate into the query, because the dates a task is
+  plotted at are not always the dates its columns hold (a row with only an end gets
+  a one-day bar back-dated from it; a date-only end is pushed forward a day), so a
+  SQL filter on the raw columns would disagree with the chart the file is supposed
+  to match. Supplying only one bound throws rather than guessing the other.
+
+  **The boundaries are the part that needed pinning down.** A shaped `end_date` is
+  exclusive while the `{from, to}` a person types is inclusive at both ends, and
+  every combination of those two conventions produces a plausible-looking chart.
+  The rule: a task ending 31 March does not reach into a window opening 1 April, a
+  task starting on the window's last day does, and `from == to` is a whole day, not
+  zero time. `scripts/test_gantt_export_range.js` (new, node, no runner — it shims
+  `document.createElementNS` and renders) and eleven new cases in
+  `test_gantt_api.py` assert the same boundaries on both sides, because the two
+  halves of one feature disagreeing is the bug nobody would look for.
+
+  The capability lives on the shared widget, so any embed gets it: `range: {from,
+  to}` on `export_image`/`print`/`export_data`, `widget.export_range_dialog()` for
+  the picker, `toolbar.export.date_range: false` to hide the entry. The Projects
+  Dashboard's portfolio Gantt owns its own toolbar markup and is unchanged.
+
 ## [1.440.0] - 2026-09-14
 
 ### Added
