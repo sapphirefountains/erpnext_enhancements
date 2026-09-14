@@ -934,3 +934,9 @@ erpnext_enhancements.patches.seed_inspection_milestones
 # standard of care and nobody has written them down, and an invented checklist carries the
 # authority of a real one right up until it fails to catch something.
 erpnext_enhancements.patches.seed_commissioning_section
+# ER-2026-420503 -- the Asset form was reported as broken; the measured cause is that three
+# of its tables are empty. Asset.location is reqd and Location had 0 rows, so no Asset could
+# be saved by anyone; and with 0 Asset Categories no Item could be a fixed asset, so the
+# item_code picker (filtered is_fixed_asset:1) could never have a candidate. Seeded rather
+# than fixtured because Finance edits these afterwards and fixture sync would revert them.
+erpnext_enhancements.patches.seed_rental_asset_setup

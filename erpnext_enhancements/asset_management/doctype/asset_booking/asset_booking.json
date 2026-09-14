@@ -78,7 +78,13 @@
  ],
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
- "links": [],
+ "links": [
+  {
+   "group": "Inspections",
+   "link_doctype": "Rental Inspection",
+   "link_fieldname": "asset_booking"
+  }
+ ],
  "modified": "2024-05-23 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Asset Management",
