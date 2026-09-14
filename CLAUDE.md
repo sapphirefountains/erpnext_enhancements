@@ -177,6 +177,24 @@ Verified, and all of them expensive to rediscover:
   `tests/test_hr_qualification_roster.py` now fails the build on a double brace anywhere in
   that file, and checks every identifier the compiled template would read against what
   `render_grid` actually passes.
+- **A DocType controller that fails to import is `force`-deleted, silently, by `bench migrate`.**
+  `remove_orphan_doctypes()` runs on every migrate: it calls `clear_controller_cache()`, then
+  `get_controller()` on every non-custom DocType, and anything raising `ImportError` or
+  `DoesNotExistError` is passed to `frappe.delete_doc(..., force=True)`. Nothing fails the
+  deploy and nothing reaches the Error Log. v1.452.1 lost `Project Scope of Work` this way on
+  the release that introduced it — model sync created it at ~12:08, the sweep deleted it at
+  12:09:22, and the only trace was a `Deleted Document` row. **The table it had already created
+  stayed behind**, because MariaDB DDL auto-commits and survives the rollback of the row that
+  caused it, so the site was left with a 26-column table, no DocType, and a Custom Field on
+  Project that was a Link to something that no longer existed. Note the shape: the module ships
+  dormant, so nothing broke and nobody would have noticed. The trigger was a **cross-module**
+  import at module scope — a controller in `project_enhancements` importing from `quality`, a
+  package introduced in that same release; the two `quality` controllers importing from their
+  own package survived the same migrate. Roughly fifteen controllers import from this app at
+  module scope and are fine, so the rule is narrow: **a DocType controller must not import, at
+  module scope, from a module that does not already exist in production.** Import it inside the
+  method instead. `override_doctype_class` entries are skipped by the sweep entirely, which is
+  the only reason `Quality Action` was never at risk.
 - **Merging to `main` does more than deploy this app's code.** The prod deploy `FLUSHDB`s
   **both** redis instances — `:13000` and `:11000` — and restarts the bench. The `:11000`
   flush destroys every queued background job, silently, whether or not it had anything to

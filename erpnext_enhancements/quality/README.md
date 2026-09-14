@@ -189,6 +189,24 @@ An open punch-list item is structurally the same thing — raised against a stan
 somebody, not actually done until it has been looked at again — so it is a Quality Action with
 `custom_punch_list` ticked and gets all of this for free.
 
+## One thing this module cost us on its first deploy
+
+`Project Scope of Work` was created by model sync and then **force-deleted in the same
+migrate**, because its controller imported `erpnext_enhancements.quality.scope_criteria` at
+module scope and that import did not resolve during frappe's `remove_orphan_doctypes()` sweep.
+That function imports every non-custom DocType's controller and force-deletes any that raises
+`ImportError`. Nothing failed the deploy; nothing reached the Error Log.
+
+The table it had already created survived — MariaDB DDL auto-commits — so production was left
+with a 26-column `tabProject Scope of Work`, no DocType row, and `Project.custom_scope_of_work`
+pointing at a Link target that no longer existed.
+
+That controller now imports inside the method. The rule, and it is narrow because ~15 existing
+controllers import from this app at module scope quite safely: **a DocType controller must not
+import at module scope from a module that does not already exist in production.** The two
+controllers in this package that import from `quality` survived the same migrate, because by
+then the package had been pulled in from inside itself.
+
 ## Settings
 
 Every dial in `Quality Settings` ships off or permissive, and `quality_enabled` gates the lot.
