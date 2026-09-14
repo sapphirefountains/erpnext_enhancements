@@ -115,6 +115,10 @@ def create_composite_booking(asset, rental_start, rental_end, location=None):
 PRE_SHIPPING = "Pre-shipping"
 RETURN = "Return"
 
+#: Mirrors ``rental_inspection.NOT_APPLICABLE``. Duplicated rather than imported to keep
+#: this module free of a doctype-controller import; the pair is pinned by a test.
+NOT_APPLICABLE = "N/A"
+
 
 def resolve_checklist_template(asset):
     """Return the active Rental Checklist Template for an asset, or None.
@@ -167,6 +171,11 @@ def _rows_from_pre_shipping(inspection):
     to what the template said. That is the whole reason a return reads from here rather
     than from the template: "are all items accounted for" is a question about what left
     the yard, and if three of four panels shipped, three coming back is complete.
+
+    Rows the pre-shipping crew marked ``N/A`` are dropped. A category-level template
+    lists parts that a given fountain does not carry, and a component this unit never had
+    is not something the return crew should be asked about twice — it would arrive with a
+    blank ``qty_expected`` and demand a count of a part that does not exist.
     """
     doc = frappe.get_doc("Rental Inspection", inspection)
     return [
@@ -176,6 +185,7 @@ def _rows_from_pre_shipping(inspection):
             "notes": row.notes,
         }
         for row in doc.items
+        if row.condition != NOT_APPLICABLE
     ]
 
 

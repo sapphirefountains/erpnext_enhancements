@@ -44,6 +44,18 @@ from frappe.utils import flt
 #: Conditions that mean something is wrong with the component itself.
 ADVERSE_CONDITIONS = ("Damaged", "Missing")
 
+#: "This fountain does not have that component." A category-level checklist template
+#: covers every fountain of a type, so it necessarily lists parts a given unit does not
+#: carry — and without this the crew's only options were to delete the row or to mark a
+#: component Missing that was never in the crate, i.e. to file a false shortfall.
+NOT_APPLICABLE = "N/A"
+
+#: Every condition that has to be explained in writing. N/A is in here deliberately: it
+#: is the one value that makes a row disappear from the findings, so it is exactly the
+#: value someone would reach for to make a genuinely missing part stop being a problem.
+#: Requiring a sentence turns that from a dropdown click into a written claim.
+CONDITIONS_NEEDING_A_NOTE = (*ADVERSE_CONDITIONS, NOT_APPLICABLE)
+
 
 class RentalInspection(Document):
     def validate(self):
@@ -74,11 +86,18 @@ class RentalInspection(Document):
         A blank ``qty_accounted`` is **not** treated as a shortfall: at draft it means
         "not counted yet", which is a different fact from "counted, and short". Submit
         is where the difference stops being allowed to persist.
+
+        An ``N/A`` row is skipped entirely. Its ``qty_expected`` came from a template
+        describing a *type* of fountain rather than this one, so comparing a count
+        against it would manufacture a shortfall out of a component that was never
+        supposed to be in the crate.
         """
         damage = False
         shortfall = False
 
         for row in self.items or []:
+            if row.condition == NOT_APPLICABLE:
+                continue
             if row.condition in ADVERSE_CONDITIONS:
                 damage = True
             if row.qty_accounted is None or row.qty_accounted == "":
@@ -102,10 +121,14 @@ class RentalInspection(Document):
                 frappe.ValidationError,
             )
 
+        # N/A rows are exempt: there is nothing to count, and demanding a 0 would make
+        # "this fountain has no transformer" indistinguishable from "the transformer
+        # did not come back".
         uncounted = [
             row.idx
             for row in self.items or []
-            if row.qty_accounted is None or row.qty_accounted == ""
+            if row.condition != NOT_APPLICABLE
+            and (row.qty_accounted is None or row.qty_accounted == "")
         ]
         if uncounted:
             frappe.throw(
@@ -116,21 +139,25 @@ class RentalInspection(Document):
             )
 
     def validate_adverse_rows_explained(self):
-        """Damaged or Missing needs a note.
+        """Anything not marked Pass needs a note — N/A included.
 
         "Missing", on its own, is where the trail goes cold three weeks later when
-        somebody asks whether it was ever in the crate.
+        somebody asks whether it was ever in the crate. And N/A needs one for the
+        opposite reason: it is the only value that removes a row from the findings
+        entirely, so an unexplained N/A is precisely how a real shortfall would be made
+        to disappear. A sentence costs seconds and makes it a written claim.
         """
         unexplained = [
             row.idx
             for row in self.items or []
-            if row.condition in ADVERSE_CONDITIONS and not (row.notes or "").strip()
+            if row.condition in CONDITIONS_NEEDING_A_NOTE and not (row.notes or "").strip()
         ]
         if unexplained:
             frappe.throw(
-                _("Rows {0} are marked Damaged or Missing with no note. Say what you found.").format(
-                    ", ".join(f"#{idx}" for idx in unexplained)
-                ),
+                _(
+                    "Rows {0} are marked Damaged, Missing or N/A with no note. "
+                    "Say what you found, or why it does not apply."
+                ).format(", ".join(f"#{idx}" for idx in unexplained)),
                 frappe.ValidationError,
             )
 
@@ -153,6 +180,8 @@ class RentalInspection(Document):
 
         lines = []
         for row in self.items or []:
+            if row.condition == NOT_APPLICABLE:
+                continue
             if row.condition in ADVERSE_CONDITIONS:
                 lines.append(f"<li>{frappe.utils.escape_html(row.component)} — {row.condition}"
                              f": {frappe.utils.escape_html((row.notes or '').strip())}</li>")

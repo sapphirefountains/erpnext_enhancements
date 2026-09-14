@@ -30,6 +30,9 @@ PROCUREMENT_API = APP / "api" / "procurement.py"
 BOOKING_JS = APP / "asset_management" / "doctype" / "asset_booking" / "asset_booking.js"
 BOOKING_JSON = APP / "asset_management" / "doctype" / "asset_booking" / "asset_booking.json"
 INSPECTION_PY = APP / "asset_management" / "doctype" / "rental_inspection" / "rental_inspection.py"
+ITEM_JSON = (
+	APP / "asset_management" / "doctype" / "rental_inspection_item" / "rental_inspection_item.json"
+)
 ASSET_JS = APP / "public" / "js" / "asset_management" / "asset_form.js"
 
 
@@ -311,6 +314,61 @@ class RentalInspectionTest(unittest.TestCase):
 		self.assertFalse(
 			sorted(called - whitelisted),
 			f"the JS calls methods that are not whitelisted: {sorted(called - whitelisted)}",
+		)
+
+	def test_na_is_an_option_and_is_not_a_silent_escape_hatch(self):
+		"""N/A must exist, must require a note, and must not count as a shortfall.
+
+		A category-level template covers every fountain of a type, so it necessarily
+		lists parts a given unit does not carry. Without N/A the crew's only options were
+		to delete the row or mark a real component Missing — filing a false shortfall.
+
+		But N/A is also the ONLY value that removes a row from the findings, which makes
+		it exactly what somebody would reach for to make a genuinely missing part stop
+		being a problem. So it is in CONDITIONS_NEEDING_A_NOTE: the escape hatch costs a
+		written sentence. That pairing is the whole point and is what this pins.
+		"""
+		options = json.loads(ITEM_JSON.read_text(encoding="utf-8"))
+		condition = next(f for f in options["fields"] if f["fieldname"] == "condition")
+		self.assertIn("N/A", condition["options"].split("\n"))
+
+		src = INSPECTION_PY.read_text(encoding="utf-8")
+		self.assertRegex(
+			src,
+			r"CONDITIONS_NEEDING_A_NOTE\s*=\s*\(\*ADVERSE_CONDITIONS,\s*NOT_APPLICABLE\)",
+			"N/A must require a note, or it becomes a one-click way to erase a shortfall",
+		)
+
+		# The note gate must read the wider tuple; the damage roll-up must not.
+		methods = _methods(INSPECTION_PY, "RentalInspection")
+		note_gate = _executable_source(methods["validate_adverse_rows_explained"])
+		self.assertIn("CONDITIONS_NEEDING_A_NOTE", note_gate)
+
+		findings = _executable_source(methods["set_findings"])
+		self.assertIn(
+			"NOT_APPLICABLE",
+			findings,
+			"an N/A row must be skipped by the shortfall calculation, or a template row "
+			"for a part this fountain never had manufactures a shortfall",
+		)
+
+	def test_the_na_constant_agrees_across_both_modules(self):
+		"""`api/booking.py` duplicates NOT_APPLICABLE rather than importing the controller.
+
+		Two spellings of the same string would mean the return sheet silently stopped
+		dropping N/A rows, with nothing raising anywhere.
+		"""
+		def literal(path, name):
+			for node in ast.parse(path.read_text(encoding="utf-8")).body:
+				if isinstance(node, ast.Assign):
+					for t in node.targets:
+						if isinstance(t, ast.Name) and t.id == name:
+							return ast.literal_eval(node.value)
+			raise AssertionError(f"{name} not found in {path.name}")
+
+		self.assertEqual(
+			literal(INSPECTION_PY, "NOT_APPLICABLE"),
+			literal(BOOKING_API, "NOT_APPLICABLE"),
 		)
 
 	def test_the_booking_reaches_its_inspections_by_connection(self):

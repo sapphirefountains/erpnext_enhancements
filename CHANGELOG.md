@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.456.0] - 2026-09-14
+
+### Added
+
+- **`N/A` as a Rental Inspection condition** (follow-up to ER-2026-312370). Found by using
+  the feature rather than by testing it: the first real checklist template is keyed to the
+  `Rental Fountain Fleet` **category**, so it describes a *type* of fountain and necessarily
+  lists parts a given unit does not carry. With only Pass / Damaged / Missing, and
+  `before_submit` demanding a condition on every row, the crew's options were to delete the
+  row or to mark a component Missing that was never in the crate -- **filing a false
+  shortfall on the one document whose purpose is to be evidence.**
+
+### Notes
+
+- **N/A requires a note, and that is the whole design.** It is the only condition that
+  removes a row from the findings entirely, which makes it exactly what somebody would reach
+  for to make a genuinely missing part stop being a problem. So `CONDITIONS_NEEDING_A_NOTE`
+  is deliberately wider than `ADVERSE_CONDITIONS`: the escape hatch costs a written sentence.
+  An unexplained N/A is refused at submit alongside an unexplained Damaged or Missing.
+- **Three knock-on effects, all of which would have been silent.** An N/A row is skipped by
+  the `has_shortfall` roll-up (its `qty_expected` came from a template about a different
+  fountain, so comparing a count against it manufactures a shortfall); it is exempt from the
+  "every row counted" gate (demanding a 0 would make "this unit has no transformer"
+  indistinguishable from "the transformer did not come back"); and it is dropped from the
+  return sheet that `_rows_from_pre_shipping` generates, rather than arriving with a blank
+  `qty_expected` and demanding a count of a part that does not exist.
+- `api/booking.py` duplicates `NOT_APPLICABLE` rather than importing the doctype controller,
+  to keep that module free of a controller import. Two spellings of the same string would
+  silently stop the return sheet dropping N/A rows, so a test pins the two literals equal.
+- No data migration: adding an option to a Select leaves existing rows alone (unlike
+  *renaming* one, which freezes every row holding the old value), and there are zero Rental
+  Inspections on production in any case.
+
 ## [1.455.0] - 2026-09-14
 
 Four employee feedback requests from the portal, triaged against production and the ERPNext
