@@ -31,6 +31,32 @@ Related code outside this folder:
 - `dashboard_overrides.py` (repo root) — adds a "Travel" connections group to the **Employee** dashboard. Wired via `override_doctype_dashboards["Employee"]`.
 - The dashboard UI is the **"Projects Dashboard" Custom HTML Block** (`custom_html_blocks/projects_dashboard.{js,html,css}`); the only front-end helpers left under `public/js/project_enhancements/dashboard_components/` are the shared `column_selector.js` / `column_resizer.js` — see the [public README](../public/README.md#project-dashboard-components).
 
+## Scope of Work (WI-075, v1.445.0)
+
+`Project Scope of Work` is the scope authored once and locked — one submitted record per
+project, whose `Scope Acceptance Criterion` rows are the measurable standards an inspector
+later passes or fails. **Submit is the lock**; there is deliberately no separate approval flag
+to fall out of step with `docstatus`.
+
+It lives here rather than in the `quality` module because this is where the contract machinery
+already is, and a second contract system is precisely what the programme exists to prevent.
+The Statement of Work reads from it; so, later, does the inspection template.
+
+**`criterion_key` is the field everything joins on.** Minted once, read-only, never
+regenerated — because the inspection result, the NCR and the Quality Action that follow all
+point at *a criterion*, and inserting a row mid-list a year later must not repoint a closed
+NCR at a different standard. The rules live in
+[`quality/scope_criteria.py`](../quality/scope_criteria.py), which imports no `frappe` so that
+[`tests/test_scope_criteria.py`](../tests/test_scope_criteria.py) can run without a bench.
+
+Locking refuses a scope with no criteria, and refuses any criterion missing a criterion, a
+pass standard or a verification method. Those blank-checks are Python, not SQL: under PAD SPACE
+collation `<> ''` treats `"   "` as present, and that check would report clean forever.
+
+**Nothing consumes this yet.** WI-075 sub-phase B2 adds the hand-off step and the anchor that
+drive it; until then the record is inert by design.
+
+
 ## Projects Dashboard
 
 - **One surface (consolidated in v1.159.8):** the dashboard is the **"Projects Dashboard" Custom HTML Block**, embedded on the **Home** and **Projects** workspaces (placed by `setup.custom_html_blocks.sync_custom_html_blocks`, which also *deploys* it — the repo `.js`/`.html`/`.css` become the block's `script`/`html`/`style` on migrate, no asset build). It renders a tabbed shell — Priority Overview (default), Active Internal Projects, Completed Projects, Portfolio Gantt, Dashboard — plus **New Project** / **New Master Project** buttons, all in one IIFE (`custom_html_blocks/projects_dashboard.js`). A *second*, parallel desk-page implementation (`/app/project-dashboard`) was **removed** here; the desk shortcut + Project Enhancements workspace link now point at the Projects workspace (`retire_project_dashboard_desk_page` patch).

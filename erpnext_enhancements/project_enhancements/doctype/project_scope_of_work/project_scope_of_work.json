@@ -1,0 +1,257 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "naming_series:",
+ "creation": "2026-09-14 11:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "project",
+  "project_type",
+  "customer",
+  "column_break_head",
+  "status",
+  "opportunity",
+  "contract",
+  "revision",
+  "section_scope",
+  "scope_summary",
+  "inclusions",
+  "exclusions",
+  "assumptions",
+  "section_criteria",
+  "criteria_intro",
+  "acceptance_criteria",
+  "section_lock",
+  "locked_on",
+  "locked_by",
+  "column_break_lock",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "options": "SCOPE-.YYYY.-.####",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Project",
+   "options": "Project",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "project.project_type",
+   "fieldname": "project_type",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Project stage",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "project.customer",
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "allow_on_submit": 1,
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Draft\nLocked\nSuperseded",
+   "read_only": 1
+  },
+  {
+   "fieldname": "opportunity",
+   "fieldtype": "Link",
+   "label": "Opportunity",
+   "options": "Opportunity"
+  },
+  {
+   "description": "The Statement of Work generated from this scope. Stamped when that contract is created.",
+   "fieldname": "contract",
+   "fieldtype": "Link",
+   "label": "Contract",
+   "options": "Project Contract",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "revision",
+   "fieldtype": "Int",
+   "label": "Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_scope",
+   "fieldtype": "Section Break",
+   "label": "Scope"
+  },
+  {
+   "description": "Plain-language scope. Composed from the project's own requests and deliverables rather than retyped.",
+   "fieldname": "scope_summary",
+   "fieldtype": "Text Editor",
+   "label": "Scope summary"
+  },
+  {
+   "fieldname": "inclusions",
+   "fieldtype": "Text Editor",
+   "label": "Inclusions"
+  },
+  {
+   "description": "The field that prevents the \"we assumed that was included\" change order. Worth more than the inclusions list.",
+   "fieldname": "exclusions",
+   "fieldtype": "Text Editor",
+   "label": "Exclusions"
+  },
+  {
+   "fieldname": "assumptions",
+   "fieldtype": "Small Text",
+   "label": "Assumptions"
+  },
+  {
+   "fieldname": "section_criteria",
+   "fieldtype": "Section Break",
+   "label": "Acceptance criteria"
+  },
+  {
+   "fieldname": "criteria_intro",
+   "fieldtype": "HTML",
+   "label": "Criteria intro",
+   "options": "<p class=\"text-muted small\">Each row is one measurable thing an inspector can pass or fail. These are <b>authored here</b>, not extracted — the project's deliverables are prose, so turning them into standards is the work this record exists for. If a criterion cannot be inspected, it should not be in the contract.</p>"
+  },
+  {
+   "fieldname": "acceptance_criteria",
+   "fieldtype": "Table",
+   "label": "Acceptance criteria",
+   "options": "Scope Acceptance Criterion"
+  },
+  {
+   "fieldname": "section_lock",
+   "fieldtype": "Section Break",
+   "label": "Lock"
+  },
+  {
+   "description": "Server-stamped on submit. Never proposed by the browser.",
+   "fieldname": "locked_on",
+   "fieldtype": "Datetime",
+   "label": "Locked on",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "locked_by",
+   "fieldtype": "Link",
+   "label": "Locked by",
+   "no_copy": 1,
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_lock",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Project Scope of Work",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-09-14 11:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Project Scope of Work",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Project Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production Team"
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Team"
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Executive Team"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "project",
+ "track_changes": 1
+}

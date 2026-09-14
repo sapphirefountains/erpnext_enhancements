@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.447.0] - 2026-09-14
+
+### Added
+
+- **`Project Scope of Work`** (submittable) and **`Scope Acceptance Criterion`** — the record
+  that ends "scope existed in more than one version". One locked scope per project, carrying
+  measurable acceptance criteria that the Statement of Work and the inspection template both
+  read from rather than restate. WI-075 sub-phase B1.
+  **Submit is the lock** — no separate approval flag to fall out of step with `docstatus`.
+  Locking refuses a scope with no criteria, and refuses criteria missing a criterion, a pass
+  standard or a verification method: a scope nobody can inspect against is the thing this
+  record exists to prevent.
+- **`criterion_key`** — stable identity on every criterion, minted once and never regenerated.
+  The inspection template row, the inspection result, the NCR and the Quality Action will all
+  join on it, never on row order, so inserting a criterion mid-list a year later cannot
+  silently repoint a closed NCR at a different standard. The precedent is `block_key` in
+  Training, and the reason is the same one its README gives.
+
+### Notes
+
+- **Nothing consumes this yet, on purpose.** Sub-phase B2 wires it into the hand-off engine —
+  a new step, a new anchor, and the renumbering of the existing step 7 — and that is a separate
+  change so the schema can be reviewed without also reviewing an edit to an engine that 707
+  live `Project Process Step` rows already run through.
+- The logic lives in `quality/scope_criteria.py`, which imports no `frappe`, rather than in the
+  DocType controller. There is no Frappe integration-test job in CI, so that split is what lets
+  `tests/test_scope_criteria.py` run on every push. It sits under `quality/` rather than beside
+  the DocType because `project_enhancements/__init__.py` imports `frappe` at module scope,
+  which would put it out of reach however pure it was — the same split `utils/url_safety.py`
+  makes, for the same reason.
+- Blank-checks on criteria are done in Python, not SQL. Under MariaDB's default PAD SPACE
+  collation `WHERE pass_standard <> ''` treats `"   "` as present, so the obvious SQL form of
+  that check reports clean on data that is genuinely blank. Note the failure direction: it
+  passes.
+- At most one locked scope per project is enforced in `before_submit` and not by a unique
+  index: a cancelled or amended row keeps its name and its `project`, so a database constraint
+  would refuse the legitimate re-lock after an amendment. `docstatus = 1` is the real predicate.
+
+
 ## [1.446.0] - 2026-09-14
 
 ### Added

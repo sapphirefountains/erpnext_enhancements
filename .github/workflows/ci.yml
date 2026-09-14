@@ -462,6 +462,14 @@ jobs:
       # slug never renders, per-user, so it reads as a permissions bug. Nothing logs any of it.
       - name: Quality module name collisions (workspace, tile, DocType, page slug)
         run: python -m unittest erpnext_enhancements.tests.test_quality_naming_collisions -v
+      # Acceptance-criterion identity (WI-075 sub-phase B1). Every downstream record in the
+      # quality chain -- template row, inspection result, NCR, Quality Action -- joins on
+      # `criterion_key`, so the property that matters is that a key, once minted, NEVER
+      # changes. Re-minting on every save looks completely normal in a diff and in a smoke
+      # test, and only shows itself when somebody inserts a criterion mid-list a year later
+      # and a closed NCR silently repoints at a different standard.
+      - name: Scope acceptance criteria (stable keys, inspectable rows)
+        run: python -m unittest erpnext_enhancements.tests.test_scope_criteria -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk
