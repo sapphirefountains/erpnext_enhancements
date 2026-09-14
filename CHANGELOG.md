@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.452.2] - 2026-09-14
+
+### Fixed
+
+- **`Project Scope of Work` was force-deleted by its own deploy, and this restores it.** On
+  v1.452.1 model sync created the DocType at ~12:08 and frappe's `remove_orphan_doctypes()`
+  deleted it at 12:09:22 in the same migrate. That function calls `get_controller()` on every
+  non-custom DocType and passes anything raising `ImportError` to
+  `frappe.delete_doc(..., force=True)`. The controller imported `quality.scope_criteria` at
+  module scope, across into a package introduced in that same release, and the import did not
+  resolve during the sweep. It now imports inside the method, so the controller module itself
+  has no cross-module dependency that can fail.
+
+### Notes
+
+- **Nothing failed the deploy and nothing reached the Error Log.** The only trace was a
+  `Deleted Document` row. The table frappe had already created stayed behind, because MariaDB
+  DDL auto-commits and survives the rollback of the row that caused it — so production held a
+  26-column `tabProject Scope of Work` with no DocType, and `Project.custom_scope_of_work` as a
+  Link to a target that no longer existed. Verified inert: Project meta loads all 227 fields,
+  Projects open, list queries work. The module ships dormant, so nothing was broken — which is
+  also why nobody would have noticed.
+- Everything else from the A–F series installed correctly: all seven patches logged, 17
+  milestones, the Commissioning section and its Build template, the `Products` project type,
+  the five roles, the workspace and Desk tile, 25 Custom Fields, and the Property Setters with
+  `Quality Action.status` offering the five-state lifecycle.
+- The rule this adds to CLAUDE.md is deliberately narrow: about fifteen DocType controllers in
+  this app import from it at module scope and are entirely fine. **A DocType controller must not
+  import at module scope from a module that does not already exist in production.**
+  `override_doctype_class` entries are skipped by the sweep, which is the only reason
+  `Quality Action` was never at risk.
+
+
 ## [1.452.1] - 2026-09-14
 
 ### Changed
