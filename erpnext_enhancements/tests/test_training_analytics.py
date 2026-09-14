@@ -22,6 +22,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_training_analytics
 import datetime
 import sys
 import types
+import json
 import unittest
 from pathlib import Path
 
@@ -286,11 +287,52 @@ class TestRecentCompletions(_Base):
 
 
 class TestPageSurface(unittest.TestCase):
-	def test_the_controller_gates_to_managers_and_404s_others(self):
-		src = (APP / "www/training_analytics.py").read_text(encoding="utf-8")
-		self.assertIn('ALLOWED_ROLES = {"System Manager", "Training Manager", "HR Manager"}', src)
-		self.assertIn("raise frappe.DoesNotExistError", src)
-		self.assertIn("context.analytics = get_training_analytics()", src)
+	"""The dashboard is a Desk Page now; the website route is a redirect.
+
+	Until v1.431.0 this asserted a server-rendered Jinja page with its own
+	`ALLOWED_ROLES` gate that raised `DoesNotExistError` for a non-manager. The gate
+	has not been relaxed, it has moved to the two places that can enforce it: the
+	Page record's `roles`, and `get_training_analytics`'s own `_require_manager()`,
+	which is the one that actually matters because it guards the data rather than
+	the view.
+	"""
+
+	PAGE = APP / "training/page/training_insights"
+
+	def test_the_desk_page_is_registered_for_managers(self):
+		doc = json.loads((self.PAGE / "training_insights.json").read_text(encoding="utf-8"))
+		self.assertEqual(doc["doctype"], "Page")
+		self.assertEqual(doc["module"], "Training")
+		self.assertEqual(
+			sorted(row["role"] for row in doc["roles"]),
+			["HR Manager", "System Manager", "Training Manager"],
+			"the Page roles must match MANAGER_ROLES in analytics.py",
+		)
+
+	def test_the_page_roles_match_the_servers_manager_set(self):
+		"""Two lists of the same three names, in two files. Pinned against each other
+		rather than trusted: a role added to one and not the other means either a
+		manager who cannot open the page, or a page that opens on a 403."""
+		doc = json.loads((self.PAGE / "training_insights.json").read_text(encoding="utf-8"))
+		source = (APP / "training/analytics.py").read_text(encoding="utf-8")
+		for row in doc["roles"]:
+			with self.subTest(row["role"]):
+				self.assertIn(f'"{row["role"]}"', source)
+
+	def test_the_page_computes_nothing_of_its_own(self):
+		"""It renders the dict `get_training_analytics` returns. The rollup is Python
+		over guarded get_all reads rather than SQL because "overdue" is a predicate --
+		a `<` filter on a nullable date silently matches NULLs -- and a second
+		implementation in JavaScript would be a second chance to get that wrong."""
+		js = (self.PAGE / "training_insights.js").read_text(encoding="utf-8")
+		self.assertIn("get_training_analytics", js)
+		for token in ("due_date", "getdate", "Date.now"):
+			with self.subTest(token):
+				self.assertNotIn(token, js)
+
+	def test_the_page_renders_no_html_from_strings(self):
+		js = (self.PAGE / "training_insights.js").read_text(encoding="utf-8")
+		self.assertNotIn("innerHTML", js)
 
 	def test_the_controller_filename_is_underscored(self):
 		# Frappe never imports a hyphenated web controller; the template basename must
@@ -298,11 +340,17 @@ class TestPageSurface(unittest.TestCase):
 		self.assertTrue((APP / "www/training_analytics.py").exists())
 		self.assertTrue((APP / "www/training_analytics.html").exists())
 
-	def test_the_page_renders_the_rollup_server_side(self):
+	def test_the_website_route_redirects_into_the_desk(self):
+		src = (APP / "www/training_analytics.py").read_text(encoding="utf-8")
+		self.assertIn("/app/training-insights", src)
+		self.assertIn("raise frappe.Redirect", src)
+
+	def test_the_retired_template_renders_no_rollup(self):
+		"""It was 233 lines. Anything approaching that again means somebody rebuilt
+		the dashboard at the website route rather than pointing at the Desk one."""
 		html = (APP / "www/training_analytics.html").read_text(encoding="utf-8")
-		self.assertIn("analytics.totals", html)
-		self.assertIn("analytics.by_course", html)
-		# Server-rendered, autoescaped Jinja — no client fetch, no innerHTML.
+		self.assertLess(len(html.splitlines()), 40)
+		self.assertNotIn("analytics.totals", html)
 		self.assertNotIn("innerHTML", html)
 
 

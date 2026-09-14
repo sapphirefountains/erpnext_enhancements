@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.431.0] - 2026-09-13
+
+Training Phase 6, D8. **The manager's half of the move.**
+
+### Added
+
+- **Training Insights at `/desk/training-insights`** (`training/page/training_insights/`),
+  replacing `www/training_analytics.html`. That was 233 lines of server-rendered Jinja at a
+  website route, manager-only, with no desk link and no workspace entry — a page for people
+  who live in the Desk that could only be reached by typing a URL nobody had a link to. It
+  now has a shortcut on the Training workspace, beside the learner page.
+
+- **The numbers are clickable.** A manager reading "7 overdue" and then hand-building the
+  filter to find out *who* is the difference between a dashboard and a report. Each tile
+  and each course row opens the set it counts.
+
+  Where a number has no honest filter it stays plain text. `learners` and
+  `certificates` are counts over different doctypes than the list a tile would open, and
+  a tile that says 4 and opens a list of 11 is worse than a tile that does not open at
+  all — the number stops being trustworthy, rather than the link stopping being useful.
+  `pending` submissions covers two statuses on the server, so its filter covers the same
+  two.
+
+### Changed
+
+- **It renders the rollup and computes nothing of its own.**
+  `training.analytics.get_training_analytics` is untouched and is still the single source.
+  That is deliberate: the rollup is Python over guarded `get_all` reads rather than SQL,
+  because **"overdue" is a predicate** — a `<` filter on a nullable date silently matches
+  NULLs through frappe's ifnull sentinel, which is how "no expiry" once became "expired"
+  across this module. A second implementation here, in JavaScript, would be a second
+  chance to get that wrong, and the test now refuses `due_date`, `getdate` and `Date.now`
+  in the page source for exactly that reason.
+
+- **No Aurora palette on this page, and no `player.css`.** That stylesheet is the
+  learner's reading surface; this is a manager's console, so it takes frappe's own tokens,
+  follows the desk theme with no work of its own, looks like every other desk dashboard,
+  and costs no extra asset load to render six numbers and three tables. Hence the `ti-`
+  prefix, alongside `tr-` (learner render), `tc-` (authoring canvas) and `tl-` (learner
+  desk host).
+
+- `/training_analytics` becomes a redirect. Unlike `/training` it was **never emailed**, so
+  keeping the route is politeness toward a bookmark rather than the necessity it is there.
+
+- The manager-role gate has not been relaxed, it has moved to the two places that can
+  enforce it: the Page record's `roles`, and `get_training_analytics`'s own
+  `_require_manager()` — which is the one that matters, because it guards the data rather
+  than the view. The two lists of the same three names now pin each other.
+
+### Deferred again, with the reason
+
+- **Standalone number cards.** They would need "overdue" expressed a second time as a
+  DocType filter, and the natural spelling — `due_date < today` — is precisely the
+  NULL-sweeping predicate `analytics.py` exists to avoid. A number card that quietly counts
+  every assignment with no due date is worse than no number card: it is a wrong number on a
+  dashboard, which is the one place people stop checking.
+
 ## [1.430.0] - 2026-09-13
 
 Training Phase 6, D7. **Being given a course now reaches the person it is given to.**
