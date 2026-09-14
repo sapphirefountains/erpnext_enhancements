@@ -31,12 +31,47 @@ Indentation note: this file is 4-space, matching the rest of ``api/``. See ``api
 import frappe
 from frappe import _
 
-from erpnext_enhancements.quality import merge
+from erpnext_enhancements.quality import carry_forward, merge
 
-CARRIED_FORWARD_NOTE = (
-    "Open fixes are carried into the next inspection from sub-phase F onwards; "
-    "this one contains the template and the contracted criteria only."
-)
+
+def _claim_open_fixes(project, inspection_name):
+    """Claim this project's unverified fixes for the inspection being generated.
+
+    The claim is a **stamp written in the same transaction** as the generation, not a query run
+    later. Without it two inspections generated the same morning both carry the same item, both
+    answer it, and the second one submitted silently overwrites the first one's verdict.
+
+    Synchronous rather than enqueued for the same class of reason: a prod deploy `FLUSHDB`s the
+    queue redis and destroys every pending job, so a claim living in a background job could
+    vanish between generating an inspection and answering it.
+
+    Returns the claimed action documents, oldest first.
+    """
+    live = set(
+        frappe.get_all(
+            "Project Quality Inspection",
+            filters={"project": project, "docstatus": ["!=", 2]},
+            pluck="name",
+        )
+    )
+    candidates = frappe.get_all(
+        "Quality Action",
+        filters=carry_forward.claimable_filters(project),
+        fields=[
+            "name", "custom_subject", "custom_priority", "custom_reopen_count",
+            "custom_punch_list", "custom_verifying_inspection", "date",
+        ],
+        order_by="creation asc",
+    )
+    claimed = [a for a in candidates if carry_forward.is_claimable(a, live)]
+    for action in claimed:
+        frappe.db.set_value(
+            "Quality Action",
+            action.name,
+            {"custom_verifying_inspection": inspection_name, "custom_verification_result": None},
+            update_modified=False,
+        )
+    return claimed
 
 
 def _items_for_section(section):
@@ -136,6 +171,15 @@ def generate_inspection(project, milestone):
     scope = _locked_scope(project)
     criteria = scope.acceptance_criteria if scope else []
 
+    # Unverified fixes are resolved before the insert so an empty inspection is still refused
+    # on the template's own emptiness, but they are CLAIMED after it, because a claim names the
+    # inspection that will answer it and that name does not exist yet.
+    pending = frappe.get_all(
+        "Quality Action",
+        filters=carry_forward.claimable_filters(project),
+        fields=["name"],
+        limit=1,
+    )
     rows = merge.merge(
         merge.master_rows(template.sections, _items_for_section),
         merge.addendum_rows(criteria, scope.name if scope else "", milestone),
@@ -179,10 +223,21 @@ def generate_inspection(project, milestone):
         doc.append("results", row)
     doc.insert(ignore_permissions=False)
 
+    # Claim now that the inspection has a name, then append the carried rows and re-hash: the
+    # snapshot has to cover what the inspection actually contains, carried fixes included.
+    carried = _claim_open_fixes(project, doc.name) if pending else []
+    if carried:
+        carried_rows = merge.merge(rows, [], carry_forward.carried_rows(carried))[len(rows):]
+        for row in carried_rows:
+            doc.append("results", row)
+        doc.snapshot_hash = merge.spec_hash(rows + carried_rows)
+        doc.save(ignore_permissions=True)
+
     return {
         "name": doc.name,
-        "checks": len(rows),
-        "mandatory": merge.mandatory_count(rows),
+        "checks": len(doc.results),
+        "mandatory": merge.mandatory_count(doc.results),
+        "carried_forward": [a.name for a in carried],
         "from_template": template.name,
         "from_scope": scope.name if scope else None,
         "unassigned_criteria": [key for key, _text in unassigned],
@@ -191,7 +246,7 @@ def generate_inspection(project, milestone):
 
 def _generation_note(unassigned):
     """Say out loud what was contracted and is not being inspected."""
-    parts = [CARRIED_FORWARD_NOTE]
+    parts = []
     if unassigned:
         listed = "; ".join(f"{text} ({key})" for key, text in unassigned)
         parts.append(

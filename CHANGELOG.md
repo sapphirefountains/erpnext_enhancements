@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.452.0] - 2026-09-14
+
+### Added
+
+- **An unverified fix is now carried into the next inspection and re-checked.** A Quality Action
+  reaching `PM Resolved` is claimed by the next inspection generated for its project, appears
+  there as a row to answer, and closes only when somebody standing in front of the work says it
+  holds. WI-075 sub-phase F - the mechanism the whole programme is built on.
+- **The punch list, for free.** An open punch-list item is structurally identical to an action
+  awaiting re-verification, so it *is* a Quality Action with `custom_punch_list` ticked and
+  inherits this machinery rather than living in a spreadsheet somebody has to remember to check.
+  Carried rows show a `[Punch]` prefix so an inspector can see which is which.
+
+### Notes
+
+- **Pass closes it. Fail reopens to `In Progress`, escalates the priority one step, counts the
+  reopen, and releases the claim so the next inspection carries it again.** Not back to `Open`:
+  somebody has already worked on this and pretending otherwise loses that. No answer decides
+  nothing and also releases the claim.
+- **The escalation happens exactly once per verification.** A Fail releases the claim, and the
+  verifier only acts on an action this inspection still holds the claim for - so a
+  cancelled-and-resubmitted inspection is a no-op rather than a second ratchet. Priority is
+  precisely the field nobody audits, so a double-step would not be noticed.
+- **The claim is a stamp written in the same transaction as generation, not a query run later.**
+  Without it, two inspections generated the same morning both carry the same item, both answer
+  it, and the second one submitted silently overwrites the first one's verdict. It is
+  synchronous rather than enqueued for a related reason: a prod deploy `FLUSHDB`s the queue
+  redis and destroys every pending job, so a claim living in a background job could vanish
+  between generating an inspection and answering it.
+- **Carried rows are deliberately not mandatory.** A mandatory row cannot be left blank, so an
+  inspection at the pump vault would be unsubmittable because a fix in the plant room could not
+  be checked from there - and the spec is explicit that sign-off must not be blocked from moving
+  a project forward. Nothing is lost: an unanswered carried item releases its claim and is
+  carried again. The pressure to answer comes from the item never going away, not from a locked
+  form.
+- **There is no `N/A` on a carried row.** "Not applicable" on a re-verification reads as neither
+  closed nor failed and the item would sit forever. Leaving the row blank is the honest escape
+  hatch, and it is the one that keeps carrying the item.
+- A failed re-verification owes a photo; a passed one does not. It is the failure that gets
+  argued about later.
+- The claim query carries **no date comparison**. A `<` on a nullable datetime silently matches
+  every NULL row through Frappe's coalesce sentinel - and "resolved a while ago" is not the rule
+  anyway. The rule is "resolved and not yet re-checked".
+
+
 ## [1.451.0] - 2026-09-14
 
 ### Added

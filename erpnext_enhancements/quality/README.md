@@ -6,12 +6,15 @@ failure traceable to a contracted, measurable standard.
 Programme: [WI-075](../../work-items/WI-075-quality-and-inspections.md).
 Decision record: [ADR-0012](../../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md).
 
-**Status: sub-phases A through E.** The scaffold, the criterion-identity rules, the authoring
-layer, the generated and frozen inspection, and the routing that turns a failed check into a
-Non-Conformance and a corrective action. What is missing is the second half of closure: sub-phase
-F carries an unverified fix into the next inspection and re-checks it, which is what stops "we
-fixed it" being taken on faith. Generation is still a deliberate act — `trigger_basis` is read
-by nothing — and `quality_enabled` is **off**.
+**Status: sub-phases A through F — the loop closes.** Scope locks, an inspection generates
+frozen from the template plus that project's contracted criteria, a failed check raises a
+Non-Conformance and a corrective action, and an unverified fix is carried into the next
+inspection and re-checked before it may close. That last step is the one the whole design rests
+on: a self-reported fix and a re-inspected fix are different levels of confidence.
+
+Still to come: the Critical-NCR alert with per-recipient acknowledgement (G) and the field
+wizard (H). Generation is still a deliberate act — `trigger_basis` is read by nothing — and
+`quality_enabled` is **off**.
 
 ## What this module is for
 
@@ -31,7 +34,8 @@ question why it exists.**
 | `catalog.py` | The milestone catalog and the Commissioning checks, as data. Frappe-free so CI can read it and sub-phase D can reuse it |
 | `lifecycle.py` | The NCR and Quality Action state machines, defined once so the Property Setter fixture and the code that writes a status cannot drift |
 | `overrides/quality_action.py` | Replaces core's one-line `validate`. **Inseparable from the status Property Setter** |
-| `routing.py` | A failed check becomes an NCR and a Quality Action |
+| `routing.py` | A failed check becomes an NCR and a Quality Action; and on submit, carried fixes get their verdict |
+| `carry_forward.py` | Claiming an unverified fix into the next inspection, and what a re-verification does to it. **The punch list is this, plus a flag** |
 | `merge.py` | **The centre of the module.** Merging a master template with a project's contracted criteria, the content hash that freezes the result, and what counts as a failure. Frappe-free, so the freeze is asserted on every push |
 | `doctype/project_quality_inspection/` + `inspection_result/` | The generated inspection. Its rows are copies, never links |
 | `stable_keys.py` | Row identity — the `*_key` that criteria, checks and (in D) results all join on. Minted once, never regenerated |
@@ -157,6 +161,33 @@ option list is ever written, including core's own `"Completed"`, which is mapped
 a row arriving with it becomes saveable rather than raising forever.
 
 `Non Conformance` needed no override — core ships it with no controller logic at all.
+
+## The two-step closure, and why the claim is a stamp
+
+An action reaching `PM Resolved` is **not** closed. The companion paper gives the reason and the
+constraint together: *PM sign-off should not be blocked from moving a project forward — if a fix
+is made, the team should keep working. But a self-reported fix and a re-inspected fix are
+different levels of confidence, and only the second one should be allowed to permanently close
+the record.*
+
+So the action is claimed by the next inspection generated for its project, appears there as a
+row, and closes only on a Pass. A Fail reopens it to `In Progress` (not `Open` — somebody has
+already worked on it), escalates one step, counts the reopen, and releases the claim so it is
+carried again.
+
+**The claim is written in the same transaction as the generation that carried it.** Without
+that, two inspections generated the same morning both carry the same item, both answer it, and
+the second one submitted silently overwrites the first one's verdict. It is also why claiming is
+synchronous rather than enqueued: a prod deploy `FLUSHDB`s the queue redis and destroys every
+pending job.
+
+The escalation happens **once** per verification. A Fail releases the claim, and the verifier
+only acts on an action this inspection still holds the claim for, so cancelling and re-submitting
+an inspection is a no-op rather than a second ratchet.
+
+An open punch-list item is structurally the same thing — raised against a standard, fixed by
+somebody, not actually done until it has been looked at again — so it is a Quality Action with
+`custom_punch_list` ticked and gets all of this for free.
 
 ## Settings
 

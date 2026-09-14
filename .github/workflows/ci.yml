@@ -495,6 +495,14 @@ jobs:
       # The override and the Property Setter are one indivisible change; this asserts both.
       - name: Quality lifecycle (Select options match the code; the Action override is wired)
         run: python -m unittest erpnext_enhancements.tests.test_quality_lifecycle -v
+      # Carry-forward and re-verification (WI-075 sub-phase F) -- the mechanism that stops
+      # "we fixed it" being taken on faith. Every failure mode here is quiet: a fix that
+      # closes without being looked at turns the two-step closure into one step wearing a
+      # longer name; an escalation that ratchets twice on a cancelled-and-resubmitted
+      # inspection moves the one field nobody audits; and two inspections carrying the same
+      # item both answer it, with the second submitted silently overwriting the first verdict.
+      - name: Carry-forward (a fix closes only when somebody looked at it again)
+        run: python -m unittest erpnext_enhancements.tests.test_carry_forward -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk

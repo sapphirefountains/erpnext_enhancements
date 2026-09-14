@@ -391,7 +391,7 @@ doc_events = {
 	# different contracted standard and each closes separately. Never raises: losing a signed
 	# inspection to protect its follow-up would be the wrong trade.
 	"Project Quality Inspection": {
-		"on_submit": "erpnext_enhancements.quality.routing.route_failures",
+		"on_submit": "erpnext_enhancements.quality.routing.on_submit",
 	},
 	# The `Chat Message` after_insert unread fan-out was removed in v1.426.0 with the
 	# rest of the chat module (ADR 0011). It was the app's only chat doc_event.

@@ -41,7 +41,70 @@ rather than a name convention, so a renamed document does not orphan the link.
 import frappe
 from frappe import _
 
-from erpnext_enhancements.quality import lifecycle, merge
+from erpnext_enhancements.quality import carry_forward, lifecycle, merge
+
+
+def on_submit(doc, method=None):
+	"""``Project Quality Inspection`` ``on_submit``: close the loop, both halves.
+
+	Order matters. Re-verification runs **first**, because a carried fix that failed again
+	should be back In Progress before anything reads the project's open-action list; and new
+	failures are routed second, so an NCR raised now cannot be mistaken for one being verified.
+	"""
+	verify_carried_fixes(doc)
+	route_failures(doc)
+
+
+def verify_carried_fixes(doc, method=None):
+	"""Apply the inspector's verdict to every fix this inspection carried.
+
+	Never raises, for the same reason as the routing below: losing a signed inspection to
+	protect its follow-up would be the wrong trade.
+	"""
+	try:
+		_apply_verifications(doc)
+	except Exception:
+		frappe.log_error(
+			title="Quality: could not apply carried-fix verifications",
+			message=f"inspection={doc.name}\n\n{frappe.get_traceback()}",
+		)
+
+
+def _apply_verifications(doc):
+	for row in doc.results or []:
+		if row.source != merge.SOURCE_CARRIED:
+			continue
+		action_name = (row.source_key or "").split(":", 1)[-1]
+		if not action_name or not frappe.db.exists("Quality Action", action_name):
+			continue
+
+		action = frappe.db.get_value(
+			"Quality Action",
+			action_name,
+			["status", "custom_priority", "custom_reopen_count", "custom_verifying_inspection"],
+			as_dict=True,
+		)
+		# Only act on an action this inspection still holds the claim for. That single guard is
+		# what makes a cancelled-and-resubmitted inspection a no-op rather than a second
+		# escalation -- a Fail releases the claim, so the re-run finds it already gone.
+		if action.custom_verifying_inspection != doc.name:
+			continue
+
+		status, priority, reopens, keep_claim = carry_forward.decide(
+			row.outcome, action.status, action.custom_priority, action.custom_reopen_count
+		)
+		frappe.db.set_value(
+			"Quality Action",
+			action_name,
+			{
+				"status": status,
+				"custom_priority": priority,
+				"custom_reopen_count": reopens,
+				"custom_verification_result": (row.outcome or "").strip() or None,
+				"custom_verifying_inspection": doc.name if keep_claim else None,
+			},
+			update_modified=False,
+		)
 
 
 def route_failures(doc, method=None):
