@@ -68,6 +68,14 @@ def _executable_source(func):
 	return "\n".join(ast.unparse(node) for node in body)
 
 
+def _module_function(path, name):
+	"""A module-level function by name, read without importing."""
+	for node in ast.parse(path.read_text(encoding="utf-8")).body:
+		if isinstance(node, ast.FunctionDef) and node.name == name:
+			return node
+	raise AssertionError(f"{name} not found in {path.name}")
+
+
 def _calls_in(func):
 	"""Bare method names called as self.<name>() inside a function body."""
 	found = set()
@@ -209,27 +217,51 @@ class AssetFormTest(unittest.TestCase):
 			"purchase_date's static reqd must be cleared, or mandatory_depends_on never gets a say",
 		)
 
-	def test_cost_center_has_a_default(self):
-		"""The fifth blocker, and the only one that static analysis could not have found.
+	def test_the_cost_center_fallback_is_on_the_company_not_the_asset(self):
+		"""The fifth blocker, and the only one static analysis could not have found.
 
 		`Asset.validate_cost_center()` throws unless the Asset carries a cost centre or
 		the Company has a depreciation cost centre — and this site had neither. It is
-		invisible in `asset.json` because the field is not `reqd`; the requirement lives
-		in the controller and depends on company configuration, so it only appears when
-		you actually insert an Asset.
+		invisible in `asset.json` because `cost_center` is not `reqd`; the rule lives in
+		the controller and depends on company configuration, so it appears only when you
+		actually insert an Asset.
 
-		A `default` rather than a client script on purpose: `Document.insert()` calls
-		`_set_defaults()`, so this reaches API and script-created Assets too, not just
-		the desk form.
-
-		**Scope caveat, deliberate:** this defaults EVERY Asset to the rentals cost
-		centre, not just rental ones. Today that is right for 100% of them (all ten
-		Assets are the rental fleet, and there is one Asset Category). Revisit when a
-		second category appears — the value is editable, so it is a starting point.
+		**The fix must not be a `default` on `Asset.cost_center`.** That was written
+		first and deliberately replaced: it worked, but it stamped EVERY Asset with the
+		rental fleet's cost centre — right for all ten Assets today and wrong the moment
+		a vehicle becomes an Asset, silently, because a default reads as a considered
+		choice. The Company field is the fallback ERPNext designed for this, and it
+		layers correctly: an Asset that knows its own cost centre keeps it, anything
+		else falls back company-wide rather than to a guess about what kind of asset it is.
 		"""
-		prop = self.props.get("Asset-cost_center-default")
-		self.assertIsNotNone(prop, "Asset.cost_center must default, or a hand-made Asset cannot save")
-		self.assertEqual(prop["value"], "CL140 - Rentals - SF")
+		self.assertNotIn(
+			"Asset-cost_center-default",
+			self.props,
+			"do not default Asset.cost_center — it would stamp non-rental assets with "
+			"the rental fleet's cost centre. Set Company.depreciation_cost_center instead.",
+		)
+		self.assertIn(
+			"erpnext_enhancements.patches.set_company_depreciation_cost_center",
+			PATCHES_TXT.read_text(encoding="utf-8"),
+		)
+
+	def test_the_cost_center_patch_never_overwrites_a_finance_decision(self):
+		"""Where depreciation posts is Finance's call; this may only fill an empty field.
+
+		And it must reject group cost centres: `validate_cost_center` refuses one
+		outright, so seeding a group would swap this blocker for a less obvious one.
+		"""
+		patch = APP / "patches" / "set_company_depreciation_cost_center.py"
+		src = patch.read_text(encoding="utf-8")
+
+		guard = _module_function(patch, "set_depreciation_cost_center")
+		body = _executable_source(guard)
+		self.assertIn(
+			"if frappe.db.get_value",
+			body,
+			"the patch must read the current value and bail out when it is already set",
+		)
+		self.assertIn("is_group", src, "a group cost centre must be rejected as a candidate")
 
 	def test_seed_patch_is_registered(self):
 		"""Location had zero rows, and Asset.location is reqd — nothing else matters until this runs."""

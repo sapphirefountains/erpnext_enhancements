@@ -174,6 +174,13 @@ doctype_js = {
 		# every supplier with material still to collect, in drive-time order out
 		# of the shop. Backed by api/pickup_routing.py.
 		"public/js/project_enhancements/pick_routing_map.js",
+		# quality (WI-075 sub-phase I): which inspection milestones have come round on this
+		# project, and what is in the way. Shows EVERY milestone, not only the due ones -- a
+		# list of just what is due loses "why has that one not come round" and "why is that one
+		# not showing at all". Two of its states are findings rather than statuses: `blocked`
+		# (due, and nobody has written the checklist) and `unknown` (the build status is not a
+		# recognised option, so due-ness is not knowable). Generates nothing.
+		"public/js/quality/project_inspections.js",
 	],
 	"Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
 	# Reading a contract on screen — the template's language with the data
@@ -424,6 +431,27 @@ doc_events = {
 	# cannot commit, and a worker starting before the commit would read the old severity.
 	"Non Conformance": {
 		"on_update": "erpnext_enhancements.quality.critical_alerts.on_ncr_update",
+	},
+	# quality (WI-075 sub-phase J): a period review that computes its own numbers. ERPNext
+	# generates the review and copies the goal's objectives into it, then stops -- the actuals
+	# are blank and somebody types a verdict. This fills them in and re-derives the verdicts,
+	# then calls core's own set_status() again, because core already ran it before any actual
+	# existed. Never raises: a review with Open rows and a note saying why beats a lost save.
+	"Quality Review": {
+		"validate": "erpnext_enhancements.quality.reviews.on_review_validate",
+	},
+	# quality (WI-075 sub-phase J): a project goal may only meet or exceed the company-wide
+	# target for the same measure. No class override needed here, unlike Quality Action --
+	# core's QualityGoal.validate is literally `pass`. Enforcement is a Quality Settings dial
+	# (Off / Warn / Block) and ships on Warn.
+	"Quality Goal": {
+		"validate": "erpnext_enhancements.quality.reviews.on_goal_validate",
+	},
+	# quality (WI-075 sub-phase J): fill an empty meeting agenda from what the period actually
+	# holds -- failed reviews, open Critical NCRs, reopened fixes, overdue actions. Only when the
+	# agenda is empty, the same courtesy core extends to a review's objectives.
+	"Quality Meeting": {
+		"validate": "erpnext_enhancements.quality.reviews.on_meeting_validate",
 	},
 	# The `Chat Message` after_insert unread fan-out was removed in v1.426.0 with the
 	# rest of the chat module (ADR 0011). It was the app's only chat doc_event.
@@ -1015,6 +1043,26 @@ scheduler_events = {
 		"30 7 * * 5": ["erpnext_enhancements.process_steps.send_weekly_sla_digest"],
 	},
 	"daily": [
+		# quality (WI-075 sub-phase I): tell each project manager which inspection milestones
+		# have come round on their jobs. Sub-phase C seeded seventeen milestones carrying a
+		# trigger_basis and NOTHING read it, so a Build project could reach QA and the pre-final
+		# commissioning check would come round only if somebody remembered.
+		#
+		# It NOTICES and never acts -- generating an inspection stays a deliberate act, because
+		# one that appeared on its own is a draft nobody owns, aging in a list, looking like work
+		# in progress. Due-ness is "reached or passed", not equality: build status is a Select
+		# somebody types into, so a project can jump Procurement -> Ready for Install in one save
+		# and an equality trigger would lose the inspection with nothing to see afterwards.
+		# One digest per manager, and one milestone is mentioned again at most weekly.
+		# No-op while Quality Settings has the module or notifications off.
+		"erpnext_enhancements.quality.scheduling.sweep",
+		# quality (WI-075 sub-phase J): the Annual review cadence, which ERPNext cannot run.
+		# Its own daily quality_review.review() branches on Daily / Weekly / Monthly / Quarterly
+		# and has NO Annual branch, so an Annual goal generates nothing, forever, with no error.
+		# This handles Annual ONLY -- covering any of the other four would put a second review
+		# beside every one core made, on the same goal, the same day, and nobody comparing two
+		# identical reviews would guess why. goals.review_due RAISES if asked about one of them.
+		"erpnext_enhancements.quality.reviews.generate_annual_reviews",
 		# training: re-grant Training Learner to anybody who owes a course and cannot
 		# open it. `roles.grant_learner_role` is correct and always was; it is only
 		# CALLED on Employee insert and on an Employee gaining a user_id, neither of

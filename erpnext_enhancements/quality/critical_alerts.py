@@ -232,7 +232,7 @@ def _candidates(doc):
 	holds two of these, and "you are the PM on this job" is the more useful thing to tell them.
 	"""
 	out = []
-	pm = _project_manager(doc.get("custom_project"))
+	pm = project_manager_user(doc.get("custom_project"))
 	if pm:
 		out.append((pm, alerting.ROLE_PM))
 	for role in (alerting.ROLE_PRODUCTION, alerting.ROLE_PRESIDENT):
@@ -240,8 +240,8 @@ def _candidates(doc):
 	return out
 
 
-def _project_manager(project):
-	"""The project owner, as a User.
+def project_manager_user(project):
+	"""The project owner, as a User. **The one place this rule lives.**
 
 	``Project.custom_project_owner`` is a Link to **Employee**, not to User, so this needs the
 	``Employee.user_id`` hop. Skipping it silently addresses nobody: the Link value is an

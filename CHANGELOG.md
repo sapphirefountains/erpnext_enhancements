@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.456.0] - 2026-09-14
+## [1.459.0] - 2026-09-14
 
 ### Added
 
@@ -18,12 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `before_submit` demanding a condition on every row, the crew's options were to delete the
   row or to mark a component Missing that was never in the crate -- **filing a false
   shortfall on the one document whose purpose is to be evidence.**
-- **A `default` on `Asset.cost_center`** (`CL140 - Rentals - SF`) -- the fifth blocker on the
+- `patches/set_company_depreciation_cost_center.py` -- the fifth blocker on the
   ER-2026-420503 form, and the only one static analysis could not have found. Creating the
   ten real rental Assets surfaced it: `Asset.validate_cost_center()` throws unless the Asset
   carries a cost centre or the Company has a depreciation cost centre, and this site had
-  **neither**. It is invisible in `asset.json` because the field is not `reqd` -- the
-  requirement lives in the controller and depends on company configuration.
+  **neither**. It is invisible in `asset.json` because `cost_center` is not `reqd` -- the
+  rule lives in the controller and depends on company configuration.
 
 ### Notes
 
@@ -45,19 +45,209 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No data migration: adding an option to a Select leaves existing rows alone (unlike
   *renaming* one, which freezes every row holding the old value), and there are zero Rental
   Inspections on production in any case.
-- **The cost-centre default is a `default`, not a client script,** because
-  `Document.insert()` calls `_set_defaults()` -- so it reaches API and script-created Assets
-  as well as the desk form. `CL140 - Rentals - SF` already existed, alongside
-  `14000 - Rental Fountains - SF` in the chart of accounts: the accounting side of the rental
-  business was set up long before the operational side, on both the account and the cost
-  centre.
-- **It defaults EVERY Asset to the rentals cost centre, not only rental ones**, and that is a
-  deliberate trade rather than an oversight. All ten Assets on this site are the rental fleet
-  and there is exactly one Asset Category, so it is correct for 100% of them today, and a
-  `default` is a starting value the user can change rather than a constraint. The alternative
-  -- setting `Company.depreciation_cost_center` -- fixes it for every asset at once but is a
-  company-wide accounting decision that belongs to Finance, not to this change. **Revisit
-  this when a second Asset Category appears.**
+- **The cost-centre fix is on the Company, not a `default` on `Asset.cost_center`.** The
+  Property Setter was written first and deliberately replaced. It worked, but it stamped
+  **every** Asset with the rental fleet's cost centre -- correct for all ten Assets that
+  exist today and wrong the moment a vehicle or a laptop becomes one, *silently*, because a
+  default reads as a considered choice rather than a fallback. The Company field is the
+  fallback ERPNext designed for exactly this and it layers correctly: an Asset that knows its
+  own cost centre carries it (each rental Asset holds `CL140 - Rentals - SF`), and anything
+  else falls back company-wide rather than to a guess about what kind of asset it is.
+- **`Main - SF`, and only into an empty field.** It is already the Company's `cost_center` and
+  `round_off_cost_center`, it is a leaf (group cost centres are rejected outright by
+  `validate_cost_center`, so seeding one would swap this blocker for a less obvious one), and
+  it is **neutral across asset types** -- which is the whole reason for preferring it to the
+  per-asset default. Where depreciation actually posts is a Finance decision, so the patch
+  writes only when the field is empty and never replaces a chosen value. Re-running is a
+  no-op.
+- The discarded Property Setter never reached production -- it existed only on this unmerged
+  branch -- so removing it from `property_setter.json` needs no deletion patch. (Removing a
+  fixture record normally only stops managing it; the row survives in the database.)
+
+## [1.458.0] - 2026-09-14
+
+### Added
+
+- **A period review that computes its own numbers** (WI-075 sub-phase J). ERPNext generates a
+  `Quality Review` on a cadence and copies the goal's objectives into it, then stops: the review
+  arrives with targets and blank actuals and somebody types a verdict. Seven metrics are now
+  computed from the records sub-phases D through I create — first-pass yield, failed checks,
+  non-conformances raised, Critical non-conformances, open punch items, fixes that failed
+  re-verification, and average days to close an action.
+- **The company floor rule.** A project-specific goal may only meet or exceed the company-wide
+  target for the same measure. `Quality Settings.company_floor_enforcement` is Off / Warn / Block
+  and ships on **Warn**.
+- **The Annual review cadence**, which ERPNext cannot run — see the notes.
+- **An auto-built Quality Meeting agenda** from what the period actually holds: failed reviews,
+  open Critical non-conformances, fixes that were reopened, overdue corrective actions. Only when
+  the agenda is empty, and it never invents a heading — an empty period produces one line saying
+  the records hold nothing that needs the meeting.
+- `quality/goals.py` (frappe-free, 50 tests) and `quality/reviews.py`; 20 Custom Fields and 2
+  Property Setters.
+
+### Notes
+
+- **All three ways of getting a quality metric wrong report good news, which is why they are
+  tests and not comments.**
+  - **An empty period divides by zero and rounds up to perfect.** First-pass yield over a quarter
+    with no inspections is undefined; the obvious implementation returns 100%, and that number is
+    then the one on the wall. Every metric returns a **sample** alongside its value and a sample
+    of zero makes the verdict `Open`. For a count metric the sample is the *activity level*, not
+    the count — zero non-conformances across fifty inspections is good news, zero across zero
+    inspections is no news, and the two must not produce the same green tick.
+  - **Half the metrics are better when smaller**, and core's `Quality Goal Objective` carries no
+    direction. The obvious comparison marks "NCRs raised: target 2" as failed every time the
+    company does well. Direction comes from the metric definition, not from a per-row field
+    anybody can mis-set, and an unknown metric has **no** direction rather than a default —
+    a default is the silent inversion.
+  - **`target` is a `Data` field.** `95%`, `<= 2`, `2 per project` and `two` all get typed into
+    it. An unreadable target treated as zero would mark a lower-is-better goal Passed forever, so
+    it reads as `None`, the verdict is `Open`, and saving the goal says so out loud.
+  - Negative-tested: removing the empty-sample guard and defaulting the direction fails three
+    tests between them.
+- **This app owns the Annual cadence and only that one.** ERPNext's daily
+  `quality_review.review()` branches on Daily, Weekly, Monthly and Quarterly and has no Annual
+  branch, so an Annual goal would generate nothing, forever, with no error. `goals.review_due`
+  **raises** if asked about any of the other four rather than returning `False`: a `False` is a
+  correct-looking answer to a question this module must not be asked, and answering it is how a
+  second review would come to sit beside every one core made, on the same goal, the same day. The
+  sweep also dedupes per goal per day, which core's own `create_review` does not.
+- **The review's period ends the day before it was generated**, so a review reports the interval
+  that finished rather than one a day old — and the same inspection cannot land in two
+  consecutive periods depending on the hour the scheduler ran.
+- Core's `set_status()` is called **again** after the actuals land. It already ran during core's
+  own validate, before any actual existed, so without the second call the parent would keep the
+  verdict it reached on empty rows.
+- No class override was needed for `Quality Goal`: core's `QualityGoal.validate` is literally
+  `pass`, unlike `Quality Action`'s one-liner that had to be replaced in v1.451.0.
+- Adding `Annual` to the frequency options is **additive**, so it needs no empty-table guard —
+  a new option never invalidates a stored value. A test asserts the original five survive.
+
+### Fixed
+
+- **`Quality Meeting` could hold one meeting per calendar day, site-wide.** Its autoname was
+  `format:QA-MEET-{YY}-{MM}-{DD}`, so a second meeting on the same day collided on the name — and
+  with an Ad Hoc meeting type now offered, that is a plausible Tuesday. A counter is appended.
+  Changed now because the table is still empty and no record has to be renamed.
+- `Quality Action` gained `custom_closed_on`, stamped on the transition that actually closes it.
+  Days-to-close could otherwise only be guessed from `modified`, which any later edit moves — so
+  the metric would drift quietly upward for every action somebody reopened to add a note.
+
+
+## [1.457.0] - 2026-09-14
+
+### Added
+
+- **Strawman inspection checklists for every milestone that had none** — Design, Events, Service,
+  Products/Controls Fab, and the three Build milestones sub-phase C left empty. 17 sections, 110
+  checks, 16 templates. Requested as drafts to correct rather than a blank page.
+- `patches/seed_draft_inspection_templates.py`, and the content as data in
+  `quality/draft_catalog.py`. Also creates five UOMs ERPNext does not ship — pH, ppm, mV, Volt,
+  PSI — because a Measurement check with no unit cannot have its bounds compared, which turns a
+  measured reading back into an opinion.
+
+### Notes
+
+- **Every template is created `Draft`, and that is the whole safety property.** A Draft template
+  generates nothing: `generate_inspection` refuses a non-Active template and the due sweep counts
+  only Active ones, so each milestone goes on reporting *due and blocked* exactly as it did
+  before this ran. **Setting a template Active is the act of adopting it**, done by a named
+  person who has read it. Nobody can be handed one of these by accident. Asserted two ways in
+  `tests/test_draft_templates.py` and negative-tested by flipping the seed to Active.
+- **This does not overturn the reasoning in sub-phases C and I.** A checklist carries the
+  authority of the company that issued it, an inspector works through it assuming somebody chose
+  those items on purpose, and an invented one is indistinguishable from a real one right up until
+  it fails to catch something. The Draft gate is what lets a strawman exist without ever being
+  mistaken for the standard of care.
+- **Three of the four sets are not invented.** They are lifted from what this company has already
+  written down elsewhere in this system, and every item records where in `reference_standard`:
+  - **Service** — Sapphire's own `Sapphire Maintenance Section` records, live on production since
+    June. The chemistry ranges are theirs verbatim (pH 7.2–7.8, free chlorine 1.0–3.0 ppm, ORP
+    650–750 mV, total alkalinity 80–120 ppm), and "GFCI protection verified" is mandatory here
+    because it is mandatory there. Those four ranges are pinned by a test, so a later "tidy-up"
+    cannot quietly turn a sourced draft into an invented one.
+  - **Design** — the `Water Feature Design` model in `water_engineering`: its status ladder,
+    `blocker_count`, `issue_acks`, computed turnover against the code maximum, TDH against the
+    selected pump. Every gate asks whether that record already says what it needs to say.
+  - **Products** — the `Control Panel Design` model: NEMA rating, controller hardware, fuse and
+    interlock schedules, control voltages and `safe_state_on_power_up`.
+- **Events is the honest exception and says so on the record.** Nothing in this system describes
+  an event setup, so those three sections are drafted from the milestone descriptions and general
+  practice. Their `description` carries "DRAFTED WITHOUT AN INTERNAL SOURCE", and a test asserts
+  that none of their items carries a `reference_standard` — a citation on an invented item would
+  be a fabricated source, which is worse than no source.
+- `Build — Pre-Final (Systems Startup)` is deliberately **not** re-seeded. It is Active and it is
+  not a strawman: its six commissioning checks came from `docs/KPI_DASHBOARD_DESIGN.md`, written
+  by somebody who knew the trade. A test fails the build if the draft seed ever names it.
+- Insert-only and idempotent throughout. Running it twice creates nothing and, in particular,
+  will not reset a template somebody has already corrected and set Active.
+- **Nothing changes on prod when this deploys.** `quality_enabled` ships off, and every template
+  here is inert until a person adopts it.
+
+
+## [1.456.0] - 2026-09-14
+
+### Added
+
+- **Inspection milestones now actually come round** (WI-075 sub-phase I). Sub-phase C seeded
+  seventeen milestones each carrying a `trigger_basis`, and **nothing read it** — a Build project
+  could reach QA and sit there, and the pre-final commissioning check would happen only if
+  somebody remembered. `quality/due.py` decides whether a milestone is due; `quality/scheduling.py`
+  runs daily and tells each project manager what is ready on their jobs.
+- `api/quality_due.py` — `get_project_milestones`, `get_my_due_inspections` — and an
+  **Inspection milestones** button on the Project form showing every milestone with its state.
+
+### Notes
+
+- **The rule is "reached or passed", not equality, and that is not a refinement.**
+  `Project.custom_build_status` is a Select somebody types into, not a workflow. A project can go
+  from `Procurement` straight to `Ready for Install` in one save, and a trigger written as
+  `current == "QA"` was never true at any moment a sweep looked — the commissioning check never
+  comes up and the record afterwards is indistinguishable from a project that has not got there
+  yet. So a milestone is due once the project is at or beyond its trigger and stays due until an
+  inspection exists: **a project that skips a stage acquires an overdue inspection rather than
+  skipping one.** Negative-tested by downgrading the comparison to equality, which fails four
+  tests.
+- **A status that cannot be placed on the scale is reported, not swallowed.** Blank, renamed or
+  legacy values return `unknown` rather than "not due". The alternative makes the sweep report
+  clean forever, on every project, with nothing to investigate — the same failure direction as a
+  trailing-space check written in SQL.
+- **A due milestone with no checklist is still reported**, flagged `blocked`. Only the Build
+  commissioning list has ever been written down; the rest are Sapphire's own standard of care and
+  live in people's heads. A list that quietly omitted them would turn a gap in what the company
+  has recorded into a gap nobody can see, which is the failure this whole programme exists to end.
+- **It notices; it never acts.** The sweep reports that an inspection is due and does not generate
+  one, for the same reason severity is never guessed: a generated inspection reads as though a
+  person decided to inspect, and one that appeared on its own is a draft nobody owns, aging in a
+  list, looking like work in progress.
+- A calendar check that has never run is marked `first_time`. It is genuinely due, but "we have
+  never inspected this" is a different conversation from "this one is overdue", and folding them
+  together would page somebody about every Service project at once the day this is switched on.
+- Only a **submitted** inspection restarts a calendar cadence, and a **cancelled** one never marks
+  a milestone done. An abandoned draft would otherwise buy another ninety days of silence.
+- The status scale is read from `Project.custom_build_status` meta rather than copied into the
+  module. A copy would be a second definition of the company's build sequence that nothing keeps
+  in step with the first, and the drift would be silent; a test fails the build on a hardcoded
+  option name.
+- One digest per manager per sweep rather than one email per project, and a milestone is mentioned
+  again at most weekly. The due list is the durable record and is always there to read; the email
+  is only the prompt, and a daily prompt about something already decided is how a mailbox rule
+  gets written.
+- `critical_alerts._project_manager` is now the public `project_manager_user`, so the rule "the PM
+  is `custom_project_owner` → `Employee.user_id`" has one definition rather than two.
+- **Nothing changes on prod when this deploys.** `quality_enabled` and `notifications_enabled`
+  both ship off, and the sweep returns immediately while they are.
+
+### Known gap
+
+- **Master checklists still exist only for Build commissioning.** Sub-phase I was planned as
+  "milestones and master templates for Design, Events, Service and Products"; the milestones were
+  already seeded in C, and the templates are not a build problem. The Design review gates, the
+  Events setup and teardown checks, the Service pre- and post-service checks and the Controls Fab
+  panel checks are Sapphire's standard of care, nobody has written them down, and an invented
+  checklist carries the authority of a real one right up until it fails to catch something. Those
+  milestones therefore report as **due and blocked**, which is the honest state and is visible on
+  the Project form rather than hidden.
 
 ## [1.455.0] - 2026-09-14
 
