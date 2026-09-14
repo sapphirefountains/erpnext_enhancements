@@ -1987,3 +1987,35 @@ def update_course_settings(course, patch):
         },
         "rejected": rejected,
     }
+
+
+@frappe.whitelist(methods=["POST"])
+def get_draft_preview(course):
+    """The draft's learner payload as JSON — the endpoint that did not exist.
+
+    Recorded as missing when the Training Lesson form button was built (v1.432.0):
+    the in-form preview needs the draft's learner payload as JSON, and nothing
+    returned it. ``/training_preview`` builds it server-side with ``_split_lesson``
+    and renders it into the template, so the only way to get it client-side was to
+    rebuild it in JavaScript — which is precisely the ~640 lines the classic builder
+    carried and the canvas port deliberately did not.
+
+    This returns **the same payload the preview page embeds**, from the same
+    builder, so there is one producer rather than two that drift. The gate travels
+    with it: an authoring role AND write permission on that specific course, which
+    is the gate ``get_builder_bootstrap`` uses — the payload contains the answer
+    key, so it is not the page-level developer-mode check that guards this.
+
+    It throws rather than returning ``None`` on a refusal. A client that received
+    ``null`` would have to guess between "no draft", "not yours" and "not a course",
+    and all three have different answers.
+    """
+    from erpnext_enhancements.www.training_preview import _draft_payload
+
+    payload = _draft_payload(course=course)
+    if payload is None:
+        frappe.throw(
+            _("There is no open draft of that course that you may preview."),
+            frappe.PermissionError,
+        )
+    return payload

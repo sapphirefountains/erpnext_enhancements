@@ -924,7 +924,7 @@ class TestThePreviewIsASecondModeNotAThirdTransport(unittest.TestCase):
         not, because developer mode is a deployment setting rather than a permission —
         and this returns the answer key."""
         src = self.PREVIEW_PY.read_text(encoding="utf-8")
-        at = src.index("def _draft_payload()")
+        at = src.index("def _draft_payload(")
         body = src[at:]
         self.assertNotIn("developer_mode", body)
         self.assertIn('frappe.has_permission("Training Course", "write"', body)
@@ -991,7 +991,7 @@ class TestThePreviewIsASecondModeNotAThirdTransport(unittest.TestCase):
         `training_author._materialize_lessons` both use the three-part order, and the
         preview has to agree with them or it is previewing a different course."""
         src = self.PREVIEW_PY.read_text(encoding='utf-8')
-        at = src.index('def _draft_payload()')
+        at = src.index('def _draft_payload(')
         body = src[at:]
         self.assertIn("chapter_key asc, idx_in_chapter asc, creation asc", body)
         # The chapters query legitimately orders by `idx` — Training Chapter IS a
@@ -1012,7 +1012,7 @@ class TestThePreviewIsASecondModeNotAThirdTransport(unittest.TestCase):
         The server builds the rows exactly as `_materialize_lessons` builds them for
         `toc_json` at publish, and the template passes them through."""
         src = self.PREVIEW_PY.read_text(encoding='utf-8')
-        at = src.index('def _draft_payload()')
+        at = src.index('def _draft_payload(')
         body = src[at:]
         for field in ("lesson_key", "chapter_key", "has_quiz", "blocks"):
             with self.subTest(field=field):

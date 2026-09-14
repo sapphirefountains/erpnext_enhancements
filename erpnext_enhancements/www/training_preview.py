@@ -55,7 +55,7 @@ def get_context(context):
 	return context
 
 
-def _draft_payload():
+def _draft_payload(course=None):
 	"""The SECOND mode: a real draft lesson, rendered by the real player.
 
 	With no request args this returns None and the page is exactly what it has always
@@ -84,7 +84,11 @@ def _draft_payload():
 	the canned lesson is a preview of the wrong thing, so the template says which mode
 	it is in rather than leaving the author to infer it from the content.
 	"""
-	course = (frappe.form_dict.get("course") or "").strip()
+	# The argument wins when there is one. The page passes nothing and keeps
+	# reading the query string; `training_author.get_draft_preview` passes the
+	# course explicitly, because an endpoint that took its argument out of
+	# `form_dict` would be reading whatever the caller happened to put there.
+	course = (course or frappe.form_dict.get("course") or "").strip()
 	if not course:
 		return None
 

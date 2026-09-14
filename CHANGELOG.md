@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.439.0] - 2026-09-13
+
+Training Phase 6, D15 part five. **The endpoint that did not exist.**
+
+### Added
+
+- **`training_author.get_draft_preview(course)`** — a draft's learner payload as
+  JSON. Recorded as missing when the Training Lesson form button was built in
+  v1.432.0, and the reason that button opens `/training_preview` in a tab rather
+  than mounting a player in the form: nothing returned the payload, because
+  `/training_preview` builds it server-side and renders it into the template. The
+  only way to get it client-side was to rebuild it in JavaScript — precisely the
+  ~640 lines the classic builder carried and the canvas port deliberately did not.
+
+  It returns **the same payload the preview page embeds, from the same builder**, so
+  there is one producer rather than two that drift. `_draft_payload()` gained an
+  explicit `course` argument: the page keeps reading the query string, and the
+  endpoint passes the course rather than reading whatever a caller happened to leave
+  in `form_dict`.
+
+  The gate travels with the payload — an authoring role **and** write permission on
+  that specific course, the gate `get_builder_bootstrap` uses, because the payload
+  contains the answer key. It is not the page-level developer-mode check, which is a
+  deployment setting rather than a permission. And it throws rather than returning
+  `null`: a client handed `null` would have to guess between "no draft", "not yours"
+  and "not a course", and those have different answers.
+
+### Fixed
+
+- **Three tests anchored on `def _draft_payload()` including its empty parentheses**,
+  and broke the moment the builder took an argument. Re-anchored on the opening
+  paren — an assertion about a function should not be an assertion about its arity.
+
 ## [1.438.0] - 2026-09-13
 
 Training Phase 6, D15 part four. **The canvas can be used by somebody without a
