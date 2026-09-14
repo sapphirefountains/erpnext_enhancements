@@ -1,0 +1,27 @@
+[
+  {
+    "origin": ["https://erp.sapphirefountains.com"],
+    "method": ["GET", "HEAD"],
+    "responseHeader": [
+      "Content-Type",
+      "Content-Length",
+      "Content-Range",
+      "Accept-Ranges",
+      "Range"
+    ],
+    "maxAgeSeconds": 3600
+  },
+  {
+    "origin": ["https://erp.sapphirefountains.com"],
+    "method": ["POST", "PUT"],
+    "responseHeader": [
+      "Content-Type",
+      "Content-Range",
+      "Range",
+      "Location",
+      "ETag",
+      "x-goog-resumable"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]
