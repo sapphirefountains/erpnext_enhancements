@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.452.1] - 2026-09-14
+
+### Changed
+
+- Version references inside the WI-075 series now name the versions it actually shipped. The
+  branch was renumbered +2 minor on rebase, because `main` took 1.444.0 and 1.445.0 for the
+  Project Brief and quiz-answer work while this was being built. Patch docstrings, `patches.txt`
+  comments, the module README headings and the work item all said the old numbers.
+  Docs only; no executable behaviour changes.
+  Note what was deliberately **not** rewritten: `project_enhancements/README.md`'s
+  "Project Brief sections (v1.444.0)" is `main`'s own reference and is correct as it stands, and
+  every historical citation in these files — the v1.280.3 backfill that logged a success while
+  matching nothing, the v1.395.0 half-installed deploy, the v1.277.3 unsaveable settings page —
+  points at a real release and would have become fiction if shifted with the rest.
+
+
 ## [1.452.0] - 2026-09-14
 
 ### Added

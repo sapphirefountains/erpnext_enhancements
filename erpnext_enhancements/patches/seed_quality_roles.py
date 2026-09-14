@@ -1,4 +1,4 @@
-"""Seed the five roles the Quality module's approval chain names (v1.444.0, WI-075).
+"""Seed the five roles the Quality module's approval chain names (v1.446.0, WI-075).
 
 The build spec's approval chain names President, Production Manager, Account Executive,
 Quality Inspector and Controller. **None of them exists on this site.** Prod carries the

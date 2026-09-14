@@ -30,7 +30,7 @@ erpnext_enhancements.patches.refresh_module_map
 # a third DocType and the collision would still stand. Idempotent from the DB state.
 erpnext_enhancements.patches.rename_plaid_settings_doctype
 
-# v1.449.0 (WI-075 sub-phase E) -- BOTH run pre_model_sync, and the ordering is the point:
+# v1.451.0 (WI-075 sub-phase E) -- BOTH run pre_model_sync, and the ordering is the point:
 # fixtures (and therefore the Property Setters that narrow these Selects) are applied AFTER
 # patches, so a stored value must be remapped while the old options are still in force. A
 # value outside a Select's options makes the row permanently unsaveable and no ignore_* flag
@@ -903,7 +903,7 @@ erpnext_enhancements.patches.resync_training_workspace_split
 # the custom_blocks CHILD TABLE, not the content blob, so a content-only placement
 # renders an empty space with no error at all.
 erpnext_enhancements.patches.resync_my_training_dashboard
-# v1.444.0 (WI-075) -- the Quality module's first release. The five roles the build spec's
+# v1.446.0 (WI-075) -- the Quality module's first release. The five roles the build spec's
 # approval chain names exist nowhere on this site; they must be created before fixture sync
 # because fixture files import in ALPHABETICAL order, so custom_docperm.json lands before
 # role.json and a DocPerm naming a missing Role is dropped in silence. Note the docstring's
@@ -921,7 +921,7 @@ erpnext_enhancements.patches.seed_products_project_type
 # the next save, so the first save you need is the one that fails. Fills only where tabSingles
 # has no row, never over a stored falsy value.
 erpnext_enhancements.patches.backfill_quality_settings_defaults
-# v1.447.0 (WI-075 sub-phase C) -- the inspection milestone catalog: where in a project's life
+# v1.449.0 (WI-075 sub-phase C) -- the inspection milestone catalog: where in a project's life
 # an inspection is due, for all five project stages. Catalog only; sub-phase D is what reads a
 # milestone and generates an inspection. Build and Products triggers name values of the
 # EXISTING Project.custom_build_status Select rather than inventing a parallel state machine,

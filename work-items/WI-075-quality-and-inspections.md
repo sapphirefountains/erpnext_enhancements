@@ -1,6 +1,6 @@
 # WI-075 — Scope that can be inspected, and failures that get re-checked
 
-**Status:** in progress — A, B1 and B2 shipped, v1.444.0 → v1.446.0
+**Status:** in progress — A through F shipped, v1.446.0 → v1.452.0 (renumbered on rebase; `main` had taken 1.444/1.445)
 **Branch:** `claude/quality-inspections-planning-691339` (off `main` at v1.443.0)
 **Tracked:** PRJ-00580, TASK-2026-02013 with a child per deliverable (A–N)
 **Decides:** [ADR-0012](../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md)

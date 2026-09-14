@@ -1,4 +1,4 @@
-"""Refuse to narrow a Select once rows depend on the wider one (v1.449.0, WI-075 E).
+"""Refuse to narrow a Select once rows depend on the wider one (v1.451.0, WI-075 E).
 
 Sub-phase E replaces the ``status`` options on ``Non Conformance`` and ``Quality Action``. That
 is free **only** while those tables are empty, which production was on 2026-09-14. It stops

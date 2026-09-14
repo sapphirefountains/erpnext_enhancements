@@ -1,4 +1,4 @@
-"""Remap core's status literals before the new options replace them (v1.449.0, WI-075 E).
+"""Remap core's status literals before the new options replace them (v1.451.0, WI-075 E).
 
 ``Non Conformance`` ships ``Open / Resolved / Cancelled`` and ``Quality Action`` ships
 ``Open / Completed``. Sub-phase E replaces both with the lifecycles the build spec describes,

@@ -31,7 +31,7 @@ Related code outside this folder:
 - `dashboard_overrides.py` (repo root) — adds a "Travel" connections group to the **Employee** dashboard. Wired via `override_doctype_dashboards["Employee"]`.
 - The dashboard UI is the **"Projects Dashboard" Custom HTML Block** (`custom_html_blocks/projects_dashboard.{js,html,css}`); the only front-end helpers left under `public/js/project_enhancements/dashboard_components/` are the shared `column_selector.js` / `column_resizer.js` — see the [public README](../public/README.md#project-dashboard-components).
 
-## Scope of Work (WI-075, v1.445.0)
+## Scope of Work (WI-075, v1.447.0)
 
 `Project Scope of Work` is the scope authored once and locked — one submitted record per
 project, whose `Scope Acceptance Criterion` rows are the measurable standards an inspector

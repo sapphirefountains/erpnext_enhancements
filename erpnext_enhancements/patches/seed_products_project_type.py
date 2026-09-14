@@ -1,4 +1,4 @@
-"""Add the ``Products`` Project Type, which Controls Fab inspections key to (v1.444.0, WI-075).
+"""Add the ``Products`` Project Type, which Controls Fab inspections key to (v1.446.0, WI-075).
 
 The Quality build spec lists five project types — Design, Build, Controls Fab, Events and
 Maintenance — and **two of them do not exist in those words on this site**. Measured on

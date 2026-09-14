@@ -1,4 +1,4 @@
-"""Seed the inspection milestone catalog (v1.447.0, WI-075 sub-phase C).
+"""Seed the inspection milestone catalog (v1.449.0, WI-075 sub-phase C).
 
 The points in a project's life where an inspection is due, taken from the build spec's
 "category-specific configuration" table. This is the catalog only — sub-phase D is what reads a
@@ -12,7 +12,7 @@ the spec uses:
   rename buys vocabulary rather than capability and would be a data migration across the largest
   category on the site.
 * **Controls Fab** has no project type at all, so it rides on **Products**, added by
-  ``seed_products_project_type`` in v1.444.0.
+  ``seed_products_project_type`` in v1.446.0.
 * **Design** milestones are review gates rather than physical checklists. A deficiency still
   runs through the same NCR and Quality Action machinery; only the shape of the checks differs.
 * **Service**'s recurring check is **calendar-driven rather than project-stage driven**, which
