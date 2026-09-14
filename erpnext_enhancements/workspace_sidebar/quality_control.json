@@ -19,6 +19,18 @@
    "type": "Link"
   },
   {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "clipboard",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Run an inspection",
+   "link_to": "inspection-wizard",
+   "link_type": "Page",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
    "child": 0,
    "collapsible": 1,
    "icon": "triangle-alert",
@@ -145,7 +157,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-14 10:00:00.000000",
+ "modified": "2026-09-14 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Quality",
  "name": "Quality Control",

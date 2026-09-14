@@ -934,3 +934,9 @@ erpnext_enhancements.patches.seed_inspection_milestones
 # standard of care and nobody has written them down, and an invented checklist carries the
 # authority of a real one right up until it fails to catch something.
 erpnext_enhancements.patches.seed_commissioning_section
+# Re-sync the Quality Control workspace so the new "Run an inspection" shortcut actually
+# arrives. Workspaces are TIMESTAMP-gated by import_file (DocTypes are hash-gated), so a JSON
+# whose `modified` is not newer than the stored row is skipped on every migrate -- and a row
+# somebody hand-edited in the Desk is newer forever, so the file loses silently from then on.
+# The JSON's `modified` is bumped alongside this; reload_doc(force=True) covers the rest.
+erpnext_enhancements.patches.resync_quality_control_workspace
