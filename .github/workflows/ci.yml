@@ -612,6 +612,19 @@ jobs:
       # release folded into it was invisible on every project for a week.
       - name: Project toolbar grouping (bench-free, source-level)
         run: python -m unittest erpnext_enhancements.tests.test_project_toolbar -v
+      # Its own step rather than appended above: that suite is filesystem-only and
+      # this one installs a frappe stub, which is the split CLAUDE.md warns about.
+      #
+      # What it guards is a feature whose failures are all silent. The brief's
+      # type-specific sections are chosen from BOTH `project_type` and the
+      # `custom_value_stream` rows, and the simplification to `project_type` alone
+      # would delete the Products brief outright -- Products is a value stream that
+      # has never been a Project Type, and every Products job on prod is stage
+      # Design. A missing section still prints; so does a line blanked by a renamed
+      # Custom Field. Neither has a symptom anybody reports, so this suite runs the
+      # builders and checks every fieldname they read against the JSON defining it.
+      - name: Project Brief type sections (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_project_brief_sections -v
       - name: Water engineering (pure engine + design issues + controller helpers)
         run: >-
           python -m unittest

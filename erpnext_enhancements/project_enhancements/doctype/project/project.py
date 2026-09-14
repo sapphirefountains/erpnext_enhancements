@@ -3,6 +3,8 @@
 import frappe
 from frappe.utils import nowdate, strip_html
 
+from erpnext_enhancements.project_enhancements import project_brief
+
 
 @frappe.whitelist()
 def get_project_brief_data(project_name):
@@ -16,6 +18,14 @@ def get_project_brief_data(project_name):
 	date, contract type, fee/contingency, etc.) are returned blank so the
 	brief renders as a fillable form, just like the printed original.
 
+	Everything above is the half of the brief that is the same for every job.
+	The other half -- the Events dates, the design phase fees, the maintenance
+	agreement, the equipment list -- comes back in ``sections``, one per line of
+	work this project involves. See
+	:mod:`erpnext_enhancements.project_enhancements.project_brief`, in particular
+	for why "what kind of job is this" is not a question ``project_type`` alone
+	can answer.
+
 	Args:
 	    project_name (str): The Project document name (e.g. "PROJ-0567").
 
@@ -23,11 +33,25 @@ def get_project_brief_data(project_name):
 	    dict: Brief fields keyed for the client-side renderer.
 	"""
 	doc = frappe.get_doc("Project", project_name)
+	# Whitelisted and login-only, so gate on Project read explicitly: the brief
+	# now carries contract fees, committed purchase-order value and maintenance
+	# terms, and without this any authenticated user could read them by guessing
+	# a project name. Same gate as `procurement_project.get_receivable_purchase_orders`.
+	doc.check_permission("read")
 
 	contract_value = doc.get("custom_project_dollar_amount") or 0
 
 	# Project notes is a Text Editor (HTML); strip tags for a clean brief.
-	description = doc.get("custom_project_description") or strip_html(doc.get("notes") or "")
+	# `custom_general_scope_description` sits between the two as the Scope tab's
+	# own "Detailed Scope Description" -- the field people actually fill in (210
+	# of 354 Service jobs, against a `custom_project_description` that is a one-
+	# line Data field), so the brief falls through to it before resorting to the
+	# catch-all notes.
+	description = (
+		doc.get("custom_project_description")
+		or strip_html(doc.get("custom_general_scope_description") or "")
+		or strip_html(doc.get("notes") or "")
+	)
 
 	data = {
 		"project_number": doc.name,
@@ -48,6 +72,11 @@ def get_project_brief_data(project_name):
 		"general_contractor": "",
 		"gc_contact": "",
 		"address_lines": [],
+		# What kind of job this is, printed in the header so the sheet says what
+		# it is, and used by the client to caption the type-specific sections.
+		"project_stage": doc.get("project_type") or "",
+		"work_streams": project_brief.applicable_types(doc),
+		"sections": project_brief.brief_sections(doc),
 	}
 
 	customer = doc.get("customer")
