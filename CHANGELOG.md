@@ -7,6 +7,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.434.0] - 2026-09-13
+
+Training Phase 6, D14. **The rail** — one sidebar across the module's Desk surfaces, and a
+**My Trainings** list in it.
+
+### Added
+
+- **`TR.deskNav`** ([`desk_nav.js`](erpnext_enhancements/public/js/training/desk_nav.js) +
+  [`desk_nav.css`](erpnext_enhancements/public/css/training/desk_nav.css)) — the shared
+  Training rail, mounted into `page.sidebar` on both `/desk/learn` and
+  `/desk/training-insights`, which are now two-column pages.
+
+  It is one file rather than a method on each page for the usual reason: two rails agree
+  for exactly as long as somebody keeps editing both, and a nav that is merely out of date
+  still renders.
+
+- **My Trainings** — the courses assigned to *you*, with due date and progress, each
+  opening at `/desk/learn/<COURSE>`. Until now that list existed only inside the catalogue
+  view, below announcements, points, cohorts, live sessions, evaluations and submissions:
+  a learner halfway through a course scrolled past six blocks to find the thing they came
+  for, and from anywhere else in the Desk had to find the page again first.
+
+  **It names no endpoint.** The list is the `assigned` array from the
+  `get_learner_bootstrap` payload the player already fetched, handed to the rail by
+  `setLearner`. The obvious alternative — a `frappe.db.get_list` for open assignments —
+  would put a second, client-side answer to "which courses are mine" beside the server's,
+  and "open" and "overdue" are *predicates* defined in `api/training._open_assignments`:
+  a nullable-date filter written in the browser is the exact shape that once turned "no
+  expiry" into "expired" across this module. `/desk/training-insights` holds no learner
+  payload, so its rail offers My Trainings as a **door** rather than a list — `null` and
+  `[]` are deliberately different states, because telling a manager they owe no training is
+  a statement about them and very likely false.
+
+- **A role-gated Manage section** — Insights, Course canvas, Courses, Assignments, Work to
+  grade, Sessions, Settings. `MANAGER_ROLES` and `AUTHOR_ROLES` are asserted against the
+  `roles` arrays on `training-insights.json` and `training-canvas.json` themselves: a link
+  offered to somebody the Page refuses lands them on "Not permitted", which reads as the
+  feature being broken rather than as not being theirs. A plain learner gets no Manage
+  heading at all, rather than an empty one.
+
+- **`tests/test_training_desk_nav.py`** (34 checks), wired into `ci.yml`. The two-way class
+  contract is the point of it — a class the script emits with no rule in the stylesheet
+  renders as an unstyled div, which is not an error and is visible only to a human looking
+  at the page, which is the failure `test_training_player_css_contract` was written for
+  after the player's scripts and stylesheet drifted into two different vocabularies.
+
+### Fixed
+
+- **Eight defects found by putting the diff through an adversarial review before merge,
+  all fixed here.** Five reviewers over independent dimensions, every finding then facing
+  two refuters with different lenses. Worth recording because three of them are invisible
+  to every check this repo has:
+
+  - **The stacked rail shrank to about 100px wide.** `align-self` is a *cross*-axis
+    property: the desktop rule sets `flex-start` so the rail does not match the height of
+    a long lesson, and the moment the container turns to `flex-direction: column` the same
+    declaration stops it matching the *width* of the page. Every symptom then reads as a
+    different bug -- the divider becomes a stray underline, the count badges sit against
+    their labels, and the two-line title clamp never engages.
+  - **A 1px dead zone between the two breakpoints.** The stylesheet said
+    `max-width: 991px` and the script `min-width: 992px`, so at any fractional width
+    between them -- which browser zoom produces routinely -- neither fired: an empty 232px
+    column whose only control was still hidden by the desktop rule, until the window was
+    resized. Now `991.98px`, frappe's own `media-breakpoint-down` value.
+  - **`HR Manager` could be offered three links it cannot open.** That role is in
+    `MANAGER_ROLES` because it is on `training-insights.json`; it is not on `learn.json`.
+    Every destination is now checked against what the person can actually open --
+    documents through `frappe.model.can_read`, Pages through `frappe.boot.allowed_pages` --
+    rather than inferred from the role that opened the section.
+  - **A late boot could drag the learner back.** Nothing cancels the boot chain and frappe
+    never removes the page div, so clicking Insights in the rail while the player was still
+    loading let the payload land on the hidden page, mount, go to the catalogue and
+    `set_route("learn")` over the top of the dashboard. Both `mount()` and the router
+    adapter now bail unless `/desk/learn` is still the current route.
+  - **A click made during the boot window was discarded whole.** `handle_route` returned on
+    `this.booting` and `mount()` then used the target captured when the boot *started*. It
+    now records the latest target unconditionally.
+  - **The loop guard never fired on a course.** The route side keyed on the ROUTE's view,
+    empty for `/desk/learn/<COURSE>`; the player side reports its own, `course`. So `|A|`
+    never equalled `course|A|` and only the URL comparison saved the normal path. Where it
+    showed was a race the rail made reachable: open course A, click B in the rail before A
+    lands, and A's late arrival writes the URL back to itself, re-enters with a
+    non-matching key and opens A a third time, then B does the same in reverse. One
+    `position_key()` now serves both directions.
+  - **Two of the new tests were vacuous**, both proven by mutation rather than by reading.
+    `test_the_rail_fails_independently_of_the_page` anchored on the first occurrence of
+    `desk_nav`, which is the asset-path constant at the top of the file, so the player
+    boot's own `.catch(` satisfied it -- deleting both rail catches left the suite green.
+    `test_the_rail_does_not_inherit_the_form_sidebar_width` was a bare
+    `assertIn("min-width: 0")` satisfied by a different rule, so the whole desktop
+    `.layout-side-section` block could be deleted and it still passed. Both are now
+    anchored inside the block they name, by a brace matcher written for the purpose.
+- **The rail stacks under 992px, and it had to be made to.** frappe lays `.layout-main` out
+  as `display: flex; flex-direction: row` at *every* width — it does not stack on its own —
+  and `.layout-side-section` carries `min-width: var(--form-sidebar-width)`, rising to
+  `calc(38vw - var(--sidebar-width))` under the `xl` breakpoint, because it is sized for the
+  **form** sidebar. Inherited, that would have handed 38% of a tablet to a nav and put a
+  permanent column beside the player on a phone, which is the device `player.css` says the
+  learner surface was built for. The rail states its own width, and below the desktop
+  breakpoint it is a closed `<details>` costing one line — whose `open` follows the viewport
+  rather than remembering a choice, since rotating a phone into landscape is not a request
+  to keep the menu shut.
+
+- **Two stale explanations in files this change touched.** `learn.js` still said the page
+  "does not write the address bar" and that `learn.json` ships `roles: [System Manager]`;
+  both stopped being true in v1.432.2 and v1.429.1 respectively, and the second is asserted
+  false by an existing test. `training/README.md` carried the same address-bar claim. A
+  comment that contradicts its own file is worse than no comment, because it is read as
+  current.
+
 ## [1.433.0] - 2026-09-13
 
 Training Phase 6, D10. **Chaptered video** — a clickable contents list inside a lesson

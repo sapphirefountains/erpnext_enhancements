@@ -30,20 +30,28 @@
 // URL, two destinations, no error in either. `tests/test_workspaces.py` fails the
 // build on it now.
 //
-// WHAT THIS PAGE DELIBERATELY DOES NOT DO YET:
-//   * it does not write the address bar. `boot.history = false`, and the deep link
-//     arrives through `boot.start` — the pair the preview harness already uses. So
-//     `/desk/learn/<course>/<lesson>` works from the first release while `route()`
-//     keeps a zero-line diff. URL writing is its own release.
-//   * it does not appear for learners. `learn.json` ships `roles: [System Manager]`;
-//     adding `Training Learner` is the rollout switch, thrown once a person has
-//     opened it on a real bench.
+// TWO THINGS IN THIS FILE ARE HISTORY RATHER THAN DESIGN, and both were once
+// written here as "not yet":
+//   * the address bar. `boot.history` is still false — this file never READS the
+//     URL, the Desk router does — but since v1.432.2 the player WRITES it through
+//     the adapter below. Those are two jobs, which is why one flag does not cover
+//     both.
+//   * the rollout switch. `learn.json` shipped `roles: [System Manager]` so the
+//     page could land dark; it carries `Training Learner` now.
+//
+// WHAT IT STILL DOES NOT DO: it renders no pixel of the learner surface itself,
+// and the rail beside it renders none either. Everything below the page head and
+// inside `.tl-desk-surface` is the player's.
 
 frappe.pages["learn"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
 		title: __("Training"),
-		single_column: true,
+		// The rail lives in `page.sidebar`, which only exists on a two-column page.
+		// See TR.deskNav: the Desk's own left sidebar lists WORKSPACES, so it can
+		// offer "My Training" as a destination and can never show the three courses
+		// this particular person owes.
+		single_column: false,
 	});
 	$(wrapper).addClass("tl-learn-page");
 	wrapper.learn = new LearnPage(page, wrapper);
@@ -66,6 +74,15 @@ const LEARN_ASSETS = [
 	"/assets/erpnext_enhancements/js/training/player.js",
 ];
 
+// The rail, loaded on its own chain. Chrome and player fail independently on
+// purpose: if the runtime cannot load, a learner can still reach their
+// certificates and a manager the dashboard; if the rail cannot load, the lesson
+// still opens. Two files rather than one — the script is useless unstyled.
+const LEARN_NAV_ASSETS = [
+	"/assets/erpnext_enhancements/css/training/desk_nav.css",
+	"/assets/erpnext_enhancements/js/training/desk_nav.js",
+];
+
 // Route segments under /desk/learn that name a VIEW rather than a course. Course
 // names come from a `TRN-CRS-` naming series so a collision is not currently
 // possible — which is exactly why it is written down rather than left to the series
@@ -81,6 +98,19 @@ class LearnPage {
 		// What the page last told the player to show, in the adapter's own key shape.
 		// Read by BOTH directions, which is what stops them driving each other.
 		this.showing = null;
+		// The same position as an object, for the rail. Kept beside `this.showing`
+		// rather than parsed back out of it: the key is a string built for equality,
+		// and splitting it again to find the course name would make the loop guard's
+		// format load-bearing for something that is not about the loop.
+		this.where = { view: "catalog", course: null };
+		// The latest position the ROUTE has asked for, kept current through the boot
+		// window so a click made while the player is still loading is not lost.
+		this.desired = null;
+		// The rail and the payload that fills it. Either can arrive first — the boot
+		// is a round trip and the rail is two files — so each hands what it has to
+		// the other when it lands.
+		this.nav = null;
+		this.nav_boot = null;
 		// The mount, with the same boot line the portal shell rendered. Not cosmetic:
 		// the runtime is six files and a round trip away, and an empty bordered box is
 		// indistinguishable from a page that has failed.
@@ -98,6 +128,45 @@ class LearnPage {
 		// listens for the jQuery "hide" event frappe fires on the outgoing page, the
 		// same idiom sales_pipeline.js uses for its polling timer.
 		$(wrapper).on("hide", () => this.destroy());
+
+		this.mount_nav();
+	}
+
+	// The deploy token every /assets URL this page pulls has to carry. "0" rather
+	// than an empty string: TR.loadAssets refuses an unversioned path, and failing
+	// loudly on a bootinfo with no version beats serving a year-old file from an
+	// immutable cache.
+	asset_version() {
+		return (frappe.boot.versions && frappe.boot.versions.erpnext_enhancements) || "0";
+	}
+
+	mount_nav() {
+		// Guarded rather than assumed. TR.loadAssets ships in the global desk bundle,
+		// so this is only reachable if that bundle failed to build or to load -- and
+		// an uncaught TypeError HERE is in the constructor, outside every promise
+		// chain, which would take the whole page down to save a sidebar.
+		if (!window.TR || typeof TR.loadAssets !== "function") return;
+		TR.loadAssets(LEARN_NAV_ASSETS, this.asset_version())
+			.then(() => {
+				if (typeof TR.deskNav !== "function") return;
+				this.nav = TR.deskNav({ page: this.page, active: this.where });
+				// Whichever landed first wins the race harmlessly: if the boot payload
+				// is already here the rail is filled immediately, and if it is not,
+				// mount() hands it over when it arrives.
+				if (this.nav_boot) this.nav.setLearner(this.nav_boot);
+			})
+			.catch(() => {
+				// Swallowed deliberately. The rail is navigation; the page is the
+				// lesson. A missing rail must not put an error where a course should
+				// be, and there is nothing a learner could do about it anyway.
+			});
+	}
+
+	// One place where the page's position changes, so the rail cannot disagree with
+	// the player about where the learner is.
+	mark(where) {
+		this.where = { view: where.view || null, course: where.course || null };
+		if (this.nav) this.nav.setActive(this.where);
 	}
 
 	destroy() {
@@ -125,14 +194,32 @@ class LearnPage {
 			if (route[2]) target.lesson_key = route[2];
 		}
 
+		// Recorded BEFORE any early return. The rail paints from two files while the
+		// player is still six files and a round trip away, so it is clickable during
+		// the boot window -- and a click in that window used to be discarded whole:
+		// handle_route returned on `this.booting` and mount() then used the target
+		// captured when the boot STARTED. Pressing "My record" while the page said
+		// "Loading training…" put the URL through /desk/learn/record and back, and
+		// landed on the catalogue.
+		this.desired = target;
+
 		if (this.player) {
 			this.apply_route(target);
 			return;
 		}
 		if (this.booting) return;
-		this.booting = this.boot(target).finally(() => {
+		this.booting = this.boot().finally(() => {
 			this.booting = null;
 		});
+	}
+
+	// Is this page still the one on screen? The boot chain outlives navigation --
+	// frappe creates the page div once and never removes it, and nothing cancels an
+	// in-flight fetch -- so a payload can arrive seconds after the learner has gone
+	// somewhere else. Mounting a player there would start a heartbeat and a <video>
+	// on a hidden page, which is the exact thing the "hide" teardown exists to stop.
+	is_current() {
+		return (frappe.get_route() || [])[0] === "learn";
 	}
 
 	// Moves an ALREADY-MOUNTED player, rather than re-booting it. A fresh boot per
@@ -147,14 +234,36 @@ class LearnPage {
 	// the player itself caused is recognised and dropped. frappe's own push_state
 	// declines a no-op URL too, but only after the route event has already fired.
 	apply_route(target) {
-		const key = `${target.view || ""}|${target.course || ""}|${target.lesson_key || ""}`;
+		const key = this.position_key(target);
 		if (key === this.showing) return;
 		this.showing = key;
+		this.mark(target);
 		if (target.course) {
 			this.player.openCourse(target.course, target.lesson_key || null);
 		} else {
 			this.player.go(target.view || "catalog");
 		}
+	}
+
+	// THE ONE KEY, computed from a route on one side and from the player's own state
+	// on the other -- and they have to agree, because the whole loop guard is a
+	// string comparison between them.
+	//
+	// They did not. The route side used the ROUTE's view, which is empty for
+	// /desk/learn/<COURSE>; the player side reports its own view, which is "course".
+	// So `|A|` never equalled `course|A|` and the first guard never fired on a
+	// course at all -- the normal path was saved only by the second guard below,
+	// which compares the URLs. Where it showed was a race: open course A, click
+	// course B in the rail before A lands, and A's late arrival writes the URL back
+	// to itself, which re-enters here with a key that does not match and opens A a
+	// third time; B then does the same in reverse. With the keys agreed, the stale
+	// arrival is recognised and stops there.
+	position_key(target) {
+		if (target.course) {
+			const lesson = target.lesson_key || target.lesson || "";
+			return `${lesson ? "lesson" : "course"}|${target.course}|${lesson}`;
+		}
+		return `${target.view || "catalog"}||`;
 	}
 
 	// The other half: what the player tells the Desk. Returns the adapter handed to
@@ -169,6 +278,15 @@ class LearnPage {
 	router_adapter() {
 		return {
 			write: (next) => {
+				// The player settles on a view and says so -- but this can arrive on a
+				// page the learner has already left, because nothing cancels the boot
+				// chain and frappe never removes the page div. Writing the URL then
+				// DRAGS THEM BACK: click "Insights" in the rail while the player is
+				// still loading, and the bootstrap lands a second later on the hidden
+				// page, mounts, goes to the catalogue and set_route's "learn" over the
+				// top of the dashboard they asked for.
+				if (!this.is_current()) return;
+
 				const parts = ["learn"];
 				if (next.course) {
 					parts.push(next.course);
@@ -179,11 +297,10 @@ class LearnPage {
 					parts.push(next.view);
 				}
 
-				const key = `${next.view || ""}|${next.course || ""}|${
-					next.view !== "course" ? next.lesson || "" : ""
-				}`;
+				const key = this.position_key(next);
 				if (key === this.showing) return;
 				this.showing = key;
+				this.mark(next);
 
 				// Compared before routing as well: a set_route to where we already are
 				// still fires a route event, and that event arrives here as a fresh
@@ -195,12 +312,10 @@ class LearnPage {
 		};
 	}
 
-	boot(target) {
+	boot() {
 		this.page.set_indicator(__("Loading…"), "blue");
-		// Same source the authoring canvas uses. "0" rather than an empty token: an
-		// unversioned /assets URL is refused by TR.loadAssets, and failing loudly on a
-		// bootinfo that has no version beats serving a year-old player.
-		const version = (frappe.boot.versions && frappe.boot.versions.erpnext_enhancements) || "0";
+		// Same source the authoring canvas uses.
+		const version = this.asset_version();
 		// Native promises the whole way down. TR.loadAssets and the transport both
 		// return real Promises; wrapping them in $.when would hand back a jQuery
 		// Deferred whose .then() has subtly different semantics from the spec's, and
@@ -215,11 +330,20 @@ class LearnPage {
 				this.transport = TR.makeTransport({ csrf: () => frappe.csrf_token });
 				return this.transport.bootstrap({});
 			})
-			.then((boot) => this.mount(boot || {}, target))
+			.then((boot) => this.mount(boot || {}))
 			.catch((err) => this.fail(err));
 	}
 
-	mount(boot, target) {
+	mount(boot) {
+		// Left the page while this was in flight. Bail rather than mount: the next
+		// visit boots again, which costs one round trip, where mounting here would
+		// leave a heartbeat and possibly a downloading <video> running behind
+		// whatever the learner actually went to look at.
+		if (!this.is_current()) return;
+		// The LATEST target, not the one this boot started with. handle_route keeps
+		// this current through the whole boot window.
+		const target = this.desired || { course: null, lesson_key: null, view: null };
+
 		// history:false plus an explicit start is how the preview harness hosts the
 		// same player. It keeps route() at a zero-line diff for this release: the
 		// player neither reads nor writes the address bar, and the Desk router owns
@@ -236,6 +360,21 @@ class LearnPage {
 			boot.view = target.view;
 		}
 		boot.translate = (text) => __(text);
+
+		// The rail's only data, and it costs nothing: `assigned`, `is_staff` and
+		// `signoffs_to_record` are already in the payload the player is about to boot
+		// from. A sidebar that fetched its own copy would be a second answer to
+		// "which courses are mine", derived in the browser, and the two would
+		// disagree the first time an assignment changed mid-session.
+		this.nav_boot = boot;
+		if (this.nav) this.nav.setLearner(boot);
+		// Marked BEFORE the player is built, so a deep link highlights its course on
+		// the first paint rather than after the fetch. The player's own adapter
+		// overwrites this the moment it settles — which is the point of the ordering:
+		// this is the page's guess, and the player's statement is the truth. Doing it
+		// the other way round leaves the rail pointing at a course the player failed
+		// to open.
+		this.mark(target);
 
 		this.destroy();
 		this.player = new TR.Player(this.root, boot, this.transport);

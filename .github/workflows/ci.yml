@@ -793,6 +793,17 @@ jobs:
       # cross-origin iframe with no currentTime and no seek.
       - name: Training video chapters (public payload, no new endpoint, real video only)
         run: python -m unittest erpnext_enhancements.tests.test_training_video_chapters -v
+      # The Training rail -- one sidebar shared by the learner page and the manager
+      # dashboard. Three silent failures: a class the script emits with no rule in the
+      # stylesheet renders as an unstyled div; a link offered to somebody the Page
+      # refuses lands them on "Not permitted", which reads as broken rather than as not
+      # theirs (so the role lists are asserted against the Page documents); and the rail
+      # must keep taking the boot payload the player already fetched rather than growing
+      # a read of its own, because "open" and "overdue" are predicates the server
+      # defines and a nullable-date filter written in the browser is how "no expiry"
+      # once became "expired" here.
+      - name: Training desk rail (class contract, role gate, no second read)
+        run: python -m unittest erpnext_enhancements.tests.test_training_desk_nav -v
       # Every dotted path in hooks.py must name something that exists. Frappe
       # resolves after_migrate at the very END of `bench migrate`, so a typo there
       # fails the deploy after every schema change has already been applied -- the

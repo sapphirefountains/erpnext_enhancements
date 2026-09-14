@@ -25,14 +25,50 @@
 // Numbers here are CLICKABLE. A manager reading "7 overdue" and then hand-building
 // the filter to find out who is the difference between a dashboard and a report.
 
+// The shared Training rail, in a stylesheet and a script. Loaded here rather than
+// included globally: TR.loadAssets is already in the desk bundle and can pull
+// these on the two pages that want them, which is two files on a training page
+// instead of two files on every desk page in the app.
+const TI_NAV_ASSETS = [
+	"/assets/erpnext_enhancements/css/training/desk_nav.css",
+	"/assets/erpnext_enhancements/js/training/desk_nav.js",
+];
+
 frappe.pages["training-insights"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
 		title: __("Training Insights"),
-		single_column: true,
+		// Two-column for the rail. A manager reading "7 overdue" had no door to the
+		// player the number is about, and no way back to a course without a
+		// workspace in between.
+		single_column: false,
 	});
 	wrapper.training_insights = new TrainingInsights(page);
+	ti_mount_nav(page);
 };
+
+function ti_mount_nav(page) {
+	// This page had no dependency on TR at all before the rail. Guarded so that
+	// stays true in effect: a missing global bundle must not turn the dashboard
+	// into a blank page, it must cost the sidebar and nothing else.
+	if (!window.TR || typeof TR.loadAssets !== "function") return;
+	const version = (frappe.boot.versions && frappe.boot.versions.erpnext_enhancements) || "0";
+	TR.loadAssets(TI_NAV_ASSETS, version)
+		.then(() => {
+			if (typeof TR.deskNav !== "function") return;
+			// No `setLearner` here, and that is the design rather than an omission.
+			// This page holds no learner boot payload, so its rail offers My
+			// Trainings as a DOOR rather than as a list. Filling it would mean a
+			// second read of every course this manager is assigned, on a page whose
+			// whole job is other people's training — and it would put a second
+			// client-side answer to "which courses are mine" beside the server's.
+			TR.deskNav({ page: page, active: { view: "insights" } });
+		})
+		.catch(() => {
+			// Navigation is not the page. A missing rail must not put an error
+			// where six numbers should be.
+		});
+}
 
 frappe.pages["training-insights"].on_page_show = function (wrapper) {
 	if (wrapper.training_insights) wrapper.training_insights.refresh();
