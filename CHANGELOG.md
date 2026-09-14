@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.450.0] - 2026-09-14
+
+### Added
+
+- **`Project Quality Inspection` and `Inspection Result` — the generated, frozen inspection.**
+  An inspection is merged from two halves: the master template (what Sapphire checks on every
+  job of this type) and the project's contracted acceptance criteria (what was promised on *this*
+  job), and the merged rows are **copied** onto the record rather than linked to.
+  WI-075 sub-phase D.
+- **`api/quality_inspection.generate_inspection(project, milestone)`** — resolves the Active
+  template and the locked Scope of Work, merges, hashes, and writes a draft. It refuses four
+  things out loud rather than quietly: a second open inspection for the same milestone; a Draft
+  or Retired template; an empty inspection (one with nothing in it submits as a clean pass); and
+  a merge with duplicate provenance.
+- **`inspect_at_milestone` on `Scope Acceptance Criterion`** — which inspection checks this
+  promise. A criterion naming no milestone appears on **no** inspection, so the generator counts
+  those, writes them onto the record's `generation_note` and returns them to the caller. A
+  contracted promise that quietly never gets inspected is the exact failure this programme
+  exists to end, so it is never filtered away in silence.
+
+### Notes
+
+- **The freeze is the point, and it is asserted rather than described.** A later edit to a
+  master template — or to a reusable section inside it — cannot reach an inspection that has
+  already been generated. `tests/test_inspection_merge.py` proves it by mutating the source
+  after generation and demanding the rows and their hash are untouched: rewording a check,
+  tightening a tolerance, deleting a check, adding one, and editing the locked scope.
+  This matters because the failure is invisible. An implementation that re-reads the master at
+  render looks completely normal — the form populates, the checks are right — until somebody
+  tightens a tolerance and last year's passed inspections quietly become failures, or its
+  failures quietly become passes. Nothing logs it.
+- **There is no `fetch_from` on a single result field, and that absence is load-bearing.** One
+  would silently un-freeze the snapshot the moment somebody edited the source, and would look
+  entirely ordinary in a diff.
+- **`snapshot_hash` is the authoritative provenance**, not `Project Inspection Template.revision`.
+  The revision cannot see a change made *inside* a referenced section; the hash is taken over
+  the rows that actually landed. It is order-sensitive (the order an inspector works through
+  checks is part of what was inspected), excludes presentation (moving a location note is not a
+  different inspection), and normalises numeric shape (Frappe returns `0`, `0.0` or `Decimal`
+  depending on how a row was loaded, and a hash that moved with that would report every
+  unaltered inspection as altered). The literal is pinned in the test suite.
+- **`outcome` is Data, not a Select**, because a Select's options are fixed per field and these
+  vary per row — the same reason `Sapphire Maintenance Result.selection` is Data. Answers are
+  validated in Python against the row's own frozen options: under PAD SPACE collation `"Pass "`
+  compares equal to `"Pass"`, so a padded answer would otherwise be accepted and the failure
+  count would depend on invisible whitespace.
+- **`N/A` is not a failure.** The failing set is explicit rather than "anything that is not
+  Pass", which would raise a non-conformance for a check that did not apply to the job. A row
+  that both reads `Fail` and is out of range counts **once** — double-counting would inflate the
+  failure rate that first-pass yield is computed from.
+- **A photo is demanded only on a check that failed.** Requiring one on every passing check
+  trains people to attach anything, which is worse than not asking.
+- `inspection_date` deliberately has **no default**: a date that fills itself in records when
+  the form was opened, not when somebody stood in front of the feature.
+- Nothing raises an NCR from a failure yet — that is sub-phase E — and nothing carries open
+  fixes forward, which is F. `Carried Action` is already in the `source` vocabulary because
+  adding a Select option once rows exist is a data migration, not an edit.
+
+
 ## [1.449.0] - 2026-09-14
 
 ### Added

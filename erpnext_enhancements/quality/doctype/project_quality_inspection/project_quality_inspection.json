@@ -1,0 +1,375 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "naming_series:",
+ "creation": "2026-09-14 13:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "project",
+  "project_type",
+  "customer",
+  "column_break_head",
+  "milestone",
+  "gate_kind",
+  "status",
+  "section_who",
+  "inspector",
+  "inspection_date",
+  "column_break_who",
+  "scheduled_date",
+  "section_results",
+  "results",
+  "section_progress",
+  "mandatory_total",
+  "mandatory_answered",
+  "column_break_progress",
+  "fail_count",
+  "completion_percent",
+  "section_signoff",
+  "inspector_sign_off",
+  "column_break_signoff",
+  "client_sign_off",
+  "remarks",
+  "section_frozen",
+  "master_template",
+  "master_template_revision",
+  "scope_of_work",
+  "column_break_frozen",
+  "snapshot_hash",
+  "frozen_on",
+  "frozen_by",
+  "generation_note",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "options": "QIR-.YYYY.-.#####",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Project",
+   "options": "Project",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fetch_from": "project.project_type",
+   "fieldname": "project_type",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Project stage",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "project.customer",
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "milestone",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Milestone",
+   "options": "Inspection Milestone",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fetch_from": "milestone.gate_kind",
+   "fieldname": "gate_kind",
+   "fieldtype": "Data",
+   "label": "Gate kind",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Draft\nIn Progress\nPassed\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_who",
+   "fieldtype": "Section Break",
+   "label": "Who and when"
+  },
+  {
+   "fieldname": "inspector",
+   "fieldtype": "Link",
+   "label": "Inspector",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "description": "When the inspection was actually carried out. Deliberately has no default — a date that fills itself in records when the form was opened, not when somebody stood in front of the feature.",
+   "fieldname": "inspection_date",
+   "fieldtype": "Date",
+   "label": "Inspection date"
+  },
+  {
+   "fieldname": "column_break_who",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "scheduled_date",
+   "fieldtype": "Date",
+   "label": "Scheduled date"
+  },
+  {
+   "fieldname": "section_results",
+   "fieldtype": "Section Break",
+   "label": "Checks"
+  },
+  {
+   "fieldname": "results",
+   "fieldtype": "Table",
+   "label": "Checks",
+   "options": "Inspection Result"
+  },
+  {
+   "fieldname": "section_progress",
+   "fieldtype": "Section Break",
+   "label": "Progress"
+  },
+  {
+   "fieldname": "mandatory_total",
+   "fieldtype": "Int",
+   "label": "Mandatory checks",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mandatory_answered",
+   "fieldtype": "Int",
+   "label": "Answered",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_progress",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "fail_count",
+   "fieldtype": "Int",
+   "label": "Failures",
+   "read_only": 1
+  },
+  {
+   "fieldname": "completion_percent",
+   "fieldtype": "Percent",
+   "label": "Complete",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_signoff",
+   "fieldtype": "Section Break",
+   "label": "Sign-off"
+  },
+  {
+   "fieldname": "inspector_sign_off",
+   "fieldtype": "Signature",
+   "label": "Inspector"
+  },
+  {
+   "fieldname": "column_break_signoff",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Taken on milestone inspections where the client is present — the final walkthrough above all.",
+   "fieldname": "client_sign_off",
+   "fieldtype": "Signature",
+   "label": "Client representative"
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Text",
+   "label": "Remarks"
+  },
+  {
+   "collapsible": 1,
+   "description": "What this inspection was generated from, recorded once and never updated. A later edit to the template cannot reach the rows above.",
+   "fieldname": "section_frozen",
+   "fieldtype": "Section Break",
+   "label": "Frozen at generation"
+  },
+  {
+   "fieldname": "master_template",
+   "fieldtype": "Link",
+   "label": "Master template",
+   "options": "Project Inspection Template",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "The template's revision at the moment this was generated. Coarse — it cannot see a change made inside a referenced section, which is why the hash beside it is the authoritative record.",
+   "fieldname": "master_template_revision",
+   "fieldtype": "Int",
+   "label": "Template revision",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "scope_of_work",
+   "fieldtype": "Link",
+   "label": "Scope of Work",
+   "options": "Project Scope of Work",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "column_break_frozen",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "SHA-256 over the merged checks as generated. Two inspections with the same hash contained the same checks, whatever either template says today.",
+   "fieldname": "snapshot_hash",
+   "fieldtype": "Data",
+   "label": "Snapshot hash",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "frozen_on",
+   "fieldtype": "Datetime",
+   "label": "Generated on",
+   "no_copy": 1,
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "frozen_by",
+   "fieldtype": "Link",
+   "label": "Generated by",
+   "no_copy": 1,
+   "options": "User",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "Anything the generator had to say — most importantly, contracted criteria that name no milestone and so appear on no inspection at all.",
+   "fieldname": "generation_note",
+   "fieldtype": "Small Text",
+   "label": "Generation note",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Project Quality Inspection",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-09-14 13:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Quality",
+ "name": "Project Quality Inspection",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Inspector",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Project Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production Team",
+   "write": 1
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Operations Team"
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Executive Team"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "project",
+ "track_changes": 1
+}

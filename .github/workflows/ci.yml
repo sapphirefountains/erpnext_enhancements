@@ -477,6 +477,14 @@ jobs:
       # trigger value against the live options in the fixture that owns them.
       - name: Inspection milestones (triggers match the live build statuses)
         run: python -m unittest erpnext_enhancements.tests.test_inspection_milestones -v
+      # THE freeze (WI-075 sub-phase D). An inspection that already happened must not change
+      # because the template it came from changed the following week. An implementation that
+      # re-reads the master at render looks completely normal -- the form populates, the checks
+      # are right -- until somebody tightens a tolerance and last year's passes quietly become
+      # failures, or its failures quietly become passes, with nothing in any log. Asserted by
+      # mutating the source after generation and demanding the rows and their hash are untouched.
+      - name: Inspection merge and freeze (a template edit cannot reach a generated inspection)
+        run: python -m unittest erpnext_enhancements.tests.test_inspection_merge -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk

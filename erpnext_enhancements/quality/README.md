@@ -6,11 +6,11 @@ failure traceable to a contracted, measurable standard.
 Programme: [WI-075](../../work-items/WI-075-quality-and-inspections.md).
 Decision record: [ADR-0012](../../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md).
 
-**Status: sub-phases A, B and C.** The scaffold, the criterion-identity rules that
-`Project Scope of Work` consumes, and the inspection **authoring** layer — milestones, reusable
-sections of checks, and master templates. What is still missing is the thing that reads them:
-sub-phase D generates an inspection from a milestone and freezes it. Until then a milestone is a
-declaration of intent that a person acts on, `trigger_basis` is read by nothing, and
+**Status: sub-phases A through D.** The scaffold, the criterion-identity rules, the authoring
+layer, and the generated inspection itself — merged from a master template and a locked Scope of
+Work, and frozen. What is missing is what happens to a failure: sub-phase E raises a
+Non-Conformance and a Quality Action from one, F carries unverified fixes into the next
+inspection. Generation is still a deliberate act — `trigger_basis` is read by nothing — and
 `quality_enabled` is **off**.
 
 ## What this module is for
@@ -29,6 +29,8 @@ question why it exists.**
 | `workspace/quality_control/` | The `Quality Control` workspace — **not** `Quality`; see below |
 | `doctype/quality_settings/` | The Single holding every master switch. Dormant by default |
 | `catalog.py` | The milestone catalog and the Commissioning checks, as data. Frappe-free so CI can read it and sub-phase D can reuse it |
+| `merge.py` | **The centre of the module.** Merging a master template with a project's contracted criteria, the content hash that freezes the result, and what counts as a failure. Frappe-free, so the freeze is asserted on every push |
+| `doctype/project_quality_inspection/` + `inspection_result/` | The generated inspection. Its rows are copies, never links |
 | `stable_keys.py` | Row identity — the `*_key` that criteria, checks and (in D) results all join on. Minted once, never regenerated |
 | `doctype/inspection_milestone/` | Where in a project's life an inspection is due |
 | `doctype/inspection_section/` + `inspection_section_item/` | A reusable block of checks. Top-level rather than a table on the template, because **Frappe has no grandchild tables** |
@@ -80,6 +82,28 @@ That is why its `permissions` block grants `read` to the `* Team` roles and `Pro
 well as write to System Manager and Quality Manager. **Do not narrow it without moving the grant
 to another non-child DocType in this module first.** `Position` does the same job for
 `hr_enhancements`, for the same reason.
+
+## The freeze, and why it is a test rather than a comment
+
+An inspection's rows are **copied** from the template at generation and never re-read from it.
+A later edit to a master template — or to a reusable section inside one — cannot reach an
+inspection that already happened.
+
+There is **no `fetch_from` on a single result field**, and that absence is load-bearing. One
+would silently un-freeze the snapshot the moment somebody edited the source, and it would look
+entirely ordinary in a diff.
+
+The reason this is enforced by `tests/test_inspection_merge.py` rather than by a note is that
+the failure is invisible. An implementation that re-reads the master at render populates the
+form correctly and shows the right checks; nothing is wrong until somebody tightens a tolerance
+and last year's passed inspections quietly become failures — or, worse, its failures quietly
+become passes. Nothing logs it, and nobody notices until an insurer or a subcontractor asks what
+was actually checked. So the suite mutates the source after generation and demands the rows and
+their hash are untouched.
+
+`snapshot_hash` is the authoritative provenance, and `Project Inspection Template.revision`
+deliberately is not: the revision cannot see a change made inside a referenced section, while the
+hash is taken over the rows that actually landed.
 
 ## Core's Quality DocTypes: seven reused, one rejected
 
