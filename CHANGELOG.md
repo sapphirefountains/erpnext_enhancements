@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.432.0] - 2026-09-13
+
+Training Phase 6, D9. Previewing one lesson, and a guard on the one route that must
+**not** move.
+
+### Added
+
+- **"Preview as a learner" on the Training Lesson form.** That doctype had no form
+  script, so an author fixing a typo in a summary or ticking "required to finish" on a
+  block had no way to see the result short of opening the whole canvas and navigating
+  back to the lesson.
+
+  **It opens `/training_preview`, and does not mount a player in a dialog.** The obvious
+  version of this feature puts the player in a tab on the form — which would make a fourth
+  host of `TR.Player`, and would need the draft's learner payload as JSON. No endpoint
+  returns that: the preview builds it server-side with `training_author._split_lesson` and
+  renders it into the template. Getting it client-side means rebuilding it in JavaScript,
+  which is precisely the ~640 lines the classic builder carried (`preview_boot`,
+  `preview_lesson`, `preview_outline`, `preview_transport`, `preview_checkpoint`) whose
+  whole job was to re-derive a payload the server already derives correctly, and which the
+  canvas port deliberately did not carry over.
+
+  So what an author sees is the bytes publish would write, produced by the code that will
+  write them.
+
+- **A guard on the certificate verification route.** `/training_certificate?code=…` is the
+  **only guest-reachable training surface**, and two neighbouring website routes were
+  retired to redirects in this same programme. Retiring this one by the same reflex would
+  be a quiet disaster of a particular kind: an external auditor scanning the code on a
+  printed certificate would be bounced to a login page for a Desk they will never have an
+  account on. The certificate would still exist, the record would still be right, and the
+  one person the feature exists for could not check it.
+
+  The test pins that the code branch is answered **before** the Guest redirect — a session
+  check above it would send the auditor to `/login` with their code in the redirect — and
+  that the controller does not learn to redirect into the Desk.
+
+### Already delivered, noted here because it was in this phase's scope
+
+- **The transcript and certificates in the Desk** arrived with D4 and D6 and needed nothing
+  further. `get_my_transcript` was already wired to the player's "My record" view, which is
+  reachable at `/desk/learn/record`; and the **My Training** workspace links the learner's
+  own `Training Completion` and `Training Certificate` lists, which
+  `permission_query_conditions` already scopes to their own rows.
+
 ## [1.431.0] - 2026-09-13
 
 Training Phase 6, D8. **The manager's half of the move.**

@@ -312,5 +312,42 @@ class TestTheDoorIsFindable(unittest.TestCase):
                 self.assertNotIn('href="/desk/', text)
 
 
+class TestTheLessonPreview(unittest.TestCase):
+    """One button that opens the one preview, and deliberately not a fourth host.
+
+    The obvious version of this feature mounts the player in a tab on the Lesson
+    form. That would need the draft's learner payload as JSON, which no endpoint
+    returns -- `/training_preview` builds it server-side with `_split_lesson` and
+    renders it into the template. Getting it client-side means rebuilding it in
+    JavaScript, which is exactly the ~640 lines the classic builder carried and the
+    canvas port deliberately did not.
+    """
+
+    SCRIPT = PLAYER_DIR / "training_lesson.js"
+
+    def test_it_is_registered(self):
+        self.assertTrue(self.SCRIPT.is_file())
+        self.assertIn("training/training_lesson.js", (APP / "hooks.py").read_text(encoding="utf-8"))
+
+    def test_it_opens_the_existing_preview(self):
+        text = strip_comments(self.SCRIPT.read_text(encoding="utf-8"))
+        self.assertIn("/training_preview?course=", text)
+
+    def test_it_mounts_no_player_of_its_own(self):
+        """A fourth host of TR.Player is a fourth place for the two to drift."""
+        text = strip_comments(self.SCRIPT.read_text(encoding="utf-8"))
+        for token in ("TR.Player", "TR.makeTransport", "TR.loadAssets"):
+            with self.subTest(token):
+                self.assertNotIn(token, text)
+
+    def test_it_resolves_the_course_rather_than_assuming_one(self):
+        """The preview is addressed by COURSE because that is what resolves an open
+        draft; the lesson knows only its course_version. Reading it beats storing a
+        denormalised course on the lesson, which would be a second place for it to
+        be wrong."""
+        text = strip_comments(self.SCRIPT.read_text(encoding="utf-8"))
+        self.assertIn("course_version", text)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -85,6 +85,14 @@ doctype_js = {
 	# website_redirect to /desk in v16, so a hand-built link costs a full reload
 	# plus a hop and is not intercepted by the router.
 	"Training Assignment": ["public/js/training/training_assignment.js"],
+	# training (Phase 6 D9): "Preview as a learner" on one lesson. An author fixing a
+	# typo in a summary had no way to see the result short of opening the whole
+	# canvas and navigating back. Opens /training_preview rather than mounting a
+	# player in a dialog: the draft payload is built server-side by _split_lesson
+	# and no endpoint returns it as JSON, so an in-form player would mean rebuilding
+	# it in JavaScript -- the ~640 lines the classic builder carried and the canvas
+	# port deliberately did not.
+	"Training Lesson": ["public/js/training/training_lesson.js"],
 	"Training Evaluation": ["public/js/training/training_evaluation.js"],
 	# training: the Submission form's "Grade" button, which files a real grade
 	# through submissions.grade_submission (stamps grader, times it, mails the
