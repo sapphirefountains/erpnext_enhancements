@@ -956,3 +956,10 @@ erpnext_enhancements.patches.seed_draft_inspection_templates
 # item_code picker (filtered is_fixed_asset:1) could never have a candidate. Seeded rather
 # than fixtured because Finance edits these afterwards and fixture sync would revert them.
 erpnext_enhancements.patches.seed_rental_asset_setup
+# The fifth ER-2026-420503 blocker, found only by creating ten real Assets: an Asset must
+# carry a cost centre OR the Company must have a depreciation one, and this site had neither.
+# Invisible in asset.json because cost_center is not reqd -- the rule is in the controller
+# and depends on company config. The Company field rather than a `default` on
+# Asset.cost_center, which would stamp every future asset with the RENTAL fleet's centre.
+# Writes only when empty: where depreciation posts is Finance's decision, not this file's.
+erpnext_enhancements.patches.set_company_depreciation_cost_center

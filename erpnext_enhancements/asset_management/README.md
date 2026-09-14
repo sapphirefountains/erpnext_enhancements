@@ -48,8 +48,21 @@ index (a template may be deactivated and replaced, so the constraint is on the a
 
 A submittable checklist in one `direction` — **Pre-shipping** or **Return** — against one
 booking. Rows carry the component, quantity expected, quantity counted, a condition
-(Pass / Damaged / Missing), notes and a photo. `has_damage` and `has_shortfall` are read-only
-roll-ups, so "did this rental come back short" is a query rather than a reading exercise.
+(Pass / Damaged / Missing / N/A), notes and a photo. `has_damage` and `has_shortfall` are
+read-only roll-ups, so "did this rental come back short" is a query rather than a reading
+exercise.
+
+**`N/A` exists because a category-level template describes a *type* of fountain.** It
+necessarily lists parts a given unit does not carry, and without N/A the crew's only
+options were to delete the row or to mark a component Missing that was never in the crate
+— filing a false shortfall. An N/A row is skipped by the roll-ups, exempt from the count
+requirement, and dropped from the return sheet generated off that pre-shipping inspection.
+
+**And N/A requires a note, for the opposite reason to the others.** It is the only value
+that removes a row from the findings entirely, so it is exactly what somebody would reach
+for to make a genuinely missing part stop being a problem. Requiring a sentence turns a
+dropdown click into a written claim. `CONDITIONS_NEEDING_A_NOTE` is deliberately wider
+than `ADVERSE_CONDITIONS` for that reason, and a test pins the pair.
 
 **A return reconciles against the pre-shipping sheet, not against the template.** Its
 `qty_expected` is what was actually counted *out* — if three of four panels shipped, three

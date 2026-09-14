@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.459.0] - 2026-09-14
+
+### Added
+
+- **`N/A` as a Rental Inspection condition** (follow-up to ER-2026-312370). Found by using
+  the feature rather than by testing it: the first real checklist template is keyed to the
+  `Rental Fountain Fleet` **category**, so it describes a *type* of fountain and necessarily
+  lists parts a given unit does not carry. With only Pass / Damaged / Missing, and
+  `before_submit` demanding a condition on every row, the crew's options were to delete the
+  row or to mark a component Missing that was never in the crate -- **filing a false
+  shortfall on the one document whose purpose is to be evidence.**
+- `patches/set_company_depreciation_cost_center.py` -- the fifth blocker on the
+  ER-2026-420503 form, and the only one static analysis could not have found. Creating the
+  ten real rental Assets surfaced it: `Asset.validate_cost_center()` throws unless the Asset
+  carries a cost centre or the Company has a depreciation cost centre, and this site had
+  **neither**. It is invisible in `asset.json` because `cost_center` is not `reqd` -- the
+  rule lives in the controller and depends on company configuration.
+
+### Notes
+
+- **N/A requires a note, and that is the whole design.** It is the only condition that
+  removes a row from the findings entirely, which makes it exactly what somebody would reach
+  for to make a genuinely missing part stop being a problem. So `CONDITIONS_NEEDING_A_NOTE`
+  is deliberately wider than `ADVERSE_CONDITIONS`: the escape hatch costs a written sentence.
+  An unexplained N/A is refused at submit alongside an unexplained Damaged or Missing.
+- **Three knock-on effects, all of which would have been silent.** An N/A row is skipped by
+  the `has_shortfall` roll-up (its `qty_expected` came from a template about a different
+  fountain, so comparing a count against it manufactures a shortfall); it is exempt from the
+  "every row counted" gate (demanding a 0 would make "this unit has no transformer"
+  indistinguishable from "the transformer did not come back"); and it is dropped from the
+  return sheet that `_rows_from_pre_shipping` generates, rather than arriving with a blank
+  `qty_expected` and demanding a count of a part that does not exist.
+- `api/booking.py` duplicates `NOT_APPLICABLE` rather than importing the doctype controller,
+  to keep that module free of a controller import. Two spellings of the same string would
+  silently stop the return sheet dropping N/A rows, so a test pins the two literals equal.
+- No data migration: adding an option to a Select leaves existing rows alone (unlike
+  *renaming* one, which freezes every row holding the old value), and there are zero Rental
+  Inspections on production in any case.
+- **The cost-centre fix is on the Company, not a `default` on `Asset.cost_center`.** The
+  Property Setter was written first and deliberately replaced. It worked, but it stamped
+  **every** Asset with the rental fleet's cost centre -- correct for all ten Assets that
+  exist today and wrong the moment a vehicle or a laptop becomes one, *silently*, because a
+  default reads as a considered choice rather than a fallback. The Company field is the
+  fallback ERPNext designed for exactly this and it layers correctly: an Asset that knows its
+  own cost centre carries it (each rental Asset holds `CL140 - Rentals - SF`), and anything
+  else falls back company-wide rather than to a guess about what kind of asset it is.
+- **`Main - SF`, and only into an empty field.** It is already the Company's `cost_center` and
+  `round_off_cost_center`, it is a leaf (group cost centres are rejected outright by
+  `validate_cost_center`, so seeding one would swap this blocker for a less obvious one), and
+  it is **neutral across asset types** -- which is the whole reason for preferring it to the
+  per-asset default. Where depreciation actually posts is a Finance decision, so the patch
+  writes only when the field is empty and never replaces a chosen value. Re-running is a
+  no-op.
+- The discarded Property Setter never reached production -- it existed only on this unmerged
+  branch -- so removing it from `property_setter.json` needs no deletion patch. (Removing a
+  fixture record normally only stops managing it; the row survives in the database.)
+
 ## [1.458.0] - 2026-09-14
 
 ### Added
