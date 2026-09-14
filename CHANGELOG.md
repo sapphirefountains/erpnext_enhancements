@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.439.1] - 2026-09-14
+
+Docs only. No executable change.
+
+### Added
+
+- **[`docs/gcs-training-cors.md`](docs/gcs-training-cors.md)** and the config beside
+  it. Browser-direct video upload needs the media bucket to admit this origin, and
+  that is a *bucket* setting rather than app code — so it does not arrive with a
+  deploy, and until now the requirement existed only in a conversation. That is
+  exactly how the Drive service-account share stayed invisible for a year while
+  being mandatory.
+
+  **Applied to the live bucket and verified end to end.** The finding that shaped
+  the runbook: the upload preflight answered **HTTP 200 with no CORS headers at
+  all**, which is a refusal — a browser rejects the request because
+  `Access-Control-Allow-Origin` is *absent*, not because anything returned an
+  error. So "the preflight returns OK" is not evidence of anything.
+
+  **And that 200 was hiding something.** The bucket had CORS all along — a
+  `GET`/`HEAD` entry with the range headers, which is what lets the player seek in
+  a video. It simply did not match `POST`, and an entry that does not match the
+  requested *method* is indistinguishable from no configuration at all. A
+  single-entry upload config would have **silently deleted video seeking**,
+  because `--cors-file` replaces the whole configuration rather than adding to it.
+  The shipped file therefore carries two entries, the original preserved
+  byte-for-byte.
+
+  Verified after applying: `POST`/`PUT` preflight allows `x-goog-resumable`; the
+  **actual** response exposes `Location` (the preflight can pass while that does
+  not, and the upload would then start, succeed, and have nowhere to send the
+  file); the original `GET` entry still answers with its own header list; and a
+  different origin still gets nothing.
+
+  Three things the file records that are easy to get wrong: `--cors-file`
+  **replaces** the whole configuration rather than adding to it; GCS uses
+  `responseHeader` for `Access-Control-Allow-Headers` as well as
+  `Access-Control-Expose-Headers`, so `x-goog-resumable` must be listed before a
+  browser may *send* it — and it is part of the signed canonical request, so a
+  mismatch is a 403 that names no header; and `Location` must be exposed, because
+  the resumable session URI comes back in it and a browser cannot read a response
+  header it was not given.
+
+  Also stated plainly, because it is the question somebody will ask: **CORS is not
+  authorization.** Objects stay private and are reached only through short-lived
+  signed URLs; applying this does not make the bucket public.
+
 ## [1.439.0] - 2026-09-13
 
 Training Phase 6, D15 part five. **The endpoint that did not exist.**
