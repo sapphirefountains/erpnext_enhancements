@@ -1,7 +1,7 @@
 # WI-075 — Scope that can be inspected, and failures that get re-checked
 
-**Status:** planned — A not started
-**Branch:** `claude/quality-inspections` (off `main` at v1.443.0)
+**Status:** in progress — A, B1 and B2 shipped, v1.444.0 → v1.446.0
+**Branch:** `claude/quality-inspections-planning-691339` (off `main` at v1.443.0)
 **Tracked:** PRJ-00580, TASK-2026-02013 with a child per deliverable (A–N)
 **Decides:** [ADR-0012](../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md)
 
@@ -123,6 +123,14 @@ generates nothing, forever, with no error. Annual reviews are owned by a schedul
     budget categories with a reallocation log, and a subcontractor scorecard.
 11. **All four training courses are in scope.**
 12. **Progress is tracked as Tasks under PRJ-00580.**
+13. **B ships as two changes, and the hand-off step is declined for now.** B1 is the schema;
+    B2 stamps the Project and stops. A step in the 7-step tracker was the obvious design and
+    was turned down on blast radius, not on the idea: the record links to a Project so it
+    cannot precede step 3, anywhere but last means renumbering steps that 707 live
+    `Project Process Step` rows already carry, and `hand_off_sla_compliance` hardcodes
+    `LAUNCH_STEP_NUMBER = 7` and would silently stop computing the launch deadline. Not worth
+    buying before anyone has locked a real scope and learned where the step belongs. If it
+    comes, it is its own change.
 
 ## Deliverables
 
@@ -131,7 +139,8 @@ One PR per sub-phase. Slice 1 proves the chain end-to-end on Build before anythi
 | | Deliverable | Size |
 |---|---|---|
 | **A** | Module scaffold: `Quality` module, `Quality Control` workspace, the five roles, `Products` project type, `Quality Settings` + its backfill | M |
-| **B** | `Project Scope of Work` + `Scope Acceptance Criterion`, wired into the **existing** hand-off engine as one new step and one new anchor | M |
+| **B1** | `Project Scope of Work` + `Scope Acceptance Criterion`, schema and `criterion_key` only, no consumers | M |
+| **B2** | Locking stamps `Project.custom_scope_of_work` / `custom_scope_locked_on`. **No hand-off step** — see the decision below | S |
 | **C** | Inspection authoring: Milestone, Section, Section Item, Template, Template Section; the Build master template seeded incl. commissioning | L |
 | **D** | The inspection record, the Master+Addendum merge, the freeze, generation from a milestone | L |
 | **E** | Core Quality extension: NCR + Quality Action fields, the Select replacement **and the class override together**; inspection Fail → NCR → Quality Action | L |

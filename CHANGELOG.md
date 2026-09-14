@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.448.1] - 2026-09-14
+
+### Changed
+
+- WI-075's work item records what actually shipped: A, B1 and B2 (v1.444.0 → v1.446.0), B
+  split into schema and wiring, and the decision to leave the hand-off step out for now.
+  Docs only; no executable behaviour changes.
+
+
 ## [1.448.0] - 2026-09-14
 
 ### Added
