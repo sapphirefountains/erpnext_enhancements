@@ -214,10 +214,17 @@ Four things worth knowing before editing it:
   four blank date slots is the sheet somebody writes the setup time onto. A block of a
   *linked document's* fields disappears when that document is absent: no `rental` contract
   means no rental agreement, and nine blank currency lines would invent one. All 16 Project
-  Contracts on prod are `maintenance`, so this is live, not theoretical. **Design's fee
-  block is the deliberate exception** (`fillable=True`): there are no Design-specific fields
-  on Project at all, so marking it non-fillable would leave a Design job with no Design
-  section.
+  Contracts on prod are `maintenance`, so this is live, not theoretical.
+
+  **With one bound: a linked-document block may only disappear when its section keeps a
+  Project-sourced block either way.** Every stream gets a section on a Project nobody has
+  filled in yet — that is the point of a brief specific to the kind of job. Events keeps its
+  four dates and Build its production line, so "Rental Terms" and "Construction Schedule" are
+  free to drop. **Design and Service have no fields of their own on Project at all**, so
+  their blocks are the section's anchor and stay `fillable=True`, printing as a blank design
+  fee schedule and a blank agreement form — the case for 338 of the 354 Service jobs on prod.
+  `test_every_stream_gets_a_section_on_an_empty_project` holds the whole rule, so a
+  `fillable=False` on the wrong block fails the build instead of silently deleting a section.
 - **A contract is matched to its section by template, with no fallback.** Project Contract
   carries every template's fields and fills only its own, so a `maintenance` contract under
   an Events heading would print another agreement's zeros as this job's rental terms.

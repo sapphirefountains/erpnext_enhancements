@@ -50,6 +50,16 @@ invent a relationship rather than leave a gap in a real one. ``list``, ``table``
 and ``text`` blocks always drop when empty: blank rows for equipment nobody has
 listed are noise, not a form.
 
+With one bound on the second rule: **a linked-document block may only disappear
+when its section has a Project-sourced block to stand on either way.** Every
+stream gets a section on a Project nobody has filled in yet -- that is the point
+of a brief that is specific to the kind of job -- and Design and Service have no
+fields of their own on Project at all. Their blocks are therefore their section's
+anchor and stay fillable, printing as a blank design fee schedule and a blank
+agreement form. ``test_every_stream_gets_a_section_on_an_empty_project`` holds the
+whole rule in place, which is what keeps it a rule rather than a list of
+exceptions.
+
 **A contract is matched to the section by template, with no fallback.** Project
 Contract is one doctype carrying every template's fields -- design fees, rental
 fees, maintenance terms, construction dates -- and only the fields of the template
@@ -230,6 +240,16 @@ def _fields_block(title, rows, fillable=True):
 	  "Rental Terms" would invent a relationship rather than leave a gap in a
 	  real one. Prod has 16 Project Contracts and every one is ``maintenance``,
 	  so without this every Events brief would carry that empty fee schedule.
+
+	**A linked-document block may only be ``fillable=False`` when its section has
+	a Project-sourced block to stand on either way.** Events keeps its four dates
+	and Build its production line, so "Rental Terms" and "Construction Schedule"
+	are free to disappear. Design and Service have no fields of their own on
+	Project at all -- their content is these blocks, the two scope tables and
+	nothing else -- so their blocks are the section's anchor and stay fillable;
+	marking either non-fillable deletes the whole section from a job that has not
+	been filled in yet. ``test_every_stream_gets_a_section_on_an_empty_project``
+	enforces exactly that, so the rule cannot rot into a list of exceptions.
 	"""
 	rows = [row for row in rows if row]
 	if not rows:
@@ -443,15 +463,13 @@ def _design_blocks(doc):
 				_row("Total Design Fee", contract.get("total_design_fee"), "currency"),
 				_row("Design Hours Budgeted", doc.get("custom_time_budget_in_hours")),
 			],
-			# Fillable, unlike the other three contract-sourced blocks, and the
-			# asymmetry is deliberate. There are no Design-specific fields on
-			# Project at all -- the Design content is these fees, the two scope
-			# tables and nothing else -- so marking this one non-fillable would
-			# leave a Design job with no Design section whatsoever. Six blank
-			# lines is also the printed original's own idiom: it has carried
-			# "Fee ___ % | $ ___" since before any of this was in ERPNext.
-			# "Rental Terms" earns the opposite treatment because the Events
-			# section keeps its four dates either way.
+			# The section's anchor, like Service's agreement block: Design has no
+			# fields of its own on Project, so this staying fillable is what makes
+			# a Design job print a Design brief at all. Six blank lines is the
+			# printed original's own idiom -- it has carried "Fee ___ % | $ ___"
+			# since before any of this was in ERPNext. "Rental Terms" earns the
+			# opposite treatment only because the Events section keeps its four
+			# dates either way.
 		)
 	)
 	blocks.append(_text_block("Scope of Work", strip_html(contract.get("scope_of_work") or "")))
@@ -565,7 +583,11 @@ def _service_blocks(doc):
 					agreement.get("winterization_month") if agreement.get("winterization") else "",
 				),
 			],
-			fillable=False,
+			# The section's anchor: Service has no fields of its own on Project,
+			# so this block staying fillable is what makes a Service job print a
+			# Service brief at all. On the 338 of 354 Service jobs with no
+			# agreement it prints as a blank agreement form -- which is the
+			# printed original's idiom, and a sheet somebody can fill in on site.
 		)
 	)
 

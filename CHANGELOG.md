@@ -51,12 +51,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   document's** fields disappears when that document is not there: no `rental` contract means
   the job has no rental agreement, and nine blank currency lines under "Rental Terms" would
   invent one. That is live rather than theoretical — all 16 Project Contracts on prod are
-  `maintenance`. Design's fee block is the deliberate exception (there are no
-  Design-specific fields on Project at all, so the rule would leave a Design job with no
-  Design section). For the same reason a contract is matched to its section **by template
-  with no fallback**: Project Contract carries every template's fields and fills only its
-  own, so "most recent contract" would print a maintenance agreement's zeros as this job's
-  rental terms.
+  `maintenance`.
+
+  The second rule is bounded by the first: **a linked-document block may only disappear when
+  its section keeps a Project-sourced block either way**, because every stream has to get a
+  section on a Project nobody has filled in yet — a brief specific to the kind of job has to
+  say what kind of job it is precisely on the jobs that need it most. Events keeps its four
+  dates and Build its production line, so those two are free to drop. Design and Service have
+  no fields of their own on Project at all, so their blocks are their section's anchor and
+  render blank: a blank design fee schedule, and a blank agreement form — the case for 338 of
+  the 354 Service jobs on prod. `test_every_stream_gets_a_section_on_an_empty_project` holds
+  the whole rule, so a `fillable=False` on the wrong block fails the build rather than
+  silently deleting a section from every unfilled project of that kind.
+
+  For the same reason a contract is matched to its section **by template with no fallback**:
+  Project Contract carries every template's fields and fills only its own, so "most recent
+  contract" would print a maintenance agreement's zeros as this job's rental terms.
 
   Covered by `tests/test_project_brief_sections.py` — bench-free, its own frappe stub, its
   own CI step. It runs the builders rather than reading them, and checks every fieldname

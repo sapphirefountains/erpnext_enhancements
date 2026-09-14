@@ -226,46 +226,52 @@ class ProjectBriefTypes(ProjectBriefTestCase):
 				self.assertEqual(project_brief.applicable_types(doc), [])
 				self.assertEqual(project_brief.brief_sections(doc), [])
 
-	#: The block each stream's section is anchored on, given the data that stream
-	#: is about. Build, Events, Products and Design anchor on a block that renders
-	#: blank, so every such job reads as one; Service has no Service-specific
-	#: fields on Project at all, so its section appears only once somebody has
-	#: written a scope row or raised an agreement. That asymmetry is a judgement
-	#: call, not an oversight -- 338 of the 354 Service jobs on prod have neither.
+	#: The block each stream's section is anchored on -- the one that renders even
+	#: on a Project nobody has filled in, so the job reads as that kind of job.
+	#: Design's and Service's come from a linked document that usually is not
+	#: there (prod has 16 Project Contracts, all ``maintenance``); they stay
+	#: fillable anyway because those two streams have no fields of their own on
+	#: Project, so a non-fillable anchor would delete the section outright.
 	ANCHORS = {
-		"Design": ({}, "Design Phases & Fees"),
-		"Build": ({}, "Production & Budget"),
-		"Products": ({}, "Supply & Billing"),
-		"Events": ({}, "Event Schedule"),
-		"Service": (
-			{
-				"custom_service_customer_requests": [
-					FakeDoc({"service_customer_requests": "Weekly chemistry check"})
-				]
-			},
-			"Customer Requests",
-		),
+		"Design": "Design Phases & Fees",
+		"Build": "Production & Budget",
+		"Products": "Supply & Billing",
+		"Service": "Maintenance Agreement",
+		"Events": "Event Schedule",
 	}
 
-	def test_a_service_job_with_nothing_written_on_it_gets_no_section(self):
-		"""The asymmetry above, stated as a fact so it survives a tidy-up.
+	def test_every_stream_gets_a_section_on_an_empty_project(self):
+		"""The whole rule, held in one place so it cannot rot into exceptions.
 
-		Service is the one stream with no fields of its own on Project. Making its
-		section unconditional would mean printing twelve blank lines of somebody
-		else's maintenance agreement on 338 of the 354 Service jobs on prod.
+		A brief specific to the kind of job has to say what kind of job it is on
+		the jobs that need it most -- the ones nobody has filled in. This is what
+		stops a ``fillable=False`` added to the wrong block from silently deleting
+		a whole section: that block is some section's anchor, and the section
+		disappears from every unfilled Project of that kind at once, on a sheet
+		that still prints and still looks finished.
 		"""
-		doc = _project(project_type="Service")
-		self.assertEqual(project_brief.brief_sections(doc), [])
-
-	def test_every_declared_type_builds_its_anchor_block(self):
-		"""No entry in BRIEF_TYPES without a builder, and none without content."""
 		for stream in project_brief.BRIEF_TYPES:
-			fields, anchor = self.ANCHORS[stream]
 			with self.subTest(stream=stream):
-				doc = _project(project_type="", custom_value_stream=_streams(stream), **fields)
+				doc = _project(project_type="", custom_value_stream=_streams(stream))
 				sections = project_brief.brief_sections(doc)
 				self.assertEqual([s["type"] for s in sections], [stream])
-				self.assertIn(anchor, _blocks(sections, stream))
+				self.assertIn(self.ANCHORS[stream], _blocks(sections, stream))
+
+	def test_the_service_anchor_is_a_blank_agreement_form(self):
+		"""Service prints its agreement terms as slots, not as somebody else's.
+
+		338 of the 354 Service jobs on prod have no maintenance agreement, so this
+		is what a Service brief looks like most of the time: the terms a tech
+		would want on site, ready to be written in.
+		"""
+		doc = _project(project_type="Service")
+		agreement = _blocks(project_brief.brief_sections(doc), "Service")["Maintenance Agreement"]
+
+		# Falsy, not specifically None: the two seasonal rows come back "" because
+		# their month is gated on its own checkbox. Both render as the blank slot,
+		# which is the property that matters here.
+		self.assertFalse([row["label"] for row in agreement["rows"] if row["value"]])
+		self.assertIn("Visit Frequency", [row["label"] for row in agreement["rows"]])
 
 
 # ------------------------------------------------------------------- what a section holds
