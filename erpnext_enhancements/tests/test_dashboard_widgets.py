@@ -64,6 +64,19 @@ def _scrub(text):
 	return text.lower().replace(" ", "_").replace("-", "_")
 
 
+def _workspace_json(folder):
+	"""The shipped Workspace JSON for a folder name, in whichever module owns it.
+
+	Workspaces live beside the module they belong to, not in one directory: the
+	department dashboards are `kpi_dashboards/workspace/`, but `My Training` is a
+	Training workspace and sits in `training/workspace/`. Looking only in the
+	first place reported a shipped workspace as missing.
+	"""
+	for path in APP.glob(f"*/workspace/{folder}/{folder}.json"):
+		return path
+	return None
+
+
 class DashboardWidgetWiring(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls):
@@ -141,12 +154,19 @@ class DashboardWidgetWiring(unittest.TestCase):
 		"""
 		for workspace, names in self.placement.items():
 			folder = _scrub(workspace)
-			path = WORKSPACES / folder / f"{folder}.json"
+			path = _workspace_json(folder)
 			with self.subTest(workspace=workspace):
-				self.assertTrue(path.exists(), f"{path} missing")
+				self.assertIsNotNone(path, f"no workspace JSON named {folder} in any module")
 				doc = json.loads(path.read_text(encoding="utf-8"))
 
-				expected = list(names) + [KPI_COCKPIT]
+				# The KPI Cockpit rides every DEPARTMENT dashboard and nothing else.
+				# `My Training` is a learner's own page: it carries one widget about
+				# the person looking at it, and a business-wide cockpit underneath
+				# would be a different product on the same screen.
+				expected = list(names)
+				if KPI_COCKPIT in (self.placement.get(workspace) or ()) or path.parent.parent.parent.name == "kpi_dashboards":
+					if KPI_COCKPIT not in expected:
+						expected = expected + [KPI_COCKPIT]
 
 				content = json.loads(doc.get("content") or "[]")
 				placed = [

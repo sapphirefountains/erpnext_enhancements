@@ -92,6 +92,28 @@
 		});
 	};
 
+	// One door to the manager's "how is this person doing" dialog, from anywhere in
+	// the Desk. It lives here, in the global bundle, because its two callers are on
+	// opposite sides of the app (the Training Insights page and the Employee form)
+	// and neither can load a helper before the helper exists -- the same argument
+	// that put TR.loadAssets here.
+	//
+	// The dialog ITSELF is loaded on demand, not shipped globally: a manager opens
+	// it rarely and a learner never, so bundling it would charge everyone for a
+	// screen almost nobody sees.
+	TR.openPersonRecord = function (user, version) {
+		if (!user) return Promise.resolve();
+		return TR.loadAssets(
+			[
+				"/assets/erpnext_enhancements/css/training/person_record.css",
+				"/assets/erpnext_enhancements/js/training/person_record.js",
+			],
+			version || (window.frappe && frappe.boot.versions && frappe.boot.versions.erpnext_enhancements) || "0"
+		).then(function () {
+			if (typeof TR.personRecord === "function") TR.personRecord(user);
+		});
+	};
+
 	// paths: ["/assets/.../player.css", ...]; version: the deploy token.
 	// Kept as one call because the caller almost always wants all of them or none,
 	// and a partial load is the shape that renders a half-styled page.

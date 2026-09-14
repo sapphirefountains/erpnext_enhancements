@@ -886,3 +886,9 @@ erpnext_enhancements.patches.grant_learner_role_to_assigned_users
 # DocTypes, which are hash-gated), so a row that reads newer than the file is skipped in
 # silence -- the failure that stranded this same workspace's cards for five weeks.
 erpnext_enhancements.patches.resync_training_workspace_split
+# v1.436.0 -- the My Training dashboard widget's PLACEMENT on the learner workspace.
+# The block is upserted by the after_migrate seeder; the placement lives on the
+# Workspace row, which is timestamp-gated by the importer. v16 builds the payload from
+# the custom_blocks CHILD TABLE, not the content blob, so a content-only placement
+# renders an empty space with no error at all.
+erpnext_enhancements.patches.resync_my_training_dashboard

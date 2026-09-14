@@ -45,6 +45,10 @@ MANAGER_ROLES = {"System Manager", "Training Manager", "HR Manager"}
 # half that actually mattered -- the copy in `hr_enhancements/onboarding.py` did drift,
 # and led with "Assigned", a status that has never existed.
 ACTIVE_ASSIGNMENT_STATUSES = {"Not Started", "In Progress", "Awaiting Sign-off", "Overdue"}
+# How many assignment names a clickable tile will carry so its drill-through can
+# select exactly the set it counted. Beyond this the client is told to stop
+# offering the link rather than offer one that selects a different set.
+DRILL_NAME_CAP = 500
 CLOSED_ASSIGNMENT_STATUSES = {"Completed", "Waived", "Cancelled"}
 
 
@@ -75,7 +79,9 @@ def get_training_analytics():
 	assignments = (
 		frappe.get_all(
 			"Training Assignment",
-			fields=["user", "course", "course_title", "status", "due_date"],
+			# `name` is here for the drill-through below, which selects assignments by
+			# identity rather than by re-deriving the predicate in a list filter.
+			fields=["name", "user", "course", "course_title", "status", "due_date"],
 			limit_page_length=0,
 		)
 		if _exists("Training Assignment")
@@ -155,6 +161,31 @@ def get_training_analytics():
 			"overdue": len(overdue),
 			"awaiting_signoff": len(awaiting),
 			"certificates": certificates,
+		},
+		# The exact membership of the two counts a manager can click through, as
+		# assignment names. Not a nicety: this dashboard's own rule is that a tile
+		# saying 4 which opens a list of 11 costs the NUMBER its credibility, not the
+		# link its usefulness -- and neither of these sets can be expressed as an
+		# AND-only list filter.
+		#
+		# `active` cannot, because the tile counts four statuses and the drill filter
+		# named two. That one is expressible and is now spelled out client-side.
+		#
+		# `overdue` genuinely cannot. The predicate is "not closed AND (status is
+		# literally Overdue OR the due date has passed)" -- an OR across two fields,
+		# where frappe list filters AND. Worse, the obvious `due_date < today` half
+		# walks straight into this repo's documented coalesce trap: a `<` filter on a
+		# NULLABLE date silently matches NULLs too, so it would drag every undated
+		# assignment into a list of overdue ones. Sending the names sidesteps both.
+		#
+		# Capped. At the scale this runs (26 assignments on production) the cap is
+		# theoretical, but an uncapped list of names is a payload that grows with the
+		# business, and the client is told when it was truncated rather than being
+		# handed a short list that looks complete.
+		"drill": {
+			"overdue": [a.name for a in overdue[:DRILL_NAME_CAP]],
+			"overdue_truncated": len(overdue) > DRILL_NAME_CAP,
+			"active_statuses": sorted(ACTIVE_ASSIGNMENT_STATUSES),
 		},
 		"by_course": by_course,
 		"by_batch": _batch_progress(assignments),

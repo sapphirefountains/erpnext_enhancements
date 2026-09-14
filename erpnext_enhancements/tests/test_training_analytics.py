@@ -23,6 +23,7 @@ import datetime
 import sys
 import types
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -172,8 +173,29 @@ class _Base(unittest.TestCase):
 		_reset()
 
 
-def _assignment(user, course, status, due_date=None, title=None):
-	return {"user": user, "course": course, "course_title": title or course, "status": status, "due_date": due_date}
+def _code(js):
+	"""JavaScript with comments stripped, for assertions about absence."""
+	src = re.sub(r"/\*.*?\*/", "", js, flags=re.S)
+	return chr(10).join(l for l in src.splitlines() if not l.strip().startswith("//"))
+
+
+def _assignment(user, course, status, due_date=None, title=None, name=None):
+	"""One row shaped like `frappe.get_all("Training Assignment", ...)` returns.
+
+	`name` is part of that shape and was missing here, which is the kind of gap a
+	stub quietly develops: the module asked only for fields this builder happened
+	to supply, so nothing noticed. It matters now because the drill-through selects
+	assignments by identity rather than by re-deriving the overdue predicate in a
+	list filter, and a stub without identities cannot exercise that.
+	"""
+	return {
+		"name": name or f"TRN-ASG-{abs(hash((user, course, status))) % 100000:05d}",
+		"user": user,
+		"course": course,
+		"course_title": title or course,
+		"status": status,
+		"due_date": due_date,
+	}
 
 
 class TestGate(_Base):
@@ -323,8 +345,15 @@ class TestPageSurface(unittest.TestCase):
 		"""It renders the dict `get_training_analytics` returns. The rollup is Python
 		over guarded get_all reads rather than SQL because "overdue" is a predicate --
 		a `<` filter on a nullable date silently matches NULLs -- and a second
-		implementation in JavaScript would be a second chance to get that wrong."""
-		js = (self.PAGE / "training_insights.js").read_text(encoding="utf-8")
+		implementation in JavaScript would be a second chance to get that wrong.
+
+		COMMENTS ARE STRIPPED FIRST, and that is the whole lesson of this assertion's
+		own history. The sentence in the page that explains why the client must not
+		filter on a nullable date necessarily contains `due_date` — so the test failed
+		on the comment written to satisfy it. That is at least the sixth instance of
+		this shape in this repo: an absence assertion reading the prose that explains
+		the absence."""
+		js = _code((self.PAGE / "training_insights.js").read_text(encoding="utf-8"))
 		self.assertIn("get_training_analytics", js)
 		for token in ("due_date", "getdate", "Date.now"):
 			with self.subTest(token):

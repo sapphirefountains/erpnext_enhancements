@@ -225,5 +225,68 @@ class TestTrueFalseNeverGuesses(unittest.TestCase):
 		self.assertNotIn("self.options = []", fn)
 
 
+# ------------------------------------------- N. every visible course lands somewhere
+
+
+class TestTheCatalogueLosesNoVisibleCourse(unittest.TestCase):
+	"""`get_learner_bootstrap` sorts every course this person may see into one of
+	three lists. Twice now it has sorted one into NONE of them, and each time the
+	course vanished from the catalogue for the only people entitled to open it.
+
+	v1.406.0: a COMPLETED Required course matched neither `name in assignments`
+	(Completed is not in OPEN_STATUSES) nor `weight == "Optional"`. An arm was added.
+
+	And the arm added was the specific one in front of us, so the final branch stayed
+	conditional and the next uncovered combination fell through the same hole: a
+	Published, audience-matching, REQUIRED, unassigned, uncompleted course matched
+	nothing either. Measured on production 2026-09-13, that was TRN-CRS-00005
+	"Accounting in ERPNext" — visible to Internal Staff and invisible to all of them.
+
+	The loop iterates `names`, which IS the set of courses this person may see, so
+	the only correct final branch is an unconditional one. A member of that set with
+	no list is not filtered out; it is lost.
+	"""
+
+	def bucketing(self):
+		"""The bucketing loop, WITH COMMENTS STRIPPED.
+
+		Stripped because the assertion below is about absence, and the comment that
+		explains why the expression is gone necessarily contains the expression. This
+		module's first run failed on exactly that: the test read its own explanation
+		and reported the bug still present. It is at least the fifth instance of that
+		shape in this repo, which is why it is worth a helper rather than a one-off
+		regex at the call site.
+		"""
+		source = _source(APP / "api" / "training.py")
+		start = source.index("    for name in names:")
+		end = source.index("assigned_cards.sort(")
+		block = source[start:end]
+		keep = [line for line in block.splitlines() if not line.strip().startswith("#")]
+		return chr(10).join(keep)
+
+	def test_the_final_branch_is_unconditional(self):
+		self.assertIn("        else:", self.bucketing())
+
+	def test_no_arm_tests_the_weight(self):
+		"""The exact expression that lost the course. `weight` still reaches the
+		client on the card — what must not come back is the SERVER deciding
+		  visibility from it."""
+		self.assertNotIn('course.weight == "Optional"', self.bucketing())
+
+	def test_all_three_lists_are_still_filled(self):
+		"""An `else` that swallowed the other arms would also pass the two above."""
+		block = self.bucketing()
+		for name in ("assigned_cards.append(card)", "finished.append(card)", "library.append(card)"):
+			with self.subTest(name):
+				self.assertIn(name, block)
+
+	def test_the_player_titles_that_section_neutrally(self):
+		"""`library` is the right home for a Required-but-unassigned course only
+		because the catalogue calls it "Available to you" rather than "Optional".
+		If that heading ever becomes weight-specific, this bucketing lies."""
+		player = _source(APP / "public" / "js" / "training" / "player.js")
+		self.assertIn('t("Available to you")', player)
+
+
 if __name__ == "__main__":
 	unittest.main()

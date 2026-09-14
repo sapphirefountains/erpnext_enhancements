@@ -149,10 +149,20 @@ class TrainingCanvas {
 		this.build_chrome();
 		this.page.set_secondary_action(__("Reload"), () => this.reload());
 		this.page.add_menu_item(__("Preview as a learner"), () => this.open_preview());
+		this.page.add_menu_item(__("Course settings…"), () => this.open_course_settings());
 		this.page.add_menu_item(__("Chapters…"), () => this.open_chapters());
 		this.page.add_menu_item(__("New draft version"), () => this.new_draft());
 		this.page.add_menu_item(__("Submit for review"), () => this.submit_for_review());
-		this.page.add_menu_item(__("Publish…"), () => this.publish());
+		// Offered only to somebody who may actually do it. `publish_version` calls
+		// `_require_manager()`, so a Training Author could open the dialog, choose a
+		// change type, write release notes, press Publish -- and get "Not permitted".
+		// `can_publish` has been on the bootstrap all along, precisely so the client
+		// could decide this, and nothing read it.
+		// Added now and HIDDEN until the bootstrap says otherwise. The menu is built
+		// before the first read returns, so gating on a flag that does not exist yet
+		// would hide Publish from everybody, including the managers it is for.
+		this.$publish = this.page.add_menu_item(__("Publish…"), () => this.publish());
+		if (this.$publish) $(this.$publish).parent().attr("hidden", "hidden");
 
 		// The autosave debounce is 1200ms, so a tab closed a second after the last
 		// keystroke loses it. The browser prompt is the only thing between the author
@@ -298,9 +308,23 @@ class TrainingCanvas {
 		this.version = data.version || null;
 		this.readiness = data.readiness || null;
 		this.ai_enabled = !!data.ai_enabled;
+		// `publish_version` calls `_require_manager()`, so a Training Author could
+		// open the dialog, choose a change type, write release notes, press Publish
+		// and get "Not permitted". `can_publish` has ridden the bootstrap all along,
+		// precisely so a client could decide this, and nothing read it.
+		this.can_publish = !!data.can_publish;
+		if (this.$publish) {
+			const item = $(this.$publish).parent();
+			if (this.can_publish) item.removeAttr("hidden");
+			else item.attr("hidden", "hidden");
+		}
 		this.ai_drafts = { kind: null, lesson: null, block_key: null, items: [], message: "", busy: false };
 		this.chapters = data.chapters || [];
 		this.video_assets = data.video_assets || [];
+		// Sent by get_builder_bootstrap all along and never stored. The course
+		// settings panel offers these as a Select rather than a Link control, so it
+		// cannot offer a category this site does not have.
+		this.categories = data.categories || [];
 		this.lessons = (data.lessons || []).map((lesson) => {
 			lesson.blocks = lesson.blocks || [];
 			return lesson;
@@ -399,8 +423,12 @@ class TrainingCanvas {
 
 	lesson_row(lesson) {
 		const id = lesson.name || lesson.__temp;
+		// `role` and `tabindex` rather than a <button>: the row CONTAINS a delete
+		// button, and a button inside a button is invalid HTML that browsers repair
+		// by moving the inner one out. Without these it was a plain <div> with a
+		// click handler -- selecting a lesson was impossible without a mouse.
 		const $row = $(`
-			<div class="tc-rail-row ${id === this.lesson_name ? "is-current" : ""}" data-lesson="${frappe.utils.escape_html(id)}">
+			<div class="tc-rail-row ${id === this.lesson_name ? "is-current" : ""}" role="button" tabindex="0" data-lesson="${frappe.utils.escape_html(id)}">
 				<span class="tc-rail-title"></span>
 				<button class="tc-rail-del" title="${__("Delete lesson")}" aria-label="${__("Delete lesson")}">🗑</button>
 			</div>
@@ -408,6 +436,14 @@ class TrainingCanvas {
 		$row.find(".tc-rail-title").text(lesson.lesson_title || __("Untitled lesson"));
 		$row.on("click", (e) => {
 			if ($(e.target).closest(".tc-rail-del").length) return;
+			this.select_lesson(id);
+		});
+		$row.on("keydown", (e) => {
+			// Enter and Space are what `role="button"` promises. Space also scrolls the
+			// page by default, which is why it is prevented rather than merely handled.
+			if (e.key !== "Enter" && e.key !== " ") return;
+			if ($(e.target).closest(".tc-rail-del").length) return;
+			e.preventDefault();
 			this.select_lesson(id);
 		});
 		$row.find(".tc-rail-del").on("click", () => this.remove_lesson(lesson));
@@ -669,6 +705,8 @@ class TrainingCanvas {
 		};
 		qcheck(__("Shuffle questions"), "quiz_shuffle_questions");
 		qcheck(__("Shuffle options"), "quiz_shuffle_options");
+		this.$quizpool = $('<div class="tc-quizpool"></div>').appendTo($quizbox);
+		this.paint_quiz_pool(lesson);
 		this.$lessonset.append($quizbox);
 		$quiz.on("change", paintQuiz);
 		paintQuiz();
@@ -690,8 +728,12 @@ class TrainingCanvas {
 			if ($drawer) this.$lessonset.append($drawer);
 		}
 
+		// The hint that used to live here read "Quiz questions themselves are still
+		// listed in the classic builder" -- a page DELETED in v1.422.0. It was the one
+		// sentence an author read when looking for the quiz editor, and it sent them
+		// to a URL that 404s. There is an editor now, so the sentence goes.
 		$('<div class="tc-hint"></div>')
-			.html(__("In-video checkpoints are placed on the video block's timeline. Quiz questions themselves are still listed in the classic builder."))
+			.text(__("In-video checkpoints are placed on the video block's timeline."))
 			.appendTo(this.$lessonset);
 
 		if (!ed) this.$lessonset.find("input, textarea, select").attr("disabled", "disabled");
@@ -703,6 +745,711 @@ class TrainingCanvas {
 		this.dirty_lesson(lesson)[field] = value;
 		this.mark_dirty();
 	}
+
+	// ------------------------------------------------------------ the quiz pool
+	//
+	// Until now there was no way to write a quiz question by hand ANYWHERE in this
+	// app. The canvas offered the four quiz *settings* and a hint pointing at a page
+	// deleted three releases earlier; the only code path that created a Training
+	// Question was the AI drawer, behind a setting that ships off.
+	//
+	// THE READ HALF WAS ALREADY ON THE WIRE. `_builder_lesson` sends `lesson.quiz`
+	// with each pool row's full body, type, explanation, provenance and every option
+	// INCLUDING `is_correct` -- `get_builder_bootstrap` is documented as the one
+	// place in the module that deliberately hands `is_correct` to a browser, so that
+	// an editor could exist. The canvas set `quiz: []` on new lessons and never read
+	// it back.
+	//
+	// THE WRITE HALF IS TWO PATHS, and that is the server's design rather than an
+	// inconvenience:
+	//   * POOL MEMBERSHIP (which question, points, is_required, order) rides the
+	//     draft save -- `_apply_quiz` allowlists exactly those three fields.
+	//   * THE QUESTION BODY goes through its own doctype, the way checkpoints and
+	//     video chapters already do. `_apply_quiz` refuses body fields and reports
+	//     them in `rejected`, and its docstring says why: a Training Question is a
+	//     SHARED document that can sit in another course's pool, so editing its
+	//     wording from here would silently rewrite a question somewhere else.
+	//
+	// WHICH IS WHY EDITING IS COPY-ON-WRITE. Before a change to a question used by
+	// more than one lesson, the author is asked, and the offered default is to take
+	// a copy for this lesson. Rewriting somebody else's course from a settings panel
+	// is not something a non-developer should be able to do by accident -- and it is
+	// exactly what a naive editor built on frappe.client.save would do.
+
+	quiz_rows(lesson) {
+		lesson.quiz = lesson.quiz || [];
+		return lesson.quiz;
+	}
+
+	paint_quiz_pool(lesson) {
+		if (!this.$quizpool) return;
+		const $box = this.$quizpool.empty();
+		const rows = this.quiz_rows(lesson);
+
+		const $head = $('<div class="tc-quizpool-head"></div>').appendTo($box);
+		$('<span class="tc-quizpool-count"></span>')
+			.text(rows.length ? __("{0} in the pool", [String(rows.length)]) : __("No questions yet"))
+			.appendTo($head);
+		if (this.editable()) {
+			$('<button class="btn btn-default btn-xs"></button>')
+				.text(__("Add a question"))
+				.on("click", () => this.add_quiz_question(lesson))
+				.appendTo($head);
+		}
+
+		if (!rows.length) {
+			// Named rather than generic, because an empty pool is not a neutral state:
+			// `TrainingLesson._validate_quiz` throws on save while the box above is
+			// ticked, so this sentence is the way out of a lesson that cannot be saved.
+			$('<div class="tc-muted"></div>')
+				.text(__("A ticked quiz with no questions cannot be saved. Add one, or untick the box above."))
+				.appendTo($box);
+			return;
+		}
+		rows.forEach((row) => $box.append(this.quiz_row(lesson, row)));
+	}
+
+	quiz_row(lesson, row) {
+		const $host = $('<div class="tc-quizq"></div>');
+		const ed = this.editable();
+		const touch = () => this.write_question(lesson, row);
+
+		if (this.num(row.ai_generated) && !row.ai_reviewed_by) {
+			// The publish gate refuses an ai_generated question with no reviewer, and
+			// until now the ONLY writer of `ai_reviewed_by` was the AI drawer's accept
+			// path -- which always constructs a NEW question rather than marking an
+			// existing one reviewed. So a Triton-authored course carrying a quiz could
+			// never be published by anybody. Saving an edit here stamps the reviewer.
+			$('<div class="tc-quizq-flag"></div>')
+				.text(__("AI-drafted, not yet reviewed"))
+				.appendTo($host);
+		}
+
+		const $q = $('<textarea class="form-control" rows="2"></textarea>')
+			.attr("placeholder", __("What are you asking?"))
+			.val(this.plain(row.question_text));
+		$q.on("change", () => {
+			row.question_text = $q.val();
+			touch();
+		});
+		$host.append($q);
+
+		const $type = $('<select class="form-control"></select>');
+		// The four the doctype declares and the player can render. Short Answer grades
+		// against `correct_text_answers`, so it hides the option list entirely.
+		["Single Choice", "Multiple Choice", "True-False", "Short Answer"].forEach((t) =>
+			$("<option></option>").attr("value", t).text(__(t)).appendTo($type)
+		);
+		$type.val(row.question_type || "Single Choice");
+		$type.on("change", () => {
+			row.question_type = $type.val();
+			this.normalise_question(row);
+			touch();
+			this.paint_quiz_pool(lesson);
+		});
+		$host.append($('<label class="tc-set"></label>').append($("<span></span>").text(__("Type")), $type));
+
+		if (row.question_type === "Short Answer") {
+			const $ans = $('<input type="text" class="form-control" />')
+				.attr("placeholder", __("Accepted answers, comma separated"))
+				.val(row.correct_text_answers || "");
+			$ans.on("change", () => {
+				row.correct_text_answers = $ans.val();
+				touch();
+			});
+			$host.append($('<label class="tc-set"></label>').append($("<span></span>").text(__("Answer")), $ans));
+		} else {
+			(row.options || []).forEach((opt, i) => $host.append(this.quiz_option(lesson, row, opt, i, touch)));
+			if (ed) {
+				$('<button class="btn btn-default btn-xs"></button>')
+					.text(__("Add option"))
+					.on("click", () => {
+						row.options = (row.options || []).concat([{ option_text: "", is_correct: 0 }]);
+						this.paint_quiz_pool(lesson);
+					})
+					.appendTo($host);
+			}
+		}
+
+		const $why = $('<textarea class="form-control" rows="2"></textarea>')
+			.attr("placeholder", __("Why is that the answer? Shown after grading."))
+			.val(this.plain(row.explanation));
+		$why.on("change", () => {
+			row.explanation = $why.val();
+			touch();
+		});
+		$host.append($why);
+
+		// Points is a POOL field, not a question field -- the same question can be
+		// worth more in one course than in another. It rides the draft save;
+		// everything above goes through the doctype.
+		const $pts = $('<input type="number" min="0" class="form-control" />').val(this.num(row.points) || 1);
+		$pts.on("change", () => {
+			row.points = this.num($pts.val());
+			this.set_lesson_quiz(lesson);
+		});
+		$host.append($('<label class="tc-set"></label>').append($("<span></span>").text(__("Points")), $pts));
+
+		if (ed) {
+			$('<button class="btn btn-default btn-xs tc-quizq-del"></button>')
+				.text(__("Remove from this lesson"))
+				.on("click", () => this.remove_quiz_question(lesson, row))
+				.appendTo($host);
+		}
+		if (!ed) $host.find("input, textarea, select, button").attr("disabled", "disabled");
+		return $host;
+	}
+
+	quiz_option(lesson, row, opt, index, touch) {
+		const $li = $('<div class="tc-quizopt"></div>');
+		const single = row.question_type !== "Multiple Choice";
+
+		const $ok = $('<input type="checkbox" />').prop("checked", !!this.num(opt.is_correct));
+		$ok.attr("title", __("Correct answer"));
+		$ok.on("change", () => {
+			opt.is_correct = $ok.prop("checked") ? 1 : 0;
+			// Enforced here so the author never meets the controller's throw -- the
+			// same courtesy the checkpoint pin inspector already extends.
+			if (single && opt.is_correct) {
+				(row.options || []).forEach((other, i) => {
+					if (i !== index) other.is_correct = 0;
+				});
+				this.paint_quiz_pool(lesson);
+			}
+			touch();
+		});
+		$li.append($ok);
+
+		const $text = $('<input type="text" class="form-control" />')
+			.attr("placeholder", __("Option text"))
+			.val(opt.option_text || "");
+		$text.on("change", () => {
+			opt.option_text = $text.val();
+			touch();
+		});
+		$li.append($text);
+
+		$('<button class="btn btn-default btn-xs"></button>')
+			.text("×")
+			.attr("title", __("Delete this option"))
+			.on("click", () => {
+				row.options = (row.options || []).filter((o, i) => i !== index);
+				touch();
+				this.paint_quiz_pool(lesson);
+			})
+			.appendTo($li);
+		return $li;
+	}
+
+	// True-False has exactly two options and they are not the author's to invent;
+	// Short Answer has none. Normalising on the type change stops an author leaving
+	// a half-converted question the grader cannot read.
+	normalise_question(row) {
+		if (row.question_type === "True-False") {
+			const correct = (row.options || []).findIndex((o) => this.num(o.is_correct) === 1);
+			row.options = [
+				{ option_text: __("True"), is_correct: correct === 0 ? 1 : 0 },
+				{ option_text: __("False"), is_correct: correct === 0 ? 0 : 1 },
+			];
+		} else if (row.question_type === "Short Answer") {
+			row.options = [];
+		} else if (!(row.options || []).length) {
+			row.options = [
+				{ option_text: "", is_correct: 1 },
+				{ option_text: "", is_correct: 0 },
+			];
+		}
+	}
+
+	// The stem and explanation are Text Editor fields, so what arrives is HTML. The
+	// editor is a textarea, so it shows text. Round-tripping raw HTML through a
+	// textarea would have an author editing markup they cannot see.
+	plain(html) {
+		if (!html) return "";
+		const box = document.createElement("div");
+		box.innerHTML = html;
+		return (box.textContent || "").trim();
+	}
+
+	add_quiz_question(lesson) {
+		if (!this.editable()) return;
+		const row = {
+			question_text: "",
+			question_type: "Single Choice",
+			explanation: "",
+			correct_text_answers: "",
+			points: 1,
+			is_required: 0,
+			options: [],
+		};
+		this.normalise_question(row);
+		this.quiz_rows(lesson).push(row);
+		this.paint_quiz_pool(lesson);
+		// Written immediately so the pool row has a question to name. An empty stem is
+		// legal on the doctype; an empty POOL is what makes the lesson unsaveable.
+		this.write_question(lesson, row);
+	}
+
+	remove_quiz_question(lesson, row) {
+		// Removed from THIS lesson's pool. The Training Question document is left
+		// alone, because it is shared and may sit in another course's pool -- and
+		// because a delete reaching beyond the screen you are on is something an
+		// author should have to go and do deliberately.
+		lesson.quiz = this.quiz_rows(lesson).filter((r) => r !== row);
+		this.set_lesson_quiz(lesson);
+		this.paint_quiz_pool(lesson);
+	}
+
+	// Pool membership, in order. Rides the draft save because `_apply_quiz`
+	// allowlists exactly these three fields and replaces the child table wholesale.
+	set_lesson_quiz(lesson) {
+		if (!this.editable()) return;
+		const rows = this.quiz_rows(lesson)
+			.filter((r) => r.question)
+			.map((r) => ({
+				question: r.question,
+				points: this.num(r.points) || 1,
+				is_required: this.num(r.is_required) || 0,
+			}));
+		this.dirty_lesson(lesson).quiz = rows;
+		this.mark_dirty();
+	}
+
+	write_question(lesson, row) {
+		if (!this.editable()) return Promise.resolve();
+		const body = {
+			doctype: "Training Question",
+			question_text: row.question_text || "",
+			question_type: row.question_type || "Single Choice",
+			explanation: row.explanation || "",
+			correct_text_answers: row.correct_text_answers || "",
+			difficulty: row.difficulty || "Medium",
+			options: (row.options || []).map((o) => ({
+				doctype: "Training Answer Option",
+				option_text: o.option_text || "",
+				is_correct: this.num(o.is_correct) || 0,
+				explanation: o.explanation || "",
+			})),
+		};
+		// Stamping the reviewer is what unblocks publish for an AI-drafted question.
+		// Set on SAVE rather than on render, so it records somebody having actually
+		// changed or confirmed the question rather than merely opened the panel.
+		if (this.num(row.ai_generated)) body.ai_reviewed_by = frappe.session.user;
+
+		if (!row.question) {
+			return frappe
+				.call("frappe.client.insert", { doc: body })
+				.then((r) => {
+					const saved = (r && r.message) || {};
+					row.question = saved.name;
+					row.name = saved.name;
+					row.modified = saved.modified;
+					this.set_lesson_quiz(lesson);
+					this.paint_status("saved");
+				})
+				.catch((error) => this.quiz_write_failed(error));
+		}
+		return this.shared_question_count(row).then((used) => {
+			if (used > 1) return this.fork_question(lesson, row, body, used);
+			return this.save_question(lesson, row, body);
+		});
+	}
+
+	save_question(lesson, row, body) {
+		return frappe
+			.call("frappe.client.save", { doc: { ...body, name: row.question, modified: row.modified } })
+			.then((r) => {
+				const saved = (r && r.message) || {};
+				row.modified = saved.modified;
+				row.ai_reviewed_by = saved.ai_reviewed_by || row.ai_reviewed_by;
+				this.paint_status("saved");
+			})
+			.catch((error) => this.quiz_write_failed(error));
+	}
+
+	// How many lesson pools name this question. A child-table count, because that
+	// child table IS the usage record. A failed count answers 1 -- the safe answer
+	// is the one that does NOT silently fork a question the author meant to edit.
+	shared_question_count(row) {
+		return frappe
+			.call("frappe.client.get_count", {
+				doctype: "Training Quiz Question",
+				filters: { question: row.question },
+			})
+			.then((r) => this.num((r && r.message) || 0))
+			.catch(() => 1);
+	}
+
+	fork_question(lesson, row, body, used) {
+		return new Promise((resolve) => {
+			const dialog = new frappe.ui.Dialog({
+				title: __("This question is used elsewhere"),
+				indicator: "orange",
+				fields: [
+					{
+						fieldtype: "HTML",
+						options: frappe.utils.escape_html(
+							__("It sits in {0} lesson pools. Editing it changes every one of them.", [String(used)])
+						),
+					},
+				],
+				primary_action_label: __("Copy it for this lesson"),
+				primary_action: () => {
+					dialog.hide();
+					const fresh = { ...body };
+					delete fresh.name;
+					resolve(
+						frappe
+							.call("frappe.client.insert", { doc: fresh })
+							.then((r) => {
+								const saved = (r && r.message) || {};
+								row.question = saved.name;
+								row.name = saved.name;
+								row.modified = saved.modified;
+								this.set_lesson_quiz(lesson);
+								this.paint_status("saved");
+							})
+							.catch((error) => this.quiz_write_failed(error))
+					);
+				},
+				secondary_action_label: __("Change it everywhere"),
+				secondary_action: () => {
+					dialog.hide();
+					resolve(this.save_question(lesson, row, body));
+				},
+			});
+			dialog.show();
+		});
+	}
+
+	quiz_write_failed(error) {
+		this.paint_status("error");
+		frappe.msgprint({
+			title: __("The question was not saved"),
+			indicator: "red",
+			message: (error && error.message) || __("Reload and try again."),
+		});
+	}
+
+
+	// ----------------------------------------------------------- video upload
+	//
+	// An author with an MP4 on their laptop could not get it into a lesson at all.
+	// They had to own a Google account, upload to Drive, then obtain a Drive-admin
+	// action most of them cannot perform themselves — sharing the file with the
+	// SERVICE ACCOUNT, a requirement that appeared nowhere on screen and lived only
+	// in a runbook — and finally paste the link back here.
+	//
+	// THE BYTES NEVER TOUCH THE SITE. The server signs a short-lived URL; this
+	// talks to Google Cloud Storage directly. Frappe's own uploader was not an
+	// option: it enforces a 25MB ceiling twice and streams the whole body through a
+	// gunicorn worker synchronously, so the obvious build fails on any real video
+	// and would take the site down for the ones it accepted.
+	//
+	// THE DURATION IS READ BEFORE THE UPLOAD, off the very file about to be sent.
+	// That is an upgrade rather than a shortcut: the Drive probe swallows every
+	// exception and lands `duration_source = Manual`, for which grading WAIVES the
+	// video-coverage gate entirely — one orange modal at registration, and after
+	// that a course that silently requires no watching. A file whose duration a
+	// browser cannot read is a file there is no point uploading.
+	//
+	// XHR rather than fetch, for the same reason `upload()` above uses it: fetch has
+	// no upload-progress event, and a 300MB upload with no progress bar is
+	// indistinguishable from a hang.
+
+	video_upload_ready() {
+		// Asked once per canvas session and remembered. The answer is about the
+		// SITE (is a bucket and a signing key configured), not about this lesson.
+		if (this._upload_ready) return Promise.resolve(this._upload_ready);
+		return frappe
+			.call("erpnext_enhancements.training.video_upload.upload_preflight")
+			.then((r) => {
+				this._upload_ready = (r && r.message) || { enabled: false };
+				return this._upload_ready;
+			})
+			.catch(() => ({ enabled: false }));
+	}
+
+	pick_video(lesson, block) {
+		if (!this.editable()) return;
+		this.video_upload_ready().then((ready) => {
+			if (!ready.enabled) {
+				// Said in words, before a file is chosen. Dropping 200MB and then
+				// meeting a CORS failure is not a message anybody can act on.
+				frappe.msgprint({
+					title: __("Uploads are not set up"),
+					indicator: "orange",
+					message: ready.message || __("Ask an administrator to configure training video storage."),
+				});
+				return;
+			}
+			const input = document.createElement("input");
+			input.type = "file";
+			input.accept = (ready.accepts || ["video/mp4"]).join(",");
+			input.addEventListener("change", () => {
+				const file = input.files && input.files[0];
+				if (file) this.upload_video(lesson, block, file, ready);
+			});
+			input.click();
+		});
+	}
+
+	// Reads HTMLMediaElement.duration without downloading anything: the object URL
+	// points at the local file. Resolves 0 when the browser cannot decode it, which
+	// the caller treats as a refusal rather than a default.
+	read_duration(file) {
+		return new Promise((resolve) => {
+			const url = URL.createObjectURL(file);
+			const probe = document.createElement("video");
+			probe.preload = "metadata";
+			const done = (seconds) => {
+				URL.revokeObjectURL(url);
+				resolve(Math.round(seconds) || 0);
+			};
+			probe.onloadedmetadata = () => done(probe.duration);
+			probe.onerror = () => done(0);
+			probe.src = url;
+		});
+	}
+
+	upload_video(lesson, block, file, ready) {
+		const cap = (ready && ready.max_mb) || 0;
+		if (cap && file.size > cap * 1024 * 1024) {
+			// Checked here as well as on the server, purely so the author hears it
+			// instantly rather than after the round trip. The server's check is the
+			// one that counts.
+			frappe.msgprint({
+				title: __("That video is too big"),
+				indicator: "orange",
+				message: __("{0} MB is the limit on this site.", [String(cap)]),
+			});
+			return;
+		}
+
+		this.read_duration(file).then((seconds) => {
+			if (!seconds) {
+				frappe.msgprint({
+					title: __("That file will not play"),
+					indicator: "orange",
+					message: __("The browser could not read its length, so learners could not play it either."),
+				});
+				return;
+			}
+			this.paint_status("saving");
+			frappe
+				.call("erpnext_enhancements.training.video_upload.start_video_upload", {
+					filename: file.name,
+					content_type: file.type,
+					size_bytes: file.size,
+				})
+				.then((r) => {
+					const start = (r && r.message) || {};
+					if (!start.url) throw new Error(__("The upload could not be started."));
+					return this.gcs_session(start, file).then((session) => this.gcs_put(session, file, start));
+				})
+				.then((start) =>
+					frappe.call("erpnext_enhancements.training.video_upload.finish_video_upload", {
+						object_name: start.object_name,
+						title: file.name,
+						duration_seconds: seconds,
+						content_type: start.content_type,
+					})
+				)
+				.then((r) => {
+					const asset = (r && r.message) || {};
+					if (!asset.name) throw new Error(__("The upload finished but the video was not registered."));
+					this.video_assets = (this.video_assets || []).concat([asset]);
+					this.video_registered(lesson, block, asset);
+					this.paint_status("saved");
+					frappe.show_alert({ message: __("Video uploaded."), indicator: "green" }, 4);
+				})
+				.catch((error) => this.upload_failed(error));
+		});
+	}
+
+	// Step one of a resumable upload: POST the signed URL with the exact headers
+	// that were signed, and read the session URI out of `Location`. The header must
+	// go back byte-identical -- it is part of the canonical request, and Google
+	// answers a mismatch with a 403 that says nothing about which header was wrong.
+	gcs_session(start, file) {
+		return new Promise((resolve, reject) => {
+			const xhr = new XMLHttpRequest();
+			xhr.open("POST", start.url, true);
+			Object.keys(start.headers || {}).forEach((name) => {
+				xhr.setRequestHeader(name, start.headers[name]);
+			});
+			xhr.onload = () => {
+				const location = xhr.getResponseHeader("Location");
+				if (xhr.status >= 200 && xhr.status < 300 && location) {
+					resolve(location);
+					return;
+				}
+				// The likeliest cause by far, and the one nobody guesses.
+				reject(
+					new Error(
+						xhr.status === 0
+							? __("The storage bucket refused the browser. Its CORS rules need this site's address, and must expose the Location header.")
+							: __("Storage answered {0} when starting the upload.", [String(xhr.status)])
+					)
+				);
+			};
+			xhr.onerror = () =>
+				reject(new Error(__("The storage bucket refused the browser. Check its CORS rules.")));
+			xhr.send(null);
+		});
+	}
+
+	gcs_put(session, file, start) {
+		return new Promise((resolve, reject) => {
+			const xhr = new XMLHttpRequest();
+			xhr.open("PUT", session, true);
+			xhr.setRequestHeader("Content-Type", start.content_type);
+			xhr.upload.onprogress = (event) => {
+				if (!event.lengthComputable) return;
+				const done = Math.round((event.loaded / event.total) * 100);
+				this.paint_status("saving", __("Uploading {0}%", [String(done)]));
+			};
+			xhr.onload = () => {
+				if (xhr.status >= 200 && xhr.status < 300) resolve(start);
+				else reject(new Error(__("Storage answered {0} during the upload.", [String(xhr.status)])));
+			};
+			xhr.onerror = () => reject(new Error(__("The upload was interrupted.")));
+			xhr.send(file);
+		});
+	}
+
+	upload_failed(error) {
+		this.paint_status("error");
+		frappe.msgprint({
+			title: __("The video was not uploaded"),
+			indicator: "red",
+			message: (error && error.message) || __("Try again."),
+		});
+	}
+
+
+	// ------------------------------------------------------- course settings
+	//
+	// The canvas showed the course name as static text. Title, Required vs Optional
+	// weight, category, passing score, max attempts, minimum video coverage,
+	// recertification — all Desk-form only, so an author building a course had to
+	// leave the authoring surface to say what kind of course it is.
+	//
+	// `weight` is the field that joins the two halves of this work item: Required vs
+	// Optional is exactly what the learner dashboard sorts on, and it was being set
+	// somewhere the author never went.
+	//
+	// `status` is NOT here. Publishing and retiring have their own endpoints and
+	// their own gates, and publish asks the Minor-Edit vs Material-Change question
+	// explicitly because a Material Change marks existing completions Superseded and
+	// raises retakes. A settings panel that could flip it would be a way to do that
+	// by accident.
+
+	open_course_settings() {
+		if (!this.course) return;
+		const course = this.course;
+		const ed = this.editable();
+		const categories = (this.categories || []).map((row) => row.name);
+
+		const dialog = new frappe.ui.Dialog({
+			title: __("Course settings"),
+			fields: [
+				{ fieldname: "course_title", fieldtype: "Data", label: __("Title"), reqd: 1 },
+				{
+					fieldname: "weight",
+					fieldtype: "Select",
+					label: __("Weight"),
+					// The two the doctype declares. An off-options Select value makes the
+					// row UNSAVEABLE and no ignore_* flag bypasses _validate_selects, so
+					// this list is the doctype's or nothing.
+					options: ["Required", "Optional"].join("\n"),
+					description: __("Required courses are what the learner dashboard counts."),
+				},
+				{
+					fieldname: "category",
+					fieldtype: "Select",
+					label: __("Category"),
+					// Read off the bootstrap rather than a Link control, so the dialog
+					// cannot offer a category that this site does not have.
+					options: [""].concat(categories).join("\n"),
+				},
+				{ fieldname: "estimated_minutes", fieldtype: "Int", label: __("Estimated minutes") },
+				{ fieldtype: "Column Break" },
+				{ fieldname: "passing_score", fieldtype: "Int", label: __("Passing score (%)") },
+				{ fieldname: "max_attempts", fieldtype: "Int", label: __("Max attempts") },
+				{
+					fieldname: "min_video_coverage",
+					fieldtype: "Int",
+					label: __("Minimum video coverage (%)"),
+					description: __("Waived entirely for any video whose length was typed in rather than measured."),
+				},
+				{
+					fieldname: "require_checkpoints_answered",
+					fieldtype: "Check",
+					label: __("Require in-video checkpoints answered"),
+				},
+				{ fieldname: "allow_self_enrollment", fieldtype: "Check", label: __("Learners may enrol themselves") },
+				{ fieldtype: "Section Break" },
+				{ fieldname: "summary", fieldtype: "Small Text", label: __("Summary"), description: __("Shown on the course card.") },
+			],
+			primary_action_label: __("Save"),
+			primary_action: (values) => this.save_course_settings(dialog, values),
+		});
+
+		dialog.set_values({
+			course_title: course.course_title || "",
+			weight: course.weight || "Optional",
+			category: course.category || "",
+			estimated_minutes: this.num(course.estimated_minutes),
+			passing_score: this.num(course.passing_score),
+			max_attempts: this.num(course.max_attempts),
+			min_video_coverage: this.num(course.min_video_coverage),
+			require_checkpoints_answered: this.num(course.require_checkpoints_answered),
+			allow_self_enrollment: this.num(course.allow_self_enrollment),
+			summary: course.summary || "",
+		});
+		if (!ed) {
+			// A published course with no open draft is read-only everywhere else on
+			// this page; the settings panel should not be the one door that is not.
+			dialog.disable_primary_action();
+			dialog.fields.forEach((field) => {
+				const control = dialog.get_field(field.fieldname);
+				if (control && control.df) control.df.read_only = 1;
+			});
+			dialog.refresh();
+		}
+		dialog.show();
+	}
+
+	save_course_settings(dialog, values) {
+		dialog.disable_primary_action();
+		frappe
+			.call({
+				method: "erpnext_enhancements.api.training_author.update_course_settings",
+				args: { course: this.course.name, patch: JSON.stringify(values) },
+			})
+			.then((r) => {
+				const state = (r && r.message) || {};
+				if (state.course) {
+					this.course = state.course;
+					this.render();
+				}
+				// Reported rather than dropped, the same contract the draft save keeps:
+				// a field silently ignored is a field the author believes they set.
+				this.report_rejected(state.rejected);
+				dialog.hide();
+				frappe.show_alert({ message: __("Course settings saved."), indicator: "green" }, 4);
+			})
+			.catch((error) => {
+				dialog.enable_primary_action();
+				frappe.msgprint({
+					title: __("Not saved"),
+					indicator: "red",
+					message: (error && error.message) || __("Try again."),
+				});
+			});
+	}
+
 
 	// ---------------------------------------------------------- lifecycle
 	new_draft() {
@@ -958,7 +1705,23 @@ class TrainingCanvas {
 				body.setAttribute("spellcheck", "false");
 				body.classList.add("tc-rich");
 				body.addEventListener("focus", () => this.show_rt_toolbar(body));
-				body.addEventListener("blur", () => this.hide_rt_toolbar());
+				// Remembered continuously, because the toolbar acts on a selection that
+				// will already be gone by the time a keyboard user reaches a button.
+				body.addEventListener("keyup", () => this.remember_rt_selection());
+				body.addEventListener("mouseup", () => this.remember_rt_selection());
+				body.addEventListener("blur", () => {
+					this.remember_rt_selection();
+					// DEFERRED, and cancelled when focus landed in the toolbar. Tabbing from
+					// the text to the toolbar fires blur first, so hiding immediately took
+					// the buttons away from the keyboard user who was on their way to them --
+					// which is the other half of why this toolbar was unusable without a
+					// mouse, and the half that would have survived fixing the click handler.
+					setTimeout(() => {
+						const bar = this.$rt && this.$rt.get(0);
+						if (bar && bar.contains(document.activeElement)) return;
+						this.hide_rt_toolbar();
+					}, 0);
+				});
 				body.addEventListener("input", () => {
 					block.content = body.innerHTML;
 					this.dirty_blocks(lesson);
@@ -983,10 +1746,24 @@ class TrainingCanvas {
 	// ------------------------------------------------------ rich text toolbar
 	build_rt_toolbar($bar) {
 		this.$rt = $bar;
+		// TWO EVENTS, AND BOTH ARE LOAD-BEARING.
+		//
+		// `mousedown` + preventDefault is why this works with a mouse at all: without
+		// it, pressing a button moves focus out of the contenteditable and the
+		// selection collapses before the command can apply. That part was right.
+		//
+		// But the ACTION hung off mousedown too, and mousedown does not fire for a
+		// keyboard. So every button here was focusable, looked interactive and did
+		// nothing on Enter or Space -- Bold, Italic, both headings, both lists, Link
+		// and Clear, all inert for anybody not using a mouse. The action moves to
+		// `click`, which fires for both, and the remembered range covers the keyboard
+		// case, where focus has already left the text by the time the button is hit.
 		const cmd = (label, title, action) =>
-			$(`<button class="tc-rt-btn" title="${title}" aria-label="${title}">${label}</button>`)
-				.on("mousedown", (e) => {
+			$(`<button type="button" class="tc-rt-btn" title="${title}" aria-label="${title}">${label}</button>`)
+				.on("mousedown", (e) => e.preventDefault())
+				.on("click", (e) => {
 					e.preventDefault();
+					this.restore_rt_selection();
 					action();
 				})
 				.appendTo($bar);
@@ -1002,6 +1779,27 @@ class TrainingCanvas {
 			if (url) document.execCommand("createLink", false, url);
 		});
 		cmd("✕", __("Clear formatting"), () => document.execCommand("removeFormat"));
+	}
+
+	// Where the caret was when the editable last held it. Tabbing to the toolbar
+	// moves focus off the text, and a command applied with no selection either
+	// does nothing or applies to whatever the browser decides is current.
+	remember_rt_selection() {
+		const selection = window.getSelection && window.getSelection();
+		if (!selection || !selection.rangeCount || !this._rt_target) return;
+		const range = selection.getRangeAt(0);
+		if (this._rt_target.contains(range.commonAncestorContainer)) this._rt_range = range.cloneRange();
+	}
+
+	restore_rt_selection() {
+		const selection = window.getSelection && window.getSelection();
+		if (!selection || !this._rt_target) return;
+		const current = selection.rangeCount ? selection.getRangeAt(0) : null;
+		if (current && this._rt_target.contains(current.commonAncestorContainer)) return;
+		this._rt_target.focus();
+		if (!this._rt_range) return;
+		selection.removeAllRanges();
+		selection.addRange(this._rt_range);
 	}
 
 	show_rt_toolbar(body) {
@@ -1302,6 +2100,13 @@ class TrainingCanvas {
 			const $d = this.render_ai_drawer(lesson);
 			if ($d && this.ai_drafts.kind === "checkpoint") $box.append($d);
 		}
+		// Upload first, and Drive second: the order is the recommendation. Drive
+		// needs a Google account AND an admin action nobody can see from here;
+		// upload needs a file.
+		$('<button class="btn btn-default btn-xs" style="margin-top:6px"></button>')
+			.text(__("Upload a video…"))
+			.on("click", () => this.pick_video(lesson, block))
+			.appendTo($box);
 		$('<button class="btn btn-default btn-xs" style="margin-top:6px"></button>')
 			.text(__("Add a video from Drive…"))
 			.on("click", () => this.register_drive_video(lesson, block))
@@ -1712,6 +2517,15 @@ class TrainingCanvas {
 	}
 
 	remove_block(lesson, block) {
+		if (!this.editable()) return;
+		// Deleting a LESSON has always confirmed; deleting a block did not, though it
+		// is just as unrecoverable -- there is no undo, and the next autosave writes
+		// the shorter block list. A paragraph somebody spent ten minutes on went on a
+		// single click with no way back.
+		frappe.confirm(__("Delete this block? There is no undo."), () => this.drop_block(lesson, block));
+	}
+
+	drop_block(lesson, block) {
 		if (!this.editable()) return;
 		lesson.blocks = lesson.blocks.filter((b) => b !== block);
 		this.dirty_blocks(lesson);
@@ -2602,10 +3416,24 @@ class TrainingCanvas {
 		if (!this.$lessonset.prop("hidden")) this.render_lesson_settings();
 	}
 
-	paint_status(kind) {
-		const label = { saved: __("Saved"), dirty: __("Editing…"), saving: __("Saving…"), conflict: __("Out of date") };
-		this.$status.removeClass("is-dirty is-saving is-conflict").addClass(kind === "saved" ? "" : "is-" + kind);
-		this.$status.find(".tc-status-text").text(label[kind] || "");
+	// `text` overrides the standing label for a transient one -- an upload's
+	// percentage, say. Without it a 300MB upload shows "Saving…" for four
+	// minutes, which is indistinguishable from a hang.
+	paint_status(kind, text) {
+		const label = {
+			saved: __("Saved"),
+			dirty: __("Editing…"),
+			saving: __("Saving…"),
+			conflict: __("Out of date"),
+			// Added with the quiz editor and the video upload, both of which write
+			// through their own doctype rather than the draft save -- so a failure
+			// there leaves the sheet clean and had nothing to say so with.
+			error: __("Not saved"),
+		};
+		this.$status
+			.removeClass("is-dirty is-saving is-conflict is-error")
+			.addClass(kind === "saved" ? "" : "is-" + kind);
+		this.$status.find(".tc-status-text").text(text || label[kind] || "");
 	}
 }
 

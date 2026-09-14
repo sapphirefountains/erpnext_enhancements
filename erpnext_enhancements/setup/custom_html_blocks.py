@@ -39,6 +39,12 @@ import frappe
 # Order is the order blocks are appended to Home.
 BLOCKS = [
 	("Desk Shortcuts", "desk_shortcuts"),
+	# The learner's own dashboard, placed on the My Training workspace. It is the
+	# one widget here whose content is DIFFERENT FOR EVERY VIEWER -- which is
+	# exactly why it is a Custom HTML Block and not a Number Card or a Quick List:
+	# those carry their filters on the widget, so they are the same for everyone
+	# who opens the page.
+	("My Training Dashboard", "training_my_dashboard"),
 	("Projects Dashboard", "projects_dashboard"),
 	("Task Dashboard", "task_dashboard"),
 	("Morning Briefing", "morning_briefing"),
@@ -161,6 +167,9 @@ DEPARTMENT_DASHBOARD_BLOCKS = {
 		"Marketing Unsourced Leads",
 		"Marketing Source Health",
 	),
+	# The learner workspace. One block, and no KPI Cockpit beside it: this page is
+	# for the person looking at it, not for reading the business.
+	"My Training": ("My Training Dashboard",),
 	"HR Dashboard": (
 		"HR Training Compliance",
 		"HR Time Capture",

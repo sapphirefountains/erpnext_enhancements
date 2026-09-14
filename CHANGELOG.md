@@ -7,6 +7,329 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.439.0] - 2026-09-13
+
+Training Phase 6, D15 part five. **The endpoint that did not exist.**
+
+### Added
+
+- **`training_author.get_draft_preview(course)`** — a draft's learner payload as
+  JSON. Recorded as missing when the Training Lesson form button was built in
+  v1.432.0, and the reason that button opens `/training_preview` in a tab rather
+  than mounting a player in the form: nothing returned the payload, because
+  `/training_preview` builds it server-side and renders it into the template. The
+  only way to get it client-side was to rebuild it in JavaScript — precisely the
+  ~640 lines the classic builder carried and the canvas port deliberately did not.
+
+  It returns **the same payload the preview page embeds, from the same builder**, so
+  there is one producer rather than two that drift. `_draft_payload()` gained an
+  explicit `course` argument: the page keeps reading the query string, and the
+  endpoint passes the course rather than reading whatever a caller happened to leave
+  in `form_dict`.
+
+  The gate travels with the payload — an authoring role **and** write permission on
+  that specific course, the gate `get_builder_bootstrap` uses, because the payload
+  contains the answer key. It is not the page-level developer-mode check, which is a
+  deployment setting rather than a permission. And it throws rather than returning
+  `null`: a client handed `null` would have to guess between "no draft", "not yours"
+  and "not a course", and those have different answers.
+
+### Fixed
+
+- **Three tests anchored on `def _draft_payload()` including its empty parentheses**,
+  and broke the moment the builder took an argument. Re-anchored on the opening
+  paren — an assertion about a function should not be an assertion about its arity.
+
+## [1.438.0] - 2026-09-13
+
+Training Phase 6, D15 part four. **The canvas can be used by somebody without a
+mouse, on a tablet, and without leaving it to say what kind of course this is.**
+
+### Added
+
+- **Course settings on the canvas.** Title, **Required vs Optional weight**,
+  category, summary, estimated minutes, passing score, max attempts, minimum video
+  coverage, require-checkpoints-answered and self-enrolment — all Desk-form only
+  until now, so an author building a course had to leave the authoring surface to
+  say what kind of course it is.
+
+  `weight` is the field that joins the two halves of this work item: Required vs
+  Optional is exactly what the learner dashboard sorts on, and it was being set
+  somewhere the author never went.
+
+  `status` is deliberately **not** writable from the panel. Publishing and retiring
+  have their own endpoints and their own gates, and publish asks the Minor-Edit vs
+  Material-Change question explicitly because a Material Change marks existing
+  completions `Superseded` and raises retake assignments. A settings panel able to
+  flip `status` would be a way to do that by accident.
+
+### Fixed
+
+- **The rich-text toolbar did nothing from a keyboard, for two separate reasons,
+  and fixing either alone would have left it broken.** The action hung off
+  `mousedown`, which does not fire for a keyboard — so Bold, Italic, both headings,
+  both lists, Link and Clear were focusable, looked interactive and were inert. And
+  the editable's `blur` handler hid the toolbar, so tabbing *to* it removed the
+  buttons on the way. The `mousedown` + `preventDefault` stays, because it is what
+  stops the selection collapsing under a mouse; the action moves to `click`, the
+  hide is deferred and cancelled when focus lands in the toolbar, and the caret
+  position is remembered so a command has something to apply to.
+
+- **A lesson could not be selected without a mouse.** Rail rows were plain `<div>`s
+  with click handlers, no `tabindex` and no `role`. They get both — rather than
+  becoming `<button>`s, because the row *contains* a delete button and a button
+  inside a button is invalid HTML that browsers repair by moving the inner one out.
+
+- **The canvas had zero media queries across 1,072 lines**, with `.tc-app` fixed at
+  `calc(100vh - 115px)` and a 248px rail, while the page's own `visibilitychange`
+  handler exists because *"a tablet locking its screen"* was anticipated. The script
+  assumed a tablet; the stylesheet assumed one could not happen.
+
+- **The primary authoring action was invisible.** The `+` between blocks was
+  `opacity: 0` until hover — and the empty-lesson message says "Add a block below
+  the line above", pointing at something nobody could see. A non-developer opening
+  the canvas had no way to discover that a lesson is built by pressing something
+  between the blocks.
+
+- **Deleting a block asks first.** Deleting a *lesson* has always confirmed;
+  deleting a block did not, though it is just as unrecoverable — there is no undo
+  and the next autosave writes the shorter list.
+
+- **Publish is offered only to somebody who may publish.** `publish_version` calls
+  `_require_manager()`, so a Training Author could open the dialog, choose a change
+  type, write release notes, press Publish and get "Not permitted". `can_publish`
+  has ridden the bootstrap all along precisely so a client could decide this, and
+  nothing read it. The item starts hidden rather than absent, because the menu is
+  built before the first read returns.
+
+## [1.437.0] - 2026-09-13
+
+Training Phase 6, D15 part three. **An author can upload a video.**
+
+### Added
+
+- **Browser-to-bucket video upload** (`training/video_upload.py`, plus the canvas
+  control). Pick a file, watch a progress bar, done.
+
+  Until now an author with an MP4 on their laptop could not get it into a lesson at
+  all. They needed a Google account, a Drive upload, and then a Drive-admin action
+  most of them cannot perform themselves — sharing the file with
+  `erpnext-drive@…iam.gserviceaccount.com`, a requirement that appeared **nowhere on
+  screen** and lived only in `docs/training-video-drive-runbook.md`.
+
+  **The obvious build does not work, and that is why this one looks the way it
+  does.** Frappe enforces a 25 MB default ceiling *twice* — `get_max_file_size()`
+  and again in `File.check_max_file_size` — and streams the whole body through a
+  gunicorn worker synchronously. So pointing `frappe.ui.FileUploader` at a video,
+  the way Image and PDF already upload, fails on any real one, and a raised limit
+  only converts the failure into a worker held for minutes. The bytes therefore go
+  **browser → GCS** on a signed URL, and this app is never in the data path.
+
+  Two things the browser is deliberately not trusted for: the **object name** is
+  minted server-side (a name from the client is an arbitrary write path into the
+  bucket), and the **size is re-read from GCS** on completion, because the client
+  already reported a size once and that number decided whether the upload was
+  allowed at all.
+
+- **The duration is read from the file before it is sent**, which closes a hole
+  rather than adding a feature. `_probe_drive_video` swallows every exception and
+  returns `{}`, landing an asset with `duration_seconds = 1` and
+  `duration_source = Manual` — and grading **waives the video-coverage gate
+  entirely** for a Manual duration. One orange modal at registration, and after
+  that a course that silently requires no watching. A browser reading
+  `HTMLMediaElement.duration` off the very file it is about to upload cannot fail
+  that way, so an uploaded asset is `Probed`, and a file whose length cannot be
+  read is refused instead of stored.
+
+- **`Training Settings.max_video_mb` finally does something.** It has existed with
+  a default of 300 and was read by **zero lines** of Python or JavaScript, so there
+  has never been a size ceiling anywhere in the upload path. It is now the limit,
+  enforced before a byte is sent and again on the server.
+
+- **`gcs_media.generate_signed_url` can sign extra headers**, sorted and declared,
+  which is what makes a resumable-upload start signable. A plain GET passes none
+  and gets the host-only canonical request it always had.
+
+### Fixed
+
+- **The canvas status line can say "not saved".** It had four states and no failure
+  one, which was fine while everything went through the draft save — the quiz
+  editor and the upload both write through their own doctype, so a failure there
+  left the sheet looking clean with nothing to say otherwise. It also takes an
+  override now, because a 300 MB upload showing "Saving…" for four minutes is
+  indistinguishable from a hang.
+
+- **A CORS refusal says what it is.** The bucket must allow this origin and expose
+  the `Location` header; a browser reports the failure as status 0 with no detail,
+  so the one sentence an author can act on is written into the client rather than
+  left to guesswork.
+
+## [1.436.0] - 2026-09-13
+
+Training Phase 6, D15 part two. **A learner dashboard**, and a manager's view of one
+person that deliberately carries no scores.
+
+### Added
+
+- **My Training dashboard** — a Custom HTML Block on the learner workspace, showing
+  this person's statistics and a live list of their **Required** and **Optional**
+  courses, each opening at `/desk/learn/<COURSE>`.
+
+  It is a Custom HTML Block rather than a Number Card or a Quick List for one
+  reason: those carry their filters on the widget, so they are identical for
+  everyone who opens the page. None of them can answer *"which courses does the
+  person looking at this owe"*. The Desk's own left sidebar has the same limit and
+  the same cause — it lists workspaces, which are places, not people.
+
+- **`training/dashboard.py`** — one read model, two whitelisted reads.
+  `get_my_dashboard()` answers about yourself; `get_person_dashboard(user)` answers
+  about somebody else, for a manager, and **builds no scores and no attempt
+  history**.
+
+  That exclusion lives in the **shape** of the response rather than in a filter:
+  the manager payload has no score keys to omit, so no future caller can pass an
+  argument that puts them back, and a call-graph test asserts `_scores` is reachable
+  from exactly one function. The reasoning is the module's own: showing a person
+  their own quiz history is feedback, showing it to their manager is assessment, and
+  this module already took that position when the team feed was built to carry no
+  number anyone could be judged by.
+
+  It defines nothing. "Open", "overdue" and "visible" are predicates owned by
+  `api/training.py` and imported from there, and every tile is counted off the same
+  rows the dashboard then draws — so a number and the list beneath it cannot
+  disagree, which is the failure this module had already shipped twice.
+
+- **"Training record" on the Employee form, and "Look up a person" on Training
+  Insights.** The dashboard's real gap: every number on the manager console is
+  aggregated by course, by cohort or org-wide, so a manager could read "7 overdue"
+  and open the list of assignment documents, but could not ask *how is this person
+  doing* about the technician whose form they already had open. Role-gated, and
+  drawn only when the Employee has a `user_id` — training records belong to a User,
+  and an entry point that opens an empty dialog reads as the data being missing.
+
+  The dialog loads on demand rather than shipping in the global bundle: a manager
+  opens it rarely and a learner never.
+
+### Fixed
+
+- **Three guards in this repo caught things I would otherwise have shipped**, and
+  each is worth more than the line it changed:
+
+  - `test_dashboard_widgets` refused the placement because it looked for every
+    workspace JSON under `kpi_dashboards/` — but workspaces live beside the module
+    that owns them, and `My Training` is a Training workspace. The test now resolves
+    the file across modules, and treats the KPI Cockpit as a department-dashboard
+    fixture rather than a universal one. **A learner's own page should not carry a
+    business-wide cockpit**; that is a different product on the same screen.
+  - The same test's message recorded something easy to get wrong and impossible to
+    see: **v16 builds a workspace's custom-block payload from the `custom_blocks`
+    child table, not from the `content` blob**, so a placement written into
+    `content` alone renders an empty space with no error anywhere. The shipped JSON
+    now carries both.
+  - An absence assertion matched the comment explaining the absence — the **seventh**
+    instance of that shape here, this time in a stylesheet, where the rule said "a
+    `var(--tr-surface)` here would resolve to nothing" and the test was looking for
+    `var(--tr-`.
+
+- **The workspace JSON's `modified` is bumped and a patch forces the reload.**
+  Workspaces are *timestamp*-gated by frappe's importer, unlike DocTypes, which are
+  hash-gated: a file that does not read newer than the stored row is skipped in
+  silence. That is what stranded this same workspace's cards for five weeks in
+  v1.379.0.
+
+## [1.435.0] - 2026-09-13
+
+Training Phase 6, D15 part one. **A quiz can be written by hand**, and three counts
+start meaning what they say.
+
+### Added
+
+- **A quiz editor on the authoring canvas.** Until now a quiz question could not be
+  written by hand *anywhere in this app*. The canvas carried the four quiz settings
+  and a hint reading "Quiz questions themselves are still listed in the classic
+  builder" — a page **deleted in v1.422.0** — so the one sentence an author read
+  when looking for the editor pointed at a URL that 404s. The only code path that
+  created a `Training Question` was the AI drawer, behind a setting that ships off
+  and a Vertex client that is dead on production.
+
+  All four declared types (Single Choice, Multiple Choice, True-False, Short
+  Answer), options with correct answers, explanation, points, add / edit / remove.
+  The AI drafter now feeds the same editor rather than being a separate route.
+
+  **The read half was already on the wire.** `_builder_lesson` has always sent
+  `lesson.quiz` with each pool row's full body and every option including
+  `is_correct` — `get_builder_bootstrap` is documented as the one place in the
+  module that deliberately hands `is_correct` to a browser, *so that an editor could
+  exist*. The canvas set `quiz: []` on new lessons and never read it back.
+
+  **The write half is two paths, which is the server's design rather than an
+  inconvenience.** Pool membership (question, points, is_required, order) rides the
+  draft save, because `_apply_quiz` allowlists exactly those three fields. Question
+  *bodies* go through their own doctype, the way checkpoints and video chapters
+  already do — `_apply_quiz` refuses body fields and reports them in `rejected`.
+
+- **Editing a shared question is copy-on-write.** `_apply_quiz`'s docstring names
+  the trap: a `Training Question` is a shared document that can sit in another
+  course's pool, so editing its wording from one lesson would silently rewrite a
+  question somewhere else. Before changing one that more than one lesson names, the
+  author is asked, and the offered default is to take a copy for this lesson. A
+  failed usage count answers **1**, not 0 — the safe answer is the one that does not
+  silently fork a question somebody meant to edit.
+
+### Fixed
+
+- **A Required course that nobody had assigned vanished from the catalogue, and it
+  was live.** `get_learner_bootstrap` bucketed `assigned` / `completed` /
+  `weight == "Optional"`, so a Published, audience-matching, Required, unassigned,
+  uncompleted course matched **no arm at all** and was silently dropped — even
+  though `_visible_course_names` had deliberately just put it in scope. Measured on
+  production: `TRN-CRS-00005`, "Accounting in ERPNext", invisible to every learner.
+
+  This was the **third** instance of one shape. Each previous fix added the single
+  arm for the case in front of it and left the final branch conditional, so the next
+  uncovered combination fell through the same hole. The loop iterates the set of
+  courses this person may see, so the only correct final branch is an unconditional
+  one: a member of that set with no list is not filtered, it is lost.
+
+- **A ticked quiz with an empty pool made the lesson unsaveable, with no way out.**
+  `_validate_quiz` throws while `has_quiz` is set and the pool is empty, and the
+  canvas autosaves every 1200ms — so an author got a red dialog on every keystroke
+  and no surface on which to add a question. There is one now, and the empty state
+  names both ways out.
+
+- **A Triton-authored course carrying a quiz could never be published, by anyone.**
+  `author_course_from_spec` writes questions with `ai_generated: 1` and no reviewer;
+  `publish_version` refuses exactly that; and the only writer of `ai_reviewed_by`
+  always constructed a **new** question rather than marking an existing one. The
+  review gate had no door. Saving an edit in the new editor stamps the reviewer —
+  on save rather than on render, so it records somebody having actually changed or
+  confirmed the question rather than merely opened the panel it sits in.
+
+- **Two dashboard tiles counted one thing and opened another.** "In progress"
+  totalled four statuses server-side and drilled to a list filtered to two, so a
+  manager clicked 26 and got about 20. "Overdue" counted a predicate — not closed,
+  and either the status says Overdue *or* the due date has passed — but drilled on
+  the literal status column, which `refresh_overdue_status` writes once a day; for
+  up to 24 hours the tile was right and the list it opened was short by exactly the
+  assignments that had gone overdue since the sweep.
+
+  Neither is expressible as an AND-only list filter, and the obvious repair for the
+  second walks into this repo's documented coalesce trap: `due_date < today` on a
+  **nullable** column silently matches NULLs, which would drag every undated
+  assignment into a list of overdue ones. So the server now sends the membership it
+  counted, capped — and where the cap bites, the tile stops being a link rather than
+  becoming a misleading one. This is the same defect fixed for the submission tiles
+  in v1.433.0, in the tiles beside them.
+
+- **Three test-shape defects found by the repo's own guards**, each worth more than
+  the line it changed. An absence assertion matched the comment explaining the
+  absence (at least the fifth instance here, now stripped by a helper rather than a
+  regex at the call site). A block-type regex matched *any* identifier ending in
+  `type`, so the new `question_type ===` read as an undeclared block type. And both
+  new test classes were appended **after** the `__main__` guard, where running the
+  file directly would define them after `unittest.main()` had already collected —
+  caught by `test_test_collection`, which exists for precisely that.
+
 ## [1.434.0] - 2026-09-13
 
 Training Phase 6, D14. **The rail** — one sidebar across the module's Desk surfaces, and a

@@ -196,6 +196,11 @@ doctype_js = {
 		"public/js/comments.js",
 		"public/js/employee.js",
 		"public/js/device_management/employee_devices.js",
+		# training: "how is this person doing?" -- the question a manager arrives
+		# with, which every other training surface answered about a course, a cohort
+		# or the whole org. Manager-gated and drawn only when the Employee has a
+		# user_id, because training records belong to a User.
+		"public/js/training/employee_training.js",
 	],
 	"Account": ["public/js/vue.global.js", "public/js/comments.js", "public/js/account.js"],
 	"Customer": [

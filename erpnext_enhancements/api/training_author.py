@@ -1165,6 +1165,31 @@ BLOCK_ALLOWED_FIELDS = frozenset(
     }
 )
 QUIZ_ROW_ALLOWED_FIELDS = frozenset({"question", "points", "is_required"})
+
+# What the canvas may write on the COURSE itself. The same allowlist discipline as
+# LESSON_ALLOWED_FIELDS and BLOCK_ALLOWED_FIELDS, and for the same reason: a patch
+# assembled in a browser is a list of field names, and the ones absent from here are
+# the ones that decide who the course is for and whether it is live.
+#
+# `status` is NOT here, deliberately. Publishing and retiring are their own
+# endpoints with their own gates -- `publish_version` requires a manager and asks
+# the Minor-Edit vs Material-Change question explicitly, because a Material Change
+# marks existing completions Superseded and raises retakes. A settings panel that
+# could flip `status` would be a way to do that by accident.
+COURSE_ALLOWED_FIELDS = frozenset(
+    {
+        "course_title",
+        "weight",
+        "category",
+        "summary",
+        "estimated_minutes",
+        "passing_score",
+        "max_attempts",
+        "min_video_coverage",
+        "require_checkpoints_answered",
+        "allow_self_enrollment",
+    }
+)
 CHAPTER_ALLOWED_FIELDS = frozenset({"chapter_title", "description"})
 VERSION_ALLOWED_FIELDS = frozenset({"change_type", "release_notes"})
 
@@ -1300,6 +1325,13 @@ def get_builder_bootstrap(course):
             "max_attempts": cint(course_doc.max_attempts),
             "min_video_coverage": cint(course_doc.min_video_coverage),
             "require_checkpoints_answered": cint(course_doc.require_checkpoints_answered),
+            # Added with the canvas course-settings panel. Everything in
+            # COURSE_ALLOWED_FIELDS has to round-trip, or the panel opens with a
+            # blank box beside a field that already has a value and the first save
+            # quietly clears it.
+            "summary": course_doc.summary or "",
+            "estimated_minutes": cint(course_doc.estimated_minutes),
+            "allow_self_enrollment": cint(course_doc.allow_self_enrollment),
         },
         "version": version,
         "chapters": chapters,
@@ -1899,3 +1931,91 @@ def reorder_lessons(course_version, order):
             "Training Lesson", name, "idx_in_chapter", counters[chapter_key], update_modified=False
         )
     return {"ok": True}
+
+
+@frappe.whitelist(methods=["POST"])
+def update_course_settings(course, patch):
+    """Write the course's own settings from the authoring canvas.
+
+    Until now the canvas showed the course name as static text: title, **Required
+    vs Optional weight**, category, passing score, max attempts, minimum video
+    coverage and the rest were Desk-form only, so an author building a course had
+    to leave the authoring surface to say what kind of course it is.
+
+    `weight` is the field that connects the two halves of this work item — Required
+    vs Optional is exactly what the learner dashboard sorts on, and it was being set
+    somewhere the author never went.
+
+    **Allowlisted, and `status` is not on the list.** Publishing and retiring have
+    their own endpoints with their own gates, and `publish_version` asks the
+    Minor-Edit vs Material-Change question explicitly because a Material Change
+    marks existing completions `Superseded` and raises retake assignments. A
+    settings panel able to flip `status` would be a way to do that by accident.
+
+    Refusals are REPORTED rather than dropped, the same contract `save_draft_version`
+    already keeps: a field silently ignored is a field the author believes they set.
+    """
+    _require_author()
+    doc = frappe.get_doc("Training Course", course)
+
+    if isinstance(patch, str):
+        patch = json.loads(patch or "{}")
+    patch = patch or {}
+
+    rejected = []
+    for field, value in patch.items():
+        if field in COURSE_ALLOWED_FIELDS:
+            doc.set(field, value)
+        else:
+            rejected.append(_refusal("course", course, field))
+
+    doc.save()
+    return {
+        "modified": doc.modified,
+        "course": {
+            "name": doc.name,
+            "course_title": doc.course_title,
+            "slug": doc.slug or "",
+            "status": doc.status,
+            "weight": doc.weight,
+            "category": doc.category or "",
+            "current_version": doc.current_version or "",
+            "passing_score": cint(doc.passing_score),
+            "max_attempts": cint(doc.max_attempts),
+            "min_video_coverage": cint(doc.min_video_coverage),
+            "require_checkpoints_answered": cint(doc.require_checkpoints_answered),
+        },
+        "rejected": rejected,
+    }
+
+
+@frappe.whitelist(methods=["POST"])
+def get_draft_preview(course):
+    """The draft's learner payload as JSON — the endpoint that did not exist.
+
+    Recorded as missing when the Training Lesson form button was built (v1.432.0):
+    the in-form preview needs the draft's learner payload as JSON, and nothing
+    returned it. ``/training_preview`` builds it server-side with ``_split_lesson``
+    and renders it into the template, so the only way to get it client-side was to
+    rebuild it in JavaScript — which is precisely the ~640 lines the classic builder
+    carried and the canvas port deliberately did not.
+
+    This returns **the same payload the preview page embeds**, from the same
+    builder, so there is one producer rather than two that drift. The gate travels
+    with it: an authoring role AND write permission on that specific course, which
+    is the gate ``get_builder_bootstrap`` uses — the payload contains the answer
+    key, so it is not the page-level developer-mode check that guards this.
+
+    It throws rather than returning ``None`` on a refusal. A client that received
+    ``null`` would have to guess between "no draft", "not yours" and "not a course",
+    and all three have different answers.
+    """
+    from erpnext_enhancements.www.training_preview import _draft_payload
+
+    payload = _draft_payload(course=course)
+    if payload is None:
+        frappe.throw(
+            _("There is no open draft of that course that you may preview."),
+            frappe.PermissionError,
+        )
+    return payload

@@ -25,6 +25,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_training_canvas
 """
 
 import ast
+import json
 import re
 import unittest
 from pathlib import Path
@@ -334,7 +335,14 @@ class TestCanvasWritesLegalSelectValues(unittest.TestCase):
         """Same rule, the other Select on the same child table. ``block_type`` is
         seeded by the canvas on every new block and has twelve legal values."""
         declared = set(self._select_options("block_type"))
-        seeded = set(re.findall(r'type === "([A-Z][A-Za-z ]+)"', _canvas()))
+        # The lookbehind is load-bearing. The canvas does `const type =
+        # block.block_type` and then branches on the bare local, so the pattern is a
+        # standalone `type`. Without `(?<![A-Za-z_])` this also matched
+        # `question_type === "Short Answer"` in the quiz editor -- a DIFFERENT Select
+        # on a different doctype -- and reported it as an undeclared block type. A
+        # regex that matches any identifier ending in "type" is not asserting what
+        # this test says it asserts.
+        seeded = set(re.findall(r'(?<![A-Za-z_])type === "([A-Z][A-Za-z ]+)"', _canvas()))
         unknown = sorted(seeded - declared)
         self.assertEqual(
             unknown, [], f"canvas branches on block types {unknown} which the DocType does not declare"
@@ -916,7 +924,7 @@ class TestThePreviewIsASecondModeNotAThirdTransport(unittest.TestCase):
         not, because developer mode is a deployment setting rather than a permission —
         and this returns the answer key."""
         src = self.PREVIEW_PY.read_text(encoding="utf-8")
-        at = src.index("def _draft_payload()")
+        at = src.index("def _draft_payload(")
         body = src[at:]
         self.assertNotIn("developer_mode", body)
         self.assertIn('frappe.has_permission("Training Course", "write"', body)
@@ -983,7 +991,7 @@ class TestThePreviewIsASecondModeNotAThirdTransport(unittest.TestCase):
         `training_author._materialize_lessons` both use the three-part order, and the
         preview has to agree with them or it is previewing a different course."""
         src = self.PREVIEW_PY.read_text(encoding='utf-8')
-        at = src.index('def _draft_payload()')
+        at = src.index('def _draft_payload(')
         body = src[at:]
         self.assertIn("chapter_key asc, idx_in_chapter asc, creation asc", body)
         # The chapters query legitimately orders by `idx` — Training Chapter IS a
@@ -1004,7 +1012,7 @@ class TestThePreviewIsASecondModeNotAThirdTransport(unittest.TestCase):
         The server builds the rows exactly as `_materialize_lessons` builds them for
         `toc_json` at publish, and the template passes them through."""
         src = self.PREVIEW_PY.read_text(encoding='utf-8')
-        at = src.index('def _draft_payload()')
+        at = src.index('def _draft_payload(')
         body = src[at:]
         for field in ("lesson_key", "chapter_key", "has_quiz", "blocks"):
             with self.subTest(field=field):
@@ -1132,5 +1140,279 @@ class TestVideoIsAuthoredEntirelyOnTheCanvas(unittest.TestCase):
 # the draft preview. A developer checking their work the obvious way got a green
 # run over a third of nothing. Same defect fixed in test_training_builder_entry.py
 # in this release.
+
+
+class TestTheQuizPoolIsAuthorableByHand(unittest.TestCase):
+    """Before this, a quiz question could not be written by hand anywhere in the
+    app. The canvas carried the four quiz *settings* and a hint reading "Quiz
+    questions themselves are still listed in the classic builder" — a page deleted
+    in v1.422.0 — so the one sentence an author read when looking for the editor
+    sent them to a URL that 404s. The only code path that created a Training
+    Question was the AI drawer, behind a setting that ships off.
+    """
+
+    def canvas(self):
+        return _canvas()
+
+    def css(self):
+        return (CANVAS_JS.parent / "training_canvas.css").read_text(encoding="utf-8")
+
+    def test_the_editor_exists_and_the_settings_panel_mounts_it(self):
+        src = self.canvas()
+        self.assertIn("\tpaint_quiz_pool(lesson) {", src)
+        self.assertIn("this.paint_quiz_pool(lesson);", src)
+
+    def test_the_dead_pointer_is_gone(self):
+        """`_canvas()` strips comments, which this assertion depends on: the comment
+        recording WHY the sentence was removed necessarily quotes it."""
+        self.assertNotIn("classic builder", self.canvas())
+
+    def test_it_offers_exactly_the_question_types_the_doctype_declares(self):
+        """Same rule as the callout tones and the block types: an option the canvas
+        writes that the Select does not declare makes the row unsaveable, and no
+        ignore_* flag bypasses _validate_selects."""
+        doc = json.loads(
+            (APP / "training" / "doctype" / "training_question" / "training_question.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        declared = None
+        for field in doc["fields"]:
+            if field["fieldname"] == "question_type":
+                declared = field["options"].split("\n")
+        self.assertIsNotNone(declared, "question_type is no longer a Select")
+        block = re.search(r'\[(\s*"Single Choice".*?)\]\.forEach', self.canvas(), re.S)
+        self.assertIsNotNone(block, "the type list is no longer a flat array")
+        offered = re.findall(r'"([^"]+)"', block.group(1))
+        self.assertEqual(offered, declared)
+
+    def test_pool_membership_rides_the_draft_save(self):
+        """`_apply_quiz` allowlists question / points / is_required and replaces the
+        child table wholesale, so membership belongs on the lesson patch."""
+        src = self.canvas()
+        start = src.index("\tset_lesson_quiz(lesson) {")
+        body = src[start : src.index("	write_question(lesson, row) {", start)]
+        self.assertIn("dirty_lesson(lesson).quiz", body)
+        for field in ("question:", "points:", "is_required:"):
+            with self.subTest(field):
+                self.assertIn(field, body)
+
+    def test_question_bodies_do_not(self):
+        """They cannot: `_apply_quiz` reports `question_text` and `options` back as
+        REFUSED. Bodies go through the doctype, the way checkpoints and video
+        chapters already do."""
+        src = self.canvas()
+        start = src.index("\tset_lesson_quiz(lesson) {")
+        body = src[start : src.index("	write_question(lesson, row) {", start)]
+        for field in ("question_text", "options"):
+            with self.subTest(field):
+                self.assertNotIn(field, body)
+        self.assertIn('doctype: "Training Question"', src)
+
+    def test_editing_a_shared_question_is_copy_on_write(self):
+        """The trap the server's own docstring names: a Training Question is a
+        SHARED document that can sit in another course's pool, so editing its
+        wording from one lesson would silently rewrite somebody else's course. The
+        author is asked, and the offered default is the copy."""
+        src = self.canvas()
+        self.assertIn("\tshared_question_count(row) {", src)
+        self.assertIn("\tfork_question(lesson, row, body, used) {", src)
+        start = src.index("\tfork_question(lesson, row, body, used) {")
+        body = src[start : src.index("	quiz_write_failed(error) {", start)]
+        self.assertIn("primary_action_label: __(\"Copy it for this lesson\")", body)
+        self.assertIn("secondary_action_label: __(\"Change it everywhere\")", body)
+
+    def test_a_failed_usage_count_does_not_silently_fork(self):
+        """Answering 0 on failure would make every edit look unshared and rewrite the
+        shared question; answering 1 keeps the edit on the question the author meant."""
+        src = self.canvas()
+        start = src.index("\tshared_question_count(row) {")
+        self.assertIn(".catch(() => 1)", src[start : src.index("	fork_question(", start)])
+
+    def test_saving_stamps_the_reviewer_on_an_ai_question(self):
+        """`publish_version` refuses an `ai_generated` question with no
+        `ai_reviewed_by`, and until now the only writer of that field always
+        constructed a NEW question rather than marking an existing one — so a
+        Triton-authored course carrying a quiz could never be published by anyone."""
+        src = self.canvas()
+        start = src.index("\twrite_question(lesson, row) {")
+        self.assertIn("body.ai_reviewed_by = frappe.session.user", src[start : src.index("	save_question(", start)])
+
+    def test_the_empty_pool_says_how_to_escape_it(self):
+        """`_validate_quiz` throws while `has_quiz` is ticked and the pool is empty,
+        and the canvas autosaves every 1200ms — so the lesson becomes unsaveable and
+        the author gets a red dialog on every keystroke. The empty state names both
+        ways out."""
+        src = self.canvas()
+        self.assertIn("A ticked quiz with no questions cannot be saved.", src)
+
+    def test_every_class_it_renders_has_a_rule(self):
+        src = self.canvas()
+        css = self.css()
+        emitted = {c for c in re.findall(r"\btc-quiz[a-z-]*", src)}
+        self.assertGreater(len(emitted), 3)
+        missing = sorted(c for c in emitted if f".{c}" not in css)
+        self.assertEqual(missing, [], f"{missing} render unstyled")
+
+
+class TestTheCanvasCanBeDrivenFromAKeyboard(unittest.TestCase):
+    """Four failures, all verified in source, all of which locked somebody out of
+    authoring entirely rather than merely inconveniencing them."""
+
+    def css(self):
+        return (CANVAS_JS.parent / "training_canvas.css").read_text(encoding="utf-8")
+
+    def test_the_toolbar_acts_on_click_not_only_mousedown(self):
+        """`mousedown` + preventDefault is why the toolbar works with a mouse at all
+        — without it the contenteditable loses its selection before the command can
+        apply. But the ACTION hung off mousedown too, and mousedown does not fire
+        for a keyboard: every button was focusable, looked interactive and did
+        nothing on Enter or Space."""
+        code = _canvas()
+        self.assertIn('.on("mousedown", (e) => e.preventDefault())', code)
+        self.assertIn('.on("click", (e) => {', code)
+
+    def test_the_toolbar_survives_being_tabbed_to(self):
+        """The other half, and the half that would have outlived fixing the click
+        handler: the body's `blur` hid the toolbar, and tabbing from the text to the
+        toolbar fires blur first — so the buttons vanished on the way to them."""
+        code = _canvas()
+        self.assertIn("bar.contains(document.activeElement)", code)
+
+    def test_the_selection_is_remembered_across_that_move(self):
+        """A command applied with no selection either does nothing or applies to
+        whatever the browser decides is current."""
+        code = _canvas()
+        self.assertIn("remember_rt_selection()", code)
+        self.assertIn("restore_rt_selection()", code)
+        self.assertIn("cloneRange()", code)
+
+    def test_a_lesson_can_be_selected_without_a_mouse(self):
+        """Rail rows were plain `<div>`s with click handlers, no tabindex and no
+        role. `role`/`tabindex` rather than a `<button>` because the row CONTAINS a
+        delete button, and a button inside a button is invalid HTML that browsers
+        repair by moving the inner one out."""
+        code = _canvas()
+        self.assertIn('role="button" tabindex="0"', code)
+        self.assertIn('$row.on("keydown"', code)
+
+    def test_space_is_prevented_as_well_as_handled(self):
+        """Space scrolls the page by default, so handling it without preventing it
+        selects the lesson and jumps the view."""
+        code = _canvas()
+        start = code.index('$row.on("keydown"')
+        self.assertIn("e.preventDefault()", code[start : start + 400])
+
+
+class TestTheCanvasWorksOnATablet(unittest.TestCase):
+    def css(self):
+        return (CANVAS_JS.parent / "training_canvas.css").read_text(encoding="utf-8")
+
+    def test_there_is_a_media_query_at_all(self):
+        """There were ZERO across 1,072 lines, while the page's own
+        `visibilitychange` handler exists because "a tablet locking its screen" was
+        anticipated — the script assumed a tablet and the stylesheet assumed one
+        could not happen."""
+        self.assertIn("@media (max-width: 991.98px)", self.css())
+
+    def test_the_rail_stops_being_a_fixed_column(self):
+        css = self.css()
+        block = css[css.index("@media (max-width: 991.98px)") :]
+        self.assertIn("flex-direction: column", block)
+        self.assertIn("width: auto", block)
+
+    def test_the_breakpoint_matches_the_one_the_learner_rail_uses(self):
+        """frappe's own `media-breakpoint-down` value. Written as 991 it leaves a
+        fractional gap that browser zoom lands in routinely."""
+        self.assertNotIn("@media (max-width: 991px)", self.css())
+
+
+class TestTheFrictionsThatCompound(unittest.TestCase):
+    def css(self):
+        return (CANVAS_JS.parent / "training_canvas.css").read_text(encoding="utf-8")
+
+    def test_the_add_button_is_visible_without_hovering(self):
+        """It was `opacity: 0` until hover, so the primary authoring action on the
+        page was invisible — and the empty-lesson message says "Add a block below
+        the line above", pointing at something nobody could see."""
+        css = self.css()
+        rule = css[css.index(".tc-addbtn {") : css.index("}", css.index(".tc-addbtn {"))]
+        self.assertNotIn("opacity: 0;", rule)
+        self.assertIn("opacity: 0.35", rule)
+
+    def test_it_is_fully_visible_when_focused(self):
+        self.assertIn(".tc-addbtn:focus-visible", self.css())
+
+    def test_deleting_a_block_asks_first(self):
+        """Deleting a LESSON has always confirmed; deleting a block did not, though
+        it is just as unrecoverable — there is no undo and the next autosave writes
+        the shorter list."""
+        code = _canvas()
+        start = code.index("\tremove_block(lesson, block) {")
+        body = code[start : code.index("\tdrop_block(lesson, block) {", start)]
+        self.assertIn("frappe.confirm", body)
+
+    def test_publish_is_offered_only_to_somebody_who_may_publish(self):
+        """`publish_version` calls `_require_manager()`, so a Training Author could
+        open the dialog, choose a change type, write release notes, press Publish
+        and get "Not permitted". `can_publish` had ridden the bootstrap all along
+        and nothing read it."""
+        code = _canvas()
+        self.assertIn("this.can_publish = !!data.can_publish;", code)
+        self.assertIn("this.$publish", code)
+
+    def test_the_publish_item_starts_hidden_rather_than_absent(self):
+        """The menu is built before the first read returns, so gating on a flag that
+        does not exist yet would hide Publish from everybody — including the
+        managers it is for."""
+        code = _canvas()
+        self.assertIn('if (this.$publish) $(this.$publish).parent().attr("hidden", "hidden");', code)
+
+
+class TestTheCourseIsEditableOnTheCanvas(unittest.TestCase):
+    def test_the_panel_exists_and_is_reachable(self):
+        code = _canvas()
+        self.assertIn("\topen_course_settings() {", code)
+        self.assertIn('add_menu_item(__("Course settings…")', code)
+
+    def test_weight_is_offered_because_the_dashboard_sorts_on_it(self):
+        """Required vs Optional is exactly what the learner dashboard splits on, and
+        it was being set on a Desk form the author never opened."""
+        code = _canvas()
+        start = code.index("\topen_course_settings() {")
+        body = code[start : code.index("\tsave_course_settings(", start)]
+        self.assertIn('fieldname: "weight"', body)
+        self.assertIn('["Required", "Optional"]', body)
+
+    def test_status_is_not_writable_from_the_panel(self):
+        """Publishing and retiring have their own endpoints and their own gates, and
+        publish asks Minor-Edit vs Material-Change explicitly because a Material
+        Change marks existing completions Superseded and raises retakes."""
+        author = AUTHOR_PY.read_text(encoding="utf-8")
+        allowed = re.search(r"COURSE_ALLOWED_FIELDS = frozenset\((.*?)\)\n", author, re.S).group(1)
+        self.assertNotIn('"status"', allowed)
+        self.assertNotIn('"current_version"', allowed)
+        self.assertIn('"weight"', allowed)
+
+    def test_every_editable_field_round_trips_on_the_bootstrap(self):
+        """A field the panel can write but the bootstrap does not send opens as a
+        blank box beside a value that already exists, and the first save clears it."""
+        author = AUTHOR_PY.read_text(encoding="utf-8")
+        allowed = set(
+            re.findall(r'"([a-z_]+)"', re.search(r"COURSE_ALLOWED_FIELDS = frozenset\((.*?)\)\n", author, re.S).group(1))
+        )
+        payload = author[author.index('"course": {') : author.index('"version": version,')]
+        missing = sorted(f for f in allowed if f'"{f}"' not in payload)
+        self.assertEqual(missing, [], f"{missing} are writable but never sent back")
+
+    def test_refusals_are_reported_rather_than_dropped(self):
+        """The same contract `save_draft_version` keeps: a field silently ignored is
+        a field the author believes they set."""
+        author = AUTHOR_PY.read_text(encoding="utf-8")
+        start = author.index("def update_course_settings(")
+        body = author[start : start + 2200]
+        self.assertIn("rejected.append(_refusal(", body)
+
+
 if __name__ == "__main__":
     unittest.main()
