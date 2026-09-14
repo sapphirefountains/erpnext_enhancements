@@ -18,10 +18,13 @@ Generation is still a **deliberate act**. The sweep reports that a milestone is 
 creates an inspection. And `quality_enabled` is **off** — nothing in this module acts until it
 is ticked.
 
-Still to come: master checklists for anything but Build commissioning, which is a question of
-whose standard of care gets written down rather than a build (see the sweep section below), then
-the front-end chain — Change Orders, MSA rates, budget categories and the subcontractor
-scorecard.
+Master checklists now exist for every milestone, but **as strawmen seeded `Draft`** — drafts to
+be corrected, which generate nothing until a person reads one and sets it Active. Until then
+every milestone but Build commissioning still reports *due and blocked*. See the strawman section
+below for what each set was drawn from.
+
+Still to come: the front-end chain — Change Orders, MSA rates, budget categories and the
+subcontractor scorecard.
 
 ## What this module is for
 
@@ -58,6 +61,7 @@ question why it exists.**
 | `inspector_advisory.py` | The frappe half of that: inline warning, timeline comment, manager email. Gate, then swallow — **never** throws |
 | `due.py` | Whether a milestone has come round, and why not. Frappe-free. The rule is **reached or passed**, never equality |
 | `scheduling.py` | The daily sweep that tells each project manager what is ready. It notices; it never generates |
+| `draft_catalog.py` | The **strawman** checklists, as data. Drafts to be corrected — seeded `Draft`, and a Draft template generates nothing |
 
 Registered in [`../modules.txt`](../modules.txt), tiled from
 [`../setup/desktop_icon_map.py`](../setup/desktop_icon_map.py), and given a sidebar by
@@ -203,6 +207,43 @@ an inspection is a no-op rather than a second ratchet.
 An open punch-list item is structurally the same thing — raised against a standard, fixed by
 somebody, not actually done until it has been looked at again — so it is a Quality Action with
 `custom_punch_list` ticked and gets all of this for free.
+
+## The strawman checklists, and the one field that makes them safe
+
+Sub-phases C and I both declined to seed checklists for anything but Build commissioning, and the
+reasoning has not changed: **a checklist carries the authority of the company that issued it**, an
+inspector works through it assuming somebody chose those items on purpose, and an invented one is
+indistinguishable from a real one right up until it fails to catch something.
+
+What changed is that a blank page turned out to be a worse starting point than a draft to argue
+with. The compromise is the `status` field that already existed:
+
+**Every strawman template is seeded `Draft`, and a Draft template generates nothing.**
+`generate_inspection` refuses a non-Active template; `scheduling._active_template_keys` counts
+only Active ones. So a milestone with only a strawman behind it keeps reporting *due and blocked*
+exactly as it did before. **Setting a template Active is the act of adopting it** — a deliberate
+act, by a named person who has read it. Nobody can be handed one of these by accident, and
+`tests/test_draft_templates.py` fails the build if the seed ever creates one Active.
+
+### Three of the four sets are not invented
+
+Each item records where it came from in `reference_standard`:
+
+| Set | Source |
+|---|---|
+| **Service** | Sapphire's own `Sapphire Maintenance Section` records, live on production since June. The chemistry ranges are theirs verbatim — pH 7.2–7.8, free chlorine 1.0–3.0 ppm, ORP 650–750 mV, alkalinity 80–120 ppm — and "GFCI protection verified" is mandatory here because it is mandatory there |
+| **Design** | The `Water Feature Design` model in `water_engineering`: status ladder, `blocker_count`, `issue_acks`, computed turnover against the code maximum, TDH against the selected pump. Every gate asks whether that record already says what it needs to say |
+| **Products** | The `Control Panel Design` model: NEMA rating, controller hardware, fuse and interlock schedules, control voltages, `safe_state_on_power_up` |
+| **Events** | **Nothing.** Read this set hardest |
+
+The four chemistry ranges are pinned by a test, so a later tidy-up cannot quietly turn a sourced
+draft into an invented one. And a test asserts that **no Events item carries a
+`reference_standard`** — a citation on an invented item would be a fabricated source, which is
+worse than no source at all.
+
+`Build — Pre-Final (Systems Startup)` is deliberately not re-seeded. It is Active and it is not a
+strawman: its six commissioning checks came from `docs/KPI_DASHBOARD_DESIGN.md`, written by
+somebody who knew the trade.
 
 ## When a milestone comes round, and the equality bug that would have eaten inspections
 

@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.456.0] - 2026-09-14
+
+### Added
+
+- **Strawman inspection checklists for every milestone that had none** — Design, Events, Service,
+  Products/Controls Fab, and the three Build milestones sub-phase C left empty. 17 sections, 110
+  checks, 16 templates. Requested as drafts to correct rather than a blank page.
+- `patches/seed_draft_inspection_templates.py`, and the content as data in
+  `quality/draft_catalog.py`. Also creates five UOMs ERPNext does not ship — pH, ppm, mV, Volt,
+  PSI — because a Measurement check with no unit cannot have its bounds compared, which turns a
+  measured reading back into an opinion.
+
+### Notes
+
+- **Every template is created `Draft`, and that is the whole safety property.** A Draft template
+  generates nothing: `generate_inspection` refuses a non-Active template and the due sweep counts
+  only Active ones, so each milestone goes on reporting *due and blocked* exactly as it did
+  before this ran. **Setting a template Active is the act of adopting it**, done by a named
+  person who has read it. Nobody can be handed one of these by accident. Asserted two ways in
+  `tests/test_draft_templates.py` and negative-tested by flipping the seed to Active.
+- **This does not overturn the reasoning in sub-phases C and I.** A checklist carries the
+  authority of the company that issued it, an inspector works through it assuming somebody chose
+  those items on purpose, and an invented one is indistinguishable from a real one right up until
+  it fails to catch something. The Draft gate is what lets a strawman exist without ever being
+  mistaken for the standard of care.
+- **Three of the four sets are not invented.** They are lifted from what this company has already
+  written down elsewhere in this system, and every item records where in `reference_standard`:
+  - **Service** — Sapphire's own `Sapphire Maintenance Section` records, live on production since
+    June. The chemistry ranges are theirs verbatim (pH 7.2–7.8, free chlorine 1.0–3.0 ppm, ORP
+    650–750 mV, total alkalinity 80–120 ppm), and "GFCI protection verified" is mandatory here
+    because it is mandatory there. Those four ranges are pinned by a test, so a later "tidy-up"
+    cannot quietly turn a sourced draft into an invented one.
+  - **Design** — the `Water Feature Design` model in `water_engineering`: its status ladder,
+    `blocker_count`, `issue_acks`, computed turnover against the code maximum, TDH against the
+    selected pump. Every gate asks whether that record already says what it needs to say.
+  - **Products** — the `Control Panel Design` model: NEMA rating, controller hardware, fuse and
+    interlock schedules, control voltages and `safe_state_on_power_up`.
+- **Events is the honest exception and says so on the record.** Nothing in this system describes
+  an event setup, so those three sections are drafted from the milestone descriptions and general
+  practice. Their `description` carries "DRAFTED WITHOUT AN INTERNAL SOURCE", and a test asserts
+  that none of their items carries a `reference_standard` — a citation on an invented item would
+  be a fabricated source, which is worse than no source.
+- `Build — Pre-Final (Systems Startup)` is deliberately **not** re-seeded. It is Active and it is
+  not a strawman: its six commissioning checks came from `docs/KPI_DASHBOARD_DESIGN.md`, written
+  by somebody who knew the trade. A test fails the build if the draft seed ever names it.
+- Insert-only and idempotent throughout. Running it twice creates nothing and, in particular,
+  will not reset a template somebody has already corrected and set Active.
+- **Nothing changes on prod when this deploys.** `quality_enabled` ships off, and every template
+  here is inert until a person adopts it.
+
+
 ## [1.455.0] - 2026-09-14
 
 ### Added

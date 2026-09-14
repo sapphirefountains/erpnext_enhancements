@@ -546,6 +546,16 @@ jobs:
       # that "not due" would make every sweep report clean forever, on every project.
       - name: Inspection due (a skipped stage does not skip its inspection)
         run: python -m unittest erpnext_enhancements.tests.test_inspection_due -v
+      # The strawman checklists. Two properties make seeding a draft checklist safe at all, and
+      # both are asserted here. Every template is created DRAFT -- a Draft template generates
+      # nothing, so a milestone keeps reporting due-and-blocked until a person reads it and sets
+      # it Active, which is what adoption means. And every check carries a pass standard and a
+      # verification method: the programme's own principle is that a criterion which cannot be
+      # inspected should not be in the contract, and a checklist row with no standard is the
+      # same failure on the other side of the wall. Also pins the four chemistry ranges, which
+      # are the one set of numbers taken verbatim from a live Sapphire record.
+      - name: Draft checklists (seeded Draft, never Active; every check has a standard)
+        run: python -m unittest erpnext_enhancements.tests.test_draft_templates -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk
