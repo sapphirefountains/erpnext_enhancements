@@ -224,6 +224,11 @@ READ_BUT_NOT_SENT = {
     "start": "client option from www/training.html, not a server field",
     "translate": "client option from www/training.html, not a server field",
     "view": "client option from www/training.html, not a server field",
+    # The URL writer, injected by the host like the transport is. The Desk page
+    # passes one that drives frappe.router; the portal passes none and keeps its
+    # own replaceState. Never a server field -- the server has no opinion about
+    # what the address bar says.
+    "router": "host option: the URL adapter, not a server field",
     # Read off the transport's own options object, not off a reply. The host hands
     # `{csrf}` to TR.makeTransport -- a constant on the portal page, which renders
     # its token server-side, and a function in the Desk, where a session can

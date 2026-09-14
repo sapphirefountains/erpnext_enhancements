@@ -39,7 +39,7 @@ PLAYER = JS_DIR / "player.js"
 
 # Keys the page's own bootstrap adds on the client side — options passed by
 # www/training.html or defaulted by the player, not fields the server sends.
-CLIENT_OPTIONS = {"translate", "route_base", "history", "view", "start"}
+CLIENT_OPTIONS = {"translate", "route_base", "history", "view", "start", "router"}
 
 
 def _player_code():

@@ -78,6 +78,9 @@ class LearnPage {
 		this.wrapper = wrapper;
 		this.player = null;
 		this.booting = null;
+		// What the page last told the player to show, in the adapter's own key shape.
+		// Read by BOTH directions, which is what stops them driving each other.
+		this.showing = null;
 		// The mount, with the same boot line the portal shell rendered. Not cosmetic:
 		// the runtime is six files and a round trip away, and an empty bordered box is
 		// indistinguishable from a page that has failed.
@@ -135,12 +138,61 @@ class LearnPage {
 	// Moves an ALREADY-MOUNTED player, rather than re-booting it. A fresh boot per
 	// route change would refetch the catalogue and throw away in-flight watch
 	// progress on every click.
+	//
+	// THE NO-OP IS THE IMPORTANT PART. Since v1.432.2 the player writes the URL
+	// through an adapter, so the two drive each other: player moves -> adapter ->
+	// frappe.set_route -> router change -> on_page_show -> here -> player moves. That
+	// closes into a loop unless one end stops, and this is the end that stops --
+	// `this.showing` is what the page last told the player to show, so a route change
+	// the player itself caused is recognised and dropped. frappe's own push_state
+	// declines a no-op URL too, but only after the route event has already fired.
 	apply_route(target) {
+		const key = `${target.view || ""}|${target.course || ""}|${target.lesson_key || ""}`;
+		if (key === this.showing) return;
+		this.showing = key;
 		if (target.course) {
 			this.player.openCourse(target.course, target.lesson_key || null);
 		} else {
 			this.player.go(target.view || "catalog");
 		}
+	}
+
+	// The other half: what the player tells the Desk. Returns the adapter handed to
+	// TR.Player on the boot payload.
+	//
+	// `frappe.set_route` and not an href: the router intercepts its own navigation,
+	// and a hand-built /app/... link would be a full page reload plus a redirect hop.
+	// It pushes rather than replaces, deliberately -- inside the Desk, Back is the
+	// desk's Back, and it should walk the views the way it does everywhere else in
+	// ERPNext. The portal deliberately does the opposite (replaceState, so Back means
+	// "leave the course"), which is exactly why this is an adapter and not a flag.
+	router_adapter() {
+		return {
+			write: (next) => {
+				const parts = ["learn"];
+				if (next.course) {
+					parts.push(next.course);
+					// The outline names a course and no single lesson, matching what the
+					// portal puts in its query string.
+					if (next.lesson && next.view !== "course") parts.push(next.lesson);
+				} else if (next.view && LEARN_VIEWS.indexOf(next.view) !== -1) {
+					parts.push(next.view);
+				}
+
+				const key = `${next.view || ""}|${next.course || ""}|${
+					next.view !== "course" ? next.lesson || "" : ""
+				}`;
+				if (key === this.showing) return;
+				this.showing = key;
+
+				// Compared before routing as well: a set_route to where we already are
+				// still fires a route event, and that event arrives here as a fresh
+				// handle_route.
+				const current = (frappe.get_route() || []).join("/");
+				if (current === parts.join("/")) return;
+				frappe.set_route(parts);
+			},
+		};
 	}
 
 	boot(target) {
@@ -172,7 +224,12 @@ class LearnPage {
 		// same player. It keeps route() at a zero-line diff for this release: the
 		// player neither reads nor writes the address bar, and the Desk router owns
 		// the URL entirely.
+		// history:false and an adapter together: the player never READS the address
+		// bar (the Desk router owns Back, and this page answers it through
+		// on_page_show) but it does WRITE it, through the adapter below. Those are two
+		// different jobs; the player checks the adapter independently of this flag.
 		boot.history = false;
+		boot.router = this.router_adapter();
 		if (target.course) {
 			boot.start = { course: target.course, lesson_key: target.lesson_key || null };
 		} else if (target.view) {

@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.432.2] - 2026-09-13
+
+Training Phase 6, D12 — the last phase, and deliberately so. **The address bar now
+follows the learner through the Desk.**
+
+### Added
+
+- **A router adapter on the boot payload**, injected by the host exactly as the transport
+  is. Three hosts answer "where am I?" differently, so it is a seam rather than a branch:
+
+  - `b.router` present — the **host** owns the URL in both directions. The Desk page passes
+    one that drives `frappe.router`, and drives the player back from `on_page_show`.
+  - no router and `history: false` — nothing touches the address bar. The preview harness.
+  - neither — the portal's own `replaceState`, **unchanged since v1.427.1**.
+
+  The default path is byte-for-byte what it was; `scripts/test_training_route.mjs` runs the
+  real `route()` for both and is 11 checks up to 15.
+
+- **The Desk page keeps `history: false` *and* writes the URL**, which is the load-bearing
+  part. Those are two different jobs: the flag stops the player *reading* the address bar,
+  and it must stay off, because `queryParam("course")` against a desk route that has no
+  query string returns nothing and would land a learner on the catalogue on every browser
+  Back. The adapter is therefore checked **first and independently** of the flag.
+
+- Inside the Desk the adapter **pushes** rather than replaces, so Back walks the views the
+  way it does everywhere else in ERPNext. The portal deliberately does the opposite —
+  `replaceState`, so Back means "leave the course" on a phone. That disagreement is exactly
+  why this is an adapter and not a setting.
+
+### The loop, and how it is stopped
+
+The player writes the URL and the URL drives the player, so the two close into a cycle:
+player moves → adapter → `frappe.set_route` → route change → `on_page_show` → `apply_route`
+→ player moves. One end has to stop, and `this.showing` — what the page last told the
+player to show — is read by **both** directions.
+
+Checking `frappe.get_route()` alone would not be enough: a `set_route` to where we already
+are still fires a route event, and that event arrives as a fresh `handle_route`. Both
+guards are in place; the adapter's decision logic is covered in node, but **the cycle
+itself can only be confirmed in a browser**, and that is the one item on this programme's
+bench list that is about correctness rather than appearance.
+
+### Changed
+
+- `router` joins `CLIENT_OPTIONS` in `test_training_boot_wire` and the `READ_BUT_NOT_SENT`
+  allowlist in `test_training_boundary_contract`, with the reason: the server has no
+  opinion about what the address bar says.
+
+- The node harness's mutation anchor moved with the guard it tests. It reproduced the
+  v1.427.1 bug by deleting `inCourse` from the `course=` line; that guard now lives in
+  `routeState()`, so the mutation deletes it there instead. Same bug, one level up — and
+  the test says so rather than silently testing nothing.
+
 ## [1.432.1] - 2026-09-13
 
 Training Phase 6, D11. Documentation, and a note on what the canvas polish turned out to

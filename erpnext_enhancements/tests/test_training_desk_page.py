@@ -182,13 +182,37 @@ class TestTheLifecycle(unittest.TestCase):
         self.assertIn("this.booting", code())
 
 
-class TestItDoesNotOwnTheUrlYet(unittest.TestCase):
-    """This release keeps `route()` at a zero-line diff: the Desk router owns the URL
-    and the player neither reads nor writes it. Deep links still work, through the
-    same `boot.start` the preview harness uses."""
+class TestItOwnsTheUrl(unittest.TestCase):
+    """Since v1.432.2 the page writes the address bar through the player's injected
+    router adapter — and still does not let the player READ it.
+
+    Those are two different jobs. `history: false` keeps the player from running
+    `queryParam("course")` against a desk route that has no query string (which would
+    land on the catalogue on every browser Back); the adapter is checked
+    independently of that flag, so the URL is still written.
+    """
 
     def test_history_is_off(self):
         self.assertRegex(code(), r"boot\.history\s*=\s*false")
+
+    def test_it_injects_a_router_adapter(self):
+        self.assertRegex(code(), r"boot\.router\s*=")
+        self.assertIn("router_adapter", code())
+
+    def test_the_adapter_routes_rather_than_linking(self):
+        self.assertIn("frappe.set_route(", code())
+
+    def test_both_directions_share_one_guard(self):
+        """The player writes the URL and the URL drives the player, so they close into
+        a loop unless one end stops. `this.showing` is that end, and it has to be read
+        by BOTH — an adapter that only checked frappe.get_route() would still fire a
+        route event for a no-op, and that event arrives as a fresh handle_route."""
+        text = code()
+        self.assertGreaterEqual(
+            text.count("this.showing"),
+            3,
+            "the loop guard must be read in apply_route and in the adapter",
+        )
 
     def test_the_deep_link_arrives_through_start(self):
         self.assertRegex(code(), r"boot\.start\s*=")

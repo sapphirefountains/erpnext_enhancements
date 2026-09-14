@@ -308,31 +308,62 @@
 			complete: true,
 		};
 
+		// Where the player says where it is. THREE hosts answer that differently, so it
+		// is an injected adapter rather than a branch:
+		//
+		//   * `b.router` present -- the HOST owns the URL, in both directions. The Desk
+		//     page passes one that drives frappe.router, and drives the player back from
+		//     on_page_show. Nothing below runs, and neither does the popstate handler,
+		//     because the desk's own router already is the popstate handler.
+		//   * no router and `b.history === false` -- nothing touches the address bar at
+		//     all. The preview harness, and the Desk page before v1.432.2.
+		//   * neither -- the portal's own replaceState, unchanged since v1.427.1.
+		//
+		// The adapter is checked FIRST and independently of `b.history`, and that is the
+		// load-bearing part: it lets the Desk host keep `history: false` -- so this file
+		// never reads the URL back -- while still having the URL written. Writing and
+		// reading are two different jobs, and conflating them is how the desk would have
+		// ended up answering browser Back by running queryParam("course") against a route
+		// that has no query string, and landing on the catalogue every time.
+		function routeState() {
+			var inCourse = COURSE_SCOPED_VIEWS[state.view] === true;
+			return {
+				view: state.view,
+				course: inCourse ? state.courseName : null,
+				// The history STATE carries the lesson whenever we are inside a course; the
+				// URL below omits it on the outline view, which names a course and no single
+				// lesson. That asymmetry is original and deliberate -- do not tidy the two
+				// into agreement.
+				lesson: inCourse ? state.lessonKey : null,
+			};
+		}
+
 		function route() {
+			var next = routeState();
+
+			if (b.router && typeof b.router.write === "function") {
+				try {
+					b.router.write(next);
+				} catch (err) {
+					// Same contract as below: routing is a convenience and losing it must
+					// not stop the lesson.
+				}
+				return;
+			}
+
 			if (b.history === false || !window.history || !window.history.replaceState) return;
 			var base = b.route_base || window.location.pathname;
 			var params = [];
-			var inCourse = COURSE_SCOPED_VIEWS[state.view] === true;
-			if (inCourse && state.courseName) {
-				params.push("course=" + encodeURIComponent(state.courseName));
+			if (next.course) {
+				params.push("course=" + encodeURIComponent(next.course));
 			}
 			// `course` is the outline: it names the course but no single lesson.
-			if (inCourse && state.lessonKey && state.view !== "course") {
-				params.push("lesson=" + encodeURIComponent(state.lessonKey));
+			if (next.lesson && state.view !== "course") {
+				params.push("lesson=" + encodeURIComponent(next.lesson));
 			}
 			if (state.view === "quiz" || state.view === "results") params.push("view=" + state.view);
 			try {
-				window.history.replaceState(
-					{
-						tr: {
-							view: state.view,
-							course: inCourse ? state.courseName : null,
-							lesson: inCourse ? state.lessonKey : null,
-						},
-					},
-					"",
-					base + (params.length ? "?" + params.join("&") : "")
-				);
+				window.history.replaceState({ tr: next }, "", base + (params.length ? "?" + params.join("&") : ""));
 			} catch (err) {
 				// A sandboxed iframe (the builder preview) refuses replaceState.
 				// Routing is a convenience; losing it must not stop the lesson.
