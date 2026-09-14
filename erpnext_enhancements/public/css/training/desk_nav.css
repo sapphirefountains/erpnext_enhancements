@@ -237,8 +237,16 @@
 
 /* `.layout-main` is a flex row at every width in frappe, so this is what stacks
    the rail above the page instead of beside it — and the <details> ships closed at
-   this width, so the cost to the player is one line. */
-@media (max-width: 991px) {
+   this width, so the cost to the player is one line.
+
+   991.98 AND NOT 991, which is frappe's own `media-breakpoint-down` value and not a
+   superstition. desk_nav.js opens the disclosure on `(min-width: 992px)`. Written as
+   `991`, the two leave a gap: at any fractional width between them -- which browser
+   zoom produces routinely, e.g. a 1239px window at 125% -- neither query matches, so
+   the script leaves the rail closed while this block fails to un-hide the summary
+   that opens it. The result is an empty 232px column with no control in it, and it
+   persists until the window is resized. */
+@media (max-width: 991.98px) {
 	.tn-host .layout-main {
 		flex-direction: column;
 	}
@@ -246,6 +254,17 @@
 	.tn-host .layout-side-section {
 		flex: none;
 		width: auto;
+		/* RESET, and the whole block is wrong without it. The wide rule above sets
+		   `align-self: flex-start` to stop the rail stretching to the height of a
+		   long lesson. But align-self is a CROSS-axis property, and once
+		   `.layout-main` turns to `flex-direction: column` the cross axis is
+		   HORIZONTAL -- so the same declaration stops it stretching to the WIDTH of
+		   the page, and `width: auto` above shrink-to-fits instead of filling. The
+		   rail then renders about 100px wide: the border-bottom below reads as a
+		   stray underline rather than a divider, the count badges sit flush against
+		   their labels instead of at the right edge, and .tn-course-title's
+		   two-line clamp never engages because there is no width to wrap against. */
+		align-self: stretch;
 		position: static;
 		border-right: 0;
 		border-bottom: 1px solid var(--border-color);

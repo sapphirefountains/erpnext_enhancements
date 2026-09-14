@@ -83,6 +83,27 @@
 		return false;
 	}
 
+	// Can this person open this Desk Page at all? `frappe.boot.allowed_pages` is
+	// built by desk.js `sync_pages()` from `frappe.boot.page_info`, which the server
+	// has already filtered through `Page.is_permitted()` -- so it is the runtime
+	// truth about the very thing a Page link leads to, rather than a second opinion
+	// assembled from role names.
+	//
+	// IT IS NOT REDUNDANT WITH THE ROLE LISTS BELOW, and the gap it closes was real:
+	// `HR Manager` is in MANAGER_ROLES because it is on `training-insights.json`,
+	// but it is NOT on `learn.json` -- so a person holding HR Manager and nothing
+	// else could open the dashboard, be shown "All courses", "My record" and "Open
+	// my training" beside it, and get "Not permitted" from all three. The role lists
+	// decide whether a SECTION is drawn; this decides whether a DESTINATION is
+	// offered. Two questions, two gates.
+	function canOpenPage(name) {
+		var pages = (window.frappe && frappe.boot && frappe.boot.allowed_pages) || null;
+		// Absent bootinfo is not a licence to offer the link: the cost of guessing
+		// wrong is a "Not permitted" modal, which reads as the feature being broken.
+		if (!pages || !pages.length) return false;
+		return pages.indexOf(name) !== -1;
+	}
+
 	// The exact question, asked of frappe rather than inferred from a role. The
 	// Manage section is opened by role -- that part mirrors the Page documents --
 	// but the links INSIDE it are lists, and a role is a poor proxy for a DocPerm:
@@ -190,8 +211,13 @@
 		clear(this.body);
 		this.rows = {};
 		this.courses = {};
-		this.body.appendChild(this.mine());
-		this.body.appendChild(this.section(t("Learn"), this.learnLinks()));
+		// Each section returns null / an empty list when this person has nothing in
+		// it, and an empty heading is the thing being avoided: it tells somebody
+		// that something is missing when nothing is.
+		var mine = this.mine();
+		if (mine) this.body.appendChild(mine);
+		var learn = this.learnLinks();
+		if (learn.length) this.body.appendChild(this.section(t("Learn"), learn));
 		var manage = this.manageLinks();
 		if (manage.length) this.body.appendChild(this.section(t("Manage"), manage));
 		this.paint();
@@ -200,11 +226,16 @@
 	// ------------------------------------------------------------- My Trainings
 
 	DeskNav.prototype.mine = function () {
+		var assigned = this.learner && this.learner.assigned;
+		// Nothing to say and nowhere to send them: this person cannot open the
+		// learner page and has no payload from it either. A "My Trainings" heading
+		// over a dead end is worse than no heading.
+		if (!assigned && !canOpenPage("learn")) return null;
+
 		var section = el("div", "tn-section");
 		var head = el("div", "tn-section-head");
 		head.appendChild(el("h6", "tn-section-title", t("My Trainings")));
 
-		var assigned = this.learner && this.learner.assigned;
 		if (assigned) head.appendChild(el("span", "tn-count", String(assigned.length)));
 		section.appendChild(head);
 
@@ -296,7 +327,7 @@
 				count: b.signoffs_to_record,
 			});
 		}
-		return links;
+		return this.reachable(links);
 	};
 
 	DeskNav.prototype.manageLinks = function () {
@@ -322,13 +353,11 @@
 			links.push({ key: "sessions", label: t("Sessions"), route: ["List", "Training Session"] });
 			links.push({ key: "settings", label: t("Settings"), route: ["Form", "Training Settings"] });
 		}
-		// Every destination that is a document, checked against what this person can
-		// actually open. Page routes are already gated above against the `roles` on
-		// the Page documents themselves.
-		return links.filter(function (spec) {
-			if (spec.route[0] !== "List" && spec.route[0] !== "Form") return true;
-			return canRead(spec.route[1]);
-		});
+		// Every destination checked against what this person can actually open --
+		// documents by DocPerm, Pages by the permission-filtered boot map. The role
+		// test above decided whether to draw the section at all; it does not decide
+		// what goes in it.
+		return this.reachable(links);
 	};
 
 	DeskNav.prototype.section = function (title, links) {
@@ -340,6 +369,16 @@
 			section.appendChild(this.link(spec));
 		}, this);
 		return section;
+	};
+
+	// One filter for every link the rail draws, whatever section it is in. A route
+	// of one segment is a Desk Page; ["List"|"Form", doctype, ...] is a document.
+	DeskNav.prototype.reachable = function (links) {
+		return links.filter(function (spec) {
+			var head = spec.route[0];
+			if (head === "List" || head === "Form") return canRead(spec.route[1]);
+			return canOpenPage(head);
+		});
 	};
 
 	DeskNav.prototype.link = function (spec) {

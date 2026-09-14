@@ -204,17 +204,38 @@ section. Three things about it are load-bearing:
   "no expiry" into "expired" here. `/desk/training-insights` holds no learner payload, so
   its rail offers My Trainings as a **door** rather than a list; `null` and `[]` are
   deliberately different states.
-- **The Manage links are gated against the Page documents themselves.** `MANAGER_ROLES`
-  must equal `training-insights.json`'s roles and `AUTHOR_ROLES` `training-canvas.json`'s,
-  asserted in [`../tests/test_training_desk_nav.py`](../tests/test_training_desk_nav.py).
-  A link offered to somebody the Page refuses lands them on "Not permitted", which reads as
-  broken rather than as not theirs. A learner gets no Manage heading at all, not an empty one.
+- **Two gates, because there are two questions.** A *section* is drawn on role —
+  `MANAGER_ROLES` must equal `training-insights.json`'s roles and `AUTHOR_ROLES`
+  `training-canvas.json`'s, asserted in
+  [`../tests/test_training_desk_nav.py`](../tests/test_training_desk_nav.py) — and a learner
+  gets no Manage heading at all rather than an empty one. But every *destination* is then
+  checked against what this person can actually open: documents through
+  `frappe.model.can_read`, Pages through `frappe.boot.allowed_pages`, which desk.js builds
+  from the server's own permission-filtered `page_info`.
+
+  Role alone is wrong in **both** directions, and the hole was real: `HR Manager` is in
+  `MANAGER_ROLES` because it is on `training-insights.json`, but it is *not* on
+  `learn.json` — so somebody holding HR Manager and nothing else could open the dashboard
+  and be offered three links into the learner page, all of which answer "Not permitted".
+  Meanwhile a Training Learner holds read DocPerms on fourteen Training doctypes and must
+  still see no Manage section. A link offered to somebody the Page refuses reads as the
+  feature being broken rather than as not being theirs.
 - **It stacks under 992px.** frappe lays `.layout-main` out as `display: flex;
   flex-direction: row` at *every* width — it does not stack on its own — so without the
   media block the rail would sit beside the player on a phone, which is the device
   `player.css` says the learner surface was built for. Below that breakpoint the rail is a
   closed `<details>` costing one line, and its `open` follows the viewport rather than
   remembering a choice.
+
+  Two details in that block are load-bearing and neither is obvious. The stylesheet must
+  say **`991.98px`**, frappe's own `media-breakpoint-down` value, against the script's
+  `min-width: 992px`: written as `991` the pair leaves a gap at every fractional width
+  between them — which browser zoom produces routinely — and in it the rail is an empty
+  232px column whose only control is still hidden by the desktop rule. And the block must
+  reset **`align-self: stretch`**, because `align-self` is a *cross*-axis property: the
+  desktop rule sets `flex-start` to stop the rail matching the height of a long lesson, and
+  once the container turns to `column` that same declaration stops it matching the *width*
+  of the page, shrink-to-fitting to about 100px.
 
 The Desk's own left sidebar could not do this job: it lists **workspaces**, so it can offer
 "My Training" as a destination and can never show the three courses one person owes.

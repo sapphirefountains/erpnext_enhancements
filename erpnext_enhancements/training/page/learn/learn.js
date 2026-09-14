@@ -103,6 +103,9 @@ class LearnPage {
 		// and splitting it again to find the course name would make the loop guard's
 		// format load-bearing for something that is not about the loop.
 		this.where = { view: "catalog", course: null };
+		// The latest position the ROUTE has asked for, kept current through the boot
+		// window so a click made while the player is still loading is not lost.
+		this.desired = null;
 		// The rail and the payload that fills it. Either can arrive first — the boot
 		// is a round trip and the rail is two files — so each hands what it has to
 		// the other when it lands.
@@ -191,14 +194,32 @@ class LearnPage {
 			if (route[2]) target.lesson_key = route[2];
 		}
 
+		// Recorded BEFORE any early return. The rail paints from two files while the
+		// player is still six files and a round trip away, so it is clickable during
+		// the boot window -- and a click in that window used to be discarded whole:
+		// handle_route returned on `this.booting` and mount() then used the target
+		// captured when the boot STARTED. Pressing "My record" while the page said
+		// "Loading training…" put the URL through /desk/learn/record and back, and
+		// landed on the catalogue.
+		this.desired = target;
+
 		if (this.player) {
 			this.apply_route(target);
 			return;
 		}
 		if (this.booting) return;
-		this.booting = this.boot(target).finally(() => {
+		this.booting = this.boot().finally(() => {
 			this.booting = null;
 		});
+	}
+
+	// Is this page still the one on screen? The boot chain outlives navigation --
+	// frappe creates the page div once and never removes it, and nothing cancels an
+	// in-flight fetch -- so a payload can arrive seconds after the learner has gone
+	// somewhere else. Mounting a player there would start a heartbeat and a <video>
+	// on a hidden page, which is the exact thing the "hide" teardown exists to stop.
+	is_current() {
+		return (frappe.get_route() || [])[0] === "learn";
 	}
 
 	// Moves an ALREADY-MOUNTED player, rather than re-booting it. A fresh boot per
@@ -213,7 +234,7 @@ class LearnPage {
 	// the player itself caused is recognised and dropped. frappe's own push_state
 	// declines a no-op URL too, but only after the route event has already fired.
 	apply_route(target) {
-		const key = `${target.view || ""}|${target.course || ""}|${target.lesson_key || ""}`;
+		const key = this.position_key(target);
 		if (key === this.showing) return;
 		this.showing = key;
 		this.mark(target);
@@ -222,6 +243,27 @@ class LearnPage {
 		} else {
 			this.player.go(target.view || "catalog");
 		}
+	}
+
+	// THE ONE KEY, computed from a route on one side and from the player's own state
+	// on the other -- and they have to agree, because the whole loop guard is a
+	// string comparison between them.
+	//
+	// They did not. The route side used the ROUTE's view, which is empty for
+	// /desk/learn/<COURSE>; the player side reports its own view, which is "course".
+	// So `|A|` never equalled `course|A|` and the first guard never fired on a
+	// course at all -- the normal path was saved only by the second guard below,
+	// which compares the URLs. Where it showed was a race: open course A, click
+	// course B in the rail before A lands, and A's late arrival writes the URL back
+	// to itself, which re-enters here with a key that does not match and opens A a
+	// third time; B then does the same in reverse. With the keys agreed, the stale
+	// arrival is recognised and stops there.
+	position_key(target) {
+		if (target.course) {
+			const lesson = target.lesson_key || target.lesson || "";
+			return `${lesson ? "lesson" : "course"}|${target.course}|${lesson}`;
+		}
+		return `${target.view || "catalog"}||`;
 	}
 
 	// The other half: what the player tells the Desk. Returns the adapter handed to
@@ -236,6 +278,15 @@ class LearnPage {
 	router_adapter() {
 		return {
 			write: (next) => {
+				// The player settles on a view and says so -- but this can arrive on a
+				// page the learner has already left, because nothing cancels the boot
+				// chain and frappe never removes the page div. Writing the URL then
+				// DRAGS THEM BACK: click "Insights" in the rail while the player is
+				// still loading, and the bootstrap lands a second later on the hidden
+				// page, mounts, goes to the catalogue and set_route's "learn" over the
+				// top of the dashboard they asked for.
+				if (!this.is_current()) return;
+
 				const parts = ["learn"];
 				if (next.course) {
 					parts.push(next.course);
@@ -246,9 +297,7 @@ class LearnPage {
 					parts.push(next.view);
 				}
 
-				const key = `${next.view || ""}|${next.course || ""}|${
-					next.view !== "course" ? next.lesson || "" : ""
-				}`;
+				const key = this.position_key(next);
 				if (key === this.showing) return;
 				this.showing = key;
 				this.mark(next);
@@ -263,7 +312,7 @@ class LearnPage {
 		};
 	}
 
-	boot(target) {
+	boot() {
 		this.page.set_indicator(__("Loading…"), "blue");
 		// Same source the authoring canvas uses.
 		const version = this.asset_version();
@@ -281,11 +330,20 @@ class LearnPage {
 				this.transport = TR.makeTransport({ csrf: () => frappe.csrf_token });
 				return this.transport.bootstrap({});
 			})
-			.then((boot) => this.mount(boot || {}, target))
+			.then((boot) => this.mount(boot || {}))
 			.catch((err) => this.fail(err));
 	}
 
-	mount(boot, target) {
+	mount(boot) {
+		// Left the page while this was in flight. Bail rather than mount: the next
+		// visit boots again, which costs one round trip, where mounting here would
+		// leave a heartbeat and possibly a downloading <video> running behind
+		// whatever the learner actually went to look at.
+		if (!this.is_current()) return;
+		// The LATEST target, not the one this boot started with. handle_route keeps
+		// this current through the whole boot window.
+		const target = this.desired || { course: null, lesson_key: null, view: null };
+
 		// history:false plus an explicit start is how the preview harness hosts the
 		// same player. It keeps route() at a zero-line diff for this release: the
 		// player neither reads nor writes the address bar, and the Desk router owns

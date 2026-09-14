@@ -55,6 +55,50 @@ Training Phase 6, D14. **The rail** — one sidebar across the module's Desk sur
 
 ### Fixed
 
+- **Eight defects found by putting the diff through an adversarial review before merge,
+  all fixed here.** Five reviewers over independent dimensions, every finding then facing
+  two refuters with different lenses. Worth recording because three of them are invisible
+  to every check this repo has:
+
+  - **The stacked rail shrank to about 100px wide.** `align-self` is a *cross*-axis
+    property: the desktop rule sets `flex-start` so the rail does not match the height of
+    a long lesson, and the moment the container turns to `flex-direction: column` the same
+    declaration stops it matching the *width* of the page. Every symptom then reads as a
+    different bug -- the divider becomes a stray underline, the count badges sit against
+    their labels, and the two-line title clamp never engages.
+  - **A 1px dead zone between the two breakpoints.** The stylesheet said
+    `max-width: 991px` and the script `min-width: 992px`, so at any fractional width
+    between them -- which browser zoom produces routinely -- neither fired: an empty 232px
+    column whose only control was still hidden by the desktop rule, until the window was
+    resized. Now `991.98px`, frappe's own `media-breakpoint-down` value.
+  - **`HR Manager` could be offered three links it cannot open.** That role is in
+    `MANAGER_ROLES` because it is on `training-insights.json`; it is not on `learn.json`.
+    Every destination is now checked against what the person can actually open --
+    documents through `frappe.model.can_read`, Pages through `frappe.boot.allowed_pages` --
+    rather than inferred from the role that opened the section.
+  - **A late boot could drag the learner back.** Nothing cancels the boot chain and frappe
+    never removes the page div, so clicking Insights in the rail while the player was still
+    loading let the payload land on the hidden page, mount, go to the catalogue and
+    `set_route("learn")` over the top of the dashboard. Both `mount()` and the router
+    adapter now bail unless `/desk/learn` is still the current route.
+  - **A click made during the boot window was discarded whole.** `handle_route` returned on
+    `this.booting` and `mount()` then used the target captured when the boot *started*. It
+    now records the latest target unconditionally.
+  - **The loop guard never fired on a course.** The route side keyed on the ROUTE's view,
+    empty for `/desk/learn/<COURSE>`; the player side reports its own, `course`. So `|A|`
+    never equalled `course|A|` and only the URL comparison saved the normal path. Where it
+    showed was a race the rail made reachable: open course A, click B in the rail before A
+    lands, and A's late arrival writes the URL back to itself, re-enters with a
+    non-matching key and opens A a third time, then B does the same in reverse. One
+    `position_key()` now serves both directions.
+  - **Two of the new tests were vacuous**, both proven by mutation rather than by reading.
+    `test_the_rail_fails_independently_of_the_page` anchored on the first occurrence of
+    `desk_nav`, which is the asset-path constant at the top of the file, so the player
+    boot's own `.catch(` satisfied it -- deleting both rail catches left the suite green.
+    `test_the_rail_does_not_inherit_the_form_sidebar_width` was a bare
+    `assertIn("min-width: 0")` satisfied by a different rule, so the whole desktop
+    `.layout-side-section` block could be deleted and it still passed. Both are now
+    anchored inside the block they name, by a brace matcher written for the purpose.
 - **The rail stacks under 992px, and it had to be made to.** frappe lays `.layout-main` out
   as `display: flex; flex-direction: row` at *every* width — it does not stack on its own —
   and `.layout-side-section` carries `min-width: var(--form-sidebar-width)`, rising to

@@ -43,6 +43,11 @@ LEARN_JS = APP / "training" / "page" / "learn" / "learn.js"
 INSIGHTS_JS = APP / "training" / "page" / "training_insights" / "training_insights.js"
 INSIGHTS_JSON = APP / "training" / "page" / "training_insights" / "training_insights.json"
 CANVAS_JSON = APP / "training" / "page" / "training_canvas" / "training_canvas.json"
+LEARN_JSON = APP / "training" / "page" / "learn" / "learn.json"
+
+# The stylesheet half of the breakpoint pair. frappe's own media-breakpoint-down
+# value, and the .98 is load-bearing — see TestTheNarrowScreen.
+NARROW = "@media (max-width: 991.98px)"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
@@ -66,6 +71,28 @@ def code(path):
 
 def page_roles(path):
     return {row["role"] for row in json.loads(read(path))["roles"]}
+
+
+def block_after(text, opener):
+    """The body of the brace-delimited block opened by ``opener``.
+
+    Two assertions in this module were satisfied by code in a DIFFERENT block
+    than the one their docstring named, and both were found by mutation rather
+    than by reading: deleting the thing under test left 35 tests green. A bare
+    ``assertIn(token, whole_file)`` is an assertion about the file, not about the
+    rule -- and in a file that mentions `min-width: 0` twice and `.catch(` three
+    times, that is not the same statement at all.
+    """
+    start = text.index(opener) + len(opener)
+    depth = 1
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i]
+    raise AssertionError(f"unclosed block: {opener!r}")
 
 
 class TestTheFilesAreThere(unittest.TestCase):
@@ -193,7 +220,38 @@ class TestTheRoleGate(unittest.TestCase):
         no Manage section at all."""
         src = code(NAV_JS)
         self.assertIn("frappe.model.can_read", src)
-        self.assertIn('if (spec.route[0] !== "List" && spec.route[0] !== "Form") return true;', src)
+        # One filter, applied to BOTH sections -- a link is drawn only if its
+        # destination is one this person can actually open.
+        self.assertIn("DeskNav.prototype.reachable", src)
+        self.assertEqual(src.count("return this.reachable(links);"), 2)
+        body = block_after(src, "DeskNav.prototype.reachable = function (links) {")
+        self.assertIn("canRead(spec.route[1])", body)
+        self.assertIn("canOpenPage(head)", body)
+
+    def test_a_page_link_is_checked_against_the_boot_map(self):
+        """The hole this closes was real and specific. `HR Manager` is in
+        MANAGER_ROLES because it is on `training-insights.json`, but it is NOT on
+        `learn.json` -- so somebody holding HR Manager and nothing else could open
+        the dashboard and be shown three links into the learner page, all of which
+        answer "Not permitted". `frappe.boot.allowed_pages` is built by desk.js
+        from the server's own permission-filtered `page_info`, so it is the runtime
+        truth rather than a second opinion assembled from role names."""
+        src = code(NAV_JS)
+        self.assertIn("frappe.boot.allowed_pages", src)
+        body = block_after(src, "function canOpenPage(name) {")
+        # Absent bootinfo must not read as "allowed": the cost of guessing wrong is
+        # a "Not permitted" modal, which reads as the feature being broken.
+        self.assertIn("return false;", body)
+        self.assertNotIn("return true;", body.split("indexOf")[0])
+
+    def test_the_hr_manager_hole_is_closed_where_it_was_open(self):
+        """Named after the actual defect so a regression says so. The Learn section
+        and the My Trainings door both route into `learn`, and neither used to be
+        gated at all."""
+        src = code(NAV_JS)
+        self.assertIn("if (!assigned && !canOpenPage(\"learn\")) return null;", src)
+        self.assertIn("HR Manager", self.js_role_list("MANAGER_ROLES"))
+        self.assertNotIn("HR Manager", page_roles(LEARN_JSON))
 
     def test_the_learner_can_still_reach_the_learner_surfaces(self):
         """Everything in the Learn section is a route into `learn`, which is the
@@ -243,15 +301,45 @@ class TestTheNarrowScreen(unittest.TestCase):
 
     def test_the_layout_is_stacked_under_the_desktop_breakpoint(self):
         css = read(NAV_CSS)
-        self.assertIn("@media (max-width: 991px)", css)
-        block = css[css.index("@media (max-width: 991px)") :]
+        self.assertIn(NARROW, css)
+        block = css[css.index(NARROW) :]
         self.assertIn("flex-direction: column", block)
+
+    def test_the_two_breakpoints_are_complementary(self):
+        """The stylesheet stacks the rail and the script opens the disclosure, and
+        between them there must be no width where neither fires. Written as `991`
+        against `min-width: 992px` there is one -- any fractional width in between,
+        which browser zoom produces routinely -- and in it the rail is an empty
+        232px column whose only control is hidden by the desktop rule. frappe's own
+        `media-breakpoint-down` uses .98 for exactly this."""
+        self.assertIn("(min-width: 992px)", code(NAV_JS))
+        self.assertIn("@media (max-width: 991.98px)", read(NAV_CSS))
+        self.assertNotIn("@media (max-width: 991px)", read(NAV_CSS))
+
+    def test_the_stacked_rail_is_told_to_span_the_page(self):
+        """`align-self` is a CROSS-axis property. The desktop rule sets
+        `flex-start` to stop the rail matching the height of a long lesson; once
+        `.layout-main` turns to `flex-direction: column` that same declaration
+        stops it matching the WIDTH of the page, and `width: auto` shrink-to-fits
+        to about 100px. Every visible symptom then reads as a different bug: the
+        divider becomes a stray underline, the count badges sit against their
+        labels, and the two-line title clamp never engages."""
+        css = read(NAV_CSS)
+        wide = block_after(css, ".tn-host .layout-side-section {")
+        self.assertIn("align-self: flex-start", wide)
+        narrow = block_after(css[css.index(NARROW) :], ".tn-host .layout-side-section {")
+        self.assertIn("align-self: stretch", narrow)
 
     def test_the_rail_does_not_inherit_the_form_sidebar_width(self):
         """frappe's own `.layout-side-section` carries `min-width:
         var(--form-sidebar-width)` and, under xl, `min-width: calc(38vw -
         var(--sidebar-width))`. Inherited, that hands 38% of a tablet to a nav."""
-        self.assertIn("min-width: 0", read(NAV_CSS))
+        # Anchored INSIDE the rule. `min-width: 0` appears twice in this file, and
+        # the bare assertion this replaces was satisfied by the OTHER one: the whole
+        # desktop `.layout-side-section` block could be deleted and it still passed.
+        wide = block_after(read(NAV_CSS), ".tn-host .layout-side-section {")
+        self.assertIn("min-width: 0", wide)
+        self.assertIn("flex: 0 0 232px", wide)
 
     def test_the_disclosure_follows_the_viewport(self):
         src = code(NAV_JS)
@@ -291,12 +379,31 @@ class TestTheHostsMountIt(unittest.TestCase):
     def test_the_rail_fails_independently_of_the_page(self):
         """Chrome is not the page. A rail that cannot load must not put an error
         where a lesson or six numbers should be — so its chain is its own, and it
-        ends in a catch."""
-        for path in (LEARN_JS, INSIGHTS_JS):
+        ends in a catch.
+
+        ANCHORED IN THE FUNCTION BODY, because the obvious version of this test
+        is vacuous: the first occurrence of "desk_nav" in both hosts is the
+        asset-path constant near the top of the file, so `".catch(" in
+        src[that:]` is satisfied by the player boot's own catch several hundred
+        lines later. Proven by mutation — deleting both rail catches left the
+        whole suite green.
+        """
+        hosts = ((LEARN_JS, "mount_nav() {"), (INSIGHTS_JS, "function ti_mount_nav(page) {"))
+        for path, opener in hosts:
             with self.subTest(path.name):
-                src = code(path)
-                start = src.index("desk_nav")
-                self.assertIn(".catch(", src[start:])
+                body = block_after(code(path), opener)
+                self.assertIn(".catch(", body)
+                self.assertIn("TR.loadAssets", body)
+
+    def test_the_host_guards_against_the_bundle_being_absent(self):
+        """That call sits in a constructor / on_page_load, outside every promise
+        chain, so an uncaught TypeError there takes the whole page down to save a
+        sidebar."""
+        hosts = ((LEARN_JS, "mount_nav() {"), (INSIGHTS_JS, "function ti_mount_nav(page) {"))
+        for path, opener in hosts:
+            with self.subTest(path.name):
+                body = block_after(code(path), opener)
+                self.assertIn("typeof TR.loadAssets", body)
 
     def test_the_learner_page_feeds_it_the_boot_payload(self):
         self.assertIn("setLearner(", code(LEARN_JS))
@@ -314,6 +421,85 @@ class TestTheHostsMountIt(unittest.TestCase):
         self.assertIn("mark(where)", src)
         # Both directions of the router loop, which is where position is decided.
         self.assertEqual(src.count("this.mark("), 3)
+
+
+class TestTheBootWindow(unittest.TestCase):
+    """The rail is two files; the player is six files and a round trip. So for a
+    second or so the rail is on screen, clickable, and the page under it says
+    "Loading training". Every test here is about something that can be done in that
+    window, and none of it was reachable before the rail existed: the catalogue is
+    what used to hold the only controls, and `loading()` clears it.
+    """
+
+    def test_the_page_knows_whether_it_is_still_on_screen(self):
+        """frappe creates the page div once and never removes it, and nothing
+        cancels an in-flight fetch, so a boot payload can land seconds after the
+        learner has gone elsewhere."""
+        self.assertIn("is_current()", code(LEARN_JS))
+
+    def test_a_late_boot_does_not_mount_a_player_on_a_hidden_page(self):
+        """Mounting there starts a heartbeat and possibly a downloading <video>
+        behind whatever the learner actually went to look at — the exact thing
+        the "hide" teardown exists to stop."""
+        body = block_after(code(LEARN_JS), "mount(boot) {")
+        self.assertIn("if (!this.is_current()) return;", body)
+
+    def test_a_late_boot_does_not_drag_the_learner_back(self):
+        """Click "Insights" in the rail while the player is still loading: the
+        bootstrap lands on the hidden page, mounts, goes to the catalogue, and the
+        adapter set_route's "learn" over the top of the dashboard they asked for."""
+        body = block_after(code(LEARN_JS), "write: (next) => {")
+        self.assertIn("if (!this.is_current()) return;", body)
+
+    def test_a_click_made_while_booting_is_not_discarded(self):
+        """It was: handle_route returned on `this.booting` and mount() then used the
+        target captured when the boot STARTED, so pressing "My record" put the URL
+        through /desk/learn/record and back and landed on the catalogue."""
+        body = block_after(code(LEARN_JS), "handle_route() {")
+        self.assertIn("this.desired = target;", body)
+        self.assertLess(
+            body.index("this.desired = target;"),
+            body.index("if (this.booting) return;"),
+            "the target must be recorded before the early return, or it is lost",
+        )
+        self.assertIn("this.desired", block_after(code(LEARN_JS), "mount(boot) {"))
+
+
+class TestTheLoopGuardActuallyGuards(unittest.TestCase):
+    """The player writes the URL and the URL drives the player, and the only thing
+    between them is a string comparison — so the two ends must compute that
+    string the same way.
+
+    They did not. The route side used the ROUTE's view, which is empty for
+    /desk/learn/<COURSE>; the player side reports its own, which is "course". `|A|`
+    never equalled `course|A|`, so the first guard never fired on a course at all
+    and the normal path survived only on the second guard, which compares URLs.
+    Where it showed was a race the rail made reachable: open course A, click course
+    B in the rail before A lands, and A's late arrival writes the URL back to
+    itself, re-enters with a key that does not match, and opens A a third time —
+    then B does the same in reverse.
+    """
+
+    def test_there_is_exactly_one_key_function(self):
+        src = code(LEARN_JS)
+        self.assertIn("position_key(target) {", src)
+        self.assertEqual(src.count("this.position_key("), 2, "both directions must use it")
+
+    def test_neither_direction_builds_its_own_key(self):
+        """The shape that caused it: a template literal assembled at the call site.
+        Two of them drift; one function cannot."""
+        src = code(LEARN_JS)
+        self.assertNotIn('${target.view || ""}|', src)
+        self.assertNotIn('${next.view || ""}|', src)
+
+    def test_the_key_predicts_the_players_view_rather_than_the_routes(self):
+        """A course URL carries no view, but the player will be on "course" (or
+        "lesson" if the URL named one). Predicting that is what makes the two sides
+        comparable."""
+        body = block_after(code(LEARN_JS), "position_key(target) {")
+        self.assertIn('"lesson"', body)
+        self.assertIn('"course"', body)
+        self.assertIn('"catalog"', body)
 
 
 class TestItIsWiredIntoCI(unittest.TestCase):
