@@ -25,6 +25,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ten `Course Completed` badges, priced at five points per lesson so a three-lesson module and a
   twelve-lesson one are not worth the same, with ten SVGs in
   `public/images/training/badges/` written into `Training Badge.image` as `/assets` paths.
+- **The AI question review queue at `/desk/training-review` — the publish gate's missing half.**
+  `submit_for_review` and `publish_version` have refused a course holding an unaccepted AI-drafted
+  question since Phase 4, and the gate works. What never existed was anywhere to *do* the accepting.
+  Measured on production 2026-09-15: **128 unreviewed questions across all 11 Draft courses**
+  against 14 ever reviewed — every one of those courses is Draft because of this — and the ten
+  Technician Program drafts add 239 more.
+- **The lesson is the unit of review, and that is the whole design.** The question a reviewer cannot
+  answer from a list is *"could a learner have got this from the lesson?"*, so
+  `get_review_lesson` returns a lesson's content and its pending questions in one reply and the page
+  shows them side by side. Accept, edit-and-accept, or reject, driven from the keyboard
+  (`a` / `e` / `r` / `j` / `k`) because 367 repetitions is a morning's work.
+
+### Fixed
+
+- **`ai_reviewed_by` was caller-supplied.** The only thing that ever flipped it on an
+  already-persisted question was the browser — the authoring canvas calls core
+  `frappe.client.save` with `body.ai_reviewed_by = frappe.session.user`. That works, and it means
+  the one field whose entire job is recording **who vouched for this answer key** was being set by
+  the client that wanted it set. `accept_question` takes it from `frappe.session.user` server-side
+  and the payload cannot express a reviewer at all: a test asserts the call raises `TypeError`,
+  because the parameter does not exist. A signature you can address to somebody else is not one.
+- **There was no reject path**, though `submit_for_review` has always thrown *"Accept or reject each
+  one"*. `Training Question` carries `ai_generated` and `ai_reviewed_by` and nothing else, so a
+  "Rejected" state that left the reviewer unset would be indistinguishable from "nobody has looked
+  at it" and would block publication for ever, while one that *set* it would let a rejected question
+  go live. Rejecting now removes the question from every draft lesson pool that draws it, deletes it
+  if nothing else wants it, and writes the reason to the course version's timeline — no new field,
+  no migration, and the audit trail lands where a reader would look for it.
 
 ### Notes
 

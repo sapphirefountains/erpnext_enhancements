@@ -514,6 +514,38 @@ There is deliberately **no capstone badge** for finishing all ten. The mechanism
 categories with courses already on the site — so its meaning would change whenever somebody adds a
 course. A criterion that drifts is worse than no badge.
 
+### Reviewing AI-drafted questions
+
+**`/desk/training-review`** ([`page/training_review/`](page/training_review/), served by
+[`review.py`](review.py)) is where the publish gate is actually satisfied. Every question an AI path
+creates is stamped `ai_generated` with **no** reviewer, and `_unreviewed_ai_questions` is what
+`submit_for_review` and `publish_version` both refuse on. That gate has worked since Phase 4; what
+never existed was anywhere to do the reviewing. Measured on production 2026-09-15 it was holding
+**128 questions across all 11 Draft courses**, against 14 ever reviewed.
+
+**The lesson is the unit of review.** A reviewer cannot answer *"could a learner have got this from
+the lesson?"* from a list of questions, so `get_review_lesson` returns a lesson's content and its
+pending questions in one reply and the page puts them side by side. Accept, edit-and-accept, or
+reject, from the keyboard.
+
+Three properties are load-bearing:
+
+- **The reviewer comes from the session, never from the payload.** Until this page the only writer of
+  `ai_reviewed_by` on a persisted question was the browser, through core `frappe.client.save` — so
+  the field recording *who vouched for this answer key* was set by the client that wanted it set.
+  `accept_question` has no reviewer parameter at all, which a test pins by asserting `TypeError`.
+- **Reject means the question leaves the course**, because that is the only thing that clears the
+  gate: there is nowhere on `Training Question` to record a verdict, so a rejected question left in
+  the pool would block publication for ever and one marked reviewed would go live. The reason is
+  written to the course version's timeline, which is the surviving record of a question about to be
+  deleted. Rejecting a lesson's **last** question is refused unless the reviewer confirms — with
+  `has_quiz` ticked and an empty pool, `TrainingLesson._validate_quiz` makes that lesson unsaveable
+  by anybody.
+- **There is no bulk accept and one must not be added.** A button that clears a course in one click
+  turns the gate into theatre, and the gate is the only thing between a machine-written answer key
+  and somebody's compliance record. The endpoint set is pinned by set equality so adding one fails
+  the build first. Making the work fast is the goal; making it skippable is not.
+
 ### Batches (cohorts)
 
 A **Training Batch** is a cohort — a set of learners moving through a set of courses

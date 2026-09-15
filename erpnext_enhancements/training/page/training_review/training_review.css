@@ -1,0 +1,1079 @@
+/*
+ * Question Review chrome. The class registry for training_review.js: a class the JS
+ * invents with no rule here renders as an unstyled div.
+ *
+ * PREFIX IS `tq-`, alongside `ti-` (the insights dashboard), `tr-` (the learner
+ * render), `tc-` (the authoring canvas), `tl-` (the learner Desk host), `tn-` and
+ * `tpr-`. Nothing here may borrow a `tr-` name: the player CSS contract test asserts
+ * both directions between the learner stylesheet and the four player scripts, and a
+ * stray one fails the build.
+ *
+ * EVERY COLOUR COMES FROM FRAPPE. There is not one theme selector in this file and
+ * there must not be: the desk stamps its own light and dark on the document root, and
+ * a console built on frappe's tokens follows it for free. training_insights.css makes
+ * exactly this bargain. This page also does NOT pull the learner stylesheet — 127KB
+ * and a whole second palette, to render a reviewer's console.
+ *
+ * The two literal colours below are the semantic ones, and they are literal for the
+ * same reason the learner stylesheet keeps its answer colours literal: "this option is
+ * the correct one" and "this key would be refused" must not change meaning because
+ * somebody edited a palette. Everything else is a var().
+ *
+ * THE LAYOUT IS THE PRODUCT. Two panes, the lesson beside its questions, each
+ * scrolling on its own so a reviewer can hold their place in a long lesson while
+ * working down the cards. Below frappe's own 991.98px breakpoint they stack and the
+ * page scrolls as one — written with the .98 because 991 leaves a gap at exactly the
+ * fractional widths browser zoom produces.
+ */
+
+/* ------------------------------------------------------------------- the frame */
+
+/* One magic number in the whole file: the desk navbar plus the page head above this.
+   Everything else — the stats bar's real height, the panes — is measured by the flex
+   column from what is left, rather than guessed at a second time. */
+.tq-page {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	height: calc(100vh - 150px);
+	min-height: 420px;
+	padding: 8px 0 8px;
+}
+
+.tq-split {
+	display: grid;
+	/* The questions get the wider half: they carry the options, the flags and the
+	   whole editor, while the lesson is a column of prose. */
+	grid-template-columns: minmax(0, 23fr) minmax(0, 27fr);
+	gap: 16px;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+.tq-pane {
+	min-height: 0;
+	overflow-y: auto;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 8px);
+	background: var(--card-bg);
+}
+
+.tq-pane-lesson {
+	padding: 16px 18px 24px;
+}
+
+.tq-pane-questions {
+	padding: 0 0 16px;
+}
+
+.tq-done {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 32px 28px;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 8px);
+	background: var(--card-bg);
+}
+
+/* ------------------------------------------------------------ the progress line */
+
+.tq-bar {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	flex: 0 0 auto;
+}
+
+.tq-bar-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.tq-stats {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+
+.tq-stat {
+	padding: 8px 14px;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 8px);
+	background: var(--card-bg);
+	min-width: 104px;
+}
+
+/* The number the reviewer is actually working down. */
+.tq-stat.is-lead {
+	border-color: var(--primary);
+}
+
+.tq-stat-value {
+	font-size: 1.5rem;
+	font-weight: 700;
+	line-height: 1.1;
+	color: var(--heading-color);
+}
+
+.tq-stat.is-lead .tq-stat-value {
+	color: var(--primary);
+}
+
+.tq-stat-label {
+	font-size: 0.8125rem;
+	color: var(--text-color);
+}
+
+.tq-stat-sub {
+	margin-top: 1px;
+	font-size: 0.6875rem;
+	color: var(--text-muted);
+}
+
+.tq-controls {
+	display: flex;
+	align-items: flex-end;
+	gap: 8px;
+}
+
+.tq-filter-wrap {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 0;
+	min-width: 240px;
+}
+
+.tq-filter-label {
+	font-size: 0.6875rem;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--text-muted);
+}
+
+.tq-filter {
+	max-width: 340px;
+}
+
+.tq-progress {
+	height: 6px;
+	border-radius: 3px;
+	background: var(--bg-color);
+	overflow: hidden;
+}
+
+.tq-progress-fill {
+	height: 100%;
+	width: 0;
+	background: var(--primary);
+	transition: width 180ms ease-out;
+}
+
+.tq-meta {
+	font-size: 0.75rem;
+	color: var(--text-color);
+}
+
+.tq-meta-dim {
+	color: var(--text-muted);
+}
+
+.tq-notice {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	padding: 10px 14px;
+	border: 1px solid var(--border-color);
+	border-left: 3px solid #e03636;
+	border-radius: var(--border-radius-md, 8px);
+	background: var(--card-bg);
+	font-size: 0.8125rem;
+}
+
+.tq-notice-text {
+	flex: 1 1 auto;
+	color: var(--text-color);
+}
+
+/* A button that reads as a link. Used for every in-page destination, because a real
+   <a href> inside the desk is a full page load plus a redirect hop. */
+.tq-linkish {
+	border: none;
+	background: none;
+	padding: 0;
+	font: inherit;
+	color: var(--primary);
+	cursor: pointer;
+	text-align: left;
+}
+
+.tq-linkish:hover,
+.tq-linkish:focus-visible {
+	text-decoration: underline;
+}
+
+.tq-muted {
+	font-size: 0.75rem;
+	color: var(--text-muted);
+}
+
+/* Visible to a screen reader only. The answer key is marked with a glyph and a
+   colour, neither of which is a word. */
+.tq-sr {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+/* ------------------------------------------------------------- the lesson pane */
+
+.tq-lesson-head {
+	margin-bottom: 16px;
+	padding-bottom: 12px;
+	border-bottom: 1px solid var(--border-color);
+}
+
+.tq-crumb {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	font-size: 0.75rem;
+	color: var(--text-muted);
+}
+
+.tq-crumb-sep {
+	color: var(--border-color);
+}
+
+.tq-status {
+	padding: 1px 7px;
+	border: 1px solid var(--border-color);
+	border-radius: 10px;
+	font-size: 0.6875rem;
+	color: var(--text-muted);
+}
+
+.tq-status.is-draft {
+	border-color: var(--yellow-500);
+	color: var(--yellow-500);
+}
+
+.tq-status.is-published {
+	border-color: var(--green-500);
+	color: var(--green-500);
+}
+
+.tq-lesson-title {
+	margin: 4px 0 0;
+	font-size: 1.25rem;
+	font-weight: 600;
+	line-height: 1.3;
+	color: var(--heading-color);
+}
+
+.tq-lesson-sub {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	margin-top: 4px;
+	font-size: 0.75rem;
+	color: var(--text-muted);
+}
+
+/* A readable measure. The lesson pane is as wide as the window allows, and prose set
+   the full width of a 1600px monitor is genuinely harder to read carefully — which is
+   the one thing a reviewer is here to do. */
+.tq-blocks {
+	max-width: 72ch;
+}
+
+.tq-block {
+	margin-bottom: 18px;
+}
+
+.tq-block-head {
+	margin: 0 0 6px;
+	font-size: 0.9375rem;
+	font-weight: 600;
+	color: var(--heading-color);
+}
+
+.tq-block-rule {
+	margin: 12px 0;
+}
+
+.tq-rule {
+	margin: 0;
+	border: none;
+	border-top: 1px solid var(--border-color);
+}
+
+/* The author's own HTML, sanitised server-side by `_blocks`. Only the tags a Text
+   Editor can produce need rules, and they only need to read like prose. */
+.tq-prose {
+	font-size: 0.875rem;
+	line-height: 1.6;
+	color: var(--text-color);
+	overflow-wrap: anywhere;
+}
+
+.tq-prose p {
+	margin: 0 0 8px;
+}
+
+.tq-prose p:last-child {
+	margin-bottom: 0;
+}
+
+.tq-prose ul,
+.tq-prose ol {
+	margin: 0 0 8px;
+	padding-left: 22px;
+}
+
+.tq-prose li {
+	margin-bottom: 3px;
+}
+
+.tq-prose a {
+	color: var(--primary);
+}
+
+.tq-prose code {
+	font-size: 0.8125rem;
+	padding: 1px 4px;
+	border-radius: 3px;
+	background: var(--bg-color);
+}
+
+.tq-prose img {
+	max-width: 100%;
+	height: auto;
+}
+
+/* A table inside a lesson scrolls in its own box rather than pushing the pane wide
+   enough to shove the questions off screen. */
+.tq-prose table {
+	display: block;
+	max-width: 100%;
+	overflow-x: auto;
+	border-collapse: collapse;
+}
+
+.tq-prose th,
+.tq-prose td {
+	padding: 4px 8px;
+	border: 1px solid var(--border-color);
+}
+
+.tq-items {
+	margin: 0;
+	padding-left: 22px;
+	font-size: 0.875rem;
+	line-height: 1.6;
+	color: var(--text-color);
+}
+
+.tq-items li {
+	margin-bottom: 3px;
+}
+
+.tq-callout {
+	padding: 10px 14px;
+	border: 1px solid var(--border-color);
+	border-left: 3px solid var(--text-muted);
+	border-radius: var(--border-radius-md, 8px);
+	background: var(--bg-color);
+}
+
+.tq-callout .tq-block-head {
+	font-size: 0.8125rem;
+}
+
+.tq-tone-info {
+	border-left-color: var(--primary);
+}
+
+.tq-tone-tip {
+	border-left-color: var(--green-500);
+}
+
+.tq-tone-warning {
+	border-left-color: var(--yellow-500);
+}
+
+.tq-tone-danger {
+	border-left-color: var(--red-500);
+}
+
+/* Media the server deliberately does not fetch. Dashed, so it reads as "there is
+   something here you are not being shown" rather than as a broken block. */
+.tq-media {
+	padding: 10px 14px;
+	border: 1px dashed var(--border-color);
+	border-radius: var(--border-radius-md, 8px);
+	font-size: 0.75rem;
+	color: var(--text-muted);
+}
+
+.tq-caption {
+	margin-top: 4px;
+	font-size: 0.75rem;
+	color: var(--text-muted);
+}
+
+.tq-medianote {
+	margin-top: 18px;
+	padding-top: 10px;
+	border-top: 1px solid var(--border-color);
+	font-size: 0.75rem;
+	color: var(--text-muted);
+}
+
+/* A lesson with no content at all is the loudest thing this pane can say: no question
+   drawn from it is answerable. It is not a muted note. */
+.tq-nocontent {
+	padding: 14px 16px;
+	border: 1px solid #e03636;
+	border-radius: var(--border-radius-md, 8px);
+	font-size: 0.875rem;
+	color: #e03636;
+}
+
+/* ----------------------------------------------------------- the question pane */
+
+/* Sticky, because the count and the keys are the two things a reviewer looks back at
+   while working down a list longer than the pane. */
+.tq-panehead {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 10px 16px;
+	border-bottom: 1px solid var(--border-color);
+	background: var(--card-bg);
+}
+
+.tq-panehead-count {
+	font-size: 0.8125rem;
+	font-weight: 600;
+	color: var(--heading-color);
+}
+
+.tq-keys {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	font-size: 0.6875rem;
+	color: var(--text-muted);
+}
+
+.tq-keys-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+}
+
+.tq-kbd {
+	display: inline-block;
+	min-width: 17px;
+	padding: 1px 4px;
+	border: 1px solid var(--border-color);
+	border-bottom-width: 2px;
+	border-radius: 4px;
+	background: var(--bg-color);
+	font-family: inherit;
+	font-size: 0.625rem;
+	font-weight: 600;
+	line-height: 1.4;
+	text-align: center;
+	color: var(--text-muted);
+}
+
+.tq-cards {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 12px 16px 0;
+}
+
+/* A named lesson that turned out to have nothing pending — reachable only from
+   "Open a specific lesson", and a dead end without the way back it carries. */
+.tq-lesson-clear {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 18px;
+	border: 1px dashed var(--border-color);
+	border-radius: var(--border-radius-md, 8px);
+	font-size: 0.875rem;
+	color: var(--text-muted);
+}
+
+.tq-card {
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 8px);
+	background: var(--card-bg);
+	padding: 12px 14px 10px;
+	/* scrollIntoView({block:"nearest"}) stops exactly at the edge; this keeps the card
+	   clear of the sticky header above it. */
+	scroll-margin: 56px 0 12px;
+}
+
+.tq-card:focus {
+	outline: none;
+}
+
+/* j and k move this, and it is the only thing that says which question a keystroke is
+   about. It has to be unmissable at a glance and from the corner of an eye. */
+.tq-card.is-focused {
+	border-color: var(--primary);
+	box-shadow: inset 3px 0 0 0 var(--primary);
+}
+
+.tq-card-top {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.tq-card-n {
+	min-width: 20px;
+	height: 20px;
+	border-radius: 10px;
+	background: var(--bg-color);
+	font-size: 0.6875rem;
+	font-weight: 700;
+	line-height: 20px;
+	text-align: center;
+	color: var(--text-muted);
+}
+
+.tq-card.is-focused .tq-card-n {
+	background: var(--primary);
+	color: var(--card-bg);
+}
+
+.tq-tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 5px;
+}
+
+.tq-tag {
+	padding: 1px 7px;
+	border: 1px solid var(--border-color);
+	border-radius: 10px;
+	font-size: 0.625rem;
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+/* Shown only when a verdict came back refused and the card was put back. */
+.tq-card-error {
+	display: none;
+	margin-bottom: 8px;
+	padding: 7px 10px;
+	border-left: 3px solid #e03636;
+	border-radius: 3px;
+	background: var(--bg-color);
+	font-size: 0.75rem;
+	color: #e03636;
+}
+
+.tq-card-error.is-on {
+	display: block;
+}
+
+/* Swaps between the read view and the editor. A drafted stem can carry a part number
+   or a URL with no break in it, and one of those must not widen the card past the
+   pane it lives in. */
+.tq-card-body {
+	overflow-wrap: anywhere;
+}
+
+.tq-stem {
+	font-size: 0.9375rem;
+	line-height: 1.45;
+	font-weight: 600;
+	color: var(--heading-color);
+	overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------- the answer key */
+
+.tq-key {
+	margin-top: 10px;
+}
+
+.tq-key-head {
+	margin-bottom: 5px;
+	font-size: 0.625rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--text-muted);
+}
+
+.tq-opts,
+.tq-answers {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.tq-opt {
+	display: flex;
+	gap: 8px;
+	padding: 5px 8px 5px 6px;
+	border-left: 3px solid var(--border-color);
+	border-radius: 0 3px 3px 0;
+}
+
+.tq-opt + .tq-opt {
+	margin-top: 3px;
+}
+
+/* THE thing being reviewed. `_questions` sends is_correct on purpose, and a reviewer
+   has to be able to see which option the machine chose without reading for it. Green
+   is literal here for the same reason the learner surface keeps its answer colours
+   literal: this must not turn into a different idea when a palette is edited. */
+.tq-opt.is-correct {
+	border-left-color: #22a06b;
+	background: var(--bg-color);
+}
+
+.tq-opt-mark {
+	flex: 0 0 auto;
+	width: 13px;
+	font-size: 0.8125rem;
+	font-weight: 700;
+	line-height: 1.5;
+	color: #22a06b;
+}
+
+.tq-opt-main {
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+.tq-opt-text {
+	font-size: 0.8125rem;
+	line-height: 1.5;
+	color: var(--text-color);
+	overflow-wrap: anywhere;
+}
+
+.tq-opt.is-correct .tq-opt-text {
+	font-weight: 600;
+}
+
+.tq-opt-why {
+	margin-top: 2px;
+	font-size: 0.6875rem;
+	line-height: 1.45;
+	color: var(--text-muted);
+}
+
+.tq-answers li {
+	padding: 4px 8px 4px 6px;
+	border-left: 3px solid #22a06b;
+	font-size: 0.8125rem;
+	color: var(--text-color);
+}
+
+.tq-answers li + li {
+	margin-top: 3px;
+}
+
+.tq-why {
+	margin-top: 10px;
+	font-size: 0.8125rem;
+	line-height: 1.5;
+	color: var(--text-color);
+}
+
+.tq-why-head {
+	margin-bottom: 2px;
+	font-size: 0.625rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--text-muted);
+}
+
+/* A missing explanation is not an error, but it is a thing worth noticing on a screen
+   whose job is to ask whether a learner is being treated fairly. */
+.tq-why-missing {
+	font-style: italic;
+	color: var(--text-muted);
+}
+
+/* Restatements of what `TrainingQuestion.validate` would say. The blocking ones are
+   red because Accept is disabled beside them. */
+.tq-flags {
+	margin-top: 10px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.tq-flag {
+	padding: 5px 9px;
+	border-left: 3px solid var(--yellow-500);
+	border-radius: 0 3px 3px 0;
+	background: var(--bg-color);
+	font-size: 0.75rem;
+	line-height: 1.45;
+	color: var(--text-color);
+}
+
+.tq-flag.is-blocking {
+	border-left-color: #e03636;
+	color: #e03636;
+}
+
+.tq-prov {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 10px;
+	margin-top: 10px;
+	padding-top: 8px;
+	border-top: 1px solid var(--border-color);
+	font-size: 0.6875rem;
+	color: var(--text-muted);
+}
+
+.tq-source {
+	font-size: 0.6875rem;
+}
+
+.tq-source summary {
+	cursor: pointer;
+	color: var(--primary);
+}
+
+.tq-source div {
+	margin-top: 4px;
+	color: var(--text-muted);
+}
+
+/* ------------------------------------------------------------------- the verdicts */
+
+.tq-acts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 10px;
+}
+
+.tq-act {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+/* The keystroke lives on the button, so the shortcut is learned from the thing it
+   does rather than from a legend somebody has to go and find. */
+.tq-act .tq-kbd {
+	background: transparent;
+	border-color: currentColor;
+	color: inherit;
+	opacity: 0.65;
+}
+
+.tq-act:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+.tq-act-reject:hover:not(:disabled),
+.tq-act-reject:focus-visible {
+	border-color: #e03636;
+	color: #e03636;
+}
+
+/* ----------------------------------------------------------------- the editor */
+
+.tq-card.is-editing {
+	border-color: var(--primary);
+}
+
+.tq-editor {
+	margin-top: 4px;
+}
+
+.tq-field {
+	margin-bottom: 10px;
+}
+
+.tq-label {
+	margin-bottom: 3px;
+	font-size: 0.625rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--text-muted);
+}
+
+.tq-etext {
+	font-size: 0.8125rem;
+	line-height: 1.45;
+}
+
+.tq-eopts {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.tq-erow {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+
+/* A wide hit target for the one control that decides the answer key, and centred on
+   the option text rather than floating above it. */
+.tq-ecorrect {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+	width: 26px;
+	height: 30px;
+	margin: 0;
+	cursor: pointer;
+}
+
+.tq-efields {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.tq-eopt {
+	font-size: 0.8125rem;
+}
+
+.tq-ewhy {
+	font-size: 0.6875rem;
+	height: 26px;
+	padding-top: 2px;
+	padding-bottom: 2px;
+}
+
+.tq-erm {
+	flex: 0 0 auto;
+	width: 26px;
+	height: 30px;
+	border: 1px solid transparent;
+	border-radius: var(--border-radius-md, 8px);
+	background: none;
+	font-size: 1rem;
+	line-height: 1;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.tq-erm:hover:not(:disabled) {
+	border-color: var(--border-color);
+	color: #e03636;
+}
+
+.tq-erm:disabled {
+	opacity: 0.3;
+	cursor: not-allowed;
+}
+
+.tq-eadd {
+	align-self: flex-start;
+}
+
+.tq-eacts {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.tq-ehint {
+	font-size: 0.625rem;
+	color: var(--text-muted);
+}
+
+/* Why Save is disabled, said in words rather than left as a dead button. */
+.tq-problem {
+	display: none;
+	padding: 5px 9px;
+	border-left: 3px solid #e03636;
+	border-radius: 0 3px 3px 0;
+	background: var(--bg-color);
+	font-size: 0.75rem;
+	color: #e03636;
+}
+
+.tq-problem.is-on {
+	display: block;
+}
+
+.tq-readonly {
+	padding: 8px 10px;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 8px);
+	background: var(--bg-color);
+}
+
+.tq-readonly .tq-linkish {
+	margin-top: 6px;
+	font-size: 0.75rem;
+}
+
+/* ------------------------------------------------------------- nothing left to do */
+
+.tq-done-head {
+	margin: 0 0 10px;
+	font-size: 1.25rem;
+	font-weight: 600;
+	color: var(--heading-color);
+}
+
+.tq-done-body {
+	max-width: 62ch;
+	margin: 0 0 10px;
+	font-size: 0.875rem;
+	line-height: 1.6;
+	color: var(--text-color);
+}
+
+.tq-done-label {
+	margin-top: 18px;
+	font-size: 0.625rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--text-muted);
+}
+
+.tq-done-list {
+	list-style: none;
+	margin: 6px 0 0;
+	padding: 0;
+	font-size: 0.875rem;
+}
+
+.tq-done-list li {
+	padding: 3px 0;
+}
+
+.tq-done-acts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 20px;
+}
+
+/* -------------------------------------------------- the reject dialog's preamble */
+
+/* Outside .tq-page: frappe modals are appended to the body. What is being destroyed
+   is shown above the box the reason goes in, because "say why" is a hard question to
+   answer about a question you can no longer see. */
+.tq-dialog-stem {
+	margin-bottom: 10px;
+	padding: 9px 12px;
+	border-left: 3px solid var(--border-color);
+	background: var(--bg-color);
+	font-size: 0.875rem;
+	line-height: 1.45;
+	color: var(--text-color);
+	overflow-wrap: anywhere;
+}
+
+.tq-dialog-warn {
+	margin-bottom: 8px;
+	padding: 8px 12px;
+	border-left: 3px solid var(--yellow-500);
+	font-size: 0.8125rem;
+	line-height: 1.45;
+	color: var(--text-color);
+}
+
+.tq-dialog-note {
+	margin-bottom: 14px;
+	font-size: 0.75rem;
+	line-height: 1.45;
+	color: var(--text-muted);
+}
+
+/* --------------------------------------------------------------------- narrow */
+
+/* frappe's own breakpoint, written with the .98 it uses. At 991 a window sitting at a
+   fractional width — which browser zoom produces constantly — matches neither rule. */
+@media (max-width: 991.98px) {
+	/* The two panes stop being panes: there is no width to put them side by side, and a
+	   pair of short independently scrolling boxes on a phone is worse than one page
+	   that scrolls. */
+	.tq-page {
+		height: auto;
+		min-height: 0;
+	}
+
+	.tq-split {
+		grid-template-columns: minmax(0, 1fr);
+		height: auto;
+	}
+
+	.tq-pane {
+		overflow-y: visible;
+		max-height: none;
+	}
+
+	.tq-panehead {
+		position: static;
+	}
+
+	.tq-card {
+		scroll-margin: 12px;
+	}
+
+	.tq-done {
+		overflow-y: visible;
+		padding: 24px 18px;
+	}
+
+	.tq-controls,
+	.tq-filter-wrap {
+		width: 100%;
+	}
+
+	.tq-filter {
+		max-width: none;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tq-progress-fill {
+		transition: none;
+	}
+}
