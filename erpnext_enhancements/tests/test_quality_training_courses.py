@@ -42,6 +42,7 @@ course_spec = None
 specs = None
 
 PATCH = APP_ROOT / "patches" / "seed_quality_training_courses.py"
+REQ_PATCH = APP_ROOT / "patches" / "seed_quality_position_requirements.py"
 SPECS = APP_ROOT / "training" / "quality_course_specs.py"
 
 #: Positions and Roles verified present on production 2026-09-14. `Technician` is the job-family
@@ -379,6 +380,124 @@ class TestPatchCannotAbortAMigrate(unittest.TestCase):
         raised, logged = self._run_execute_with(settings_raises=False)
         self.assertIsNone(raised)
         self.assertEqual(logged, 0)
+
+
+class TestPositionRequirements(unittest.TestCase):
+    """Making the four courses job requirements, without marking anybody short for a Draft.
+
+    `progression._course_line` looks only for a submitted Training Completion — it does **not**
+    check that the course is publishable. So a mandatory requirement against a Draft course reports
+    every holder of that position as Missing, permanently, for something they cannot take.
+    `progression` counts only *mandatory* missing rows toward readiness, which is the lever these
+    rows use.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib
+
+        cls.mod = importlib.import_module(
+            "erpnext_enhancements.patches.seed_quality_position_requirements"
+        )
+        cls.source = _code_only(REQ_PATCH)
+
+    def test_every_requirement_ships_not_mandatory(self):
+        """The whole point. Mandatory would mark real people short for a Draft course."""
+        self.assertIn('"is_mandatory": 0', self.source)
+        self.assertNotIn('"is_mandatory": 1', self.source)
+
+    def test_every_course_named_actually_exists_in_the_specs(self):
+        """A title typo would silently produce no requirement at all."""
+        known = set(specs.course_titles())
+        for position, titles in self.mod.BY_POSITION.items():
+            for title in titles:
+                with self.subTest(f"{position}: {title}"):
+                    self.assertIn(title, known)
+
+    def test_every_position_is_one_that_exists(self):
+        for position in self.mod.BY_POSITION:
+            with self.subTest(position):
+                self.assertIn(position, LIVE_POSITIONS)
+
+    def test_the_position_mapping_matches_the_assignment_rules(self):
+        """Assignment and job-requirement are different records, but they must not disagree about
+        who needs which course. Role-targeted rules have no Position counterpart and are excluded
+        deliberately — a requirement hangs off a Position and a Role is not one."""
+        from_rules = {}
+        for title, rules in specs.ASSIGNMENT_RULES.items():
+            for applies_to, value, _due in rules:
+                if applies_to != "Position":
+                    continue
+                from_rules.setdefault(value, set()).add(title)
+
+        from_patch = {pos: set(titles) for pos, titles in self.mod.BY_POSITION.items()}
+        self.assertEqual(from_patch, from_rules)
+
+    def test_the_note_tells_somebody_what_to_do_at_adoption(self):
+        self.assertIn("published", self.mod.NOTE)
+        self.assertIn("Mandatory", self.mod.NOTE)
+
+    def test_it_runs_after_the_course_seed(self):
+        """It resolves courses by title, so the courses must exist first."""
+        registered = _raw(APP_ROOT / "patches.txt")
+        course_at = registered.index("patches.seed_quality_training_courses")
+        req_at = registered.index("patches.seed_quality_position_requirements")
+        self.assertLess(course_at, req_at)
+
+    def test_it_cannot_abort_a_migrate(self):
+        """Same guard as its sibling, and behavioural rather than a source grep — the grep is what
+        failed to catch v1.464.0."""
+        import importlib
+        import types
+
+        logged = []
+
+        class _FakeDB:
+            def exists(self, doctype, *a, **k):
+                return doctype == "DocType"
+
+            def get_value(self, *a, **k):
+                return None
+
+            def commit(self):
+                pass
+
+        fake = types.ModuleType("frappe")
+        fake.db = _FakeDB()
+        fake.log_error = lambda **kw: logged.append(kw)
+        fake.get_traceback = lambda: "traceback"
+
+        def _boom(*a, **k):
+            raise RuntimeError("position blew up")
+
+        fake.get_doc = _boom
+
+        saved = sys.modules.get("frappe")
+        sys.modules["frappe"] = fake
+        try:
+            mod = importlib.reload(
+                importlib.import_module(
+                    "erpnext_enhancements.patches.seed_quality_position_requirements"
+                )
+            )
+            raised = None
+            try:
+                mod.execute()
+            except Exception as exc:
+                raised = exc
+        finally:
+            if saved is None:
+                sys.modules.pop("frappe", None)
+            else:
+                sys.modules["frappe"] = saved
+            importlib.reload(
+                importlib.import_module(
+                    "erpnext_enhancements.patches.seed_quality_position_requirements"
+                )
+            )
+
+        self.assertIsNone(raised, f"execute() propagated {raised!r} and would abort the migrate")
+        self.assertEqual(len(logged), len(self.mod.BY_POSITION))
 
 
 class TestContentSafety(unittest.TestCase):
