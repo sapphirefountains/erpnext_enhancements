@@ -1,5 +1,3 @@
-/* global frappe, __, format_currency */
-
 /**
  * Project Brief
  * -------------

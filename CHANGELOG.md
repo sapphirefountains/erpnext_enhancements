@@ -39,6 +39,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Nothing was linting the JavaScript, and nothing ever had.** `package.json` has carried a
+  `"lint": "eslint ."` script and an `.eslintrc` for the life of the repo, and no workflow ever ran
+  either — so roughly 30k lines of front end (every desk page, the learner runtime, the Triton
+  widget) shipped unchecked. There is now an `eslint` job, and it is a **hard gate on errors**.
+- The first run found 42 errors, and the split is why this was worth a job rather than a cleanup:
+  - **28 were the linter not knowing this app's own globals.** `TR` — the namespace every training
+    desk surface shares, defined in `public/js/training/desk_assets.js` — was absent from
+    `.eslintrc` while `erpnext_enhancements` was present, so `learn.js`, `training_canvas.js`,
+    `training_insights.js`, `employee_training.js` and the new review page all failed on a config
+    gap rather than a bug. `google` and `Twilio` were missing the same way, and the vendored
+    `frappe-gantt` UMD build was being linted at all when its sibling vendored libraries are
+    already excluded. **A linter that is wrong about your own code is one people learn to ignore.**
+  - **14 were real**: four empty `catch (e) {}` blocks in `triton_widget.js`, which now carry the
+    reason they swallow (each probes an optional desk global — `cur_frm` mid-teardown, a
+    `query_report` not yet loaded — where the field should simply stay unset); a `hasOwnProperty`
+    read straight off an instance rather than through `Object.prototype`; a **zero-width space
+    sitting inside a comment** in the learner runtime; and five redundant `/* global */` directives
+    re-declaring names the shared config already provides.
+- `--quiet` so errors fail and warnings do not, deliberately: the 175 remaining warnings are all
+  `no-console` in `scripts/*.js`, which are node CLI tools where console *is* the output. Gating on
+  those would force a pointless suppression sweep or a permanently red job, and a permanently red
+  job gates nothing. Errors are at zero, so any error is a new one. The gate was negative-tested by
+  planting an undefined global and confirming a non-zero exit.
+- The job uses `npm ci` rather than `npm install` for a reason worth writing down: the lockfile pins
+  eslint **8.57.1**, and `.eslintrc` is the pre-flat-config format only v8 reads. An unpinned
+  install pulls v9+, which refuses `.eslintrc` outright and fails with a migration notice that looks
+  nothing like a lint failure — which is exactly how this was first misdiagnosed as a repo problem
+  when it was a local `npx` resolving a global v10.
 - **`ai_reviewed_by` was caller-supplied.** The only thing that ever flipped it on an
   already-persisted question was the browser — the authoring canvas calls core
   `frappe.client.save` with `body.ai_reviewed_by = frappe.session.user`. That works, and it means

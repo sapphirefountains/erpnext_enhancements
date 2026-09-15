@@ -14,10 +14,14 @@
  * exactly this bargain. This page also does NOT pull the learner stylesheet — 127KB
  * and a whole second palette, to render a reviewer's console.
  *
- * The two literal colours below are the semantic ones, and they are literal for the
- * same reason the learner stylesheet keeps its answer colours literal: "this option is
- * the correct one" and "this key would be refused" must not change meaning because
- * somebody edited a palette. Everything else is a var().
+ * That includes the two semantic ones. "This option is the correct one" and "this key
+ * would be refused" are the only ideas in here that are carried by colour at all, and
+ * both take var(--green-500) and var(--red-500) rather than a literal: a hard-coded
+ * green that reads on a white desk is the green that disappears on a near-black one,
+ * and the answer key is the one thing on this page that must be legible in both. So
+ * neither idea is left to the colour anyway -- a correct option carries a tick, a
+ * heavier weight, a tint and the word `correct`, and a blocking flag says in words what
+ * the server would refuse.
  *
  * THE LAYOUT IS THE PRODUCT. Two panes, the lesson beside its questions, each
  * scrolling on its own so a reviewer can hold their place in a long lesson while
@@ -38,6 +42,16 @@
 	height: calc(100vh - 150px);
 	min-height: 420px;
 	padding: 8px 0 8px;
+}
+
+/* The one sentence saying what the reviewer is being asked to do. Quiet, because it is
+   read once and then lived with, and permanent, because the menu item that says it at
+   length is one nobody opens twice. */
+.tq-stance {
+	flex: 0 0 auto;
+	font-size: 0.8125rem;
+	line-height: 1.45;
+	color: var(--text-muted);
 }
 
 .tq-split {
@@ -188,7 +202,7 @@
 	gap: 10px;
 	padding: 10px 14px;
 	border: 1px solid var(--border-color);
-	border-left: 3px solid #e03636;
+	border-left: 3px solid var(--red-500);
 	border-radius: var(--border-radius-md, 8px);
 	background: var(--card-bg);
 	font-size: 0.8125rem;
@@ -445,10 +459,10 @@
    drawn from it is answerable. It is not a muted note. */
 .tq-nocontent {
 	padding: 14px 16px;
-	border: 1px solid #e03636;
+	border: 1px solid var(--red-500);
 	border-radius: var(--border-radius-md, 8px);
 	font-size: 0.875rem;
-	color: #e03636;
+	color: var(--red-500);
 }
 
 /* ----------------------------------------------------------- the question pane */
@@ -526,6 +540,15 @@
 	color: var(--text-muted);
 }
 
+/* The round trip between the last verdict in a lesson and the next lesson arriving.
+   Centred and quiet: it is a state that lasts about as long as it takes to read. */
+.tq-interstitial {
+	padding: 22px 8px;
+	text-align: center;
+	font-size: 0.875rem;
+	color: var(--text-muted);
+}
+
 .tq-card {
 	border: 1px solid var(--border-color);
 	border-radius: var(--border-radius-md, 8px);
@@ -591,11 +614,11 @@
 	display: none;
 	margin-bottom: 8px;
 	padding: 7px 10px;
-	border-left: 3px solid #e03636;
+	border-left: 3px solid var(--red-500);
 	border-radius: 3px;
 	background: var(--bg-color);
 	font-size: 0.75rem;
-	color: #e03636;
+	color: var(--red-500);
 }
 
 .tq-card-error.is-on {
@@ -652,11 +675,11 @@
 }
 
 /* THE thing being reviewed. `_questions` sends is_correct on purpose, and a reviewer
-   has to be able to see which option the machine chose without reading for it. Green
-   is literal here for the same reason the learner surface keeps its answer colours
-   literal: this must not turn into a different idea when a palette is edited. */
+   has to be able to see which option the machine chose without reading for it -- so it
+   is marked four ways over, and the word beside it is the one that carries the meaning
+   if the colour does not. */
 .tq-opt.is-correct {
-	border-left-color: #22a06b;
+	border-left-color: var(--green-500);
 	background: var(--bg-color);
 }
 
@@ -666,7 +689,7 @@
 	font-size: 0.8125rem;
 	font-weight: 700;
 	line-height: 1.5;
-	color: #22a06b;
+	color: var(--green-500);
 }
 
 .tq-opt-main {
@@ -685,6 +708,20 @@
 	font-weight: 600;
 }
 
+/* The word, and it takes a muted token rather than the green beside it on purpose:
+   there is no single green that clears 4.5:1 against both a white desk and a near-black
+   one, and this is the part that has to be READ. The green is the tick and the rule --
+   decoration over a fact that is already written out. */
+.tq-opt-flag {
+	margin-left: 6px;
+	font-size: 0.625rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
 .tq-opt-why {
 	margin-top: 2px;
 	font-size: 0.6875rem;
@@ -694,7 +731,7 @@
 
 .tq-answers li {
 	padding: 4px 8px 4px 6px;
-	border-left: 3px solid #22a06b;
+	border-left: 3px solid var(--green-500);
 	font-size: 0.8125rem;
 	color: var(--text-color);
 }
@@ -746,8 +783,8 @@
 }
 
 .tq-flag.is-blocking {
-	border-left-color: #e03636;
-	color: #e03636;
+	border-left-color: var(--red-500);
+	color: var(--red-500);
 }
 
 .tq-prov {
@@ -807,8 +844,8 @@
 
 .tq-act-reject:hover:not(:disabled),
 .tq-act-reject:focus-visible {
-	border-color: #e03636;
-	color: #e03636;
+	border-color: var(--red-500);
+	color: var(--red-500);
 }
 
 /* ----------------------------------------------------------------- the editor */
@@ -898,7 +935,7 @@
 
 .tq-erm:hover:not(:disabled) {
 	border-color: var(--border-color);
-	color: #e03636;
+	color: var(--red-500);
 }
 
 .tq-erm:disabled {
@@ -927,11 +964,11 @@
 .tq-problem {
 	display: none;
 	padding: 5px 9px;
-	border-left: 3px solid #e03636;
+	border-left: 3px solid var(--red-500);
 	border-radius: 0 3px 3px 0;
 	background: var(--bg-color);
 	font-size: 0.75rem;
-	color: #e03636;
+	color: var(--red-500);
 }
 
 .tq-problem.is-on {
@@ -985,6 +1022,40 @@
 
 .tq-done-list li {
 	padding: 3px 0;
+}
+
+/* Where the work that is left actually is. Its own scroller, because a course title
+   plus four columns is wider than this panel on a laptop and a table is the one thing
+   allowed to overflow sideways. */
+.tq-table-wrap {
+	margin-top: 8px;
+	overflow-x: auto;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 8px);
+}
+
+.tq-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.8125rem;
+	text-align: left;
+}
+
+.tq-table th,
+.tq-table td {
+	padding: 7px 12px;
+	border-bottom: 1px solid var(--border-color);
+	white-space: nowrap;
+}
+
+.tq-table th {
+	font-weight: 600;
+	background: var(--bg-color);
+	color: var(--text-muted);
+}
+
+.tq-table tbody tr:last-child td {
+	border-bottom: none;
 }
 
 .tq-done-acts {

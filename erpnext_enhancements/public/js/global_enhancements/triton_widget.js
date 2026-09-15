@@ -823,7 +823,9 @@ import { renderMarkdown } from "../triton/markdown.js";
 			if (s.created_at && frappe.datetime && frappe.datetime.comment_when) {
 				when = frappe.datetime.comment_when(s.created_at);
 			}
-		} catch (e) {}
+		} catch (e) {
+			// Decoration only: an unparseable timestamp leaves the label empty.
+		}
 		item.innerHTML =
 			`<span class="triton-history-title">${esc(title)}</span>` +
 			(when ? `<span class="triton-history-when">${esc(when)}</span>` : "");
@@ -966,7 +968,9 @@ import { renderMarkdown } from "../triton/markdown.js";
 				if (window.cur_frm && cur_frm.doc && cur_frm.docname === route[2] && cur_frm.is_dirty && cur_frm.is_dirty()) {
 					ref.unsaved = true;
 				}
-			} catch (e) {}
+			} catch (e) {
+				// cur_frm can be mid-teardown during a route change; unsaved stays false.
+			}
 			return ref;
 		}
 		if (r0 === "List" || r0 === "list") {
@@ -975,7 +979,9 @@ import { renderMarkdown } from "../triton/markdown.js";
 			let filters = null;
 			try {
 				if (window.cur_list && cur_list.get_filters_for_args) filters = cur_list.get_filters_for_args();
-			} catch (e) {}
+			} catch (e) {
+				// cur_list may not expose filters yet; they stay null.
+			}
 			if (view === "Report") {
 				return { type: "report", report_name: doctype, name: doctype, filters, title: `${doctype} (Report)`, route: hash };
 			}
@@ -985,7 +991,9 @@ import { renderMarkdown } from "../triton/markdown.js";
 			let filters = null;
 			try {
 				if (frappe.query_report && frappe.query_report.get_filter_values) filters = frappe.query_report.get_filter_values();
-			} catch (e) {}
+			} catch (e) {
+				// query_report may not be loaded; filters stay null.
+			}
 			return { type: "report", report_name: route[1], name: route[1], filters, title: `Report: ${route[1]}`, route: hash };
 		}
 		return { type: "page", title: document.title.replace(/\s*\|.*/, "").trim() || r0, route: hash };

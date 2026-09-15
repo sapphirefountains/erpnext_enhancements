@@ -118,10 +118,11 @@ function tq_explain() {
 // Every `get_review_lesson` reply already carries the queue under `queue`, so the
 // working loop never asks for it separately — two slightly different answers to "how
 // many are left" on one screen is how a reviewer stops believing either of them.
-// `get_review_queue` is called in exactly one place, sync_queue, and it is the reason
-// that endpoint is worth having on its own: coming back to the page after an hour
-// elsewhere should make the counters true again WITHOUT refetching the lesson, which
-// would throw away a half-finished edit.
+// `get_review_queue` is only ever asked on its own for the two questions the lesson
+// reply cannot answer: coming back to the page after an hour elsewhere (sync_queue —
+// the counters go true again WITHOUT refetching the lesson, which would throw away a
+// half-finished edit), and confirming that a course really has emptied before telling
+// somebody it can be published (check_course_cleared).
 
 // Mirrors MAX_REASON in review.py. Checked here as well so an over-long reason is
 // caught with the words still in the box, rather than thrown away by a round trip.
@@ -1024,8 +1025,11 @@ class TrainingReview {
 			const $main = $('<div class="tq-opt-main"></div>').appendTo($item);
 			const $text = $('<div class="tq-opt-text"></div>').text(tq_plain(option.option_text));
 			if (right) {
-				// The glyph is decorative; this is what a screen reader hears.
-				$text.append($('<span class="tq-sr"></span>').text(" " + __("correct")));
+				// Four signals for one fact and none of them colour alone: the tick, the
+				// weight, the tint and this word. It is the line the whole screen exists to
+				// put in front of somebody, so it is written out rather than left to a green
+				// border that a reviewer has to know the meaning of.
+				$text.append($('<span class="tq-opt-flag"></span>').text(__("correct")));
 			}
 			$main.append($text);
 			const why = tq_plain(option.explanation);
@@ -1529,7 +1533,14 @@ class TrainingReview {
 			.catch((err) => {
 				rec.busy = false;
 				const messages = (err && err.messages) || [];
-				const refused = !drop_quiz && (tq_empty_quiz_refusal(messages) || this.would_empty_a_quiz());
+				// The words first, and the structural prediction only when there were no
+				// words to read. `reject_question` throws ValidationError for all six of its
+				// refusals, and offering to untick a quiz in answer to "that question has
+				// already been accepted by somebody" would be this page inventing a decision
+				// nobody was asked for.
+				const refused =
+					!drop_quiz &&
+					(tq_empty_quiz_refusal(messages) || (!messages.length && this.would_empty_a_quiz()));
 				this.restore(rec, index, tq_first(err) || __("That question could not be rejected."));
 				if (refused) this.confirm_drop_quiz(name, reason, messages);
 			})

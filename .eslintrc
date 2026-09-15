@@ -22,6 +22,7 @@
 		"no-console": ["warn"],
 		"no-extra-boolean-cast": ["off"],
 		"no-control-regex": ["off"],
+		"no-constant-condition": ["error", { "checkLoops": false }],
 	},
 	"root": true,
 	"globals": {
@@ -121,6 +122,9 @@
 		"localforage": true,
 		"extend_cscript": true,
 		"erpnext_enhancements": true,
+		"TR": true,
+		"google": true,
+		"Twilio": true,
 		"root_element": true
 	}
 }
