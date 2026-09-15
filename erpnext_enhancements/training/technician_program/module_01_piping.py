@@ -40,15 +40,9 @@ COURSE = {
 		"weight": "Required",
 		"audience": "Internal Staff",
 	},
-	"chapters": [
-		{"title": "Making a joint that holds", "description": "Cutting, chamfering and solvent welding."},
-		{"title": "Putting pipe in the ground", "description": "Bedding, backfill and pitch."},
-		{"title": "Proving it and sealing it", "description": "Hydrostatic testing and penetrations."},
-	],
 	"lessons": [
 		{
 			"lesson_title": "PVC cutting, chamfering and solvent welding",
-			"chapter": 0,
 			"estimated_minutes": 18,
 			"summary": "Sapphire's solvent-weld procedure, step by step, and the preparation people skip.",
 			"blocks": [
@@ -326,7 +320,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Underground piping and bedding procedures",
-			"chapter": 1,
 			"estimated_minutes": 16,
 			"summary": "What actually holds buried pipe up, the bedding and shading figures, the two things you cannot backfill over, and the over-under coil.",
 			"blocks": [
@@ -618,7 +611,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Precision pitch and laser level operation",
-			"chapter": 1,
 			"estimated_minutes": 15,
 			"summary": "Sapphire's minimum slopes, the drop arithmetic, and the mistake that puts a laser's error into the pipe.",
 			"blocks": [
@@ -835,7 +827,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Hydrostatic pressure testing",
-			"chapter": 2,
 			"estimated_minutes": 18,
 			"summary": "Water never air, Sapphire's 50 PSI two-hour test with a needle that does not move, and the shockwave the system sees afterwards.",
 			"blocks": [
@@ -1137,7 +1128,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Pipe penetration sealing (Link-Seals)",
-			"chapter": 2,
 			"estimated_minutes": 13,
 			"summary": "How a modular mechanical seal works, why the annular space is a measurement, and why an impact gun ruins one.",
 			"blocks": [

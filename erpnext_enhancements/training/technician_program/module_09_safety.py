@@ -36,24 +36,9 @@ COURSE = {
 		"weight": "Required",
 		"audience": "Internal Staff",
 	},
-	"chapters": [
-		{
-			"title": "The truck, the site and the tools",
-			"description": "What you bring, how you lay it out, and how you hand it on.",
-		},
-		{
-			"title": "The hazards that do not give second chances",
-			"description": "Confined space, stored energy, electricity, and the codes behind all three.",
-		},
-		{
-			"title": "Looking after the person",
-			"description": "First aid, protective equipment, and the body doing the work.",
-		},
-	],
 	"lessons": [
 		{
 			"lesson_title": "Loading vehicles",
-			"chapter": 0,
 			"estimated_minutes": 12,
 			"summary": "What a truck is rated to carry, where the weight has to sit, and why a load that shifts is a crash.",
 			"blocks": [
@@ -235,7 +220,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Jobsite hose and cord management",
-			"chapter": 0,
 			"estimated_minutes": 10,
 			"summary": "The most common way somebody gets hurt on our sites, and how temporary power is run near water.",
 			"blocks": [
@@ -423,7 +407,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Tool usage and storage best practices",
-			"chapter": 0,
 			"estimated_minutes": 11,
 			"summary": "Guards, sharpness, inspection, and putting a tool away in the state you would want to find it.",
 			"blocks": [
@@ -619,7 +602,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Confined space entry and lock-out/tag-out",
-			"chapter": 1,
 			"estimated_minutes": 20,
 			"summary": "Why Sapphire classes a below-ground vault as permit-required, the four readings taken before the hatch opens, why rescuers die, and the lock-out sequence that ends in proof.",
 			"blocks": [
@@ -1023,7 +1005,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Electrical safety",
-			"chapter": 1,
 			"estimated_minutes": 14,
 			"summary": "Why water changes the numbers, what 'qualified' actually means, and proving a conductor is dead yourself.",
 			"blocks": [
@@ -1223,7 +1204,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Basic OSHA and ISPSC safety codes",
-			"chapter": 1,
 			"estimated_minutes": 12,
 			"summary": "Which document governs which question, and why 'the code says' is only ever half a sentence.",
 			"blocks": [
@@ -1420,7 +1400,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Basic first aid",
-			"chapter": 2,
 			"estimated_minutes": 14,
 			"summary": "Recognise it, call early, control what you can safely control — and know what this trade actually produces.",
 			"blocks": [
@@ -1620,7 +1599,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Jobsite clothing and personal protective equipment (PPE)",
-			"chapter": 2,
 			"estimated_minutes": 12,
 			"summary": "Why PPE is last on the list, how each type is actually selected, and the two we skip on a fountain.",
 			"blocks": [
@@ -1806,7 +1784,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Physical fatigue and wellness",
-			"chapter": 2,
 			"estimated_minutes": 12,
 			"summary": "Heat, cold, lifting and tiredness as jobsite hazards — including the sign that turns heat illness into an emergency.",
 			"blocks": [

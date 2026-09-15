@@ -19,28 +19,9 @@ COURSE = {
 		"weight": "Required",
 		"audience": "Internal Staff",
 	},
-	"chapters": [
-		{
-			"title": "The system as a loop",
-			"description": "What the components are, what treats the water, and how flow is read and controlled.",
-		},
-		{
-			"title": "Documents, codes and the bonding grid",
-			"description": "Reading a drawing set, who regulates a water feature, and the lesson people get wrong.",
-		},
-		{
-			"title": "The engineering behind the details",
-			"description": "Pressure surge, water balance, and the threaded fastener nobody thinks about.",
-		},
-		{
-			"title": "Running the job and facing the client",
-			"description": "Milestones, dependencies, records, and being the company on somebody's site.",
-		},
-	],
 	"lessons": [
 		{
 			"lesson_title": "Fountain component basics",
-			"chapter": 0,
 			"estimated_minutes": 12,
 			"summary": "The parts of a fountain, what each one is for, and why they only make sense as a loop.",
 			"blocks": [
@@ -237,7 +218,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Water purification systems",
-			"chapter": 0,
 			"estimated_minutes": 13,
 			"summary": "Filtration, sanitation and oxidation are three different jobs, and UV and ozone only do one of them.",
 			"blocks": [
@@ -413,7 +393,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Aquatic system diagrams and basics",
-			"chapter": 0,
 			"estimated_minutes": 12,
 			"summary": "Reading a hydraulic schematic: following the loop, what the symbols mean, and what a schematic is not.",
 			"blocks": [
@@ -593,7 +572,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Flow control methods",
-			"chapter": 0,
 			"estimated_minutes": 14,
 			"summary": "Which valve is for which job, why throttling a gate valve ruins it, and why the far end of a manifold starves.",
 			"blocks": [
@@ -800,7 +778,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Architectural and engineering drawing mastery",
-			"chapter": 1,
 			"estimated_minutes": 14,
 			"summary": "Plans, sections, elevations and details; why you never scale a print; and which revision is in your hand.",
 			"blocks": [
@@ -978,7 +955,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Basic electrical and health department codes",
-			"chapter": 1,
 			"estimated_minutes": 13,
 			"summary": "Who regulates a water feature, why classification decides which rules bind, and why the AHJ has the last word.",
 			"blocks": [
@@ -1124,7 +1100,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Bonding grids versus grounding",
-			"chapter": 1,
 			"estimated_minutes": 15,
 			"summary": "The difference between grounding and bonding, precisely — and why a perfectly grounded fountain can still shock somebody.",
 			"blocks": [
@@ -1303,7 +1278,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Hydraulic shock (water hammer)",
-			"chapter": 2,
 			"estimated_minutes": 12,
 			"summary": "Where the bang comes from, why the damage arrives disguised as age, and what actually reduces it.",
 			"blocks": [
@@ -1469,7 +1443,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Langelier Saturation Index (LSI) engineering",
-			"chapter": 2,
 			"estimated_minutes": 14,
 			"summary": "What the index is made of, what aggressive and scaling water actually do, and why one body of water can be both at once.",
 			"blocks": [
@@ -1624,7 +1597,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Fasteners, taps and dies",
-			"chapter": 2,
 			"estimated_minutes": 13,
 			"summary": "Threads, grades and clamp load: why torque is really a measure of stretch, and how to cut or rescue a thread.",
 			"blocks": [
@@ -1826,7 +1798,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Tasks, milestones and deadlines",
-			"chapter": 3,
 			"estimated_minutes": 11,
 			"summary": "What a milestone is, why dependencies make your day somebody else's problem, and what a record is for.",
 			"blocks": [
@@ -1989,7 +1960,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Customer interactions",
-			"chapter": 3,
 			"estimated_minutes": 11,
 			"summary": "Being the company on somebody's site: what you may say, what you may not commit to, and what goes up the line.",
 			"blocks": [

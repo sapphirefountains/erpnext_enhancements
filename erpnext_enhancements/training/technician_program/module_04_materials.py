@@ -27,24 +27,9 @@ COURSE = {
 		"weight": "Required",
 		"audience": "Internal Staff",
 	},
-	"chapters": [
-		{
-			"title": "The structure underneath",
-			"description": "Masonry, stone, concrete and rebar — what carries the load and what permanent water does to it.",
-		},
-		{
-			"title": "Metals in water",
-			"description": "Galvanic corrosion, the stainless family, and what the word stainless does not promise.",
-		},
-		{
-			"title": "Beds, tile, coping and fixings",
-			"description": "Mortar beds, tile adhesion, precast coping and the fasteners that hold it all down.",
-		},
-	],
 	"lessons": [
 		{
 			"lesson_title": "Structural masonry, tile and stone",
-			"chapter": 0,
 			"estimated_minutes": 18,
 			"summary": "Which units survive permanent water and freeze-thaw, the scale the water builds on them, and the ways a stone is ruined by the products meant to clean or protect it.",
 			"blocks": [
@@ -326,7 +311,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Basics of concrete and rebar",
-			"chapter": 0,
 			"estimated_minutes": 18,
 			"summary": "What the steel is actually doing, why cover decides whether it lasts, Sapphire's 28-day floor on a new pour, and the fact that a concrete basin does not hold water by itself.",
 			"blocks": [
@@ -599,7 +583,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Metals",
-			"chapter": 1,
 			"estimated_minutes": 16,
 			"summary": "Why treated water turns two metals into a battery, and why stainless still pits, crevices and rusts.",
 			"blocks": [
@@ -846,7 +829,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Grout, mortar and mud bed mechanics",
-			"chapter": 2,
 			"estimated_minutes": 18,
 			"summary": "Sapphire's zero-slump snowball test, why every submerged mix is polymer-modified, how pitch gets built into a surface, and why a bed that cannot drain becomes a reservoir.",
 			"blocks": [
@@ -1125,7 +1107,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Tile adhesion and precast coping installation",
-			"chapter": 2,
 			"estimated_minutes": 21,
 			"summary": "Sapphire's 95% to 100% coverage rule behind a submerged tile, levelling a coping weir to 1/16 inch, and setting a heavy stone without crushing a hand.",
 			"blocks": [
@@ -1442,7 +1423,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Stainless steel fasteners and anti-seize protocols",
-			"chapter": 2,
 			"estimated_minutes": 14,
 			"summary": "Why stainless threads cold-weld to each other, how to stop it, and why lubricating a fastener changes what a torque figure means.",
 			"blocks": [

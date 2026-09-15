@@ -37,20 +37,9 @@ COURSE = {
 		"weight": "Required",
 		"audience": "Internal Staff",
 	},
-	"chapters": [
-		{
-			"title": "Cleaning a basin that is in service",
-			"description": "The two vacuum rigs, priming them, and lifting sediment without stirring it back up.",
-		},
-		{
-			"title": "The two ends of the season",
-			"description": "Closing a system down so nothing freezes, and bringing it back with everything proved rather than assumed.",
-		},
-	],
 	"lessons": [
 		{
 			"lesson_title": "Pool vacuuming operations",
-			"chapter": 0,
 			"estimated_minutes": 16,
 			"summary": "Priming a portable pump the way Sapphire primes one, when to reach for a venturi hydro-vac instead, and why the technique is slowness.",
 			"blocks": [
@@ -331,7 +320,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Seasonal winterization",
-			"chapter": 1,
 			"estimated_minutes": 17,
 			"summary": "One fact drives the whole job: trapped water splits whatever is holding it.",
 			"blocks": [
@@ -625,7 +613,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Seasonal start-up and commissioning",
-			"chapter": 1,
 			"estimated_minutes": 20,
 			"summary": "Sapphire's spring workflow in order, and the baselines the rest of the year is measured against.",
 			"blocks": [

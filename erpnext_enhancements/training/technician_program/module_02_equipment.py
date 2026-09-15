@@ -38,15 +38,9 @@ COURSE = {
 		"weight": "Required",
 		"audience": "Internal Staff",
 	},
-	"chapters": [
-		{"title": "Moving the water", "description": "Pumps, pipe, and where water enters and leaves."},
-		{"title": "Conditioning the water", "description": "Filters, gauges, chemical feed, temperature."},
-		{"title": "Holding it all up", "description": "Structures, anchors and deck systems."},
-	],
 	"lessons": [
 		{
 			"lesson_title": "Pump installation and priming",
-			"chapter": 0,
 			"estimated_minutes": 16,
 			"summary": "Mounting it, the five-diameter straight run, and the fifteen seconds a dry seal survives.",
 			"blocks": [
@@ -288,7 +282,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Piping and fitting types",
-			"chapter": 0,
 			"estimated_minutes": 12,
 			"summary": "Schedules, pressure ratings, and putting unions where the next person needs them.",
 			"blocks": [
@@ -440,7 +433,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Skimmers and main drains",
-			"chapter": 0,
 			"estimated_minutes": 14,
 			"summary": "Where water leaves the basin, how the manifold is balanced, and the hazard that has killed people.",
 			"blocks": [
@@ -654,7 +646,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Cartridge and sand filters",
-			"chapter": 1,
 			"estimated_minutes": 16,
 			"summary": "Differential pressure, the 8-to-10 PSI service threshold, and the two cleaning procedures.",
 			"blocks": [
@@ -932,7 +923,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Pressure and vacuum gauges",
-			"chapter": 1,
 			"estimated_minutes": 15,
 			"summary": "The two-gauge split that locates a restriction, and the arithmetic that turns both gauges into a flow rate.",
 			"blocks": [
@@ -1120,7 +1110,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Chemical treatment systems",
-			"chapter": 1,
 			"estimated_minutes": 13,
 			"summary": "Feeders, injection points, the flow interlock, and the two chemicals that must never meet.",
 			"blocks": [
@@ -1286,7 +1275,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Heaters and chillers",
-			"chapter": 1,
 			"estimated_minutes": 11,
 			"summary": "Flow before fire, combustion air, and the circuit you do not open.",
 			"blocks": [
@@ -1421,7 +1409,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Fountain structures",
-			"chapter": 2,
 			"estimated_minutes": 11,
 			"summary": "Vessels, embeds and joints — and why sequencing is where fountains go wrong.",
 			"blocks": [
@@ -1563,7 +1550,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Concrete anchoring",
-			"chapter": 2,
 			"estimated_minutes": 12,
 			"summary": "Mechanical versus adhesive, and the one step that causes most adhesive failures.",
 			"blocks": [
@@ -1710,7 +1696,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Pedestal false floors",
-			"chapter": 2,
 			"estimated_minutes": 15,
 			"summary": "A deck over a sloped sub-slab, the balance tank it drains to, and the three levels the controller works between.",
 			"blocks": [

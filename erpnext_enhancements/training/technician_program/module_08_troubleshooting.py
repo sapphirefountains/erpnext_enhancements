@@ -17,28 +17,9 @@ COURSE = {
 		"weight": "Required",
 		"audience": "Internal Staff",
 	},
-	"chapters": [
-		{
-			"title": "Working a fault, and the electrical side",
-			"description": "The method every lesson here uses, and finding an electrical fault by proving dead and measuring toward the load.",
-		},
-		{
-			"title": "Where the water is going",
-			"description": "A spray that has changed, a basin that keeps dropping, and pipe that leaks.",
-		},
-		{
-			"title": "What the water carries, and what it stops",
-			"description": "Scale, lost flow, debris in the basin, and chemistry that will not balance.",
-		},
-		{
-			"title": "When the hardware itself is the fault",
-			"description": "Threads that seize or gall, and a pump losing performance or cutting out.",
-		},
-	],
 	"lessons": [
 		{
 			"lesson_title": "Electrical components",
-			"chapter": 0,
 			"estimated_minutes": 16,
 			"summary": "The method this whole module uses, and why an electrical fault is found from the supply toward the load.",
 			"blocks": [
@@ -223,7 +204,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Nozzles and spray features",
-			"chapter": 1,
 			"estimated_minutes": 12,
 			"summary": "Four causes cover nearly every spray complaint, and identical nozzles tell you which one in seconds.",
 			"blocks": [
@@ -422,7 +402,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Water loss in basins",
-			"chapter": 1,
 			"estimated_minutes": 14,
 			"summary": "Separating evaporation from splash-out from a real leak, and why the bucket test is the standard way to do it.",
 			"blocks": [
@@ -623,7 +602,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Leaks in piping",
-			"chapter": 1,
 			"estimated_minutes": 13,
 			"summary": "Where pipe actually fails, why the wet spot is not the hole, and how to halve a system with the valves already on it.",
 			"blocks": [
@@ -803,7 +781,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Scaling and deposit buildup",
-			"chapter": 2,
 			"estimated_minutes": 14,
 			"summary": "Why scale is diagnosed with a calculation rather than a scraper, and how to tell one white deposit from another.",
 			"blocks": [
@@ -981,7 +958,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "No flow",
-			"chapter": 2,
 			"estimated_minutes": 14,
 			"summary": "Two gauges divide the system at the impeller, and the pair of readings names the half the fault is in.",
 			"blocks": [
@@ -1168,7 +1144,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Excessive debris in basin",
-			"chapter": 2,
 			"estimated_minutes": 12,
 			"summary": "Debris is a rate that belongs to the site, and the fix is usually upstream of the filtration rather than inside it.",
 			"blocks": [
@@ -1351,7 +1326,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Chemicals not balancing",
-			"chapter": 2,
 			"estimated_minutes": 15,
 			"summary": "Three reasons chemistry refuses to move: the wrong correction order, a test that is lying, or a source nobody has counted.",
 			"blocks": [
@@ -1569,7 +1543,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Seized, galled and cross-threaded pipe fittings",
-			"chapter": 3,
 			"estimated_minutes": 15,
 			"summary": "Why fountain threads lock up, the four-step escalation from penetrant to cutting it out, and the three assembly rules that stop the next technician meeting the same joint.",
 			"blocks": [
@@ -1916,7 +1889,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Pump motor performance drop or cut-out",
-			"chapter": 3,
 			"estimated_minutes": 15,
 			"summary": "An ordered walk through prime, suction, impeller, air, voltage, overload and heat — and what a motor that restarts when cool is telling you.",
 			"blocks": [

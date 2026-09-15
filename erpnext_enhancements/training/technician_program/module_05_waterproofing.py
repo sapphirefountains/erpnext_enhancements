@@ -33,24 +33,9 @@ COURSE = {
 		"weight": "Required",
 		"audience": "Internal Staff",
 	},
-	"chapters": [
-		{
-			"title": "The membrane and the finish over it",
-			"description": "Applying a submerged membrane, and the sand that decides whether tile stays on.",
-		},
-		{
-			"title": "Keeping water out of things that must stay dry",
-			"description": "Submersible enclosures, cable entries and potting.",
-		},
-		{
-			"title": "The structure itself",
-			"description": "Vessels, groundwater, movement joints and proving it holds.",
-		},
-	],
 	"lessons": [
 		{
 			"lesson_title": "Submerged waterproof membranes and sand broadcasting",
-			"chapter": 0,
 			"estimated_minutes": 20,
 			"summary": "What is actually holding the water, the Rule of Clean the shell has to pass first, the two crossed coats, and the sand that decides whether tile stays on.",
 			"blocks": [
@@ -386,7 +371,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Submersible enclosures and potting",
-			"chapter": 1,
 			"estimated_minutes": 16,
 			"summary": "What an IP or NEMA rating actually promises, why the rating is yours to lose, and what potting buys and costs.",
 			"blocks": [
@@ -683,7 +667,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Waterproofing structural vessels",
-			"chapter": 2,
 			"estimated_minutes": 18,
 			"summary": "Holding water in versus keeping groundwater out, why an empty basin can float, and when to prove it holds.",
 			"blocks": [

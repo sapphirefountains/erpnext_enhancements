@@ -35,24 +35,9 @@ COURSE = {
 		"weight": "Required",
 		"audience": "Internal Staff",
 	},
-	"chapters": [
-		{
-			"title": "What the readings actually mean",
-			"description": "pH, alkalinity, hardness, stabiliser, ORP, and the three chlorines.",
-		},
-		{
-			"title": "Getting a number you can trust",
-			"description": "Sampling, the core tests, the probes, and the honest limits of each.",
-		},
-		{
-			"title": "Correcting the water",
-			"description": "Shocking and feeders, algae, UV, and the scaling-versus-corrosive balance.",
-		},
-	],
 	"lessons": [
 		{
 			"lesson_title": "Basic water chemistry",
-			"chapter": 0,
 			"estimated_minutes": 20,
 			"summary": "What each reading controls, why they are not independent, and the two numbers Sapphire's document does put in writing.",
 			"blocks": [
@@ -400,7 +385,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Water testing",
-			"chapter": 1,
 			"estimated_minutes": 20,
 			"summary": "Taking a sample that represents the feature, running Sapphire's core tests the way the document specifies, and recognising the times the test itself is what is wrong.",
 			"blocks": [
@@ -747,7 +731,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Chemical shocking",
-			"chapter": 2,
 			"estimated_minutes": 20,
 			"summary": "What a breakpoint shock is actually doing, Sapphire's dose for it, and the feeder and interlock rules that exist because people have been gassed.",
 			"blocks": [
@@ -1099,7 +1082,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Algae eradication and biological remediation",
-			"chapter": 2,
 			"estimated_minutes": 22,
 			"summary": "Telling Sapphire's three kinds apart, brushing before chemistry, running the UV loop without blinding yourself, and recognising when the problem is not in the water at all.",
 			"blocks": [
@@ -1462,7 +1444,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Scale and mineral deposit mitigation",
-			"chapter": 2,
 			"estimated_minutes": 20,
 			"summary": "Why no single reading tells you whether water will scale or corrode, the five variables Sapphire's document balances, and why suppression is not removal.",
 			"blocks": [

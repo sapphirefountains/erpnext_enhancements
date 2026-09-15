@@ -49,24 +49,9 @@ COURSE = {
 		"weight": "Required",
 		"audience": "Internal Staff",
 	},
-	"chapters": [
-		{
-			"title": "Getting power and signal to the equipment",
-			"description": "Conduit, wire, the gear in the panel, and the sensors that tell it what is happening.",
-		},
-		{
-			"title": "Measuring it, and the device that protects people",
-			"description": "The multimeter, proving dead, and what a GFCI is actually watching.",
-		},
-		{
-			"title": "Making it do something",
-			"description": "DMX lighting, ladder logic, and finding out why the program disagrees with the machine.",
-		},
-	],
 	"lessons": [
 		{
 			"lesson_title": "Running conduit and pulling wire",
-			"chapter": 0,
 			"estimated_minutes": 14,
 			"summary": "What conduit is for, why fill and bend limits exist, and the pull that quietly ruins a conductor.",
 			"blocks": [
@@ -234,7 +219,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Basic automation components",
-			"chapter": 0,
 			"estimated_minutes": 15,
 			"summary": "The devices that let a small signal switch a large load, and why a quiet control circuit proves nothing.",
 			"blocks": [
@@ -491,7 +475,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Sensor types and functions",
-			"chapter": 0,
 			"estimated_minutes": 13,
 			"summary": "What each sensor is really measuring, and why a broken wire has to produce the safe state.",
 			"blocks": [
@@ -730,7 +713,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Basic electrical equipment",
-			"chapter": 0,
 			"estimated_minutes": 16,
 			"summary": "What each part of the distribution system protects, the rule about junction boxes that gets broken on nearly every finished fountain, and how a submerged splice is sealed.",
 			"blocks": [
@@ -946,7 +928,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Multimeter diagnostics (voltage, resistance, continuity)",
-			"chapter": 1,
 			"estimated_minutes": 20,
 			"summary": "Which measurements are valid live, which are only valid dead, what a supply and a solenoid coil should read, and how to prove a meter is still telling the truth.",
 			"blocks": [
@@ -1226,7 +1207,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "GFCI",
-			"chapter": 1,
 			"estimated_minutes": 20,
 			"summary": "What a GFCI compares, why it trips at a current the breaker cannot see, how the bonding grid is built, and how to walk a tripping circuit back to the leak.",
 			"blocks": [
@@ -1533,7 +1513,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "DMX systems",
-			"chapter": 2,
 			"estimated_minutes": 13,
 			"summary": "How a lighting universe is wired and addressed, and why the trouble always appears at the far end of the run.",
 			"blocks": [
@@ -1704,7 +1683,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Ladder logic and basic automation",
-			"chapter": 2,
 			"estimated_minutes": 14,
 			"summary": "Read a rung, and know what a controller is doing between one scan and the next.",
 			"blocks": [
@@ -1920,7 +1898,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Program troubleshooting",
-			"chapter": 2,
 			"estimated_minutes": 16,
 			"summary": "Find out what the program believes before changing it, change one thing at a time, and know what the module asks you to demonstrate at the end.",
 			"blocks": [

@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The draft notice now splits.** A course built from a Sapphire document says its figures are
   Sapphire's; the generic notice — which tells a reader to check every number against the product in
   their hands — is exactly the wrong thing to say about a number Sapphire wrote down itself.
+- **The courses no longer use chapters.** A course is its lessons, in order. The module *is* the
+  course, so a second level of grouping inside it only put a heading between the learner and the
+  next lesson. 126 lines of chapter definitions and all 72 lesson chapter indices removed, and a
+  test now asserts their absence — both the seeder and the rebuild hand `spec["chapters"]` straight
+  to `_apply_chapters`, so one reintroduced here would appear in the outline with no warning.
 
 ### Fixed
 
@@ -63,6 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`player.css` referenced `--tr-danger`, which is declared nowhere** — so that error colour
   resolved to its literal fallback and never followed dark mode. The real token is `--tr-bad`. Every
   `--tr-*` referenced in the file is now declared.
+- **A rebuild would have left orphaned chapters behind.** `_apply_chapters` returns early on an
+  empty list — correct for a brand-new version, wrong for a rebuild, where the draft on production
+  still holds the chapters seeded in v1.467.0. The lessons referencing them are deleted and the
+  empty groups survive. `rebuild_draft_from_spec` now clears them explicitly, and it has to happen
+  *after* the lessons are gone: `save_draft_version._apply_chapters` refuses to drop a chapter that
+  lessons still point at, so clearing first would be rejected.
 - **`MIN_MATCHABLE` was 3 and should have been 2**, which the glossary tests caught before the seed
   ran. The reasoning for 3 — that short terms match everything — is wrong because matching is
   **whole-word**: `IP` cannot match inside `IP68`, and `CO` standing alone in a lesson about gas
