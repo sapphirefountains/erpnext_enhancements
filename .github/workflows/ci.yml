@@ -470,6 +470,14 @@ jobs:
       # that raises. Cost this repo two consecutive deploys (v1.452.1, v1.452.2).
       - name: DocType controller class names (Frappe strips spaces, it does not title-case)
         run: python -m unittest erpnext_enhancements.tests.test_doctype_controller_names -v
+      # Same shape one layer up, in JS. make_quick_entry's 4th argument REPLACES the doc
+      # frappe would have built, so an object literal without a `doctype` key goes to
+      # frappe.client.save as-is and raises `"doctype" is a required key` before the
+      # controller is reached. The Task form's "Create Child Task" button shipped that way
+      # and 500'd on every press while the dialog looked entirely normal. Source-only, no
+      # stub set, so its own step.
+      - name: Quick Entry docs carry their own doctype (make_quick_entry replaces, not merges)
+        run: python -m unittest erpnext_enhancements.tests.test_quick_entry_doctype_key -v
       - name: Workspace structure (content <-> child rows, WI-018)
         run: python -m unittest erpnext_enhancements.tests.test_workspaces -v
       # The Quality module (WI-075) sits beside erpnext's own Quality Management, which owns

@@ -722,7 +722,53 @@ def validate_mapped_values(
 	unlinked_project = _blocked_unlinked_project(erpnext_doctype, values, include_doc_required)
 	if unlinked_project:
 		issues.append(unlinked_project)
+	unpromotable_parent = _blocked_unpromotable_parent(erpnext_doctype, values)
+	if unpromotable_parent:
+		issues.append(unpromotable_parent)
 	return issues
+
+
+def _blocked_unpromotable_parent(erpnext_doctype: str, values: dict) -> str | None:
+	"""Issue when this child's parent Account is a posting ledger that must stay one.
+
+	``_ensure_group_parent`` promotes a ledger parent so a child can be written
+	under it, and part of promoting is **clearing ``account_type``** — a group
+	never posts, so on a clean account the type is informational. On an account
+	that has been posted to it is not informational at all: dropping ``Tax`` from
+	a sales-tax account is how taxed invoices end up short by exactly the tax.
+
+	ERPNext's ``validate_group_or_ledger`` already refuses the save when the
+	account has GL entries, so the destructive write has never landed. But it
+	refuses by *throwing*, one 40-frame traceback into the Error Log per sync
+	run, for a record no retry can ever fix — QBO 193 ("Sales Tax Payable
+	(deleted)", ``Active: false``) has been asking for 25010 to become a group
+	since 2026-09-09, and 25010 carries 426 GL entries.
+
+	Catching it here turns that into what it actually is: a record needing a
+	human to restructure the chart. It routes to manual review before any write,
+	which is the same answer, said once, somewhere an accountant will see it.
+
+	Note the message ERPNext throws reads "cannot be converted to ledger" in
+	**both** directions — its GL-entry branch is checked before it looks at which
+	way ``is_group`` moved — so the wording is no guide to what was attempted.
+	"""
+	if erpnext_doctype != "Account":
+		return None
+	parent_name = values.get("parent_account")
+	if not parent_name:
+		return None
+	is_group = frappe.db.get_value("Account", parent_name, "is_group")
+	# Unknown parent, or one that is already a group: nothing would be promoted.
+	if is_group is None or int(is_group):
+		return None
+	# Mirrors Account.check_gle_exists exactly (no is_cancelled filter in v16), so
+	# this blocks on the same condition the controller would throw on.
+	if not frappe.db.get_value("GL Entry", {"account": parent_name}):
+		return None
+	return (
+		f"Parent account {parent_name} is a ledger with posted GL entries and cannot be made a "
+		"group; move this account under a group parent in the chart of accounts first."
+	)
 
 
 def _blocked_unlinked_project(erpnext_doctype: str, values: dict, include_doc_required: bool) -> str | None:
@@ -2879,9 +2925,14 @@ def _ensure_group_parent(erpnext_doctype: str, values: dict):
 
 	QBO parent accounts auto-linked to pre-existing chart-of-accounts leaves stay
 	ledgers, and ERPNext then rejects every child with "Parent account ... can
-	not be a ledger". The conversion goes through the Account controller, which
-	still blocks parents that already have GL entries (those sync attempts keep
-	failing and need manual chart restructuring).
+	not be a ledger".
+
+	A parent that has been **posted to** is never promoted: ``upsert_entity``
+	preflights that case to manual review before reaching here (see
+	``_blocked_unpromotable_parent``, which carries the reasoning). The check is
+	repeated anyway because this is the function that clears ``account_type``,
+	and an account with GL entries is one where clearing it loses real meaning —
+	a guard belongs next to the write it guards, not only at the gate upstream.
 	"""
 	if erpnext_doctype != "Account":
 		return
@@ -2890,6 +2941,8 @@ def _ensure_group_parent(erpnext_doctype: str, values: dict):
 		return
 	is_group = frappe.db.get_value("Account", parent_name, "is_group")
 	if is_group is None or int(is_group):
+		return
+	if frappe.db.get_value("GL Entry", {"account": parent_name}):
 		return
 	parent = frappe.get_doc("Account", parent_name)
 	parent.is_group = 1

@@ -5047,3 +5047,94 @@ def test_erpnext_item_precisions_fall_back_to_erpnext_defaults():
 		"float_precision": 4,
 	}.get(fieldname)
 	assert _erpnext_item_precisions() == (3, 4)
+
+
+# ---------------------------------------------------------------------------
+# A posted parent account is never promoted to a group (v1.467.0)
+# ---------------------------------------------------------------------------
+#
+# QBO 193 ("Sales Tax Payable (deleted)", Active: false) is a sub-account of QBO
+# 191, which maps to 25010 - Sales Tax Agency Payable - SF: a ledger carrying 426
+# GL entries and account_type "Tax". _ensure_group_parent wanted to make 25010 a
+# group AND clear its account_type, which is how taxed invoices end up short by
+# exactly the tax. ERPNext's controller refused every time -- correctly, and by
+# throwing, which is why a record no retry can fix logged a fresh traceback on
+# every sync run from 2026-09-09 onward.
+
+
+def _account_tree(*, parent_is_group, parent_has_gl):
+	"""A get_value answering the two questions the parent-promotion guard asks."""
+
+	def get_value(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Account" and fieldname == "is_group":
+			return 1 if parent_is_group else 0
+		if doctype == "GL Entry":
+			return "ACC-GLE-0001" if parent_has_gl else None
+		return None
+
+	return get_value
+
+
+def test_posted_ledger_parent_routes_to_manual_review(monkeypatch):
+	"""A ledger parent with GL entries blocks at preflight, before any write."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db, "get_value", _account_tree(parent_is_group=False, parent_has_gl=True)
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _blocked_unpromotable_parent
+
+	issue = _blocked_unpromotable_parent(
+		"Account", {"parent_account": "25010 - Sales Tax Agency Payable - SF"}
+	)
+	assert issue and "25010 - Sales Tax Agency Payable - SF" in issue
+	assert "cannot be made a group" in issue
+
+
+def test_clean_ledger_parent_is_still_promotable(monkeypatch):
+	"""The guard is about POSTINGS, not about being a ledger.
+
+	Promoting an untouched leaf is the behaviour this feature exists for, and
+	narrowing it to "never promote" would break every legitimate QBO sub-account.
+	"""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db, "get_value", _account_tree(parent_is_group=False, parent_has_gl=False)
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _blocked_unpromotable_parent
+
+	assert _blocked_unpromotable_parent("Account", {"parent_account": "UC-90 - Unused - SF"}) is None
+
+
+def test_group_parent_and_non_account_doctypes_are_untouched(monkeypatch):
+	"""No issue when there is nothing to promote: already a group, or not an Account."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db, "get_value", _account_tree(parent_is_group=True, parent_has_gl=True)
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _blocked_unpromotable_parent
+
+	assert _blocked_unpromotable_parent("Account", {"parent_account": "2000 - Liabilities - SF"}) is None
+	assert _blocked_unpromotable_parent("Customer", {"parent_account": "2000 - Liabilities - SF"}) is None
+	assert _blocked_unpromotable_parent("Account", {}) is None
+
+
+def test_ensure_group_parent_refuses_to_clear_account_type_on_a_posted_account(monkeypatch):
+	"""The guard is repeated at the write itself, not only at the preflight gate.
+
+	This is the function that sets account_type = None. If a future caller reaches
+	it without preflighting, the destructive write must still not happen.
+	"""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db, "get_value", _account_tree(parent_is_group=False, parent_has_gl=True)
+	)
+
+	def _no_get_doc(*args, **kwargs):
+		raise AssertionError("_ensure_group_parent loaded the account it must not modify")
+
+	# raising=False: the bench-free stub carries no get_doc at all, which is itself
+	# the assertion -- a path that reached it would AttributeError either way.
+	monkeypatch.setattr(frappe, "get_doc", _no_get_doc, raising=False)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _ensure_group_parent
+
+	_ensure_group_parent("Account", {"parent_account": "25010 - Sales Tax Agency Payable - SF"})
