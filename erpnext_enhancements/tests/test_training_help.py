@@ -654,6 +654,63 @@ class TestTheWiring(unittest.TestCase):
         self.assertIn("erpnext_enhancements.tests.test_training_help", _raw(CI))
 
 
+class TestAShortAcronymNeedsItsCapitals(unittest.TestCase):
+    """Found on production by hovering it, which is the point of having marked up the text.
+
+    `Normally closed` carries the alias `NO`, and matching case-insensitively made it match the
+    English word *no*: "landscape lighting on a photocell will come on at dusk **no** matter what
+    you did at the pump panel". The panel listed an entry about relay contacts because the lesson
+    said "no" — and with the words marked up, that one gets a dotted underline in front of a reader.
+    `CO`, `IP`, `OL` and `PI` are each one ordinary word from the same thing.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        state = {"get_all": lambda *a, **k: [], "get_doc": lambda *a, **k: None}
+        cls.mod, cls.saved = _load_help(state)
+        from erpnext_enhancements.training.doctype.training_glossary_term import (
+            training_glossary_term as controller,
+        )
+
+        cls.compile = staticmethod(controller.TrainingGlossaryTerm.compile_pattern)
+
+    @classmethod
+    def tearDownClass(cls):
+        _restore(cls.saved)
+
+    def _hits(self, form, text):
+        return bool(self.compile(form).search(text))
+
+    def test_the_live_false_positive_is_gone(self):
+        self.assertFalse(self._hits("NO", "it will come on at dusk no matter what you did"))
+
+    def test_the_acronym_itself_still_matches(self):
+        self.assertTrue(self._hits("NO", "a NO contact on the rung"))
+
+    def test_the_other_two_letter_traps(self):
+        for form, ordinary, meant in (
+            ("CO", "the co-ordinator said so", "CO builds up in a vault"),
+            ("IP", "rated ip 68", "rated IP 68"),
+            ("OL", "an ol' habit", "the coil reads OL"),
+        ):
+            with self.subTest(form):
+                self.assertFalse(self._hits(form, ordinary))
+                self.assertTrue(self._hits(form, meant))
+
+    def test_an_ordinary_word_stays_case_insensitive(self):
+        """A term at the start of a sentence must still match its own lower-case spelling."""
+        self.assertTrue(self._hits("Haunching", "haunching carries the load"))
+        self.assertTrue(self._hits("haunch", "Haunch the pipe properly"))
+
+    def test_a_longer_acronym_is_unchanged(self):
+        """GFCI does not collide with English, so nothing is gained by being strict about it."""
+        self.assertTrue(self._hits("GFCI", "the gfci tripped again"))
+
+    def test_whole_word_matching_still_applies(self):
+        """The reason `MIN_MATCHABLE` is 2 rather than 3: IP cannot match inside IP68 either way."""
+        self.assertFalse(self._hits("IP", "an IP68 fitting"))
+
+
 class TestTheGlossaryIsReachable(unittest.TestCase):
     """Somebody has to be able to find the table to correct it.
 

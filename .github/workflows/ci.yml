@@ -734,6 +734,17 @@ jobs:
       # exact bug that shipped once on Ask-the-author; and a Training Learner holds no DocPerm on
       # the glossary, without which the mid-quiz suppression would be decoration on data they
       # could fetch in one REST call.
+      # The glossary review queue, and the two ways it fixes a collision. The merge is the one
+      # button in the Training module that deletes somebody's content, so three properties are
+      # held behaviourally against a fake site: it refuses an entry a person wrote or checked,
+      # every spelling the loser answered to survives on the winner (a merge that narrows what
+      # Help can find is worse than two entries), and every see_also elsewhere is repointed --
+      # see_also is a plain text field, not a child table of Links, so the framework will not
+      # stop the delete and nothing would notice the reference had gone dead. Also pins the
+      # patch's acronym rule against all nine real collisions on production, including
+      # `Scale (on a drawing)`, which is two concepts sharing a word and must NOT be merged.
+      - name: Glossary review (a merge must not narrow what Help can find)
+        run: python -m unittest erpnext_enhancements.tests.test_glossary_review -v
       - name: Training help (a second learner payload, held to the first one's rules)
         run: python -m unittest erpnext_enhancements.tests.test_training_help -v
       # The publish_training_course assistant tool. Guards the two ways it could be

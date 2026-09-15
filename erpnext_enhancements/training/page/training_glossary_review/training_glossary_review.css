@@ -1,0 +1,187 @@
+/* Copyright (c) 2026, Sapphire Fountains and contributors
+ * For license information, please see license.txt
+ *
+ * Desk tokens only — frappe's own --text-color / --border-color / --fg-color and nothing
+ * of its own. The same stance training_review.css takes, and for the same reason: this
+ * page follows the desk theme for free and pulls no learner stylesheet, so a change to
+ * the player's palette cannot reach it and the dark theme needs no separate handling. */
+
+.gr-page .gr-tabs {
+	display: flex;
+	gap: 0.5rem;
+	align-items: center;
+	margin: 0 0 1rem;
+	border-bottom: 1px solid var(--border-color);
+	padding-bottom: 0.5rem;
+}
+
+.gr-page .gr-tab {
+	padding: 0.35rem 0.75rem;
+	border: 0;
+	border-radius: var(--border-radius-md, 6px);
+	background: none;
+	color: var(--text-muted);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.gr-page .gr-tab.is-active {
+	background: var(--bg-light-gray, #f4f5f6);
+	color: var(--text-color);
+}
+
+.gr-page .gr-toggle {
+	margin-left: auto;
+	color: var(--text-muted);
+	font-weight: normal;
+	cursor: pointer;
+}
+
+.gr-page .gr-body {
+	max-width: 60rem;
+}
+
+/* A collision, not a term. The border says at a glance that this card is about a word two
+ * entries are fighting over rather than one entry to judge. */
+.gr-page .gr-cluster {
+	border-left: 3px solid var(--text-muted);
+}
+
+.gr-page .gr-counts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 1.25rem;
+	margin: 0 0 1rem;
+	color: var(--text-muted);
+}
+
+.gr-page .gr-count b {
+	color: var(--text-color);
+	font-size: 1.1rem;
+}
+
+.gr-page .gr-note {
+	margin: 0 0 0.75rem;
+	color: var(--text-muted);
+	max-width: 60rem;
+}
+
+.gr-page .gr-card {
+	margin: 0 0 1rem;
+	padding: 1rem;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 6px);
+	background: var(--fg-color);
+	max-width: 60rem;
+	transition: opacity 0.15s ease;
+}
+
+/* A verdict removes the card immediately rather than after a round trip. Somebody working
+ * through 717 entries should never wait to see the one they just judged go. */
+.gr-page .gr-card.is-gone {
+	opacity: 0;
+}
+
+.gr-page .gr-term {
+	display: inline-block;
+	margin: 0 0.5rem 0.25rem 0;
+	font-size: 1.05rem;
+}
+
+.gr-page .gr-trap {
+	display: inline-block;
+	padding: 0.1rem 0.4rem;
+	border-radius: 3px;
+	background: var(--bg-orange, #fff3e0);
+	color: var(--text-color);
+	font-size: 0.75rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.gr-page .gr-aliases {
+	margin: 0 0 0.75rem;
+	color: var(--text-muted);
+	font-size: 0.85rem;
+}
+
+.gr-page .gr-field {
+	display: block;
+	margin: 0 0 0.6rem;
+}
+
+.gr-page .gr-label {
+	display: block;
+	margin-bottom: 0.2rem;
+	color: var(--text-muted);
+	font-size: 0.8rem;
+}
+
+.gr-page .gr-field textarea {
+	width: 100%;
+	padding: 0.4rem 0.55rem;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 6px);
+	background: var(--control-bg, var(--fg-color));
+	color: var(--text-color);
+	font: inherit;
+	font-size: 0.9rem;
+}
+
+.gr-page .gr-actions {
+	display: flex;
+	gap: 0.5rem;
+	align-items: center;
+	margin-top: 0.5rem;
+}
+
+.gr-page .gr-open {
+	margin-left: auto;
+	color: var(--text-muted);
+	font-size: 0.85rem;
+}
+
+.gr-page .gr-pager {
+	display: flex;
+	gap: 0.5rem;
+	margin: 1rem 0 2rem;
+}
+
+.gr-page .gr-holders {
+	margin: 0;
+	padding-left: 1.1rem;
+}
+
+.gr-page .gr-holders li {
+	margin-bottom: 0.35rem;
+}
+
+.gr-page .gr-holder {
+	margin-right: 0.5rem;
+	font-weight: 600;
+}
+
+.gr-page .gr-link {
+	margin-right: 0.6rem;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--text-muted);
+	font: inherit;
+	font-size: 0.85rem;
+	text-decoration: underline;
+	cursor: pointer;
+}
+
+.gr-page .gr-link:hover {
+	color: var(--text-color);
+}
+
+.gr-page .gr-muted {
+	color: var(--text-muted);
+}
+
+.gr-page .gr-bad {
+	color: var(--text-on-red, #b91c1c);
+}

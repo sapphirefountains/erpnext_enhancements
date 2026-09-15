@@ -1039,3 +1039,9 @@ erpnext_enhancements.patches.rebuild_technician_course_drafts_after_link_fix
 # Workspace JSON is age-gated on import and silently skipped when the row is not older, so the
 # bumped `modified` needs a forced reload beside it to reach a site that already has the workspace.
 erpnext_enhancements.patches.reload_training_workspace_for_glossary
+# v1.470.0: fold `X (ABBR)` into `X` where ABBR is genuinely that term's abbreviation. The seed
+# wrote a handful of concepts twice -- AHJ, ISPSC, LSI, LOTO, SDS, TDS, UV, VFD -- each with its own
+# definition, so a lesson using the word shows two entries for it. Merges only when the bracket is
+# UPPER CASE and its letters appear in order inside the base term, which spares `Scale (on a
+# drawing)`: that bracket is a disambiguator, not an abbreviation, and those are two real concepts.
+erpnext_enhancements.patches.merge_acronym_glossary_terms
