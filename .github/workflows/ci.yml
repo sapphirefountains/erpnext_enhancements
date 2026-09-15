@@ -622,6 +622,17 @@ jobs:
       # manual adjustment cannot be saved without a reason.
       - name: Subcontractor scorecard (a page saying everyone is flawless is the failure)
         run: python -m unittest erpnext_enhancements.tests.test_subcontractor_scorecard -v
+      # The four WI-075 course drafts. Its own step because it imports the frappe stub from
+      # test_training_course_authoring, and `python -m unittest` shares a process -- two suites
+      # installing stubs cross-talk. The failure it guards is not a crash: it is four Required
+      # courses landing in real inboxes before anybody has read them. The plan assumed that was
+      # impossible because Training Settings ships dormant; prod has training_enabled=1 and
+      # auto_assign_enabled=1 against 14 live courses, so `status = Draft` is now the only thing
+      # holding. Also pins: every spec validates against the REAL validator (one that does not
+      # would abort a migrate), every Single Choice question has exactly one answer, and every
+      # assignment rule names a Position or Role that actually exists.
+      - name: Quality course drafts (Draft is the only thing between these and real inboxes)
+        run: python -m unittest erpnext_enhancements.tests.test_quality_training_courses -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk

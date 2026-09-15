@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.464.0] - 2026-09-15
+
+### Added
+
+- **The four Quality course drafts** (WI-075 training) — *Running an inspection in the field*,
+  *Non-conformances and corrective actions, end to end*, *Writing scope that can be inspected*,
+  and *Subcontractor agreements, purchase orders and rates*. 16 lessons, 43 content blocks and 29
+  quiz questions across 11 chapters, plus 10 assignment rules.
+- `training/quality_course_specs.py` holds them as validated **Course Specs**, built by
+  `patches/seed_quality_training_courses` through the existing
+  `api/training_course_authoring.author_course_from_spec` path.
+
+### Notes
+
+- **Every course is created as a `Draft`, and that is the whole safety property.**
+  `training/assignment.py` selects courses to auto-assign with
+  `{"status": "Published", "weight": "Required", "auto_assign": 1}` — all three. This branch sets
+  the last two, so `Draft` is the only one of the three holding. Negative-tested: making the patch
+  publish them fails a test.
+- **The plan's guardrail is gone, and this is the correction.** WI-075 says *"Training Settings
+  ships dormant (training_enabled = 0, auto_assign_enabled = 0). Four Required courses assign
+  nothing and mail nobody while those are off."* Measured on prod 2026-09-14 that is **no longer
+  true**: `training_enabled = 1`, `auto_assign_enabled = 1` and `portal_enabled = 1`, against 14
+  live courses, 278 lessons and 123 questions. Training is in real use, so publishing one of these
+  **will assign and email real staff on the next sweep**. Publishing is the act of adopting a
+  course; nothing here publishes anything, and the patch says so when it runs.
+- **Built through the reviewed authoring path rather than by creating documents directly**, so
+  every rule that path enforces applies — in particular that each quiz question is stamped
+  `ai_generated` with **no reviewer**, which the publish gate refuses to let through until a person
+  has read it. These questions were machine-written and carry the same gate as any other
+  machine-written question. That is correct, not a technicality.
+- **The courses teach how the software behaves, which is knowable from the code. They do not
+  assert Sapphire policy.** How soon an inspection must happen, who may sign what off, what counts
+  as an acceptable rework rate — inventing those is the same error as inventing a checklist, and
+  the strawman checklists in sub-phase I were only acceptable because they were labelled and
+  seeded Draft. Where a course reaches that edge it says *your supervisor decides*. A test fails
+  the build on any invented deadline of the form "within N days".
+- **Each course opens with a Warning callout saying it is a draft nobody has adopted**, so a
+  learner is told what they are reading before they read it.
+- **Assignment rules are recorded but inert.** Every rule is checked against a Position or Role
+  that exists — one naming something that does not would match nobody, silently, forever — and the
+  patch skips and logs a dead target rather than storing it. The field course targets the
+  `Technician` **job family** rather than a single tier, so it covers Junior, Senior and Master in
+  one rule. Negative-tested.
+- **Only the field course requires a supervisor's signature.** It is a practical competency:
+  passing a quiz about the wizard is not evidence somebody can run an inspection.
+  `training/authority.py` already knows who may sign.
+- The new suite imports the frappe stub from `test_training_course_authoring` rather than copying
+  it, so the two cannot drift about what the framework does — and therefore needs **its own CI
+  step**, because `python -m unittest` shares a process and two suites installing stubs would
+  cross-talk.
+- Insert-only and idempotent, keyed on course title: running it twice creates nothing, will not
+  reset a course somebody has corrected, and will never un-publish one somebody has adopted.
+
 ## [1.463.0] - 2026-09-15
 
 ### Added

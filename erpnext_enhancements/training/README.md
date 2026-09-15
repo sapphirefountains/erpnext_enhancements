@@ -429,6 +429,30 @@ discovers and calls the two tools (per its `docs/convergence.md`, one owner per
 cross-repo overlap). Bench-free coverage is in
 [`../tests/test_training_course_authoring.py`](../tests/test_training_course_authoring.py).
 
+### The four Quality course drafts (WI-075)
+
+[`quality_course_specs.py`](quality_course_specs.py) holds four Course Specs as data, seeded by
+`patches/seed_quality_training_courses` **through the same `author_course_from_spec` path** — so
+every rule above applies to them, including that each question is stamped `ai_generated` with no
+reviewer and the publish gate holds. They were written after the features they teach shipped: a
+course about a screen nobody can open is worthless, and one written from a plan teaches the plan.
+
+Two things about them are worth not undoing.
+
+**They are created `Draft`, and that is now load-bearing in a way the plan did not anticipate.**
+`assignment.py` selects on `{"status": "Published", "weight": "Required", "auto_assign": 1}` —
+all three. WI-075 assumed the module was dormant (`training_enabled = 0`), so four Required
+courses would "assign nothing and mail nobody". Measured on prod 2026-09-14 that is **no longer
+true**: `training_enabled`, `auto_assign_enabled` and `portal_enabled` are all 1, against 14 live
+courses. Publishing one of these will assign and email real staff on the next sweep. Publishing is
+the act of adopting a course.
+
+**They teach how the software behaves and do not assert Sapphire policy.** How soon an inspection
+must happen, who signs what off, what rework rate is acceptable — inventing those is the same
+error as inventing a checklist. Where a course reaches that edge it says *your supervisor
+decides*, and `tests/test_quality_training_courses.py` fails the build on any invented deadline of
+the form "within N days".
+
 ### Batches (cohorts)
 
 A **Training Batch** is a cohort — a set of learners moving through a set of courses

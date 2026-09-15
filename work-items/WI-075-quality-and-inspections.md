@@ -1,6 +1,6 @@
 # WI-075 — Scope that can be inspected, and failures that get re-checked
 
-**Status:** all fourteen sub-phases A–N shipped, v1.446.0 → v1.463.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445). Slice 1 and Slice 2 are complete. I delivered the trigger engine; the master checklists followed as **strawmen seeded Draft** at Nik's request (v1.457.0), J made a period review compute its own numbers (v1.458.0), K made `Change Order` a real record whose added criteria reach inspections (v1.460.0), L gave a subcontractor agreement an expiry, a rate schedule and a printed hold-point list (v1.461.0), M gave a project budget categories a reallocation cannot quietly drain (v1.462.0), and N gave subcontractors a scorecard that refuses to call them flawless on no evidence (v1.463.0). The four training courses remain, each authored after the feature it teaches. Everything from v1.456.0 shifted up one when `main` took 1.455.0 for the feedback batch.
+**Status:** complete — all fourteen sub-phases A–N plus the four training courses, v1.446.0 → v1.464.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445). Slice 1 and Slice 2 are complete. I delivered the trigger engine; the master checklists followed as **strawmen seeded Draft** at Nik's request (v1.457.0), J made a period review compute its own numbers (v1.458.0), K made `Change Order` a real record whose added criteria reach inspections (v1.460.0), L gave a subcontractor agreement an expiry, a rate schedule and a printed hold-point list (v1.461.0), M gave a project budget categories a reallocation cannot quietly drain (v1.462.0), and N gave subcontractors a scorecard that refuses to call them flawless on no evidence (v1.463.0). The four training courses followed at v1.464.0, each written after the feature it teaches and each seeded **Draft** — which matters more than the plan expected, because the dormancy it relied on is gone (see below). Everything from v1.456.0 shifted up one when `main` took 1.455.0 for the feedback batch.
 **Branch:** `claude/quality-inspections-planning-691339` (off `main` at v1.443.0)
 **Tracked:** PRJ-00580, TASK-2026-02013 with a child per deliverable (A–N)
 **Decides:** [ADR-0012](../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md)
@@ -308,8 +308,22 @@ every value is checked against prod before it is written.
 Each course also needs a `Position Requirement` row of type `Training Course`. Assignment and
 job-requirement are two different records and only the second reaches the competency roster.
 
-**`Training Settings` ships dormant.** If `training_enabled` or `auto_assign_enabled` is still off,
-four Required courses assign nobody and mail nobody. Each course's PR states which state it assumes.
+**Those rows were deliberately NOT created with the courses (v1.464.0).** A `Position Requirement`
+makes a course a job requirement, and a job requirement against a course nobody can open would mark
+every technician non-compliant on the competency roster for something they are unable to complete.
+They belong with adoption, alongside publishing, as one deliberate act. All 55 existing
+`Position Requirement` rows remain type `Credential`.
+
+**`Training Settings` was assumed dormant, and is not.** This work item originally read
+*"`Training Settings` ships dormant. If `training_enabled` or `auto_assign_enabled` is still off,
+four Required courses assign nobody and mail nobody."* **Re-measured on prod 2026-09-14 that is
+false**: `training_enabled = 1`, `auto_assign_enabled = 1` and `portal_enabled = 1`, against 14
+live courses, 278 lessons and 123 questions. Training is in real use.
+
+So what holds the four courses back is `status = "Draft"`. `training/assignment.py` selects on
+`{"status": "Published", "weight": "Required", "auto_assign": 1}` — all three, and v1.464.0 sets
+the last two, so Draft is the only one absent. **Publishing one is the act of adopting it and will
+assign and email real staff on the next sweep.**
 
 ## Guardrails
 
