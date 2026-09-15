@@ -1715,12 +1715,29 @@
 			}
 			if (data.more) {
 				region.appendChild(
-					el("p", "tr-help-note", fmt(t("…and {0} more terms in this lesson."), [data.more]))
+					el(
+						"p",
+						"tr-help-note",
+						fmt(
+							t("{0} more terms match this lesson than one panel will show."),
+							[data.more]
+						)
+					)
 				);
 			}
 
 			wrap.appendChild(region);
 			return wrap;
+		}
+
+		// Author-written HTML, through the runtime's one sanitiser. `TR.setHtml` comes from
+		// quiz.js, which `LEARN_ASSETS` loads first; the fallback is not defensive padding but
+		// the only correct answer if it is ever missing -- showing the markup as words is ugly
+		// and safe, and `innerHTML` without a scrub is neither.
+		function helpHtml(node, html) {
+			if (TR.setHtml) TR.setHtml(node, html);
+			else node.textContent = String(html == null ? "" : html);
+			return node;
 		}
 
 		function helpTerm(entry) {
@@ -1741,11 +1758,21 @@
 			}
 
 			item.appendChild(el("p", "tr-help-plain", entry.short_definition || ""));
-			if (entry.explanation) item.appendChild(el("p", "tr-help-more", entry.explanation));
+
+			// `explanation` and `example` are Text Editor fields, so they hold HTML and have to
+			// be inserted as HTML. Setting `textContent` puts the tags on screen as words --
+			// which is what shipped, on all 717 seeded entries, and 473 of them carry more than
+			// one paragraph, so the alternative to this is not a stray `<p>` but a wall of text
+			// with the tags in it. `short_definition` and `ordinary_meaning` above are Small Text
+			// and stay text: a plain field rendered as markup is the same mistake facing the
+			// other way.
+			if (entry.explanation) {
+				helpHtml(item.appendChild(el("div", "tr-help-more")), entry.explanation);
+			}
 			if (entry.example) {
-				var ex = el("p", "tr-help-example");
+				var ex = el("div", "tr-help-example");
 				ex.appendChild(el("span", "tr-help-example-label", t("For example")));
-				ex.appendChild(el("span", null, " " + entry.example));
+				helpHtml(ex.appendChild(el("span", "tr-help-example-body")), entry.example);
 				item.appendChild(ex);
 			}
 

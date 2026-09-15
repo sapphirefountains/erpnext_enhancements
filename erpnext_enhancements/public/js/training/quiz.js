@@ -943,4 +943,13 @@
 	].join("");
 
 	TR.Quiz = { mount: mount, results: results };
+
+	// One sanitiser for the whole runtime, exported rather than copied. Every Text Editor
+	// field the player draws — a question stem, a question explanation, a glossary entry's
+	// explanation and example — is HTML and has to go in as HTML, and each of those is a
+	// place a second, subtly weaker scrubber could grow. quiz.js loads before player.js
+	// (`LEARN_ASSETS` in `page/learn/learn.js` fixes the order), so this is always defined
+	// by the time anything calls it.
+	TR.scrubHtml = scrub;
+	TR.setHtml = setHtml;
 })();
