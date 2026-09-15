@@ -265,5 +265,120 @@ class TestTheDocTypeMatchesTheModule(unittest.TestCase):
         self.assertEqual(self.schema["module"], "Project Enhancements")
 
 
+def _raw(path):
+    return path.read_text(encoding="utf-8")
+
+
+def _js_code_only(path):
+    """JavaScript with its comments removed.
+
+    A test asserting a token is ABSENT has to strip these first, or it fires on the comment that
+    explains the absence: the sentence naming what the client must never send is exactly the
+    string the assertion is hunting for.
+    """
+    src = re.sub(r"/\*[\s\S]*?\*/", "", _raw(path))
+    return re.sub(r"(?m)^\s*//.*$", "", src)
+
+
+def _doctype_js_block():
+    """The `doctype_js` dict from `hooks.py`, brace-matched.
+
+    Deliberately not ``hooks.split("doctype_js")[-1]``. That reads only what follows the *last*
+    mention of the name, and `hooks.py` mentions it in five comments that sit well after the dict
+    closes — so the slice searched never contains the dict at all, and an assertion over it passes
+    whether or not an entry was added. A guard that cannot fail is worse than no guard, because it
+    is the one nobody re-checks.
+    """
+    src = _raw(APP_ROOT / "hooks.py")
+    start = src.index("doctype_js = {")
+    depth = 0
+    for index in range(src.index("{", start), len(src)):
+        if src[index] == "{":
+            depth += 1
+        elif src[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[start : index + 1]
+    raise AssertionError("the doctype_js dict in hooks.py is not brace-balanced")
+
+
+class TestFormScript(unittest.TestCase):
+    """The form script is not polish here — it is the only way an approval can be recorded.
+
+    Sub-phase K shipped four whitelisted endpoints and no door to any of them. Every approval
+    stamp on the document is read-only and `before_submit` refuses a change order that neither
+    party has approved, so until this file existed a change order could be raised and then never
+    locked by anybody, while the two gates that make it a commercial instrument recorded nothing.
+    """
+
+    SCRIPT = DOCTYPE_DIR / "change_order.js"
+
+    def test_the_form_script_exists(self):
+        self.assertTrue(self.SCRIPT.exists(), "the endpoints have no door without it")
+
+    def test_it_calls_every_approval_endpoint(self):
+        source = _raw(self.SCRIPT)
+        for method in (
+            "api.change_order.approve_change_order",
+            "api.change_order.record_customer_approval",
+            "api.change_order.revoke_approval",
+        ):
+            self.assertIn(method, source, method)
+
+    def test_it_reaches_the_project_listing_endpoint_too(self):
+        """The fourth endpoint, equally unreachable, and the context an approver actually wants:
+        another twelve thousand reads differently on a job that has already absorbed fifty."""
+        self.assertIn("api.change_order.get_project_change_orders", _raw(self.SCRIPT))
+
+    def test_it_is_not_also_registered_as_doctype_js(self):
+        """Frappe already loads <module>/doctype/<name>/<name>.js for a DocType this app owns. A
+        `doctype_js` entry appends the same file to that string a second time with no dedupe, and
+        a top-level `const` then becomes a SyntaxError that costs the form every button it has."""
+        self.assertNotIn('"Change Order"', _doctype_js_block())
+
+    def test_it_proposes_no_approver_and_no_timestamp(self):
+        """The server stamps both, from the session and its own clock. The old `complete_step`
+        client path let the browser send a timestamp, and the audit found retroactive
+        box-ticking — so the client never names the approver or the moment, and never writes the
+        stamp fields it would have to touch to do so."""
+        code = _js_code_only(self.SCRIPT)
+        self.assertNotIn("frappe.session.user", code)
+        self.assertNotIn("frappe.datetime.now", code)
+        self.assertNotIn("pm_approved_on", code)
+        self.assertNotIn("customer_approved_on", code)
+        self.assertNotIn("pm_approved_by", code)
+
+    def test_recording_the_customer_approval_asks_how(self):
+        """`how` is required by the endpoint on purpose — an approval nobody can point at is not
+        a record — so the form has to ask for it rather than send a placeholder that would satisfy
+        the check and record nothing."""
+        code = _js_code_only(self.SCRIPT)
+        self.assertIn("frappe.prompt", code)
+        self.assertRegex(code, r'fieldname:\s*"how"')
+        self.assertRegex(code, r'fieldname:\s*"how"[\s\S]{0,400}?reqd:\s*1')
+
+    def test_it_revokes_only_with_a_word_the_endpoint_accepts(self):
+        """`revoke_approval` throws on anything that is not 'pm' or 'customer'."""
+        code = _js_code_only(self.SCRIPT)
+        self.assertIn('revoke(frm, "pm")', code)
+        self.assertIn('revoke(frm, "customer")', code)
+
+    def test_the_approval_buttons_are_offered_only_before_submit(self):
+        """The endpoints refuse a locked change order, and a button whose only outcome is a throw
+        is worse than no button."""
+        self.assertRegex(
+            _js_code_only(self.SCRIPT), r"docstatus === 0[\s\S]{0,80}?add_approval_buttons"
+        )
+
+    def test_it_declares_nothing_at_the_top_level_that_a_second_load_would_break(self):
+        """The trap the file's own header describes. Function declarations survive being loaded
+        twice; a top-level `const` is a SyntaxError that takes every button with it."""
+        for line in _js_code_only(self.SCRIPT).splitlines():
+            self.assertFalse(
+                line.startswith(("const ", "let ", "class ")),
+                f"top-level declaration would not survive a double load: {line}",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

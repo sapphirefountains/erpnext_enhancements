@@ -62,6 +62,25 @@ def _code_only(path):
     return src
 
 
+def _doctype_js_block():
+    """The `doctype_js` dict from `hooks.py`, brace-matched.
+
+    Never slice this by splitting on the name: it appears in comments after the dict closes, and
+    the resulting assertion cannot fail. See `test_it_is_not_also_registered_as_doctype_js`.
+    """
+    src = _raw(APP_ROOT / "hooks.py")
+    start = src.index("doctype_js = {")
+    depth = 0
+    for index in range(src.index("{", start), len(src)):
+        if src[index] == "{":
+            depth += 1
+        elif src[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[start : index + 1]
+    raise AssertionError("the doctype_js dict in hooks.py is not brace-balanced")
+
+
 def _no_comments(path):
     """Source with `#` comments removed but every string literal intact.
 
@@ -588,9 +607,14 @@ class TestFormScript(unittest.TestCase):
     def test_it_is_not_also_registered_as_doctype_js(self):
         """Frappe already loads <module>/doctype/<name>/<name>.js for a DocType this app owns.
         A `doctype_js` entry appends the same file a second time with no dedupe, and a top-level
-        `const` then becomes a SyntaxError that costs the form every button."""
-        hooks = _raw(APP_ROOT / "hooks.py")
-        self.assertNotIn('"Budget Reallocation"', hooks.split("doctype_js")[-1])
+        `const` then becomes a SyntaxError that costs the form every button.
+
+        This read used to be ``hooks.split("doctype_js")[-1]``, which looks right and checks
+        nothing: `hooks.py` mentions the name in five comments that sit *after* the dict closes,
+        so the slice being searched never contained the dict and the assertion passed whether or
+        not an entry had been added. Brace-matched now, and verified to fail when one is.
+        """
+        self.assertNotIn('"Budget Reallocation"', _doctype_js_block())
 
     def test_it_proposes_no_approver_and_no_timestamp(self):
         """The server stamps both, from the session and its own clock."""
