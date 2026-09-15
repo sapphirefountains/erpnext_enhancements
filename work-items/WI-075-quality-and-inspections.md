@@ -1,6 +1,6 @@
 # WI-075 — Scope that can be inspected, and failures that get re-checked
 
-**Status:** in progress — A through M shipped, v1.446.0 → v1.462.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445). Slice 1 and Slice 2 are complete. I delivered the trigger engine; the master checklists followed as **strawmen seeded Draft** at Nik's request (v1.457.0), J made a period review compute its own numbers (v1.458.0), K made `Change Order` a real record whose added criteria reach inspections (v1.460.0), L gave a subcontractor agreement an expiry, a rate schedule and a printed hold-point list (v1.461.0), and M gave a project budget categories a reallocation cannot quietly drain (v1.462.0). Everything from v1.456.0 shifted up one when `main` took 1.455.0 for the feedback batch.
+**Status:** all fourteen sub-phases A–N shipped, v1.446.0 → v1.463.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445). Slice 1 and Slice 2 are complete. I delivered the trigger engine; the master checklists followed as **strawmen seeded Draft** at Nik's request (v1.457.0), J made a period review compute its own numbers (v1.458.0), K made `Change Order` a real record whose added criteria reach inspections (v1.460.0), L gave a subcontractor agreement an expiry, a rate schedule and a printed hold-point list (v1.461.0), M gave a project budget categories a reallocation cannot quietly drain (v1.462.0), and N gave subcontractors a scorecard that refuses to call them flawless on no evidence (v1.463.0). The four training courses remain, each authored after the feature it teaches. Everything from v1.456.0 shifted up one when `main` took 1.455.0 for the feedback batch.
 **Branch:** `claude/quality-inspections-planning-691339` (off `main` at v1.443.0)
 **Tracked:** PRJ-00580, TASK-2026-02013 with a child per deliverable (A–N)
 **Decides:** [ADR-0012](../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md)
@@ -162,10 +162,20 @@ different questions — and it is built so that filling in the categories *produ
 rather than competing with it. The rollup deliberately leaves `estimated_costing` alone on a
 project with no category lines, so WI-057's backfill can still write it without M erasing it.
 
-**What M found that N needs to know.** There are no actuals on this site at all: `tabTimesheet`
-holds 0 rows and no Purchase Invoice has submitted lines. Any measure N computes from "rework
-hours and dollars" or "days to close" has the same problem, and the same answer — report the
-coverage beside the figure rather than a confident zero.
+**What M found, and what N did with it.** There are no actuals on this site at all:
+`tabTimesheet` holds 0 rows and no Purchase Invoice has submitted lines. N hit the same wall and
+worse — every quality doctype holds 0 rows, **no `Project Contract` is a subcontractor master
+agreement** (all sixteen are `maintenance` with `party_type = Customer`; the `msa` template has
+never been used), and rework hours and certificates of insurance are recorded nowhere. So N
+carried M's coverage vocabulary forward by importing it rather than restating it, and added the
+rule a scorecard needs that a budget does not: **nothing judgeable produces no score at all** —
+`None`, never 0 and never 100. A vendor scorecard gets printed and carried into a negotiation, and
+a page saying every subcontractor is flawless is the failure.
+
+**Two gaps this programme surfaced and did not close.** Rework hours are captured nowhere, which
+keeps KPI #11 at Semi; and there is no certificate-of-insurance field on Supplier or anywhere
+else. Both are listed as measures on every scorecard with `No Source` against them, so the gap
+appears on the artifact rather than being forgotten.
 
 ### The freeze, the carry-forward, and the alert
 

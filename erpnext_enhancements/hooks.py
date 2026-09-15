@@ -1094,6 +1094,14 @@ scheduler_events = {
 		# recorded get their own block in the digest -- reported as a gap in the record, never as
 		# a lapse, because none of the existing sixteen has one.
 		"erpnext_enhancements.quality.msa_enforcement.sweep_expiring_agreements",
+		# quality (WI-075 sub-phase N): subcontractor scorecards for any CLOSED month that has
+		# none yet, then the Supplier summary stamps. Daily rather than monthly on purpose -- a
+		# prod deploy FLUSHDBs the queue redis on :11000 and silently destroys pending jobs, so a
+		# monthly job caught by a deploy is a month with no scorecards and nothing to notice. A
+		# daily job that fills gaps is self-healing, same as the Critical-NCR sweep in G.
+		# No-op while Quality Settings has the module off, which is how it ships.
+		"erpnext_enhancements.quality.scorecard_build.sweep",
+		"erpnext_enhancements.quality.scorecard_build.refresh_all_supplier_fields",
 		# training: re-grant Training Learner to anybody who owes a course and cannot
 		# open it. `roles.grant_learner_role` is correct and always was; it is only
 		# CALLED on Employee insert and on an Employee gaining a user_id, neither of

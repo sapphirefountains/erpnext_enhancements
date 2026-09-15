@@ -1,0 +1,119 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-09-15 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "label",
+  "value_display",
+  "coverage",
+  "met",
+  "column_break_detail",
+  "sample_size",
+  "threshold_display",
+  "section_note",
+  "note",
+  "value_raw",
+  "measure_key"
+ ],
+ "fields": [
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "label": "Measure",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "value_display",
+   "fieldtype": "Data",
+   "label": "Value",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "Formatted for reading. A dash means the measure had no sample to compute from -- which is not zero, and must not be read as one."
+  },
+  {
+   "fieldname": "coverage",
+   "fieldtype": "Select",
+   "label": "Coverage",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2,
+   "options": "\nTracked\nNot Tracked\nNo Source",
+   "description": "Whether the value means anything. <b>Tracked</b>: the source is in use. <b>Not Tracked</b>: the source holds no rows anywhere on this site, so a zero means nobody records this. <b>No Source</b>: nothing on this site could ever record it."
+  },
+  {
+   "fieldname": "met",
+   "fieldtype": "Select",
+   "label": "Verdict",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2,
+   "options": "\nMet\nNot Met\nNot Judged",
+   "description": "<b>Not Judged</b> is a real third answer, not a polite failure: the measure had no threshold, no usable value, or came from an instrument nobody uses."
+  },
+  {
+   "fieldname": "column_break_detail",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sample_size",
+   "fieldtype": "Int",
+   "label": "Sample",
+   "read_only": 1,
+   "description": "How many documents this was computed from. A sample of zero is why a value can be blank rather than zero."
+  },
+  {
+   "fieldname": "threshold_display",
+   "fieldtype": "Data",
+   "label": "Threshold",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_note",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note",
+   "read_only": 1
+  },
+  {
+   "fieldname": "value_raw",
+   "fieldtype": "Data",
+   "label": "Value (raw)",
+   "read_only": 1,
+   "print_hide": 1,
+   "no_copy": 1,
+   "description": "Exactly what the threshold is judged against: a bare number, or a state word such as ok / expired / unknown, or blank when the measure had no sample. Written together with Value by one builder, so the pair cannot drift -- the display string carries units and is for reading, this one is for comparing."
+  },
+  {
+   "fieldname": "measure_key",
+   "fieldtype": "Data",
+   "label": "Key",
+   "read_only": 1,
+   "print_hide": 1,
+   "no_copy": 1,
+   "description": "Stable identity. Evidence rows carry the same key, which is how a child table stands in for the grandchild table Frappe does not have."
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-15 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Quality",
+ "name": "Scorecard Measure",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "istable": 1,
+ "allow_bulk_edit": 1
+}
