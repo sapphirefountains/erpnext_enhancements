@@ -343,6 +343,17 @@
 		// role the canvas already grants for exactly that. The page's own `roles` carry
 		// the same three, so reachable() drops this link for anybody the Page refuses.
 		if (author) links.push({ key: "review", label: t("Question review"), route: ["training-review"] });
+		// Author-gated for the same reason as question review, and next to it on purpose:
+		// both are "a machine drafted this and nobody has checked it". The difference is
+		// that nothing forces this one — no gate refuses a course over an unchecked
+		// definition — so the link is the only thing that makes the queue exist at all.
+		if (author) {
+			links.push({
+				key: "glossary",
+				label: t("Glossary review"),
+				route: ["training-glossary-review"],
+			});
+		}
 		links.push({ key: "courses", label: t("Courses"), route: ["List", "Training Course"] });
 		links.push({ key: "assignments", label: t("Assignments"), route: ["List", "Training Assignment"] });
 		if (manager) {

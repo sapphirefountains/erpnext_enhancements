@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.470.0] - 2026-09-16
+
+### Added
+
+- **A glossary review queue** at `/desk/training-glossary-review`, and a link to it in the Training
+  rail beside Question review. All 717 seeded entries are AI-drafted with no reviewer and the Help
+  panel says so on every one — but **nothing is gated on it**, deliberately, because a glossary
+  entry is not an answer key. Which is exactly why the screen had to exist: the question queue is
+  forced into use by the publish gate, and nothing forces this one. A backlog with no gate and no
+  screen stays at 717 for ever.
+- **Two tabs, because the glossary has two different problems.** Reviewing is reading a definition
+  and putting a name to it. Collisions are the ones nobody would go looking for: a term matches by
+  its name *and every alias*, so two entries claiming one spelling both appear for one word.
+- **The reviewer comes from the session and the payload cannot name one** — the same rule
+  `training/review.py` keeps for questions, and for the same reason. **There is no bulk accept**: a
+  button that clears the backlog in one click makes reviewed-vs-unreviewed meaningless, and that
+  distinction is the only thing the panel has to tell a learner with.
+
+### Changed
+
+- **A two- or three-letter all-capitals spelling now matches case-sensitively.** Found on
+  production by hovering it, which is what marking up the lesson text was for: `Normally closed`
+  carries the alias `NO`, and case-insensitively that matched the English word *no* — "landscape
+  lighting on a photocell will come on at dusk **no** matter what you did at the pump panel". The
+  panel was listing an entry about relay contacts because the lesson said "no", and with the words
+  marked up that one had a dotted underline in front of the reader. `CO`, `IP`, `OL` and `PI` are
+  each one ordinary word from the same thing. Anything longer, or not in capitals, is unchanged —
+  `GFCI` does not collide with English, and *Haunching* at the start of a sentence must still match
+  `haunching`.
+- **A new entry whose name already exists in another shape now warns on save** — a message, never a
+  refusal, because the collision is sometimes correct. *Scale* on a drawing and *scale* in a basin
+  are different concepts sharing a word. On insert only: re-asking on every later save of a
+  deliberate homonym is a nag that teaches people to ignore the box.
+
+### Fixed
+
+- **Eight `X` / `X (ABBR)` duplicate pairs**, folded by patch: AHJ, ISPSC, LSI, LOTO, SDS, TDS, UV,
+  VFD. Each was one concept written twice with two independently drafted definitions, so a lesson
+  using the word showed both.
+- **The rule that decides what to merge is deliberately narrow**, because measuring found that
+  merging on name similarity would destroy a real concept: of the nine colliding names on
+  production, `Scale` / `Scale (on a drawing)` is two meanings of one word. So a pair merges only
+  when the bracket is UPPER CASE and its letters appear **in order** inside the base term. It is a
+  subsequence rather than a strict initials test because strict initials is wrong twice in this
+  glossary — *International Swimming Pool and Spa Code* abbreviates to ISPSC, skipping "and", and
+  *Ultraviolet* is one word abbreviating to UV. Checked against all nine before it shipped.
+- **A merge left the surviving entry's own `see_also` pointing at the row it had just deleted.**
+  `_repoint_see_also` skips both entries in the merge, which is right for the loser and was wrong
+  for the winner — caught by its own test, and the dead link would have been on the very entry the
+  merge was supposed to tidy.
+- **`tr-help-search-all` reached the DOM with no CSS rule.** It looked right because the button also
+  carries `tr-button`, which is precisely what the player CSS contract exists to catch.
+
+### Security
+
+- **Merging refuses an entry a person has written or checked.** It is the one button in the Training
+  module that deletes content: the losing entry must be `ai_generated` and unreviewed, every
+  spelling it answered to moves onto the winner first so no lesson stops matching a word, and every
+  other entry's `see_also` is repointed — `see_also` is a plain text field rather than a child table
+  of Links, so the framework would not have stopped the delete and nothing would ever have noticed
+  the reference had gone dead.
+
 ## [1.469.0] - 2026-09-15
 
 ### Added

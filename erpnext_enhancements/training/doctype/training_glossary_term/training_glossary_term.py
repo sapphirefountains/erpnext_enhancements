@@ -53,6 +53,34 @@ from frappe.model.document import Document
 MIN_MATCHABLE = 2
 
 
+#: Up to this many letters, an all-capital spelling is matched case-sensitively. Three, because the
+#: collisions that actually happen are two-letter (``NO``/no, ``CO``/co, ``IP``/ip) and the
+#: three-letter band still holds ordinary words — ``PIT``, ``CAP``, ``SET``. At four the shortest
+#: real collision would have to be a word like ``PIPE``, which is not an acronym anybody writes.
+SHORT_ACRONYM = 3
+
+
+def _is_short_acronym(form):
+	letters = re.sub(r"[^A-Za-z]", "", form or "")
+	if not letters or len(letters) > SHORT_ACRONYM:
+		return False
+	return letters == letters.upper()
+
+
+def normalised_spelling(value):
+	"""A spelling reduced to what a reader would call the same word.
+
+	Lower case, parenthetical dropped, punctuation flattened: ``Lock-out/tag-out`` and
+	``Lock-out tag-out`` are one word to a technician and two different strings to a database, and
+	the seeded glossary holds both. Shared by the duplicate warning here and by
+	``training/glossary_review.py``, so the two cannot disagree about what a duplicate is.
+	"""
+	text = (value or "").lower().strip()
+	text = re.sub(r"\s*\([^)]*\)\s*", " ", text)
+	text = re.sub(r"[^a-z0-9 ]+", " ", text)
+	return re.sub(r"\s+", " ", text).strip()
+
+
 def match_patterns_for(term, aliases):
 	"""Every spelling this term should be found by, longest first.
 
@@ -78,6 +106,7 @@ class TrainingGlossaryTerm(Document):
 		self._clean_aliases()
 		self._require_ordinary_meaning_for_a_trap()
 		self._reject_self_reference()
+		self._say_if_this_looks_like_one_we_have()
 
 	# ------------------------------------------------------------------ helpers
 
@@ -123,6 +152,38 @@ class TrainingGlossaryTerm(Document):
 			if line.strip().lower() == (self.term or "").lower():
 				frappe.throw(_("{0} cannot be its own See also.").format(self.term))
 
+	def _say_if_this_looks_like_one_we_have(self):
+		"""Warn — never refuse — when a new entry's name already exists in another shape.
+
+		**A message rather than a throw, because the collision is sometimes correct.** *Scale* on a
+		drawing and *scale* in a basin are different concepts that share a word, and refusing the
+		second one would be wrong. What is never right is writing it *by accident*, which is how
+		the seeded glossary ended up with *Authority having jurisdiction* and *Authority having
+		jurisdiction (AHJ)* as two entries with two independently written definitions.
+
+		**On insert only.** The question is being decided when the entry is created; re-asking it on
+		every later save of a deliberate homonym is a nag that teaches people to ignore the box.
+		"""
+		if not self.is_new():
+			return
+		key = normalised_spelling(self.term)
+		if not key:
+			return
+		for row in frappe.get_all("Training Glossary Term", fields=["name", "term"]):
+			if row["name"] == self.name:
+				continue
+			if normalised_spelling(row["term"]) == key:
+				frappe.msgprint(
+					_(
+						"There is already an entry called {0}. If this is the same thing, add this "
+						"spelling to that entry as an alias instead — two entries for one word both "
+						"show up in the Help panel."
+					).format(row["term"]),
+					title=_("That word may already be in the glossary"),
+					indicator="orange",
+				)
+				return
+
 	# ------------------------------------------------------------------ matching
 
 	def match_patterns(self):
@@ -131,15 +192,29 @@ class TrainingGlossaryTerm(Document):
 
 	@staticmethod
 	def compile_pattern(form):
-		"""A whole-word, case-insensitive matcher for one spelling.
+		"""A whole-word matcher for one spelling, case-insensitive unless it is a short acronym.
 
 		``\\b`` is wrong at an edge that is not a word character — ``Link-Seal`` and ``lock-out``
 		both end on a hyphenated part, and a trailing ``\\b`` after ``l`` is fine while a leading
 		one before ``L`` is fine too, but a term like ``+/-`` would break it. Guarding with
 		``re.escape`` plus explicit lookarounds keeps punctuation-bearing terms matchable.
+
+		**A two- or three-letter acronym matches case-sensitively, and that is not fussiness.**
+		Found on production 2026-09-15, by hovering it: ``Normally closed`` carries the alias
+		``NO``, and case-insensitively that matches the English word *no* — "landscape lighting on
+		a photocell will come on at dusk **no** matter what you did at the pump panel". The panel
+		listed a glossary entry about relay contacts because the lesson said "no", and once the
+		lesson text is marked up that word gets a dotted underline in front of the reader.
+
+		``CO``, ``IP``, ``OL`` and ``PI`` are all one ordinary word away from the same thing. An
+		acronym is written in capitals by whoever means it, so requiring them costs almost nothing
+		and stops the panel explaining a word nobody used. Anything longer, or anything not written
+		in capitals, stays case-insensitive — ``GFCI`` does not collide with English, and *Haunching*
+		at the start of a sentence must still match ``haunching``.
 		"""
 		escaped = re.escape(form)
-		return re.compile(rf"(?<![\w-]){escaped}(?![\w-])", re.IGNORECASE)
+		flags = 0 if _is_short_acronym(form) else re.IGNORECASE
+		return re.compile(rf"(?<![\w-]){escaped}(?![\w-])", flags)
 
 
 @lru_cache(maxsize=8192)
