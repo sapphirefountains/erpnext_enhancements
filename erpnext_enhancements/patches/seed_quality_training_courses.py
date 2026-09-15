@@ -49,10 +49,20 @@ def execute() -> None:
 
 	for spec in specs.COURSES:
 		title = spec["course"]["course_title"]
-		if frappe.db.exists("Training Course", {"course_title": title}):
-			skipped.append(title)
+		try:
+			if frappe.db.exists("Training Course", {"course_title": title}):
+				skipped.append(title)
+				continue
+			name = _build(spec, title)
+		except Exception:
+			# Belt and braces. `_build` already swallows, but this loop must survive anything --
+			# including a failure in the existence check itself. Seeding four draft courses is
+			# never worth aborting a deploy over.
+			frappe.log_error(
+				title="Quality training course seed failed",
+				message=f"{title}: {frappe.get_traceback()}",
+			)
 			continue
-		name = _build(spec, title)
 		if name:
 			created.append(title)
 
@@ -76,20 +86,21 @@ def _build(spec, title):
 
 	try:
 		result = author_course_from_spec(spec)
+		name = result.get("course")
+		if not name:
+			return None
+		# INSIDE the try, deliberately. In v1.464.0 this call sat outside it, threw
+		# ValidationError because the course asked for a supervisor signature with no stated
+		# criterion, and aborted `bench migrate` -- which on this repo is the production deploy.
+		_apply_course_settings(name, title)
+		return name
 	except Exception:
-		# One bad spec must not take the other three down, and must not abort the migrate.
+		# One bad course must not take the other three down, and must never abort the migrate.
 		frappe.log_error(
 			title="Quality training course seed failed",
 			message=f"{title}: {frappe.get_traceback()}",
 		)
 		return None
-
-	name = result.get("course")
-	if not name:
-		return None
-
-	_apply_course_settings(name, title)
-	return name
 
 
 def _apply_course_settings(name, title):
@@ -106,11 +117,17 @@ def _apply_course_settings(name, title):
 	doc.weight = "Required"
 	doc.auto_assign = 1
 
-	if title in specs.REQUIRES_SIGNOFF:
+	instructions = specs.REQUIRES_SIGNOFF.get(title)
+	if instructions:
 		# A practical competency: passing a quiz about the wizard is not evidence somebody can
 		# run an inspection. `training/authority.py` already knows who may sign.
+		#
+		# The instructions are set together with the flag because the controller refuses one
+		# without the other -- "a sign-off with no stated criterion is a signature on nothing".
+		# Reading both from a single mapping is what stops them drifting apart again.
 		doc.require_supervisor_signoff = 1
 		doc.signoff_supervisor_source = "Reports To"
+		doc.signoff_instructions = instructions
 
 	for applies_to, value, due_days in specs.ASSIGNMENT_RULES.get(title, ()):
 		if not _target_exists(applies_to, value):

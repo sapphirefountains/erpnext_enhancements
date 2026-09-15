@@ -81,9 +81,26 @@ ASSIGNMENT_RULES = {
 	],
 }
 
-#: Courses that ask for a supervisor's signature as well as a pass mark. Only the field course:
-#: it is a practical competency, and ``training/authority.py`` already knows who may sign.
-REQUIRES_SIGNOFF = ("Running an inspection in the field",)
+#: Courses that ask for a supervisor's signature as well as a pass mark, mapped to **what the
+#: supervisor is actually verifying**. Only the field course: it is a practical competency, and
+#: ``training/authority.py`` already knows who may sign.
+#:
+#: The instructions are not optional garnish. ``TrainingCourse._validate_signoff`` refuses to save
+#: a course that asks for a signature without saying what the signature is for -- *"a sign-off with
+#: no stated criterion is a signature on nothing"* -- and it is right to. Keeping the flag and its
+#: criterion in one mapping is what stops the two drifting apart: v1.464.0 set the flag alone, the
+#: controller threw, and because a patch that raises aborts ``bench migrate``, that took the whole
+#: production deploy down with it.
+REQUIRES_SIGNOFF = {
+	"Running an inspection in the field": (
+		"Watch this person run one full inspection on site, start to finish, without prompting. "
+		"You are confirming four things: they record what they actually observe rather than what "
+		"they expect; a measurement is the real reading in the right unit, including when it "
+		"fails; N/A is used only where a check genuinely does not apply, never where they could "
+		"not get to it; and a photo is attached wherever the check asks for one. Passing the quiz "
+		"is not evidence of any of that."
+	),
+}
 
 
 def _notice_block():

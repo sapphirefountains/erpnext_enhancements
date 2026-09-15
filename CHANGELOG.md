@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.465.1] - 2026-09-15
+
+### Fixed
+
+- **`seed_quality_training_courses` aborted `bench migrate`, which on this repo is the production
+  deploy.** v1.464.0 set `require_supervisor_signoff = 1` on the field-inspection course without
+  setting `signoff_instructions`. `TrainingCourse._validate_signoff` refuses that pairing — *"a
+  sign-off with no stated criterion is a signature on nothing"* — so `doc.save()` raised
+  `ValidationError`, the patch propagated it, and the Cloud Build step exited non-zero. **v1.464.0
+  and v1.465.0 never reached production**; prod stayed on v1.463.0 for roughly 40 minutes with no
+  outward sign beyond the failed build.
+- **No data damage.** The migrate rolled back cleanly: no course, version, lesson or question was
+  created, the course count stayed at 14, and the patch is absent from `tabPatch Log`. This was a
+  deploy that refused to finish, not a half-applied one — the failure mode the "patches must never
+  raise" rule exists to prevent, arriving through the one patch that was written to obey it.
+
+### Changed
+
+- **The sign-off flag and its criterion now live in one mapping.** `REQUIRES_SIGNOFF` was a tuple
+  of course titles; it is now `{title: instructions}`, and the patch reads both from it. Two fields
+  the controller requires together cannot be set apart if there is only one place to set them.
+  The criterion itself is worth reading: it asks a supervisor to watch one full inspection and
+  confirm four specific behaviours, and says outright that passing the quiz is not evidence of any
+  of them.
+- **The patch is now structurally incapable of aborting a migrate.** `_apply_course_settings` was
+  called *outside* the `try` that was meant to contain exactly this, so a settings failure escaped
+  while a spec failure would have been caught. It now sits inside, and the loop in `execute()`
+  carries its own guard so even a failure in the existence check cannot propagate. Seeding four
+  draft courses is never worth a failed deploy.
+
+### Notes
+
+- **The test that was supposed to prevent this passed the whole time.**
+  `test_the_patch_cannot_abort_the_deploy` greps the source for `except Exception` and a `return`.
+  Both were present — in a `try` block that did not enclose the call that threw. **A source check
+  cannot see control flow**, and this one produced confident false assurance about the exact hazard
+  it named.
+- So there is now a **behavioural** test: `TestPatchCannotAbortAMigrate` imports the patch against
+  a throwaway fake `frappe`, injects the failure at the precise call that failed in production, and
+  asserts `execute()` returns normally and logs four errors. Negative-tested by restoring the
+  v1.464.0 shape — the new test fails, and the old source-grep test still passes, which is the
+  point. The source check is kept: it is cheap and it catches a different mistake.
+- The rest of `TrainingCourse.validate` was read end to end before shipping this, to avoid a second
+  failed deploy. `passing_score` (80), `max_attempts` (3) and `min_video_coverage` (80) all default
+  inside `_validate_gates`' bounds; `Position` and `Role` are both in `RULE_TARGET_DOCTYPES`; and
+  `weight` is set to Required before any rule is appended, so `_validate_rules` does not object.
+- Nothing else about the courses changed. They are still created `Draft`, still assign nobody, and
+  publishing one is still the act of adopting it.
+
 ## [1.465.0] - 2026-09-15
 
 ### Added

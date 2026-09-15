@@ -220,8 +220,27 @@ class TestAssignmentRules(unittest.TestCase):
         """A practical competency. Passing a quiz about the wizard is not evidence somebody can
         run an inspection."""
         self.assertEqual(
-            specs.REQUIRES_SIGNOFF, ("Running an inspection in the field",)
+            set(specs.REQUIRES_SIGNOFF), {"Running an inspection in the field"}
         )
+
+    def test_every_signoff_course_says_what_is_being_verified(self):
+        """`TrainingCourse._validate_signoff` refuses the flag without a criterion -- *"a sign-off
+        with no stated criterion is a signature on nothing"*.
+
+        v1.464.0 set the flag alone. The controller threw, and because a patch that raises aborts
+        `bench migrate`, that took the whole production deploy down. Flag and criterion now live
+        in one mapping so they cannot drift apart again.
+        """
+        for title, instructions in specs.REQUIRES_SIGNOFF.items():
+            with self.subTest(title):
+                self.assertTrue((instructions or "").strip(), title)
+                self.assertGreater(len(instructions), 80, title)
+
+    def test_the_patch_sets_the_criterion_whenever_it_sets_the_flag(self):
+        source = _code_only(PATCH)
+        entry = source.split("def _apply_course_settings(", 1)[1]
+        self.assertIn("require_supervisor_signoff = 1", entry)
+        self.assertIn("signoff_instructions", entry)
 
 
 class TestNothingPublishes(unittest.TestCase):
@@ -276,6 +295,90 @@ class TestNothingPublishes(unittest.TestCase):
         source = _raw(SPECS)
         self.assertIn("training_enabled = 1", source)
         self.assertIn("no longer true", source)
+
+
+class TestPatchCannotAbortAMigrate(unittest.TestCase):
+    """The test that should have existed before v1.464.0.
+
+    `TestNothingPublishes.test_the_patch_cannot_abort_the_deploy` greps the source for
+    `except Exception` and a `return`. Both were present, it passed, and the patch still aborted
+    a production migrate -- because the call that threw, `_apply_course_settings`, sat *outside*
+    the try block the grep found. A source check cannot see control flow.
+
+    So this one runs `execute()` for real against a fake frappe, with the failure injected at the
+    exact place it actually happened, and asserts nothing propagates.
+    """
+
+    def _run_execute_with(self, settings_raises):
+        """Import the patch against a throwaway fake frappe and run `execute()`.
+
+        Returns (raised_exception_or_None, logged_error_count).
+        """
+        import importlib
+        import types
+
+        logged = []
+
+        class _FakeDB:
+            def exists(self, doctype, *a, **k):
+                # True for the REQUIRED_DOCTYPES guard at the top of execute(), False for the
+                # "does this course already exist" check -- so every course is actually built.
+                return doctype == "DocType"
+
+            def commit(self):
+                pass
+
+        fake = types.ModuleType("frappe")
+        fake.db = _FakeDB()
+        fake.log_error = lambda **kw: logged.append(kw)
+        fake.get_traceback = lambda: "traceback"
+
+        def _get_doc(*a, **k):
+            raise AssertionError("should not be reached in this test")
+
+        fake.get_doc = _get_doc
+
+        authoring = types.ModuleType("erpnext_enhancements.api.training_course_authoring")
+        authoring.author_course_from_spec = lambda spec: {"course": "TRN-CRS-00001"}
+
+        saved = {k: sys.modules.get(k) for k in
+                 ("frappe", "erpnext_enhancements.api.training_course_authoring")}
+        sys.modules["frappe"] = fake
+        sys.modules["erpnext_enhancements.api.training_course_authoring"] = authoring
+        try:
+            mod = importlib.import_module(
+                "erpnext_enhancements.patches.seed_quality_training_courses"
+            )
+            mod = importlib.reload(mod)
+            if settings_raises:
+                mod._apply_course_settings = lambda name, title: (_ for _ in ()).throw(
+                    RuntimeError("Say what the supervisor is verifying.")
+                )
+            else:
+                mod._apply_course_settings = lambda name, title: None
+            raised = None
+            try:
+                mod.execute()
+            except Exception as exc:
+                raised = exc
+            return raised, len(logged)
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = v
+
+    def test_a_failure_applying_course_settings_never_propagates(self):
+        """This is the exact v1.464.0 failure, reproduced. It must be swallowed and logged."""
+        raised, logged = self._run_execute_with(settings_raises=True)
+        self.assertIsNone(raised, f"execute() propagated {raised!r} and would abort the migrate")
+        self.assertEqual(logged, len(specs.COURSES))
+
+    def test_the_happy_path_still_creates_every_course(self):
+        raised, logged = self._run_execute_with(settings_raises=False)
+        self.assertIsNone(raised)
+        self.assertEqual(logged, 0)
 
 
 class TestContentSafety(unittest.TestCase):
