@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.468.1] - 2026-09-15
+
+### Fixed
+
+- **The v1.468.0 rebuild failed on all ten technician courses and said nothing.** Measured on
+  production after the deploy: every course still carried its v1.467.0 lessons, `creation` and
+  `modified` both stamped at the original 15:42 seed, and the 31 chapters that release was supposed
+  to have cleared. `Patch Log` recorded the patch as applied.
+- **The cause is an ordering mistake, and the framework was right to stop it.**
+  `rebuild_draft_from_spec` deleted the draft's lessons and *then* dropped the questions those
+  lessons had minted. But `Training Question.source_lesson` is a **Link**, so `check_if_doc_is_linked`
+  runs on every `frappe.delete_doc` and throws `LinkExistsError` — the first lesson of every course,
+  ten times, caught by the per-course `except` that exists to stop one bad course aborting the
+  migrate. The questions are now released **before** the lessons: the orphaned AI drafts are deleted,
+  and whatever the three drop-guards spare (reviewed, hand-written, or still drawn by a pool on
+  another version) keeps its text and loses only its pointer to a lesson that is going.
+- **The other five doctypes that Link to a lesson are still allowed to refuse.**
+  `Training Attempt Question`, `Training Checkpoint`, `Training Question Thread`,
+  `Training Submission` and `Training Video Chapter` are a learner or an author having done
+  something, and forcing the delete past them would leave those links dangling — exactly what the
+  check exists to prevent. A rebuild that refuses is recoverable; a video chapter anchored to a
+  lesson that no longer exists is not.
+- **What made it invisible for a release was the counting, not the bug.** A course that *raised* was
+  appended to neither the `rebuilt` nor the `skipped` list, so the summary printed
+  `0 rebuilt, 0 left alone` — a line indistinguishable from a site with nothing to do — while the
+  only real trace was ten Error Logs nobody was reading. There is now a `failed` bucket, it is
+  printed whatever it holds, and a test asserts rebuilt + skipped + failed equals the course count
+  under every outcome.
+- **`rebuild_draft_from_spec` had one test and it read the source rather than running it.** A patch
+  runs once, so `patches/rebuild_technician_course_drafts_after_link_fix.py` re-runs the fixed code
+  on the site it was written for; it is idempotent, because a rebuild makes the draft match the spec.
+  The shared frappe stub's `delete_doc` now refuses a linked row the way the real one does, and
+  `TestRebuildDraftFromSpec` runs the function against it — **sixteen** new tests across the two
+  suites, **fourteen** of them checked against the v1.468.0 code and confirmed to fail on it. The
+  other two cover the empty cases (no open draft, a draft with no lessons), which were never broken.
+
 ## [1.468.0] - 2026-09-15
 
 ### Added
