@@ -102,16 +102,16 @@ COURSES = (
 	module_10_design_pm.COURSE,
 )
 
-#: Where the badge artwork is served from. These are static app assets rather than uploaded Files,
-#: so there is no ``File`` record and no upload validation in play — the patch writes this path
-#: straight into ``Training Badge.image``, which is an ``Attach Image`` field and stores a URL.
+#: Where the badge artwork is served from. **Imported rather than restated**: the five starter
+#: badges in ``training/setup.py`` live in the same directory, and two copies of a path is two
+#: places a directory move can half-happen. ``setup.py`` is the home because it is the module that
+#: provisions badges, and it imports nothing but ``frappe`` — so this costs no import weight.
 #:
-#: **A raw ``/assets`` path is served immutable for a year with no content hash** — the same fact
-#: behind this app's rule that global JS and CSS ship as esbuild bundles. An image referenced from a
-#: database field has no bundling option, and it does not matter while the artwork never changes. It
-#: matters the day somebody redraws one: an edit in place will not reach a browser that has already
-#: cached it, for up to a year. **Give a redrawn badge a new filename** rather than overwriting.
-BADGE_IMAGE_BASE = "/assets/erpnext_enhancements/images/training/badges"
+#: These are static app assets rather than uploaded Files, so there is no ``File`` record and no
+#: upload validation in play; the patch writes the path straight into ``Training Badge.image``,
+#: which is an ``Attach Image`` field and stores a URL. The immutable-caching consequence — and the
+#: rule that a redrawn badge needs a new filename — is documented beside the constant itself.
+from erpnext_enhancements.training.setup import BADGE_IMAGE_BASE
 
 #: One badge per module, which is what was asked for. ``criteria_type`` is **Course Completed** and
 #: the patch resolves ``criteria_course`` to the course it just created — the only criterion in

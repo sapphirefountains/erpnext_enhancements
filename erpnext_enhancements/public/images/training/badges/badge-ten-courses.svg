@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Ten Courses: Finished ten courses">
+<title>Ten Courses — Finished ten courses</title>
+<circle cx="128" cy="128" r="124" fill="#55265f"/>
+<circle cx="128" cy="128" r="102" fill="#00111c"/>
+<circle cx="128" cy="128" r="112" fill="none" stroke="#f8f8f8" stroke-width="2" opacity=".55"/>
+<circle cx="128" cy="128" r="102" fill="none" stroke="#f8f8f8" stroke-width="1.5" opacity=".35"/>
+
+<g transform="translate(128 120) scale(1.22) translate(-128 -118)">
+<path d="M96 66h64v36a32 32 0 0 1-64 0z" fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M96 76H78a4 4 0 0 0-4 4c0 16 10 26 22 28M160 76h18a4 4 0 0 1 4 4c0 16-10 26-22 28" fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M128 134v16M110 166h36M118 150h20l6 16h-32z" fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M128 78l6 12 13 2-9 9 2 13-12-6-12 6 2-13-9-9 13-2z" fill="#b14fc5"/>
+</g>
+<rect x="100" y="212" width="56" height="30" rx="15" fill="#f8f8f8"/>
+<g transform="translate(116.0 218) scale(1.0)" fill="none" stroke="#00111c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5 6 0v18" transform="translate(0 0)"/><path d="M1.5 4.5a3.5 3.5 0 0 1 7 0v9a3.5 3.5 0 0 1-7 0z" transform="translate(14 0)"/></g>
+</svg>

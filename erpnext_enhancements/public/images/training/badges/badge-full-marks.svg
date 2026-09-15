@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Full Marks: Scored 100% on a quiz">
+<title>Full Marks — Scored 100% on a quiz</title>
+<circle cx="128" cy="128" r="124" fill="#62cbc9"/>
+<circle cx="128" cy="128" r="102" fill="#00111c"/>
+<circle cx="128" cy="128" r="112" fill="none" stroke="#f8f8f8" stroke-width="2" opacity=".55"/>
+<circle cx="128" cy="128" r="102" fill="none" stroke="#f8f8f8" stroke-width="1.5" opacity=".35"/>
+
+<g fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="122" cy="126" r="50"/>
+  <circle cx="122" cy="126" r="28"/>
+</g>
+<circle cx="122" cy="126" r="9" fill="#62cbc9"/>
+<path d="M122 126l50-50" fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round"/>
+<path d="M172 76l-16 1M172 76l-1 16M162 86l-16 1M162 86l-1 16" fill="none" stroke="#62cbc9" stroke-width="6" stroke-linecap="round"/>
+<rect x="96" y="212" width="64" height="30" rx="15" fill="#f8f8f8"/>
+<g transform="translate(109.0 218) scale(1.0)" fill="none" stroke="#00111c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5 6 0v18" transform="translate(0 0)"/><path d="M1.5 4.5a3.5 3.5 0 0 1 7 0v9a3.5 3.5 0 0 1-7 0z" transform="translate(14 0)"/><path d="M1.5 4.5a3.5 3.5 0 0 1 7 0v9a3.5 3.5 0 0 1-7 0z" transform="translate(28 0)"/></g>
+</svg>

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Five Courses: Finished five courses">
+<title>Five Courses — Finished five courses</title>
+<circle cx="128" cy="128" r="124" fill="#00609c"/>
+<circle cx="128" cy="128" r="102" fill="#00111c"/>
+<circle cx="128" cy="128" r="112" fill="none" stroke="#f8f8f8" stroke-width="2" opacity=".55"/>
+<circle cx="128" cy="128" r="102" fill="none" stroke="#f8f8f8" stroke-width="1.5" opacity=".35"/>
+
+<g fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="78" y="146" width="100" height="22" rx="4"/>
+  <rect x="84" y="118" width="88" height="22" rx="4" transform="rotate(-3 128 129)"/>
+  <rect x="80" y="90" width="96" height="22" rx="4" transform="rotate(2 128 101)"/>
+</g>
+<path d="M98 157h20M108 129h24M106 101h30" fill="none" stroke="#99bfd7" stroke-width="4" stroke-linecap="round"/>
+<path d="M172 54l6 13 14 2-10 10 2 14-12-7-12 7 2-14-10-10 14-2z" fill="#99bfd7"/>
+<rect x="100" y="212" width="56" height="30" rx="15" fill="#f8f8f8"/>
+<g transform="translate(123.0 218) scale(1.0)" fill="none" stroke="#00111c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M9 0H2.2l-.8 8c2-1.6 7.4-1.8 7.4 3.6 0 6-6.5 6.4-8.3 4" transform="translate(0 0)"/></g>
+</svg>

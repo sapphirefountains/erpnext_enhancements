@@ -1000,3 +1000,12 @@ erpnext_enhancements.patches.seed_quality_position_requirements
 # Insert-only, keyed on course title and badge name; a re-run gives a badge to a course that already
 # has none.
 erpnext_enhancements.patches.seed_technician_training_program
+# Artwork for the five starter badges. `training/setup.py`'s ensure_training_badges is insert-only
+# by design (a badge an admin renamed or disabled stays that way), so adding an `image` to
+# STARTER_BADGES reaches a fresh install and NO existing site -- prod has held all five since
+# Phase 4 and would have rendered empty circles forever. Sets the field only where it is empty, so
+# an image somebody chose is never walked over. Note the sentinel trap it is written around:
+# db.get_value returns None for BOTH "no such row" and "field IS NULL", and on prod all five hold
+# NULL -- so existence is asked separately with db.exists, or the patch would have skipped every
+# badge and reported success. Idempotent; a second run finds the field set and does nothing.
+erpnext_enhancements.patches.backfill_starter_badge_images

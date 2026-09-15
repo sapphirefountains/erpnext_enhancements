@@ -65,13 +65,24 @@ def ensure_training_categories():
 # course-scoped kinds (Course Completed, Category Completed) would need a course
 # or category that may not exist yet, and a badge pointing at a missing link is
 # worse than no badge.
+#: Where every badge's artwork is served from, and the single home for that path — the ten
+#: Technician Program badges import this rather than restating it, so the directory cannot move
+#: for half of them.
+#:
+#: **A raw ``/assets`` path is served immutable for a year with no content hash** — the same fact
+#: behind this app's rule that global JS and CSS ship as esbuild bundles. An image referenced from a
+#: database field has no bundling option, and it does not matter while the artwork never changes. It
+#: matters the day somebody redraws one: an edit in place will not reach a browser that has already
+#: cached it, for up to a year. **Give a redrawn badge a new filename** rather than overwriting it.
+BADGE_IMAGE_BASE = "/assets/erpnext_enhancements/images/training/badges"
+
 STARTER_BADGES = (
-	# (name, description, criteria_type, criteria_value, points)
-	("First Course", "Finished your first course.", "First Completion", None, 10),
-	("Full Marks", "Scored 100% on a quiz.", "Perfect Score", None, 15),
-	("Five Courses", "Finished five courses.", "Courses Completed Count", "5", 25),
-	("Ten Courses", "Finished ten courses.", "Courses Completed Count", "10", 50),
-	("Steady Week", "Trained on seven days in a row.", "Streak Days", "7", 20),
+	# (name, description, criteria_type, criteria_value, points, image file)
+	("First Course", "Finished your first course.", "First Completion", None, 10, "badge-first-course.svg"),
+	("Full Marks", "Scored 100% on a quiz.", "Perfect Score", None, 15, "badge-full-marks.svg"),
+	("Five Courses", "Finished five courses.", "Courses Completed Count", "5", 25, "badge-five-courses.svg"),
+	("Ten Courses", "Finished ten courses.", "Courses Completed Count", "10", 50, "badge-ten-courses.svg"),
+	("Steady Week", "Trained on seven days in a row.", "Streak Days", "7", 20, "badge-steady-week.svg"),
 )
 
 
@@ -93,8 +104,10 @@ def ensure_training_badges():
 		# Phase 4 may not have migrated on this site yet. Not an error: the badge
 		# doctype arriving later is exactly what the next migrate is for.
 		return
-	for name, description, criteria_type, criteria_value, points in STARTER_BADGES:
+	for name, description, criteria_type, criteria_value, points, image in STARTER_BADGES:
 		if frappe.db.exists("Training Badge", name):
+			# Insert-only, which is why the artwork needed a backfill patch of its own for the
+			# sites that already had these five: `patches/backfill_starter_badge_images.py`.
 			continue
 		try:
 			frappe.get_doc(
@@ -105,6 +118,9 @@ def ensure_training_badges():
 					"criteria_type": criteria_type,
 					"criteria_value": criteria_value,
 					"points": points,
+					# A static app asset, not an uploaded File -- `image` is an Attach Image
+					# field and stores a URL, so there is no File record to create.
+					"image": f"{BADGE_IMAGE_BASE}/{image}",
 					"enabled": 1,
 				}
 			).insert(ignore_permissions=True)

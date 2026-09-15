@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.467.1] - 2026-09-15
+
+### Added
+
+- **Artwork for the five starter badges** — `First Course`, `Full Marks`, `Five Courses`,
+  `Ten Courses` and `Steady Week` now carry the SVGs drawn for them, so all fifteen badges on the
+  site have a picture rather than ten having one and five showing an empty circle.
+- `BADGE_IMAGE_BASE` now has **one home**, in `training/setup.py`, and
+  `training/technician_program/` imports it instead of keeping a second copy. Two copies of a path
+  is two places a directory move can half-happen.
+
+### Fixed
+
+- **`ensure_training_badges` is insert-only, so the artwork alone would have reached nobody.**
+  That rule is correct — a badge an admin renamed, re-priced or disabled must stay that way — and
+  its consequence is that adding an `image` to `STARTER_BADGES` reaches a fresh install and **no
+  existing site**. Production has held all five badges since Phase 4, so without a backfill they
+  would have gone on rendering as empty circles while the code said they had pictures.
+  `patches/backfill_starter_badge_images` fills the field **only where it is empty**, so an image
+  somebody chose is never walked over.
+- **And that patch nearly shipped as a silent no-op.** `frappe.db.get_value` returns `None` for
+  **both** "no such row" and "the field is NULL" — and measured on production 2026-09-15, all five
+  badges hold `image IS NULL`, not `''`. The obvious `if current is None: continue`, written to
+  mean *"this site does not have that badge"*, would therefore have read every one of them as
+  absent, skipped all five, committed nothing and printed a cheerful success line. Existence is
+  asked separately, with `db.exists`, before the value is read at all.
+- This is a **cousin** of the trap `CLAUDE.md` already records rather than the same one. The
+  recorded trap is a *new* field whose `default` the `ALTER` writes into every existing row, so a
+  backfill keyed on emptiness matches nothing. Here `image` is an existing field with no default and
+  the rows really are empty — what bites is not the predicate but **the sentinel a read returns for
+  two different facts**.
+
+### Notes
+
+- 21 bench-free tests in `tests/test_starter_badge_artwork.py`, on their own CI step. The
+  NULL-handling guard is **behavioural** — it runs the real `execute()` against rows that return
+  `None` and asserts they get written — because a source grep for `db.exists` would pass on a
+  version that called it for the wrong reason. Negative-tested by reintroducing the bug, which
+  fails 8 tests including the one named for it.
+- Also pinned: an image somebody chose is never overwritten, `modified` is left untouched (a
+  cosmetic backfill should not make five records look freshly edited in every timeline), a second
+  run writes nothing, a write failure cannot abort the migrate, every declared file exists on disk,
+  no SVG carries a script or an external reference, and each file names the badge it belongs to —
+  a cheap guard against filing the trophy under Steady Week.
+
 ## [1.467.0] - 2026-09-15
 
 ### Added

@@ -708,6 +708,18 @@ jobs:
       # it -- the exact way v1.464.0's patch guard passed and still took a deploy down.
       - name: Training question review (the gate needs a door, and the signature must be real)
         run: python -m unittest erpnext_enhancements.tests.test_training_review -v
+      # Artwork for the five starter badges. `ensure_training_badges` is insert-only by design, so
+      # adding an image to STARTER_BADGES reaches a fresh install and NO existing site -- prod has
+      # held all five since Phase 4 and would show empty circles while the code said otherwise.
+      # The guard that matters is behavioural: `db.get_value` returns None for BOTH "no such row"
+      # and "the field is NULL", and on prod all five hold NULL, so the obvious
+      # `if current is None: continue` would have read every badge as absent, skipped all five,
+      # committed nothing and printed a success line. This runs the real execute() against rows
+      # that return None and asserts they get written. Also pins that an image somebody chose is
+      # never overwritten, that `modified` is left alone, and that the asset path has ONE home --
+      # technician_program imports it from setup.py rather than keeping a second copy.
+      - name: Starter badge artwork (NULL is not "no such row")
+        run: python -m unittest erpnext_enhancements.tests.test_starter_badge_artwork -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk
