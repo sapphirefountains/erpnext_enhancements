@@ -1425,6 +1425,7 @@
 				column.appendChild(TR.renderBlock(block, ctx));
 			});
 			main.appendChild(column);
+			glossRoot = column;
 
 			// A lesson that asks for a hand-in (requires_submission) shows the submit
 			// box between the content and the Q&A. Its "already submitted / graded"
@@ -1460,8 +1461,31 @@
 		// different: during a quiz the server sends definitions only and withholds every
 		// term that appears in the lesson's quiz pool. Reusing a lesson-mode payload on
 		// the quiz screen would show the explanations the server just declined to send.
-		var helpState = { key: null, inQuiz: false, open: false, busy: false, data: null, error: null };
+		var helpState = {
+			key: null,
+			inQuiz: false,
+			open: false,
+			busy: false,
+			data: null,
+			error: null,
+			// What the reader typed into the panel's filter box.
+			query: "",
+			// Terms reached by following a See also link or opening a search hit. Kept apart from
+			// `data.terms` because those are "the words in this lesson" and these are not -- a
+			// cross-reference can point at a word the lesson never uses.
+			extra: {},
+			// Whole-glossary search: only ever populated outside a quiz, because the server
+			// refuses it inside one.
+			search: null,
+			searching: false,
+			// The term to scroll to and flash after the next repaint.
+			focus: null,
+		};
 		var helpWrap = null;
+		// The rendered block column of the lesson on screen. Glossary marks are written into it,
+		// so it is held rather than re-found: re-querying the document would also reach the Help
+		// panel's own copies of the same words and mark those too.
+		var glossRoot = null;
 
 		// The lesson-view work-submission box (WI-071 Phase F). Reset per lesson, same
 		// as qaState: a different lesson is a different hand-in.
@@ -1613,6 +1637,10 @@
 				.then(function (payload) {
 					helpState.busy = false;
 					helpState.data = payload || {};
+					// The lesson's own text, marked where each term first appears. Not in quiz
+					// mode: the quiz view renders questions rather than blocks, and the terms it
+					// was given are the suppressed set anyway.
+					if (!inQuiz) markGlossary(glossRoot, helpState.data.terms || []);
 					repaintHelp();
 				})
 				.catch(function (err) {
@@ -1641,8 +1669,20 @@
 					busy: false,
 					data: null,
 					error: null,
+					query: "",
+					extra: {},
+					search: null,
+					searching: false,
+					focus: null,
 				};
 			}
+
+			// Fetched on render rather than on the toggle, and that is a deliberate reversal.
+			// The panel alone could stay lazy; the marks in the lesson text cannot, because a
+			// reader hovering a word has not opened anything. Measured on production, a lesson's
+			// payload is 42-67 KB for 42-67 terms -- one round trip per lesson, and the reader
+			// who never opens the panel still gets the words in front of them explained.
+			if (!helpState.data && !helpState.busy && !helpState.error) loadHelp(key, inQuiz);
 
 			var wrap = el("div", "tr-help");
 			helpWrap = wrap;
@@ -1654,11 +1694,9 @@
 				"tr-button tr-button-quiet tr-help-toggle",
 				function () {
 					helpState.open = !helpState.open;
-					// Fetch on first open, never on render: otherwise this is an extra round
-					// trip per lesson on a portal opened on phones, on site — the same reason
-					// the Q&A panel and the leaderboard are lazy.
-					if (helpState.open && !helpState.data && !helpState.busy) loadHelp(key, inQuiz);
-					else repaintHelp();
+					// The fetch has already been started by the render above, for the marks in
+					// the lesson text. This is now only the disclosure.
+					repaintHelp();
 				}
 			);
 			toggle.setAttribute("aria-expanded", helpState.open ? "true" : "false");
@@ -1677,16 +1715,42 @@
 			if (helpState.error) region.appendChild(el("p", "tr-help-error", helpState.error));
 
 			var data = helpState.data || {};
-			var terms = data.terms || [];
+			var lessonTerms = data.terms || [];
+			var query = String(helpState.query || "").trim().toLowerCase();
 
-			if (!helpState.busy && !helpState.error && !terms.length) {
+			// A filter box, because a lesson matches around fifty-seven terms and scrolling an
+			// alphabet is not reading. Rendered whenever there is anything to filter, before the
+			// list, and it keeps its own focus across the repaint it causes -- a search box that
+			// drops focus after one keystroke can only be used one letter at a time.
+			if (lessonTerms.length || query) {
+				region.appendChild(helpSearchBox(query));
+			}
+
+			var terms = query
+				? lessonTerms.filter(function (entry) {
+						return matchesQuery(entry, query);
+				  })
+				: lessonTerms;
+
+			// Terms reached by a See also link or a search hit. Shown above the lesson's own list
+			// and labelled, because "this word is in your lesson" and "you went looking for this
+			// word" are different claims and the panel should not blur them.
+			var extras = [];
+			Object.keys(helpState.extra).forEach(function (key) {
+				var entry = helpState.extra[key];
+				if (!query || matchesQuery(entry, query)) extras.push(entry);
+			});
+
+			if (!helpState.busy && !helpState.error && !terms.length && !extras.length) {
 				region.appendChild(
 					el(
 						"p",
 						"tr-muted",
-						data.withheld
-							? t("Every term from this lesson is hidden while you are answering.")
-							: t("No glossary terms were found in this lesson yet.")
+						query
+							? fmt(t("Nothing in this lesson matches {0}."), [helpState.query])
+							: data.withheld
+								? t("Every term from this lesson is hidden while you are answering.")
+								: t("No glossary terms were found in this lesson yet.")
 					)
 				);
 			}
@@ -1694,9 +1758,14 @@
 			// `entry`, not `term`: test_training_boundary_contract only sees a key as READ when
 			// it is read off one of its RESPONSE_BINDERS, and a row bound to any other name is
 			// invisible to the scan -- which files a real read as a deliberate asymmetry.
+			extras.forEach(function (entry) {
+				region.appendChild(helpTerm(entry, true));
+			});
 			terms.forEach(function (entry) {
 				region.appendChild(helpTerm(entry));
 			});
+
+			region.appendChild(helpSearchResults(query));
 
 			// Said out loud rather than left as a silent gap. A panel that quietly drops
 			// words teaches a learner that Help is unreliable; one that states the rule
@@ -1740,9 +1809,337 @@
 			return node;
 		}
 
-		function helpTerm(entry) {
+		// ------------------------------------------------------ glossary in the lesson text
+
+		// One shared popover for the whole player. A node per marked word would be dozens of
+		// hidden elements in the accessibility tree saying nothing until somebody hovered one.
+		var glossPop = null;
+		var glossOpenFor = null;
+
+		// Marking every occurrence of "bonding" in a lesson that says it fourteen times turns the
+		// page into a field of dotted underlines and stops meaning anything. The FIRST occurrence
+		// of each term is marked and the rest are left alone -- a reader who has met the word once
+		// does not need it flagged again, and the panel still lists every one of them.
+		var GLOSS_MARK_LIMIT = 150;
+
+		function glossSkip(node) {
+			// Never inside something already interactive, already marked, or inside Help itself:
+			// the panel contains the same words, and marking those makes a term explain itself.
+			for (var at = node; at && at !== document.body; at = at.parentNode) {
+				var tag = (at.tagName || "").toLowerCase();
+				if (tag === "a" || tag === "button" || tag === "code" || tag === "pre") return true;
+				if (at.classList && (at.classList.contains("tr-gloss") || at.classList.contains("tr-help"))) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		function glossPattern(form) {
+			// The server's whole-word rule, in a dialect every browser has. A lookbehind would read
+			// better and Safari only learned it in 16.4, so the preceding character is captured
+			// instead and its length added back when the offset is used.
+			var esc = String(form).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+			return new RegExp("(^|[^\\w-])(" + esc + ")(?![\\w-])", "i");
+		}
+
+		function markGlossary(root, terms) {
+			if (!root || !terms || !terms.length) return;
+
+			// Longest spelling first across ALL terms, so "breakpoint chlorination" claims the
+			// phrase before "breakpoint" can take the first half of it.
+			var forms = [];
+			terms.forEach(function (entry) {
+				(entry.spellings || []).forEach(function (form) {
+					if (form) forms.push({ form: form, entry: entry });
+				});
+			});
+			// `left`/`right` rather than the usual `a`/`b`: `b` is the boot payload throughout this
+			// file, and test_training_boundary_contract reads any `b.something` as a key the player
+			// takes off a server reply. A sort comparator named `b` files `b.form` as a key the
+			// server never sends -- a true statement about a variable that has nothing to do with
+			// the server.
+			forms.sort(function (left, right) {
+				return String(right.form).length - String(left.form).length;
+			});
+
+			var marked = {};
+			var count = 0;
+			forms.forEach(function (candidate) {
+				if (count >= GLOSS_MARK_LIMIT) return;
+				if (marked[candidate.entry.term]) return;
+				if (markFirst(root, candidate)) {
+					marked[candidate.entry.term] = true;
+					count += 1;
+				}
+			});
+		}
+
+		function markFirst(root, candidate) {
+			var pattern = glossPattern(candidate.form);
+			var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+			var node;
+			while ((node = walker.nextNode())) {
+				var text = node.nodeValue || "";
+				var hit = pattern.exec(text);
+				if (!hit) continue;
+				if (glossSkip(node.parentNode)) continue;
+
+				var start = hit.index + hit[1].length;
+				var word = hit[2];
+				var tail = node.splitText(start);
+				tail.splitText(word.length);
+
+				var mark = el("button", "tr-gloss", word);
+				mark.type = "button";
+				mark.setAttribute("aria-label", fmt(t("What does {0} mean?"), [word]));
+				bindGloss(mark, candidate.entry);
+				tail.parentNode.replaceChild(mark, tail);
+				return true;
+			}
+			return false;
+		}
+
+		function bindGloss(mark, entry) {
+			// Hover for a mouse, focus for a keyboard, click for a finger. A tooltip that answers
+			// only to hover does not exist on the phone this course is read on, and one that cannot
+			// be reached by Tab is one a screen reader never announces.
+			mark.addEventListener("mouseenter", function () {
+				showGloss(mark, entry);
+			});
+			mark.addEventListener("focus", function () {
+				showGloss(mark, entry);
+			});
+			mark.addEventListener("mouseleave", hideGloss);
+			mark.addEventListener("blur", hideGloss);
+			mark.addEventListener("click", function (event) {
+				event.preventDefault();
+				if (glossOpenFor === entry.term) hideGloss();
+				else showGloss(mark, entry);
+			});
+		}
+
+		function showGloss(mark, entry) {
+			hideGloss();
+			glossOpenFor = entry.term;
+
+			var pop = el("div", "tr-gloss-pop");
+			pop.id = "tr-gloss-pop";
+			pop.setAttribute("role", "tooltip");
+			pop.appendChild(el("strong", "tr-gloss-word", entry.term || ""));
+			if (entry.trade_trap && entry.ordinary_meaning) {
+				pop.appendChild(el("span", "tr-gloss-trap", t("Not what it sounds like.")));
+			}
+			pop.appendChild(el("span", "tr-gloss-plain", entry.short_definition || ""));
+			// Short on purpose. The panel holds the explanation and the worked example, and a
+			// tooltip long enough to carry those is a tooltip covering the sentence the reader was
+			// in the middle of.
+			pop.appendChild(
+				button(t("Full entry"), "tr-gloss-more", function () {
+					hideGloss();
+					openTerm(entry.term);
+				})
+			);
+
+			mark.setAttribute("aria-describedby", pop.id);
+			mark.parentNode.insertBefore(pop, mark.nextSibling);
+			glossPop = pop;
+		}
+
+		function hideGloss() {
+			if (glossPop && glossPop.parentNode) {
+				var owner = glossPop.previousSibling;
+				if (owner && owner.removeAttribute) owner.removeAttribute("aria-describedby");
+				glossPop.parentNode.removeChild(glossPop);
+			}
+			glossPop = null;
+			glossOpenFor = null;
+		}
+
+		// ------------------------------------------------------ opening one term
+
+		function knownTerm(name) {
+			var wanted = String(name || "").toLowerCase();
+			var found = null;
+			((helpState.data || {}).terms || []).forEach(function (entry) {
+				if (!found && String(entry.term || "").toLowerCase() === wanted) found = entry;
+			});
+			return found || helpState.extra[wanted] || null;
+		}
+
+		function openTerm(name) {
+			if (!name) return;
+			helpState.open = true;
+			helpState.error = null;
+			helpState.focus = name;
+
+			if (knownTerm(name)) {
+				repaintHelp();
+				return;
+			}
+
+			// Not among this lesson's words, so it has to be fetched. A See also can point at a term
+			// the lesson never uses -- which is also why the lesson goes with the request: the
+			// server has to apply the quiz rule to a word the panel never had the chance to
+			// suppress, rather than inheriting an answer that was about a different set.
+			helpState.busy = true;
+			repaintHelp();
+			call("glossaryTerm", {
+				course: state.courseName,
+				term: name,
+				lesson_key: helpState.key,
+				in_quiz: helpState.inQuiz ? 1 : 0,
+			})
+				.then(function (payload) {
+					helpState.busy = false;
+					var data = payload || {};
+					if (data.entry) {
+						helpState.extra[String(data.entry.term || "").toLowerCase()] = data.entry;
+					} else if (data.withheld) {
+						helpState.error = t("That word is hidden while the quiz is open.");
+					} else {
+						helpState.error = fmt(t("There is no glossary entry for {0} yet."), [name]);
+					}
+					repaintHelp();
+				})
+				.catch(function (err) {
+					helpState.busy = false;
+					helpState.error = (err && err.message) || t("Could not load that term.");
+					repaintHelp();
+				});
+		}
+
+		// ------------------------------------------------------ searching
+
+		function runGlossarySearch(query) {
+			helpState.searching = true;
+			repaintHelp();
+			call("glossarySearch", {
+				course: state.courseName,
+				query: query,
+				in_quiz: helpState.inQuiz ? 1 : 0,
+			})
+				.then(function (payload) {
+					helpState.searching = false;
+					helpState.search = payload || { terms: [], more: 0 };
+					repaintHelp();
+				})
+				.catch(function () {
+					helpState.searching = false;
+					helpState.search = { terms: [], more: 0 };
+					repaintHelp();
+				});
+		}
+
+		function matchesQuery(entry, query) {
+			return String(entry.term || "").toLowerCase().indexOf(query) !== -1;
+		}
+
+		function helpSearchBox(query) {
+			var row = el("div", "tr-help-search");
+			var input = document.createElement("input");
+			input.type = "search";
+			input.className = "tr-help-search-input";
+			input.value = helpState.query || "";
+			input.placeholder = t("Find a word…");
+			input.setAttribute("aria-label", t("Find a word in the glossary"));
+			input.addEventListener("input", function () {
+				helpState.query = input.value;
+				// A new filter invalidates the last whole-glossary answer. Leaving it on screen
+				// shows results for a word the reader has finished typing over.
+				helpState.search = null;
+				repaintHelp();
+			});
+			row.appendChild(input);
+
+			// Focus survives the repaint that every keystroke causes. Without this the box can
+			// only be used one letter at a time, which is not a search box.
+			if (helpState.query) {
+				setTimeout(function () {
+					if (!input.parentNode) return;
+					input.focus();
+					var end = input.value.length;
+					try {
+						input.setSelectionRange(end, end);
+					} catch (err) {
+						// `setSelectionRange` throws on type="search" in some browsers. The focus
+						// is the part that matters; the caret position is a nicety.
+					}
+				}, 0);
+			}
+			return row;
+		}
+
+		function helpSearchResults(query) {
+			var wrap = el("div", "tr-help-found");
+			if (!query) return wrap;
+
+			// Whole-glossary search is closed while a quiz is open, and the panel says so rather
+			// than showing an empty result that reads like a broken search. The lesson's own
+			// terms -- already suppressed -- are still filtered by the box above.
+			if (helpState.inQuiz) {
+				wrap.appendChild(
+					el("p", "tr-help-note", t("Searching the whole glossary is closed while the quiz is open."))
+				);
+				return wrap;
+			}
+
+			if (helpState.searching) {
+				wrap.appendChild(el("p", "tr-muted", t("Searching the glossary…")));
+				return wrap;
+			}
+
+			if (!helpState.search) {
+				wrap.appendChild(
+					button(
+						fmt(t("Search the whole glossary for {0}"), [helpState.query]),
+						"tr-button tr-button-quiet tr-help-search-all",
+						function () {
+							runGlossarySearch(helpState.query);
+						}
+					)
+				);
+				return wrap;
+			}
+
+			var hits = helpState.search.terms || [];
+			if (!hits.length) {
+				wrap.appendChild(
+					el("p", "tr-muted", fmt(t("No glossary entry matches {0}."), [helpState.query]))
+				);
+				return wrap;
+			}
+
+			wrap.appendChild(el("h3", "tr-help-found-head", t("Elsewhere in the glossary")));
+			hits.forEach(function (entry) {
+				wrap.appendChild(helpTerm(entry, true));
+			});
+			if (helpState.search.more) {
+				wrap.appendChild(
+					el(
+						"p",
+						"tr-help-note",
+						fmt(t("{0} more match. Try a longer word."), [helpState.search.more])
+					)
+				);
+			}
+			return wrap;
+		}
+
+		function helpTerm(entry, elsewhere) {
 			var item = el("div", "tr-help-term");
+			if (elsewhere) item.classList.add("is-elsewhere");
 			item.appendChild(el("h3", "tr-help-word", entry.term || ""));
+
+			// The term somebody just asked for, brought into view and flashed. Scrolling a panel
+			// to a heading without marking it leaves the reader hunting for what changed.
+			if (helpState.focus && String(helpState.focus).toLowerCase() === String(entry.term || "").toLowerCase()) {
+				helpState.focus = null;
+				item.classList.add("is-focused");
+				setTimeout(function () {
+					if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
+				}, 0);
+			}
 
 			// The trap line goes ABOVE the definition on purpose. Somebody who thinks they
 			// already know the word does not read the definition — telling them first that
@@ -1776,10 +2173,24 @@
 				item.appendChild(ex);
 			}
 
+			// See also is a list of other terms, so each one is a way to get to that term rather
+			// than a sentence naming it. `see_also` is a plain text field on the entry, not a
+			// child table of Links, so a name in it can point at a term that was renamed, disabled
+			// or never written -- `openTerm` answers that with a sentence in the panel rather than
+			// a dead button, which is the only honest thing to do with a reference that may not
+			// resolve.
 			if ((entry.see_also || []).length) {
-				item.appendChild(
-					el("p", "tr-help-seealso", t("See also") + ": " + entry.see_also.join(", "))
-				);
+				var also = el("p", "tr-help-seealso");
+				also.appendChild(el("span", null, t("See also") + ": "));
+				entry.see_also.forEach(function (name, i) {
+					if (i) also.appendChild(el("span", null, ", "));
+					also.appendChild(
+						button(name, "tr-help-seealso-link", function () {
+							openTerm(name);
+						})
+					);
+				});
+				item.appendChild(also);
 			}
 
 			// A definition somebody has stood behind and one a machine wrote last week are

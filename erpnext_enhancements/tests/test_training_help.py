@@ -61,6 +61,18 @@ HELP_CLASSES = (
     "tr-help-example-label",
     "tr-help-example-body",
     "tr-help-seealso",
+    "tr-help-seealso-link",
+    "tr-help-search",
+    "tr-help-search-input",
+    "tr-help-search-all",
+    "tr-help-found",
+    "tr-help-found-head",
+    "tr-gloss",
+    "tr-gloss-pop",
+    "tr-gloss-word",
+    "tr-gloss-trap",
+    "tr-gloss-plain",
+    "tr-gloss-more",
     "tr-help-draft",
     "tr-help-note",
     "tr-help-error",
@@ -261,6 +273,212 @@ class TestQuizMode(unittest.TestCase):
         self.assertFalse(served["unreviewed"])
 
 
+TERM_B = {
+    "name": "GT-2",
+    "term": "Invert",
+    "aliases": "",
+    "short_definition": "The inside bottom of a pipe.",
+    "trade_trap": 1,
+    "ordinary_meaning": "Turning something upside down.",
+    "explanation": "<p>The level you actually measure to.</p>",
+    "example": "A drain tie-in that misses by an inch.",
+    "see_also": "Haunching",
+    "ai_generated": 1,
+    "reviewed_by": None,
+}
+
+
+class _Glossary:
+    """A fake site holding two terms, one lesson and one quiz pool."""
+
+    def __init__(self, lesson_text="", pool_text="", terms=(TERM, TERM_B)):
+        self.terms = [dict(t) for t in terms]
+        self.lesson_text = lesson_text
+        self.pool_text = pool_text
+
+    def get_all(self, doctype, **kw):
+        if doctype == "Training Glossary Term":
+            return [dict(t) for t in self.terms]
+        if doctype == "Training Content Block":
+            return [{"heading": "", "content": self.lesson_text, "caption": "", "data": ""}]
+        if doctype == "Training Quiz Question":
+            return ["Q-1"] if self.pool_text else []
+        if doctype == "Training Question":
+            return [{"question_text": self.pool_text}] if self.pool_text else []
+        if doctype == "Training Answer Option":
+            return []
+        return []
+
+    def load(self):
+        return _load_help({"get_all": self.get_all, "get_doc": lambda *a, **k: None})
+
+
+class TestTheOrderTheLessonUsesThem(unittest.TestCase):
+    """A-Z is the wrong order for a list of fifty-seven.
+
+    The word somebody has just read sits at a random position in an alphabetical list, so the panel
+    reads as a dictionary bolted to the page rather than as a key to the thing in front of them.
+    """
+
+    def _terms(self, text):
+        site = _Glossary(lesson_text=text)
+        mod, saved = site.load()
+        try:
+            return [e["term"] for e in mod.help_for_lesson("LSN-1", False)["terms"]]
+        finally:
+            _restore(saved)
+
+    def test_first_mentioned_comes_first(self):
+        self.assertEqual(self._terms("The invert matters, and haunching carries it."), ["Invert", "Haunching"])
+
+    def test_and_the_other_way_round(self):
+        self.assertEqual(self._terms("Haunching first, then the invert."), ["Haunching", "Invert"])
+
+    def test_an_alias_counts_as_an_appearance(self):
+        """"haunch" is an alias of Haunching. A lesson that only ever says the alias still used the
+        word, and ordering on the term's own spelling alone would put it last."""
+        self.assertEqual(self._terms("Pack the haunch, then check the invert."), ["Haunching", "Invert"])
+
+
+class TestTheSpellingsComeBack(unittest.TestCase):
+    """The player marks the word where the lesson uses it, so it needs to know how it was spelled."""
+
+    def _entry(self, text, term="Haunching"):
+        site = _Glossary(lesson_text=text)
+        mod, saved = site.load()
+        try:
+            for entry in mod.help_for_lesson("LSN-1", False)["terms"]:
+                if entry["term"] == term:
+                    return entry
+            return None
+        finally:
+            _restore(saved)
+
+    def test_the_matched_alias_is_returned(self):
+        entry = self._entry("Pack the haunch properly.")
+        self.assertIn("haunch", entry["spellings"])
+
+    def test_every_matched_spelling_is_returned_not_just_the_first(self):
+        """The old matcher stopped at the first spelling that hit, which answers "is it here" and
+        cannot tell the player which words in the text to mark."""
+        entry = self._entry("Haunching, haunch and haunches all appear.")
+        self.assertEqual(sorted(entry["spellings"], key=str.lower), ["haunch", "haunches", "Haunching"])
+
+    def test_longest_first(self):
+        """So the client can try them in order and a short spelling cannot claim the first half of
+        a long one."""
+        entry = self._entry("Haunching, haunch and haunches all appear.")
+        lengths = [len(s) for s in entry["spellings"]]
+        self.assertEqual(lengths, sorted(lengths, reverse=True))
+
+    def test_a_spelling_that_did_not_match_is_absent(self):
+        entry = self._entry("Only the haunch is mentioned.")
+        self.assertEqual(entry["spellings"], ["haunch"])
+
+    def test_a_term_reached_by_search_has_none(self):
+        """There is no occurrence to point at, and an empty list says that rather than lying."""
+        site = _Glossary()
+        mod, saved = site.load()
+        try:
+            self.assertEqual(mod.search_glossary("invert")["terms"][0]["spellings"], [])
+        finally:
+            _restore(saved)
+
+
+class TestOneTermByName(unittest.TestCase):
+    """The See also link, and a search hit being opened."""
+
+    def _call(self, term, pool_text="", in_quiz=False):
+        site = _Glossary(lesson_text="Haunching and invert.", pool_text=pool_text)
+        mod, saved = site.load()
+        try:
+            return mod.term_help(term, lesson="LSN-1" if pool_text else None, in_quiz=in_quiz)
+        finally:
+            _restore(saved)
+
+    def test_a_known_term_comes_back(self):
+        self.assertEqual(self._call("Invert")["entry"]["term"], "Invert")
+
+    def test_the_lookup_is_case_insensitive(self):
+        self.assertEqual(self._call("invert")["entry"]["term"], "Invert")
+
+    def test_an_unknown_term_is_none_rather_than_an_error(self):
+        """`see_also` is a plain text field, not a child table of Links, so it can name a term that
+        was renamed or never written. That is a sentence in the panel, not an exception."""
+        found = self._call("Nothing like this")
+        self.assertIsNone(found["entry"])
+        self.assertEqual(found["withheld"], 0)
+
+    # ------------------------------------------------------------------ the quiz rule
+
+    def test_a_term_the_pool_gives_away_is_withheld(self):
+        """The panel's suppression is computed from the terms the LESSON uses. A See also can point
+        outside that set, so the pool has to be asked about this term directly -- otherwise the one
+        word a question turns on stays reachable in two clicks from a word that is safe."""
+        found = self._call("Invert", pool_text="What is the invert of the pipe?", in_quiz=True)
+        self.assertIsNone(found["entry"])
+        self.assertEqual(found["withheld"], 1)
+
+    def test_a_term_the_pool_does_not_mention_is_served(self):
+        found = self._call("Invert", pool_text="A question about something else.", in_quiz=True)
+        self.assertEqual(found["entry"]["term"], "Invert")
+
+    def test_and_it_is_served_in_quiz_shape(self):
+        found = self._call("Invert", pool_text="A question about something else.", in_quiz=True)
+        self.assertEqual(found["entry"]["explanation"], "")
+        self.assertEqual(found["entry"]["example"], "")
+
+    def test_outside_a_quiz_the_pool_is_irrelevant(self):
+        found = self._call("Invert", pool_text="What is the invert of the pipe?", in_quiz=False)
+        self.assertEqual(found["entry"]["term"], "Invert")
+        self.assertTrue(found["entry"]["explanation"])
+
+
+class TestSearchingTheGlossary(unittest.TestCase):
+    def _search(self, query, in_quiz=False):
+        site = _Glossary()
+        mod, saved = site.load()
+        try:
+            return mod.search_glossary(query, in_quiz=in_quiz)
+        finally:
+            _restore(saved)
+
+    def test_a_word_is_found(self):
+        self.assertEqual([e["term"] for e in self._search("invert")["terms"]], ["Invert"])
+
+    def test_an_alias_is_found(self):
+        self.assertEqual([e["term"] for e in self._search("haunches")["terms"]], ["Haunching"])
+
+    def test_the_word_itself_sorts_above_one_that_merely_contains_it(self):
+        site = _Glossary(terms=(TERM, TERM_B, dict(TERM, name="GT-3", term="Inverted siphon", aliases="")))
+        mod, saved = site.load()
+        try:
+            hits = mod.search_glossary("invert")["terms"]
+            self.assertEqual(hits[0]["term"], "Invert")
+        finally:
+            _restore(saved)
+
+    def test_one_character_finds_nothing(self):
+        """A single letter matches most of the glossary and answers nothing."""
+        self.assertEqual(self._search("i")["terms"], [])
+
+    def test_an_empty_query_finds_nothing(self):
+        self.assertEqual(self._search("")["terms"], [])
+        self.assertEqual(self._search("   ")["terms"], [])
+
+    # ------------------------------------------------------------------ the quiz rule
+
+    def test_search_is_closed_during_a_quiz(self):
+        """The panel's suppression is answerable because the lesson is known. A free search over
+        the whole glossary has no equivalent guarantee, and approximating one would be worse than
+        saying so -- the suppressed panel is still there mid-question."""
+        self.assertEqual(self._search("invert", in_quiz=True)["terms"], [])
+        self.assertEqual(self._search("invert", in_quiz=True)["more"], 0)
+
+    def test_a_search_result_is_served_in_full_outside_a_quiz(self):
+        self.assertTrue(self._search("invert")["terms"][0]["explanation"])
+
+
 class TestSuppressionIsServerSide(unittest.TestCase):
     def test_the_pool_is_read_from_the_lesson_not_the_caller(self):
         """`_pool_text` takes a lesson and looks the pool up. Nothing about which questions to
@@ -411,6 +629,19 @@ class TestTheWiring(unittest.TestCase):
             with self.subTest(cls):
                 self.assertIn(f".{cls}", css)
 
+    def test_every_palette_token_used_is_declared(self):
+        """A `var(--tr-whatever)` that nothing declares does not fail — it falls back.
+
+        Which is the trap. The fallback is the light-theme colour written inline beside it, so the
+        rule looks perfect until somebody switches to dark and that one element stays pale. It has
+        happened twice here: `--tr-danger` for `--tr-bad`, and `--tr-surface-2` for
+        `--tr-surface-alt`, both introduced by Help rules and both invisible in light mode.
+        """
+        css = _raw(PLAYER_CSS)
+        declared = set(re.findall(r"^\s*(--tr-[a-z0-9-]+)\s*:", css, re.M))
+        used = set(re.findall(r"var\((--tr-[a-z0-9-]+)", css))
+        self.assertEqual(sorted(used - declared), [], "these tokens are read but never declared")
+
     def test_no_help_rule_declares_the_palette(self):
         """--tr-* may be declared in player.css only, and the Help rules READ it rather than adding
         to it — but a new token here would still be a silent divergence from the three-way dark
@@ -421,6 +652,200 @@ class TestTheWiring(unittest.TestCase):
 
     def test_this_suite_runs_in_ci(self):
         self.assertIn("erpnext_enhancements.tests.test_training_help", _raw(CI))
+
+
+class TestTheGlossaryIsReachable(unittest.TestCase):
+    """Somebody has to be able to find the table to correct it.
+
+    Until v1.469.0 `Training Glossary Term` was linked from **no workspace at all** — the doctype
+    appeared in exactly one file in the repo, its own. The only route to 717 AI-drafted definitions
+    was typing the doctype name into the awesomebar, which is not a route anybody finds. A glossary
+    nobody can reach to correct is a glossary that stays wrong.
+    """
+
+    WORKSPACE = APP_ROOT / "training" / "workspace" / "training" / "training.json"
+    PATCH = APP_ROOT / "patches" / "reload_training_workspace_for_glossary.py"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ws = json.loads(_raw(cls.WORKSPACE))
+
+    def test_the_workspace_links_it(self):
+        labels = [row.get("link_to") for row in self.ws["links"]]
+        self.assertIn("Training Glossary Term", labels)
+
+    def test_it_sits_under_authoring(self):
+        """Writing a definition is authoring, and putting it under Setup files it with the
+        switches nobody opens twice."""
+        card = None
+        for row in self.ws["links"]:
+            if row.get("type") == "Card Break":
+                card = row.get("label")
+            elif row.get("link_to") == "Training Glossary Term":
+                self.assertEqual(card, "Authoring")
+                return
+        self.fail("the glossary link is not in the workspace at all")
+
+    def test_a_forced_reload_ships_with_it(self):
+        """`import_file` compares the file's `modified` against the row and SILENTLY skips when the
+        row is not older, so a workspace edit reaches a fresh install and no existing site. This
+        module has been caught by that before."""
+        self.assertTrue(self.PATCH.exists())
+        src = _raw(self.PATCH)
+        self.assertIn('reload_doc("training", "workspace", "training", force=True)', src)
+        self.assertIn(
+            "erpnext_enhancements.patches.reload_training_workspace_for_glossary",
+            _raw(APP_ROOT / "patches.txt"),
+        )
+
+    def test_the_patch_cannot_abort_a_migrate(self):
+        """A workspace card is not worth a half-finished deploy."""
+        src = _raw(self.PATCH)
+        self.assertIn("except Exception:", src)
+        self.assertIn("frappe.log_error(", src)
+
+    def test_an_author_can_actually_edit_it(self):
+        """Reachable and read-only would be a worse answer than not reachable at all."""
+        doctype = json.loads(_raw(DOCTYPE_JSON))
+        writers = {p["role"] for p in doctype.get("permissions", []) if p.get("write")}
+        self.assertIn("Training Author", writers)
+        self.assertIn("Training Manager", writers)
+
+    def test_a_learner_still_holds_no_permission(self):
+        """The mid-quiz suppression is only real because a learner cannot fetch the table."""
+        doctype = json.loads(_raw(DOCTYPE_JSON))
+        roles = {p["role"] for p in doctype.get("permissions", [])}
+        self.assertNotIn("Training Learner", roles)
+
+
+class TestTheWordsInTheLessonAreMarked(unittest.TestCase):
+    """Hover-to-define, and the three things that decide whether it is usable."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js = _strip_js_comments(_raw(PLAYER))
+
+    def test_the_payload_is_fetched_on_render_not_on_the_toggle(self):
+        """The panel alone could stay lazy. The marks cannot: a reader hovering a word has not
+        opened anything, so a fetch that waits for the toggle means hover does nothing until the
+        reader has already found the answer another way."""
+        block = self.js.split("function renderHelp(", 1)[1][:2000]
+        self.assertIn("loadHelp(key, inQuiz)", block)
+        toggle = self.js.split('t("What does that mean?")', 1)[1][:600]
+        self.assertNotIn("loadHelp(", toggle)
+
+    def test_only_the_first_occurrence_of_a_term_is_marked(self):
+        """A lesson that says "bonding" fourteen times would otherwise become a field of dotted
+        underlines, which stops meaning anything."""
+        self.assertIn("marked[candidate.entry.term]", self.js)
+        self.assertIn("GLOSS_MARK_LIMIT", self.js)
+
+    def test_longest_spelling_first(self):
+        """So "breakpoint chlorination" claims the phrase before "breakpoint" takes half of it."""
+        block = self.js.split("function markGlossary(", 1)[1][:1200]
+        self.assertIn("forms.sort", block)
+        self.assertIn("length - String(left.form).length", block)
+
+    def test_the_mark_is_reachable_by_keyboard_and_by_touch(self):
+        """Hover alone is not an interaction on the phone this course is read on, and a mark that
+        cannot be reached by Tab is one a screen reader never announces."""
+        block = self.js.split("function bindGloss(", 1)[1][:900]
+        for event in ("mouseenter", "focus", "click"):
+            with self.subTest(event):
+                self.assertIn('addEventListener("' + event + '"', block)
+
+    def test_the_mark_is_a_button_with_a_label(self):
+        block = self.js.split("function markFirst(", 1)[1][:1200]
+        self.assertIn('el("button", "tr-gloss", word)', block)
+        self.assertIn('setAttribute("aria-label"', block)
+
+    def test_marking_never_descends_into_the_help_panel(self):
+        """The panel lists the same words. Marking those makes a term explain itself."""
+        block = self.js.split("function glossSkip(", 1)[1][:800]
+        self.assertIn('contains("tr-help")', block)
+        self.assertIn('contains("tr-gloss")', block)
+
+    def test_the_lesson_text_is_not_marked_during_a_quiz(self):
+        block = self.js.split("function loadHelp(", 1)[1][:1200]
+        self.assertIn("if (!inQuiz) markGlossary(", block)
+
+    def test_the_tooltip_carries_the_definition_and_not_the_teaching(self):
+        """A tooltip long enough to hold the explanation and the worked example is a tooltip
+        covering the sentence the reader was in the middle of."""
+        block = self.js.split("function showGloss(", 1)[1][:1200]
+        self.assertIn("entry.short_definition", block)
+        self.assertNotIn("entry.explanation", block)
+        self.assertNotIn("entry.example", block)
+
+
+class TestSeeAlsoIsReachable(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.js = _strip_js_comments(_raw(PLAYER))
+
+    def test_each_see_also_is_a_button(self):
+        block = self.js.split("entry.see_also.forEach(", 1)[1][:500]
+        self.assertIn("tr-help-seealso-link", block)
+        self.assertIn("openTerm(name)", block)
+
+    def test_a_term_already_loaded_is_not_fetched_again(self):
+        block = self.js.split("function openTerm(", 1)[1][:1400]
+        self.assertIn("if (knownTerm(name))", block)
+
+    def test_the_fetch_sends_the_lesson_so_the_quiz_rule_can_be_applied(self):
+        """A cross-reference can point at a word the lesson never uses, which the panel therefore
+        never had the chance to suppress."""
+        block = self.js.split('call("glossaryTerm"', 1)[1][:400]
+        self.assertIn("lesson_key: helpState.key", block)
+        self.assertIn("in_quiz: helpState.inQuiz", block)
+
+    def test_the_fetch_sends_the_course_docname(self):
+        """state.course carries no `name` key, so `state.course.name` is undefined and
+        JSON.stringify DROPS the argument. That bug has shipped twice in this module."""
+        for endpoint in ('call("glossaryTerm"', 'call("glossarySearch"'):
+            with self.subTest(endpoint):
+                block = self.js.split(endpoint, 1)[1][:400]
+                self.assertIn("course: state.courseName", block)
+                self.assertNotIn("state.course.name", block)
+
+    def test_a_reference_that_resolves_to_nothing_says_so(self):
+        """`see_also` is a plain text field, not a child table of Links, so it can name a term that
+        was renamed, disabled or never written."""
+        block = self.js.split("function openTerm(", 1)[1][:1800]
+        self.assertIn("There is no glossary entry for", block)
+
+
+class TestSearchingFromThePanel(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.js = _strip_js_comments(_raw(PLAYER))
+
+    def test_the_box_filters_the_lesson_list_without_a_round_trip(self):
+        self.assertIn("matchesQuery(entry, query)", self.js)
+
+    def test_the_box_keeps_focus_across_the_repaint_it_causes(self):
+        """Every keystroke repaints the panel. Without this the box can only be used one letter at
+        a time, which is not a search box."""
+        block = self.js.split("function helpSearchBox(", 1)[1][:1400]
+        self.assertIn("input.focus()", block)
+
+    def test_the_whole_glossary_search_is_a_deliberate_second_step(self):
+        """Filtering what is already loaded costs nothing; searching 717 entries is a request, and
+        it should happen because somebody asked rather than on every keystroke."""
+        block = self.js.split("function helpSearchResults(", 1)[1][:2000]
+        self.assertIn("tr-help-search-all", block)
+        self.assertIn("runGlossarySearch(helpState.query)", block)
+
+    def test_the_panel_says_search_is_closed_during_a_quiz(self):
+        """Rather than showing an empty result, which reads as a broken search."""
+        block = self.js.split("function helpSearchResults(", 1)[1][:2000]
+        self.assertIn("if (helpState.inQuiz)", block)
+        self.assertIn("closed while the quiz is open", block)
+
+    def test_a_new_keystroke_drops_the_last_whole_glossary_answer(self):
+        """Leaving it up shows results for a word the reader has finished typing over."""
+        block = self.js.split("function helpSearchBox(", 1)[1][:1400]
+        self.assertIn("helpState.search = null", block)
 
 
 class TestAFieldIsRenderedAsWhatItIs(unittest.TestCase):

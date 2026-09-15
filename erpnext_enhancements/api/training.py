@@ -2513,6 +2513,39 @@ def lesson_help(course, lesson_key, in_quiz=0):
 
 
 @frappe.whitelist(methods=["POST"])
+def glossary_term(course, term, lesson_key=None, in_quiz=0):
+    """One glossary term by name — a **See also** link, or a search result being opened.
+
+    The panel answers "what do the words in this lesson mean". This answers "what does *that* word
+    mean", where *that* word was reached by following a cross-reference out of an entry, and may
+    not occur in the lesson at all.
+
+    Which is exactly why it takes ``lesson_key``: the panel's quiz suppression is computed from the
+    terms the lesson uses, and a link can step outside that set. ``training/help.py`` therefore
+    asks the pool about this term directly rather than inheriting the panel's answer — otherwise
+    the one word a question turns on stays reachable in two clicks from a word that is safe.
+    """
+    from erpnext_enhancements.training import help as training_help
+
+    return training_help.get_term_help(course, term, lesson_key=lesson_key, in_quiz=in_quiz)
+
+
+@frappe.whitelist(methods=["POST"])
+def glossary_search(course, query, in_quiz=0):
+    """Search the whole glossary by word or alias.
+
+    Gated on a course the learner can actually open, so this is not an open dictionary endpoint
+    hanging off the site — and **closed during a quiz**. The panel's suppression is answerable
+    because the lesson is known; a free search over the whole glossary has no equivalent
+    guarantee, and approximating one would be worse than saying so. The suppressed panel is still
+    there mid-question.
+    """
+    from erpnext_enhancements.training import help as training_help
+
+    return training_help.get_glossary_search(course, query, in_quiz=in_quiz)
+
+
+@frappe.whitelist(methods=["POST"])
 def submit_lesson_work(course, lesson_key, file=None, text=None, block_key=None):
     """Hand in a file against a lesson that asks for one. Delegates to :mod:`training.submissions`.
 

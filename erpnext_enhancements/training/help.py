@@ -67,7 +67,8 @@ from frappe import _
 from frappe.utils import cint
 
 from erpnext_enhancements.training.doctype.training_glossary_term.training_glossary_term import (
-	TrainingGlossaryTerm,
+	compiled_pattern,
+	match_patterns_for,
 )
 from erpnext_enhancements.training.doctype.training_settings.training_settings import runtime_ready
 
@@ -147,10 +148,14 @@ def _lesson_text(lesson):
 	draft — the authoring canvas wants to preview Help too, and a helper that only works after
 	publication would be discovered useless at exactly the wrong moment.
 	"""
+	# `idx`, explicitly. `get_all` orders by `creation` unless told otherwise, and on a child table
+	# that is the order the rows were WRITTEN -- close enough to reading order to look right and not
+	# the same thing, which matters now that the panel lists terms in the order the lesson uses them.
 	rows = frappe.get_all(
 		"Training Content Block",
 		filters={"parent": lesson, "parenttype": "Training Lesson"},
 		fields=["heading", "content", "caption", "data"],
+		order_by="idx asc",
 	)
 	parts = []
 	for row in rows:
@@ -198,21 +203,36 @@ def _pool_text(lesson):
 
 
 def _matches(terms, haystack):
-	"""The terms that actually occur in ``haystack``.
+	"""The terms that actually occur in ``haystack``, with where and how.
 
-	Longest spelling first inside a single entry means "breakpoint chlorination" is preferred to
-	"breakpoint" when both are aliases of the same term. Across entries both still match, which is
-	right — they are two words and a learner may want either.
+	Returns ``[{"row": …, "at": int, "forms": [spelling, …]}]``. Two things beyond "does it occur",
+	and each one buys a feature:
+
+	* ``at`` is the offset of the **earliest** occurrence of any of its spellings, which is what
+	  lets the panel list terms in the order the lesson uses them. Alphabetical is the wrong order
+	  for a list of fifty-seven: the word somebody just read is in a random position in it.
+	* ``forms`` is **every** spelling that matched, not the first. The player marks up the lesson
+	  text itself, and marking only the term's own name would miss the alias a lesson actually
+	  used. Longest first, so the client can try them in order and a short spelling cannot claim
+	  the first half of a long one.
+
+	Note the deliberate loss of the old early ``break``: it stopped at the first matching spelling,
+	which was enough to answer "is it here" and not enough for either of the above.
 	"""
 	if not haystack:
 		return []
 	found = []
 	for row in terms:
-		doc = frappe.get_doc({"doctype": "Training Glossary Term", **row})
-		for form in doc.match_patterns():
-			if TrainingGlossaryTerm.compile_pattern(form).search(haystack):
-				found.append(row)
-				break
+		at = None
+		forms = []
+		for form in match_patterns_for(row.get("term"), row.get("aliases")):
+			hit = compiled_pattern(form).search(haystack)
+			if hit:
+				forms.append(form)
+				if at is None or hit.start() < at:
+					at = hit.start()
+		if forms:
+			found.append({"row": row, "at": at, "forms": forms})
 	return found
 
 
@@ -234,11 +254,28 @@ def _plain(value):
 	return _INLINE_TAG.sub("", value or "").strip()
 
 
-def _serve(row, in_quiz):
-	"""One term, trimmed to what this context is allowed to show."""
+def _suppressed(hits, lesson):
+	"""The names of the terms this lesson's quiz pool gives away.
+
+	Split out of ``help_for_lesson`` because the single-term lookup and the search need the same
+	answer, and a second implementation of "what must not be shown during a quiz" is the one piece
+	of duplication in this module that could actually hand somebody a mark.
+	"""
+	rows = [hit["row"] for hit in hits]
+	return {hit["row"]["name"] for hit in _matches(rows, _pool_text(lesson))}
+
+
+def _serve(row, in_quiz, forms=()):
+	"""One term, trimmed to what this context is allowed to show.
+
+	``forms`` is the spellings that actually matched the lesson. The player uses them to mark the
+	word where it appears in the text; an entry the reader reached by searching has none, and that
+	is not a missing value — there is no occurrence to point at.
+	"""
 	trap = cint(row["trade_trap"])
 	out = {
 		"term": row["term"],
+		"spellings": list(forms),
 		"short_definition": _plain(row["short_definition"]),
 		"trade_trap": trap,
 		"ordinary_meaning": _plain(row["ordinary_meaning"]) if trap else "",
@@ -266,14 +303,18 @@ def help_for_lesson(lesson, in_quiz=False):
 
 	withheld = 0
 	if in_quiz:
-		hidden = {r["name"] for r in _matches(present, _pool_text(lesson))}
+		hidden = _suppressed(present, lesson)
 		withheld = len(hidden)
-		present = [r for r in present if r["name"] not in hidden]
+		present = [hit for hit in present if hit["row"]["name"] not in hidden]
 
-	present.sort(key=lambda r: (r["term"] or "").lower())
+	# In the order the lesson uses them, alphabetically only to break a tie. A lesson matches
+	# around fifty-seven terms, and in an A-Z list the word somebody has just read sits in a
+	# random position -- so the list reads as a dictionary bolted to the page rather than as a
+	# key to the thing in front of them.
+	present.sort(key=lambda hit: (hit["at"], (hit["row"]["term"] or "").lower()))
 	shown = present[:MAX_TERMS]
 	return {
-		"terms": [_serve(r, in_quiz) for r in shown],
+		"terms": [_serve(hit["row"], in_quiz, hit["forms"]) for hit in shown],
 		# Two counts, because they mean different things to a reader: `withheld` is the rule working
 		# and is worth saying out loud on screen; `more` is just a long lesson. A total is
 		# deliberately NOT sent -- it is `terms.length + more`, and a number the client can compute
@@ -340,3 +381,110 @@ def get_lesson_help(course, lesson_key, in_quiz=0):
 
 	_visible_or_throw(user, course)
 	return help_for_lesson(_lesson_row(course, lesson_key), in_quiz=in_quiz)
+
+
+# ------------------------------------------------------------------- one term, and searching
+
+
+#: A search shorter than this matches most of the glossary and answers nothing. Two, not three,
+#: for the same reason `MIN_MATCHABLE` is two: a technician looking up "CO" or "IP" is asking a
+#: real question.
+MIN_QUERY = 2
+
+#: How many search hits come back. A search is a question with an answer in mind, so a long list
+#: means the query was too broad and scrolling it is not the fix.
+MAX_HITS = 40
+
+
+def _term_row(term):
+	"""One enabled glossary row by name, or ``None``.
+
+	Read through `_enabled_terms` rather than by docname so `enabled` and the served field list are
+	honoured in exactly one place. A term somebody has disabled must be unreachable by a See also
+	link too, or disabling it only hides it from the panel.
+	"""
+	wanted = (term or "").strip().lower()
+	if not wanted:
+		return None
+	for row in _enabled_terms():
+		if (row.get("term") or "").strip().lower() == wanted:
+			return row
+	return None
+
+
+def _gives_an_answer_away(row, lesson):
+	"""Whether this term's own text appears in the lesson's quiz pool.
+
+	The panel's suppression asks this of the terms the lesson uses. A See also link reaches outside
+	that set -- the target need not appear in the lesson at all -- so the question has to be asked
+	directly of the pool rather than inherited from the panel's answer. Missing that is how the one
+	word the question turns on stays reachable by following a link from a word that does not.
+	"""
+	if not lesson:
+		return False
+	return bool(_matches([row], _pool_text(lesson)))
+
+
+def term_help(term, lesson=None, in_quiz=False):
+	"""One term by name. ``lesson`` is a **docname**, needed only to police quiz mode."""
+	in_quiz = bool(cint(in_quiz))
+	row = _term_row(term)
+	if not row:
+		return {"entry": None, "withheld": 0}
+	if in_quiz and _gives_an_answer_away(row, lesson):
+		# Said out loud rather than returned as "no such term": a learner who followed a link to a
+		# word that plainly exists is owed the rule, not a dead end that reads like a bug.
+		return {"entry": None, "withheld": 1}
+	return {"entry": _serve(row, in_quiz), "withheld": 0}
+
+
+def search_glossary(query, in_quiz=False):
+	"""Terms whose name or alias contains ``query``.
+
+	**Closed during a quiz, and that is the whole of the quiz rule here.** The panel's suppression
+	is computed from the lesson's own pool, which is answerable because the lesson is known; a free
+	search is a question about the entire glossary and there is no equivalent guarantee to give.
+	Rather than approximate one, the search simply is not open mid-question -- the panel, already
+	suppressed, still is.
+	"""
+	if bool(cint(in_quiz)):
+		return {"terms": [], "more": 0}
+
+	needle = (query or "").strip().lower()
+	if len(needle) < MIN_QUERY:
+		return {"terms": [], "more": 0}
+
+	hits = []
+	for row in _enabled_terms():
+		haystack = [row.get("term") or "", *(row.get("aliases") or "").splitlines()]
+		for form in haystack:
+			if needle in form.strip().lower():
+				hits.append(row)
+				break
+
+	# The word itself before the words that merely contain it: somebody typing "bond" wants
+	# "Bonding", not the fourth entry that mentions it in an alias.
+	hits.sort(key=lambda row: (not (row.get("term") or "").lower().startswith(needle), (row.get("term") or "").lower()))
+	shown = hits[:MAX_HITS]
+	return {"terms": [_serve(row, False) for row in shown], "more": max(0, len(hits) - len(shown))}
+
+
+def get_term_help(course, term, lesson_key=None, in_quiz=0):
+	"""One term, gated like every other learner read."""
+	user = _learner()
+	if not runtime_ready():
+		return {"entry": None, "withheld": 0}
+
+	_visible_or_throw(user, course)
+	lesson = _lesson_row(course, lesson_key) if lesson_key else None
+	return term_help(term, lesson=lesson, in_quiz=in_quiz)
+
+
+def get_glossary_search(course, query, in_quiz=0):
+	"""Search the glossary. Gated on the course so this is not an open dictionary endpoint."""
+	user = _learner()
+	if not runtime_ready():
+		return {"terms": [], "more": 0}
+
+	_visible_or_throw(user, course)
+	return search_glossary(query, in_quiz=in_quiz)

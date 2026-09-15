@@ -106,6 +106,13 @@
 			// when there is one -- the server reads that question itself to decide what to
 			// withhold, so the panel stays open during a quiz without becoming an open book.
 			lessonHelp: "lesson_help",
+			// One term by name, for a See also link or a search hit being opened. Takes the
+			// lesson too, because a cross-reference can point at a word the lesson never
+			// uses and the quiz suppression has to be asked about that word directly.
+			glossaryTerm: "glossary_term",
+			// Searching the whole glossary, which is what makes it a reference book rather
+			// than a per-lesson footnote. Closed while a quiz is open; the panel is not.
+			glossarySearch: "glossary_search",
 			// Work submissions (WI-071 Phase F). The learner uploads the file through
 			// Frappe's own upload_file (a different prefix -- see transport.uploadFile
 			// below) and then this hands its URL in. Grading is not here: it is a Desk

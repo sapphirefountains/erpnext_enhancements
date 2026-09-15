@@ -32,6 +32,7 @@ perfectly confident, which is why they get a field of their own rather than a ta
 """
 
 import re
+from functools import lru_cache
 
 import frappe
 from frappe import _
@@ -50,6 +51,25 @@ from frappe.model.document import Document
 #: One character is still refused, and that is the real line: a single letter carries no signal at
 #: all and would match a variable name in a formula.
 MIN_MATCHABLE = 2
+
+
+def match_patterns_for(term, aliases):
+	"""Every spelling this term should be found by, longest first.
+
+	Longest first matters: with both "breakpoint" and "breakpoint chlorination" in the glossary, a
+	lesson mentioning the latter should match the specific term rather than stopping at the general
+	one. The same order lets the player mark up lesson text without a short spelling stealing the
+	first half of a long one.
+
+	**A plain function, taking the two fields rather than a document.** ``help.py`` matches every
+	enabled term against every lesson on every Help request, and building a ``Document`` per term
+	to reach one method costs more than all the regex work put together — measured on production,
+	a loop over twelve lessons could not finish inside a thirty-second budget. The method below
+	delegates here so there is still only one definition of what a spelling is.
+	"""
+	forms = [term or ""] + [a for a in (aliases or "").splitlines() if a.strip()]
+	forms = [f.strip() for f in forms if len(f.strip()) >= MIN_MATCHABLE]
+	return sorted(set(forms), key=len, reverse=True)
 
 
 class TrainingGlossaryTerm(Document):
@@ -106,15 +126,8 @@ class TrainingGlossaryTerm(Document):
 	# ------------------------------------------------------------------ matching
 
 	def match_patterns(self):
-		"""Every spelling this term should be found by, longest first.
-
-		Longest first matters: with both "breakpoint" and "breakpoint chlorination" in the
-		glossary, a lesson mentioning the latter should match the specific term rather than
-		stopping at the general one.
-		"""
-		forms = [self.term] + [a for a in (self.aliases or "").splitlines() if a.strip()]
-		forms = [f.strip() for f in forms if len(f.strip()) >= MIN_MATCHABLE]
-		return sorted(set(forms), key=len, reverse=True)
+		"""Every spelling this term should be found by, longest first."""
+		return match_patterns_for(self.term, self.aliases)
 
 	@staticmethod
 	def compile_pattern(form):
@@ -127,3 +140,13 @@ class TrainingGlossaryTerm(Document):
 		"""
 		escaped = re.escape(form)
 		return re.compile(rf"(?<![\w-]){escaped}(?![\w-])", re.IGNORECASE)
+
+
+@lru_cache(maxsize=8192)
+def compiled_pattern(form):
+	"""``compile_pattern`` with the result kept.
+
+	Same spelling, same regex, and a Help request compiles a few thousand of them. Keyed on the
+	spelling itself, so an edited alias simply produces a different key rather than a stale hit.
+	"""
+	return TrainingGlossaryTerm.compile_pattern(form)
