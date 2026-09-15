@@ -59,6 +59,7 @@ HELP_CLASSES = (
     "tr-help-more",
     "tr-help-example",
     "tr-help-example-label",
+    "tr-help-example-body",
     "tr-help-seealso",
     "tr-help-draft",
     "tr-help-note",
@@ -420,6 +421,151 @@ class TestTheWiring(unittest.TestCase):
 
     def test_this_suite_runs_in_ci(self):
         self.assertIn("erpnext_enhancements.tests.test_training_help", _raw(CI))
+
+
+class TestAFieldIsRenderedAsWhatItIs(unittest.TestCase):
+    """Text Editor fields go in as HTML; Small Text fields go in as text.
+
+    v1.468.1 rendered `explanation` with `textContent`, so every one of the 717 seeded entries
+    showed its own `<p>` tags as words — and 473 of them carry more than one paragraph, so the
+    result was a wall of text with the markup in it rather than a stray tag. The mirror mistake
+    is just as available: rendering a Small Text field as markup, where a `<` somebody typed
+    becomes an unclosed element and swallows the rest of the definition.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js = _strip_js_comments(_raw(PLAYER))
+        cls.term = cls.js.split("function helpTerm(", 1)[1].split("\n\t\tfunction ", 1)[0]
+
+    # ------------------------------------------------------- the Text Editor fields
+
+    def test_the_explanation_goes_in_as_html(self):
+        self.assertIn("helpHtml(", self.term)
+        self.assertRegex(self.term, r"helpHtml\(.*tr-help-more.*,\s*entry\.explanation\)")
+
+    def test_the_example_goes_in_as_html(self):
+        self.assertRegex(self.term, r"helpHtml\(.*tr-help-example-body.*,\s*entry\.example\)")
+
+    def test_neither_is_passed_to_the_text_helper(self):
+        """`el(tag, cls, text)` sets textContent. Passing HTML to it is the whole bug."""
+        self.assertNotIn('el("p", "tr-help-more", entry.explanation)', self.term)
+        self.assertNotIn('" " + entry.example', self.term)
+
+    # ------------------------------------------------------- the plain fields
+
+    def test_the_plain_fields_stay_text(self):
+        for field in ("short_definition", "ordinary_meaning"):
+            with self.subTest(field):
+                self.assertNotRegex(self.term, rf"helpHtml\([^;]*entry\.{field}")
+
+    # ------------------------------------------------------- one sanitiser, not two
+
+    def test_the_player_reuses_the_runtime_sanitiser(self):
+        """quiz.js already owns the scrubber and the reasoning behind it (an inert DOMParser,
+        because assigning to a detached div's innerHTML still fires an `<img onerror>`). A second
+        copy here is how the two drift and one of them ends up weaker."""
+        self.assertIn("TR.setHtml", self.js)
+        quiz = _raw(APP_ROOT / "public" / "js" / "training" / "quiz.js")
+        self.assertIn("TR.setHtml = setHtml", quiz)
+        self.assertIn("TR.scrubHtml = scrub", quiz)
+
+    def test_the_player_never_assigns_innerhtml_itself(self):
+        """The fallback when `TR.setHtml` is absent must be textContent, not a raw assignment."""
+        self.assertNotIn("innerHTML", self.js)
+
+    def test_quiz_js_loads_before_player_js(self):
+        """`TR.setHtml` is read at call time, but the order is what guarantees it exists at all.
+        `loadAsset` sets async = false, so insertion order IS execution order."""
+        learn = _raw(APP_ROOT / "training" / "page" / "learn" / "learn.js")
+        self.assertLess(learn.index("training/quiz.js"), learn.index("training/player.js"))
+
+
+class TestTheCapIsAbove(unittest.TestCase):
+    """`MAX_TERMS` has to sit above how many terms a real lesson matches, not below it.
+
+    At 24 it sat below **every** lesson measured on production: twelve technician lessons sampled
+    2026-09-15 matched between 28 and 105 terms, middle around 57. So the truncation note was not
+    an edge case a dense lesson occasionally hit — it was on every panel, every time, naming a
+    number of words the reader had no route to. A cap that always fires is not a cap, it is a
+    silent content limit with a counter attached to it.
+    """
+
+    #: The worst lesson in that sample. The cap must clear it with room, or the note is furniture
+    #: again the first time somebody writes a longer lesson.
+    MEASURED_WORST = 105
+
+    @classmethod
+    def setUpClass(cls):
+        state = {"get_all": lambda *a, **k: [], "get_doc": lambda *a, **k: None}
+        cls.mod, cls.saved = _load_help(state)
+
+    @classmethod
+    def tearDownClass(cls):
+        _restore(cls.saved)
+
+    def test_the_cap_clears_the_densest_lesson_measured(self):
+        self.assertGreater(self.mod.MAX_TERMS, self.MEASURED_WORST)
+
+    def test_there_is_still_a_cap(self):
+        """Not unbounded. The glossary is a table anybody can add to, and one lesson's panel
+        should not be able to become a multi-megabyte reply because it grew to 5,000 entries."""
+        self.assertLessEqual(self.mod.MAX_TERMS, 500)
+
+    def test_the_overflow_is_still_counted_rather_than_dropped(self):
+        src = _raw(HELP_PY)
+        self.assertIn('"more":', src)
+
+    def test_the_note_says_why_rather_than_just_how_many(self):
+        """"…and 4 more terms in this lesson" describes a number, not a reason, and a reader who
+        cannot act on it is owed the rule instead."""
+        js = _strip_js_comments(_raw(PLAYER))
+        # The `more` branch specifically. `tr-help-note` is also the class the withheld-in-quiz
+        # note uses, and that one is a different sentence with a different job.
+        note = js.split("if (data.more)", 1)[1][:300]
+        self.assertIn("one panel will show", note)
+        self.assertNotIn("more terms in this lesson.", note)
+
+
+class TestMarkupInAPlainField(unittest.TestCase):
+    """`_plain` takes markup back out of the two Small Text fields, server-side."""
+
+    @classmethod
+    def setUpClass(cls):
+        from erpnext_enhancements.training import help as help_module
+
+        # staticmethod, not a bare assignment: a plain function stored on a class becomes a
+        # bound method on access and swallows the first argument as `self`.
+        cls.plain = staticmethod(help_module._plain)
+
+    def test_inline_tags_are_removed(self):
+        self.assertEqual(self.plain("work that <i>makes</i> heat"), "work that makes heat")
+        self.assertEqual(self.plain("<p>a definition</p>"), "a definition")
+        self.assertEqual(self.plain("<b>bold</b> and <strong>strong</strong>"), "bold and strong")
+
+    def test_a_comparison_is_not_eaten(self):
+        """The reason this is an allowlist and not `<[^>]+>`. A glossary is full of these, and a
+        greedy pattern takes everything between the two signs and calls it a tag."""
+        self.assertEqual(self.plain("keep pH < 7.8 and > 7.2"), "keep pH < 7.8 and > 7.2")
+        self.assertEqual(self.plain("a gap of < 3 mm"), "a gap of < 3 mm")
+
+    def test_empty_is_empty_not_none(self):
+        self.assertEqual(self.plain(None), "")
+        self.assertEqual(self.plain(""), "")
+
+    def test_the_serve_path_uses_it(self):
+        src = _raw(APP_ROOT / "training" / "help.py")
+        serve = src.split("def _serve(", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn('"short_definition": _plain(', serve)
+        self.assertIn('"ordinary_meaning": _plain(', serve)
+
+    def test_the_text_editor_fields_are_not_stripped(self):
+        """`explanation` and `example` are meant to hold HTML — stripping them here would fix the
+        symptom by deleting the formatting, which is the other way to get this wrong."""
+        src = _raw(APP_ROOT / "training" / "help.py")
+        serve = src.split("def _serve(", 1)[1].split("\ndef ", 1)[0]
+        self.assertNotIn('"explanation": _plain(', serve)
+        self.assertNotIn('"example": _plain(', serve)
 
 
 class TestTheGlossaryContent(unittest.TestCase):

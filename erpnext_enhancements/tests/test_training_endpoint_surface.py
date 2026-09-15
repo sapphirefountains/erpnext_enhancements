@@ -292,9 +292,22 @@ class AskTheAuthorIsReachableTest(unittest.TestCase):
 
     def test_the_panel_renders_untrusted_text_without_innerhtml(self):
         """Questions are learner-typed and answers are author-typed, and both are rendered into
-        a page a third learner opens. ``el()`` sets textContent; an innerHTML anywhere in this
-        file would turn a question into script."""
-        self.assertNotIn("innerHTML", self.PLAYER.read_text(encoding="utf-8"))
+        a page a third learner opens. ``el()`` sets textContent; a raw innerHTML assignment
+        anywhere in this file would turn a question into script.
+
+        **Comments are stripped first, and that is not a loophole.** The rule is about what the
+        file *does*, and the single most likely place for the word to appear innocently is the
+        comment explaining why it is not used — which is exactly what happened in v1.468.2. An
+        absence assertion that reads prose fails on its own documentation and teaches whoever
+        hits it to delete the explanation.
+
+        Author-written HTML, where it is genuinely needed, goes through ``TR.setHtml`` in
+        quiz.js: one sanitiser, parsing into an inert document before anything is inserted.
+        """
+        src = self.PLAYER.read_text(encoding="utf-8")
+        src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+        src = re.sub(r"(?<!:)//[^\n]*", " ", src)
+        self.assertNotIn("innerHTML", src)
 
     def test_the_disclosure_is_announced(self):
         """The panel is collapsed by default, so a screen reader has to be told it is a

@@ -60,6 +60,7 @@ Indentation is tabs, matching the ``training/`` package.
 """
 
 import json
+import re
 
 import frappe
 from frappe import _
@@ -70,10 +71,21 @@ from erpnext_enhancements.training.doctype.training_glossary_term.training_gloss
 )
 from erpnext_enhancements.training.doctype.training_settings.training_settings import runtime_ready
 
-#: How many terms one panel will show. A lesson that legitimately uses forty glossary words is a
-#: lesson whose Help panel is longer than the lesson, so the list is capped and the count of what
-#: did not fit is returned rather than silently dropped.
-MAX_TERMS = 24
+#: How many terms one panel will show.
+#:
+#: **Was 24, and 24 was guesswork.** The reasoning was that a lesson using forty glossary words
+#: would get a Help panel longer than the lesson — sound in the abstract, and wrong about this
+#: glossary. Measured against twelve technician lessons on production 2026-09-15, every single one
+#: matched more than 24: the range was 28 to 105 and the middle was around 57. So the cap was not
+#: a safety valve for the occasional dense lesson, it fired on **every** lesson, and the note
+#: saying "…and N more terms in this lesson" was permanent furniture pointing at words a reader
+#: had no way to reach.
+#:
+#: 200 is a ceiling rather than a budget: high enough that nothing real is hidden, low enough that a
+#: glossary grown to thousands of entries cannot turn one panel into a multi-megabyte reply. The
+#: payload is fetched only when somebody opens the panel (`loadHelp` in player.js runs on the
+#: toggle, not on the lesson), so the cost is paid by the reader who asked for it.
+MAX_TERMS = 200
 
 #: Block fields whose text a term can be found in. ``data`` (the interactive-list JSON) is handled
 #: separately because a Checklist's items are lesson content as much as a paragraph is.
@@ -204,14 +216,32 @@ def _matches(terms, haystack):
 	return found
 
 
+#: The inline tags a Desk author's editor can leave behind in a **plain** field. Deliberately a
+#: short allowlist rather than a general ``<[^>]+>`` sweep: a glossary is full of "pH < 7 and
+#: > 6", and a greedy pattern eats everything between the two and calls it a tag.
+_INLINE_TAG = re.compile(r"</?\s*(?:b|i|p|br|em|strong|span)\s*/?>", re.IGNORECASE)
+
+
+def _plain(value):
+	"""A Small Text field, with any markup taken back out.
+
+	``short_definition`` and ``ordinary_meaning`` are Small Text, so the player renders them as
+	text and a tag in them arrives on screen as the word ``<i>``. Nothing stops somebody pasting
+	from a rich editor into a plain field, and one seeded entry already does it. Stripped here
+	rather than in the data because the data is insert-only: a correction to the JSON reaches a
+	fresh install and never the site that has the term.
+	"""
+	return _INLINE_TAG.sub("", value or "").strip()
+
+
 def _serve(row, in_quiz):
 	"""One term, trimmed to what this context is allowed to show."""
 	trap = cint(row["trade_trap"])
 	out = {
 		"term": row["term"],
-		"short_definition": row["short_definition"] or "",
+		"short_definition": _plain(row["short_definition"]),
 		"trade_trap": trap,
-		"ordinary_meaning": (row["ordinary_meaning"] or "") if trap else "",
+		"ordinary_meaning": _plain(row["ordinary_meaning"]) if trap else "",
 		# Said out loud on every entry rather than left for the reader to infer. A definition
 		# somebody has stood behind and one a machine wrote last week are different things to rely
 		# on when you are about to go and do the work.

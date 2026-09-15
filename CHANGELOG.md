@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.468.2] - 2026-09-15
+
+### Fixed
+
+- **The Help panel printed its own markup.** `explanation` is a Text Editor field, so every one of
+  the 717 seeded entries holds HTML — and `helpTerm` set it with `textContent`, which puts `<p>` on
+  screen as a word. 473 of the entries carry more than one paragraph, so what a learner actually saw
+  was not a stray tag but a run-together wall of text with the tags still in it. `explanation` and
+  `example` now go in through `TR.setHtml` — the sanitiser quiz.js already owns, exported rather
+  than copied, so there is one scrubber in the runtime and not two that can drift apart.
+- **The plain fields stay plain, which is the same mistake facing the other way.**
+  `short_definition` and `ordinary_meaning` are Small Text, and rendering those as markup would let
+  a `<` somebody typed swallow the rest of a definition. `help.py._plain` takes inline tags back out
+  of them server-side, on a short allowlist rather than a `<[^>]+>` sweep — a glossary is full of
+  "pH < 7.8 and > 7.2", and a greedy pattern eats everything between the two signs.
+- **"…and N more terms in this lesson" was on every panel, every time.** `MAX_TERMS` was 24, which
+  was guesswork: measured against twelve technician lessons on production, every one matched more
+  than 24 — between 28 and 105, middle around 57. The cap never behaved as a safety valve for a
+  dense lesson, it silently cut every lesson and attached a counter to words the reader had no way
+  to reach. Now 200, which clears the densest lesson measured with room, and the note is reworded to
+  give the rule rather than a number. The payload is still fetched only when somebody opens the
+  panel.
+- **The absence assertion on `innerHTML` in player.js now strips comments first.** It failed on the
+  comment explaining why `innerHTML` is not used — the third time this exact shape has come up in
+  this repo. An absence test that reads prose fails on its own documentation and teaches whoever
+  hits it to delete the explanation.
+
 ## [1.468.1] - 2026-09-15
 
 ### Fixed

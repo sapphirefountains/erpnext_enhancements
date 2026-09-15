@@ -2960,10 +2960,22 @@
 	color: var(--tr-text, #17212b);
 }
 
+/* A container now rather than a paragraph: `explanation` is a Text Editor field and 473 of
+ * the seeded entries carry more than one <p>. The browser's default paragraph margins are
+ * far too loose inside a side panel, so they are set here and the last one is flattened —
+ * otherwise every term ends with a gap the panel did not ask for. */
 .tr-help-more {
 	margin: 0 0 0.35rem;
 	color: var(--tr-muted, #5c6670);
 	font-size: 0.92rem;
+}
+
+.tr-help-more p {
+	margin: 0 0 0.4rem;
+}
+
+.tr-help-more p:last-child {
+	margin-bottom: 0;
 }
 
 .tr-help-example {
@@ -2975,6 +2987,24 @@
 .tr-help-example-label {
 	font-weight: 600;
 	color: var(--tr-text, #17212b);
+}
+
+/* The example reads as one sentence after the label, so its first paragraph stays on the
+ * label's line. An example long enough to need a second one gets it as a block. */
+.tr-help-example-body {
+	margin-left: 0.3rem;
+}
+
+.tr-help-example-body p {
+	margin: 0 0 0.4rem;
+}
+
+.tr-help-example-body p:first-child {
+	display: inline;
+}
+
+.tr-help-example-body p:last-child {
+	margin-bottom: 0;
 }
 
 .tr-help-seealso {
