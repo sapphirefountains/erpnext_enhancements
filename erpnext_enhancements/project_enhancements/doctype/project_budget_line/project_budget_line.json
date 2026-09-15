@@ -1,0 +1,101 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 1,
+ "allow_rename": 0,
+ "creation": "2026-09-15 09:05:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "category",
+  "budgeted_amount",
+  "column_break_spend",
+  "committed_amount",
+  "actual_amount",
+  "spend_coverage",
+  "section_detail",
+  "notes",
+  "budget_key"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "category",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Category",
+   "options": "Project Budget Category",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "budgeted_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Budgeted"
+  },
+  {
+   "fieldname": "column_break_spend",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 2,
+   "fieldname": "committed_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Committed",
+   "read_only": 1,
+   "description": "Ordered but not yet invoiced. Computed, never keyed."
+  },
+  {
+   "columns": 2,
+   "fieldname": "actual_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Actual",
+   "read_only": 1,
+   "description": "Computed, never keyed."
+  },
+  {
+   "columns": 2,
+   "fieldname": "spend_coverage",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Coverage",
+   "options": "\nTracked\nNot Tracked\nNo Source",
+   "read_only": 1,
+   "description": "Whether the <b>Actual</b> figure beside this means anything. <b>Tracked</b>: the source is in use, so a zero means nothing was spent. <b>Not Tracked</b>: the source holds no rows anywhere on this site, so a zero means nobody records this. <b>No Source</b>: nothing could ever be spent against this category directly, which is correct for Contingency and Fee — money leaves those by reallocation. Committed is reported separately and can be real even when Actual is not."
+  },
+  {
+   "fieldname": "section_detail",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "budget_key",
+   "fieldtype": "Data",
+   "label": "Budget Key",
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide": 1,
+   "description": "Minted once and never regenerated, so a reallocation that referenced this line still points at the same line after the rows are reordered."
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-15 09:05:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Project Budget Line",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

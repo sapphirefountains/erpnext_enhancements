@@ -1,6 +1,6 @@
 # WI-075 — Scope that can be inspected, and failures that get re-checked
 
-**Status:** in progress — A through L shipped, v1.446.0 → v1.461.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445). Slice 1 and Slice 2 are complete. I delivered the trigger engine; the master checklists followed as **strawmen seeded Draft** at Nik's request (v1.457.0), J made a period review compute its own numbers (v1.458.0), K made `Change Order` a real record whose added criteria reach inspections (v1.460.0), and L gave a subcontractor agreement an expiry, a rate schedule and a printed hold-point list (v1.461.0). Everything from v1.456.0 shifted up one when `main` took 1.455.0 for the feedback batch.
+**Status:** in progress — A through M shipped, v1.446.0 → v1.462.0 (A–F renumbered on rebase; `main` had taken 1.444/1.445). Slice 1 and Slice 2 are complete. I delivered the trigger engine; the master checklists followed as **strawmen seeded Draft** at Nik's request (v1.457.0), J made a period review compute its own numbers (v1.458.0), K made `Change Order` a real record whose added criteria reach inspections (v1.460.0), L gave a subcontractor agreement an expiry, a rate schedule and a printed hold-point list (v1.461.0), and M gave a project budget categories a reallocation cannot quietly drain (v1.462.0). Everything from v1.456.0 shifted up one when `main` took 1.455.0 for the feedback batch.
 **Branch:** `claude/quality-inspections-planning-691339` (off `main` at v1.443.0)
 **Tracked:** PRJ-00580, TASK-2026-02013 with a child per deliverable (A–N)
 **Decides:** [ADR-0012](../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md)
@@ -153,6 +153,19 @@ One PR per sub-phase. Slice 1 proves the chain end-to-end on Build before anythi
 | **L** | MSA rates referenced by work orders, and the expiration alert | M |
 | **M** | Budget categories, budget lines, `Budget Reallocation` and the protected-category rule | L |
 | **N** | Subcontractor scorecard and recovery tracking | M |
+
+**M shipped with WI-057's precondition unmet, and did not substitute for it.** The plan says
+WI-057's backfill should land first "so there is a number to split into categories". Re-measured
+on prod 2026-09-14, two months after WI-057 counted it: `estimated_costing` is **still zero on
+all 654 projects**. M builds the structure regardless, because structure and denominator are
+different questions — and it is built so that filling in the categories *produces* the total
+rather than competing with it. The rollup deliberately leaves `estimated_costing` alone on a
+project with no category lines, so WI-057's backfill can still write it without M erasing it.
+
+**What M found that N needs to know.** There are no actuals on this site at all: `tabTimesheet`
+holds 0 rows and no Purchase Invoice has submitted lines. Any measure N computes from "rework
+hours and dollars" or "days to close" has the same problem, and the same answer — report the
+coverage beside the figure rather than a confident zero.
 
 ### The freeze, the carry-forward, and the alert
 

@@ -963,3 +963,11 @@ erpnext_enhancements.patches.seed_rental_asset_setup
 # Asset.cost_center, which would stamp every future asset with the RENTAL fleet's centre.
 # Writes only when empty: where depreciation posts is Finance's decision, not this file's.
 erpnext_enhancements.patches.set_company_depreciation_cost_center
+# WI-075 sub-phase M. The seven project budget categories -- Labor, Materials, Equipment,
+# Subcontractors, and the three protected ones (General Conditions, Contingency, Fee) that a
+# reallocation cannot touch on a project manager's signature alone. Seeded rather than fixtured
+# because Finance edits the descriptions and the declared spend sources afterwards, and fixture
+# sync deletes and re-inserts each doc from its JSON every migrate. Insert-only: it never
+# overwrites an edited row, and it restores a protection flag that has been unticked without
+# ever clearing one that has been added.
+erpnext_enhancements.patches.seed_budget_categories

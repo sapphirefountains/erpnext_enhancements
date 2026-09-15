@@ -1,0 +1,281 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:BR-{YY}-{#####}",
+ "creation": "2026-09-15 09:10:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "project",
+  "transaction_date",
+  "column_break_head",
+  "status",
+  "requires_additional_approval",
+  "section_move",
+  "from_category",
+  "amount",
+  "column_break_move",
+  "to_category",
+  "section_reason",
+  "reason",
+  "section_balances",
+  "balances_intro",
+  "from_balance_before",
+  "from_balance_after",
+  "column_break_balances",
+  "to_balance_before",
+  "to_balance_after",
+  "section_approval",
+  "requested_by",
+  "pm_approved_by",
+  "pm_approved_on",
+  "column_break_approval",
+  "additional_approved_by",
+  "additional_approved_on",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "default": "Today",
+   "fieldname": "transaction_date",
+   "fieldtype": "Date",
+   "label": "Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nApplied\nCanceled",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Derived from the submission state. A stored status a person can type is a second state beside docstatus, free to disagree with it."
+  },
+  {
+   "default": "0",
+   "fieldname": "requires_additional_approval",
+   "fieldtype": "Check",
+   "label": "Needs Second Approval",
+   "read_only": 1,
+   "description": "Set automatically when either category is protected."
+  },
+  {
+   "fieldname": "section_move",
+   "fieldtype": "Section Break",
+   "label": "The Move"
+  },
+  {
+   "fieldname": "from_category",
+   "fieldtype": "Link",
+   "label": "From Category",
+   "options": "Project Budget Category",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "label": "Amount",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "Always positive. A negative amount would be a move in the other direction whose From and To labels are lies, so reverse the categories instead."
+  },
+  {
+   "fieldname": "column_break_move",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "to_category",
+   "fieldtype": "Link",
+   "label": "To Category",
+   "options": "Project Budget Category",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "section_reason",
+   "fieldtype": "Section Break",
+   "label": "Why"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "reqd": 1,
+   "description": "What happened on the job that moved this money. A reallocation with no reason is a number nobody can audit six months later."
+  },
+  {
+   "fieldname": "section_balances",
+   "fieldtype": "Section Break",
+   "label": "Balances"
+  },
+  {
+   "fieldname": "balances_intro",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">Stamped when this was submitted, and never re-read afterwards. The budget lines go on changing; this document is the record of one move against the numbers as they stood that day, which is what makes a sequence of reallocations reconstructable.</p>"
+  },
+  {
+   "fieldname": "from_balance_before",
+   "fieldtype": "Currency",
+   "label": "From: Before",
+   "read_only": 1
+  },
+  {
+   "fieldname": "from_balance_after",
+   "fieldtype": "Currency",
+   "label": "From: After",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_balances",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "to_balance_before",
+   "fieldtype": "Currency",
+   "label": "To: Before",
+   "read_only": 1
+  },
+  {
+   "fieldname": "to_balance_after",
+   "fieldtype": "Currency",
+   "label": "To: After",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_approval",
+   "fieldtype": "Section Break",
+   "label": "Approval"
+  },
+  {
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pm_approved_by",
+   "fieldtype": "Link",
+   "label": "Project Manager Approval",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pm_approved_on",
+   "fieldtype": "Datetime",
+   "label": "Approved On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_approval",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "additional_approved_by",
+   "fieldtype": "Link",
+   "label": "Second Approval",
+   "options": "User",
+   "read_only": 1,
+   "description": "Cannot be the requester, and cannot be the project manager who approved it. A second signature from the same hand is not a second signature."
+  },
+  {
+   "fieldname": "additional_approved_on",
+   "fieldtype": "Datetime",
+   "label": "Second Approval On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Budget Reallocation",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-09-15 09:10:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Budget Reallocation",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Project Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Finance Team",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Executive Team"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Production Team"
+  }
+ ],
+ "search_fields": "project,from_category,to_category",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "project",
+ "track_changes": 1
+}

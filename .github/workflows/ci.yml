@@ -597,6 +597,18 @@ jobs:
       # row project, 32 of those under a header that names the job).
       - name: MSA rates (unknown expiry is neither valid nor expired)
         run: python -m unittest erpnext_enhancements.tests.test_msa_rates -v
+      # Project budgets and reallocations (WI-075 sub-phase M). Every failure here is a wrong
+      # number that looks right. Measured on prod 2026-09-14: tabTimesheet holds 0 rows and no
+      # Purchase Invoice has submitted lines, so a naked `actual` column would read 0.00 on every
+      # line of every project forever while looking correct -- the trailing-space failure in
+      # another costume. Hence the coverage verdict beside every figure, saying whether the zero
+      # is about the project or about the instrument. Also pins: a percentage of a zero budget is
+      # None rather than 0% ("on budget") or a huge number; a reallocation is net zero, so it
+      # cannot rewrite the project total that WI-058 will divide by; and the second approval a
+      # protected category needs cannot come from the requester or the PM who already approved,
+      # because a control one person satisfies by clicking twice is a control in appearance only.
+      - name: Project budgets (a zero nobody recorded is not a zero that was spent)
+        run: python -m unittest erpnext_enhancements.tests.test_project_budgets -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk

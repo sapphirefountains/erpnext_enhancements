@@ -1,0 +1,146 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:category_name",
+ "creation": "2026-09-15 09:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "category_name",
+  "is_protected",
+  "column_break_head",
+  "disabled",
+  "section_sources",
+  "sources_intro",
+  "committed_source",
+  "column_break_sources",
+  "actual_source",
+  "section_about",
+  "description"
+ ],
+ "fields": [
+  {
+   "fieldname": "category_name",
+   "fieldtype": "Data",
+   "label": "Category",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_protected",
+   "fieldtype": "Check",
+   "label": "Protected",
+   "in_list_view": 1,
+   "description": "A reallocation moving money into or out of this category needs a second approval, and that approval cannot come from the requester or from the project manager who approved it. General Conditions, Contingency and Fee are protected: the first is where an overrun gets absorbed quietly, and the last is where contracted work becomes margin."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "disabled",
+   "fieldtype": "Check",
+   "label": "Disabled",
+   "description": "Hidden from new budget lines. Existing lines keep their category, so disabling one never rewrites a budget that was already agreed."
+  },
+  {
+   "fieldname": "section_sources",
+   "fieldtype": "Section Break",
+   "label": "Where Spend Would Come From"
+  },
+  {
+   "fieldname": "sources_intro",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">These declare which instrument could record spend against this category, and they are read as a statement of what this site can observe today rather than as an aspiration. A category whose source holds no rows anywhere reports its spend as <b>Not Tracked</b> instead of <b>0.00</b> — a zero that means <i>nobody records this</i> must never be read as <i>nothing was spent</i>. A category with no source at all reports <b>No Source</b>, which is correct for Contingency and Fee: money leaves those by reallocation, never by purchase.</p>"
+  },
+  {
+   "default": "None",
+   "fieldname": "committed_source",
+   "fieldtype": "Select",
+   "label": "Committed From",
+   "options": "None\nPurchase Orders\nPurchase Invoices\nTimesheets",
+   "description": "What has been ordered but not yet invoiced."
+  },
+  {
+   "fieldname": "column_break_sources",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "None",
+   "fieldname": "actual_source",
+   "fieldtype": "Select",
+   "label": "Actuals From",
+   "options": "None\nPurchase Orders\nPurchase Invoices\nTimesheets",
+   "description": "What has actually been spent."
+  },
+  {
+   "fieldname": "section_about",
+   "fieldtype": "Section Break",
+   "label": "About"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-15 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Project Budget Category",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Finance Team",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Project Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Executive Team"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Production Team"
+  }
+ ],
+ "search_fields": "category_name",
+ "sort_field": "category_name",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "category_name",
+ "track_changes": 1
+}

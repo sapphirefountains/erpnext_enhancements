@@ -66,6 +66,7 @@ question why it exists.**
 | `reviews.py` | The half that queries: the seven metrics, the floor rule, the Annual cadence ERPNext cannot run, and the meeting agenda |
 | `change_orders.py` | Change-order numbering, the derived status, and the sign of the money. Frappe-free; its DocType lives in `project_enhancements`, which cannot host a frappe-free module |
 | `msa.py` | Whether a subcontractor agreement is still in force, which rate was in force when, and which project a purchase-order line belongs to. Frappe-free |
+| `budgets.py` | Project budget categories, what a spend figure is worth, and the rules a reallocation must satisfy. Frappe-free; its DocTypes live in `project_enhancements`. The load-bearing call is that a spend figure never travels alone — a zero from a source nobody uses is `Not Tracked`, not `0.00` |
 | `msa_enforcement.py` | The half that queries: derives an MSA's expiry, checks it when a Statement of Work is issued, reports rate drift, and sweeps for renewals |
 
 Registered in [`../modules.txt`](../modules.txt), tiled from
