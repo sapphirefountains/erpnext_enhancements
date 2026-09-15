@@ -65,6 +65,8 @@ question why it exists.**
 | `goals.py` | What a period review is allowed to conclude. Frappe-free. Reads a `Data` target, knows which way each metric runs, and returns **Open** whenever it cannot decide |
 | `reviews.py` | The half that queries: the seven metrics, the floor rule, the Annual cadence ERPNext cannot run, and the meeting agenda |
 | `change_orders.py` | Change-order numbering, the derived status, and the sign of the money. Frappe-free; its DocType lives in `project_enhancements`, which cannot host a frappe-free module |
+| `msa.py` | Whether a subcontractor agreement is still in force, which rate was in force when, and which project a purchase-order line belongs to. Frappe-free |
+| `msa_enforcement.py` | The half that queries: derives an MSA's expiry, checks it when a Statement of Work is issued, reports rate drift, and sweeps for renewals |
 
 Registered in [`../modules.txt`](../modules.txt), tiled from
 [`../setup/desktop_icon_map.py`](../setup/desktop_icon_map.py), and given a sidebar by
@@ -210,6 +212,60 @@ an inspection is a no-op rather than a second ratchet.
 An open punch-list item is structurally the same thing — raised against a standard, fixed by
 somebody, not actually done until it has been looked at again — so it is a Quality Action with
 `custom_punch_list` ticked and gets all of this for free.
+
+## The agreement that was signed once and never checked again
+
+`Project Contract.validate_msa_gate` already refuses a Statement of Work without a **Signed**
+master agreement — and that is the whole of the check. It asks whether the agreement was ever
+signed; it never asks whether it is **still in force**. An MSA signed in 2019, with superseded
+rates and a lapsed certificate of insurance, gates a Statement of Work issued today exactly as
+well as one signed last week.
+
+### Unknown is a third answer, and both easy alternatives are wrong
+
+**None of the sixteen live contracts records an expiry date.** So:
+
+- Treating "no expiry recorded" as **expired** blocks every Statement of Work the company can
+  currently issue, on the day this deploys, for a gap in the record rather than a real lapse.
+- Treating it as **valid** is the vacuous pass this whole programme exists to stop — the check
+  reports clean forever, on every agreement, and nobody goes looking.
+
+So there is a third state, `unknown`, which is reported and **never blocks on any setting** —
+including `Block`. `days_remaining` comes back as `None` rather than `0`, so nothing can render
+"expires in 0 days" for an agreement nobody has dated. The expiry itself is derived, never typed:
+the override if there is one, otherwise the term counted from signing.
+
+### The snapshot is never rewritten
+
+A Statement of Work's four rate fields are a **frozen snapshot** taken the day it was issued. A
+signed agreement prints its own `agreement_html`, so a rate re-read live from the MSA would
+silently change a document somebody has already signed — and the difference between "the rate we
+agreed" and "the rate the schedule says today" is exactly what a dispute is about. Drift is
+**reported** on save, for a person to decide about, and a rate the MSA does not publish is not
+drift: plenty of Statements of Work carry a negotiated figure the schedule never listed.
+
+Two rate lines in force at once for the same classification is called out on save, because then
+the rate depends on which row a query read first and an invoice checked against it could be right
+or wrong depending on nothing.
+
+### Two purchase-order projects, and either one alone loses money
+
+`Purchase Order.project` and `Purchase Order Item.project` disagree on real data. Measured on
+production: **40 of 148 live pending lines carry no row project, and 32 of those sit under a
+header that names the job.** On PRJ-00566 a row-only match returns 37 rows where the union
+returns 63 — and it under-reports *silently*: the query runs, the number looks plausible, and the
+missing orders are simply absent. The rule is `ifnull(nullif(poi.project, ''), po.project)`, and
+it exists in Python in `msa.order_project` as the tested definition with the SQL required to
+agree.
+
+### §9.4 of the printed Statement of Work
+
+The hold-point list was six literal `[ ]` checkboxes. Where the project has a locked Scope of
+Work it now prints the **contracted** hold points with the standard each is accepted against —
+a printed checkbox nobody ticks becoming a row a system can ask about, which is this whole
+programme in miniature. Where there is no locked scope it still prints the checkboxes, because a
+Statement of Work for a project without one is still a real Statement of Work and an empty table
+would be worse than the old wording.
 
 ## What a period review is allowed to conclude
 

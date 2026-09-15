@@ -42,6 +42,14 @@ from frappe.model.document import Document
 REPAIRABLE_DEFAULTS = {
 	"critical_ack_sla_hours": 24,
 	"company_floor_enforcement": "Warn",
+	# WI-075 sub-phase L. `patches/backfill_quality_settings_defaults` is registered on
+	# `after_migrate` and fills any declared default with no stored row, so it covers these
+	# already; they are repeated here for the same reason as the two above -- the page must not
+	# brick if that has not run, and this module is dormant, which is exactly the case where the
+	# first save is the one you need and the one that fails.
+	"msa_expiry_enforcement": "Warn",
+	"msa_warn_days": 60,
+	"msa_escalate_days": 14,
 }
 
 #: Values ``company_floor_enforcement`` is allowed to hold. A stored value outside a Select's

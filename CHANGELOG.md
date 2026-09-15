@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.461.0] - 2026-09-15
+
+### Added
+
+- **A master subcontractor agreement can now expire** (WI-075 sub-phase L). `Project Contract`
+  gains a term, an expiry override, a derived *expiry in force*, and a `Contract Rate Line` rate
+  schedule. A Statement of Work issued under an agreement is checked against it, and a daily
+  sweep warns 60 days before renewal and escalates to the Production Manager and President
+  inside 14.
+- **Purchase orders can name what they were placed under** — `custom_msa_contract`,
+  `custom_sow_contract`, `custom_scope_of_work`, `custom_change_order` — with an advisory warning
+  when the supplier has a signed agreement and the order does not name it.
+- **§9.4 of the printed Statement of Work prints the contracted hold points**, with the standard
+  each is accepted against, where the project has a locked Scope of Work.
+- `quality/msa.py` (frappe-free, 53 tests) and `quality/msa_enforcement.py`.
+
+### Notes
+
+- **The existing gate asks whether an agreement was ever signed, and stops there.** It never asks
+  whether it is still in force, so an MSA signed in 2019 — superseded rates, lapsed insurance —
+  gated a Statement of Work issued today exactly as well as one signed last week.
+- **Unknown is a third answer, and both easy alternatives are wrong.** None of the sixteen live
+  contracts records an expiry. Treating "no expiry recorded" as *expired* would block every
+  Statement of Work the company can currently issue, on deploy day, for a gap in the record
+  rather than a real lapse; treating it as *valid* is the vacuous pass. So `unknown` is reported
+  and **never blocks on any setting, including Block** — only a known, past expiry refuses, and
+  only when enforcement is set to Block. `days_remaining` comes back as `None` rather than `0`,
+  so nothing can render "expires in 0 days" for an agreement nobody has dated. Negative-tested:
+  making unknown report OK fails two tests.
+- **A Statement of Work's rates are a snapshot and are never rewritten.** A signed agreement
+  prints its own `agreement_html`, so a rate re-read live from the MSA would silently change a
+  document somebody has already signed — and the difference between "the rate we agreed" and
+  "the rate the schedule says today" is exactly what a dispute is about. Drift is reported on
+  save for a person to decide about. A rate the MSA does not publish is **not** drift: plenty of
+  Statements of Work carry a negotiated figure the schedule never listed, and calling that a
+  discrepancy would make the check noise on its first day.
+- **Two rate lines in force at once** for the same classification is called out on save. The rate
+  would otherwise depend on which row a query read first, and a subcontractor invoice checked
+  against it could be right or wrong depending on nothing.
+- **Either purchase-order project field alone loses orders, silently.** `Purchase Order.project`
+  and `Purchase Order Item.project` disagree on real data: 40 of 148 live pending lines carry no
+  row project and 32 of those sit under a header that names the job. On PRJ-00566 a row-only
+  match returns 37 rows where the union returns 63. The rule is
+  `ifnull(nullif(poi.project, ''), po.project)`, defined in Python in `msa.order_project` as the
+  tested definition, with the SQL required by test to agree with it.
+- **A term of `0` means "not stated", not "zero months".** A Frappe `Int` is 0 when nobody has
+  filled it in and there is no null to tell the two apart, so 0 falls back to the default term —
+  otherwise every agreement created before somebody typed a term would have no computable expiry.
+  A *negative* term has no answer at all, because deriving an expiry in the past from it would
+  report every agreement as expired.
+- **Both new checks are advisory by default.** Refusing to save a purchase order would stop
+  somebody buying materials, and an order placed outside an agreement is a commercial problem to
+  correct rather than an emergency to prevent.
+- The two new `doc_events` keys were **appended into the existing `Project Contract` and
+  `Purchase Order` dicts**, which already had entries. `hooks.py` is one dict literal and a
+  repeated key silently discards the earlier value; a guard in the edit script caught the attempt
+  to add second keys before anything was written.
+- The three new Quality Settings dials need no backfill patch of their own:
+  `backfill_quality_settings_defaults` is registered on `after_migrate` and fills any declared
+  default with no stored row. `QualitySettings.validate` repairs them in place as well, because
+  this module is dormant and a dormant feature's settings page is exactly where the first save is
+  the one you need and the one that fails.
+- **Nothing changes on prod when this deploys.** The purchase-order check is gated on
+  `quality_enabled`, which ships off; no agreement has a term or a rate schedule yet, so every
+  expiry is `unknown` and nothing blocks.
+
+### Changed
+
+- **§9.4 of the Statement of Work print template.** Six literal `[ ]` checkboxes become a table
+  of the project's contracted hold points and the standard each is accepted against — a printed
+  checkbox nobody ticks becoming a row a system can ask about. **The checkboxes remain** where
+  the project has no locked Scope of Work, which is most of them today: an empty table would be
+  worse than the old wording. Resolved at render time on purpose, so the signed instrument
+  captures the hold points as they stood that day and no later scope edit can change what was
+  signed.
+
+
 ## [1.460.0] - 2026-09-14
 
 ### Added

@@ -445,9 +445,49 @@ def _render_context(doc):
 		"signature": signature or frappe._dict(),
 		"phases": phases,
 		"service_options": options,
+		# WI-075 sub-phase L. The hold points this project actually contracted for, so §9.4
+		# prints the rows a system can later ask about instead of six checkboxes nobody ticks.
+		# Resolved at RENDER time on purpose: the rendered body becomes `agreement_html` when
+		# the contract is signed, so the signed instrument captures the hold points as they
+		# stood that day and no later scope edit can change what was signed.
+		"hold_points": _hold_points(doc),
 		"frappe": frappe._dict(utils=frappe.utils),
 	}
 
+
+def _hold_points(doc):
+	"""Hold-point acceptance criteria from the project's locked Scope of Work.
+
+	Empty when there is no locked scope, which is the common case today — and the template falls
+	back to its manual checkboxes rather than printing an empty table, because a Statement of
+	Work for a project with no Scope of Work is still a real Statement of Work.
+
+	Never raises: this is a render path, and a contract that will not print because an evidence
+	lookup hiccupped is worse than one printing the older wording.
+	"""
+	project = doc.get("project")
+	if not project or not frappe.db.exists("DocType", "Project Scope of Work"):
+		return []
+	try:
+		scope = frappe.get_all(
+			"Project Scope of Work",
+			filters={"project": project, "docstatus": 1},
+			pluck="name",
+			limit=1,
+		)
+		if not scope:
+			return []
+		rows = frappe.get_all(
+			"Scope Acceptance Criterion",
+			filters={"parent": scope[0], "parenttype": "Project Scope of Work", "is_hold_point": 1},
+			fields=["criterion", "pass_standard", "verification_method", "responsible_party",
+					"stage", "criterion_key"],
+			order_by="idx asc",
+			ignore_permissions=True,
+		)
+		return rows
+	except Exception:
+		return []
 
 def _compose_scope(source):
 	"""SOW scope HTML from a source doc's request/deliverable scope tables.

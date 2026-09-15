@@ -18,7 +18,12 @@
   "section_ncr",
   "critical_ack_sla_hours",
   "column_break_ncr",
-  "company_floor_enforcement"
+  "company_floor_enforcement",
+  "section_msa",
+  "msa_expiry_enforcement",
+  "msa_warn_days",
+  "column_break_msa",
+  "msa_escalate_days"
  ],
  "fields": [
   {
@@ -98,12 +103,44 @@
    "fieldtype": "Select",
    "label": "Company floor enforcement",
    "options": "Off\nWarn\nBlock"
+  },
+  {
+   "fieldname": "section_msa",
+   "fieldtype": "Section Break",
+   "label": "Subcontractor agreements"
+  },
+  {
+   "default": "Warn",
+   "description": "What happens when a Statement of Work is issued under an <b>expired</b> MSA. An MSA with <i>no expiry recorded</i> is never blocked on any setting — none of the existing agreements has one, and a missing field is a gap in the record rather than a lapse.",
+   "fieldname": "msa_expiry_enforcement",
+   "fieldtype": "Select",
+   "label": "Expired MSA enforcement",
+   "options": "Off\nWarn\nBlock"
+  },
+  {
+   "default": "60",
+   "fieldname": "msa_warn_days",
+   "fieldtype": "Int",
+   "label": "Warn this many days before expiry",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "column_break_msa",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "14",
+   "description": "Inside this window the notice also goes to the Production Manager and President, not only the buyer.",
+   "fieldname": "msa_escalate_days",
+   "fieldtype": "Int",
+   "label": "Escalate this many days before expiry",
+   "non_negative": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-14 10:00:00.000000",
+ "modified": "2026-09-15 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Quality",
  "name": "Quality Settings",

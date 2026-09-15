@@ -80,13 +80,21 @@
 <p>9.1  Subcontractor shall perform the Work in accordance with the quality standards specified herein and in any referenced drawings or specifications.</p>
 <p>9.2  Company (or its representative) reserves the right to inspect the Work at any time. Subcontractor shall provide reasonable cooperation and access.</p>
 <p>9.3  Work that fails to meet the specified quality standards shall be corrected by Subcontractor at no additional cost within ___ business days of written notice.</p>
-<p>9.4  Required inspections / hold points (check all that apply):</p>
+<p>9.4  Required inspections / hold points:</p>
+{% if hold_points %}
+<p>The following hold points are contracted for this project. Work shall not proceed past a hold point until it has been inspected and accepted. Each will be inspected against the standard stated.</p>
+<table class="ct-table"><tr><td><b>Hold point</b></td><td><b>Accepted when</b></td><td><b>Verified by</b></td><td><b>Responsible</b></td></tr>
+{% for hp in hold_points %}<tr><td>{{ fill(hp.criterion, 34) }}</td><td>{{ fill(hp.pass_standard, 38) }}</td><td>{{ fill(hp.verification_method, 16) }}</td><td>{{ fill(hp.responsible_party, 16) }}</td></tr>
+{% endfor %}</table>
+{% else %}
+<p>(check all that apply)</p>
 <p>  [ ]  Pre-pour inspection (before concrete placement)</p>
 <p>  [ ]  Rough plumbing inspection</p>
 <p>  [ ]  Electrical rough-in inspection</p>
 <p>  [ ]  Equipment installation inspection</p>
 <p>  [ ]  Final completion / startup inspection</p>
 <p>  [ ]  Other: {{ blank(30) }}</p>
+{% endif %}
 <h1>10. SPECIAL TERMS</h1>
 <p>List any terms specific to this SOW that supplement or modify the MSA (e.g., unique warranty periods, specific insurance endorsements, special subcontractors, or owner-required provisions):</p>
 <p>{{ blank(30) }}</p>
