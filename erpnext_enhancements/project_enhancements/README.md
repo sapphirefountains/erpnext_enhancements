@@ -18,6 +18,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/project/project_list.js` | Project list-view tweaks | — | list view |
 | `doctype/address/address.js` | Live full-address build + Google Maps embed; attaches the global Places autocomplete to `address_line1` (widget: `public/js/global_enhancements/address_autocomplete.js`) and records the picked place in `custom_google_place_id` / `custom_latitude` / `custom_longitude`. The coordinates are **user-editable** (v1.207.0) for sites the address cannot locate; `custom_location_source` records whether the point came from Google (discarded when the address text is edited) or was typed (kept) | Address form handlers | `doctype_js["Address"]` |
 | `doctype/change_order/change_order.py` | The `Change Order` controller (WI-075 sub-phase K): per-project numbering, a derived status, an impact type read from the **sign** of the money, and an outright refusal to be amended. Judgement in [`quality/change_orders.py`](../quality/change_orders.py), which imports no `frappe` — `project_enhancements/__init__` does, which would put it out of reach of the bench-free tests | `ChangeOrder`, `insert_with_retry` | Doctype controller; approvals via [`api/change_order.py`](../api/change_order.py) |
+| `doctype/change_order/change_order.js` | The approval buttons. **Not optional** — every approval stamp is read-only and `before_submit` refuses a change order neither party has approved, so until v1.465.0 the four endpoints in `api/change_order.py` had no caller and no change order could be locked at all. Auto-loaded by frappe; deliberately **not** in `doctype_js`, which would append it a second time with no dedupe | form script | — |
 | `doctype/project_budget_category/project_budget_category.py` | The budget-category catalog (WI-075 sub-phase M). Its one real job: **the protection flag cannot be quietly unticked** — `budgets.PROTECTED` is the rule and the Check is its display, so `validate` restores a flag that has been removed and never clears one that has been added | `ProjectBudgetCategory` | Doctype controller; seeded by `seed_budget_categories` |
 | `doctype/project_budget_line/project_budget_line.py` | Child table on Project: one category, what it is budgeted at, and the computed committed/actual with a **coverage verdict** beside them. No controller logic — everything that decides anything lives on the parent, and a child controller with opinions would be a third place the same rules could disagree | `ProjectBudgetLine` | child-table controller |
 | `doctype/budget_reallocation/budget_reallocation.py` | Submittable record of money moving between two categories. Net zero by construction and checked at apply time; a protected category on either side needs a second approval that cannot come from the requester or the approving PM; amendment refused, and a cancellation that would drive a line negative refused too | `BudgetReallocation` | Doctype controller; approvals via [`api/project_budget.py`](../api/project_budget.py) |
@@ -105,6 +106,13 @@ Four decisions worth not undoing:
 The approval stamps are read-only and written only by `api/change_order.py`, from the server clock
 and the session user. The old client path on `complete_step` let the browser propose a timestamp
 and the audit found retroactive box-ticking.
+
+Those endpoints are reached from `change_order.js` — *Approve as Project Manager*, *Record
+Customer Approval* and a revoke beside each, offered only while the change order is unsubmitted.
+The form proposes neither approver nor timestamp; it sends the change order's name and, for the
+customer, **how** they approved, which the endpoint requires because an approval nobody can point
+at is not a record. Recording the customer's approval is deliberately not the same act as the
+customer clicking something: approval arrives by signature, by email, or in a meeting.
 
 The judgement lives in `quality/change_orders.py` rather than beside the DocType, because
 `project_enhancements/__init__` imports `frappe` at module scope and anything under it is

@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.465.0] - 2026-09-15
+
+### Added
+
+- **The Change Order form's approval buttons** —
+  `project_enhancements/doctype/change_order/change_order.js`. *Approve as Project Manager*,
+  *Record Customer Approval*, and a revoke beside each, all before submit only. Plus *Change
+  Orders on This Project*, which gives the fourth endpoint a door.
+
+### Fixed
+
+- **A change order could be raised and then never locked by anybody.** Sub-phase K (v1.460.0)
+  shipped `api/change_order.py` with four whitelisted endpoints and no form script at all, so
+  nothing in the Desk could call any of them. Every approval stamp on the document is
+  `read_only` and written only by those endpoints, and `before_submit` refuses a change order
+  neither party has approved — so the two gates that make it a commercial instrument recorded
+  nothing, on every change order, since the day it shipped. This is the same gap
+  `Budget Reallocation` was given a form script for in v1.462.0; it was left open here.
+- **`tests/test_project_budgets.py`'s "not registered in `doctype_js`" assertion could not
+  fail.** It read `hooks.split("doctype_js")[-1]`, and `hooks.py` mentions that name in five
+  comments that sit *after* the dict closes — so the slice it searched never contained the dict,
+  and the assertion passed whether or not an entry had been added. Brace-matched now in both
+  suites, and each was negative-tested by adding the entry and watching the test go red. The
+  real protection against the double-load was never this check: it is
+  `test_hooks_integrity.TestDoctypeJsDoesNotDoubleLoad`, which `ast.literal_eval`s the dict.
+
+### Notes
+
+- **Registered nowhere, deliberately.** Frappe's `FormMeta.add_code` already loads
+  `<module>/doctype/<name>/<name>.js` for a DocType this app owns, and then appends every
+  `doctype_js` entry to the *same* string with no dedupe. A `doctype_js["Change Order"]` line
+  would evaluate the file twice in one `Function` body, where a top-level `const` is a
+  SyntaxError that costs the form every button — how Plaid Banking Settings shipped, twice. For
+  the same reason nothing in the file is declared at the top level except functions, which
+  survive redeclaration. A test asserts the absence of the entry, and another asserts the
+  absence of any top-level `const` / `let` / `class`.
+- **The client proposes no approver and no timestamp.** The server stamps both from the session
+  and its own clock. The old `complete_step` client path let the browser send a timestamp and
+  the audit that followed found retroactive box-ticking, so the form never touches
+  `pm_approved_by`, `pm_approved_on` or `customer_approved_on` — asserted, against a
+  comment-stripped read of the file, because the sentence explaining the absence would otherwise
+  satisfy the assertion by naming the very token it hunts for.
+- **Recording the customer's approval always asks _how_.** `record_customer_approval` requires
+  the argument on purpose — an approval nobody can point at is not a record — so the button
+  prompts for it (`reqd: 1`) rather than sending a placeholder that would satisfy the check and
+  record nothing.
+- **The two approvals are offered in either order**, unlike the second approval on a Budget
+  Reallocation, which is gated behind the first because it countersigns it. These are two
+  different acts by two different parties, and a customer often agrees before the figure has
+  finished being checked; gating them would only stop the true one being recorded.
+
 ## [1.464.0] - 2026-09-15
 
 ### Added
