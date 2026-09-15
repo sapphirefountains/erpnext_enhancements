@@ -560,6 +560,16 @@ doc_events = {
 		],
 	},
 	"Project Contract": {
+		# quality (WI-075 sub-phase L): `validate_msa_gate` already refuses a Statement of Work
+		# without a SIGNED master agreement -- and that is the whole of it. It never asks whether
+		# the agreement is still IN FORCE, so one signed in 2019 gates a SOW issued today just as
+		# well. This derives an MSA's expiry, checks it when a SOW is issued, and reports where
+		# the SOW's FROZEN rates have drifted from what the agreement publishes now. It never
+		# rewrites that snapshot: a signed agreement prints its own copy, and a live re-read
+		# would change a document somebody has already signed. Only a KNOWN, past expiry can
+		# block -- "no expiry recorded" never does, because none of the sixteen live contracts
+		# has one and that is a gap in the record rather than a lapse.
+		"validate": "erpnext_enhancements.quality.msa_enforcement.on_contract_validate",
 		# When a Maintenance Services Agreement is Signed, draft the operational
 		# Maintenance Contract (left as a draft; activation stays the human gate).
 		# Both signing paths: submitting an already-Signed draft (on_submit) and
@@ -592,6 +602,11 @@ doc_events = {
 	# 0 disables) unless the user holds the "PO Approver" role — the CEO sign-off
 	# escalation. Threshold resolution is per-project-ready (see po_approval.py).
 	"Purchase Order": {
+		# quality (WI-075 sub-phase L): say so when the supplier has a signed master agreement
+		# and this order does not name it -- an order placed outside the agreement is an order at
+		# rates nobody agreed. Advisory: refusing the save would stop somebody buying materials,
+		# and this is a commercial problem to correct rather than an emergency to prevent.
+		"validate": "erpnext_enhancements.quality.msa_enforcement.on_purchase_order_validate",
 		# WI-014 follow-through: `Purchase Order Item.project` is mandatory, but
 		# ERPNext never pushes the header project down to the item rows — fill the
 		# blank ones before the mandatory check runs. Desk saves are already
@@ -1063,6 +1078,11 @@ scheduler_events = {
 		# beside every one core made, on the same goal, the same day, and nobody comparing two
 		# identical reviews would guess why. goals.review_due RAISES if asked about one of them.
 		"erpnext_enhancements.quality.reviews.generate_annual_reviews",
+		# quality (WI-075 sub-phase L): master agreements coming up for renewal. 60 days' notice,
+		# escalating to the Production Manager and President inside 14. Agreements with NO expiry
+		# recorded get their own block in the digest -- reported as a gap in the record, never as
+		# a lapse, because none of the existing sixteen has one.
+		"erpnext_enhancements.quality.msa_enforcement.sweep_expiring_agreements",
 		# training: re-grant Training Learner to anybody who owes a course and cannot
 		# open it. `roles.grant_learner_role` is correct and always was; it is only
 		# CALLED on Employee insert and on an Employee gaining a user_id, neither of

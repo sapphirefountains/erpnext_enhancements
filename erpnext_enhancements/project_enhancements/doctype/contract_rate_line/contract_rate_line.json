@@ -1,0 +1,101 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-09-15 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "classification",
+  "rate_type",
+  "rate",
+  "uom",
+  "column_break_dates",
+  "effective_from",
+  "effective_to",
+  "overtime_multiplier",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "classification",
+   "fieldtype": "Data",
+   "label": "Classification",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "Journeyman, Apprentice, Equipment, Materials \u2014 matched exactly against a Statement of Work's frozen rates, so the spelling is load-bearing."
+  },
+  {
+   "fieldname": "rate_type",
+   "fieldtype": "Select",
+   "label": "Type",
+   "reqd": 1,
+   "options": "Hourly\nDaily\nUnit\nEquipment\nMarkup %",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "rate",
+   "fieldtype": "Float",
+   "label": "Rate",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 1,
+   "precision": "2"
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Data",
+   "label": "Per",
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Hour, day, each \u2014 free text, because equipment lines are not UOM records."
+  },
+  {
+   "fieldname": "column_break_dates",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "effective_from",
+   "fieldtype": "Date",
+   "label": "Effective from",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "effective_to",
+   "fieldtype": "Date",
+   "label": "Effective to",
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "Leave blank for open-ended. Two lines in force at once for the same classification makes the rate depend on which row a query reads first, and the save says so."
+  },
+  {
+   "fieldname": "overtime_multiplier",
+   "fieldtype": "Float",
+   "label": "Overtime multiplier",
+   "precision": "2",
+   "description": "1.5 for time-and-a-half. Blank means no overtime rate was agreed, which is not the same as 1.0."
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Contract Rate Line",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

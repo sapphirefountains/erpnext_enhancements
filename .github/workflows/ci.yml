@@ -587,6 +587,16 @@ jobs:
       # -1, producing a second commercial instrument with almost the same name as the first.
       - name: Change orders (a credit cannot be totalled as an addition)
         run: python -m unittest erpnext_enhancements.tests.test_change_orders -v
+      # MSA expiry, rates and order attribution (WI-075 sub-phase L). `validate_msa_gate` asks
+      # whether an agreement was ever SIGNED and never whether it is still IN FORCE, so one
+      # signed in 2019 gates a Statement of Work issued today just as well. The load-bearing case
+      # is that UNKNOWN is a third answer: none of the sixteen live contracts records an expiry,
+      # so treating unknown as expired blocks every SOW the company can issue on deploy day,
+      # and treating it as valid is the vacuous pass. Also pins the purchase-order union --
+      # either project field alone drops orders silently (40 of 148 live pending lines carry no
+      # row project, 32 of those under a header that names the job).
+      - name: MSA rates (unknown expiry is neither valid nor expired)
+        run: python -m unittest erpnext_enhancements.tests.test_msa_rates -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk

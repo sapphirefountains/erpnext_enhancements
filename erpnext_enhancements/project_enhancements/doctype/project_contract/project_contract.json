@@ -38,6 +38,14 @@
   "architect_owner_agreement_date",
   "msa_section",
   "msa_tier",
+  "section_msa_term",
+  "msa_term_months",
+  "msa_expires_on",
+  "column_break_msa_term",
+  "msa_expiry_effective",
+  "section_msa_rates",
+  "rate_schedule_intro",
+  "rate_schedule",
   "sow_section",
   "msa_contract",
   "msa_effective_date",
@@ -334,6 +342,61 @@
    "label": "Subcontractor Tier",
    "mandatory_depends_on": "eval:doc.template_key==\"msa\"",
    "options": "\nTier 1 - Service & Design\nTier 2 - Trade"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"msa\"",
+   "fieldname": "section_msa_term",
+   "fieldtype": "Section Break",
+   "label": "Term and rates"
+  },
+  {
+   "default": "12",
+   "depends_on": "eval:doc.template_key==\"msa\"",
+   "description": "Counted from the signing date. An unset Int reads as 0, which is treated as 'not stated' and falls back to twelve months.",
+   "fieldname": "msa_term_months",
+   "fieldtype": "Int",
+   "label": "Term (months)",
+   "non_negative": 1
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"msa\"",
+   "description": "Leave blank to derive the expiry from the signing date and the term. Set it only when the agreement states a date of its own.",
+   "fieldname": "msa_expires_on",
+   "fieldtype": "Date",
+   "label": "Expires on (override)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"msa\"",
+   "fieldname": "column_break_msa_term",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"msa\"",
+   "description": "Derived, never typed — the override if there is one, otherwise the term counted from signing. Blank means it cannot be worked out, which is NOT the same as still valid.",
+   "fieldname": "msa_expiry_effective",
+   "fieldtype": "Date",
+   "label": "Expiry in force",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"msa\"",
+   "fieldname": "section_msa_rates",
+   "fieldtype": "Section Break",
+   "label": "Rate schedule"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"msa\"",
+   "fieldname": "rate_schedule_intro",
+   "fieldtype": "HTML",
+   "label": "Rate schedule intro",
+   "options": "<p class=\"text-muted small\">The rates this agreement publishes. A Statement of Work issued under it takes a <b>frozen snapshot</b> of these into its own four rate fields; the snapshot is never rewritten from here, because a signed agreement prints its own copy and a live re-read would change a document somebody has already signed. A drift between the two is reported on the SOW.</p>"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"msa\"",
+   "fieldname": "rate_schedule",
+   "fieldtype": "Table",
+   "label": "Rate schedule",
+   "options": "Contract Rate Line"
   },
   {
    "depends_on": "eval:doc.template_key==\"sow\"",
