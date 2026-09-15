@@ -1,9 +1,27 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Module 9 — Jobsite Safety, Best Practices & Code Requirements."""
+"""Module 9 — Jobsite Safety, Best Practices & Code Requirements.
 
-from erpnext_enhancements.training.technician_program._common import ask_block, notice_block
+Sapphire has no Module 9 document of its own. The safety material is lesson 7.3 of *Module 7:
+Service Operations & Safety Protocols* — confined space entry and lock-out/tag-out — and it is
+written here rather than in Module 7, which says so in its own docstring. Where that lesson
+gives a figure, a sequence or a rule it is used as written: permit-required as Sapphire's own
+classification of a below-ground vault, the calibrated four-gas monitor lowered in before the
+hatch is cracked completely, O2 19.5-23.5%, H2S 0 ppm, CO below 25 ppm, LEL 0%, the
+explosion-proof blower purging with fresh outdoor air for a minimum of 15 minutes before a
+re-test, and the six lock-out steps ending at 0 volts on the terminal block with the key in
+your pocket. The two field demonstrations its checklist requires in front of a Lead Installer
+are named in the lesson's ask_block().
+
+The other eight lessons -- loading, hoses and cords, tools, electrical, codes, first aid, PPE,
+fatigue -- are outside what that document covers. They keep their general-practice content and
+the rule that goes with it: where a number belongs to a product, a study or the employer, the
+lesson says where to read it instead of printing one. Hence sourced_notice_block(), whose
+second paragraph is what tells a learner which half they are reading.
+"""
+
+from erpnext_enhancements.training.technician_program._common import ask_block, sourced_notice_block
 
 COURSE = {
 	"course": {
@@ -18,28 +36,13 @@ COURSE = {
 		"weight": "Required",
 		"audience": "Internal Staff",
 	},
-	"chapters": [
-		{
-			"title": "The truck, the site and the tools",
-			"description": "What you bring, how you lay it out, and how you hand it on.",
-		},
-		{
-			"title": "The hazards that do not give second chances",
-			"description": "Confined space, stored energy, electricity, and the codes behind all three.",
-		},
-		{
-			"title": "Looking after the person",
-			"description": "First aid, protective equipment, and the body doing the work.",
-		},
-	],
 	"lessons": [
 		{
 			"lesson_title": "Loading vehicles",
-			"chapter": 0,
 			"estimated_minutes": 12,
 			"summary": "What a truck is rated to carry, where the weight has to sit, and why a load that shifts is a crash.",
 			"blocks": [
-				notice_block(),
+				sourced_notice_block(),
 				{
 					"block_type": "Rich Text",
 					"heading": "The truck has a number, and it is not a suggestion",
@@ -217,7 +220,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Jobsite hose and cord management",
-			"chapter": 0,
 			"estimated_minutes": 10,
 			"summary": "The most common way somebody gets hurt on our sites, and how temporary power is run near water.",
 			"blocks": [
@@ -405,7 +407,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Tool usage and storage best practices",
-			"chapter": 0,
 			"estimated_minutes": 11,
 			"summary": "Guards, sharpness, inspection, and putting a tool away in the state you would want to find it.",
 			"blocks": [
@@ -601,9 +602,8 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Confined space entry and lock-out/tag-out",
-			"chapter": 1,
-			"estimated_minutes": 18,
-			"summary": "What makes a vault a permit-required space, why rescuers die, and the lock-out sequence that ends in proof.",
+			"estimated_minutes": 20,
+			"summary": "Why Sapphire classes a below-ground vault as permit-required, the four readings taken before the hatch opens, why rescuers die, and the lock-out sequence that ends in proof.",
 			"blocks": [
 				{
 					"block_type": "Rich Text",
@@ -626,12 +626,27 @@ COURSE = {
 						"<p>Which is why the determination is made <b>in writing, by the employer, "
 						"before anybody goes near it</b>. It is not a judgement a technician makes at "
 						"the lip of the hole.</p>"
+						"<p><b>Sapphire has already made that determination for the commonest case.</b> "
+						"Its own training document states that many commercial fountain mechanical "
+						"systems are located in below-ground concrete vaults, and that <b>these areas "
+						"are classified as permit-required confined spaces</b> — on the grounds of "
+						"toxic gas accumulation and oxygen depletion. So on our work a subterranean "
+						"equipment vault is not a space you assess and form a view about. It starts "
+						"permit-required, and it stays that way unless somebody with the authority to "
+						"reclassify it does so in writing.</p>"
 					),
 				},
 				{
 					"block_type": "Rich Text",
 					"heading": "Test before entry, monitor during, and in that order",
 					"content": (
+						"<p>Sapphire's document puts this in one line: <b>never drop into a vault "
+						"without testing the air first.</b> <b>Lower a calibrated four-gas "
+						"atmospheric monitor down into the vault before cracking the hatch "
+						"completely</b> — the instrument goes in ahead of you, through a hatch that "
+						"is not yet fully open. The reading you want is of the air as it has been "
+						"sitting, not of the air after you have stood over an open hatch stirring it "
+						"about with your own head in the worst place to have it.</p>"
 						"<p>The atmosphere is tested <b>before</b> anybody enters and monitored "
 						"<b>while</b> they are in there, because the space changes — the work itself "
 						"changes it. Grinding, hot work, solvent cement, a running engine outside the "
@@ -640,11 +655,14 @@ COURSE = {
 						"is not arbitrary. Oxygen comes first because it decides whether anybody can be "
 						"in there at all, and because the combustible sensor in most meters needs oxygen "
 						"to work — in an oxygen-deficient atmosphere it reads <b>low</b>, which is the "
-						"worst possible direction for an instrument to be wrong.</p>"
-						"<p><b>Acceptable oxygen runs roughly 19.5% to 23.5%.</b> Below that range you "
-						"are in an oxygen-deficient atmosphere; above it, the space is oxygen-enriched, "
-						"which is not a bonus — enriched oxygen makes materials that normally smoulder "
-						"burn fiercely, clothing included.</p>"
+						"worst possible direction for an instrument to be wrong. Sapphire's document "
+						"lists the four gases in a different order from this on its page, but that is "
+						"the order of a table rather than the order of a test; oxygen is read first "
+						"either way.</p>"
+						"<p><b>Sapphire's safe operational range for oxygen is 19.5% to 23.5%.</b> "
+						"Below that range you are in an oxygen-deficient atmosphere; above it, the "
+						"space is oxygen-enriched, which is not a bonus — enriched oxygen makes "
+						"materials that normally smoulder burn fiercely, clothing included.</p>"
 						"<p>Test at the <b>top, the middle and the bottom</b> of the space, lowering the "
 						"probe slowly. Gases stratify: solvent vapour and many fuel vapours are heavier "
 						"than air and sit in the bottom where you will be kneeling, while others "
@@ -654,6 +672,59 @@ COURSE = {
 						"nothing — it reads a plausible number</b>, and a plausible number is exactly "
 						"what talks somebody into the hole.</p>"
 					),
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "The four gases, and the numbers Sapphire sets for them",
+					"content": (
+						"<p>Four-gas means four metrics, and Sapphire's document gives a safe "
+						"operational range for each. The meter must <b>actively verify</b> all four "
+						"before anybody goes in — a meter that has not been looked at is not a "
+						"test.</p>"
+						"<ul>"
+						"<li><b>Oxygen (O₂) — between 19.5% and 23.5%.</b> The one that decides "
+						"whether anybody can be in there at all.</li>"
+						"<li><b>Hydrogen sulfide (H₂S) — 0 ppm.</b> Not 'low'. Zero. It is the gas "
+						"of stagnant organic decomposition, which is an exact description of the "
+						"bottom of a fountain vault that has been shut since autumn. It smells of "
+						"rotten eggs at small concentrations and then <b>deadens your sense of smell "
+						"at larger ones</b>, so the smell going away is the wrong kind of good "
+						"news.</li>"
+						"<li><b>Carbon monoxide (CO) — below 25 ppm.</b> Colourless, odourless, and "
+						"produced by anything burning: a generator, a compressor, a pressure washer "
+						"or a vehicle idling near the hatch you are about to open.</li>"
+						"<li><b>Lower explosive limit (LEL) — 0%.</b> Combustible methane or a fuel "
+						"leak. The LEL reading is a percentage of the concentration at which the "
+						"atmosphere will burn, so a small number here is not a small problem.</li>"
+						"</ul>"
+						"<p><b>If the monitor alarms, the vault gets purged, not entered.</b> Deploy "
+						"an industrial <b>explosion-proof</b> ventilation blower — explosion-proof "
+						"because the thing you are blowing out may be flammable and a blower motor "
+						"makes sparks — and purge the space with <b>fresh outdoor air for a minimum "
+						"of 15 minutes</b> before re-testing. Fresh <i>outdoor</i> air: a blower "
+						"drawing from beside a running generator feeds the vault the carbon monoxide "
+						"you are trying to clear out of it.</p>"
+						"<p>Then test again. A purge that ran is not a purge that worked, and the "
+						"only thing that says it worked is the meter.</p>"
+					),
+				},
+				{
+					"block_type": "Checklist",
+					"heading": "Before anybody goes into a vault",
+					"items": [
+						"The space has been evaluated and the permit is in front of you, filled in and authorised",
+						"The four-gas monitor is in calibration and has been bump tested",
+						"The monitor went down into the vault before the hatch was cracked completely",
+						"Oxygen reads between 19.5% and 23.5%",
+						"Hydrogen sulfide reads 0 ppm",
+						"Carbon monoxide reads below 25 ppm",
+						"LEL reads 0%",
+						"If anything alarmed: an explosion-proof blower purged the space with fresh outdoor air for at least 15 minutes, and it was re-tested afterwards",
+						"Readings were taken at the top, the middle and the bottom, not just at the hatch",
+						"An attendant is outside, knows who is in, and is staying",
+						"The rescue arrangements are in place now, not being worked out now",
+						"Monitoring continues the whole time anybody is inside",
+					],
 				},
 				{
 					"block_type": "Callout",
@@ -699,37 +770,67 @@ COURSE = {
 				},
 				{
 					"block_type": "Rich Text",
-					"heading": "Lock-out/tag-out: the sequence, and it ends in proof",
+					"heading": "Lock-out/tag-out: Sapphire's sequence, and it ends in proof",
 					"content": (
 						"<p>Lock-out/tag-out exists because equipment that is switched off is not "
 						"equipment that is safe. Someone else flips a breaker, a timer fires, a level "
 						"switch calls for a pump, a control system resumes after a fault. The lock is "
 						"the physical statement that none of those can happen.</p>"
+						"<p>Sapphire's document names the trigger plainly: <b>before replacing a pump "
+						"motor, clearing a jammed valve actuator, or replacing a broken Splash Wizard "
+						"relay, you isolate the power source.</b> These are its steps.</p>"
 						"<ol>"
-						"<li><b>Prepare.</b> Find out what energy sources this equipment has — all of "
-						"them, not the obvious one — and how each is isolated.</li>"
-						"<li><b>Notify</b> everybody affected, and shut down by the normal means.</li>"
-						"<li><b>Isolate every source.</b> The electrical disconnect, but also the "
-						"valves, the blinds, the air supply, the chemical feed.</li>"
-						"<li><b>Apply your own lock and tag</b> to each isolating device. The tag says "
-						"who and why; the lock is what actually stops it.</li>"
-						"<li><b>Release or restrain stored energy</b> — drain, bleed, block, discharge.</li>"
-						"<li><b>Verify.</b> Try to start it by its normal controls, then return the "
-						"control to off. Then test for zero energy with an instrument, on every "
-						"conductor, having proven the instrument works.</li>"
+						"<li>Turn the equipment switch <b>off at the local panel</b>.</li>"
+						"<li>Locate the <b>main circuit breaker upstream</b>.</li>"
+						"<li>Flip that breaker to the <b>OFF</b> position.</li>"
+						"<li>Snap a physical <b>LOTO scissor-hasp</b> over the breaker switch "
+						"toggle.</li>"
+						"<li>Affix <b>your personal padlock</b> to the hasp, alongside a signed, dated "
+						'warning tag reading <b>"DANGER: DO NOT OPERATE."</b></li>'
+						"<li><b>Verify.</b> Attempt to turn the breaker back on — then take your "
+						"multi-meter and prove the target terminal block reads <b>0 volts</b>.</li>"
 						"</ol>"
-						"<p>That is the shape every lock-out procedure takes. It is not the procedure you "
-						"follow: what you follow is the <b>equipment-specific</b> procedure written for "
-						"that pump, that panel, that feature, which names the actual isolating devices and "
-						"the actual stored energy. This list is here so you can tell whether the one in "
-						"front of you is complete — and notice when there isn't one.</p>"
-						"<p>Two rules about the lock itself, and they are absolute. <b>Each person "
-						"working on the equipment applies their own lock</b> — a group lock box exists "
-						"for exactly this. And <b>only the person who applied a lock removes it</b>. If "
-						"somebody has gone home with their lock on, there is a written procedure for "
-						"that case and it belongs to the employer; cutting a colleague's lock off "
-						"because the job is waiting is how somebody who is still inside the equipment "
-						"gets started up.</p>"
+						"<p>And the rule that runs through all six: <b>the key stays in your pocket "
+						"until the repair is fully finished.</b> A lock whose key is hanging on the "
+						"panel, or sitting in the van, or in somebody else's hand, is a sign rather "
+						"than a lock.</p>"
+						"<p>Notice where those steps end. They do not end at the lock — they end at a "
+						"<b>measurement</b>. A breaker labelled off, a hasp, a padlock and a tag are "
+						"four things that all look like proof and none of which are; the meter on the "
+						"terminal block is the only step in the list that tells you something you did "
+						"not already believe.</p>"
+						"<p>Four things the six steps assume rather than state, and all four matter "
+						"on a water feature:</p>"
+						"<ul>"
+						"<li><b>Tell everybody affected</b> before it goes down, and shut down by the "
+						"normal means first — which is what step 1 is doing.</li>"
+						"<li><b>Electricity is not the only energy source.</b> The valves, the air "
+						"supply and the chemical feed isolate too, each isolating device carries its "
+						"own lock, and stored energy is released or restrained before work starts. "
+						"The next callout is the list of what a fountain is still holding after the "
+						"breaker is open.</li>"
+						"<li><b>Each person working on the equipment applies their own lock.</b> That "
+						"is what a scissor-hasp is for — it takes several padlocks, and it cannot be "
+						"removed until the last one comes off. A group lock box does the same job for "
+						"a bigger crew.</li>"
+						"<li><b>Step 6 proves one point, once.</b> Whatever you moved to test it goes "
+						"back to off — the breaker you just tried, and the local switch from step 1 — "
+						"or the equipment starts itself the moment somebody restores power. Prove "
+						"<b>every</b> conductor you are going to touch rather than one of three. And "
+						"prove the meter itself, on a known live source, before and after: a meter "
+						"with a blown fuse reads 0 volts on a live terminal block. That last one is "
+						"the next lesson, and it is the reason this one ends at a measurement.</li>"
+						"</ul>"
+						"<p>And <b>only the person who applied a lock removes it</b>. If somebody has "
+						"gone home with their lock on, there is a written procedure for that case and "
+						"it belongs to the employer; cutting a colleague's lock off because the job is "
+						"waiting is how somebody who is still inside the equipment gets started "
+						"up.</p>"
+						"<p>What you follow on the day is the <b>equipment-specific</b> procedure "
+						"written for that pump, that panel, that feature, which names the actual "
+						"isolating devices and the actual stored energy. The six steps above are the "
+						"shape — here so you can tell whether the one in front of you is complete, and "
+						"notice when there isn't one.</p>"
 					),
 				},
 				{
@@ -761,11 +862,18 @@ COURSE = {
 					"attendant and entry supervisor, the atmospheric testing and monitoring "
 					"arrangements, the equipment-specific lock-out procedures, and the rescue "
 					"arrangements including how somebody is actually retrieved.</p>"
-					"<p>This lesson tells you what those documents are for and what the roles mean. "
-					"<b>It does not train you, and it does not authorise you to enter anything.</b> "
-					"If Sapphire's program and permit are not in front of you and the space has not "
-					"been evaluated, the correct move is to stop and ask — not to look in and form an "
-					"opinion.</p>",
+					"<p>This lesson tells you what those documents are for and what the roles mean, "
+					"and it now carries Sapphire's own figures for the pre-entry gas test and its own "
+					"lock-out sequence. <b>It still does not train you, and it does not authorise you "
+					"to enter anything.</b> If Sapphire's program and permit are not in front of you "
+					"and the space has not been evaluated, the correct move is to stop and ask — not "
+					"to look in and form an opinion.</p>"
+					"<p>Sapphire's document is explicit that these two are <b>demonstrated, not "
+					"read</b>: a technician executes a true pre-entry confined space gas test, "
+					"reading out safe oxygen, LEL and toxic gas baselines, and deploys a multi-lock "
+					"scissor hasp, padlock and danger tag to isolate an electric motor panel, in "
+					"front of a Lead Installer. Having read the steps here is not that, and it is not "
+					"a substitute for it.</p>",
 				),
 			],
 			"quiz": {
@@ -776,7 +884,9 @@ COURSE = {
 						"explanation": (
 							"Whatever dropped them is still in there and it acts in seconds. A large share of the "
 							"people who die in confined spaces are would-be rescuers found beside the person they "
-							"went in for. Call for rescue, keep everyone out, and help from outside."
+							"went in for. Call for rescue, keep everyone out, and help from outside. Purge and "
+							"re-test is the sequence for making an entry — it is not a rescue, and a collapse is "
+							"not the moment to start one."
 						),
 						"options": [
 							{
@@ -792,7 +902,40 @@ COURSE = {
 								"is_correct": False,
 							},
 							{
-								"text": "Run a blower into the hatch for a minute and then go in",
+								"text": "Purge with the blower, re-test the atmosphere, and then go in and get them out",
+								"is_correct": False,
+							},
+						],
+					},
+					{
+						"question": "Sapphire's document sets out the pre-entry test for a below-ground vault. Which of these are part of it?",
+						"type": "Multiple Choice",
+						"explanation": (
+							"The calibrated four-gas monitor goes down into the vault before the hatch is cracked "
+							"completely; the safe ranges are oxygen 19.5% to 23.5%, hydrogen sulfide 0 ppm, carbon "
+							"monoxide below 25 ppm and LEL 0%; and an alarm means an explosion-proof blower purges "
+							"the space with fresh outdoor air for at least 15 minutes before re-testing. A reading "
+							"taken at an open hatch is a reading of the air you are standing in."
+						),
+						"options": [
+							{
+								"text": "The monitor goes down into the vault before the hatch is cracked completely",
+								"is_correct": True,
+							},
+							{
+								"text": "Oxygen 19.5% to 23.5%, hydrogen sulfide 0 ppm, carbon monoxide below 25 ppm, LEL 0%",
+								"is_correct": True,
+							},
+							{
+								"text": "On an alarm, an explosion-proof blower purges with fresh outdoor air for at least 15 minutes, then it is re-tested",
+								"is_correct": True,
+							},
+							{
+								"text": "A reading taken at the open hatch is enough, because the vault air mixes with it",
+								"is_correct": False,
+							},
+							{
+								"text": "Carbon monoxide below 100 ppm is acceptable as long as the entry is short",
 								"is_correct": False,
 							},
 						],
@@ -828,18 +971,23 @@ COURSE = {
 						"question": "Which of these are true of lock-out/tag-out?",
 						"type": "Multiple Choice",
 						"explanation": (
-							"Each person applies their own lock, only that person removes it, verification means "
-							"trying to start the equipment and then testing for zero energy, and stored energy is "
-							"released or restrained first. A tag records who and why; the lock is what stops it."
+							"Each person applies their own lock — which is what a scissor-hasp is for — and only "
+							"that person removes it, with the key in their own pocket until the repair is finished. "
+							"Sapphire's sequence ends in a measurement: attempt to turn the breaker back on, then "
+							"prove 0 volts at the terminal block with a multi-meter. Stored energy is released or "
+							"restrained first. A tag records who and why; the lock is what stops it."
 						),
 						"options": [
 							{
-								"text": "Each person working on the equipment applies their own lock and tag",
+								"text": "Each person working on the equipment applies their own lock and tag, which is what a scissor-hasp is for",
 								"is_correct": True,
 							},
-							{"text": "Only the person who applied a lock removes it", "is_correct": True},
 							{
-								"text": "Verification means trying to start it by the normal controls and then testing for zero energy",
+								"text": "Only the person who applied a lock removes it, and the key stays in their pocket until the repair is finished",
+								"is_correct": True,
+							},
+							{
+								"text": "Verification means attempting to turn the breaker back on, then proving 0 volts at the terminal block with a meter",
 								"is_correct": True,
 							},
 							{
@@ -857,7 +1005,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Electrical safety",
-			"chapter": 1,
 			"estimated_minutes": 14,
 			"summary": "Why water changes the numbers, what 'qualified' actually means, and proving a conductor is dead yourself.",
 			"blocks": [
@@ -915,6 +1062,11 @@ COURSE = {
 						"does not announce itself — it reads <b>zero</b>, on everything, forever, and "
 						"zero is exactly what a safely dead conductor reads. Re-testing on the known "
 						"source is how you tell a dead circuit from a dead instrument.</p>"
+						"<p>This is where Sapphire's lock-out sequence ends, and it ends here on "
+						"purpose. Having flipped the breaker, hasped it, padlocked it, tagged it and "
+						"tried to turn it back on, the last step is to <b>prove the target terminal "
+						"block reads 0 volts with your multi-meter</b>. Live-dead-live is how you earn "
+						"the right to believe that reading.</p>"
 						"<p>And a circuit can be fed from somewhere you did not look: a generator, a "
 						"transfer switch, a control transformer, a UPS, a second panel, or a back-fed "
 						"circuit somebody added years ago. One open breaker proves one open "
@@ -1052,7 +1204,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Basic OSHA and ISPSC safety codes",
-			"chapter": 1,
 			"estimated_minutes": 12,
 			"summary": "Which document governs which question, and why 'the code says' is only ever half a sentence.",
 			"blocks": [
@@ -1249,7 +1400,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Basic first aid",
-			"chapter": 2,
 			"estimated_minutes": 14,
 			"summary": "Recognise it, call early, control what you can safely control — and know what this trade actually produces.",
 			"blocks": [
@@ -1449,7 +1599,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Jobsite clothing and personal protective equipment (PPE)",
-			"chapter": 2,
 			"estimated_minutes": 12,
 			"summary": "Why PPE is last on the list, how each type is actually selected, and the two we skip on a fountain.",
 			"blocks": [
@@ -1635,7 +1784,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Physical fatigue and wellness",
-			"chapter": 2,
 			"estimated_minutes": 12,
 			"summary": "Heat, cold, lifting and tiredness as jobsite hazards — including the sign that turns heat illness into an emergency.",
 			"blocks": [

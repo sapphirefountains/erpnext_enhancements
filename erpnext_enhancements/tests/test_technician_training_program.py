@@ -274,14 +274,30 @@ class TestSpecsValidate(unittest.TestCase):
                     self.assertGreater(lesson.get("estimated_minutes", 0), 0)
                     self.assertGreaterEqual(len(lesson["blocks"]), 3)
 
-    def test_every_lesson_belongs_to_a_chapter(self):
+    def test_no_course_uses_chapters(self):
+        """A course is its lessons, in order — no grouping layer.
+
+        Chapters are a real feature of the model and these ten deliberately do not use one. The
+        outline already names the module, the module IS the course, and a second level of grouping
+        inside it only gave the learner a heading between them and the next lesson.
+
+        Asserted rather than left implicit, because the seeding and rebuild paths both hand
+        `spec["chapters"]` straight to `_apply_chapters`: a chapter reintroduced here would appear
+        in the outline with no warning, and a lesson carrying a stale `chapter` index would be
+        refused by the validator with a message about a chapter count."""
         for spec in program.COURSES:
-            chapters = len(spec.get("chapters") or [])
-            self.assertGreater(chapters, 0, spec["course"]["course_title"])
-            for lesson in spec["lessons"]:
-                with self.subTest(f"{spec['course']['course_title']} / {lesson['lesson_title']}"):
-                    self.assertIn("chapter", lesson)
-                    self.assertLess(lesson["chapter"], chapters)
+            with self.subTest(spec["course"]["course_title"]):
+                self.assertEqual(spec.get("chapters") or [], [])
+                for lesson in spec["lessons"]:
+                    self.assertNotIn("chapter", lesson, lesson["lesson_title"])
+
+    def test_the_rebuild_clears_chapters_a_draft_already_has(self):
+        """`_apply_chapters` returns early on an empty list — right for a new version, wrong for a
+        rebuild, where the draft on production still holds the chapters seeded in v1.467.0. Without
+        this the lessons referencing them are deleted and the empty groups survive."""
+        src = _raw(APP_ROOT / "api" / "training_course_authoring.py")
+        rebuild = src.split("def rebuild_draft_from_spec(", 1)[1]
+        self.assertIn('{"chapters": []}', rebuild)
 
     def test_every_module_file_is_in_the_package(self):
         for name in MODULE_FILES:

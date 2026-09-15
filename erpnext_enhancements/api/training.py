@@ -2489,6 +2489,30 @@ def lesson_questions(course, lesson_key):
 
 
 @frappe.whitelist(methods=["POST"])
+def lesson_help(course, lesson_key, in_quiz=0):
+    """Plain-English help for the words in the lesson on screen. Delegates to :mod:`training.help`.
+
+    A thin re-export for the reason ``ask_lesson_question`` is: the player's transport has one
+    ``PREFIX`` and one gate, and a second prefix in the client is a second place for a rename to
+    break silently.
+
+    ``in_quiz`` puts the panel in quiz mode: definitions only, and nothing whose text appears
+    anywhere in this lesson's quiz pool. The pool rather than the drawn questions, because
+    ``Training Attempt Question`` rows are written at grading time and the server therefore cannot
+    discover mid-quiz what this learner was given — and a client that declares its own suppression
+    list can declare an empty one. ``training/help.py`` has the reasoning, the field-level boundary,
+    and an honest note on what the flag does and does not guarantee.
+
+    This is the *only* learner-facing payload in the module that is not assembled by
+    ``_split_lesson``, and it is allowed to exist because it is built from a different table
+    entirely — ``Training Glossary Term`` — and never opens ``answer_key_json``.
+    """
+    from erpnext_enhancements.training import help as training_help
+
+    return training_help.get_lesson_help(course, lesson_key, in_quiz=in_quiz)
+
+
+@frappe.whitelist(methods=["POST"])
 def submit_lesson_work(course, lesson_key, file=None, text=None, block_key=None):
     """Hand in a file against a lesson that asks for one. Delegates to :mod:`training.submissions`.
 

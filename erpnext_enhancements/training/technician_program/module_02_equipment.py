@@ -1,34 +1,50 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Module 2 — Aquatic System Equipment Installation."""
+"""Module 2 — Aquatic System Equipment Installation.
 
-from erpnext_enhancements.training.technician_program._common import ask_block, notice_block
+Built from Sapphire's own document, "Module 2: Equipment Installation, Flow Control, &
+Filtration". Where that document states a figure it is used as written, in place of whatever
+this file said before: the five-diameter straight suction run, the fifteen seconds a dry
+mechanical seal survives, the 8-to-10 PSI rise that condemns a filter, the 30-second rinse, the
+45-degree wand, PSI x 2.31 and inHg x 1.13, the 1/8-to-3/16-inch paver gap, and the three tank
+levels the Splash Wizard controller works between.
+
+The document covers pump installation and priming, balance and surge tanks, skimmer and
+main-drain balancing, filtration, pedestal false floors and pump curves. Pipe and fittings,
+chemical feed, heaters and chillers, structures and anchoring are **not** in it; those lessons
+keep the general-practice content they had, and the ask_block()s they already carried, which
+say where the real number lives rather than printing one. ("Fountain structures" never had one
+and still does not.) The single thing added to that set is a balance-tank entry in the vessel
+list of "Fountain structures", pointing at the lesson that carries the document's own account
+of it.
+
+One place the document contradicted this file outright: the void under a pedestal deck is a
+drainage plenum, not the reservoir. Water drains through the open joints to a sloped sub-slab
+and back to a separate holding tank, and it is that tank's level the controller watches.
+"""
+
+from erpnext_enhancements.training.technician_program._common import ask_block, sourced_notice_block
 
 COURSE = {
 	"course": {
 		"course_title": "Technician Module 2 — Aquatic System Equipment Installation",
 		"summary": (
-			"Set and pipe the equipment a water feature runs on — pumps, filters, drains, gauges, "
-			"chemical feed, heaters — and the structures and anchors that hold it all up."
+			"Set and pipe the equipment a water feature runs on — pumps, balance tanks, filters, "
+			"drains, gauges, chemical feed, heaters — and the structures and anchors that hold it "
+			"all up."
 		),
 		"category": "Installation",
 		"weight": "Required",
 		"audience": "Internal Staff",
 	},
-	"chapters": [
-		{"title": "Moving the water", "description": "Pumps, pipe, and where water enters and leaves."},
-		{"title": "Conditioning the water", "description": "Filters, gauges, chemical feed, temperature."},
-		{"title": "Holding it all up", "description": "Structures, anchors and deck systems."},
-	],
 	"lessons": [
 		{
 			"lesson_title": "Pump installation and priming",
-			"chapter": 0,
-			"estimated_minutes": 14,
-			"summary": "Why a centrifugal pump cannot pull water, and what running dry destroys.",
+			"estimated_minutes": 16,
+			"summary": "Mounting it, the five-diameter straight run, and the fifteen seconds a dry seal survives.",
 			"blocks": [
-				notice_block(),
+				sourced_notice_block(),
 				{
 					"block_type": "Rich Text",
 					"heading": "A pump does not suck",
@@ -40,13 +56,14 @@ COURSE = {
 						"<p>Which is why the arrangement of the suction side decides whether the "
 						"pump works at all:</p>"
 						"<ul>"
-						"<li><b>Flooded suction</b> — the pump sits below the water line, so water "
-						"runs into it by gravity. This is the easy case and the one most fountains "
-						"are designed for.</li>"
-						"<li><b>Suction lift</b> — the pump sits above the water line and has to "
-						"be primed. There is a hard limit to how high that can work, and it gets "
-						"worse with altitude, with warm water, and with every foot of pipe and "
-						"every fitting on the suction side.</li>"
+						"<li><b>Flooded suction</b> — the equipment room sits lower than the "
+						"reservoir water level, so gravity keeps the pump wet. This is the easy case "
+						"and the one most fountains are designed for.</li>"
+						"<li><b>Suction lift</b> — the pump sits above the water level, so it has to "
+						"actively pull the air out of the suction line before any water will follow "
+						"it. There is a hard limit to how high that can work, and it gets worse with "
+						"altitude, with warm water, and with every foot of pipe and every fitting on "
+						"the suction side.</li>"
 						"</ul>"
 						"<p>A pump that will not hold prime is nearly always a suction-side "
 						"problem, not a pump problem.</p>"
@@ -55,12 +72,15 @@ COURSE = {
 				{
 					"block_type": "Callout",
 					"callout_tone": "Danger",
-					"heading": "Running dry destroys the seal, fast",
+					"heading": "Fifteen seconds is all a dry seal gets",
 					"content": (
 						"<p>The mechanical seal between the wet end and the motor shaft is "
 						"<b>lubricated and cooled by the water going past it</b>. Run the pump "
-						"dry and there is nothing doing either job. The faces overheat and the "
-						"seal is gone — in seconds to minutes, not hours.</p>"
+						"dry and there is nothing doing either job.</p>"
+						"<p>Sapphire puts a number on how long that lasts: running a centrifugal "
+						"pump without water <b>destroys the mechanical shaft seal within 15 "
+						"seconds</b>, on friction heat alone. That is less time than it takes to "
+						"notice the noise is wrong and walk back to the panel.</p>"
 						"<p>So a pump is never started to 'see if it primes' on a system you have "
 						"not filled and purged. And a pump that has just run dry does not get "
 						"cold water thrown at a hot wet end.</p>"
@@ -87,19 +107,55 @@ COURSE = {
 				},
 				{
 					"block_type": "Rich Text",
-					"heading": "Setting it, and starting it",
+					"heading": "The pad, the pipe, and five diameters of straight run",
 					"content": (
-						"<p><b>Mount it solidly and level</b>, on a base that will not move. "
-						"Vibration works fittings loose and is the slow way to a leak.</p>"
-						"<p><b>Support the pipe.</b> The pump's ports are not brackets, and a "
-						"heavy run of pipe hanging off a plastic wet end cracks it.</p>"
-						"<p><b>Give the suction a straight run into the pump</b> where you can. "
-						"An elbow hard against the suction port feeds the impeller unevenly.</p>"
+						"<p><b>The pad.</b> The pump chassis bolts down to a <b>level, reinforced "
+						"concrete equipment pad</b> with high-grade anchor bolts. <b>Vibration "
+						"isolation pads</b> go under the pump feet, to keep the machine's resonance "
+						"out of the mechanical room — and vibration is also the slow way to a loose "
+						"fitting and a leak.</p>"
+						"<p><b>The pipe carries itself.</b> Suction and discharge plumbing are "
+						"supported independently, on pipe hangers or struts. <b>Never let the pump "
+						"housing bear the weight of the plumbing.</b> It distorts the casing, and a "
+						"distorted casing means premature seal failure — the same seal as the "
+						"callout above, killed a completely different way.</p>"
+						"<p><b>Five pipe diameters of straight run into the inlet.</b> Water has to "
+						"reach the eye of the impeller in an even, laminar flow, so the suction "
+						"piping needs a straight run immediately before the pump inlet of <b>at "
+						"least five times the pipe diameter</b>. A 3-inch suction line therefore "
+						"needs 15 inches of straight pipe before the pump. An elbow hard against "
+						"the suction port feeds the impeller unevenly, and that pump never makes "
+						"its numbers.</p>"
 						"<p><b>Unions both sides.</b> This pump will come out one day, and whether "
 						"that is a ten-minute job or a saw is decided now.</p>"
-						"<p><b>Prime it before power.</b> Fill the strainer pot, purge air at the "
-						"filter's relief, and confirm you have water at the pump before the motor "
-						"turns.</p>"
+					),
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "Commissioning, in Sapphire's order",
+					"content": (
+						"<p>The order is not arbitrary. Each step removes one of the ways the next "
+						"step could destroy the pump.</p>"
+						"<ol>"
+						"<li><b>Never run a centrifugal pump dry.</b> Everything below exists so "
+						"that it does not happen.</li>"
+						"<li>Open the <b>hair-and-lint strainer basket</b> lid.</li>"
+						"<li>Fill the housing <b>completely, to the top lip</b>, with clean "
+						"water.</li>"
+						"<li>Inspect the lid O-ring for debris and cracks, lubricate it with a "
+						"<b>silicone-based sealant</b>, and <b>hand-tighten</b> the lid. Not a "
+						"wrench.</li>"
+						"<li>Open all <b>suction and discharge valves fully</b>.</li>"
+						"<li><b>Jog the motor</b> momentarily and confirm the shaft turns the way "
+						"the arrow on the motor casing says it should.</li>"
+						"<li>Start the pump and watch the pressure gauges. If it has not caught "
+						"prime in two to three minutes, <b>shut it down immediately</b>, re-verify "
+						"the water levels, and check for suction-side air leaks.</li>"
+						"</ol>"
+						"<p>Note what the last step is not. It is not 'give it another ten "
+						"minutes'. A pump that is not catching prime is a pump turning with very "
+						"little water in it, and the fifteen-second figure above is why that clock "
+						"is short.</p>"
 					),
 				},
 				{
@@ -112,8 +168,9 @@ COURSE = {
 						"still sounds like a pump, so nothing looks obviously wrong — it just "
 						"never makes its numbers, and everybody spends the day chasing a "
 						"hydraulic problem that does not exist.</p>"
-						"<p>Check rotation against the arrow on the housing at first start, and "
-						"check it again after any electrical work upstream.</p>"
+						"<p>Check rotation against the arrow on the motor casing at first start — "
+						"that is what the jog step in the sequence above is for — and check it "
+						"again after any electrical work upstream.</p>"
 					),
 				},
 				ask_block(
@@ -148,67 +205,74 @@ COURSE = {
 						],
 					},
 					{
-						"question": "A pump loses prime, air collects in the strainer pot, and there is no water anywhere on the floor. Where is the fault?",
+						"question": "A 3-inch suction line runs into the pump. How much straight pipe does Sapphire require immediately before the inlet?",
 						"type": "Single Choice",
 						"explanation": (
-							"The suction side is below atmospheric pressure, so a leak there draws air in rather "
-							"than pushing water out. No puddle is the signature of a suction-side leak."
+							"At least five times the pipe diameter — five times 3 inches is 15 inches. The straight "
+							"run is what delivers an even, laminar flow into the eye of the impeller."
 						),
 						"options": [
 							{
-								"text": "On the suction side — it is drawing air in rather than pushing water out",
+								"text": "At least 15 inches — five times the pipe diameter",
 								"is_correct": True,
 							},
-							{"text": "On the discharge side, downstream of the filter", "is_correct": False},
-							{"text": "In the return lines, which are siphoning back", "is_correct": False},
-							{"text": "Nowhere — air in the pot is normal operation", "is_correct": False},
+							{"text": "At least 3 inches — one pipe diameter", "is_correct": False},
+							{"text": "At least 30 inches — ten times the pipe diameter", "is_correct": False},
+							{
+								"text": "None is needed, provided the last fitting is a long-sweep 90",
+								"is_correct": False,
+							},
 						],
 					},
 					{
-						"question": "Why is running a pump dry so damaging?",
+						"question": "How long does a centrifugal pump's mechanical shaft seal survive being run dry?",
 						"type": "Single Choice",
 						"explanation": (
-							"The mechanical seal is lubricated and cooled by the water passing it. Dry, the faces "
-							"overheat and the seal fails within seconds to minutes."
+							"Sapphire's figure is 15 seconds. The seal is lubricated and cooled by the water going "
+							"past it, and friction heat destroys the faces almost immediately without it."
 						),
 						"options": [
 							{
-								"text": "The mechanical seal is water-lubricated and water-cooled, and destroys itself without flow",
+								"text": "About 15 seconds — friction heat destroys it almost immediately",
 								"is_correct": True,
 							},
 							{
-								"text": "The impeller unbalances without the weight of water in it",
+								"text": "Several minutes, which is long enough to walk back to the panel",
 								"is_correct": False,
 							},
 							{
-								"text": "The motor draws far more current with no water to move",
+								"text": "As long as the motor itself stays cool to the touch",
 								"is_correct": False,
 							},
-							{"text": "It is only a problem on pumps with suction lift", "is_correct": False},
+							{
+								"text": "Indefinitely — the seal is stressed by pressure, not by running dry",
+								"is_correct": False,
+							},
 						],
 					},
 					{
-						"question": "A new three-phase pump runs, moves some water, but never reaches its design flow. What is worth checking early?",
+						"question": "The pot is full, the valves are open, and three minutes after start-up the pump still has not caught prime. There is no water anywhere on the floor. What does the protocol say?",
 						"type": "Single Choice",
 						"explanation": (
-							"Two swapped phases reverse the motor. A backwards centrifugal pump still moves some "
-							"water and sounds normal, so it reads as a hydraulic problem."
+							"Shut it down immediately, re-verify the water levels, and check for suction-side air "
+							"leaks. The suction side runs below atmospheric pressure, so a leak there draws air in "
+							"rather than pushing water out — a dry floor is the signature, not the all-clear."
 						),
 						"options": [
 							{
-								"text": "Rotation direction against the arrow on the housing",
+								"text": "Shut it down immediately, re-check the water levels, and hunt for a suction-side air leak",
 								"is_correct": True,
 							},
 							{
-								"text": "Whether the impeller is the wrong colour for its size",
+								"text": "Give it another ten minutes — some pumps are simply slow to catch",
 								"is_correct": False,
 							},
 							{
-								"text": "The voltage at the panel, since low volts halve the flow",
+								"text": "Nothing is wrong: with no water on the floor, there is no leak to find",
 								"is_correct": False,
 							},
 							{
-								"text": "Nothing — a three-phase motor cannot run backwards",
+								"text": "Throttle the suction valve to raise the vacuum so it pulls harder",
 								"is_correct": False,
 							},
 						],
@@ -218,7 +282,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Piping and fitting types",
-			"chapter": 0,
 			"estimated_minutes": 12,
 			"summary": "Schedules, pressure ratings, and putting unions where the next person needs them.",
 			"blocks": [
@@ -370,9 +433,8 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Skimmers and main drains",
-			"chapter": 0,
-			"estimated_minutes": 13,
-			"summary": "Where water leaves the basin, and the suction hazard that has killed people.",
+			"estimated_minutes": 14,
+			"summary": "Where water leaves the basin, how the manifold is balanced, and the hazard that has killed people.",
 			"blocks": [
 				{
 					"block_type": "Rich Text",
@@ -382,9 +444,12 @@ COURSE = {
 						"fountain look dull all float. A skimmer draws from the <b>top few "
 						"inches</b> of water and takes that layer away before it sinks and "
 						"becomes a bottom problem.</p>"
-						"<p>The hinged flap at the mouth is the <b>weir</b>. It floats up and down "
-						"with the level and accelerates the top layer of water over it, which is "
-						"what makes skimming work at all. A weir that is jammed, missing or "
+						"<p>The hinged flap at the mouth is the <b>weir door</b>, and it floats — it "
+						"adjusts itself to a fluctuating water level, and it accelerates the top "
+						"layer of water over its lip. That is what creates the <b>localised "
+						"surface-tension draw</b> that pulls floating leaves, oils and debris off "
+						"the water and into the skimmer's <b>internal collector basket</b>, before "
+						"any of it can sink to the floor. A weir door that is jammed, missing or "
 						"installed backwards turns a skimmer into an ordinary suction port.</p>"
 						"<p>The basket catches what comes in. Full basket, no flow — and on many "
 						"systems that means the pump is starved, not just that the skimmer is "
@@ -396,14 +461,41 @@ COURSE = {
 					"callout_tone": "Warning",
 					"heading": "Water level is the skimmer's operating range",
 					"content": (
+						"<p>The weir door follows the level by itself, but only across the range it "
+						"was set for. Outside that range it stops working, in two different "
+						"ways.</p>"
 						"<p>Too <b>low</b> and the skimmer gulps air past the weir. That air goes "
-						"straight to the pump, and the pump loses prime — which, as Module 2's "
-						"first lesson explains, is how mechanical seals die.</p>"
+						"straight to the pump, and the pump loses prime — which, as this module's "
+						"first lesson explains, is how a mechanical seal dies in fifteen "
+						"seconds.</p>"
 						"<p>Too <b>high</b> and the weir stops working: the surface layer no longer "
 						"accelerates over it, so debris drifts past instead of being caught.</p>"
 						"<p>On a fountain, evaporation and wind-blow move that level every day. "
 						"Auto-fill exists for exactly this reason, and an auto-fill that has "
 						"failed is a common root cause behind 'the pump keeps losing prime'.</p>"
+					),
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "The balancing act",
+					"content": (
+						"<p>Most fountain basins draw from <b>both</b> — surface skimmers and "
+						"submerged floor main drains — through one suction manifold. How much of "
+						"the pump's draw each of them gets is set <b>by hand</b>, on the eccentric "
+						"ball or butterfly valves on that manifold. It is a real adjustment with a "
+						"right answer, not a set of valves to leave wide open.</p>"
+						"<p>Both ways of getting it wrong announce themselves:</p>"
+						"<ul>"
+						"<li><b>Too much skimmer draw</b> — the skimmers <b>vortex</b>. A vortex "
+						"pulls air down into the plumbing lines, and air on the suction side costs "
+						"the pump its prime.</li>"
+						"<li><b>Too much main drain draw</b> — the surface goes <b>stagnant</b>. "
+						"Nothing is accelerating over the weirs, so a film of debris collects and "
+						"sits there across the water. This is the one the client sees first.</li>"
+						"</ul>"
+						"<p>So the balance point sits between a vortexing skimmer and a dirty-looking "
+						"surface, and you find it by watching the water rather than by counting "
+						"turns on a valve.</p>"
 					),
 				},
 				{
@@ -421,6 +513,13 @@ COURSE = {
 						"designs, and safety vacuum release systems. Covers are certified, they "
 						"are rated for a flow, and they carry a <b>life span and a date</b> — they "
 						"are a wear part, not permanent hardware.</p>"
+						"<p>Which is why balancing the manifold is a safety job and not only a "
+						"housekeeping one. Sapphire's rule is to adjust the valves so that "
+						"<b>main drain suction stays distributed across multiple grates</b>, to "
+						"anti-entanglement standard. Throttling a compliant multi-outlet design "
+						"until one grate is taking effectively all of the flow turns it back into a "
+						"single-point suction hazard, with every cover still in place and "
+						"everything still looking correct.</p>"
 						"<p><b>A system with a damaged or missing suction cover does not run.</b> "
 						"Not for a minute, not to finish a test, not while somebody goes for the "
 						"part. Shut it down and lock it out.</p>"
@@ -472,20 +571,30 @@ COURSE = {
 						],
 					},
 					{
-						"question": "The basin level has dropped below the skimmer weir. What happens?",
+						"question": "A film of debris is sitting across the fountain surface and the skimmer weirs are barely moving any water. What does that say about the suction manifold?",
 						"type": "Single Choice",
 						"explanation": (
-							"The skimmer gulps air past the weir, that air reaches the pump, and the pump loses "
-							"prime — which is how mechanical seals are destroyed."
+							"Too much of the draw is on the main drain, so the surface goes stagnant. The opposite "
+							"error — too much skimmer draw — makes the skimmers vortex and costs the pump its "
+							"prime. The balance is set by hand on the manifold valves."
 						),
 						"options": [
 							{
-								"text": "The skimmer draws air, which reaches the pump and breaks prime",
+								"text": "Too much of the draw is on the main drain — open the skimmers up at the manifold",
 								"is_correct": True,
 							},
-							{"text": "Skimming improves because the water moves faster", "is_correct": False},
-							{"text": "Nothing, until the level reaches the main drain", "is_correct": False},
-							{"text": "The weir seals shut and protects the pump", "is_correct": False},
+							{
+								"text": "Too much of the draw is on the skimmers, which is why they are vortexing",
+								"is_correct": False,
+							},
+							{
+								"text": "The manifold balance cannot affect the surface; the filter is dirty",
+								"is_correct": False,
+							},
+							{
+								"text": "Nothing — surface film is normal and clears itself once the pump warms up",
+								"is_correct": False,
+							},
 						],
 					},
 					{
@@ -524,6 +633,10 @@ COURSE = {
 								"text": "Multiple suction outlets separated so one cannot be fully blocked",
 								"is_correct": True,
 							},
+							{
+								"text": "Balancing the manifold so main drain suction stays distributed across multiple grates",
+								"is_correct": True,
+							},
 							{"text": "A safety vacuum release system", "is_correct": True},
 							{"text": "A warning sign at the edge of the basin", "is_correct": False},
 						],
@@ -533,9 +646,8 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Cartridge and sand filters",
-			"chapter": 1,
-			"estimated_minutes": 12,
-			"summary": "What a filter does and does not do, the clean baseline, and the lid that comes off.",
+			"estimated_minutes": 16,
+			"summary": "Differential pressure, the 8-to-10 PSI service threshold, and the two cleaning procedures.",
 			"blocks": [
 				{
 					"block_type": "Callout",
@@ -547,8 +659,13 @@ COURSE = {
 						"warning in Module 1. Opening or loosening a clamp band on a vessel with "
 						"trapped air under pressure can launch the lid.</p>"
 						"<p>This has killed and maimed people in this trade. The sequence is "
-						"always: <b>shut the pump off, lock it out, open the air relief, and wait "
-						"until nothing more comes out</b> — then open the vessel.</p>"
+						"always: <b>shut down all system pumps and lock them out, isolate the "
+						"vessel by closing its inlet and outlet plumbing valves, open the air "
+						"relief valve on the lid, and wait until nothing more comes out of it</b> — "
+						"and only then does the locking ring or the lid clamp come off.</p>"
+						"<p>It runs in reverse on the way back. Valves open, pump on, and the "
+						"<b>air relief stays open until a solid stream of water escapes it</b>. A "
+						"vessel buttoned up full of air is the same spring you just let down.</p>"
 						"<p>A filter that repeatedly builds air is telling you there is a "
 						"suction-side leak. Fix that; do not manage it by bleeding it every "
 						"visit.</p>"
@@ -602,28 +719,102 @@ COURSE = {
 				},
 				{
 					"block_type": "Rich Text",
-					"heading": "The clean baseline is the whole measurement",
+					"heading": "Differential pressure, and the number that condemns a filter",
 					"content": (
-						"<p>A filter pressure gauge reading means nothing on its own. What means "
-						"something is <b>how far it has risen above the reading this system gave "
-						"when the filter was clean</b>.</p>"
-						"<p>So the baseline is recorded at commissioning and after every "
-						"clean — the pressure with a clean filter, at normal operating speed, with "
-						"the valves in their normal positions. A rise above that baseline is what "
-						"triggers a clean, and how much of a rise is set by the equipment "
-						"submittal and the manufacturer's data for this filter.</p>"
-						"<p>Without a baseline, nobody can tell a dirty filter from a system that "
-						"has always run at that pressure. With one, it is a ten-second call.</p>"
+						"<p>Every filter vessel carries two gauges: an <b>influent</b> gauge on the "
+						"inlet and an <b>effluent</b> gauge on the outlet. The difference between "
+						"those two readings is how dirty the media inside has become. Nothing else "
+						"in the equipment room tells you that directly.</p>"
+						"<p>A reading still means nothing on its own. What means something is how "
+						"far it has moved from <b>this vessel's clean baseline</b> — the pressure "
+						"it showed with completely clean media, at normal operating speed, with the "
+						"valves in their normal positions. Say this one reads <b>12 PSI</b> "
+						"clean.</p>"
+						"<p><b>Sapphire's service threshold is a rise of 8 to 10 PSI over the clean "
+						"baseline.</b> On that 12 PSI vessel, that means roughly 20 to 22 PSI on "
+						"the gauge. At that point the media is choked, the system's flow rate is "
+						"suffering for it, and the filter is serviced immediately — not noted for "
+						"next time.</p>"
+						"<p>Which is why the baseline is recorded at commissioning and <b>recorded "
+						"again after every clean</b>. Without it, nobody can tell a dirty filter "
+						"from a system that has always run at that pressure. With it, it is a "
+						"ten-second call.</p>"
+					),
+				},
+				{
+					"block_type": "Accordion",
+					"heading": "The two cleaning procedures, step by step",
+					"panels": [
+						{
+							"title": "Backwashing a sand filter",
+							"body": (
+								"<ol>"
+								"<li>Shut down <b>all</b> feature and circulation pumps connected to "
+								"the filter vessel.</li>"
+								"<li>Depress the handle on the multi-port backwash valve, rotate it "
+								"to <b>BACKWASH</b>, and lock it in place.</li>"
+								"<li>Open the waste-line sight-glass valve.</li>"
+								"<li>Turn the circulation pump on and watch the sight glass. It runs "
+								"dark and dirty at first, as the reversed flow lifts the trapped "
+								"organic matter out of the sand or glass media bed.</li>"
+								"<li>Once the sight glass runs crystal clear — usually two to three "
+								"minutes — turn the pump <b>off</b>.</li>"
+								"<li>Rotate the handle to <b>RINSE</b> and run the pump for 30 "
+								"seconds. This resettles the bed and clears the dirty water still "
+								"standing in the pipe, which would otherwise shoot straight back "
+								"into a clean basin.</li>"
+								"<li>Pump off, handle back to <b>FILTER</b>, pump on. Note the new "
+								"clean baseline pressure.</li>"
+								"</ol>"
+							),
+						},
+						{
+							"title": "Cleaning cartridge elements",
+							"body": (
+								"<ol>"
+								"<li>Turn off all system pumps and isolate the vessel by closing its "
+								"inlet and outlet plumbing valves.</li>"
+								"<li>Open the air relief valve on top of the lid and bleed off the "
+								"stored pressure.</li>"
+								"<li>Remove the heavy-duty locking ring or the lid clamps and lift "
+								"the filter top off.</li>"
+								"<li>Carefully extract the pleated fabric cartridge elements.</li>"
+								"<li>Wash the pleats down with a filter spray wand on a garden hose, "
+								"held at a <b>45-degree downward angle</b>, working thoroughly from "
+								"the top to the bottom.</li>"
+								"<li>Inspect the element cores for cracks. Reinstall, lubricate the "
+								"main tank body O-ring, and close the lid securely.</li>"
+								"<li>Open the plumbing valves and restart the system with the air "
+								"relief held open until a stream of water escapes.</li>"
+								"</ol>"
+							),
+						},
+					],
+				},
+				{
+					"block_type": "Callout",
+					"callout_tone": "Warning",
+					"heading": "Two 'nevers' inside those procedures",
+					"content": (
+						"<p><b>Never turn a multi-port valve handle while a pump is running.</b> "
+						"Every stage of the backwash cycle above begins with the pump off, and that "
+						"is not padding in the sequence — the running pump is what puts the vessel "
+						"under pressure, and the handle is being moved across its ports.</p>"
+						"<p><b>Never clean a cartridge element with a high-pressure washer.</b> It "
+						"is quicker, and it looks like it works. What it actually does is tear the "
+						"engineered fibres of the fabric — after which the element passes water "
+						"freely, looks clean, and filters nothing.</p>"
 					),
 				},
 				ask_block(
-					"Cleaning frequency, media and discharge are site decisions",
-					"<p>How often a filter needs cleaning depends on the feature, the season and "
-					"the debris load. Which media, which cleaning chemical, and where backwash "
-					"water is legally allowed to go are set by the equipment submittal, the "
-					"product label and the local authority.</p>"
-					"<p>A schedule from another site is a guess. Build the baseline for this "
-					"system and let it tell you.</p>",
+					"Cleaning frequency, media and discharge are still site decisions",
+					"<p>Sapphire gives the trigger — a rise of 8 to 10 PSI over clean baseline — "
+					"and that is the number to work to. How quickly a given feature reaches it "
+					"depends on the feature, the season and the debris load, so the baseline and "
+					"the gauges are what tell you, not a calendar.</p>"
+					"<p>Which media, which cleaning chemical, and where backwash water is legally "
+					"allowed to go are set by the equipment submittal, the product label and the "
+					"local authority. A schedule carried over from another site is a guess.</p>",
 				),
 			],
 			"quiz": {
@@ -637,7 +828,7 @@ COURSE = {
 						),
 						"options": [
 							{
-								"text": "Shut off and lock out the pump, then open the air relief and wait",
+								"text": "Shut off and lock out the pumps, isolate the vessel, then open the air relief and wait",
 								"is_correct": True,
 							},
 							{
@@ -655,69 +846,76 @@ COURSE = {
 						],
 					},
 					{
-						"question": "A customer says the water looks perfectly clear, so the chemistry must be fine. What is wrong with that reasoning?",
+						"question": "A filter vessel's clean baseline is 12 PSI. At what reading does Sapphire call it choked and due for service?",
 						"type": "Single Choice",
 						"explanation": (
-							"Filtration removes particles; sanitation deals with what is alive. Clear water is a "
-							"report on the filter, not on the chemistry."
+							"The threshold is a rise of 8 to 10 PSI over this vessel's clean baseline, so 12 PSI "
+							"clean means service at roughly 20 to 22 PSI. The absolute number means nothing "
+							"without the baseline it is being compared to."
 						),
 						"options": [
 							{
-								"text": "Clarity reports on the filter; sanitation is a separate job entirely",
+								"text": "Around 20 to 22 PSI — a rise of 8 to 10 PSI over the clean baseline",
 								"is_correct": True,
 							},
-							{"text": "Nothing — clear water is balanced water", "is_correct": False},
+							{"text": "14 PSI — any rise at all means it is dirty", "is_correct": False},
+							{"text": "About 36 PSI — roughly triple the baseline", "is_correct": False},
 							{
-								"text": "Clarity only proves the chemistry was right last week",
-								"is_correct": False,
-							},
-							{
-								"text": "Filters sanitise, so clarity does prove it, but only on cartridge systems",
+								"text": "There is no figure; you clean it when the water starts to look cloudy",
 								"is_correct": False,
 							},
 						],
 					},
 					{
-						"question": "Why is a filter's clean-pressure baseline recorded?",
+						"question": "The backwash sight glass has run crystal clear and the pump is off. What happens before the handle goes back to FILTER?",
 						"type": "Single Choice",
 						"explanation": (
-							"A pressure reading alone says nothing. What matters is the rise above the pressure "
-							"this system gave when the filter was clean."
+							"RINSE, with the pump on for 30 seconds. That resettles the sand bed and clears the "
+							"dirty water still standing in the pipe, which would otherwise shoot straight back "
+							"into a clean basin. Then the handle goes to FILTER and the new baseline is recorded."
 						),
 						"options": [
 							{
-								"text": "Because the useful signal is the rise above clean, not the absolute number",
+								"text": "RINSE, pump on for 30 seconds, to resettle the bed and clear the dirty water left in the pipe",
 								"is_correct": True,
 							},
 							{
-								"text": "Because gauges drift and the baseline is used to recalibrate them",
+								"text": "Nothing — return the handle straight to FILTER and restart",
 								"is_correct": False,
 							},
-							{"text": "For the warranty claim if the filter fails", "is_correct": False},
+							{"text": "A second backwash cycle, to be sure", "is_correct": False},
 							{
-								"text": "Because every filter of that model should read the same figure",
+								"text": "Open the lid and inspect the media bed before restarting",
 								"is_correct": False,
 							},
 						],
 					},
 					{
-						"question": "A cartridge element has been hosed at every visit for two years and flow is still poor. What is likely?",
-						"type": "Single Choice",
+						"question": "Which of these belong to Sapphire's cartridge element procedure?",
+						"type": "Multiple Choice",
 						"explanation": (
-							"Hosing clears debris from the pleats but leaves oils, scale and mineral deposits. "
-							"Those need a soak in the appropriate cleaner."
+							"The spray wand at a 45-degree downward angle, lubricating the tank body O-ring on "
+							"reassembly, and restarting with the air relief open are all in it. A pressure washer "
+							"tears the engineered fabric fibres, and a torn element passes water freely while "
+							"filtering nothing."
 						),
 						"options": [
 							{
-								"text": "Oils and mineral deposits have built up, and the element needs a soak or replacement",
+								"text": "Wash the pleats with a filter spray wand at a 45-degree downward angle, top to bottom",
 								"is_correct": True,
 							},
 							{
-								"text": "The element has been hosed too hard and needs a gentler nozzle",
+								"text": "Lubricate the main tank body O-ring before closing the lid",
+								"is_correct": True,
+							},
+							{
+								"text": "Restart with the air relief open until a stream of water escapes",
+								"is_correct": True,
+							},
+							{
+								"text": "Use a high-pressure washer on the stubborn pleats to save time",
 								"is_correct": False,
 							},
-							{"text": "The pump has worn out", "is_correct": False},
-							{"text": "The cartridge needs backwashing instead", "is_correct": False},
 						],
 					},
 				]
@@ -725,9 +923,8 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Pressure and vacuum gauges",
-			"chapter": 1,
-			"estimated_minutes": 11,
-			"summary": "The two-gauge split that tells you which side of the pump the restriction is on.",
+			"estimated_minutes": 15,
+			"summary": "The two-gauge split that locates a restriction, and the arithmetic that turns both gauges into a flow rate.",
 			"blocks": [
 				{
 					"block_type": "Rich Text",
@@ -760,6 +957,52 @@ COURSE = {
 						"<p>The logic is simple once you see it: a blockage downstream <i>builds</i> "
 						"pressure, a blockage upstream <i>starves</i> the pump so there is less "
 						"water to pressurise.</p>"
+					),
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "The same two gauges give you Total Dynamic Head",
+					"content": (
+						"<p>Read together and converted, the pair tells you the system's <b>Total "
+						"Dynamic Head</b> — the whole resistance this pump is working against, "
+						"measured live, on this installation rather than on a drawing.</p>"
+						"<p>Two conversions do it:</p>"
+						"<ul>"
+						"<li><b>Discharge pressure gauge:</b> PSI x 2.31 = feet of head.</li>"
+						"<li><b>Suction vacuum gauge:</b> inches of mercury x 1.13 = feet of "
+						"head.</li>"
+						"</ul>"
+						"<p><b>Add the two together.</b> That sum is the real-time TDH. Both halves "
+						"count — the work of getting water in is as real as the work of pushing it "
+						"out — and dropping the vacuum reading is the usual way people come up "
+						"short.</p>"
+						"<p>Worked through: 20 PSI on the discharge is 46.2 feet of head, 5 inches "
+						"of mercury on the suction is 5.65 feet, and the system is running at about "
+						"52 feet of head.</p>"
+					),
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "Plotting it on the manufacturer's curve",
+					"content": (
+						"<p>A pump curve is the manufacturer's statement of what that pump can do: "
+						"how much water it moves against how much friction resistance. <b>The "
+						"vertical axis is Total Dynamic Head</b>, in feet. <b>The horizontal axis "
+						"is flow rate</b>, in gallons per minute. The line between them is the "
+						"pump.</p>"
+						"<p>So the two gauges give you a flow rate without a flow meter:</p>"
+						"<ol>"
+						"<li>Find your measured TDH on the vertical axis.</li>"
+						"<li>Move horizontally across until you intersect the pump's operational "
+						"line.</li>"
+						"<li>Drop straight down to the horizontal axis and read the GPM.</li>"
+						"</ol>"
+						"<p>Then look at <i>where</i> on the curve you landed. A point sitting out "
+						"at the extreme right or the extreme left means the pump is running outside "
+						"the window it was designed for, and it pays for that in <b>motor "
+						"overheating, cavitation pitting on the impeller, and premature bearing "
+						"failure</b>. None of which stops it moving water in the meantime — which "
+						"is exactly why this gets plotted rather than assumed.</p>"
 					),
 				},
 				{
@@ -828,17 +1071,38 @@ COURSE = {
 						],
 					},
 					{
-						"question": "How can you tell a stuck gauge from a real reading?",
-						"type": "Multiple Choice",
+						"question": "The discharge gauge reads 20 PSI and the suction vacuum gauge reads 5 inches of mercury. What is the system's Total Dynamic Head?",
+						"type": "Single Choice",
 						"explanation": (
-							"A live gauge responds. It falls back when the pump stops and it moves when you "
-							"change a valve position."
+							"PSI x 2.31 gives 46.2 feet, inches of mercury x 1.13 gives 5.65 feet, and TDH is the "
+							"sum of the two — about 52 feet. The suction side counts."
 						),
 						"options": [
-							{"text": "It should fall back when the pump is shut off", "is_correct": True},
-							{"text": "It should move when you throttle a valve", "is_correct": True},
-							{"text": "A stuck gauge always reads exactly zero", "is_correct": False},
-							{"text": "A stuck gauge rattles audibly", "is_correct": False},
+							{"text": "About 52 feet of head", "is_correct": True},
+							{
+								"text": "About 46 feet of head — the vacuum reading is not part of TDH",
+								"is_correct": False,
+							},
+							{"text": "25 feet of head — the two readings add directly", "is_correct": False},
+							{"text": "About 12 feet of head", "is_correct": False},
+						],
+					},
+					{
+						"question": "A pump plots out at the extreme right-hand end of its curve. What does that cost?",
+						"type": "Multiple Choice",
+						"explanation": (
+							"Either extreme of the curve is outside the pump's design window: the motor "
+							"overheats, the impeller pits from cavitation, and the bearings fail early. It keeps "
+							"moving water the whole time it is happening."
+						),
+						"options": [
+							{"text": "Motor overheating", "is_correct": True},
+							{"text": "Cavitation pitting on the impeller", "is_correct": True},
+							{"text": "Premature bearing failure", "is_correct": True},
+							{
+								"text": "Nothing — the far right of the curve is the efficient end",
+								"is_correct": False,
+							},
 						],
 					},
 				]
@@ -846,7 +1110,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Chemical treatment systems",
-			"chapter": 1,
 			"estimated_minutes": 13,
 			"summary": "Feeders, injection points, the flow interlock, and the two chemicals that must never meet.",
 			"blocks": [
@@ -1012,7 +1275,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Heaters and chillers",
-			"chapter": 1,
 			"estimated_minutes": 11,
 			"summary": "Flow before fire, combustion air, and the circuit you do not open.",
 			"blocks": [
@@ -1147,7 +1409,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Fountain structures",
-			"chapter": 2,
 			"estimated_minutes": 11,
 			"summary": "Vessels, embeds and joints — and why sequencing is where fountains go wrong.",
 			"blocks": [
@@ -1179,6 +1440,10 @@ COURSE = {
 						"it.</li>"
 						"<li><b>Lined</b> — a membrane doing the water-holding over a structure "
 						"that does the load-carrying.</li>"
+						"<li><b>Balance or surge tanks</b> — the subterranean holding vessel a "
+						"zero-depth feature drains into. It is a vessel like any other here, and "
+						"the last lesson of this module covers what it does and how its level is "
+						"controlled.</li>"
 						"</ul>"
 						"<p>In every case, <b>the thing holding the water and the thing holding "
 						"the load may not be the same thing</b>. Knowing which is which on the "
@@ -1285,7 +1550,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Concrete anchoring",
-			"chapter": 2,
 			"estimated_minutes": 12,
 			"summary": "Mechanical versus adhesive, and the one step that causes most adhesive failures.",
 			"blocks": [
@@ -1432,51 +1696,140 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Pedestal false floors",
-			"chapter": 2,
-			"estimated_minutes": 10,
-			"summary": "A walkable deck over a hidden reservoir — where the pitch goes and what falls through.",
+			"estimated_minutes": 15,
+			"summary": "A deck over a sloped sub-slab, the balance tank it drains to, and the three levels the controller works between.",
 			"blocks": [
 				{
 					"block_type": "Rich Text",
 					"heading": "What the system is",
 					"content": (
-						"<p>A pedestal false floor is a walkable deck — pavers, grating or stone — "
-						"carried on adjustable pedestals above a waterproofed slab. The space "
-						"underneath is the <b>reservoir</b>, and the jets come up through the "
-						"deck.</p>"
+						"<p>A pedestal false floor is a walkable deck — stone pavers, tile or "
+						"grating — carried on <b>heavy-duty adjustable plastic pedestals</b> that "
+						"stand on a waterproofed concrete sub-slab. The jets come up through the "
+						"deck, and there is no visible basin edge at all.</p>"
+						"<p>The joints between the pavers are <b>entirely open</b>, and deliberately "
+						"so. The pedestals carry <b>modular spacer tabs</b> that set that gap for "
+						"you — consistent and uniform, <b>typically 1/8 to 3/16 inch</b> — so water "
+						"sprayed from the nozzles drains instantly down through the floor grid "
+						"instead of standing on it.</p>"
+						"<p>Underneath, the sub-slab is <b>sloped</b>, and it carries that water "
+						"back to the holding tank. Be precise about this part: the void beneath the "
+						"deck is a drainage and service space, and <b>the reservoir is the balance "
+						"tank</b> — a separate vessel, usually subterranean. Getting those two the "
+						"wrong way round matters, because it is the tank's level, not anything "
+						"under the deck, that the controller watches and the pumps depend on.</p>"
 						"<p>It is how a plaza can be a dry, usable public space one minute and a "
-						"water feature the next, with no visible basin edge at all. Everything "
-						"that makes that possible also makes it a service challenge, because the "
-						"entire system is under a floor people walk on.</p>"
+						"water feature the next. Everything that makes that possible also makes it "
+						"a service challenge, because the entire system is under a floor people "
+						"walk on.</p>"
 					),
 				},
 				{
 					"block_type": "Callout",
 					"callout_tone": "Info",
-					"heading": "The deck is level. The slab underneath is not.",
+					"heading": "The deck is level. The sub-slab underneath is not.",
 					"content": (
 						"<p>This is the detail that gets inverted in the field, and it is worth "
 						"stating plainly: the <b>finished deck is set level</b> — people walk on "
-						"it, and it has to look flat — while the <b>slab beneath it is pitched</b> "
-						"to drain to the sump or outlet.</p>"
+						"it, and it has to look flat — while the <b>sub-slab beneath it is "
+						"pitched</b>, to drain back to the holding tank.</p>"
 						"<p>That is exactly what the adjustable pedestals are for. They take up "
 						"the difference between a sloping structural surface and a level walking "
-						"surface. Pitching the deck to match the slab gains nothing — the joints "
-						"already pass water straight through — and gives you a walking surface that "
-						"slopes where it should be flat, and a feature that trips people.</p>"
+						"surface, and their adjustment keys are how you prove the deck is true "
+						"across a run of pavers. Pitching the deck to match the slab gains nothing "
+						"— the open joints already pass water straight through — and gives you a "
+						"walking surface that slopes where it should be flat, and a feature that "
+						"trips people.</p>"
 					),
 				},
 				{
 					"block_type": "Rich Text",
-					"heading": "Everything on the deck ends up in the reservoir",
+					"heading": "The plumbing lives in the void",
+					"content": (
+						"<p>Nozzle supply lines and light conduits are routed through the open "
+						"space beneath the pedestals. Two things follow from that, and both are the "
+						"point of building a deck this way.</p>"
+						"<p><b>Nothing is under the traffic.</b> The pavers and the pedestals carry "
+						"the foot load; the pipe and conduit sit in the void below and take none of "
+						"it.</p>"
+						"<p><b>Service is a lift, not a demolition.</b> A failed nozzle or valve is "
+						"reached by lifting out the surrounding paver tiles to expose the plumbing, "
+						"and then putting them back. That is the whole maintenance model of a "
+						"raised deck — and it only works if whoever set the equipment put it where "
+						"pavers can actually be lifted over it.</p>"
+					),
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "The balance tank is the reservoir",
+					"content": (
+						"<p>A zero-depth feature — a splash pad, a dry-deck plaza fountain — holds "
+						"no standing pool of water on the play deck. Everything drains straight off "
+						"the surface into a <b>subterranean holding tank</b>, and that tank is the "
+						"system's hydraulic buffer.</p>"
+						"<p>'Buffer' means something specific here. The tank has to hold enough "
+						"volume to <b>fill every pipe and every nozzle in the system</b> at the "
+						"moment the Splash Wizard controller starts the feature pumps — and enough "
+						"room spare to take all of that water back when the system shuts down and "
+						"the decks drain down into it. A tank sized only for the running state "
+						"overflows at every shutdown.</p>"
+						"<p>The level in it is watched by <b>digital ultrasonic level sensors</b> or "
+						"by <b>multi-tier float switches</b> suspended inside the tank, reporting to "
+						"the Splash Wizard MAX or INDUSTRIAL controller.</p>"
+					),
+				},
+				{
+					"block_type": "Accordion",
+					"heading": "The three levels the controller works between",
+					"panels": [
+						{
+							"title": "Level 1 — high-water fill / refill solenoid",
+							"body": (
+								"<p>Evaporation and splash-out take water out of the system "
+								"continuously. When the tank volume drops below the safe "
+								"operational threshold, the controller opens an automatic "
+								"water-makeup valve and tops it back up.</p>"
+								"<p>Worth knowing as a diagnostic: a feature that is losing water "
+								"faster than it should is losing it somewhere, and a make-up "
+								"solenoid will hide that indefinitely if nobody is looking at how "
+								"often it runs.</p>"
+							),
+						},
+						{
+							"title": "Level 2 — operating level",
+							"body": (
+								"<p>The sweet spot. Enough volume in the tank to run the water "
+								"features, and enough freeboard that the water draining back down "
+								"from the decks at shutdown does not put it over the top.</p>"
+							),
+						},
+						{
+							"title": "Level 3 — low-water cut-off",
+							"body": (
+								"<p>If the level drops critically low, the controller instantly cuts "
+								"power to the feature pumps and the circulation pumps. It is "
+								"protecting the pumps: at that level they would be drawing in air, "
+								"cavitating and running dry — and a dry mechanical seal has fifteen "
+								"seconds.</p>"
+								"<p>So a feature that has shut itself off on low water has done its "
+								"job. The question is where the water went, not how to get past the "
+								"cut-off.</p>"
+							),
+						},
+					],
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "Everything on the deck ends up in the water",
 					"content": (
 						"<p>Leaves, grit, cigarette ends, coins, food, dust, dropped litter — all "
-						"of it goes through the joints between pavers and lands in the water "
-						"below. That is not a defect, it is how the system works, and it defines "
-						"the maintenance regime completely.</p>"
+						"of it goes through the open joints between the pavers, onto the sub-slab, "
+						"and down to the holding tank with the water. That is not a defect, it is "
+						"how the system works, and it defines the maintenance regime "
+						"completely.</p>"
 						"<p>It is why these systems need real filtration and real access, why the "
-						"sump needs cleaning far more often than a conventional basin, and why "
-						"debris in the reservoir is Module 8's most predictable "
+						"tank and its sump need cleaning far more often than a conventional basin, "
+						"and why debris in the reservoir is Module 8's most predictable "
 						"troubleshooting call.</p>"
 					),
 				},
@@ -1500,13 +1853,27 @@ COURSE = {
 				},
 				ask_block(
 					"Loads, spacing and accessibility requirements are designed",
-					"<p>Pedestal spacing, paver thickness, edge restraint, gap widths and any "
-					"accessibility requirement for the walking surface are set by the design and by "
-					"code, and they depend on whether the deck carries pedestrians, a maintenance "
-					"vehicle or a crowd.</p>"
+					"<p>Pedestal spacing, paver thickness, edge restraint and any accessibility "
+					"requirement for the walking surface are set by the design and by code, and "
+					"they depend on whether the deck carries pedestrians, a maintenance vehicle or "
+					"a crowd. The spacer tabs hand you the typical 1/8 to 3/16 inch joint; whether "
+					"that width is acceptable underfoot on <i>this</i> deck is an accessibility "
+					"question with a code answer behind it.</p>"
 					"<p>If what arrives on site does not match the drawing, that is a change to "
 					"raise rather than adapt to.</p>",
 				),
+				{
+					"block_type": "Checklist",
+					"heading": "Module 2 sign-off — demonstrate these to a Lead Installer",
+					"items": [
+						"Align a centrifugal pump housing flush with a suction manifold and bolt it securely to an isolation pad",
+						"Fill a pump strainer housing, inspect and lubricate the lid ring, and establish a prime under suction lift",
+						"Perform a full backwash and rinse cycle on a commercial sand filter, using the multi-port safety steps",
+						"Extract, clean, inspect and safely reinstall the pleated elements of a cartridge filter housing",
+						"Assemble a four-pedestal layout grid and check true level across mock stone pavers with the adjustment keys",
+						"Calculate system TDH from live manifold gauge readings and plot the flow rate on a manufacturer's pump curve",
+					],
+				},
 			],
 			"quiz": {
 				"questions": [
@@ -1514,33 +1881,85 @@ COURSE = {
 						"question": "On a pedestal false floor, which surface is pitched to drain?",
 						"type": "Single Choice",
 						"explanation": (
-							"The slab below is pitched; the deck above is set level. Adjustable pedestals take up "
-							"the difference — that is what they are for."
+							"The sub-slab below is pitched, back to the holding tank; the deck above is set "
+							"level. Adjustable pedestals take up the difference — that is what they are for."
 						),
 						"options": [
 							{
-								"text": "The slab below — the deck above is set level on adjustable pedestals",
+								"text": "The sub-slab below — the deck above is set level on adjustable pedestals",
 								"is_correct": True,
 							},
-							{"text": "The deck above — the slab below is poured level", "is_correct": False},
+							{"text": "The deck above — the sub-slab below is poured level", "is_correct": False},
 							{"text": "Both are pitched at the same angle", "is_correct": False},
 							{"text": "Neither; the sump pump handles all drainage", "is_correct": False},
 						],
 					},
 					{
-						"question": "Why does a pedestal deck system need more frequent sump and filter attention than a conventional basin?",
+						"question": "What sets the width of the open joints between the pavers?",
 						"type": "Single Choice",
 						"explanation": (
-							"Everything dropped or blown onto the deck falls through the joints into the "
-							"reservoir. That is how the system works, and it sets the maintenance regime."
+							"Modular spacer tabs on the pedestals set a consistent, uniform gap, typically 1/8 to "
+							"3/16 inch. Those open joints are what let the deck drain straight through to the "
+							"sloped sub-slab below."
 						),
 						"options": [
 							{
-								"text": "Everything dropped on the deck falls through the joints into the reservoir",
+								"text": "Modular spacer tabs on the pedestals, giving a uniform gap of typically 1/8 to 3/16 inch",
 								"is_correct": True,
 							},
 							{
-								"text": "The reservoir is shallower, so chemistry swings faster",
+								"text": "The setter's eye, checked with a tape at each course of pavers",
+								"is_correct": False,
+							},
+							{"text": "Grout, raked back to a consistent depth once it cures", "is_correct": False},
+							{
+								"text": "Nothing — the joints are closed and the deck drains at its perimeter",
+								"is_correct": False,
+							},
+						],
+					},
+					{
+						"question": "The tank level falls critically low. What does the controller do, and why?",
+						"type": "Single Choice",
+						"explanation": (
+							"Level 3 is the low-water cut-off: power to the feature and circulation pumps is cut "
+							"instantly, so they cannot draw air, cavitate or run dry. The make-up solenoid is "
+							"Level 1, a much earlier trip — by Level 3 it is the pumps being protected."
+						),
+						"options": [
+							{
+								"text": "Cuts power to the feature and circulation pumps, so they cannot draw air, cavitate or run dry",
+								"is_correct": True,
+							},
+							{
+								"text": "Opens the make-up valve and keeps the pumps running while it refills",
+								"is_correct": False,
+							},
+							{
+								"text": "Sounds an alarm and leaves the pumps to the technician",
+								"is_correct": False,
+							},
+							{
+								"text": "Drops the pumps to low speed until the level recovers",
+								"is_correct": False,
+							},
+						],
+					},
+					{
+						"question": "Why does a pedestal deck system need more frequent tank and filter attention than a conventional basin?",
+						"type": "Single Choice",
+						"explanation": (
+							"Everything dropped or blown onto the deck falls through the open joints, onto the "
+							"sub-slab and down to the holding tank with the water. That is how the system works, "
+							"and it sets the maintenance regime."
+						),
+						"options": [
+							{
+								"text": "Everything dropped on the deck falls through the joints and ends up in the holding tank",
+								"is_correct": True,
+							},
+							{
+								"text": "The holding tank is shallower, so the chemistry swings faster",
 								"is_correct": False,
 							},
 							{
@@ -1548,32 +1967,6 @@ COURSE = {
 								"is_correct": False,
 							},
 							{"text": "It does not; it needs less because it is covered", "is_correct": False},
-						],
-					},
-					{
-						"question": "What should be verified about equipment placement during a false-floor installation?",
-						"type": "Single Choice",
-						"explanation": (
-							"That each item can actually be reached by lifting panels by hand, with room to work. "
-							"Equipment that needs the deck dismantled will not be serviced properly."
-						),
-						"options": [
-							{
-								"text": "That every item can be reached by lifting panels, with room to work on it",
-								"is_correct": True,
-							},
-							{
-								"text": "That equipment is grouped as tightly as possible to save space",
-								"is_correct": False,
-							},
-							{
-								"text": "That all equipment sits directly under a structural pedestal",
-								"is_correct": False,
-							},
-							{
-								"text": "That nothing sits within reach of the deck joints",
-								"is_correct": False,
-							},
 						],
 					},
 				]

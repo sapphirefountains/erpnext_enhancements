@@ -323,3 +323,143 @@ def _apply_quizzes(draft_version, lessons, lesson_names, modified):
 
     if patches:
         training_author.save_draft_version(draft_version, {"lessons": patches}, modified)
+
+
+def rebuild_draft_from_spec(course, spec):
+    """Replace an **untouched** draft's content with the spec's, in place.
+
+    ``author_course_from_spec`` can only ever create: it mints a course and then a draft, and
+    ``create_draft_version`` refuses outright when an open draft already exists. So a course whose
+    spec has been rewritten in the repo cannot be brought up to date by re-running the seeder --
+    the seeder is insert-only and keyed on title, and it skips. Without this, editing a spec file
+    changes what a *fresh install* gets and nothing at all on a site that already has the course.
+
+    This is the missing half, and it is deliberately **not** whitelisted: it deletes every lesson
+    on the draft and builds new ones, which is a migration's job and nobody's to invoke from a
+    browser. The caller is responsible for deciding the draft is safe to rebuild --
+    ``patches/rebuild_technician_course_drafts.py`` holds those guards and states them.
+
+    **Keys are re-minted, and that is why the caller must check.** A rebuilt lesson is a new
+    ``Training Lesson`` with a new ``lesson_key`` and new ``block_key`` values. Everything in this
+    module joins on those keys, so a learner part-way through a course would be stranded -- which
+    is exactly why the patch refuses to touch a course anybody has started. On an unpublished draft
+    that nobody can have taken, there is nothing to strand.
+
+    Returns ``{course, draft_version, lessons, questions, removed_questions}``, or ``None`` when
+    there is no open draft to rebuild.
+    """
+    spec = validate_course_spec(spec)
+
+    draft_version = frappe.db.get_value("Training Course Version", {"course": course, "docstatus": 0}, "name")
+    if not draft_version:
+        return None
+
+    old_lessons = frappe.get_all("Training Lesson", filters={"course_version": draft_version}, pluck="name")
+    # The questions those lessons drew, captured BEFORE the pools are deleted -- afterwards there
+    # is nothing left pointing at them and they would sit in the table for ever, unreferenced and
+    # invisible, still counting toward the review queue.
+    old_questions = set()
+    if old_lessons:
+        old_questions = set(
+            frappe.get_all(
+                "Training Quiz Question",
+                filters={"parent": ["in", old_lessons], "parenttype": "Training Lesson"},
+                pluck="question",
+            )
+        )
+
+    modified = str(frappe.db.get_value("Training Course Version", draft_version, "modified"))
+    if old_lessons:
+        result = training_author.save_draft_version(draft_version, {"deleted_lessons": old_lessons}, modified)
+        modified = result["modified"]
+
+    # From here it is the create path exactly, against a version that already exists. Sharing these
+    # three helpers is the point: a rebuilt course comes out in the identical shape to a seeded one,
+    # and there is no second mapping of a spec onto the model to drift.
+    # The one place a rebuild needs MORE than the create path: a spec with no chapters must CLEAR
+    # any the draft already has. `_apply_chapters` returns early on an empty list, which is right
+    # for a brand-new version -- there is nothing to clear -- and wrong here: the old chapters
+    # would survive while every lesson that referenced them has just been deleted, leaving empty
+    # groups in the outline that nothing can fill and nobody can explain.
+    #
+    # It has to happen AFTER the lessons are gone, and it does. `save_draft_version._apply_chapters`
+    # refuses to drop a chapter that lessons still point at, so clearing first would be rejected.
+    if spec["chapters"]:
+        chapter_keys = _apply_chapters(draft_version, spec["chapters"], modified)
+        if chapter_keys is not None:
+            modified = chapter_keys.pop("_modified")
+    else:
+        chapter_keys = None
+        modified = training_author.save_draft_version(
+            draft_version, {"chapters": []}, modified
+        )["modified"]
+    modified, lesson_names = _apply_lessons(draft_version, spec["lessons"], chapter_keys, modified)
+    _apply_quizzes(draft_version, spec["lessons"], lesson_names, modified)
+
+    removed = _drop_orphaned_questions(old_questions)
+    _refresh_course_fields(course, spec["course"])
+
+    summary = spec_summary(spec)
+    return {
+        "course": course,
+        "draft_version": draft_version,
+        "lessons": summary["lessons"],
+        "questions": summary["questions"],
+        "removed_questions": removed,
+    }
+
+
+def _drop_orphaned_questions(names):
+    """Delete AI-drafted questions the rebuild left pointing at nothing.
+
+    Guarded three ways, because deleting somebody's content is the one thing here that cannot be
+    undone by running the patch again: only questions that were **AI-drafted**, only ones **nobody
+    has reviewed**, and only ones **no remaining pool draws**. A hand-written question, a reviewed
+    one, or one a second lesson still uses is left alone -- it becomes an unreferenced bank entry,
+    which is untidy and recoverable, rather than gone.
+    """
+    if not names:
+        return 0
+
+    still_used = set(
+        frappe.get_all(
+            "Training Quiz Question",
+            filters={"question": ["in", list(names)], "parenttype": "Training Lesson"},
+            pluck="question",
+        )
+    )
+    candidates = [n for n in names if n not in still_used]
+    if not candidates:
+        return 0
+
+    droppable = frappe.get_all(
+        "Training Question",
+        filters={
+            "name": ["in", candidates],
+            "ai_generated": 1,
+            "ai_reviewed_by": ["is", "not set"],
+            "is_bank_question": 0,
+        },
+        pluck="name",
+    )
+    for name in droppable:
+        frappe.delete_doc("Training Question", name, ignore_permissions=True, force=True)
+    return len(droppable)
+
+
+def _refresh_course_fields(course, spec_course):
+    """Bring the course record itself back in line with the spec.
+
+    A rewritten spec can change the summary or the category, and neither lives on the version --
+    they are on the course, which the seeder set once and nothing has touched since. `weight` and
+    `audience` are deliberately NOT re-applied: those are the adopter's to change and a rebuild of
+    the *content* has no business reaching into policy.
+    """
+    updates = {}
+    if spec_course.get("summary"):
+        updates["summary"] = spec_course["summary"]
+    category = spec_course.get("category")
+    if category and frappe.db.exists("Training Category", category):
+        updates["category"] = category
+    if updates:
+        frappe.db.set_value("Training Course", course, updates, update_modified=False)

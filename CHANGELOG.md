@@ -7,6 +7,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.468.0] - 2026-09-15
+
+### Added
+
+- **A Help panel on every lesson and quiz — "What does that mean?"** A learner reading about bedding
+  a buried pipe meets *haunching*, *invert* and *thrust restraint* in three consecutive paragraphs.
+  Ask-the-author is the right tool for *"why does this work like that"* and the wrong one for
+  *"what does that word mean"*: it costs a round trip through a human and an afternoon of waiting,
+  for a question whose answer never changes.
+- **`Training Glossary Term`** — a new DocType, plus `training/help.py`, `api/training.lesson_help`,
+  and the panel in `player.js`. **717 glossary entries** seeded from
+  `training/data/glossary.json`, every one a word that actually appears in a lesson: a plain-English
+  definition, the concept behind it, and a made-up worked example.
+- **235 of them are "trade traps"** — words that mean something *different* in ordinary English:
+  bonding, aggressive, shock, weir, invert, hardness, schedule, shading, spoil, prime, media. Those
+  render **above** the definition, because a reader who believes they already know the word will not
+  read the definition underneath it.
+- **The glossary is shared and matched at read time**, not written per lesson. A term added today
+  surfaces in every lesson that was already using the word; a lesson written tomorrow arrives
+  already explained. Nothing is stored per lesson and nothing re-runs when a course changes.
+
+### Changed
+
+- **The ten Technician Program courses are rebuilt from Sapphire's own module documents.** Nine of
+  the ten specs were rewritten against the training documents Sapphire supplied — their figures,
+  their sequences, their rules, replacing content that had been written from general trade practice
+  against the outline. 484 content blocks and 250 questions, up from 411 and 239; lesson structure
+  unchanged at 72.
+- Document-to-module mapping was worked out from the documents rather than the folder names, and two
+  apparent misfilings were not: *"Module 4: Structural Masonry, Waterproofing & Tile"* genuinely
+  covers outline Modules 4 **and** 5, and *"Module 7: Service Operations & Safety Protocols"* covers
+  7 **and** the safety half of 9. Module 8 has source for one lesson (Seized Pipe Threads → 8.9);
+  Module 10 has none and keeps its original content.
+- **The draft notice now splits.** A course built from a Sapphire document says its figures are
+  Sapphire's; the generic notice — which tells a reader to check every number against the product in
+  their hands — is exactly the wrong thing to say about a number Sapphire wrote down itself.
+- **The courses no longer use chapters.** A course is its lessons, in order. The module *is* the
+  course, so a second level of grouping inside it only put a heading between the learner and the
+  next lesson. 126 lines of chapter definitions and all 72 lesson chapter indices removed, and a
+  test now asserts their absence — both the seeder and the rebuild hand `spec["chapters"]` straight
+  to `_apply_chapters`, so one reintroduced here would appear in the outline with no warning.
+
+### Fixed
+
+- **A rewritten spec would have reached nobody.** `seed_technician_training_program` is insert-only
+  and keyed on title, and `author_course_from_spec` can only *create* — `create_draft_version`
+  refuses outright when an open draft exists. So editing a spec file changes what a **fresh install**
+  gets and **nothing at all** on production. `rebuild_draft_from_spec` plus
+  `patches/rebuild_technician_course_drafts` is the missing half, reusing the same three authoring
+  helpers rather than adding a second way to map a spec onto the model.
+- A rebuild re-mints `lesson_key` and every `block_key`, and this module joins on those keys — so it
+  runs only on a course that is still Draft, has no reviewed question, no attempt and no completion.
+  Four guards, per course, and anything failing one is **skipped and named**: a silent skip is
+  indistinguishable from a rebuild that worked.
+- **`player.js` was reading `state.course.name`, which does not exist.** The course object carries no
+  `name` key, so the read is `undefined`, `JSON.stringify` **drops** it, and the call would have
+  reached the server with `course` missing — surfacing as a bare `TypeError`. That exact bug shipped
+  once before on Ask-the-author; `test_training_boot_wire` caught it this time.
+- **`player.css` referenced `--tr-danger`, which is declared nowhere** — so that error colour
+  resolved to its literal fallback and never followed dark mode. The real token is `--tr-bad`. Every
+  `--tr-*` referenced in the file is now declared.
+- **A rebuild would have left orphaned chapters behind.** `_apply_chapters` returns early on an
+  empty list — correct for a brand-new version, wrong for a rebuild, where the draft on production
+  still holds the chapters seeded in v1.467.0. The lessons referencing them are deleted and the
+  empty groups survive. `rebuild_draft_from_spec` now clears them explicitly, and it has to happen
+  *after* the lessons are gone: `save_draft_version._apply_chapters` refuses to drop a chapter that
+  lessons still point at, so clearing first would be rejected.
+- **`MIN_MATCHABLE` was 3 and should have been 2**, which the glossary tests caught before the seed
+  ran. The reasoning for 3 — that short terms match everything — is wrong because matching is
+  **whole-word**: `IP` cannot match inside `IP68`, and `CO` standing alone in a lesson about gas
+  heaters is carbon monoxide. A floor of 3 would have made the controller throw on twenty-one real
+  acronyms at seed time.
+
+### Notes
+
+- **Help is the second learner-facing payload in the module**, and `_split_lesson`'s docstring says
+  plainly that *"nothing else may assemble one"*. It is allowed to exist because it is built from a
+  different table entirely and never opens `answer_key_json`. It does not read `is_correct`; the
+  only question data it touches is stems and option text — strings already on the learner's screen —
+  and it reads them to take something away rather than to send them.
+- **Help stays open during a quiz**, showing the definition and nothing else. That is a decision
+  about what a quiz measures: a technician who can bed a pipe but has never heard the word *haunch*
+  should not fail a question about haunching. Two restrictions, different in kind — `explanation`
+  and `example` are **never assembled** in quiz mode, so no version of the reply ever held them; and
+  every term whose text appears anywhere in the lesson's **whole quiz pool** is withheld.
+- The pool rather than the questions actually drawn, and that is forced rather than chosen:
+  `Training Attempt Question` rows are written at *grading* time, so mid-quiz the server cannot
+  discover what was drawn — and letting the client name them is no alternative, because **a client
+  that declares its own suppression list can declare an empty one**.
+- **Be honest about the ceiling.** `in_quiz` is asserted by the client, and a caller that omits it
+  gets the full payload. That is not the threat — somebody who wants the answer can read the options
+  in front of them. What this prevents is the panel *handing* them the answer to the question they
+  are staring at, and that is all it claims. The same honesty the module owes when it labels watch
+  coverage "watched".
+- `Training Glossary Term` carries **no DocPerm for Training Learner**, the stance already taken on
+  `Training Question`, so `/api/resource` refuses them the raw table — without which the mid-quiz
+  suppression would be decoration on data they could fetch in one REST call.
+- The glossary lives in `data/glossary.json` rather than a Python module: as Python it was a
+  three-quarter-megabyte file that no editor opens comfortably and `ruff format` walks on every
+  commit. Data that nothing computes belongs in a data file.
+- 45 bench-free tests in `tests/test_training_help.py` on their own CI step. The quiz rule is tested
+  **behaviourally** — by running `_serve` and looking at what comes back — because grepping for the
+  word "quiz" would pass on a version that assembled the explanation and trimmed it afterwards.
+- The course rewrite was verified module by module by an independent pass, which caught a
+  **fabricated mechanism** in Module 3 (it explained scaling in acid injection lines with a claim
+  that is backwards — low pH *raises* calcium carbonate solubility) and a dropped half of Sapphire's
+  own test-pressure rule (*"or 50 PSI, whichever is greater"*), which a quiz distractor keyed on.
+
 ## [1.467.1] - 2026-09-15
 
 ### Added

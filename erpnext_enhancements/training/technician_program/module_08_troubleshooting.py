@@ -3,7 +3,7 @@
 
 """Module 8 — General Troubleshooting."""
 
-from erpnext_enhancements.training.technician_program._common import ask_block, notice_block
+from erpnext_enhancements.training.technician_program._common import ask_block, sourced_notice_block
 
 COURSE = {
 	"course": {
@@ -17,32 +17,13 @@ COURSE = {
 		"weight": "Required",
 		"audience": "Internal Staff",
 	},
-	"chapters": [
-		{
-			"title": "Working a fault, and the electrical side",
-			"description": "The method every lesson here uses, and finding an electrical fault by proving dead and measuring toward the load.",
-		},
-		{
-			"title": "Where the water is going",
-			"description": "A spray that has changed, a basin that keeps dropping, and pipe that leaks.",
-		},
-		{
-			"title": "What the water carries, and what it stops",
-			"description": "Scale, lost flow, debris in the basin, and chemistry that will not balance.",
-		},
-		{
-			"title": "When the hardware itself is the fault",
-			"description": "Threads that seize or gall, and a pump losing performance or cutting out.",
-		},
-	],
 	"lessons": [
 		{
 			"lesson_title": "Electrical components",
-			"chapter": 0,
 			"estimated_minutes": 16,
 			"summary": "The method this whole module uses, and why an electrical fault is found from the supply toward the load.",
 			"blocks": [
-				notice_block(),
+				sourced_notice_block(),
 				{
 					"block_type": "Rich Text",
 					"heading": "Find the fault before you replace the part",
@@ -223,7 +204,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Nozzles and spray features",
-			"chapter": 1,
 			"estimated_minutes": 12,
 			"summary": "Four causes cover nearly every spray complaint, and identical nozzles tell you which one in seconds.",
 			"blocks": [
@@ -422,7 +402,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Water loss in basins",
-			"chapter": 1,
 			"estimated_minutes": 14,
 			"summary": "Separating evaporation from splash-out from a real leak, and why the bucket test is the standard way to do it.",
 			"blocks": [
@@ -623,7 +602,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Leaks in piping",
-			"chapter": 1,
 			"estimated_minutes": 13,
 			"summary": "Where pipe actually fails, why the wet spot is not the hole, and how to halve a system with the valves already on it.",
 			"blocks": [
@@ -803,7 +781,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Scaling and deposit buildup",
-			"chapter": 2,
 			"estimated_minutes": 14,
 			"summary": "Why scale is diagnosed with a calculation rather than a scraper, and how to tell one white deposit from another.",
 			"blocks": [
@@ -981,7 +958,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "No flow",
-			"chapter": 2,
 			"estimated_minutes": 14,
 			"summary": "Two gauges divide the system at the impeller, and the pair of readings names the half the fault is in.",
 			"blocks": [
@@ -1168,7 +1144,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Excessive debris in basin",
-			"chapter": 2,
 			"estimated_minutes": 12,
 			"summary": "Debris is a rate that belongs to the site, and the fix is usually upstream of the filtration rather than inside it.",
 			"blocks": [
@@ -1351,7 +1326,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Chemicals not balancing",
-			"chapter": 2,
 			"estimated_minutes": 15,
 			"summary": "Three reasons chemistry refuses to move: the wrong correction order, a test that is lying, or a source nobody has counted.",
 			"blocks": [
@@ -1569,82 +1543,202 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Seized, galled and cross-threaded pipe fittings",
-			"chapter": 3,
-			"estimated_minutes": 12,
-			"summary": "Thread faults are prevented on the first turn, not cured with a bigger wrench.",
+			"estimated_minutes": 15,
+			"summary": "Why fountain threads lock up, the four-step escalation from penetrant to cutting it out, and the three assembly rules that stop the next technician meeting the same joint.",
 			"blocks": [
 				{
 					"block_type": "Rich Text",
-					"heading": "A thread is a fit, and you feel it on the first turn",
+					"heading": "Water is why this is routine work here",
 					"content": (
-						"<p>Two threads either line up or they do not, and the moment that is decided "
-						"is the first half turn. A correctly started thread turns <b>easily, by "
-						"hand</b>, for several turns before anything gets tight. If it needs force "
-						"straight away, it is not tight — it is <b>cross-threaded</b>, cutting a new "
-						"path across the existing one, and every further turn does more damage.</p>"
-						"<p>So start every thread by hand. The reliable way is to set the fitting "
-						"square and turn it <b>backwards</b> until you feel it drop into the start of "
-						"the thread, then turn forward. That drop is unmistakable once you have felt "
-						"it, and it costs two seconds.</p>"
-						"<p>The reason this matters more than it sounds is what a cross-threaded joint "
-						"does afterwards. Forced up hard, it often seals — for a while. It passes the "
-						"test, it looks finished, and it lets go later, which puts it in the same "
-						"family as the solvent-weld joint in Module 1 — Piping &amp; Hydraulics that "
-						"fails under a slab.</p>"
+						"<p>Threaded joints on a water feature live in a harsh mix: <b>constant "
+						"moisture, dissolved minerals, and chemical sanitisers</b>. All three "
+						"accelerate thread failure, which is why a seized joint is ordinary work on a "
+						"fountain rather than the occasional nuisance it is in a dry trade.</p>"
+						"<p>So the first question is not <i>how hard do I pull</i>. It is <b>why is "
+						"this joint stuck</b>, because the cause dictates the correct tool and the "
+						"correct approach. A scale bond gives way to heat and patience. Galling never "
+						"gives way to anything. A cross-threaded plastic hub is already destroyed and "
+						"is coming out in pieces. Three different jobs, one identical symptom.</p>"
+						"<p>Work out which one you have, then escalate through the removal steps in "
+						"order, <b>least destructive first</b>, so that the expensive half of the "
+						"assembly survives the repair.</p>"
 					),
 				},
 				{
+					"block_type": "Accordion",
+					"heading": "The four core culprits",
+					"panels": [
+						{
+							"title": "Galvanic corrosion",
+							"body": (
+								"<p>Dissimilar metals — a brass nozzle screwed into a galvanized or "
+								"stainless steel pipe — react chemically in water. Over time they "
+								"essentially <b>weld themselves together</b>.</p>"
+								"<p>This is the one that builds slowly on a joint nobody has touched "
+								"for seasons, and it was decided at assembly by what got screwed into "
+								"what. Nothing you do on the service visit changes it; the next "
+								"assembly is where it is prevented.</p>"
+							),
+						},
+						{
+							"title": "Scale and mineral binding",
+							"body": (
+								"<p>Calcium and chemical buildup from fountain and pool water seeps "
+								"into the microscopic gaps in the threads and sets there, forming a "
+								"<b>concrete-like bond</b>.</p>"
+								"<p>It is the same deposit as the scaling lesson earlier in this "
+								"module, in the one place nobody can see it. Water that has run a "
+								"positive index for a season has been quietly cementing every "
+								"threaded joint in the system while it furred up the nozzles.</p>"
+							),
+						},
+						{
+							"title": "Galling, or cold welding",
+							"body": (
+								"<p>Especially common where fountains use stainless steel fittings. "
+								"Without proper lubrication during assembly, the friction of "
+								"tightening <b>destroys the protective oxide layer</b> and the threads "
+								"physically fuse.</p>"
+								"<p>Note when it happens: on the way in, not over time. A joint can be "
+								"galled the day it was built, by the person building it, and nobody "
+								"finds out until somebody tries to take it apart.</p>"
+							),
+						},
+						{
+							"title": "Over-tightening and plastic deformation",
+							"body": (
+								"<p>Tapered pipe threads such as NPT act like <b>wedges</b>. If a "
+								"technician over-tightened one on a previous service, the threads jam "
+								"together so tightly that the friction becomes greater than the "
+								"strength of the metal or the plastic.</p>"
+								"<p>Which means the joint now breaks before it turns — and on a "
+								"plastic fitting what breaks is the female hub, which is usually the "
+								"half moulded into something you cannot replace on site.</p>"
+							),
+						},
+					],
+				},
+				{
 					"block_type": "Rich Text",
-					"heading": "Galling is cold welding, and it is one-way",
+					"heading": "Escalate: penetrant, then leverage, then heat, then cut",
 					"content": (
-						"<p>Galling is not corrosion and it is not dirt. Under pressure and friction, "
-						"two metal surfaces in sliding contact can <b>weld to each other in the solid "
-						"state</b> — material transfers from one face to the other, the threads seize, "
-						"and the fastener is destroyed. It commonly happens in the middle of "
-						"assembly, with nothing to be done about it in either direction.</p>"
-						"<p>Stainless steel on stainless steel is the classic case, because the oxide "
-						"film that makes it corrosion-resistant is exactly what gets scrubbed off and "
-						"lets the metal underneath contact bare metal. Aluminium and some other alloys "
-						"do it too.</p>"
-						"<p>Everything that prevents it is about keeping the surfaces apart and the "
-						"heat down: clean threads with no grit in them, a lubricant or anti-seize "
-						"suited to the material and the service, <b>slow assembly by hand</b>, and no "
-						"impact driver. Speed generates the heat that starts it, which is why a "
-						"power tool turns a thirty-second job into a replaced component.</p>"
+						"<p>The order is the method. <b>Chemical penetrant → mechanical leverage → "
+						"thermal expansion → destructive cutting.</b> You do not jump down the list, "
+						"because each step costs more than the one above it and the last one costs a "
+						"component.</p>"
+						"<p><b>Step 1 — chemical penetration, the patient approach.</b> Apply a "
+						"high-quality penetrating oil, or a 50/50 mix of acetone and automatic "
+						"transmission fluid. Then <b>tap the fitting lightly with a wrench</b>: the "
+						"vibration helps the fluid wick deeper into the threads. Give it 10 to 15 "
+						"minutes to work. That wait is the cheapest thing in this lesson and it is "
+						"the thing people skip.</p>"
+						"<p><b>Step 2 — proper mechanical leverage, the two-wrench method.</b> "
+						"<b>Never pull on a single wrench if the fitting is attached to a manifold or "
+						"a pump housing.</b> Use a pipe wrench — or a strap wrench where the finish "
+						"is delicate — to turn the stuck piece, and a back-up wrench to hold the pipe "
+						"stationary. The two wrenches take the load against each other, so it never "
+						"travels down the line and cracks expensive housings.</p>"
+						"<p>That is also the answer to the instinct that arrives when a fitting will "
+						"not move, which is to find more leverage. <b>The cheater bar does not break "
+						"the nipple — it breaks the pump housing, the valve body, the filter port, or "
+						"a female fitting cast into something you cannot replace on site.</b> The "
+						"seized fitting is almost never the most fragile thing in the assembly.</p>"
 					),
 				},
 				{
 					"block_type": "Callout",
-					"callout_tone": "Warning",
-					"heading": "Force turns a cheap fitting into an expensive one",
+					"callout_tone": "Danger",
+					"heading": "Step 3 — heat is for metal, and it goes on the outer fitting",
 					"content": (
-						"<p>When a fitting will not move, the instinct is more leverage. It is almost "
-						"always the wrong answer, because the fitting is rarely the most fragile thing "
-						"in the assembly. <b>The cheater bar does not break the nipple — it breaks the "
-						"pump housing, the valve body, the filter port or the female fitting cast into "
-						"something you cannot replace on site.</b></p>"
-						"<p>What works instead: penetrating oil and time; the correct size of wrench, "
-						"fully engaged; <b>a second wrench backing up the fitting</b> so the load never "
-						"reaches the equipment or twists the pipe; and heat only where the material "
-						"and the location allow it, which on plastic pipe and near solvent cement it "
-						"does not.</p>"
-						"<p>And know when to stop. Cutting a seized fitting out deliberately is a "
-						"controlled repair. Snapping a port off a pump because it nearly moved is an "
-						"unplanned one, and it happens at the end of the day when everybody is tired "
-						"of it.</p>"
+						"<p>Apply targeted heat, with a heat gun or a propane torch, to the "
+						"<b>female (outer) fitting</b>. The outer ring expands and that breaks the "
+						"rust or scale bond. Heating the male part works against you — it swells the "
+						"piece you are trying to withdraw.</p>"
+						"<p><b>Never use a torch near PVC, ABS, polymer basins, or the rubber seals "
+						"common in fountain pumps.</b> They soften, deform and burn, they give off "
+						"fumes nobody should be breathing, and on a system that has just been drained "
+						"there is no water behind the fitting carrying the heat away. If anything "
+						"within reach of the flame is plastic, this step is not available and you go "
+						"to the next one.</p>"
+						"<p>Heat is also the wrong instrument for the wrong cause. It breaks a "
+						"deposit or corrosion bond. It does nothing for galling, because galled "
+						"threads are not held together by a deposit — they are one piece of metal "
+						"now.</p>"
+					),
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "Step 4 — cut it out, and protect the female threads",
+					"content": (
+						"<p>Two situations reach the end of the ladder. A <b>metal nipple seized "
+						"inside a plastic manifold</b>, where nothing that would shift the metal is "
+						"survivable by the plastic. And a <b>thread that is completely "
+						"cross-threaded</b>, which is mechanically destroyed and will not back out "
+						"however it is persuaded.</p>"
+						"<p>Both come out by careful cutting — an internal pipe cutter, or a hacksaw "
+						"blade worked down the inside of the nipple — <b>being careful not to damage "
+						"the internal female threads</b>. Those are the threads you cannot buy. The "
+						"male part is a fitting off a shelf; the female half is cast into a pump, a "
+						"valve or a manifold, and losing it turns a fitting change into a component "
+						"replacement.</p>"
+						"<p>And know which repair you are doing. Cutting a seized fitting out on "
+						"purpose is a controlled repair with a known end. Snapping a port off a pump "
+						"because it nearly moved is an unplanned one, and it happens at the end of "
+						"the day when everybody is tired of it.</p>"
+					),
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "Prevention is the part that matters",
+					"content": (
+						"<p>The best service call is the one where the next technician does not "
+						"struggle. Three rules at assembly decide whether this lesson ever has to be "
+						"used on the joint you are making.</p>"
+						"<p><b>Lubrication is mandatory.</b> Never allow a stainless-steel-on-"
+						"stainless-steel connection to go together dry. It gets a high-quality "
+						"anti-seize compound or a nickel-based thread sealant, every time. This is "
+						"the rule that prevents galling, and galling is the failure with no "
+						"cure.</p>"
+						"<p><b>PTFE tape goes on clockwise.</b> Wrap it in the direction the male "
+						"thread screws in, so that making the joint up tightens the tape rather than "
+						"unwrapping it and bunching it into the first threads.</p>"
+						"<p><b>Hand-tight plus one to two turns.</b> On plastic-to-metal and "
+						"plastic-to-plastic threads, over-tightening splits the female hub — the "
+						"taper is a wedge and the hub is what gives. Hand-tight, then one to two "
+						"turns with a wrench, is the figure Sapphire's document gives, and it "
+						"gives it as the general industry standard.</p>"
+						"<p>One more, and it costs two seconds. <b>Start every thread by hand.</b> "
+						"Set the fitting square and turn it <i>backwards</i> until you feel it drop "
+						"into the start of the thread, then turn forward. A correctly started thread "
+						"turns easily by hand for several turns before anything gets tight. Force at "
+						"the very first turn is not tightness — it is a thread being cut across the "
+						"existing one at a crooked angle, and every further turn does more "
+						"damage.</p>"
 					),
 				},
 				{
 					"block_type": "Flashcards",
-					"heading": "Thread terms worth having straight",
+					"heading": "The words for a thread that will not move",
 					"cards": [
 						{
-							"front": "Cross-threaded",
-							"back": "The threads started out of alignment and are cutting a new path across the original. Felt as resistance on the first turn, when there should be none. The cure is to back it out and start again, never to push through.",
+							"front": "Seized",
+							"back": "The general industry term for a threaded connection locked or jammed over time — rust, mineral buildup, age or over-tightening. It names the state, not the cause, and the cause is what picks the tool.",
 						},
 						{
-							"front": "Galling",
-							"back": "Two thread surfaces cold-welding to each other under friction. Most common with stainless on stainless, made worse by speed, heat, dirt and dry threads. It is not reversible — the fastener is finished.",
+							"front": "Frozen",
+							"back": "Plumbing slang, used interchangeably with seized, for a fitting completely immobilised by heavy corrosion or lime scale. Same condition, same escalation ladder — the word carries no extra information.",
+						},
+						{
+							"front": "Galled",
+							"back": "The threads friction-welded to each other during installation, because male and female were the same metal and went together fast or dry. Stainless and aluminium are the usual offenders, and once galled they cannot be unscrewed without destroying them.",
+						},
+						{
+							"front": "Cross-threaded",
+							"back": "Started at a crooked angle, so mismatched threads cut into each other. It jams tight, will go no further in, and refuses to back out. Caught on the first turn it costs nothing; forced home it is a cutting job.",
+						},
+						{
+							"front": "Galvanic corrosion",
+							"back": "Dissimilar metals in water reacting and effectively welding themselves together over time — a brass part in a galvanized or stainless pipe. Unlike galling it builds slowly, on a joint nobody has touched.",
 						},
 						{
 							"front": "Tapered (NPT) thread",
@@ -1656,83 +1750,138 @@ COURSE = {
 						},
 						{
 							"front": "Anti-seize",
-							"back": "A compound that keeps thread faces from contacting bare metal so they cannot cold-weld. Which compound is a materials, temperature and potable-water question, not a preference — and some of them are also lubricants, which changes how tight a given torque actually is.",
+							"back": "A compound that keeps thread faces from touching bare metal, so they cannot cold-weld. Stainless on stainless never goes together without it or a nickel-based thread sealant. Which compound is a materials, temperature and potable-water question, not a preference.",
 						},
 					],
 				},
 				ask_block(
-					"How tight, and with what on the threads",
-					"<p>Torque figures, sealant type, tape versus dope, how many turns past hand tight "
-					"a plastic fitting takes, and whether a fitting may be reused are set by the "
-					"manufacturer of the part in your hand. They differ between metals and plastics, "
-					"between tapered and straight threads, and between potable and non-potable "
-					"service — and some plastics are chemically attacked by the wrong compound.</p>"
-					"<p>Read the instructions for the component. Where none are available, that is a "
-					"question for the supervisor rather than a guess, because the failure mode here is "
-					"a split female fitting in something that was not designed to be "
-					"replaceable.</p>",
+					"What goes on the threads, and whether the part can go back",
+					"<p>Sapphire's document settles how far a plastic thread is made up, and that a "
+					"stainless joint never goes together dry. It does not settle <b>which</b> "
+					"compound: anti-seize compounds and thread sealants are chosen for the materials, "
+					"the service temperature and whether the water is potable, and some plastics are "
+					"chemically attacked by the wrong one. Tape against dope, and whether a fitting "
+					"may be reused after it has been heated or cut at, come from the manufacturer of "
+					"the part in your hand.</p>"
+					"<p>So read the instructions for the component, and where a manufacturer prints a "
+					"torque figure for a metal assembly, that figure is theirs and it governs. Where "
+					"nothing is available, that is a question for the supervisor rather than a guess "
+					"— the failure mode here is a split female fitting in something that was never "
+					"designed to be replaceable.</p>",
 				),
 			],
 			"quiz": {
 				"questions": [
 					{
-						"question": "A threaded fitting needs noticeable force from the very first turn. What should you do?",
+						"question": "A brass nozzle body is seized into its stainless riser. What order do you work in?",
 						"type": "Single Choice",
 						"explanation": (
-							"A correctly started thread turns freely by hand for several turns. Resistance at the "
-							"start means it is cross-threading, and every further turn cuts more damage into both "
-							"parts."
+							"Escalate from least destructive to most: chemical penetrant, mechanical leverage, "
+							"thermal expansion, destructive cutting. The order exists to protect the expensive "
+							"half of the assembly, which is nearly always the female threads cast into something "
+							"you cannot replace on site."
 						),
 						"options": [
 							{
-								"text": "Back it out completely and restart it by hand — it is cross-threading",
+								"text": "Penetrant and time, then a two-wrench pull, then heat, then cut it out",
 								"is_correct": True,
 							},
 							{
-								"text": "Keep going; the threads will clean themselves up as it makes up",
+								"text": "Heat first, since it breaks the bond fastest and saves waiting on penetrant",
 								"is_correct": False,
 							},
-							{"text": "Add more sealant to take up the roughness", "is_correct": False},
 							{
-								"text": "Switch to a power tool so it runs past the tight spot quickly",
+								"text": "Maximum leverage first, so the joint is either free or clearly beyond saving",
+								"is_correct": False,
+							},
+							{
+								"text": "Cut it out straight away — anything else works the joint and damages the threads",
 								"is_correct": False,
 							},
 						],
 					},
 					{
-						"question": "What is galling?",
-						"type": "Single Choice",
+						"question": "A seized fitting is threaded into a pump housing. Which of these are right?",
+						"type": "Multiple Choice",
 						"explanation": (
-							"Galling is solid-state cold welding: under friction the two thread faces transfer "
-							"material and seize to each other. Stainless on stainless is the classic case, and it is "
-							"not reversible."
+							"The two-wrench method takes the load between the two wrenches so it never travels "
+							"down the line into the housing, and a strap wrench turns a delicate finish without "
+							"marking it. Heat expands the female outer fitting to break a rust or scale bond, and "
+							"is ruled out near PVC, ABS, polymer basins and rubber seals. A cheater bar does not "
+							"break the nipple; it breaks the housing."
 						),
 						"options": [
 							{
-								"text": "Two thread surfaces cold-welding to each other under friction",
+								"text": "A back-up wrench holds the pipe stationary so the torque never reaches the housing",
 								"is_correct": True,
 							},
-							{"text": "Corrosion between two dissimilar metals in water", "is_correct": False},
 							{
-								"text": "Threads stripping because the fitting was over-torqued",
-								"is_correct": False,
+								"text": "A strap wrench turns the stuck piece where the finish is delicate",
+								"is_correct": True,
 							},
 							{
-								"text": "Sealant hardening in the threads so the joint cannot be undone",
+								"text": "Heat, if it is used at all, goes on the female outer fitting and only on an all-metal joint",
+								"is_correct": True,
+							},
+							{
+								"text": "A length of pipe over the wrench handle gives the leverage to break it free",
 								"is_correct": False,
 							},
 						],
 					},
 					{
-						"question": "A straight-thread fitting with an O-ring is weeping. Tightening it harder is the fix.",
-						"type": "True-False",
+						"question": "Two stainless fittings went together dry and locked solid part-way through tightening, well before the joint was made up. What happened?",
+						"type": "Single Choice",
 						"explanation": (
-							"A straight thread seals on its gasket or O-ring face, not on the threads. More torque "
-							"cannot improve a seal it is not making, and it damages the face and the O-ring."
+							"That is galling. Without lubrication the friction of tightening destroys the "
+							"protective oxide layer and the threads physically fuse — during installation, not "
+							"over time. It is why stainless on stainless never goes together without anti-seize or "
+							"a nickel-based thread sealant, and why once it has happened the fitting is finished."
 						),
 						"options": [
-							{"text": "True", "is_correct": False},
-							{"text": "False", "is_correct": True},
+							{
+								"text": "Galling — the friction stripped the oxide layer and the threads cold-welded",
+								"is_correct": True,
+							},
+							{
+								"text": "Galvanic corrosion between the two stainless parts",
+								"is_correct": False,
+							},
+							{
+								"text": "Scale and mineral binding from the fountain water",
+								"is_correct": False,
+							},
+							{
+								"text": "Over-tightening, which wedged the taper past its limit",
+								"is_correct": False,
+							},
+						],
+					},
+					{
+						"question": "How far is a plastic-to-plastic or plastic-to-metal threaded joint made up?",
+						"type": "Single Choice",
+						"explanation": (
+							"Hand-tight plus one to two turns with a wrench. A tapered thread is a wedge, so "
+							"going further splits the female hub — which is usually the half moulded into a pump, "
+							"a valve or a manifold, and the half you cannot replace on site."
+						),
+						"options": [
+							{
+								"text": "Hand-tight, then one to two turns with a wrench",
+								"is_correct": True,
+							},
+							{
+								"text": "Hand-tight only — a wrench on a plastic thread is never correct",
+								"is_correct": False,
+							},
+							{
+								"text": "As tight as it will go, since a tapered thread seals on the threads themselves",
+								"is_correct": False,
+							},
+							{
+								"text": "Until the sealant tape stops extruding from the joint",
+								"is_correct": False,
+							},
 						],
 					},
 				]
@@ -1740,7 +1889,6 @@ COURSE = {
 		},
 		{
 			"lesson_title": "Pump motor performance drop or cut-out",
-			"chapter": 3,
 			"estimated_minutes": 15,
 			"summary": "An ordered walk through prime, suction, impeller, air, voltage, overload and heat — and what a motor that restarts when cool is telling you.",
 			"blocks": [

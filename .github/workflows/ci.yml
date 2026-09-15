@@ -720,6 +720,22 @@ jobs:
       # technician_program imports it from setup.py rather than keeping a second copy.
       - name: Starter badge artwork (NULL is not "no such row")
         run: python -m unittest erpnext_enhancements.tests.test_starter_badge_artwork -v
+      # The Help panel and the glossary behind it. Help is the SECOND learner-facing payload in the
+      # module -- _split_lesson's docstring says plainly that "nothing else in the module may
+      # assemble one" -- and it is allowed to exist only because it is built from a different table
+      # and never opens answer_key_json. Most of this suite holds that line: help.py may not name
+      # is_correct or the answer key at all, and may not borrow a learner-facing builder.
+      # The quiz rule is tested BEHAVIOURALLY by running _serve and looking at what comes back,
+      # because grepping for the word "quiz" would pass on a version that assembled the
+      # explanation and trimmed it afterwards. Also pinned: the suppression set is derived from the
+      # lesson's own quiz pool and cannot arrive from the browser (a client that declares its own
+      # suppression list can declare an empty one); the player sends state.courseName and never
+      # state.course.name, which is undefined and makes JSON.stringify DROP the argument -- the
+      # exact bug that shipped once on Ask-the-author; and a Training Learner holds no DocPerm on
+      # the glossary, without which the mid-quiz suppression would be decoration on data they
+      # could fetch in one REST call.
+      - name: Training help (a second learner payload, held to the first one's rules)
+        run: python -m unittest erpnext_enhancements.tests.test_training_help -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk

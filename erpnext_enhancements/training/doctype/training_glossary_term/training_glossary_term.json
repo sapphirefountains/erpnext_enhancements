@@ -1,0 +1,185 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:term",
+ "creation": "2026-09-15 23:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "term",
+  "aliases",
+  "column_break_head",
+  "category",
+  "enabled",
+  "meaning_section",
+  "short_definition",
+  "trade_trap",
+  "ordinary_meaning",
+  "explanation_section",
+  "explanation",
+  "example",
+  "see_also",
+  "provenance_section",
+  "ai_generated",
+  "reviewed_by"
+ ],
+ "fields": [
+  {
+   "description": "The word as a learner meets it in a lesson — e.g. Annular space, Breakpoint chlorination, GFCI.",
+   "fieldname": "term",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Term",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "description": "Other spellings this term is matched on, one per line — plurals, the expanded form of an acronym, a hyphenated variant. Matching is whole-word and case-insensitive, so \"GFCIs\" needs a line of its own but \"gfci\" does not.",
+   "fieldname": "aliases",
+   "fieldtype": "Small Text",
+   "label": "Also written as"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Link",
+   "label": "Category",
+   "options": "Training Category"
+  },
+  {
+   "default": "1",
+   "description": "Unticking hides the term from Help everywhere without deleting what somebody wrote.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "meaning_section",
+   "fieldtype": "Section Break",
+   "label": "What it means"
+  },
+  {
+   "description": "One or two plain sentences, no jargon. THIS IS THE ONLY FIELD SHOWN DURING A QUIZ — write it so it defines the word without answering a question about it.",
+   "fieldname": "short_definition",
+   "fieldtype": "Small Text",
+   "label": "In plain English",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Tick when the word means something different in ordinary English than it does in this trade. These are the ones people get wrong without ever realising they are confused.",
+   "fieldname": "trade_trap",
+   "fieldtype": "Check",
+   "label": "Means something else in everyday English"
+  },
+  {
+   "depends_on": "trade_trap",
+   "description": "What somebody would reasonably assume it meant — so the lesson can say plainly that it is not that.",
+   "fieldname": "ordinary_meaning",
+   "fieldtype": "Small Text",
+   "label": "What it sounds like it means"
+  },
+  {
+   "fieldname": "explanation_section",
+   "fieldtype": "Section Break",
+   "label": "The idea behind it"
+  },
+  {
+   "description": "The concept, for somebody who has the definition and still does not get it. Not shown during a quiz.",
+   "fieldname": "explanation",
+   "fieldtype": "Text Editor",
+   "label": "Explained"
+  },
+  {
+   "description": "A made-up, concrete example — a specific situation a technician would recognise. Invent the scenario freely; do NOT invent a figure that would really come from a product label, a data sheet or an engineer. Not shown during a quiz.",
+   "fieldname": "example",
+   "fieldtype": "Text Editor",
+   "label": "For example"
+  },
+  {
+   "description": "Related terms, one per line. Each is shown as a link if it exists in the glossary and ignored if it does not, so a forward reference is safe.",
+   "fieldname": "see_also",
+   "fieldtype": "Small Text",
+   "label": "See also"
+  },
+  {
+   "fieldname": "provenance_section",
+   "fieldtype": "Section Break",
+   "label": "Provenance"
+  },
+  {
+   "default": "0",
+   "description": "Drafted by a machine. Nothing is gated on this — a glossary entry is not an answer key — but Help says so on an unreviewed entry rather than presenting it as settled.",
+   "fieldname": "ai_generated",
+   "fieldtype": "Check",
+   "label": "AI Drafted",
+   "read_only": 1
+  },
+  {
+   "description": "Set when somebody has read this entry and stands behind it.",
+   "fieldname": "reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed By",
+   "options": "User",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-15 23:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Glossary Term",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Author",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager"
+  }
+ ],
+ "search_fields": "term,short_definition",
+ "sort_field": "term",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "term",
+ "track_changes": 1
+}
