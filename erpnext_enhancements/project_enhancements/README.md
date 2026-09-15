@@ -17,6 +17,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/project/project.js` | Health banner + reminder button (the Schedule-tab Gantt it used to render in `custom_gantt_chart_html` is now the embeddable widget — `public/js/project_enhancements/project_gantt_widget.js`) | two `frappe.ui.form.on("Project", {refresh})` handlers | `doctype_js["Project"]` |
 | `doctype/project/project_list.js` | Project list-view tweaks | — | list view |
 | `doctype/address/address.js` | Live full-address build + Google Maps embed; attaches the global Places autocomplete to `address_line1` (widget: `public/js/global_enhancements/address_autocomplete.js`) and records the picked place in `custom_google_place_id` / `custom_latitude` / `custom_longitude`. The coordinates are **user-editable** (v1.207.0) for sites the address cannot locate; `custom_location_source` records whether the point came from Google (discarded when the address text is edited) or was typed (kept) | Address form handlers | `doctype_js["Address"]` |
+| `doctype/change_order/change_order.py` | The `Change Order` controller (WI-075 sub-phase K): per-project numbering, a derived status, an impact type read from the **sign** of the money, and an outright refusal to be amended. Judgement in [`quality/change_orders.py`](../quality/change_orders.py), which imports no `frappe` — `project_enhancements/__init__` does, which would put it out of reach of the bench-free tests | `ChangeOrder`, `insert_with_retry` | Doctype controller; approvals via [`api/change_order.py`](../api/change_order.py) |
 | `doctype/project_dashboard_settings/*.py` | Single doctype: legacy permitted-roles list for the dashboard | `ProjectDashboardSettings` | controller |
 | `doctype/project_dashboard_permitted_role/*.py` | Child table: one `role` per row | `ProjectDashboardPermittedRole` | child-table controller |
 | `page/project_dashboard/project_dashboard.py` | Shared backend for the dashboard (data / permission / inline-edit endpoints) **plus the Scope-tab task-tree export**: `_flatten_task_tree` reads the whole project in one `get_list` and links it in memory, because the on-screen grid loads children one level at a time and a file built from that would omit every branch the user did not expand | `check_permission`, `get_project_data`, `get_gantt_tasks_for_project`, `get_master_project_projects`, `update_task_*`, `add_task_dependency`, `publish_realtime_update`, `get_project_task_tree`, `export_project_tasks`, … | Whitelisted (called by the Custom HTML Block); `publish_realtime_update` via `doc_events`. NB the folder no longer defines a desk Page — only this module + `test_project_dashboard.py` remain. |
@@ -63,6 +64,47 @@ radius: the record needs a Project so it cannot precede step 3, anywhere but las
 renumbering steps 707 live rows already carry, and `hand_off_sla_compliance` hardcodes
 `LAUNCH_STEP_NUMBER = 7`. The step, if it comes, is its own change.
 
+
+## Change Order
+
+A first-class submittable record rather than a `Project Contract` revision, and the whole reason
+is one field: **cause**. A revision counter can tell you a contract changed; it can never tell you
+whether the customer asked for something, the site turned out different, or we got it wrong.
+"How much did the job change" and "how much change did we cause" are different questions, and only
+the second is a quality signal.
+
+Submit is the lock, exactly as on `Project Scope of Work`. After submit the added acceptance
+criteria are contracted, and **the inspection generator starts putting them on inspections for the
+milestones they name** — which is the point. Without that wiring a change order would be scope
+sold after the Scope of Work was locked and checked by nothing, the failure this whole programme
+exists to end arriving through the one door nobody watches.
+
+Four decisions worth not undoing:
+
+- **The number is per project.** A naming series counter is global, so the third change order on
+  one job would be `CO-047` — which tells a customer reading it how busy the rest of the company
+  has been and nothing about their own job. Gaps are preserved: if `CO-002` was voided the next is
+  `CO-004`, because reusing 3 puts two documents behind one number in somebody's inbox.
+- **Money carries its own sign.** A credit is a negative `cost_impact`, and `cost_impact_type` is
+  *derived* from it. The tempting shape — a positive magnitude plus an Addition/Credit Select — is
+  two fields that can disagree about one fact, and the first time they do a credit is totalled as
+  an addition.
+- **Status is derived from `docstatus` and the approvals, never typed.** A stored status beside
+  `docstatus` is a second state free to drift from the first, and on a commercial instrument that
+  drift is the argument.
+- **Amending is refused.** Frappe's amend path appends `-1`, so amending `PRJ-00580-CO-003` gives
+  `PRJ-00580-CO-003-1` — a second commercial instrument with almost the same name as the first,
+  in a place where the two get quoted at each other. A wrong change order is cancelled and
+  re-raised.
+
+The approval stamps are read-only and written only by `api/change_order.py`, from the server clock
+and the session user. The old client path on `complete_step` let the browser propose a timestamp
+and the audit found retroactive box-ticking.
+
+The judgement lives in `quality/change_orders.py` rather than beside the DocType, because
+`project_enhancements/__init__` imports `frappe` at module scope and anything under it is
+unreachable from the bench-free test tier — the same reason `quality/scope_criteria.py` sits there
+while `Project Scope of Work` sits here.
 
 ## Projects Dashboard
 

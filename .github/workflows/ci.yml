@@ -578,6 +578,15 @@ jobs:
       # second review beside every one it made, so review_due RAISES if asked about them.
       - name: Quality goals (an empty period decides nothing, and fewer can be better)
         run: python -m unittest erpnext_enhancements.tests.test_quality_goals -v
+      # Change orders (WI-075 sub-phase K). A commercial instrument, so every failure guarded
+      # here is a wrong number somebody argues about months later rather than a crash somebody
+      # fixes the same afternoon. A credit stored as a positive magnitude beside an
+      # Addition/Credit Select is totalled as an addition the first time the two disagree; a
+      # naming series makes the third change order on one job CO-047; a stored status beside
+      # docstatus is two states for one document, free to disagree; and frappe's amend appends
+      # -1, producing a second commercial instrument with almost the same name as the first.
+      - name: Change orders (a credit cannot be totalled as an addition)
+        run: python -m unittest erpnext_enhancements.tests.test_change_orders -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk

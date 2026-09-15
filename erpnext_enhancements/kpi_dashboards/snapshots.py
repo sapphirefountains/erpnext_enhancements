@@ -755,13 +755,56 @@ def _production_metrics():
 			)
 		)
 		add("on_time_milestone_rate", "On-Time Milestone Rate (90d)", (ontime / done * 100.0) if done else None, "%", "Project Process Step", metrics.HIGHER)
+	# WI-075 sub-phase K renamed this key rather than re-pointing it. It has always counted
+	# contract revisions -- a contract that was edited after issue -- and called them change
+	# orders because nothing else existed to count. Re-pointing `change_orders` at the new
+	# DocType in place would put an unexplainable step in a live chart: the series would drop to
+	# near zero on deploy day and nobody reading it later could tell a real improvement from a
+	# change of definition. So the old key now says what it actually measures, and a fresh
+	# `change_orders` below is fed by the record that can genuinely answer the question.
+	# Snapshot retention is 120 days, so the renamed series ages out inside one window.
 	if _exists("Project Contract") and frappe.db.has_column("Project Contract", "revision"):
 		add(
-			"change_orders",
-			"Contract Change Orders",
+			"contract_revisions",
+			"Contract Revisions",
 			_scalar("select count(*) from `tabProject Contract` where coalesce(revision,0)>0"),
 			"count",
 			"Project Contract",
+			metrics.LOWER,
+		)
+	if _exists("Change Order"):
+		# Submitted only: a draft change order is a proposal, and counting proposals as change
+		# orders would make the number move when somebody opens a form.
+		add(
+			"change_orders",
+			"Change Orders (submitted)",
+			_scalar("select count(*) from `tabChange Order` where docstatus=1"),
+			"count",
+			"Change Order",
+			metrics.LOWER,
+		)
+		# The measure that a revision count could never give: how much of the change was ours.
+		# "How much did the job change" and "how much change did we cause" are different
+		# questions, and only the second is a quality signal.
+		add(
+			"change_orders_self_caused",
+			"Change Orders We Caused",
+			_scalar(
+				"select count(*) from `tabChange Order` where docstatus=1 and cause in "
+				"('Sapphire Error','Design Error')"
+			),
+			"count",
+			"Change Order",
+			metrics.LOWER,
+		)
+		# Signed, so a credit subtracts. Summing magnitudes would report a job that added 50k
+		# and credited 48k as a 98k upheaval.
+		add(
+			"change_order_net_value",
+			"Change Order Net Value",
+			_scalar("select sum(cost_impact) from `tabChange Order` where docstatus=1"),
+			"USD",
+			"Change Order",
 			metrics.LOWER,
 		)
 	return {"values": values, "freshness": {}}
