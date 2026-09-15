@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.469.0] - 2026-09-15
+
+### Added
+
+- **Hover a word in the lesson and it explains itself.** The first occurrence of each glossary term
+  in the lesson text is marked with a dotted underline; hovering, tabbing to it or tapping it shows
+  the plain-English definition, with a link into the full entry. Only the **first** occurrence is
+  marked — a lesson that says "bonding" fourteen times would otherwise become a field of dotted
+  underlines and stop meaning anything.
+- **Reachable three ways, because two of them do not exist on a phone.** Hover for a mouse, focus
+  for a keyboard, tap for a finger. The tooltip deliberately carries only the short definition: one
+  long enough to hold the explanation and the worked example is one that covers the sentence the
+  reader was in the middle of.
+- **See also entries are now buttons.** Clicking one opens that term, fetching it if the lesson does
+  not use it. `see_also` is a plain text field rather than a child table of Links, so a name in it
+  can point at a term that was renamed, disabled or never written — that gets a sentence in the
+  panel rather than a dead button.
+- **Search.** A filter box over the lesson's own terms, plus `glossary_search` over all 717 entries
+  as a deliberate second step. Filtering what is already loaded costs nothing; searching the whole
+  table is a request, and it should happen because somebody asked rather than on every keystroke.
+- **The panel lists terms in the order the lesson uses them**, alphabetically only to break a tie.
+  A lesson matches around 57 terms and in an A–Z list the word somebody has just read sits at a
+  random position, so the panel read as a dictionary bolted to the page rather than as a key to the
+  thing in front of them.
+- **`Training Glossary Term` now appears in the Training workspace**, under Authoring. It was linked
+  from **no workspace at all** — the doctype appeared in exactly one file in the repo, its own — so
+  the only route to 717 AI-drafted definitions was typing the doctype name into the awesomebar. A
+  glossary nobody can reach to correct is a glossary that stays wrong. Ships with a forced
+  `reload_doc`, because a Workspace JSON is age-gated on import and silently skipped otherwise.
+
+### Changed
+
+- **The Help payload is fetched when the lesson renders, not when the panel is opened** — a
+  deliberate reversal. The panel alone could stay lazy; the marks in the lesson text cannot, because
+  a reader hovering a word has not opened anything. Measured on production first: 42–67 KB for 42–67
+  terms, one round trip per lesson.
+- **`_matches` now records where each term first occurs and every spelling that matched**, rather
+  than stopping at the first hit. The old early exit answered "is this word here", which is not
+  enough to order the list or to know which words to mark.
+- **Matching no longer builds a `Document` per term.** `match_patterns_for` takes the two fields
+  directly and compiled patterns are cached. The old path constructed 717 documents per request and
+  it dominated everything else: a loop over twelve lessons could not finish inside a 30-second
+  budget on production.
+
+### Fixed
+
+- **A `var(--tr-surface-2)` that nothing declares.** It does not fail, it falls back — to the
+  light-theme colour written inline beside it — so the rule looks perfect until dark mode, where
+  that one element stays pale. Second time in this module (`--tr-danger` for `--tr-bad` was the
+  first), so there is now a test that every palette token read in `player.css` is declared in it.
+- **A `Card Break`'s denormalised `link_count`** on the Training workspace, which the workspace
+  suite caught: a wrong value corrupts the next Desk edit of that card.
+
+### Security
+
+- **The quiz rule follows the new routes.** A See also can point outside the set the panel
+  suppressed, so the pool is asked about that term directly rather than inheriting the panel's
+  answer — otherwise the one word a question turns on stays reachable in two clicks from a word that
+  is safe. Whole-glossary search is **closed** while a quiz is open: the panel's suppression is
+  answerable because the lesson is known, a free search has no equivalent guarantee, and
+  approximating one would be worse than saying so.
+
 ## [1.468.2] - 2026-09-15
 
 ### Fixed

@@ -1034,3 +1034,8 @@ erpnext_enhancements.patches.seed_training_glossary
 # needs its own entry to reach the site it was written for. Idempotent: a rebuild makes the draft
 # match the spec, so a second run makes it match again.
 erpnext_enhancements.patches.rebuild_technician_course_drafts_after_link_fix
+# v1.469.0: the glossary gets a link in the Training workspace's Authoring card -- until now it was
+# linked from NO workspace at all and the only route to the 717 definitions was the awesomebar. A
+# Workspace JSON is age-gated on import and silently skipped when the row is not older, so the
+# bumped `modified` needs a forced reload beside it to reach a site that already has the workspace.
+erpnext_enhancements.patches.reload_training_workspace_for_glossary

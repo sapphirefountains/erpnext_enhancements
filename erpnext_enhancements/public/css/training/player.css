@@ -2942,6 +2942,75 @@
 	color: var(--tr-text, #17212b);
 }
 
+/* A glossary word, marked where the lesson first uses it. A button so it is reachable by
+ * Tab and announced as something you can act on, painted back down to look like prose —
+ * a real button in the middle of a paragraph would break the line and read as a control
+ * rather than as a word with more behind it. The dotted underline is the whole signal, and
+ * `cursor: help` is the second half of it on a desktop. */
+.tr-gloss {
+	display: inline;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-bottom: 1px dotted var(--tr-accent, #2b6cb0);
+	background: none;
+	color: inherit;
+	font: inherit;
+	line-height: inherit;
+	text-align: inherit;
+	cursor: help;
+}
+
+.tr-gloss:hover,
+.tr-gloss:focus-visible {
+	background: var(--tr-accent-soft, #e6f0fa);
+	outline: none;
+}
+
+/* The tooltip. Inline-block rather than absolutely positioned: a floating layer has to be
+ * kept off the edge of every viewport by hand, and this has to work on a phone held in one
+ * hand in daylight. Letting it take its place in the flow costs a reflow of the paragraph
+ * and nothing else. */
+.tr-gloss-pop {
+	display: block;
+	margin: 0.4rem 0;
+	padding: 0.5rem 0.65rem;
+	border-left: 3px solid var(--tr-accent, #2b6cb0);
+	border-radius: 0 4px 4px 0;
+	background: var(--tr-surface-alt, #f4f6f8);
+	font-size: 0.9rem;
+	line-height: 1.45;
+}
+
+.tr-gloss-word {
+	display: block;
+	color: var(--tr-text, #17212b);
+}
+
+.tr-gloss-trap {
+	display: block;
+	color: var(--tr-warn, #d97706);
+	font-weight: 600;
+	font-size: 0.85rem;
+}
+
+.tr-gloss-plain {
+	display: block;
+	color: var(--tr-text, #17212b);
+}
+
+.tr-gloss-more {
+	margin-top: 0.35rem;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--tr-accent, #2b6cb0);
+	font: inherit;
+	font-size: 0.85rem;
+	text-decoration: underline;
+	cursor: pointer;
+}
+
 /* The trap line sits ABOVE the definition, and is styled to interrupt. Somebody who
  * believes they already know the word does not read the definition underneath it —
  * telling them first that it does not mean what they think is the thing that makes
@@ -3011,6 +3080,60 @@
 	margin: 0;
 	color: var(--tr-muted, #5c6670);
 	font-size: 0.85rem;
+}
+
+/* Each See also is a way to reach that term, so it is a button painted as a link rather
+ * than a word in a sentence. `see_also` is a plain text field, so one of these can name a
+ * term that no longer exists — the panel answers that with a sentence, which is why this is
+ * not styled as a dead-ended anchor. */
+.tr-help-seealso-link {
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--tr-accent, #2b6cb0);
+	font: inherit;
+	text-decoration: underline;
+	cursor: pointer;
+}
+
+.tr-help-search {
+	margin: 0 0 0.6rem;
+}
+
+.tr-help-search-input {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 0.4rem 0.55rem;
+	border: 1px solid var(--tr-line, #d6dbe0);
+	border-radius: 4px;
+	background: var(--tr-surface, #fff);
+	color: var(--tr-text, #17212b);
+	font: inherit;
+	font-size: 0.92rem;
+}
+
+.tr-help-found {
+	margin: 0;
+}
+
+.tr-help-found-head {
+	margin: 0.8rem 0 0.4rem;
+	color: var(--tr-muted, #5c6670);
+	font-size: 0.8rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+/* A term the reader went looking for, rather than one the lesson uses. Marked so the panel
+ * does not blur "this word is in front of you" with "you asked about this word". */
+.tr-help-term.is-elsewhere {
+	border-left: 2px solid var(--tr-line, #d6dbe0);
+	padding-left: 0.5rem;
+}
+
+.tr-help-term.is-focused {
+	background: var(--tr-accent-soft, #e6f0fa);
 }
 
 .tr-help-draft {

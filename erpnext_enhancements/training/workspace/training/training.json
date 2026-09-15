@@ -15,7 +15,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Authoring",
-   "link_count": 5,
+   "link_count": 6,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -65,6 +65,16 @@
    "label": "Training Checkpoint",
    "link_count": 0,
    "link_to": "Training Checkpoint",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Glossary Term",
+   "link_count": 0,
+   "link_to": "Training Glossary Term",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
@@ -318,7 +328,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-13 17:00:00.000000",
+ "modified": "2026-09-15 23:40:00.000000",
  "modified_by": "Administrator",
  "module": "Training",
  "name": "Training",
