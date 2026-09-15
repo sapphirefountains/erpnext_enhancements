@@ -1,4 +1,3 @@
-/* global erpnext_enhancements */
 frappe.provide("erpnext_enhancements.dashboard_components");
 
 /**

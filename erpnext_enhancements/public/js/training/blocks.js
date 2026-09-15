@@ -17,7 +17,7 @@
 //   sanitising is a server responsibility precisely because a client cannot be
 //   trusted to have done it. Re-sanitising here would create a second, weaker
 //   definition of "safe" and invite someone to eventually rely on it.
-// * A PDF is never rendered in `<iframe src="…​.pdf">`. iOS's viewer renders page
+// * A PDF is never rendered in `<iframe src="….pdf">`. iOS's viewer renders page
 //   one and silently drops the rest, so a learner scrolls, sees nothing more,
 //   and reports the course as broken. We show a card that opens the file
 //   properly and gate on dwell plus an explicit acknowledgement instead.

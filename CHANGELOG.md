@@ -7,6 +7,172 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.467.0] - 2026-09-15
+
+### Added
+
+- **The Technician Training Program — ten course drafts, 72 lessons, 239 quiz questions and a badge
+  per module.** Sapphire supplied a ten-module outline with seventy-two numbered topics under it.
+  One module is now one Training Course, one numbered topic is one Training Lesson, every lesson
+  carries an end-of-lesson quiz, and each module has its own Training Badge with its own artwork.
+  The specs live in `training/technician_program/`, one file per module, and are seeded by
+  `patches/seed_technician_training_program`.
+- Built through `api/training_course_authoring.author_course_from_spec` — the same reviewed path the
+  AI drafting tool and the four WI-075 Quality drafts use — so nothing here creates a document
+  directly and every rule that path enforces applies. In particular **all 239 questions are stamped
+  `ai_generated` with no reviewer**, which the publish gate refuses to let through until a person has
+  read them. That number is also the size of the review somebody owes before any of this goes live.
+- Ten `Course Completed` badges, priced at five points per lesson so a three-lesson module and a
+  twelve-lesson one are not worth the same, with ten SVGs in
+  `public/images/training/badges/` written into `Training Badge.image` as `/assets` paths.
+- **The AI question review queue at `/desk/training-review` — the publish gate's missing half.**
+  `submit_for_review` and `publish_version` have refused a course holding an unaccepted AI-drafted
+  question since Phase 4, and the gate works. What never existed was anywhere to *do* the accepting.
+  Measured on production 2026-09-15: **128 unreviewed questions across all 11 Draft courses**
+  against 14 ever reviewed — every one of those courses is Draft because of this — and the ten
+  Technician Program drafts add 239 more.
+- **The lesson is the unit of review, and that is the whole design.** The question a reviewer cannot
+  answer from a list is *"could a learner have got this from the lesson?"*, so
+  `get_review_lesson` returns a lesson's content and its pending questions in one reply and the page
+  shows them side by side. Accept, edit-and-accept, or reject, driven from the keyboard
+  (`a` / `e` / `r` / `j` / `k`) because 367 repetitions is a morning's work.
+
+### Fixed
+
+- **Nothing was linting the JavaScript, and nothing ever had.** `package.json` has carried a
+  `"lint": "eslint ."` script and an `.eslintrc` for the life of the repo, and no workflow ever ran
+  either — so roughly 30k lines of front end (every desk page, the learner runtime, the Triton
+  widget) shipped unchecked. There is now an `eslint` job, and it is a **hard gate on errors**.
+- The first run found 42 errors, and the split is why this was worth a job rather than a cleanup:
+  - **28 were the linter not knowing this app's own globals.** `TR` — the namespace every training
+    desk surface shares, defined in `public/js/training/desk_assets.js` — was absent from
+    `.eslintrc` while `erpnext_enhancements` was present, so `learn.js`, `training_canvas.js`,
+    `training_insights.js`, `employee_training.js` and the new review page all failed on a config
+    gap rather than a bug. `google` and `Twilio` were missing the same way, and the vendored
+    `frappe-gantt` UMD build was being linted at all when its sibling vendored libraries are
+    already excluded. **A linter that is wrong about your own code is one people learn to ignore.**
+  - **14 were real**: four empty `catch (e) {}` blocks in `triton_widget.js`, which now carry the
+    reason they swallow (each probes an optional desk global — `cur_frm` mid-teardown, a
+    `query_report` not yet loaded — where the field should simply stay unset); a `hasOwnProperty`
+    read straight off an instance rather than through `Object.prototype`; a **zero-width space
+    sitting inside a comment** in the learner runtime; and five redundant `/* global */` directives
+    re-declaring names the shared config already provides.
+- `--quiet` so errors fail and warnings do not, deliberately: the 175 remaining warnings are all
+  `no-console` in `scripts/*.js`, which are node CLI tools where console *is* the output. Gating on
+  those would force a pointless suppression sweep or a permanently red job, and a permanently red
+  job gates nothing. Errors are at zero, so any error is a new one. The gate was negative-tested by
+  planting an undefined global and confirming a non-zero exit.
+- The job uses `npm ci` rather than `npm install` for a reason worth writing down: the lockfile pins
+  eslint **8.57.1**, and `.eslintrc` is the pre-flat-config format only v8 reads. An unpinned
+  install pulls v9+, which refuses `.eslintrc` outright and fails with a migration notice that looks
+  nothing like a lint failure — which is exactly how this was first misdiagnosed as a repo problem
+  when it was a local `npx` resolving a global v10.
+- **`ai_reviewed_by` was caller-supplied.** The only thing that ever flipped it on an
+  already-persisted question was the browser — the authoring canvas calls core
+  `frappe.client.save` with `body.ai_reviewed_by = frappe.session.user`. That works, and it means
+  the one field whose entire job is recording **who vouched for this answer key** was being set by
+  the client that wanted it set. `accept_question` takes it from `frappe.session.user` server-side
+  and the payload cannot express a reviewer at all: a test asserts the call raises `TypeError`,
+  because the parameter does not exist. A signature you can address to somebody else is not one.
+- **There was no reject path**, though `submit_for_review` has always thrown *"Accept or reject each
+  one"*. `Training Question` carries `ai_generated` and `ai_reviewed_by` and nothing else, so a
+  "Rejected" state that left the reviewer unset would be indistinguishable from "nobody has looked
+  at it" and would block publication for ever, while one that *set* it would let a rejected question
+  go live. Rejecting now removes the question from every draft lesson pool that draws it, deletes it
+  if nothing else wants it, and writes the reason to the course version's timeline — no new field,
+  no migration, and the audit trail lands where a reader would look for it.
+
+### Notes
+
+- **A trade course has a failure mode the software courses do not, and it shaped the whole
+  package.** The four Quality drafts could be written from the code, because what they teach is how
+  this software behaves. These teach solvent welding, chemical handling, confined space entry and
+  anchor setting. The dangerous failure is no longer a wrong claim about a screen — it is a
+  *plausible number*: a cure time, a torque, a dose rate, a service interval. A technician reads it
+  here, does not check the label, and makes a joint that fails under a slab in three years.
+  So every such figure is replaced by the principle plus a deferral naming where the real one lives,
+  and the build fails on an invented deadline ("within N days") **or** an invented frequency ("every
+  6 weeks"). Both regexes were negative-tested, including that the frequency one stays silent on
+  "512 channels in every universe" and "at every visit".
+- Numbers that genuinely are universal are stated plainly, because hedging a fact teaches nothing
+  either: water at 8.34 lb/gal, a Class A GFCI at 4–6 mA, 512 DMX channels to a universe, 19.5–23.5%
+  oxygen, LSI balanced near zero. Safety content names the standard, teaches what it is *for*, and
+  says when to stop and get somebody qualified — never a procedure to follow instead of training.
+- **Draft is the load-bearing word, again.** `assignment.py` selects on `{"status": "Published",
+  "weight": "Required", "auto_assign": 1}` — all three. These ten are Required and carry a rule aimed
+  at the `Technician` job-family Position, so Draft is the only one of the three this branch does not
+  supply. Publishing one is the act of adopting it.
+- **Production was re-measured (2026-09-15) rather than inherited from the Quality drafts, and it
+  had moved.** `training_enabled = 1`, `notifications_enabled = 1`, `gamification_enabled = 1`,
+  `auto_assign_enabled = **0**`, `portal_enabled = 0`, against 18 live courses. `auto_assign_enabled`
+  read **1** the day before — so it is a checkbox a Training Manager can tick, not a guardrail, and
+  the older module's reasoning should not be read as still current.
+- **The badges are inert too, and the chain is worth following rather than assuming.**
+  `gamification_enabled` is 1, so awarding is live. But a `Course Completed` badge is earned when
+  `_badge_is_earned` finds its `criteria_course` among a learner's completions, a completion is a
+  submitted `Training Completion`, and nobody completes a course that was never published. **One
+  decision — adopting a course — turns on its assignment, its certificate and its badge together.**
+- `Course Completed` is also the *only* criterion that means "this specific course"; a count-based
+  one is satisfied by any other course on the site, which would turn "a badge for each module" into
+  "a badge for finishing anything". An unrecognised `criteria_type` awards **nothing**, so a drifted
+  literal would be ten badges nobody can ever earn with nothing on screen to say so — the test checks
+  it against `training_badge.json` rather than against a memory of it. There is deliberately no
+  capstone badge: `Category Completed` means every published course *in the category*, and these ten
+  share categories with existing courses, so its meaning would drift as courses are added.
+- **The badge names carry no programme prefix, at Sapphire's request.** It reads better on a profile
+  and costs one thing: `Training Badge` autonames on `badge_name` and the field is unique, so ten
+  plain generic names now sit in a shared namespace. They are clear of the five starters, which is
+  the whole of what exists today, and a test asserts it.
+- **An `Attach Image` pointing at nothing renders as an empty box** — no broken-image icon, no
+  error, nothing in the Error Log. So the suite asserts all ten artwork files are on disk, and that
+  no SVG carries a script, an external reference or an embedded raster. Both guards were
+  negative-tested by hiding a file and by planting a scripted SVG. Note that a raw `/assets` path is
+  served immutable for a year with no content hash: a redrawn badge needs a new filename, not an
+  edit in place.
+- **The seeding patch cannot abort a migrate, and that is tested behaviourally rather than by
+  grepping for `except`.** v1.464.0's sibling patch had both a `return` and an `except Exception`,
+  passed its source check, and still took a production deploy down — because the call that threw sat
+  *outside* the try block the grep found. This suite runs `execute()` against a fake frappe with the
+  failure injected at each of the two places it could happen (applying course settings, inserting a
+  badge) and asserts nothing propagates and the other work still completes.
+- It also sets no supervisor sign-off. Several modules describe competencies a quiz cannot prove and
+  a sign-off is the right instrument — but `TrainingCourse._validate_signoff` refuses the flag
+  without a stated criterion, and what a Sapphire supervisor is verifying is exactly what this
+  package does not get to invent. Whoever adopts a course sets both halves, in their own words.
+- Authored and then independently fact-checked module by module. The first review pass corrected a
+  reversed tension face on a cantilevered basin wall (the wet face is in tension at the base, which
+  is why main steel sits near the retained face), a backwards parallax rule for reading a test vial,
+  and a lesson that had drifted into instructing a lock-out the course had already said it defers.
+- **A second pass then verified the first, because a confident wrong correction is worse than the
+  claim it replaced.** Three blind lenses per module — trade accuracy, answer key, invented
+  authority — then every finding refuted by default before any edit landed: 73 raised, 45 confirmed,
+  the rest thrown out or merged as duplicates, 48 edits applied. Lesson, chapter and question counts
+  are byte-identical before and after; this pass only corrected content. What it caught is the
+  argument for having run it:
+  - **Pipe outside diameter does not vary by material** — it follows the sizing standard the pipe
+    was made to, and steel and Schedule 40 PVC of the same nominal size share one OD. The lesson on
+    sizing a penetration seal said the opposite, in the body *and* in a quiz explanation.
+  - **A chemical plug from a failed flow interlock does not pass through the heater**, because
+    injection is downstream of it — the lesson contradicted its own injection-point block two
+    screens earlier.
+  - **A filter gauge does not fall to zero when the pump stops on a flooded-suction system**; static
+    head holds it up. A Multiple Choice option was keyed on "falls to zero", so the correct answer
+    was wrong on exactly the systems most fountains use.
+  - **A centrifugal pump running against a closed discharge draws *less* current, not more** — the
+    overload lesson had it backwards.
+  - **The bucket test controls for still-surface evaporation only.** It cannot reproduce the extra
+    evaporation a running display creates by throwing water into the air, so the second run proves
+    the loss is display-dependent and not what it is. And evaporation does not stop overnight.
+  - **Sand broadcasting is not universal** — membranes tested to ANSI A118.10 are made for mortar to
+    bond to the cured film directly. Which system you have is on the data sheet.
+  - Two **false cross-references to sibling modules**: an excavation lesson Module 9 does not have,
+    and a Module 6 title that does not exist. All 36 inter-module references now resolve.
+  - **Payload is GVWR minus curb weight** — the occupants-and-cargo figure on the door-jamb placard —
+    not "minus the vehicle as it sits", which double-counts the crew.
+- 67 bench-free tests in `tests/test_technician_training_program.py`, on their own CI step because
+  the suite installs the frappe stub and `python -m unittest` shares a process. All 21 repo-wide
+  walking suites re-run green.
+
 ## [1.466.2] - 2026-09-15
 
 An Error Log pass. Four fixes, and what they have in common is worth more than any one

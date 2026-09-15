@@ -96,6 +96,43 @@ jobs:
         run: ruff check erpnext_enhancements/ --output-format=github
 
   # ---------------------------------------------------------------------------
+  # JavaScript. New, and a HARD gate on errors — because until now NOTHING linted
+  # the JS in this app. `npm run lint` existed and nothing ran it, so every
+  # front-end file here has shipped unchecked: ~30k lines of desk pages, the
+  # learner runtime, the Triton widget.
+  #
+  # The first run found 42 errors, and the split is the reason this is worth a
+  # job rather than a one-off cleanup. 28 were the linter not knowing this app's
+  # own globals — `TR`, the namespace every training desk surface shares, was
+  # absent from .eslintrc while `erpnext_enhancements` was present, so four
+  # existing pages and one new one all failed on a config gap rather than a bug.
+  # A linter that is wrong about your own code is a linter people learn to
+  # ignore. The rest were real: four empty `catch (e) {}` blocks (now carrying
+  # the reason they swallow), a `hasOwnProperty` read straight off an instance,
+  # and a zero-width space sitting inside a comment in the learner runtime.
+  #
+  # `--quiet` means ERRORS fail and warnings do not. That is deliberate: the 175
+  # remaining warnings are all `no-console` in `scripts/*.js`, which are node
+  # CLI tools where console IS the output. Gating on them would force either a
+  # pointless suppression sweep or a permanently red job, and a permanently red
+  # job gates nothing. Errors are at zero today, so any error is a new one.
+  eslint:
+    name: Lint JS (eslint, errors are a gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # `npm ci` rather than `npm install`: the lockfile pins eslint 8.57.1, and
+      # .eslintrc is the flat-config-free format that only v8 reads. An
+      # unpinned install would pull v9+, which refuses .eslintrc outright and
+      # fails with a migration notice that looks nothing like a lint failure.
+      - run: npm ci
+      - name: eslint (errors only)
+        run: npx eslint . --quiet
+
+  # ---------------------------------------------------------------------------
   # Undefined names — a HARD gate, carved out of the advisory job above.
   #
   # F821 is not style. An undefined name is a NameError at runtime, and this app
@@ -641,6 +678,36 @@ jobs:
       # assignment rule names a Position or Role that actually exists.
       - name: Quality course drafts (Draft is the only thing between these and real inboxes)
         run: python -m unittest erpnext_enhancements.tests.test_quality_training_courses -v
+      # The ten Technician Program drafts -- Sapphire's own ten-module outline, 72 lessons, a quiz on
+      # every one, one badge per module. Its own step for the same reason as the suite above: it
+      # imports that suite's frappe stub and `python -m unittest` shares a process. It guards the
+      # same Draft property, plus two the Quality suite has no equivalent of, because these teach a
+      # TRADE rather than this software. A wrong claim about a screen is embarrassing; a plausible
+      # cure time, dose rate or torque figure is a joint that fails under a slab in three years and a
+      # technician who never thought to check the label. So: no invented numbers (the notice sends
+      # every reader to the label, the data sheet and the specification, and every module defers at
+      # least once through ask_block), no invented company frequency ("clean it every 6 weeks" is a
+      # policy nobody set that reads as one that was), and no quiz setting its own pass score. Also
+      # pins the badges: `Course Completed` is the ONLY criterion that means *this* course, and an
+      # unrecognised one awards nothing -- so a drifted literal is ten badges nobody can ever earn,
+      # silently. Checked against the DocType JSON rather than against a memory of it.
+      - name: Technician program drafts (a trade course must not invent a number)
+        run: python -m unittest erpnext_enhancements.tests.test_technician_training_program -v
+      # The AI question review queue -- the screen the publish gate has always implied and the app
+      # never had. `_unreviewed_ai_questions` blocks submit-for-review and publish, and on prod
+      # 2026-09-15 it was holding 128 questions across ALL 11 Draft courses against 14 ever
+      # reviewed; the technician drafts add 239. Four failures are guarded, each one quiet rather
+      # than loud: the queue's predicate drifting from the gate's (the page would say "nothing
+      # left" while publish still refused, with nothing on screen to explain it); the reviewer
+      # being taken from the payload rather than the session (until now the only writer of
+      # ai_reviewed_by was the browser, so the one field recording WHO vouched for an answer key
+      # was set by the client that wanted it set); a rejection emptying a ticked quiz, which makes
+      # that lesson unsaveable by anybody via _validate_quiz; and a bulk-accept button appearing,
+      # which would turn the whole gate into theatre. The last two are tested behaviourally against
+      # a fake frappe, because a source grep for "drop_quiz" passes on a version that never checks
+      # it -- the exact way v1.464.0's patch guard passed and still took a deploy down.
+      - name: Training question review (the gate needs a door, and the signature must be real)
+        run: python -m unittest erpnext_enhancements.tests.test_training_review -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk

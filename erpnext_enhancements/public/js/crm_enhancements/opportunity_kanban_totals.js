@@ -11,7 +11,7 @@
 // "Opportunity". The 1s setTimeout after the original refresh lets the columns
 // finish drawing before we measure/append the per-column total pill.
 
-if (!frappe.views.KanbanView.prototype.hasOwnProperty("is_patched_for_totals")) {
+if (!Object.prototype.hasOwnProperty.call(frappe.views.KanbanView.prototype, "is_patched_for_totals")) {
     frappe.views.KanbanView.prototype.original_refresh = frappe.views.KanbanView.prototype.refresh;
 
     frappe.views.KanbanView.prototype.render_opportunity_totals = function () {

@@ -1,5 +1,3 @@
-/* global erpnext_enhancements */
-
 /**
  * TaskTreeManager — interactive, hierarchical task grid.
  *

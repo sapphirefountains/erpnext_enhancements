@@ -1,5 +1,3 @@
-/* global erpnext_enhancements */
-
 /**
  * Project form script.
  *

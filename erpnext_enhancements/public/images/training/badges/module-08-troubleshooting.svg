@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Module 8: General Troubleshooting">
+<title>Module 8 — General Troubleshooting</title>
+<circle cx="128" cy="128" r="124" fill="#99bfd7"/>
+<circle cx="128" cy="128" r="102" fill="#00111c"/>
+<circle cx="128" cy="128" r="112" fill="none" stroke="#f8f8f8" stroke-width="2" opacity=".55"/>
+<circle cx="128" cy="128" r="102" fill="none" stroke="#f8f8f8" stroke-width="1.5" opacity=".35"/>
+
+<circle cx="116" cy="112" r="40" fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M145 141l30 30" fill="none" stroke="#f8f8f8" stroke-width="14" stroke-linecap="round"/>
+<path d="M116 90v26" fill="none" stroke="#99bfd7" stroke-width="9" stroke-linecap="round"/>
+<circle cx="116" cy="130" r="5.5" fill="#99bfd7"/>
+<rect x="96" y="212" width="64" height="30" rx="15" fill="#f8f8f8"/>
+<g transform="translate(116.0 218) scale(1.0)" fill="none" stroke="#00111c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 4.5a3.5 3.5 0 0 1 7 0v9a3.5 3.5 0 0 1-7 0z" transform="translate(0 0)"/><path d="M5 8.5a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 0a4.6 4.6 0 1 0 0 9.2 4.6 4.6 0 0 0 0-9.2z" transform="translate(14 0)"/></g>
+</svg>

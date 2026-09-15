@@ -338,6 +338,11 @@
 		var links = [];
 		if (manager) links.push({ key: "insights", label: t("Insights"), route: ["training-insights"] });
 		if (author) links.push({ key: "canvas", label: t("Course canvas"), route: ["training-canvas"] });
+		// Author-gated rather than manager-gated, and deliberately: reviewing a drafted
+		// question is authoring work on an unpublished draft, and Training Author is the
+		// role the canvas already grants for exactly that. The page's own `roles` carry
+		// the same three, so reachable() drops this link for anybody the Page refuses.
+		if (author) links.push({ key: "review", label: t("Question review"), route: ["training-review"] });
 		links.push({ key: "courses", label: t("Courses"), route: ["List", "Training Course"] });
 		links.push({ key: "assignments", label: t("Assignments"), route: ["List", "Training Assignment"] });
 		if (manager) {
