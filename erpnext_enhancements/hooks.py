@@ -485,6 +485,17 @@ doc_events = {
 			"erpnext_enhancements.process_steps.seed_process_steps",
 		],
 		"after_insert": "erpnext_enhancements.process_steps.announce_seeded_steps",
+		# WI-075 sub-phase M. Derives the per-category budget rollup and, when category lines
+		# exist, the project total from them. It does nothing and costs nothing on a project with
+		# no budget lines, which is every project on prod today. Appended into THIS dict rather
+		# than added as a second "Project" key: hooks.py is one dict literal and a repeated key
+		# silently discards the earlier value, which here would drop the hand-off gate.
+		#
+		# `validate` and not `before_validate`: frappe skips validate AND before_save when
+		# `flags.ignore_validate` is set, which create_project_from_opportunity_background does.
+		# That path creates no budget lines, so there is nothing to roll up; every save that
+		# edits a budget line is an ordinary Desk save where validate runs.
+		"validate": "erpnext_enhancements.project_enhancements.budget_rollup.on_project_validate",
 		"before_save": [
 			"erpnext_enhancements.script_migrations.project.remove_open_status",
 			"erpnext_enhancements.status_alerts.stamp_payment_received_date",

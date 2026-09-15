@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.462.0] - 2026-09-15
+
+### Added
+
+- **A project budget can now be kept by category** (WI-075 sub-phase M). `Project Budget Category`
+  is a seeded catalog of seven; `Project Budget Line` is a new table on Project holding what each
+  category is budgeted at; and `Budget Reallocation` is a submittable record of money moving
+  between two of them. `Purchase Order Item.custom_budget_category` lets a purchase say which
+  category it spends against.
+- Once a project has category lines, `Project.estimated_costing` **is their sum** and is
+  maintained from them. That is the point of the shape: a project manager who fills in the
+  categories produces WI-057's denominator as a by-product rather than as a second number to keep
+  in step.
+- `quality/budgets.py` (frappe-free, the decision core) and
+  `project_enhancements/budget_rollup.py` (the glue that asks the database), plus
+  `api/project_budget.py`, `patches/seed_budget_categories.py` and a `Budget Reallocation` form
+  script. That last one is not polish: every approval field is read-only and `before_submit`
+  refuses a reallocation with no project-manager approval, so without its buttons no reallocation
+  could ever be submitted.
+
+### Notes
+
+- **WI-057's backfill has still not landed, and this release does not substitute for it.**
+  Re-measured on prod 2026-09-14, two months after that work item counted it: `estimated_costing`
+  is **zero on all 654 projects**, `custom_materials_budget` is set on 4 and
+  `custom_time_budget_in_hours` on 6. M builds the structure a budget is kept in; WI-057 still
+  owns getting numbers into it, and its acceptance criterion is not restated here.
+- **`committed` and `actual` are not simply two more Currency columns, because on this site three
+  of those four columns would read `0.00` forever and look correct.** Measured the same day:
+  `tabTimesheet` holds **0 rows** — the table is empty, so there are no labour actuals of any kind
+  for any project — and **no Purchase Invoice has submitted lines**, so there are no material
+  actuals either. Purchase *orders* do exist (324 project-tagged lines, $106,242) but cannot be
+  attributed: 217 of those 324 carry item group `Products`, a leaf directly under
+  `All Item Groups`, and the item group tree has no labour / materials / equipment / subcontract
+  axis anywhere in it. That is the trailing-space failure in another costume — it returns a
+  number, the number is about nothing, and nothing looks wrong — and it is the same reason this
+  programme already rejected core `Supplier Scorecard`.
+- **So every spend figure carries a coverage verdict beside it.** `Tracked` means the source is in
+  use and a zero means nothing was spent. `Not Tracked` means the source holds no rows anywhere on
+  the site, so a zero means *nobody records this* — Labour today. `No Source` means nothing could
+  ever be spent against the category directly, which is correct for Contingency and Fee: money
+  leaves a reserve by reallocation, never by purchase. Coverage is judged site-wide rather than
+  per project on purpose — "the instrument is not in use" is a fact about the company, and a
+  project that genuinely has no purchase orders should read `Tracked` with zero rather than be
+  told its data is missing. Negative-tested: collapsing `Not Tracked` into `Tracked` fails a test.
+- **A percentage of a zero budget comes back `None`.** Rendered as 0% it says "on budget";
+  rendered as a huge number it says "catastrophically over". Both are confident and both are
+  wrong. Sub-phase L made the identical call for an MSA with no recorded expiry. Negative-tested:
+  defaulting it to zero fails three tests.
+- **A reallocation is net zero by construction**, and the invariant is checked at apply time as
+  well as asserted in tests. The project total is the sum of the lines, so a move that changed it
+  would silently rewrite the denominator WI-058 will eventually divide by. Amounts round to cents
+  at every write so the invariant holds exactly rather than approximately.
+- **The second approval a protected category needs cannot come from the same hand.** General
+  Conditions, Contingency and Fee are protected on *both* sides — taking money out of contingency
+  is how an overrun gets hidden, and moving money into fee converts contracted work into margin —
+  and the additional approver may be neither the requester nor the project manager who already
+  approved. Without that, the control is satisfiable by one person clicking twice.
+  Negative-tested: removing either half fails a test.
+- **Purchase spend that names no category is reported, never distributed and never dropped.**
+  Today that is all of it: the field to name a category with ships in this release, so all 324
+  existing project-tagged purchase-order lines predate it. Distributing it would invent an
+  attribution nobody made; dropping it would under-report the job silently, in the direction that
+  looks clean. Both purchase queries use the sub-phase L union
+  `ifnull(nullif(line.project, ''), parent.project)` — either field alone loses orders.
+- **The rollup never zeroes a total it cannot derive.** A project with no category lines is left
+  alone rather than having `estimated_costing` set to 0 — WI-057's backfill is about to write
+  exactly that figure onto hundreds of projects, and a feature that erased it would be destroying
+  the data the work item before it exists to create.
+- **The native `Budget` doctype stays rejected**, for WI-057's reason: it budgets by GL account,
+  cost centre and fiscal year rather than per project, so it cannot back a per-project rule.
+  Nothing here revisits that. It holds 0 rows on prod.
+- `validate` and not `before_validate` for the Project hook: frappe skips `validate` **and**
+  `before_save` when `flags.ignore_validate` is set, which `create_project_from_opportunity_`
+  `background` does. That path creates no budget lines, so there is nothing to roll up; every save
+  that edits a budget line is an ordinary Desk save. The handler was **appended into the existing
+  `Project` dict** — `hooks.py` is one dict literal and a second `"Project"` key would silently
+  discard the hand-off gate, the process-step seeding and the payment-received stamp.
+- **A single `doc.save()` on Project is deliberate here and is not the thing WI-057 forbids.**
+  That rule is about *bulk*: Project carries heavy `on_update` hooks and a wildcard `'*'`
+  `after_save` → `global_triton_sync` that fires per ORM save, so a patch walking hundreds of
+  projects must batch `frappe.db.set_value`. Applying one reallocation is one project, saved once,
+  because a person deliberately moved money on it. Writing the child rows with `db.set_value`
+  instead would skip the parent's recalculation and could not create a line the project does not
+  have yet.
+- **Amendment is refused, and so is a cancellation that would go negative.** Frappe's amend
+  appends `-1` and `on_submit` would move the money a second time. And cancelling only works while
+  the money is still there to give back: if a later reallocation has already spent it, reversing
+  would drive a line below zero, so the cancel is refused and a compensating reallocation is the
+  correct instrument.
+- **Nothing changes on prod when this deploys.** Seven catalog rows appear. No project gains a
+  budget line, `estimated_costing` is untouched on all 654 projects, and the rollup returns on its
+  first line for a project with no lines — which is every project.
+
 ## [1.461.0] - 2026-09-15
 
 ### Added

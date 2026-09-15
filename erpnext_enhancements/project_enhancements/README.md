@@ -18,6 +18,11 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/project/project_list.js` | Project list-view tweaks | — | list view |
 | `doctype/address/address.js` | Live full-address build + Google Maps embed; attaches the global Places autocomplete to `address_line1` (widget: `public/js/global_enhancements/address_autocomplete.js`) and records the picked place in `custom_google_place_id` / `custom_latitude` / `custom_longitude`. The coordinates are **user-editable** (v1.207.0) for sites the address cannot locate; `custom_location_source` records whether the point came from Google (discarded when the address text is edited) or was typed (kept) | Address form handlers | `doctype_js["Address"]` |
 | `doctype/change_order/change_order.py` | The `Change Order` controller (WI-075 sub-phase K): per-project numbering, a derived status, an impact type read from the **sign** of the money, and an outright refusal to be amended. Judgement in [`quality/change_orders.py`](../quality/change_orders.py), which imports no `frappe` — `project_enhancements/__init__` does, which would put it out of reach of the bench-free tests | `ChangeOrder`, `insert_with_retry` | Doctype controller; approvals via [`api/change_order.py`](../api/change_order.py) |
+| `doctype/project_budget_category/project_budget_category.py` | The budget-category catalog (WI-075 sub-phase M). Its one real job: **the protection flag cannot be quietly unticked** — `budgets.PROTECTED` is the rule and the Check is its display, so `validate` restores a flag that has been removed and never clears one that has been added | `ProjectBudgetCategory` | Doctype controller; seeded by `seed_budget_categories` |
+| `doctype/project_budget_line/project_budget_line.py` | Child table on Project: one category, what it is budgeted at, and the computed committed/actual with a **coverage verdict** beside them. No controller logic — everything that decides anything lives on the parent, and a child controller with opinions would be a third place the same rules could disagree | `ProjectBudgetLine` | child-table controller |
+| `doctype/budget_reallocation/budget_reallocation.py` | Submittable record of money moving between two categories. Net zero by construction and checked at apply time; a protected category on either side needs a second approval that cannot come from the requester or the approving PM; amendment refused, and a cancellation that would drive a line negative refused too | `BudgetReallocation` | Doctype controller; approvals via [`api/project_budget.py`](../api/project_budget.py) |
+| `doctype/budget_reallocation/budget_reallocation.js` | The approval buttons. **Not optional** — every approval field is read-only and `before_submit` refuses a reallocation with no PM approval, so without these no reallocation could be submitted at all. Auto-loaded by frappe; deliberately **not** in `doctype_js`, which would append it a second time with no dedupe | form script | — |
+| `budget_rollup.py` | The frappe glue that fills in each budget line's committed, actual and coverage, then derives `Project.estimated_costing` from the lines. Returns on its first line when a project has no budget lines — and deliberately does **not** zero a total it cannot derive. Judgement in [`quality/budgets.py`](../quality/budgets.py), which imports no `frappe` | `refresh`, `spend_for_project`, `unclassified_for_project`, `on_project_validate` | `doc_events["Project"]["validate"]` |
 | `doctype/project_dashboard_settings/*.py` | Single doctype: legacy permitted-roles list for the dashboard | `ProjectDashboardSettings` | controller |
 | `doctype/project_dashboard_permitted_role/*.py` | Child table: one `role` per row | `ProjectDashboardPermittedRole` | child-table controller |
 | `page/project_dashboard/project_dashboard.py` | Shared backend for the dashboard (data / permission / inline-edit endpoints) **plus the Scope-tab task-tree export**: `_flatten_task_tree` reads the whole project in one `get_list` and links it in memory, because the on-screen grid loads children one level at a time and a file built from that would omit every branch the user did not expand | `check_permission`, `get_project_data`, `get_gantt_tasks_for_project`, `get_master_project_projects`, `update_task_*`, `add_task_dependency`, `publish_realtime_update`, `get_project_task_tree`, `export_project_tasks`, … | Whitelisted (called by the Custom HTML Block); `publish_realtime_update` via `doc_events`. NB the folder no longer defines a desk Page — only this module + `test_project_dashboard.py` remain. |
@@ -105,6 +110,80 @@ The judgement lives in `quality/change_orders.py` rather than beside the DocType
 `project_enhancements/__init__` imports `frappe` at module scope and anything under it is
 unreachable from the bench-free test tier — the same reason `quality/scope_criteria.py` sits there
 while `Project Scope of Work` sits here.
+
+## Project budget by category
+
+Seven categories (`Project Budget Category`), a table of them on each Project
+(`Project Budget Line`), and a submittable record of money moving between two of them
+(`Budget Reallocation`). WI-075 sub-phase M.
+
+**This is structure, not numbers.** WI-057 owns getting budgets onto projects and its acceptance
+criterion is not restated here — re-measured 2026-09-14, `estimated_costing` is still zero on all
+654 projects, two months after that work item counted it. What M adds is that once category lines
+exist, the project total **is their sum** and is maintained from them, so filling in the
+categories produces WI-057's denominator rather than being a second number to keep in step. A
+project with no lines is left alone: deriving a total from an empty list would erase the figure
+that backfill is about to write.
+
+The native `Budget` doctype stays rejected for WI-057's reason — it budgets by GL account, cost
+centre and fiscal year rather than per project. It holds 0 rows on prod.
+
+### Why a spend figure never travels alone
+
+The obvious shape for a budget line is `category | budgeted | committed | actual`, and on this
+site three of those four columns would read `0.00` forever while looking entirely correct.
+Measured 2026-09-14: `tabTimesheet` holds **0 rows**, so there are no labour actuals of any kind
+for any project; **no Purchase Invoice has submitted lines**, so there are no material actuals
+either; and purchase *orders*, which do exist (324 project-tagged lines, $106,242), cannot be
+attributed to a category, because 217 of those 324 carry item group `Products` and the item group
+tree has no labour / materials / equipment / subcontract axis anywhere in it.
+
+That is the trailing-space failure in another costume — *it returns a number, the number is about
+nothing, and nothing looks wrong* — and it is the same reason this programme rejected core
+`Supplier Scorecard`. So each line carries a **coverage verdict**:
+
+| Verdict | Means | A zero beside it means |
+|---|---|---|
+| `Tracked` | the source is in use on this site | nothing was spent on this project |
+| `Not Tracked` | the source holds no rows anywhere | **nobody records this** — Labour, today |
+| `No Source` | nothing could be spent against it directly | correct: Contingency and Fee are reserves money leaves by *reallocation*, never by purchase |
+
+Coverage is judged **site-wide, not per project**, on purpose: "the instrument is not in use" is a
+fact about the company, and a project that genuinely has no purchase orders should read `Tracked`
+with zero rather than be told its data is missing. Separating *we looked and found nothing* from
+*nobody ever recorded this* is the entire point.
+
+The same discipline governs the variance percentage: a proportion of a zero budget comes back
+**null**, never 0% ("on budget") and never a huge number. Sub-phase L made the identical call for
+an MSA with no recorded expiry.
+
+Purchase spend naming no category is reported in its own `unclassified` bucket — never folded
+into a category, which would invent an attribution nobody made, and never dropped, which would
+under-report the job silently in the direction that looks clean. Today it is all of it:
+`Purchase Order Item.custom_budget_category` ships in this release, so every existing line
+predates it.
+
+### Reallocation
+
+- **Net zero by construction**, and checked at apply time as well as in tests. The project total
+  is the sum of the lines, so a move that changed it would silently rewrite the denominator
+  WI-058 will eventually divide by.
+- **Protected categories are protected on both sides.** General Conditions, Contingency and Fee:
+  taking money out of contingency is how an overrun gets hidden, and moving money into fee
+  converts contracted work into margin.
+- **The second approval cannot come from the same hand** — not the requester, not the project
+  manager who already approved. A control one person satisfies by clicking twice is a control in
+  appearance only.
+- **Balances are stamped, then never re-read.** The lines go on changing; this document records
+  one move against the numbers as they stood that day.
+- **Amendment is refused**, and so is a cancellation that would drive a line negative — if a later
+  reallocation already spent the money, a compensating reallocation is the correct instrument.
+
+Applying one saves the Project through the document API. That is **not** the thing WI-057 forbids:
+that rule is about *bulk* patches walking hundreds of projects, which must batch
+`frappe.db.set_value`. This is one project saved once because a person deliberately moved money on
+it, and writing the child rows with `db.set_value` would skip the parent recalculation and could
+not create a line the project does not have yet.
 
 ## Projects Dashboard
 
