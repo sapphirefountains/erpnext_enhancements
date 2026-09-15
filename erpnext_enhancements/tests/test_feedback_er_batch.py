@@ -30,6 +30,9 @@ PROCUREMENT_API = APP / "api" / "procurement.py"
 BOOKING_JS = APP / "asset_management" / "doctype" / "asset_booking" / "asset_booking.js"
 BOOKING_JSON = APP / "asset_management" / "doctype" / "asset_booking" / "asset_booking.json"
 INSPECTION_PY = APP / "asset_management" / "doctype" / "rental_inspection" / "rental_inspection.py"
+ITEM_JSON = (
+	APP / "asset_management" / "doctype" / "rental_inspection_item" / "rental_inspection_item.json"
+)
 ASSET_JS = APP / "public" / "js" / "asset_management" / "asset_form.js"
 
 
@@ -63,6 +66,14 @@ def _executable_source(func):
 	):
 		body = body[1:]
 	return "\n".join(ast.unparse(node) for node in body)
+
+
+def _module_function(path, name):
+	"""A module-level function by name, read without importing."""
+	for node in ast.parse(path.read_text(encoding="utf-8")).body:
+		if isinstance(node, ast.FunctionDef) and node.name == name:
+			return node
+	raise AssertionError(f"{name} not found in {path.name}")
 
 
 def _calls_in(func):
@@ -206,6 +217,52 @@ class AssetFormTest(unittest.TestCase):
 			"purchase_date's static reqd must be cleared, or mandatory_depends_on never gets a say",
 		)
 
+	def test_the_cost_center_fallback_is_on_the_company_not_the_asset(self):
+		"""The fifth blocker, and the only one static analysis could not have found.
+
+		`Asset.validate_cost_center()` throws unless the Asset carries a cost centre or
+		the Company has a depreciation cost centre — and this site had neither. It is
+		invisible in `asset.json` because `cost_center` is not `reqd`; the rule lives in
+		the controller and depends on company configuration, so it appears only when you
+		actually insert an Asset.
+
+		**The fix must not be a `default` on `Asset.cost_center`.** That was written
+		first and deliberately replaced: it worked, but it stamped EVERY Asset with the
+		rental fleet's cost centre — right for all ten Assets today and wrong the moment
+		a vehicle becomes an Asset, silently, because a default reads as a considered
+		choice. The Company field is the fallback ERPNext designed for this, and it
+		layers correctly: an Asset that knows its own cost centre keeps it, anything
+		else falls back company-wide rather than to a guess about what kind of asset it is.
+		"""
+		self.assertNotIn(
+			"Asset-cost_center-default",
+			self.props,
+			"do not default Asset.cost_center — it would stamp non-rental assets with "
+			"the rental fleet's cost centre. Set Company.depreciation_cost_center instead.",
+		)
+		self.assertIn(
+			"erpnext_enhancements.patches.set_company_depreciation_cost_center",
+			PATCHES_TXT.read_text(encoding="utf-8"),
+		)
+
+	def test_the_cost_center_patch_never_overwrites_a_finance_decision(self):
+		"""Where depreciation posts is Finance's call; this may only fill an empty field.
+
+		And it must reject group cost centres: `validate_cost_center` refuses one
+		outright, so seeding a group would swap this blocker for a less obvious one.
+		"""
+		patch = APP / "patches" / "set_company_depreciation_cost_center.py"
+		src = patch.read_text(encoding="utf-8")
+
+		guard = _module_function(patch, "set_depreciation_cost_center")
+		body = _executable_source(guard)
+		self.assertIn(
+			"if frappe.db.get_value",
+			body,
+			"the patch must read the current value and bail out when it is already set",
+		)
+		self.assertIn("is_group", src, "a group cost centre must be rejected as a candidate")
+
 	def test_seed_patch_is_registered(self):
 		"""Location had zero rows, and Asset.location is reqd — nothing else matters until this runs."""
 		self.assertIn(
@@ -311,6 +368,61 @@ class RentalInspectionTest(unittest.TestCase):
 		self.assertFalse(
 			sorted(called - whitelisted),
 			f"the JS calls methods that are not whitelisted: {sorted(called - whitelisted)}",
+		)
+
+	def test_na_is_an_option_and_is_not_a_silent_escape_hatch(self):
+		"""N/A must exist, must require a note, and must not count as a shortfall.
+
+		A category-level template covers every fountain of a type, so it necessarily
+		lists parts a given unit does not carry. Without N/A the crew's only options were
+		to delete the row or mark a real component Missing — filing a false shortfall.
+
+		But N/A is also the ONLY value that removes a row from the findings, which makes
+		it exactly what somebody would reach for to make a genuinely missing part stop
+		being a problem. So it is in CONDITIONS_NEEDING_A_NOTE: the escape hatch costs a
+		written sentence. That pairing is the whole point and is what this pins.
+		"""
+		options = json.loads(ITEM_JSON.read_text(encoding="utf-8"))
+		condition = next(f for f in options["fields"] if f["fieldname"] == "condition")
+		self.assertIn("N/A", condition["options"].split("\n"))
+
+		src = INSPECTION_PY.read_text(encoding="utf-8")
+		self.assertRegex(
+			src,
+			r"CONDITIONS_NEEDING_A_NOTE\s*=\s*\(\*ADVERSE_CONDITIONS,\s*NOT_APPLICABLE\)",
+			"N/A must require a note, or it becomes a one-click way to erase a shortfall",
+		)
+
+		# The note gate must read the wider tuple; the damage roll-up must not.
+		methods = _methods(INSPECTION_PY, "RentalInspection")
+		note_gate = _executable_source(methods["validate_adverse_rows_explained"])
+		self.assertIn("CONDITIONS_NEEDING_A_NOTE", note_gate)
+
+		findings = _executable_source(methods["set_findings"])
+		self.assertIn(
+			"NOT_APPLICABLE",
+			findings,
+			"an N/A row must be skipped by the shortfall calculation, or a template row "
+			"for a part this fountain never had manufactures a shortfall",
+		)
+
+	def test_the_na_constant_agrees_across_both_modules(self):
+		"""`api/booking.py` duplicates NOT_APPLICABLE rather than importing the controller.
+
+		Two spellings of the same string would mean the return sheet silently stopped
+		dropping N/A rows, with nothing raising anywhere.
+		"""
+		def literal(path, name):
+			for node in ast.parse(path.read_text(encoding="utf-8")).body:
+				if isinstance(node, ast.Assign):
+					for t in node.targets:
+						if isinstance(t, ast.Name) and t.id == name:
+							return ast.literal_eval(node.value)
+			raise AssertionError(f"{name} not found in {path.name}")
+
+		self.assertEqual(
+			literal(INSPECTION_PY, "NOT_APPLICABLE"),
+			literal(BOOKING_API, "NOT_APPLICABLE"),
 		)
 
 	def test_the_booking_reaches_its_inspections_by_connection(self):

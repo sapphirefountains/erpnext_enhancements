@@ -42,15 +42,16 @@
   },
   {
    "columns": 2,
+   "description": "N/A is for a component this fountain does not have. It needs a note, so it cannot quietly stand in for Missing.",
    "fieldname": "condition",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Condition",
-   "options": "\nPass\nDamaged\nMissing"
+   "options": "\nPass\nDamaged\nMissing\nN/A"
   },
   {
    "columns": 3,
-   "description": "Required on anything not marked Pass.",
+   "description": "Required on anything not marked Pass — including N/A.",
    "fieldname": "notes",
    "fieldtype": "Small Text",
    "in_list_view": 1,
