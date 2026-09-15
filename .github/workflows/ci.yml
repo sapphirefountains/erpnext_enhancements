@@ -609,6 +609,19 @@ jobs:
       # because a control one person satisfies by clicking twice is a control in appearance only.
       - name: Project budgets (a zero nobody recorded is not a zero that was spent)
         run: python -m unittest erpnext_enhancements.tests.test_project_budgets -v
+      # Subcontractor scorecards (WI-075 sub-phase N). A vendor scorecard is the one artifact
+      # in this programme that gets PRINTED AND CARRIED INTO A NEGOTIATION, so its failure mode
+      # is not a crash -- it is a page asserting every subcontractor is flawless. Measured on
+      # prod 2026-09-14 that is exactly what this would produce: every quality doctype holds 0
+      # rows, no Project Contract is a subcontractor MSA (all sixteen are `maintenance` with
+      # party_type Customer), and rework hours and certificates of insurance are recorded
+      # nowhere at all. So: nothing judgeable must yield NO score (None, never 0 and never 100);
+      # a ratio with an empty denominator is unanswerable; the score is a count of thresholds
+      # met and never a weighted composite; a figure from an instrument nobody uses is not
+      # evidence; an unknown agreement is a gap in OUR record, never scored against them; and a
+      # manual adjustment cannot be saved without a reason.
+      - name: Subcontractor scorecard (a page saying everyone is flawless is the failure)
+        run: python -m unittest erpnext_enhancements.tests.test_subcontractor_scorecard -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk

@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.463.0] - 2026-09-15
+
+### Added
+
+- **Subcontractor scorecards** (WI-075 sub-phase N). `Subcontractor Scorecard`, one per
+  subcontractor per calendar month, with `Scorecard Measure` rows carrying nine measures and
+  `Scorecard Evidence` rows naming every document each measure counted — so a disputed score can
+  be opened rather than argued.
+- **Cost recovery on the non-conformance**: `custom_recovery_status`, `custom_recovery_claimed`,
+  `custom_recovery_recovered`, `custom_recovery_closed_on` and a note. Kept on the NCR rather than
+  on a separate claim record so what went wrong and what we recovered stay on one document.
+- **Derived Supplier fields**: `custom_scorecard_summary`, `custom_scorecard_state`,
+  `custom_latest_scorecard`, stamped by a daily job.
+- `quality/scorecard.py` (frappe-free, the decision core), `quality/scorecard_build.py` (the
+  glue and the sweep), and `api/subcontractor_scorecard.py`.
+
+### Notes
+
+- **A vendor scorecard is the one artifact in this programme that gets printed and carried into a
+  negotiation**, so its failure mode is not a crash — it is a page asserting that every
+  subcontractor is flawless. Measured on prod 2026-09-14, that is exactly what a naive
+  implementation would produce: every quality doctype holds **0 rows**; **no `Project Contract` is
+  a subcontractor master agreement** (all sixteen are `maintenance` with `party_type = Customer`,
+  and the `msa` contract template has never been used once); and **rework hours and certificates
+  of insurance are recorded nowhere at all**.
+- **So nothing judgeable produces no score.** `score()` returns `None` — never 0, which reads as a
+  terrible subcontractor, and never 100, which reads as a flawless one — and the record reads
+  *Not Measurable* in words. That is the state every scorecard on this site will be in the day
+  this deploys, and printing it is the correct behaviour. Negative-tested: returning 100 instead
+  fails four tests.
+- **The score is a count, not a weighting**: the proportion of *judgeable* measures that met their
+  threshold. Inventing weights is the same error as inventing checklists — a number carrying the
+  authority of the company with nothing behind it. A threshold is a single stated figure somebody
+  can argue with in a diff. **The thresholds are a starting point for Sapphire to correct**, on
+  the same footing as the strawman checklists seeded in sub-phase I.
+- **Every measure carries its own coverage, and the vocabulary is imported from `quality/budgets`
+  rather than redefined**, so the two surfaces cannot drift into saying `Not Tracked` and
+  `Untracked`. A figure from an instrument nobody uses is not evidence however good it looks:
+  measures are judged only when coverage is `Tracked`. Negative-tested.
+- **Two of the nine measures declare no source at all, on purpose.** Rework hours and
+  certificate-of-insurance currency are listed rather than omitted so the gap appears on the
+  artifact instead of being forgotten. Rework hours is the open question that keeps KPI #11 at
+  Semi in `docs/KPI_DASHBOARD_DESIGN.md`; it is still open, and now it is visible on every
+  scorecard.
+- **Unknown is never scored against a subcontractor.** A missing or undated master agreement is a
+  gap in *our* record, not their conduct — the same call sub-phase L made, and it applies to all
+  sixteen live contracts. `ok` and `warn` both count as in force: an agreement 45 days from
+  renewal would otherwise score somebody down for the calendar. Negative-tested.
+- **A ratio with an empty denominator is unanswerable.** First-pass yield over zero inspections is
+  not 0% and not 100%, and an average of no closed actions is not zero days. Same call as the
+  zero-budget percentage in M. Negative-tested.
+- **How a measure reaches a *named* subcontractor was the binding constraint.**
+  `Scope Acceptance Criterion.responsible_party` is a **Select** (Sapphire / Subcontractor /
+  Customer / Third Party) — it says *a* subcontractor was responsible and cannot say which — and
+  `Project Quality Inspection` carries no supplier at all. The only path is
+  `Non Conformance.custom_supplier`. So `first_pass_yield` had to be *defined*: of the inspections
+  on projects this subcontractor was engaged on in the period, the proportion that raised no
+  non-conformance against them. The scorecard prints that definition in the measure note. A weaker
+  claim, stated, beats a stronger one implied.
+- **`Project Contract` has no `supplier` column** — it uses a dynamic `party_type`/`party` link,
+  and a query on `supplier` raises `Unknown column`. The agreement lookup filters
+  `template_key = 'msa' and party_type = 'Supplier'`.
+- **Who gets a scorecard is derived from behaviour, not from `supplier_group`.** 908 of the 1181
+  suppliers sit in the group `Labels`, which cannot separate a subcontractor from a stationery
+  vendor. The population is those we placed a project purchase order with, those an NCR was
+  attributed to, and those a master agreement covers.
+- **The sweep is daily, not monthly.** A prod deploy `FLUSHDB`s the queue redis on `:11000` and
+  silently destroys every pending background job, so a monthly job caught by a deploy that morning
+  means a month with no scorecards and nothing to notice. The daily job builds any *closed* month
+  that has none, which is self-healing — the same reasoning as the Critical-NCR sweep in G. A
+  month in progress is never scored: half a month of evidence against a whole month's thresholds
+  reports everyone as improving, every time, until it ends.
+- **An existing scorecard is never overwritten.** One that has been read, adjusted and signed is a
+  record of what was known then; rebuilding over it would discard somebody's adjustment and the
+  reason they gave for it.
+- **The manual adjustment is signed.** A non-zero adjustment with no reason is refused, on both
+  the controller and the endpoint, and the approver and time are stamped from the server session
+  and the server clock. The first time a score is wrong with no way to say so on the record,
+  people stop using the record — so the way is provided, and it leaves a name. Negative-tested.
+- **Supplier summaries are written with `frappe.db.set_value`, not the document API.** Supplier
+  carries its own `doc_events`, and this runs across every scored supplier; saving each one to
+  stamp a read-only summary would fire the full hook chain. Same reasoning WI-057 records for
+  Project. The stamped field is the **sentence**, not the figure — a Supplier row showing a bare
+  `0` with nothing saying whether anything was measurable is precisely the misreading this
+  sub-phase exists to prevent.
+- **Core `Supplier Scorecard` stays unused and is not deleted**, for the reason recorded in
+  WI-075: its variables compute off Purchase Receipt discipline that is measurably partial — 81 of
+  123 submitted POs matching "not fully received" are `Closed`.
+- **Nothing changes on prod when this deploys.** The sweep is gated on `quality_enabled`, which
+  ships off, so no scorecard is built and no Supplier field is stamped.
+
 ## [1.462.0] - 2026-09-15
 
 ### Added

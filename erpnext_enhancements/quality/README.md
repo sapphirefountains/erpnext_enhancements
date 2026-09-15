@@ -67,6 +67,8 @@ question why it exists.**
 | `change_orders.py` | Change-order numbering, the derived status, and the sign of the money. Frappe-free; its DocType lives in `project_enhancements`, which cannot host a frappe-free module |
 | `msa.py` | Whether a subcontractor agreement is still in force, which rate was in force when, and which project a purchase-order line belongs to. Frappe-free |
 | `budgets.py` | Project budget categories, what a spend figure is worth, and the rules a reallocation must satisfy. Frappe-free; its DocTypes live in `project_enhancements`. The load-bearing call is that a spend figure never travels alone — a zero from a source nobody uses is `Not Tracked`, not `0.00` |
+| `scorecard.py` | What this system can honestly claim to know about a subcontractor. Frappe-free. The score is the proportion of *judgeable* measures that met their threshold — a count, never a weighted composite — and a scorecard with nothing judgeable has **no score at all**, because a vendor scorecard is the one artifact here that gets printed and carried into a negotiation |
+| `scorecard_build.py` | The queries and the daily sweep. Daily rather than monthly because a deploy FLUSHDBs the queue redis; it fills any closed month that has none. Also the reason `first_pass_yield` had to be *defined*: no inspection names a subcontractor, so the only path to a named one is `Non Conformance.custom_supplier` |
 | `msa_enforcement.py` | The half that queries: derives an MSA's expiry, checks it when a Statement of Work is issued, reports rate drift, and sweeps for renewals |
 
 Registered in [`../modules.txt`](../modules.txt), tiled from

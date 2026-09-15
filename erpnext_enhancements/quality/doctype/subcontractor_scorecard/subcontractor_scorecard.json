@@ -1,0 +1,298 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-09-15 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "supplier",
+  "supplier_name",
+  "period_label",
+  "column_break_head",
+  "period_start",
+  "period_end",
+  "generated_on",
+  "section_result",
+  "result_intro",
+  "state",
+  "score_display",
+  "column_break_result",
+  "score_percent",
+  "measures_met",
+  "measures_judgeable",
+  "measures_total",
+  "section_adjustment",
+  "adjustment_intro",
+  "manual_adjustment",
+  "final_score_percent",
+  "column_break_adjustment",
+  "adjustment_reason",
+  "adjusted_by",
+  "adjusted_on",
+  "section_measures",
+  "measures",
+  "section_evidence",
+  "evidence_intro",
+  "evidence",
+  "section_why",
+  "engagement_reason"
+ ],
+ "fields": [
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "Subcontractor",
+   "options": "Supplier",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "supplier_name",
+   "fieldtype": "Data",
+   "label": "Name",
+   "read_only": 1,
+   "description": "Snapshotted at build. A Link stores the docname, frozen at insert, and supplier names drift from it -- so the name on a scorecard is the name as it was when the scorecard was made."
+  },
+  {
+   "fieldname": "period_label",
+   "fieldtype": "Data",
+   "label": "Period",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "period_start",
+   "fieldtype": "Date",
+   "label": "From",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "period_end",
+   "fieldtype": "Date",
+   "label": "To",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "generated_on",
+   "fieldtype": "Datetime",
+   "label": "Generated",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_result",
+   "fieldtype": "Section Break",
+   "label": "Result"
+  },
+  {
+   "fieldname": "result_intro",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">The score is the proportion of <i>judgeable</i> measures that met their threshold &mdash; deliberately a count, not a weighted composite. Weights are judgements disguised as arithmetic and nobody has agreed any; a threshold is a single figure somebody can argue with. <b>A scorecard with nothing judgeable has no score at all</b>, and reads <i>Not Measurable</i> rather than zero or a hundred.</p>"
+  },
+  {
+   "fieldname": "state",
+   "fieldtype": "Select",
+   "label": "Measurability",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "options": "\nNot Measurable\nPartially Measured\nMeasured",
+   "description": "How much of the picture the score came from. Always read beside the score, never instead of it."
+  },
+  {
+   "fieldname": "score_display",
+   "fieldtype": "Data",
+   "label": "Score",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "The number and its footing, in one sentence. This is the field to read and to print; the numeric ones below exist for charting."
+  },
+  {
+   "fieldname": "column_break_result",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "score_percent",
+   "fieldtype": "Percent",
+   "label": "Score %",
+   "read_only": 1,
+   "description": "For charts only. <b>Reads 0 when there is no score at all</b>, so it is meaningless unless Measurability says otherwise -- which is exactly why Score above is the field people read."
+  },
+  {
+   "fieldname": "measures_met",
+   "fieldtype": "Int",
+   "label": "Measures met",
+   "read_only": 1
+  },
+  {
+   "fieldname": "measures_judgeable",
+   "fieldtype": "Int",
+   "label": "Measures judgeable",
+   "read_only": 1
+  },
+  {
+   "fieldname": "measures_total",
+   "fieldtype": "Int",
+   "label": "Measures total",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_adjustment",
+   "fieldtype": "Section Break",
+   "label": "Manual Adjustment"
+  },
+  {
+   "fieldname": "adjustment_intro",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">The first time a score is wrong and there is no way to say so on the record, people stop using the record. So the way is provided &mdash; and it is signed: a non-zero adjustment cannot be saved without a reason.</p>"
+  },
+  {
+   "fieldname": "manual_adjustment",
+   "fieldtype": "Float",
+   "label": "Adjustment (points)",
+   "precision": "1"
+  },
+  {
+   "fieldname": "final_score_percent",
+   "fieldtype": "Percent",
+   "label": "Final score %",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_adjustment",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "adjustment_reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "mandatory_depends_on": "eval:doc.manual_adjustment"
+  },
+  {
+   "fieldname": "adjusted_by",
+   "fieldtype": "Link",
+   "label": "Adjusted by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "adjusted_on",
+   "fieldtype": "Datetime",
+   "label": "Adjusted on",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_measures",
+   "fieldtype": "Section Break",
+   "label": "Measures"
+  },
+  {
+   "fieldname": "measures",
+   "fieldtype": "Table",
+   "label": "Measures",
+   "options": "Scorecard Measure"
+  },
+  {
+   "fieldname": "section_evidence",
+   "fieldtype": "Section Break",
+   "label": "Evidence",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "evidence_intro",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">Every document each measure counted, so a disputed score can be opened rather than argued.</p>"
+  },
+  {
+   "fieldname": "evidence",
+   "fieldtype": "Table",
+   "label": "Evidence",
+   "options": "Scorecard Evidence"
+  },
+  {
+   "fieldname": "section_why",
+   "fieldtype": "Section Break",
+   "label": "Why this subcontractor",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "engagement_reason",
+   "fieldtype": "Small Text",
+   "label": "Included because",
+   "read_only": 1,
+   "description": "Scoring all 1181 suppliers would be noise, and supplier group cannot separate them -- 908 sit in the group Labels. The population is derived from behaviour instead: we score the people we actually engaged."
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-15 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Quality",
+ "name": "Subcontractor Scorecard",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Quality Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Project Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Executive Team"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Production Team"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Finance Team"
+  }
+ ],
+ "sort_field": "period_start",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "autoname": "format:SC-{YY}{MM}-{#####}",
+ "naming_rule": "Expression",
+ "search_fields": "supplier,period_label,state",
+ "title_field": "supplier_name"
+}
