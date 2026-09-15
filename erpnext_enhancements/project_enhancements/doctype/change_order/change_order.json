@@ -1,0 +1,334 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "Prompt",
+ "creation": "2026-09-14 22:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "project",
+  "co_number",
+  "scope_of_work",
+  "column_break_head",
+  "status",
+  "customer",
+  "transaction_date",
+  "section_what",
+  "cause",
+  "client_request_description",
+  "scope_addendum",
+  "excluded_from_addendum",
+  "section_impact",
+  "cost_impact",
+  "cost_impact_type",
+  "cost_basis",
+  "column_break_impact",
+  "schedule_impact_days",
+  "revised_completion_date",
+  "section_criteria",
+  "criteria_intro",
+  "added_criteria",
+  "section_approval",
+  "pm_approved",
+  "pm_approved_by",
+  "pm_approved_on",
+  "column_break_approval",
+  "customer_approved",
+  "customer_approved_on",
+  "customer_approval_note",
+  "section_execution",
+  "executed_on",
+  "column_break_execution",
+  "notes",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "co_number",
+   "fieldtype": "Int",
+   "label": "Change order number",
+   "read_only": 1,
+   "description": "Sequential within this project, not a global counter."
+  },
+  {
+   "fieldname": "scope_of_work",
+   "fieldtype": "Link",
+   "label": "Scope of work",
+   "options": "Project Scope of Work",
+   "description": "The locked scope this change order amends."
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nPending Approval\nLocked\nExecuted\nCanceled",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Derived from the approvals and whether it is submitted. Never typed."
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "read_only": 1,
+   "fetch_from": "project.customer"
+  },
+  {
+   "fieldname": "transaction_date",
+   "fieldtype": "Date",
+   "label": "Raised on",
+   "default": "Today"
+  },
+  {
+   "fieldname": "section_what",
+   "fieldtype": "Section Break",
+   "label": "What changed"
+  },
+  {
+   "fieldname": "cause",
+   "fieldtype": "Select",
+   "label": "Cause",
+   "options": "\nCustomer Request\nSapphire Error\nSubcontractor\nSite Condition\nDesign Error\nCode or Inspector",
+   "reqd": 1,
+   "in_standard_filter": 1,
+   "description": "Who or what caused this change. The one thing a contract revision count can never tell you, and the reason this is a record rather than a revision."
+  },
+  {
+   "fieldname": "client_request_description",
+   "fieldtype": "Text Editor",
+   "label": "What the customer asked for",
+   "reqd": 1
+  },
+  {
+   "fieldname": "scope_addendum",
+   "fieldtype": "Text Editor",
+   "label": "What is being added or removed"
+  },
+  {
+   "fieldname": "excluded_from_addendum",
+   "fieldtype": "Small Text",
+   "label": "Explicitly still excluded",
+   "description": "What this change order does NOT cover, said out loud. The absence of that sentence is how a change order becomes an argument."
+  },
+  {
+   "fieldname": "section_impact",
+   "fieldtype": "Section Break",
+   "label": "Impact"
+  },
+  {
+   "fieldname": "cost_impact",
+   "fieldtype": "Currency",
+   "label": "Cost impact",
+   "description": "Signed. Positive adds to the contract, negative is a credit back to the customer. One number, so a credit cannot be totalled as an addition."
+  },
+  {
+   "fieldname": "cost_impact_type",
+   "fieldtype": "Data",
+   "label": "Impact type",
+   "read_only": 1,
+   "description": "Read from the sign of the figure above."
+  },
+  {
+   "fieldname": "cost_basis",
+   "fieldtype": "Small Text",
+   "label": "How the figure was arrived at",
+   "description": "Quantities, rates or the quote it came from. A number nobody can reconstruct is a number nobody can defend."
+  },
+  {
+   "fieldname": "column_break_impact",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "schedule_impact_days",
+   "fieldtype": "Int",
+   "label": "Schedule impact (days)",
+   "description": "Calendar days added to the programme. Negative if it saves time."
+  },
+  {
+   "fieldname": "revised_completion_date",
+   "fieldtype": "Date",
+   "label": "Revised completion date"
+  },
+  {
+   "fieldname": "section_criteria",
+   "fieldtype": "Section Break",
+   "label": "Acceptance criteria added"
+  },
+  {
+   "fieldname": "criteria_intro",
+   "fieldtype": "HTML",
+   "label": "Criteria intro",
+   "options": "<p class=\"text-muted small\">Anything added here is <b>contracted</b> and appears on the inspection for the milestone it names, once this change order is submitted. A row naming no milestone is sold and inspected by nothing, and the save will say so.</p>"
+  },
+  {
+   "fieldname": "added_criteria",
+   "fieldtype": "Table",
+   "label": "Added acceptance criteria",
+   "options": "Scope Acceptance Criterion"
+  },
+  {
+   "fieldname": "section_approval",
+   "fieldtype": "Section Break",
+   "label": "Approval"
+  },
+  {
+   "fieldname": "pm_approved",
+   "fieldtype": "Check",
+   "label": "Project manager approved",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pm_approved_by",
+   "fieldtype": "Link",
+   "label": "Approved by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pm_approved_on",
+   "fieldtype": "Datetime",
+   "label": "Approved on",
+   "read_only": 1,
+   "description": "Stamped from the server clock by the approve endpoint, never proposed by the browser."
+  },
+  {
+   "fieldname": "column_break_approval",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "customer_approved",
+   "fieldtype": "Check",
+   "label": "Customer approved",
+   "read_only": 1
+  },
+  {
+   "fieldname": "customer_approved_on",
+   "fieldtype": "Datetime",
+   "label": "Customer approved on",
+   "read_only": 1
+  },
+  {
+   "fieldname": "customer_approval_note",
+   "fieldtype": "Small Text",
+   "label": "How the customer approved",
+   "description": "Signature, email, or the meeting it was agreed in."
+  },
+  {
+   "fieldname": "section_execution",
+   "fieldtype": "Section Break",
+   "label": "Execution"
+  },
+  {
+   "fieldname": "executed_on",
+   "fieldtype": "Date",
+   "label": "Executed on",
+   "allow_on_submit": 1,
+   "description": "When the changed work was actually done. Set after submit, which is why this is the one field a submitted change order still accepts."
+  },
+  {
+   "fieldname": "column_break_execution",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes",
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "options": "Change Order",
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-09-14 22:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Change Order",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Project Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Executive Team"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Team"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Finance Team"
+  }
+ ],
+ "search_fields": "project,cause,status",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "project",
+ "track_changes": 1
+}

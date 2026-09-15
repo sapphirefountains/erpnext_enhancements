@@ -11,10 +11,10 @@ _Auto-generated design reference. 131 KPIs across 8 departments. Tiers: **Auto**
 | Sales | 18 | 13 | 3 | 2 |
 | Marketing | 17 | 7 | 9 | 1 |
 | Executive | 15 | 7 | 8 | 0 |
-| Production (Build) | 15 | 8 | 5 | 2 |
+| Production (Build) | 15 | 10 | 5 | 0 |
 | Operations (Field-Service / Maintenance / Workforce) | 17 | 11 | 5 | 1 |
 | HR (People) | 17 | 12 | 3 | 2 |
-| **TOTAL** | **131** | **78** | **44** | **9** |
+| **TOTAL** | **131** | **80** | **44** | **7** |
 
 ---
 ## Finance
@@ -844,12 +844,13 @@ _Auto-generated design reference. 131 KPIs across 8 departments. Tiers: **Auto**
 - **Implementation:** SQL: SELECT p.name, p.custom_time_budget_in_hours AS budget_hrs, SUM(td.hours) AS actual_hrs FROM `tabProject` p JOIN `tabTimesheet Detail` td ON td.project=p.name WHERE p.project_type='Build' GROUP BY p.name. The daily update_elapsed_time_daily task already aggregates task elapsed_time -> custom_total_time_elapsed, so even projects without timesheets get an actual. Ratio + flag list as Number Card. Only gap: budget hours must be entered at hand-off (single existing field).
 - **Refresh:** Daily
 
-### 7. Change-Order Volume & Value — 🟡 Semi
+### 7. Change-Order Volume & Value — 🟢 Auto
 - **Definition:** Count and dollar value of contract amendments per Build project and across the portfolio. Volume = number of SOW/Owner Project Contract revisions (revision>0, tracked via amended_from lineage). Value = delta in not_to_exceed / total_contract_value / milestones_total between consecutive revisions. Also reported as change-order $ as % of original contract value.
 - **Why it matters:** Change orders are where fountain projects make or lose money and where scope-creep hides. High CO frequency points to weak upfront design/estimating; CO value recovery (or lack of it) directly drives realized margin.
 - **Target:** CO value <10% of original contract value on average; 100% of scope changes captured as a contract revision (no uncaptured verbal changes). Set with owner.
 - **Data source:** Project Contract: revision (increments per amendment), amended_from (lineage), not_to_exceed / total_contract_value / milestones_total. Linked to Project via the project field.
-- **Implementation:** Auto for volume: COUNT amendments by following amended_from chains per project (revision>0). Auto for value IF each scope change is amended through the contract (delta of total_contract_value/not_to_exceed across the revision chain). Semi-Auto because today nothing forces a scope change to become a contract amendment, and there is no explicit change_reason. Lightest fix: add two fields to Project Contract -- 'change_order_reason' (Select: Customer-requested / Site condition / Design error / Other) and a checkbox 'is_change_order' set on amend -- so CO value can be attributed by cause. Then portfolio CO% = SUM(value deltas)/SUM(original values) via SQL.
+- **Implementation:** **Auto as of v1.460.0 (WI-075 sub-phase K).** A `Change Order` is now a first-class submittable DocType with a required `cause`, a signed `cost_impact` and a schedule impact, so volume, value and attribution are all queries. The snapshot emits `change_orders` (submitted count), `change_orders_self_caused` (cause in Sapphire Error / Design Error) and `change_order_net_value` (signed, so a credit subtracts).
+  - *Superseded proposal, kept for the reasoning:* count amendments by following `amended_from` chains on Project Contract (revision>0) and add two fields there — a `change_order_reason` Select and an `is_change_order` checkbox. That was the lightest path while nothing else existed, but it measures *a contract that was edited*, which is not the same event as a scope change and cannot be attributed. The old snapshot key has been **renamed to `contract_revisions`** rather than re-pointed, so the existing series keeps meaning what it always meant.
 - **Refresh:** Daily
 
 ### 8. Procurement Lead Time (Material Request to Receipt) — 🟢 Auto
@@ -868,20 +869,20 @@ _Auto-generated design reference. 131 KPIs across 8 departments. Tiers: **Auto**
 - **Implementation:** Auto query: at the moment 'Build Start' step completes (or mobilization_date), compute SUM(received_qty)/SUM(ordered_qty) from the procurement chain for that project. Best implemented as a hook on the Build Start step completion that snapshots readiness into the Build Briefing (point-in-time, because procurement keeps changing). Semi-Auto only because 'required materials' = what was actually requisitioned; if a PM forgets to raise an MR for an item, it won't count. Mitigation: tie required materials to the BOM/build deliverables. Lightest version reuses existing MR/PO data with no new fields.
 - **Refresh:** Event (on Build Start) + daily for in-flight
 
-### 10. First-Pass Yield (Commissioning / Water Test) — 🔴 Manual
+### 10. First-Pass Yield (Commissioning / Water Test) — 🟢 Auto
 - **Definition:** % of completed builds that pass commissioning (fill, leak test, pump/flow verification, electrical/GFCI check, nozzle pattern) on the first attempt with no failed test requiring re-work and re-test. = builds passing all commissioning checks first time / total builds commissioned.
 - **Why it matters:** For a water feature, commissioning is the moment of truth -- leaks, wrong flow, tripping GFCIs, or off-spec nozzle patterns mean tear-back and re-test. First-pass yield is the purest quality signal and directly drives rework cost and customer first-impression.
 - **Target:** >=80% first-pass, trending to >=90%. Set with owner.
-- **Data source:** NONE TODAY -- commissioning results are not captured in any doctype. Closest existing signal is the design-side Water Feature Design.calc_results warnings, which is pre-build, not field commissioning.
-- **Implementation:** Add a 'Build Commissioning Test' child table on Project (or a standalone submittable doc per build) with rows: test_type (Select: Fill/Leak/Flow-GPM/Electrical-GFCI/Nozzle Pattern/Light Function), result (Pass/Fail), measured_value, retest_required (Check), notes, tested_by, tested_on. First-pass yield then = builds where every row passed on first submission. The field crew fills this on a phone/tablet at commissioning (one short form). Once the table exists, the KPI is fully Auto via SQL.
+- **Data source:** `Project Quality Inspection` + `Inspection Result` (WI-075 sub-phase D, v1.450.0). The seeded **Commissioning** section carries this document's own six tests — fill, leak, flow (GPM), electrical/GFCI, nozzle pattern, light function — each with a measured value and a pass standard.
+- **Implementation:** **Built.** This is `Project Quality Inspection`, generated frozen from the Build pre-final template and filled on a phone in the Inspection Wizard (v1.454.0). Sub-phase J's `first_pass_yield` metric computes submitted inspections with no failed check over all submitted inspections. *One honest difference from the definition above:* the metric is per **inspection**, not per **build** — a build inspected twice counts twice. Per-build yield needs a rollup that does not exist yet.
 - **Refresh:** Event (on commissioning) + weekly rollup
 
-### 11. Rework / Punch-List Volume & Closure Rate — 🔴 Manual
+### 11. Rework / Punch-List Volume & Closure Rate — 🟡 Semi
 - **Definition:** Per build: count of punch-list/rework items raised, count closed, and avg days-to-close. Portfolio = punch items per build, % closed before final completion, and rework-hours as a share of total build hours.
 - **Why it matters:** The punch list is where 'substantially complete' becomes 'actually done.' Punch volume measures build quality; slow closure delays final payment milestones and customer sign-off. Rework hours quantify the cost of doing it twice.
 - **Target:** <=5 punch items per build; 100% closed before final_completion_date; rework hours <5% of build hours. Set with owner.
-- **Data source:** NONE structured today -- punch items would live in free-text custom_notes_for_scheduling or task comments. Stock Task could proxy a punch item but isn't categorized as rework.
-- **Implementation:** Add a 'Build Punch Item' child table on Project: description, category (Select: Leak/Finish/Electrical/Plumbing/Cosmetic/Other), raised_on, raised_by, status (Open/Closed), closed_on, rework_hours (Float). Then Auto KPIs: COUNT open/closed, AVG DATEDIFF(closed_on, raised_on), SUM(rework_hours). Alternatively, reuse stock Task with a custom_task_category='Rework/Punch' flag (lighter, no new doctype) -- then query Tasks where custom_task_category='Punch' grouped by project/status. Recommend the Task-flag approach to avoid a new child table.
+- **Data source:** `Quality Action` with `custom_punch_list` ticked (WI-075 sub-phase F, v1.452.0), plus `custom_closed_on` and `custom_reopen_count`. **Rework hours are still captured nowhere**, which is why this is Semi and not Auto.
+- **Implementation:** **Superseded by [ADR-0012](../decisions/adr/0012-project-inspections-do-not-use-quality-inspection.md).** The Task-flag approach recommended above was not taken: a punch item is structurally identical to a corrective action awaiting re-verification — raised against a standard, fixed by somebody, not actually done until it has been looked at again — so it **is** a `Quality Action` with `custom_punch_list` ticked, and inherits auto-carry-forward and re-verification for free. Sub-phase J computes `open_punch_items`, `actions_reopened` and `avg_days_to_close_action`. **Still missing for full Auto:** rework hours. Neither `Quality Action` nor `Timesheet Detail` attributes hours to a punch item, so 'rework hours as a share of build hours' remains unanswerable.
 - **Refresh:** Daily once captured
 
 ### 12. Crew Utilization (Build Labor as % of Available Hours) — 🟡 Semi
@@ -919,7 +920,7 @@ _Auto-generated design reference. 131 KPIs across 8 departments. Tiers: **Auto**
 **Data gaps:**
 - No commissioning/test-result capture: leak test, flow (GPM) verification, electrical/GFCI check, and nozzle-pattern sign-off are not recorded anywhere, so first-pass yield and build quality are invisible. This is the biggest fountain-specific gap.
 - No structured punch-list / rework record: rework items live (if at all) in free-text notes or uncategorized Tasks, so rework volume, closure time, and rework-hours cannot be measured.
-- Change orders are not first-class: scope changes are only visible if someone amends the Project Contract (revision/amended_from). There is no change_order_reason or is_change_order flag, so CO cause-attribution and 'uncaptured verbal change' leakage cannot be tracked.
+- ~~Change orders are not first-class~~ — **closed in v1.460.0.** `Change Order` is a submittable DocType with a required `cause`, per-project numbering, a signed cost impact, and acceptance criteria that flow onto the inspection for the milestone they name. What remains open is *leakage*: nothing forces a verbal scope change to become a Change Order, so the count is only as complete as the discipline behind it.
 - Build crew clock-in is not wired: Job Interval / Time Kiosk GPS time tracking targets maintenance visits, not Build project Tasks, so true crew utilization (productive hours / clocked hours on builds) has no denominator without extending clock-in to build work.
 - custom_project_spend is a manual/derived field with no enforced population: cost-variance is only trustworthy if a cron writes computed actuals (PI + labor) back to it, or PMs keep budgets current.
 - Material 'required' set isn't anchored to a BOM: readiness % is computed from whatever MRs were raised, so a forgotten requisition silently inflates readiness. Tying required materials to build deliverables / a BOM would close this.
@@ -930,7 +931,7 @@ _Auto-generated design reference. 131 KPIs across 8 departments. Tiers: **Auto**
 - Commissioning test results: at fountain start-up, the field crew fills one short form (new Build Commissioning Test child table on Project) -- test_type (Fill/Leak/Flow-GPM/Electrical-GFCI/Nozzle Pattern/Light), Pass/Fail, measured value, retest_required, notes. ~6 rows per build, captured once. Unlocks first-pass yield.
 - Punch-list items: capture rework/punch items as they arise -- lightest path is flagging the existing stock Task with a custom_task_category='Punch/Rework' + category and rework_hours, rather than a new doctype. Unlocks punch volume, closure rate, and rework-hours.
 - Budget entry at hand-off: PMs set custom_materials_budget, custom_time_budget_in_hours, and confirm custom_project_dollar_amount when the build is created (existing fields, no new schema) so all budget-vs-actual KPIs have a denominator.
-- Change-order attribution: when amending a Project Contract for a scope change, set a new change_order_reason (Customer-requested / Site condition / Design error / Other). One dropdown per amendment; everything else (value delta, count) is automatic.
+- Change-order attribution: raise a `Change Order` for a scope change rather than amending the contract, and set its `cause` (Customer Request / Sapphire Error / Subcontractor / Site Condition / Design Error / Code or Inspector). The cause is required, so attribution cannot be skipped; value, count and schedule impact follow automatically.
 - Crew clock-in on builds: have field crews clock in/out against Build project Tasks via the existing Time Kiosk PWA (requires extending Job Interval to accept build Tasks). No new data entry beyond the clock-in they already do for maintenance.
 
 ---

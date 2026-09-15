@@ -64,6 +64,7 @@ question why it exists.**
 | `draft_catalog.py` | The **strawman** checklists, as data. Drafts to be corrected — seeded `Draft`, and a Draft template generates nothing |
 | `goals.py` | What a period review is allowed to conclude. Frappe-free. Reads a `Data` target, knows which way each metric runs, and returns **Open** whenever it cannot decide |
 | `reviews.py` | The half that queries: the seven metrics, the floor rule, the Annual cadence ERPNext cannot run, and the meeting agenda |
+| `change_orders.py` | Change-order numbering, the derived status, and the sign of the money. Frappe-free; its DocType lives in `project_enhancements`, which cannot host a frappe-free module |
 
 Registered in [`../modules.txt`](../modules.txt), tiled from
 [`../setup/desktop_icon_map.py`](../setup/desktop_icon_map.py), and given a sidebar by

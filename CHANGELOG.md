@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.460.0] - 2026-09-14
+
+### Added
+
+- **`Change Order` is a first-class submittable DocType** (WI-075 sub-phase K), in
+  `project_enhancements` beside the contract machinery. A record rather than a `Project Contract`
+  revision, and the whole reason is one field: **cause**. A revision counter can tell you a
+  contract changed; it can never tell you whether the customer asked for something, the site
+  turned out different, or we got it wrong.
+- **The inspection generator now reads change orders.** Criteria added by a locked change order
+  appear on the inspection for the milestone they name, in their own section, keyed to the change
+  order rather than the Scope of Work.
+- `api/change_order.py` — `approve_change_order`, `record_customer_approval`, `revoke_approval`,
+  `get_project_change_orders`.
+- Three new KPI snapshot keys: `change_orders` (submitted count), `change_orders_self_caused`
+  and `change_order_net_value`.
+
+### Notes
+
+- **This closes the gap that would otherwise have been the worst one in the programme.** A change
+  order is scope sold *after* the Scope of Work was locked, and it is the scope most likely to be
+  agreed in a hurry and remembered by nobody. Had the generator kept reading only the Scope of
+  Work, every criterion added by change order would have reached **no inspection at all** — sold,
+  contracted and checked by nothing, which is the failure this programme exists to end arriving
+  through the one door nobody watches. Only **submitted** change orders count: a draft is a
+  proposal, and inspecting against a proposal is inspecting against something the customer has
+  not agreed to.
+- **Money carries its own sign, and the impact type is derived from it.** A credit is a negative
+  `cost_impact`. The tempting shape — a positive magnitude plus an Addition/Credit Select — is two
+  fields free to disagree about one fact, and the first time they do a credit is totalled as an
+  addition and the change-order value on a dashboard is simply wrong. `totals()` reports additions
+  and credits separately as positive figures *alongside* the net, because a job that added 50k and
+  credited 48k is a very different job from one that barely changed.
+- **The number is per project, not a naming series.** A series counter is global, so the third
+  change order on one job would be `CO-047`. Gaps are preserved: if `CO-002` was voided the next
+  is `CO-004`, because reusing 3 puts two different documents behind one number in somebody's
+  inbox. The insert retries once on a collision and catches **both** `DuplicateEntryError` and
+  `UniqueValidationError` — a primary-key clash and a unique-index clash raise different
+  exceptions here, and catching only one makes the retry fail open.
+- **Status is derived from `docstatus` and the approvals, never typed**, and the approval stamps
+  are read-only and written only by the endpoint, from the server clock and the session user. The
+  old client path on `process_steps.complete_step` let the browser propose its own timestamp and
+  the audit that followed found retroactive box-ticking.
+- **Amending is refused outright.** Frappe's amend appends `-1`, so amending `PRJ-00580-CO-003`
+  gives `PRJ-00580-CO-003-1` — a second commercial instrument with almost the same name as the
+  first, in a place where the two get quoted at each other. A wrong change order is cancelled and
+  re-raised.
+- `record_customer_approval` **requires** an account of how the customer approved. "They said yes"
+  is not a record, and the field exists so whoever writes it has to think for a second about
+  whether they can point at something.
+
+### Changed
+
+- **The KPI `change_orders` key was renamed, not re-pointed.** It has always counted `Project
+  Contract` rows with `revision > 0` — contracts that were *edited*, which is not the same event
+  as a scope change — and called them change orders because nothing else existed to count. It is
+  now `contract_revisions` / "Contract Revisions", and a fresh `change_orders` is fed by the new
+  DocType. Re-pointing in place would have put an unexplainable step in a live chart: the series
+  would drop to near zero on deploy day and nobody reading it later could tell a real improvement
+  from a change of definition. Snapshot retention is 120 days, so the renamed series ages out
+  inside one window.
+- **`docs/KPI_DASHBOARD_DESIGN.md` corrected where this programme made it false.** It asserted
+  "change orders are not first-class" as current fact and proposed adding two fields to Project
+  Contract; both are superseded, and the original reasoning is kept and marked rather than
+  deleted. Three Production KPIs are re-marked, and the automation tally re-added and verified to
+  balance across all eight departments:
+  - **#7 Change-Order Volume & Value** 🟡 Semi → 🟢 **Auto**.
+  - **#10 First-Pass Yield** 🔴 Manual → 🟢 **Auto** — the seeded Commissioning section carries
+    that document's own six proposed tests. One honest difference from its definition: the metric
+    is per *inspection*, not per *build*.
+  - **#11 Rework / Punch-List** 🔴 Manual → 🟡 **Semi**, not Auto. Volume, closure rate and
+    days-to-close are computed, but **rework hours are still captured nowhere** — neither
+    `Quality Action` nor `Timesheet Detail` attributes hours to a punch item — and the KPI's own
+    definition asks for them. Its recommended Task-flag approach is marked superseded by ADR-0012.
+- **Nothing changes on prod when this deploys.** No change order exists, so every new KPI key
+  reports zero and the generator's change-order pass finds nothing.
+
 ## [1.459.0] - 2026-09-14
 
 ### Added

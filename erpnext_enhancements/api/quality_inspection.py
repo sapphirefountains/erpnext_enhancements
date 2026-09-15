@@ -4,8 +4,15 @@
 """Generating an inspection from a milestone — WI-075 sub-phase D.
 
 One entry point. It resolves the Active master template for the project's stage and milestone,
-resolves the project's locked Scope of Work, merges the two into an ordered row list, hashes it,
-and writes the result as a draft ``Project Quality Inspection``.
+resolves the project's locked Scope of Work **and every locked Change Order on that project**,
+merges them into an ordered row list, hashes it, and writes the result as a draft
+``Project Quality Inspection``.
+
+The change orders are not an afterthought (WI-075 sub-phase K). A change order is scope sold
+*after* the Scope of Work was locked, and it is the scope most likely to be agreed in a hurry and
+remembered by nobody. Reading only the Scope of Work would leave every criterion added by change
+order on no inspection at all — sold, contracted and checked by nothing, which is the failure this
+programme exists to end arriving through the one door nobody watches.
 
 The merge and the hash are in :mod:`erpnext_enhancements.quality.merge`, which imports no
 ``frappe`` — this module is the part that talks to the database, and is deliberately thin so
@@ -21,9 +28,9 @@ Four things it refuses to do quietly
    clear refusal rather than a document with nothing in it, because an empty inspection that can
    be submitted reads as a clean pass.
 4. **Drop a contracted criterion.** A criterion naming no milestone appears on no inspection at
-   all. Those are counted, written onto the record's ``generation_note``, and shown to the
-   caller. A promise that was sold and never inspected is the exact failure this programme
-   exists to end, so it is never filtered away in silence.
+   all — whether it came from the Scope of Work or from a change order. Those are counted,
+   written onto the record's ``generation_note``, and shown to the caller. A promise that was
+   sold and never inspected is never filtered away in silence.
 
 Indentation note: this file is 4-space, matching the rest of ``api/``. See ``api/README.md``.
 """
@@ -131,6 +138,38 @@ def _locked_scope(project):
     return frappe.get_doc("Project Scope of Work", names[0]) if names else None
 
 
+def _change_order_criteria(project):
+    """``[(change order name, criteria rows), ...]`` from this project's **locked** change orders.
+
+    A change order is scope that was sold after the Scope of Work was locked, and it is the scope
+    most likely to be agreed in a hurry and remembered by nobody. If the generator looked only at
+    the Scope of Work, every criterion added by change order would reach **no inspection at all**
+    — sold, contracted, and checked by nothing, which is the exact failure this whole programme
+    exists to end, arriving through the one door nobody watches.
+
+    Only submitted change orders count. A draft is a proposal, and inspecting against a proposal
+    would be inspecting against something the customer has not agreed to.
+
+    Guarded on the DocType existing: this endpoint predates `Change Order` by several releases,
+    and a site mid-migrate should narrow what it checks rather than fail to generate at all.
+    """
+    if not frappe.db.exists("DocType", "Change Order"):
+        return []
+    out = []
+    for name in frappe.get_all(
+        "Change Order",
+        filters={"project": project, "docstatus": 1},
+        pluck="name",
+        order_by="co_number asc",
+        limit_page_length=0,
+    ):
+        doc = frappe.get_doc("Change Order", name)
+        rows = doc.get("added_criteria") or []
+        if rows:
+            out.append((name, rows))
+    return out
+
+
 @frappe.whitelist()
 def generate_inspection(project, milestone):
     """Create a draft inspection for ``project`` at ``milestone``. Returns a summary dict.
@@ -170,6 +209,9 @@ def generate_inspection(project, milestone):
     template = _active_template(project_type, milestone)
     scope = _locked_scope(project)
     criteria = scope.acceptance_criteria if scope else []
+    # Scope sold AFTER the Scope of Work was locked. Without this, a criterion added by change
+    # order appears on no inspection at all.
+    change_order_criteria = _change_order_criteria(project)
 
     # Unverified fixes are resolved before the insert so an empty inspection is still refused
     # on the template's own emptiness, but they are CLAIMED after it, because a claim names the
@@ -180,9 +222,17 @@ def generate_inspection(project, milestone):
         fields=["name"],
         limit=1,
     )
+    # Each source document keys its own rows, so a Scope of Work criterion and a change order
+    # criterion can never collide on `source_key` even if both were copied from the same text.
+    addendum = merge.addendum_rows(criteria, scope.name if scope else "", milestone)
+    for co_name, co_rows in change_order_criteria:
+        addendum.extend(
+            merge.addendum_rows(co_rows, co_name, milestone, section_title=f"Added by {co_name}")
+        )
+
     rows = merge.merge(
         merge.master_rows(template.sections, _items_for_section),
-        merge.addendum_rows(criteria, scope.name if scope else "", milestone),
+        addendum,
     )
     if not rows:
         frappe.throw(
@@ -201,7 +251,11 @@ def generate_inspection(project, milestone):
             title=_("Duplicated checks"),
         )
 
+    # Change-order criteria are checked for a missing milestone exactly as the Scope of Work's
+    # are. It matters more here, not less: this is the scope agreed in a hurry.
     unassigned = merge.unassigned_criteria(criteria)
+    for _co_name, co_rows in change_order_criteria:
+        unassigned.extend(merge.unassigned_criteria(co_rows))
 
     doc = frappe.new_doc("Project Quality Inspection")
     doc.update(
@@ -240,6 +294,7 @@ def generate_inspection(project, milestone):
         "carried_forward": [a.name for a in carried],
         "from_template": template.name,
         "from_scope": scope.name if scope else None,
+        "from_change_orders": [name for name, _rows in change_order_criteria],
         "unassigned_criteria": [key for key, _text in unassigned],
     }
 
