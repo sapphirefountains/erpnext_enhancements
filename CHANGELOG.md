@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.466.0] - 2026-09-15
+
+### Added
+
+- **The four Quality courses are now job requirements**, not just assignable courses.
+  `patches/seed_quality_position_requirements` adds eight `Position Requirement` rows across six
+  positions — Technician, Project Manager, Operations Manager, Sales Representative, Purchasing
+  Agent/Inventory Clerk, and AP/AR Purchasing Manager. **These are the first rows of type
+  `Training Course` on this site**; all 55 that existed before are `Credential`.
+
+### Notes
+
+- **They ship `is_mandatory = 0`, and that is the whole design.** An assignment and a job
+  requirement are different records, and only the second reaches the competency roster — so a
+  requirement is a claim that *this course is part of doing this job*, which is true today. What is
+  **not** true today is that anybody can complete one: all four courses are `Draft`.
+- `progression._course_line` looks only for a submitted `Training Completion` and **does not check
+  whether the course is publishable**. So a mandatory requirement against a Draft course would
+  report every holder of that position as **Missing**, permanently, for something they are unable
+  to take. Verified by reading the code rather than assumed.
+- `is_mandatory` is the right lever because `progression` counts only *mandatory* missing rows
+  toward the readiness figure — `sum(1 for line in lines if line["state"] == MISSING and
+  line["mandatory"])`. At zero the requirement is **visible on the roster and counted by nobody**:
+  the intent is on the record where people can see and argue with it, and no one is marked short.
+  Negative-tested: flipping it to 1 fails a test.
+- **Ticking Mandatory is the second half of adopting a course**, alongside publishing it. Do both
+  together or the roster and the assignment engine disagree about whether the course is real. Each
+  row carries a `note` saying exactly that, and the note renders on the roster line.
+- **The position mapping is test-locked against the assignment rules**, so the two records cannot
+  drift about who needs which course. Role-targeted rules (`Production Team`, `Sales Team`) have no
+  Position counterpart and are excluded deliberately — a requirement hangs off a Position, and a
+  Role is not one.
+- The patch runs **after** the course seed, because it resolves courses by title, and it carries
+  the same behavioural "cannot abort a migrate" test its sibling gained in v1.465.1 — injected
+  failure, `execute()` must return normally and log. Insert-only and keyed on (position, course):
+  it adds nothing on a second run and never touches a row somebody has made mandatory.
+
 ## [1.465.1] - 2026-09-15
 
 ### Fixed

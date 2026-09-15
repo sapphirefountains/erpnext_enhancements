@@ -979,3 +979,13 @@ erpnext_enhancements.patches.seed_budget_categories
 # has training_enabled=1 and auto_assign_enabled=1 against 14 live courses. Publishing one is
 # the act of adopting it and WILL email real people. Insert-only, keyed on course title.
 erpnext_enhancements.patches.seed_quality_training_courses
+# WI-075 training. Makes the four courses job requirements (the first Position Requirement
+# rows of type Training Course on this site; all 55 existing ones are Credential). Runs AFTER
+# the course seed because it resolves courses by title. Shipped is_mandatory = 0 on purpose:
+# progression._course_line looks only for a submitted Training Completion and does not check
+# that the course is publishable, so a mandatory requirement against a Draft course would
+# report every holder of that position as Missing, forever, for something they cannot take.
+# Only mandatory rows count toward the readiness figure, so at 0 the requirement is visible
+# and counted by nobody. Tick Mandatory when the course is published -- two halves of one
+# decision. Insert-only, keyed on (position, course).
+erpnext_enhancements.patches.seed_quality_position_requirements
