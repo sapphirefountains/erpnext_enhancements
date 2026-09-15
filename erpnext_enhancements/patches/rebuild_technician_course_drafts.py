@@ -29,10 +29,12 @@ when all four of these hold, and each is checked per course rather than once:
   passed; rebuilding the content under one makes that record refer to material that no longer
   exists.
 
-Any course failing any of those is **skipped and named** in the output. A silent skip here would be
-indistinguishable from a rebuild that worked.
+Any course failing any of those is **skipped and named** in the output, and a course that *raises*
+is named too, in a bucket of its own. A silent skip here would be indistinguishable from a rebuild
+that worked -- and so, it turned out, was a silent failure: see the note above the print.
 
 Re-running is safe: a rebuild makes the draft match the spec, so a second run makes it match again.
+That is what ``rebuild_technician_course_drafts_after_link_fix`` relies on.
 """
 
 import frappe
@@ -51,6 +53,7 @@ def execute() -> None:
 
 	rebuilt = []
 	skipped = []
+	failed = []
 
 	for spec in program.COURSES:
 		title = spec["course"]["course_title"]
@@ -69,8 +72,11 @@ def execute() -> None:
 			result = _rebuild(course, spec, title)
 			if result:
 				rebuilt.append(f"{title} ({result['lessons']} lessons, {result['questions']} questions)")
+			else:
+				failed.append(title)
 		except Exception:
 			# One bad course must not take the other nine down, and must never abort the migrate.
+			failed.append(title)
 			frappe.log_error(
 				title="Technician course rebuild failed",
 				message=f"{title}: {frappe.get_traceback()}",
@@ -80,13 +86,23 @@ def execute() -> None:
 	if rebuilt:
 		frappe.db.commit()
 
-	print(f"rebuild_technician_course_drafts: {len(rebuilt)} rebuilt, {len(skipped)} left alone")
+	# Every course lands in exactly one of the three, and the three are printed whatever they hold.
+	# v1.468.0 had no `failed` bucket: a course that RAISED was appended to neither list, so all ten
+	# blowing up on LinkExistsError printed "0 rebuilt, 0 left alone" -- a line that reads like a
+	# site with nothing to do -- while `Patch Log` recorded the patch as applied and ten Error Logs
+	# nobody was looking at carried the actual news.
+	print(
+		f"rebuild_technician_course_drafts: {len(rebuilt)} rebuilt, {len(skipped)} left alone, "
+		f"{len(failed)} failed"
+	)
 	for line in rebuilt:
 		print(f"  rebuilt: {line}")
 	for line in skipped:
 		# Named, never silent: a skip that looks like a success is how somebody concludes the
 		# rewrite landed when it did not.
 		print(f"  skipped: {line}")
+	for line in failed:
+		print(f"  FAILED (see Error Log): {line}")
 
 
 def _unsafe_reason(course):

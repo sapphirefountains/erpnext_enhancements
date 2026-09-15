@@ -368,6 +368,14 @@ def rebuild_draft_from_spec(course, spec):
             )
         )
 
+    # Let go of those questions BEFORE the lessons are deleted, not after. `Training Question`
+    # carries a Link to the lesson it came from, so frappe's `check_if_doc_is_linked` REFUSES to
+    # delete a lesson a question still points at -- and the refusal is the whole delete, not one
+    # row. The first run of this on production raised `LinkExistsError` on all ten courses for
+    # exactly that reason, and because the failure was caught per course it left ten Error Logs
+    # while `Patch Log` recorded the patch as applied and the drafts sat unchanged.
+    removed = _release_questions(old_lessons, old_questions)
+
     modified = str(frappe.db.get_value("Training Course Version", draft_version, "modified"))
     if old_lessons:
         result = training_author.save_draft_version(draft_version, {"deleted_lessons": old_lessons}, modified)
@@ -396,7 +404,6 @@ def rebuild_draft_from_spec(course, spec):
     modified, lesson_names = _apply_lessons(draft_version, spec["lessons"], chapter_keys, modified)
     _apply_quizzes(draft_version, spec["lessons"], lesson_names, modified)
 
-    removed = _drop_orphaned_questions(old_questions)
     _refresh_course_fields(course, spec["course"])
 
     summary = spec_summary(spec)
@@ -409,25 +416,70 @@ def rebuild_draft_from_spec(course, spec):
     }
 
 
-def _drop_orphaned_questions(names):
-    """Delete AI-drafted questions the rebuild left pointing at nothing.
+def _release_questions(old_lessons, old_questions):
+    """Let go of everything the lessons about to be deleted are still holding.
+
+    A `Training Lesson` cannot be deleted while another document Links to it. `check_if_doc_is_linked`
+    runs on every `frappe.delete_doc` and throws `LinkExistsError`, and six doctypes carry a Link to
+    Training Lesson: `Training Question.source_lesson`, `Training Attempt Question.lesson`,
+    `Training Checkpoint.lesson`, `Training Question Thread.lesson`, `Training Submission.lesson`
+    and `Training Video Chapter.lesson`.
+
+    Only the first of those is the rebuild's own doing — `_apply_quizzes` sets `source_lesson` on
+    every question it mints — so only the first is released here. The other five are a learner or an
+    author having done something with this lesson, and the honest answer to those is to let the
+    delete throw and report the course as failed. **Forcing the delete past them would leave the
+    links dangling**, which is precisely what the framework check exists to prevent; a rebuild that
+    quietly breaks a video chapter's anchor is worse than one that refuses.
+
+    Returns the number of questions deleted.
+    """
+    removed = _drop_orphaned_questions(old_questions, ignoring_lessons=old_lessons)
+    _unlink_source_lessons(old_lessons)
+    return removed
+
+
+def _unlink_source_lessons(lessons):
+    """Clear `source_lesson` on whatever survived, so the lesson delete is no longer blocked.
+
+    This runs after the drop, so what is left is a question the drop deliberately spared: reviewed,
+    hand-written, or still drawn by a lesson on some other version. Those keep their text and their
+    review; what they lose is a pointer to a lesson that is about to stop existing. There is no
+    third option — the framework will not let the lesson go while the Link is set, and a Link left
+    set would point at nothing.
+    """
+    if not lessons:
+        return
+
+    holders = frappe.get_all(
+        "Training Question", filters={"source_lesson": ["in", list(lessons)]}, pluck="name"
+    )
+    for name in holders:
+        frappe.db.set_value("Training Question", name, "source_lesson", None)
+
+
+def _drop_orphaned_questions(names, ignoring_lessons=()):
+    """Delete AI-drafted questions the rebuild is about to leave pointing at nothing.
 
     Guarded three ways, because deleting somebody's content is the one thing here that cannot be
     undone by running the patch again: only questions that were **AI-drafted**, only ones **nobody
     has reviewed**, and only ones **no remaining pool draws**. A hand-written question, a reviewed
     one, or one a second lesson still uses is left alone -- it becomes an unreferenced bank entry,
     which is untidy and recoverable, rather than gone.
+
+    ``ignoring_lessons`` is what makes "no remaining pool draws" answerable **before** the lessons
+    are deleted, which is when it has to be answered. Asked without it at this point every question
+    is still drawn — by the very pools that are about to go — so the whole set reads as in use and
+    nothing is ever dropped. The lessons being deleted are therefore excluded from the question,
+    and a pool on any *other* version still counts.
     """
     if not names:
         return 0
 
-    still_used = set(
-        frappe.get_all(
-            "Training Quiz Question",
-            filters={"question": ["in", list(names)], "parenttype": "Training Lesson"},
-            pluck="question",
-        )
-    )
+    used_filters = {"question": ["in", list(names)], "parenttype": "Training Lesson"}
+    if ignoring_lessons:
+        used_filters["parent"] = ["not in", list(ignoring_lessons)]
+    still_used = set(frappe.get_all("Training Quiz Question", filters=used_filters, pluck="question"))
     candidates = [n for n in names if n not in still_used]
     if not candidates:
         return 0

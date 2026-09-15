@@ -56,6 +56,15 @@ def _reset_state():
 			"create_draft_calls": [],
 			"save_calls": [],
 			"cache": {},
+			# A small in-memory site, used only by the rebuild tests. Empty everywhere else, so the
+			# create-path tests below see exactly the stub they always saw.
+			"draft_version": None,
+			"site_lessons": {},
+			"site_quiz_rows": [],
+			"site_questions": {},
+			"site_video_chapters": [],
+			"deleted": [],
+			"set_values": [],
 		}
 	)
 
@@ -94,7 +103,88 @@ def _get_doc(doctype, name=None):
 def _db_get_value(doctype, name, fieldname, **kwargs):
 	if doctype == "Training Course Version" and fieldname == "modified":
 		return "m0"
+	if doctype == "Training Course Version" and fieldname == "name":
+		# The open-draft lookup `rebuild_draft_from_spec` starts with. None unless a rebuild test
+		# has stood a draft up, which is what makes the function return early everywhere else.
+		return STATE.get("draft_version")
 	return None
+
+
+def _db_set_value(doctype, name, fieldname, value=None, **kwargs):
+	STATE["set_values"].append((doctype, name, fieldname, value))
+	if doctype == "Training Question" and name in STATE["site_questions"]:
+		if isinstance(fieldname, dict):
+			STATE["site_questions"][name].update(fieldname)
+		else:
+			STATE["site_questions"][name][fieldname] = value
+
+
+def _matches(row, filters):
+	"""The handful of frappe filter forms the code under test actually uses."""
+	for field, rule in (filters or {}).items():
+		value = row.get(field)
+		if isinstance(rule, (list, tuple)):
+			op, operand = rule[0], rule[1]
+			if op == "in" and value not in operand:
+				return False
+			if op == "not in" and value in operand:
+				return False
+			if op == "is" and operand == "set" and not value:
+				return False
+			if op == "is" and operand == "not set" and value:
+				return False
+		elif value != rule:
+			return False
+	return True
+
+
+def _get_all(doctype, filters=None, pluck=None, **kwargs):
+	if doctype == "Training Lesson":
+		rows = [dict(v, name=k) for k, v in STATE["site_lessons"].items()]
+	elif doctype == "Training Quiz Question":
+		rows = list(STATE["site_quiz_rows"])
+	elif doctype == "Training Question":
+		rows = [dict(v, name=k) for k, v in STATE["site_questions"].items()]
+	else:
+		rows = []
+	hits = [r for r in rows if _matches(r, filters)]
+	if pluck:
+		return [r.get(pluck) for r in hits]
+	return [_Dict(r) for r in hits]
+
+
+class _LinkExistsError(Exception):
+	pass
+
+
+def _delete_doc(doctype, name, **kwargs):
+	"""Deleting is refused while another doctype Links to the row — same as the real thing.
+
+	This is the whole point of the fake site. ``frappe.delete_doc`` runs ``check_if_doc_is_linked``
+	on every call and throws ``LinkExistsError`` when any Link field anywhere points at the row, and
+	v1.468.0's rebuild deleted a draft's lessons while ``Training Question.source_lesson`` still
+	pointed at them. A recording stub that just forgot the row passed that release; this one does
+	not. ``ignore_permissions`` and ``force`` are accepted and ignored, because ``force`` does not
+	turn the link check off either.
+	"""
+	STATE["deleted"].append((doctype, name))
+	if doctype == "Training Lesson":
+		holders = [q for q, row in STATE["site_questions"].items() if row.get("source_lesson") == name]
+		if holders:
+			raise _LinkExistsError(
+				f"Cannot delete or cancel because Training Lesson {name} "
+				f"is linked with Training Question {holders[0]}"
+			)
+		chapters = [c for c in STATE["site_video_chapters"] if c.get("lesson") == name]
+		if chapters:
+			raise _LinkExistsError(
+				f"Cannot delete or cancel because Training Lesson {name} is linked with "
+				f"Training Video Chapter {chapters[0].get('name')}"
+			)
+		STATE["site_lessons"].pop(name, None)
+		STATE["site_quiz_rows"] = [r for r in STATE["site_quiz_rows"] if r.get("parent") != name]
+	elif doctype == "Training Question":
+		STATE["site_questions"].pop(name, None)
 
 
 def _db_exists(doctype, filters=None, **kwargs):
@@ -154,7 +244,17 @@ def _install_stubs():
 	frappe.throw = _throw
 	frappe.log_error = lambda *a, **k: None
 	frappe.get_traceback = lambda: "traceback"
-	frappe.db = types.SimpleNamespace(get_value=_db_get_value, exists=_db_exists)
+	frappe.get_all = _get_all
+	frappe.delete_doc = _delete_doc
+	frappe.LinkExistsError = _LinkExistsError
+	exceptions.LinkExistsError = _LinkExistsError
+	frappe.db = types.SimpleNamespace(
+		get_value=_db_get_value,
+		exists=_db_exists,
+		set_value=_db_set_value,
+		count=lambda doctype, filters=None: len(_get_all(doctype, filters=filters, pluck="name")),
+		commit=lambda: None,
+	)
 	frappe.__dict__["_"] = lambda s: s
 
 	utils = types.ModuleType("frappe.utils")
@@ -196,6 +296,11 @@ def _install_stubs():
 
 	def _save_draft_version(version, payload, modified=None):
 		STATE["save_calls"].append({"version": version, "payload": payload, "modified": modified})
+		# The real `save_draft_version._delete_lessons` calls `frappe.delete_doc` per lesson, and
+		# that is where the link check lives. Recording the payload without making the call is what
+		# let v1.468.0's ordering bug through every test and straight onto production.
+		for lesson_name in payload.get("deleted_lessons") or []:
+			frappe.delete_doc("Training Lesson", lesson_name, ignore_permissions=True)
 		created = [
 			{"temp_id": lsn["temp_id"], "name": f"LSN-{lsn['temp_id']}"}
 			for lsn in payload.get("lessons", [])
@@ -553,6 +658,131 @@ class TestSpecStash(_Base):
 	def test_an_unknown_token_is_none(self):
 		self.assertIsNone(authoring.pop_spec("nope"))
 		self.assertIsNone(authoring.pop_spec(""))
+
+
+# ============================================================ rebuilding a draft
+
+
+class TestRebuildDraftFromSpec(_Base):
+	"""The rebuild path, run rather than read.
+
+	Until v1.468.1 this function had exactly one test and it was a source-text assertion about the
+	order of two statements. It went to production and failed on all ten technician courses at the
+	first ``frappe.delete_doc``, because a ``Training Question`` still Linked to the lesson being
+	deleted. Nothing about the shape of the code was wrong; what was wrong was what the framework
+	does when you ask it to delete a linked row, and only calling it finds that.
+	"""
+
+	def _stand_up_a_draft(self, lessons=2, reviewed=False, bank=False, other_version_pool=False):
+		"""One draft version with `lessons` lessons, each drawing one AI-drafted question."""
+		STATE["draft_version"] = "TRN-CV-DRAFT"
+		for i in range(lessons):
+			lesson = f"LSN-OLD-{i}"
+			question = f"QN-OLD-{i}"
+			STATE["site_lessons"][lesson] = {"course_version": "TRN-CV-DRAFT"}
+			STATE["site_quiz_rows"].append(
+				{"parent": lesson, "parenttype": "Training Lesson", "question": question}
+			)
+			STATE["site_questions"][question] = {
+				"ai_generated": 1,
+				"ai_reviewed_by": "someone@example.com" if reviewed else None,
+				"is_bank_question": 1 if bank else 0,
+				"source_lesson": lesson,
+			}
+		if other_version_pool:
+			# A lesson on some OTHER version drawing the first question. Not being deleted, so the
+			# question it draws must survive.
+			STATE["site_lessons"]["LSN-ELSEWHERE"] = {"course_version": "TRN-CV-OTHER"}
+			STATE["site_quiz_rows"].append(
+				{"parent": "LSN-ELSEWHERE", "parenttype": "Training Lesson", "question": "QN-OLD-0"}
+			)
+
+	# ---------------------------------------------------------------- the regression
+
+	def test_a_lesson_is_not_deleted_while_a_question_still_points_at_it(self):
+		"""The v1.468.0 failure, reproduced end to end.
+
+		`Training Question.source_lesson` is a Link, so the framework refuses the delete outright.
+		Getting through this at all means the questions were released first.
+		"""
+		self._stand_up_a_draft()
+		result = authoring.rebuild_draft_from_spec("TRN-CRS-0001", _spec())
+		self.assertIsNotNone(result)
+		self.assertEqual(STATE["site_lessons"], {})
+
+	def test_the_old_lessons_really_are_deleted(self):
+		self._stand_up_a_draft(lessons=3)
+		authoring.rebuild_draft_from_spec("TRN-CRS-0001", _spec())
+		deleted_lessons = [name for doctype, name in STATE["deleted"] if doctype == "Training Lesson"]
+		self.assertEqual(sorted(deleted_lessons), ["LSN-OLD-0", "LSN-OLD-1", "LSN-OLD-2"])
+
+	def test_the_questions_go_before_the_lessons_do(self):
+		"""Order, asserted on the sequence of calls rather than on the text of the function."""
+		self._stand_up_a_draft()
+		authoring.rebuild_draft_from_spec("TRN-CRS-0001", _spec())
+		order = [doctype for doctype, _ in STATE["deleted"]]
+		self.assertIn("Training Question", order)
+		self.assertIn("Training Lesson", order)
+		self.assertLess(order.index("Training Question"), order.index("Training Lesson"))
+
+	# ---------------------------------------------------------------- what survives
+
+	def test_the_orphaned_ai_questions_are_dropped(self):
+		self._stand_up_a_draft(lessons=2)
+		result = authoring.rebuild_draft_from_spec("TRN-CRS-0001", _spec())
+		self.assertEqual(result["removed_questions"], 2)
+		self.assertEqual(STATE["site_questions"], {})
+
+	def test_a_reviewed_question_is_kept_and_only_unlinked(self):
+		"""Somebody vouched for it. It loses its pointer to a lesson that is going, nothing else."""
+		self._stand_up_a_draft(lessons=1, reviewed=True)
+		result = authoring.rebuild_draft_from_spec("TRN-CRS-0001", _spec())
+		self.assertEqual(result["removed_questions"], 0)
+		self.assertIn("QN-OLD-0", STATE["site_questions"])
+		self.assertIsNone(STATE["site_questions"]["QN-OLD-0"]["source_lesson"])
+		self.assertEqual(STATE["site_questions"]["QN-OLD-0"]["ai_reviewed_by"], "someone@example.com")
+
+	def test_a_bank_question_is_kept(self):
+		self._stand_up_a_draft(lessons=1, bank=True)
+		result = authoring.rebuild_draft_from_spec("TRN-CRS-0001", _spec())
+		self.assertEqual(result["removed_questions"], 0)
+		self.assertIn("QN-OLD-0", STATE["site_questions"])
+
+	def test_a_question_another_version_still_draws_is_kept(self):
+		"""`ignoring_lessons` excludes the pools being deleted — not every pool everywhere."""
+		self._stand_up_a_draft(lessons=2, other_version_pool=True)
+		result = authoring.rebuild_draft_from_spec("TRN-CRS-0001", _spec())
+		self.assertEqual(result["removed_questions"], 1)
+		self.assertIn("QN-OLD-0", STATE["site_questions"])
+		self.assertNotIn("QN-OLD-1", STATE["site_questions"])
+
+	# ---------------------------------------------------------------- what still refuses
+
+	def test_a_video_chapter_still_blocks_the_rebuild(self):
+		"""Deliberate. Five other doctypes Link to a lesson and the rebuild releases none of them.
+
+		Forcing the delete past them would leave those links dangling, which is the thing the
+		framework check exists to prevent. A rebuild that refuses is recoverable; a video chapter
+		anchored to a lesson that no longer exists is not.
+		"""
+		self._stand_up_a_draft(lessons=1)
+		STATE["site_video_chapters"].append({"name": "VC-1", "lesson": "LSN-OLD-0"})
+		with self.assertRaises(Exception) as caught:
+			authoring.rebuild_draft_from_spec("TRN-CRS-0001", _spec())
+		self.assertIn("Training Video Chapter", str(caught.exception))
+
+	# ---------------------------------------------------------------- the empty cases
+
+	def test_no_open_draft_is_none_not_a_crash(self):
+		STATE["draft_version"] = None
+		self.assertIsNone(authoring.rebuild_draft_from_spec("TRN-CRS-0001", _spec()))
+
+	def test_a_draft_with_no_lessons_rebuilds_cleanly(self):
+		STATE["draft_version"] = "TRN-CV-DRAFT"
+		result = authoring.rebuild_draft_from_spec("TRN-CRS-0001", _spec())
+		self.assertEqual(result["lessons"], 1)
+		self.assertEqual(result["removed_questions"], 0)
+		self.assertEqual(STATE["deleted"], [])
 
 
 if __name__ == "__main__":

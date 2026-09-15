@@ -1026,3 +1026,11 @@ erpnext_enhancements.patches.rebuild_technician_course_drafts
 # no short_definition is skipped rather than inserted: that is the field Help shows DURING a quiz,
 # and an empty box mid-question is worse than a term the panel does not know.
 erpnext_enhancements.patches.seed_training_glossary
+# v1.468.1: the rebuild above ran on prod and failed on all ten courses -- it deleted a draft's
+# lessons before releasing the questions those lessons had minted, and Training Question.source_lesson
+# is a Link, so check_if_doc_is_linked threw LinkExistsError on the first delete every time. The
+# per-course except caught it, so Patch Log recorded the patch as applied and the summary printed
+# "0 rebuilt, 0 left alone" while the drafts sat untouched. A patch runs once, so the fixed code
+# needs its own entry to reach the site it was written for. Idempotent: a rebuild makes the draft
+# match the spec, so a second run makes it match again.
+erpnext_enhancements.patches.rebuild_technician_course_drafts_after_link_fix

@@ -24,6 +24,8 @@ suites cannot drift about what the framework does. This suite therefore needs **
 Run: python -m unittest erpnext_enhancements.tests.test_technician_training_program
 """
 
+import contextlib
+import io
 import json
 import re
 import sys
@@ -298,6 +300,21 @@ class TestSpecsValidate(unittest.TestCase):
         src = _raw(APP_ROOT / "api" / "training_course_authoring.py")
         rebuild = src.split("def rebuild_draft_from_spec(", 1)[1]
         self.assertIn('{"chapters": []}', rebuild)
+
+    def test_the_rebuild_releases_its_questions_before_deleting_the_lessons(self):
+        """Ordering, stated here because this file is where the rebuild's guards are documented.
+
+        The behaviour itself is run rather than read, in
+        `test_training_course_authoring.TestRebuildDraftFromSpec`, against a stub whose `delete_doc`
+        refuses a linked row the way the framework does."""
+        src = _raw(APP_ROOT / "api" / "training_course_authoring.py")
+        rebuild = src.split("def rebuild_draft_from_spec(", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("_release_questions(old_lessons, old_questions)", rebuild)
+        self.assertLess(
+            rebuild.index("_release_questions"),
+            rebuild.index('"deleted_lessons"'),
+            "the questions must be released before the lessons are deleted",
+        )
 
     def test_every_module_file_is_in_the_package(self):
         for name in MODULE_FILES:
@@ -793,6 +810,87 @@ class TestContentSafety(unittest.TestCase):
         for name in MODULE_FILES:
             with self.subTest(name):
                 self.assertIn("ask_block(", _raw(PKG / f"{name}.py"))
+
+
+class TestTheRebuildPatchAccountsForEveryCourse(unittest.TestCase):
+    """Whatever happens to a course, the patch's own output says so.
+
+    This is the second half of the v1.468.0 failure and the more expensive half. The rebuild
+    raising on all ten courses was a bug and got fixed; what made it *invisible for a whole
+    release* was that a course which raised was appended to neither list, so the summary line read
+    `0 rebuilt, 0 left alone` — indistinguishable from a site with nothing to bring up to date —
+    while `Patch Log` recorded the patch as applied and the only trace was ten Error Logs.
+
+    A patch that cannot fail loudly must at least be able to *count* honestly.
+    """
+
+    def _run_patch(self, rebuild_result):
+        """Run the patch's `execute` with the guards passed and `_rebuild` forced, capturing stdout."""
+        import frappe
+
+        from erpnext_enhancements.patches import rebuild_technician_course_drafts as patch
+
+        original = (patch._unsafe_reason, patch._rebuild, frappe.db.get_value)
+        patch._unsafe_reason = lambda course: ""
+        patch._rebuild = rebuild_result
+        frappe.db.get_value = lambda doctype, name=None, fieldname=None, **kw: (
+            "TRN-CRS-0001" if doctype == "Training Course" else None
+        )
+        buffer = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buffer):
+                patch.execute()
+        finally:
+            patch._unsafe_reason, patch._rebuild, frappe.db.get_value = original
+        return buffer.getvalue()
+
+    @staticmethod
+    def _counts(output):
+        head = output.splitlines()[0]
+        found = re.search(r"(\d+) rebuilt, (\d+) left alone, (\d+) failed", head)
+        assert found, f"summary line did not parse: {head!r}"
+        return tuple(int(g) for g in found.groups())
+
+    def test_a_course_that_raises_is_counted_as_failed(self):
+        def boom(course, spec, title):
+            raise RuntimeError("LinkExistsError")
+
+        output = self._run_patch(boom)
+        rebuilt, skipped, failed = self._counts(output)
+        self.assertEqual((rebuilt, skipped, failed), (0, 0, len(program.COURSES)))
+
+    def test_a_course_that_raises_is_named_in_the_output(self):
+        def boom(course, spec, title):
+            raise RuntimeError("LinkExistsError")
+
+        output = self._run_patch(boom)
+        for spec in program.COURSES:
+            self.assertIn(spec["course"]["course_title"], output)
+
+    def test_a_rebuild_that_returns_nothing_is_failed_not_forgotten(self):
+        """`_rebuild` swallows its own exception and returns None. That is still a failure."""
+        output = self._run_patch(lambda course, spec, title: None)
+        rebuilt, skipped, failed = self._counts(output)
+        self.assertEqual(failed, len(program.COURSES))
+
+    def test_a_working_rebuild_is_counted_as_rebuilt(self):
+        output = self._run_patch(lambda course, spec, title: {"lessons": 5, "questions": 20})
+        rebuilt, skipped, failed = self._counts(output)
+        self.assertEqual((rebuilt, skipped, failed), (len(program.COURSES), 0, 0))
+
+    def test_every_course_lands_in_exactly_one_bucket(self):
+        for label, result in (
+            ("raises", self._raising),
+            ("returns none", lambda course, spec, title: None),
+            ("works", lambda course, spec, title: {"lessons": 1, "questions": 1}),
+        ):
+            with self.subTest(label):
+                rebuilt, skipped, failed = self._counts(self._run_patch(result))
+                self.assertEqual(rebuilt + skipped + failed, len(program.COURSES))
+
+    @staticmethod
+    def _raising(course, spec, title):
+        raise RuntimeError("LinkExistsError")
 
 
 if __name__ == "__main__":
