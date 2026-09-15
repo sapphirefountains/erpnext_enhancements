@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.466.1] - 2026-09-15
+
+### Fixed
+
+- **The inspection wizard would not open.** `api/quality_wizard.get_open_inspections` ordered by
+  `coalesce(scheduled_date, inspection_date, creation) asc`, and Frappe v16 rejects it:
+  `frappe/database/query.py` splits `order_by` on commas and validates each segment against a
+  simple-field pattern, so a SQL expression cannot appear there at all. Because the comma split
+  happens first, the error names half a function — *"Invalid field format in Order By:
+  coalesce(scheduled_date"* — which reads like a missing field rather than a forbidden expression,
+  and sends you looking for a column of that name.
+- The sort now happens in Python, in `_due_key`. **Ordering by the three fields separately would
+  not have been an equivalent rewrite**: MariaDB sorts NULLs first on an ascending sort, so an
+  inspection with no scheduled date would jump ahead of one scheduled this morning — the list
+  would load and be quietly wrong, which is worse than not loading.
+- **And the obvious Python fix had a bug of its own, caught before shipping.** `scheduled_date`
+  and `inspection_date` are Date fields returning `datetime.date`, while `creation` is a Datetime
+  returning `datetime.datetime`, and Python refuses to compare the two. A list mixing a scheduled
+  inspection with an unscheduled one would have raised inside `sort` and taken the wizard down a
+  second time, for a different reason. `_due_key` normalises through `getdate`, and a row with no
+  date at all sorts last rather than first.
+
+### Notes
+
+- **Two new guards, both behavioural or repo-wide rather than local.**
+  `TestOrderByIsAlwaysAPlainField` walks every `.py` file in the app and fails the build on any
+  `order_by` string containing a bracket — there is no bench test tier, so a source guard is the
+  only thing standing between a SQL expression and a page that will not load.
+  `TestDueKeySorting` executes the real `_due_key` against the exact date/datetime mix the live
+  query returns.
+- Negative-tested both: restoring the `coalesce` fails the repo-wide guard (naming the file and
+  the expression), and removing the `getdate` normalisation raises `TypeError` in two tests.
+- **The sweep found no other instance.** Every other `order_by` in the app is already a plain
+  field, so this was an isolated mistake rather than a pattern — but the guard is cheap and the
+  failure mode is a field tool that will not open.
+
 ## [1.466.0] - 2026-09-15
 
 ### Added

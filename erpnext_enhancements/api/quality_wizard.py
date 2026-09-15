@@ -40,6 +40,7 @@ Indentation note: this file is 4-space, matching the rest of ``api/``. See ``api
 
 import frappe
 from frappe import _
+from frappe.utils import getdate
 
 from erpnext_enhancements.quality import merge
 from erpnext_enhancements.quality.doctype.quality_settings.quality_settings import is_enabled
@@ -248,6 +249,32 @@ def finish_inspection(inspection, modified=None):
     return state
 
 
+def _due_key(row):
+    """When an inspection is due: its scheduled date, else its inspection date, else when it
+    was raised.
+
+    This is the `coalesce` that used to live in the query. Doing it here is not a workaround
+    for its own sake -- ordering by the three fields separately would be a different sort, and
+    a wrong one: MariaDB puts NULLs first on an ascending sort, so an inspection with no
+    scheduled date would jump ahead of one scheduled this morning.
+
+    The database still applies `limit`, so an inspector holding more than OPEN_LIMIT drafts
+    sees their oldest-raised ones rather than their soonest-due. That is the right subset to
+    show somebody with a backlog that size, and OPEN_LIMIT is well above anything seen here.
+    """
+    value = row.get("scheduled_date") or row.get("inspection_date") or row.get("creation")
+    if not value:
+        # Sorts last. A row with no date at all is not "due first".
+        return getdate("2999-12-31")
+    # Normalised through `getdate` for one specific reason: `scheduled_date` and
+    # `inspection_date` are Date fields and come back as `datetime.date`, while `creation` is a
+    # Datetime and comes back as `datetime.datetime`. Python refuses to compare the two --
+    # "'<' not supported between instances of 'datetime.datetime' and 'datetime.date'" -- so a
+    # list mixing an inspection that has a scheduled date with one that does not would raise
+    # inside `sort`, taking the field tool down a second time for a different reason.
+    return getdate(value)
+
+
 @frappe.whitelist()
 def get_open_inspections():
     """Draft inspections assigned to the signed-in user, newest first.
@@ -267,13 +294,21 @@ def get_open_inspections():
             "status",
             "scheduled_date",
             "inspection_date",
+            "creation",
             "completion_percent",
             "mandatory_total",
             "mandatory_answered",
         ],
-        order_by="coalesce(scheduled_date, inspection_date, creation) asc",
+        # A plain field, because v16 will not take anything else. `frappe.database.query`
+        # splits `order_by` on commas and validates each segment against a simple-field
+        # pattern, so a SQL expression is rejected outright -- and the comma inside it makes
+        # the error read "Invalid field format in Order By: coalesce(scheduled_date", which
+        # names half a function and sends you looking for a field of that name. The real sort
+        # is done below, where it can express what it actually means.
+        order_by="creation asc",
         limit=OPEN_LIMIT,
     )
+    rows.sort(key=_due_key)
     projects = {row["project"] for row in rows if row.get("project")}
     names = (
         dict(

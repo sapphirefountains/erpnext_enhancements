@@ -287,5 +287,124 @@ class TestWizardPage(unittest.TestCase):
         self.assertTrue(roles, "a Page with no roles is visible to everybody")
 
 
+class TestOrderByIsAlwaysAPlainField(unittest.TestCase):
+    """No ``order_by`` anywhere in this app may carry a SQL expression.
+
+    Frappe v16 splits ``order_by`` on commas and validates each segment against a simple-field
+    pattern (``frappe/database/query.py``), so ``coalesce(a, b, c) asc`` is rejected outright.
+    Because the comma split happens first, the error names half a function::
+
+        Invalid field format in Order By: coalesce(scheduled_date.
+        Use 'field', 'link_field.field', or 'child_table.field'.
+
+    which reads like a missing field rather than a forbidden expression.
+
+    This shipped in the wizard's own open-inspection list and surfaced only when somebody opened
+    the page. There is no bench test tier to catch it, so this source guard is the only thing
+    between a SQL expression and a field tool that will not load.
+
+    **Ordering by the fields separately is not an equivalent rewrite.** MariaDB sorts NULLs first
+    on an ascending sort, so a row with an empty first field jumps ahead of a populated one. Sort
+    in Python instead, as ``api/quality_wizard._due_key`` does.
+    """
+
+    #: An order_by string literal containing a bracket -- i.e. a function call.
+    EXPRESSION = re.compile(r"""order_by\s*=\s*\(?\s*['"]([^'"]*[()][^'"]*)['"]""")
+
+    def test_no_order_by_carries_a_sql_expression(self):
+        offenders = []
+        for root, dirs, files in os.walk(APP_DIR):
+            dirs[:] = [d for d in dirs if d not in ("__pycache__", "tests", "node_modules")]
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                path = os.path.join(root, name)
+                with io.open(path, encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+                for match in self.EXPRESSION.finditer(text):
+                    offenders.append(
+                        "%s: %s" % (os.path.relpath(path, APP_DIR), match.group(1))
+                    )
+        self.assertEqual(
+            offenders, [], "order_by must be plain fields; sort in Python instead"
+        )
+
+
+class TestDueKeySorting(unittest.TestCase):
+    """The open-inspection list sorts in Python, so the sort must not raise.
+
+    `scheduled_date` and `inspection_date` are Date fields and come back as `datetime.date`;
+    `creation` is a Datetime and comes back as `datetime.datetime`. Python refuses to compare
+    them, so a list mixing an inspection that has a scheduled date with one that does not would
+    raise inside `sort` -- taking the field tool down a second time, for a different reason than
+    the `coalesce` order_by did.
+
+    Behavioural rather than a source grep, for the reason this session learned the hard way:
+    a grep sees the text, not the control flow.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import datetime
+        import sys
+        import types
+
+        def _getdate(value=None):
+            if isinstance(value, datetime.datetime):
+                return value.date()
+            if isinstance(value, datetime.date):
+                return value
+            return datetime.datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+
+        utils = types.ModuleType("frappe.utils")
+        utils.getdate = _getdate
+        cls._getdate = staticmethod(_getdate)
+        cls._datetime = datetime
+
+        # Read the function out of the source rather than importing the module, which would drag
+        # in frappe, the quality package and Quality Settings. The behaviour under test is the
+        # comparison, and this exercises the real code.
+        with io.open(API, encoding="utf-8") as fh:
+            source = fh.read()
+        start = source.index("def _due_key(")
+        end = source.index("\n@frappe.whitelist()", start)
+        namespace = {"getdate": _getdate}
+        exec(compile(source[start:end], API, "exec"), namespace)
+        cls.due_key = staticmethod(namespace["_due_key"])
+
+    def test_a_date_and_a_datetime_can_be_sorted_together(self):
+        """The exact mix the live query returns."""
+        rows = [
+            {"name": "B", "scheduled_date": None, "inspection_date": None,
+             "creation": self._datetime.datetime(2026, 9, 14, 10, 0)},
+            {"name": "A", "scheduled_date": self._datetime.date(2026, 9, 12),
+             "inspection_date": None, "creation": self._datetime.datetime(2026, 9, 1, 8, 0)},
+        ]
+        rows.sort(key=self.due_key)
+        self.assertEqual([r["name"] for r in rows], ["A", "B"])
+
+    def test_scheduled_date_wins_over_creation(self):
+        """Ordering by the three fields separately would put the unscheduled row first, because
+        MariaDB sorts NULLs first on an ascending sort. That is the bug this replaces."""
+        scheduled = {"scheduled_date": self._datetime.date(2026, 9, 20),
+                     "inspection_date": None,
+                     "creation": self._datetime.datetime(2026, 1, 1, 0, 0)}
+        unscheduled = {"scheduled_date": None, "inspection_date": None,
+                       "creation": self._datetime.datetime(2026, 9, 25, 0, 0)}
+        self.assertLess(self.due_key(scheduled), self.due_key(unscheduled))
+
+    def test_inspection_date_is_the_middle_fallback(self):
+        row = {"scheduled_date": None,
+               "inspection_date": self._datetime.date(2026, 3, 3),
+               "creation": self._datetime.datetime(2026, 9, 9, 0, 0)}
+        self.assertEqual(self.due_key(row), self._datetime.date(2026, 3, 3))
+
+    def test_a_row_with_no_date_at_all_sorts_last(self):
+        empty = {"scheduled_date": None, "inspection_date": None, "creation": None}
+        dated = {"scheduled_date": self._datetime.date(2030, 1, 1),
+                 "inspection_date": None, "creation": None}
+        self.assertGreater(self.due_key(empty), self.due_key(dated))
+
+
 if __name__ == "__main__":
     unittest.main()
