@@ -648,6 +648,21 @@ jobs:
       # silently. Checked against the DocType JSON rather than against a memory of it.
       - name: Technician program drafts (a trade course must not invent a number)
         run: python -m unittest erpnext_enhancements.tests.test_technician_training_program -v
+      # The AI question review queue -- the screen the publish gate has always implied and the app
+      # never had. `_unreviewed_ai_questions` blocks submit-for-review and publish, and on prod
+      # 2026-09-15 it was holding 128 questions across ALL 11 Draft courses against 14 ever
+      # reviewed; the technician drafts add 239. Four failures are guarded, each one quiet rather
+      # than loud: the queue's predicate drifting from the gate's (the page would say "nothing
+      # left" while publish still refused, with nothing on screen to explain it); the reviewer
+      # being taken from the payload rather than the session (until now the only writer of
+      # ai_reviewed_by was the browser, so the one field recording WHO vouched for an answer key
+      # was set by the client that wanted it set); a rejection emptying a ticked quiz, which makes
+      # that lesson unsaveable by anybody via _validate_quiz; and a bulk-accept button appearing,
+      # which would turn the whole gate into theatre. The last two are tested behaviourally against
+      # a fake frappe, because a source grep for "drop_quiz" passes on a version that never checks
+      # it -- the exact way v1.464.0's patch guard passed and still took a deploy down.
+      - name: Training question review (the gate needs a door, and the signature must be real)
+        run: python -m unittest erpnext_enhancements.tests.test_training_review -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk
