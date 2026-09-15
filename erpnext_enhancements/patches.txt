@@ -971,3 +971,11 @@ erpnext_enhancements.patches.set_company_depreciation_cost_center
 # overwrites an edited row, and it restores a protection flag that has been unticked without
 # ever clearing one that has been added.
 erpnext_enhancements.patches.seed_budget_categories
+# WI-075 training. The four Quality course drafts, built through the reviewed
+# author_course_from_spec path so every quiz question is stamped ai_generated with no reviewer
+# and the publish gate holds. Created as DRAFT, which is the whole safety property: assignment
+# needs status=Published AND weight=Required AND auto_assign, so a Draft assigns nobody. That
+# matters more than the plan expected -- it assumed Training Settings ships dormant, but prod
+# has training_enabled=1 and auto_assign_enabled=1 against 14 live courses. Publishing one is
+# the act of adopting it and WILL email real people. Insert-only, keyed on course title.
+erpnext_enhancements.patches.seed_quality_training_courses
