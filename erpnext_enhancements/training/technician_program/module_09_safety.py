@@ -48,11 +48,14 @@ COURSE = {
 						"<b>GVWR</b> is the most the whole loaded vehicle may weigh. <b>GAWR</b> is the "
 						"most each axle may carry. A hitch and a ball each have their own rating, and "
 						"they are frequently not the same as each other.</p>"
-						"<p><b>Payload is not GVWR.</b> Payload is GVWR minus what the vehicle actually "
-						"weighs as it sits — with fuel, the rack, the ladder, the toolboxes, the crew "
-						"and whatever has been living in the bed since spring. A service truck built "
-						"out for this trade has spent a large part of its payload before anybody puts a "
-						"pump in it.</p>"
+						"<p><b>Payload is not GVWR.</b> Payload is GVWR minus the truck's curb weight — "
+						"the 'combined weight of occupants and cargo' figure on the door-jamb placard. It "
+						"counts the crew, and it knows nothing about the rack, the ladder or the toolboxes "
+						"somebody bolted on after the truck left the factory. So what a built-out service "
+						"truck has <i>left</i> is that payload figure minus the crew, the rack, the ladder, "
+						"the toolboxes and whatever has been living in the bed since spring: a service "
+						"truck built out for this trade has spent a large part of its payload before "
+						"anybody puts a pump in it.</p>"
 						"<p>Water is the thing that catches people out, because it does not look like "
 						"weight. Water is about <b>8.34 lb per gallon</b> and about <b>62.4 lb per cubic "
 						"foot</b>. A drum, a tote or a half-full tank is heavier than the same volume of "
@@ -137,16 +140,17 @@ COURSE = {
 			"quiz": {
 				"questions": [
 					{
-						"question": "What is the payload of a service truck?",
+						"question": "How much can a built-out service truck actually still carry?",
 						"type": "Single Choice",
 						"explanation": (
-							"Payload is GVWR minus what the vehicle actually weighs as it sits — racks, "
-							"toolboxes, fuel, crew and everything already aboard. A built-out service truck has "
-							"spent much of it before the first pump goes on."
+							"Payload is GVWR minus the truck's curb weight: the occupants-and-cargo figure on "
+							"the door-jamb placard. The crew counts against it, and so does every rack, toolbox "
+							"and ladder added after the factory — so a built-out service truck has spent much of "
+							"it before the first pump goes on."
 						),
 						"options": [
 							{
-								"text": "GVWR minus the real weight of the vehicle as equipped, fuelled and crewed",
+								"text": "Its payload rating — GVWR minus curb weight — less the crew, the racks and everything already aboard",
 								"is_correct": True,
 							},
 							{"text": "The GVWR printed on the door jamb", "is_correct": False},
@@ -1082,10 +1086,12 @@ COURSE = {
 					"heading": "The ISPSC is a model code, and that changes what it means",
 					"content": (
 						"<p>The <b>International Swimming Pool and Spa Code</b> is a model code from the "
-						"International Code Council. It covers pools, spas and aquatic vessels, and it "
-						"reaches decorative water features too: barriers and access, suction entrapment "
-						"protection, circulation and filtration, water quality, and how these things are "
-						"built and maintained.</p>"
+						"International Code Council. It covers pools, spas and aquatic vessels — the ones "
+						"people are meant to get into — and its subjects are barriers and access, suction "
+						"entrapment protection, circulation and filtration, water quality, and how these "
+						"things are built and maintained. Whether it reaches a given decorative fountain "
+						"depends on how the jurisdiction classified that feature and on what it amended "
+						"in.</p>"
 						"<p>A <b>model</b> code has no legal force anywhere by itself. It is a document "
 						"offered for adoption. A state or a local jurisdiction adopts it — <b>a "
 						"particular edition of it</b> — and very commonly amends it on the way in, "
@@ -1144,7 +1150,7 @@ COURSE = {
 						},
 						{
 							"title": "Sapphire's own written programs",
-							"body": "<p>How we do it here: the confined space program and permit, the lock-out procedures, the hazard assessment and the protective equipment it selects, the injury reporting route. These are the operative documents on our own crews, and they can only be stricter than the law, never looser.</p>",
+							"body": "<p>How it is done here, wherever a program exists: the confined space program and permit, the lock-out procedures, the hazard assessment and the protective equipment it selects, the injury reporting route. Where one of these exists it is the operative document on our own crews, and it can only be stricter than the law, never looser. Where you cannot find one for the task in front of you, that absence is itself the thing to raise before you start.</p>",
 						},
 					],
 				},
@@ -1638,7 +1644,7 @@ COURSE = {
 					"heading": "Fatigue is a jobsite hazard, not a character flaw",
 					"content": (
 						"<p>Read back through this module and notice what every failure has in common. "
-						"The chamfer that got skipped. The meter that did not get re-checked on a known "
+						"The guard that got wedged open. The meter that did not get re-checked on a known "
 						"source. The hand that went into the sump because it was only for a second. The "
 						"cord that got taped instead of tagged.</p>"
 						"<p>Those are not knowledge failures. Everybody involved knew better. They are "

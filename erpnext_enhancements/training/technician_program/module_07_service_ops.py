@@ -79,7 +79,7 @@ COURSE = {
 						"<p>Vacuuming through the filter is the normal case. The debris is caught, the "
 						"water goes back to the basin, and nothing is lost except a little filter "
 						"capacity.</p>"
-						"<p><b>Fine material changes the answer.</b> Silt, sand, and the grey cloud "
+						"<p><b>Fine material changes the answer.</b> Silt and the grey cloud "
 						"left behind after an algae treatment are made of particles small enough to "
 						"pass straight through a sand bed and come back to the basin, or fine enough "
 						"to blind a cartridge so completely that you have bought yourself a cartridge "
@@ -181,7 +181,8 @@ COURSE = {
 						"type": "Single Choice",
 						"explanation": (
 							"Particles that fine pass through a sand bed and return to the basin, or blind a "
-							"cartridge. Sending them to waste is the only route that gets them out of the system."
+							"cartridge. Of the routes offered here, waste is the one that gets them out of "
+							"the system rather than through or into the filter."
 						),
 						"options": [
 							{
@@ -321,8 +322,10 @@ COURSE = {
 						"not moved. Clearing a line for winter looks similar and is a different "
 						"operation, and the difference is what keeps it safe.</p>"
 						"<p>You are <b>moving water out of an open line</b>, not building and holding "
-						"a pressure in a closed one. The far end stays open. Nothing is capped. There "
-						"is nowhere for stored energy to accumulate, which is the entire reason "
+						"a pressure in a closed one. The far end stays open. Nothing is capped. "
+						"Pressure cannot be built up and held the way a capped line holds it — it "
+						"bleeds out of the open end. It is not zero: air is compressed behind the "
+						"water until the line clears, and that stored energy is the entire reason "
 						"compressed air in plastic pipe is lethal. Stay out of the line of that open "
 						"end all the same — it throws water, grit and whatever else was in the "
 						"pipe.</p>"
@@ -351,7 +354,8 @@ COURSE = {
 						"stored where it will not freeze: nozzles and jets that hold water, chemical "
 						"feeders, probes and sensors, and whatever the design says is removable. Most "
 						"of that stores dry — but a <b>pH or ORP probe is the exception</b>, because "
-						"letting the glass dry out ruins it. Those go back into the storage solution "
+						"letting a pH probe's glass membrane or an ORP probe's reference junction dry "
+						"out ruins it. Those go back into the storage solution "
 						"the manufacturer's instructions call for, not into a bucket and not into a "
 						"toolbox. Covers and protection go "
 						"on <b>last</b>, once the draining is genuinely finished — a cover over an "
@@ -456,12 +460,12 @@ COURSE = {
 						"type": "Multiple Choice",
 						"explanation": (
 							"Stored energy is what makes air lethal in plastic pipe. An open far end means pressure "
-							"cannot accumulate, and the operation is moving water out rather than holding a pressure "
-							"and reading it."
+							"cannot be built up and held, and the operation is moving water out rather than "
+							"holding a pressure and reading it."
 						),
 						"options": [
 							{
-								"text": "The far end of the line is left open, so there is nowhere for stored energy to accumulate",
+								"text": "The far end of the line is left open, so pressure cannot be built up and held the way a closed pneumatic test holds it",
 								"is_correct": True,
 							},
 							{
@@ -630,7 +634,7 @@ COURSE = {
 					"heading": "The water is not the water you left",
 					"content": (
 						"<p>Everything that could have changed it over the winter did. "
-						"Rain and snowmelt diluted it.Evaporation concentrated what was left. "
+						"Rain and snowmelt diluted it. Evaporation concentrated what was left. "
 						"Sanitiser is long gone. The basin may have been drained entirely and is now "
 						"being refilled from a source whose own hardness and alkalinity have moved "
 						"since you last looked at them. <b>Test the fill water too</b>, because on a "

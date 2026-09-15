@@ -87,7 +87,7 @@ COURSE = {
 						"read exactly the same as a dead circuit.</p>"
 						"<p>And this is water. Everything metallic around a water feature is bonded "
 						"for a reason, NEC Article 680 says why, and a fault to ground here reaches "
-						"people standing in the basin. Module 6 — Electrical &amp; Controls and "
+						"people standing in the basin. Module 6 — Electrical Components and "
 						"Module 9 — Jobsite Safety cover the standard. If the work is beyond "
 						"measuring, it belongs to a qualified person.</p>"
 					),
@@ -141,10 +141,12 @@ COURSE = {
 				},
 				ask_block(
 					"Which of this work is yours to do",
-					"<p>Where the line sits between measuring and working live, which panels a "
-					"Sapphire technician may open, what qualification is required, and whose written "
-					"energy-control procedure governs a given client's site are decisions Sapphire and "
-					"the client make together.</p>"
+					"<p>Where the line sits between measuring and working live, and what "
+					"qualification it requires, is set by state and local law, by NFPA 70E and by "
+					"Sapphire's own policy — not by a conversation on site. Which panels a "
+					"Sapphire technician may open, and whose written energy-control procedure governs "
+					"a given client's site, are settled between Sapphire and the site before the work "
+					"starts.</p>"
 					"<p>This lesson teaches what the readings mean. It is not a qualification, and "
 					"nothing in it authorises anybody to open a piece of equipment they have not been "
 					"trained and permitted to open. If you are not sure which side of that line you "
@@ -441,8 +443,11 @@ COURSE = {
 						"height, so it changes week to week, and it leaves a wet plaza and a mineral "
 						"ring beyond the coping as evidence.</p>"
 						"<p><b>A leak.</b> Water is leaving through the shell, a penetration, a "
-						"fitting, or a pipe. It does not care about the weather, and it does not stop "
-						"in the night.</p>"
+						"fitting, or a pipe. It does not care about the weather. A leak through the "
+						"shell or a penetration runs whenever there is water standing against it; a "
+						"leak in pressurised pipework runs only while the pump runs — so a loss that "
+						"stops overnight on a feature that shuts down overnight has not ruled a leak "
+						"out.</p>"
 						"<p>That last sentence is the whole diagnosis: <b>the first two follow the "
 						"weather and the third does not.</b> Everything below is a way of using that.</p>"
 					),
@@ -454,21 +459,25 @@ COURSE = {
 						"<p>The bucket test works because it removes the one variable nobody can "
 						"measure directly. Put a bucket of basin water in the basin, so the bucket and "
 						"the basin sit in the same sun, the same air and the same water temperature. "
-						"<b>They evaporate at the same rate.</b> Mark both levels, leave it, and come "
-						"back.</p>"
+						"<b>They evaporate at the same rate from a still surface</b> — which is all the "
+						"bucket controls for. It cannot reproduce the extra evaporation a running "
+						"display creates by throwing water into the air. Mark both levels, leave it, "
+						"and come back.</p>"
 						"<p>Now the arithmetic does itself:</p>"
 						"<ul>"
 						"<li><b>Both dropped the same.</b> Evaporation accounts for all of it. There is "
 						"nothing to chase.</li>"
-						"<li><b>The basin dropped more than the bucket.</b> The difference is water "
-						"leaving the system by some route other than evaporation — splash-out, or a "
+						"<li><b>The basin dropped more than the bucket.</b> The difference is "
+						"everything still-surface evaporation does not explain — with the display "
+						"running that is the display's own extra evaporation, splash-out, or a "
 						"leak.</li>"
 						"</ul>"
 						"<p>Then split those two the same way you split everything else. Run the test "
 						"again with the feature <b>off</b> and the basin still. If the extra loss "
-						"disappears, it was going over the edge while the display ran. If the extra "
-						"loss is still there with the water flat and the pump idle, it is leaving "
-						"through the shell, and now you know that before anybody opens a deck.</p>"
+						"disappears, the display was doing it — its own extra evaporation, water going "
+						"over the edge, or both. If the extra loss is still there with the water flat "
+						"and the pump idle, it is leaving through the shell, and now you know that "
+						"before anybody opens a deck.</p>"
 						"<p>A third run — feature off but the pump and filtration circulating — narrows "
 						"it again, because it separates a leak in the vessel from one that only exists "
 						"when the pipework is pressurised.</p>"
@@ -556,13 +565,16 @@ COURSE = {
 						"type": "Single Choice",
 						"explanation": (
 							"The extra loss exists only while the display runs and disappears when the water is "
-							"still, so it is not leaving through the shell. It is either being thrown clear of the "
-							"basin or coming out of pipework that is only pressurised while the pump runs — and the "
-							"third run, feature off with the pump still circulating, separates those two."
+							"still, so it is not leaving through the shell. That is all the second run proves — "
+							"that the extra loss was display-dependent, not what it was. It could be the extra "
+							"evaporation the display itself creates by throwing water into the air, water thrown "
+							"clear of the basin, or pipework that is only pressurised while the pump runs — and the "
+							"third run, feature off with the pump still circulating, separates that last one from "
+							"the other two."
 						),
 						"options": [
 							{
-								"text": "It happens only while the display runs — splash-out, or pipework that leaks only under pressure — and it is not the shell",
+								"text": "It happens only while the display runs — the extra evaporation the display itself creates, splash-out, or pipework that leaks only under pressure — and it is not the shell",
 								"is_correct": True,
 							},
 							{
@@ -1829,7 +1841,7 @@ COURSE = {
 					"<p>The other limit is scope. Measuring is one thing; opening a motor, working on "
 					"a starter, or anything beyond proving dead and taking a reading belongs to a "
 					"qualified person under Sapphire's energy-control procedure. Module 6 — Electrical "
-					"&amp; Controls and Module 9 — Jobsite Safety set that line, and a hot motor is "
+					"Components and Module 9 — Jobsite Safety cover the standard, and a hot motor is "
 					"also a burn hazard before it is a diagnostic puzzle.</p>",
 				),
 			],

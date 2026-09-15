@@ -74,10 +74,13 @@ COURSE = {
 						"an afternoon.</p>"
 						"<p>Everything <b>downstream</b> of the impeller is above atmospheric "
 						"pressure, so a leak there pushes water out and you can see it. "
-						"Everything <b>upstream</b> is below atmospheric, so a leak there pulls "
-						"<i>air in</i> — and air in the pot, a pump that loses prime, and "
-						"bubbles at the returns are the only symptoms. <b>There is no water on "
-						"the ground.</b></p>"
+						"Upstream of the impeller the line is usually below atmospheric while "
+						"the pump runs, so a leak there pulls <i>air in</i> rather than pushing "
+						"water out — air in the pot, a pump that loses prime, and bubbles at the "
+						"returns, and nothing on the floor. On a flooded-suction system that same "
+						"joint is under static pressure once the pump stops, so shut it down and "
+						"look again: a weep that appears only with the pump off is the "
+						"confirmation.</p>"
 						"<p>Usual suspects: the pump lid O-ring, the drain plugs, a threaded "
 						"fitting on the suction side, the union, and the shaft seal itself.</p>"
 					),
@@ -606,9 +609,9 @@ COURSE = {
 						"when the filter was clean</b>.</p>"
 						"<p>So the baseline is recorded at commissioning and after every "
 						"clean — the pressure with a clean filter, at normal operating speed, with "
-						"the valves in their normal positions. A rise of several psi over that "
-						"baseline is the common trigger to clean, and the exact figure is set by "
-						"the equipment manufacturer and by how the system behaves.</p>"
+						"the valves in their normal positions. A rise above that baseline is what "
+						"triggers a clean, and how much of a rise is set by the equipment "
+						"submittal and the manufacturer's data for this filter.</p>"
 						"<p>Without a baseline, nobody can tell a dirty filter from a system that "
 						"has always run at that pressure. With one, it is a ten-second call.</p>"
 					),
@@ -781,9 +784,10 @@ COURSE = {
 						"stuck gauge does not read zero and look broken — it reads a normal-looking "
 						"number and stays there, and somebody troubleshoots the system around it "
 						"for an hour.</p>"
-						"<p>Two cheap checks: the needle should fall to zero when the pump stops, "
-						"and it should visibly move when you throttle a valve. A needle that does "
-						"neither is the fault.</p>"
+						"<p>Two cheap checks: the needle should fall back when the pump stops — to "
+						"zero only where the equipment sits above the water line — and it should "
+						"visibly move when you throttle a valve. A needle that does neither is the "
+						"fault.</p>"
 					),
 				},
 			],
@@ -827,11 +831,11 @@ COURSE = {
 						"question": "How can you tell a stuck gauge from a real reading?",
 						"type": "Multiple Choice",
 						"explanation": (
-							"A live gauge responds. It falls to zero when the pump stops and it moves when you "
+							"A live gauge responds. It falls back when the pump stops and it moves when you "
 							"change a valve position."
 						),
 						"options": [
-							{"text": "It should fall to zero when the pump is shut off", "is_correct": True},
+							{"text": "It should fall back when the pump is shut off", "is_correct": True},
 							{"text": "It should move when you throttle a valve", "is_correct": True},
 							{"text": "A stuck gauge always reads exactly zero", "is_correct": False},
 							{"text": "A stuck gauge rattles audibly", "is_correct": False},
@@ -907,8 +911,7 @@ COURSE = {
 						"dosed into a system that is not moving water.</p>"
 						"<p>Without it, a feeder that keeps running after the pump stops builds a "
 						"concentrated plug of chemical in the pipe. The next start-up delivers "
-						"that plug, all at once, through the heater and out to the feature. That "
-						"is how heat exchangers are destroyed, and it is how a swimmer or a "
+						"that plug, all at once, out to the feature. That is how a swimmer or a "
 						"passer-by gets chemically burned.</p>"
 					),
 				},
@@ -1292,8 +1295,9 @@ COURSE = {
 					"content": (
 						"<p><b>Mechanical anchors</b> — wedge, sleeve and screw anchors — grip by "
 						"friction and by biting into the concrete. They can be loaded quickly, and "
-						"they put expansive force into the concrete, so edge distance and spacing "
-						"matter a great deal.</p>"
+						"the expansion types put outward force into the concrete, so edge distance "
+						"and spacing matter a great deal — every type has its own edge and spacing "
+						"table.</p>"
 						"<p><b>Adhesive anchors</b> — threaded rod or rebar set in an injected "
 						"epoxy or acrylic — bond to the walls of the hole. They put no expansive "
 						"force in, they work closer to an edge, they fill irregular holes, and "
@@ -1311,8 +1315,11 @@ COURSE = {
 						"hole. Adhesive injected onto that dust bonds to <b>dust</b>, not to "
 						"concrete, and the anchor can pull straight out at a fraction of its rated "
 						"load.</p>"
-						"<p>This is the number one cause of adhesive anchor failure in the field, "
-						"and it has killed people when overhead anchors dropped a load.</p>"
+						"<p>This is the number one cause of adhesive anchor failure in the field. "
+						"Overhead adhesive anchors under sustained load have failed and killed, "
+						"which is why the adhesive, its hole-cleaning procedure and its "
+						"sustained-load qualification all have to be the ones in the evaluation "
+						"report for that exact product.</p>"
 						"<p>The manufacturer's instructions give an <b>exact</b> procedure — a "
 						"specified number of blow, brush and blow cycles, with a brush of a "
 						"specified diameter. It is not 'give it a blast with the compressor'. "
@@ -1454,8 +1461,9 @@ COURSE = {
 						"to drain to the sump or outlet.</p>"
 						"<p>That is exactly what the adjustable pedestals are for. They take up "
 						"the difference between a sloping structural surface and a level walking "
-						"surface. Pitching the deck to match the slab produces a plaza that ponds "
-						"and a feature that trips people.</p>"
+						"surface. Pitching the deck to match the slab gains nothing — the joints "
+						"already pass water straight through — and gives you a walking surface that "
+						"slopes where it should be flat, and a feature that trips people.</p>"
 					),
 				},
 				{

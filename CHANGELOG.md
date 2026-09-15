@@ -83,11 +83,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a sign-off is the right instrument — but `TrainingCourse._validate_signoff` refuses the flag
   without a stated criterion, and what a Sapphire supervisor is verifying is exactly what this
   package does not get to invent. Whoever adopts a course sets both halves, in their own words.
-- Authored and then independently fact-checked module by module. The review pass corrected real
-  errors, including a reversed tension face on a cantilevered basin wall (the wet face is in tension
-  at the base, which is why main steel sits near the retained face), a backwards parallax rule for
-  reading a test vial, and a lesson that had drifted into instructing a lock-out the course had
-  already said it would defer.
+- Authored and then independently fact-checked module by module. The first review pass corrected a
+  reversed tension face on a cantilevered basin wall (the wet face is in tension at the base, which
+  is why main steel sits near the retained face), a backwards parallax rule for reading a test vial,
+  and a lesson that had drifted into instructing a lock-out the course had already said it defers.
+- **A second pass then verified the first, because a confident wrong correction is worse than the
+  claim it replaced.** Three blind lenses per module — trade accuracy, answer key, invented
+  authority — then every finding refuted by default before any edit landed: 73 raised, 45 confirmed,
+  the rest thrown out or merged as duplicates, 48 edits applied. Lesson, chapter and question counts
+  are byte-identical before and after; this pass only corrected content. What it caught is the
+  argument for having run it:
+  - **Pipe outside diameter does not vary by material** — it follows the sizing standard the pipe
+    was made to, and steel and Schedule 40 PVC of the same nominal size share one OD. The lesson on
+    sizing a penetration seal said the opposite, in the body *and* in a quiz explanation.
+  - **A chemical plug from a failed flow interlock does not pass through the heater**, because
+    injection is downstream of it — the lesson contradicted its own injection-point block two
+    screens earlier.
+  - **A filter gauge does not fall to zero when the pump stops on a flooded-suction system**; static
+    head holds it up. A Multiple Choice option was keyed on "falls to zero", so the correct answer
+    was wrong on exactly the systems most fountains use.
+  - **A centrifugal pump running against a closed discharge draws *less* current, not more** — the
+    overload lesson had it backwards.
+  - **The bucket test controls for still-surface evaporation only.** It cannot reproduce the extra
+    evaporation a running display creates by throwing water into the air, so the second run proves
+    the loss is display-dependent and not what it is. And evaporation does not stop overnight.
+  - **Sand broadcasting is not universal** — membranes tested to ANSI A118.10 are made for mortar to
+    bond to the cured film directly. Which system you have is on the data sheet.
+  - Two **false cross-references to sibling modules**: an excavation lesson Module 9 does not have,
+    and a Module 6 title that does not exist. All 36 inter-module references now resolve.
+  - **Payload is GVWR minus curb weight** — the occupants-and-cargo figure on the door-jamb placard —
+    not "minus the vehicle as it sits", which double-counts the crew.
 - 67 bench-free tests in `tests/test_technician_training_program.py`, on their own CI step because
   the suite installs the frappe stub and `python -m unittest` shares a process. All 21 repo-wide
   walking suites re-run green.

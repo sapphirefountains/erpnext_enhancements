@@ -145,8 +145,12 @@ COURSE = {
 						"are welding pipe.</p>"
 						"<p>The vapour is also a respiratory irritant. In a confined or poorly "
 						"ventilated space that stops being a nuisance and becomes the hazard. "
-						"Gloves, eye protection, and read the safety data sheet for what is "
-						"actually in your hand.</p>"
+						"A vault, pit or sump is very likely a permit-required confined space, and "
+						"ventilating it is not what makes it safe to enter: entry is determined in "
+						"writing by the employer beforehand, and the atmosphere is tested and "
+						"monitored by somebody trained to do it. Module 9 covers what that "
+						"involves. Gloves, eye protection, and read the safety data sheet for what "
+						"is actually in your hand.</p>"
 					),
 				},
 				{
@@ -317,8 +321,9 @@ COURSE = {
 						"<p><b>It can bury you.</b> Trench and excavation work has its own OSHA "
 						"standard and its own protective systems — sloping, benching, shielding — "
 						"and a competent person has to decide which applies. A trench that looks "
-						"stable is the one people die in. Module 9 covers the rule; the point here "
-						"is that <i>getting into a trench is not a plumbing decision</i>.</p>"
+						"stable is the one people die in. Excavation safety is its own standard and "
+						"its own training, and this program is not it; the point here is that "
+						"<i>getting into a trench is not a plumbing decision</i>.</p>"
 						"<p><b>Something else is already down there.</b> Utility locates are "
 						"required before you dig, they expire, and they mark an approximate "
 						"position — you still expose by hand within the tolerance zone. Hitting a "
@@ -589,10 +594,10 @@ COURSE = {
 					"heading": "What the test is actually for",
 					"content": (
 						"<p>A hydrostatic test asks one question: <i>does this system hold "
-						"pressure?</i> It is not a strength test, and it is not a substitute for "
-						"having built it correctly. It is the check that finds the joint you were "
-						"unsure about while the trench is still open and while it is still an "
-						"hour's work to fix.</p>"
+						"pressure?</i> It does not tell you whether the system was designed right, "
+						"and it is not a substitute for having built it correctly. It is the check "
+						"that finds the joint you were unsure about while the trench is still open "
+						"and while it is still an hour's work to fix.</p>"
 						"<p>The test pressure and the hold duration come from the specification and "
 						"the code — commonly some multiple of the system's working pressure, held "
 						"for a stated time. Both numbers live on the job, not in this course.</p>"
@@ -768,10 +773,13 @@ COURSE = {
 						"of the pipe</b> and <b>the inside diameter of the hole</b>. Get either "
 						"wrong and the right number of links will not do the job.</p>"
 						"<p>Which means the sizing question is answered by <i>measuring</i>, not by "
-						"naming pipe sizes. A 4-inch pipe is not 4 inches across the outside, and it "
-						"is a different outside diameter in ductile iron, steel, PVC and copper. A "
-						"cored hole is not the same diameter as a sleeve of the same nominal size. "
-						"Measure both, then select.</p>"
+						"naming pipe sizes. A 4-inch pipe is not 4 inches across the outside, and "
+						"the outside diameter belongs to the sizing standard the pipe was made to "
+						"rather than to the material — steel and Schedule 40 PVC of the same "
+						"nominal size share one outside diameter, ductile iron and copper are each "
+						"on a different one, and PVC is made in both the steel and the ductile-iron "
+						"sizes. A cored hole is not the same diameter as a sleeve of the same "
+						"nominal size. Measure both, then select.</p>"
 						"<p>The manufacturer's table turns those two diameters into a model and a "
 						"number of links. That table is the authority.</p>"
 					),
@@ -850,7 +858,8 @@ COURSE = {
 						"type": "Single Choice",
 						"explanation": (
 							"The pipe's actual outside diameter and the hole or sleeve's actual inside diameter. "
-							"Nominal sizes do not answer it — outside diameter differs by pipe material."
+							"Nominal sizes do not answer it — outside diameter follows the sizing standard "
+							"the pipe was made to."
 						),
 						"options": [
 							{

@@ -474,8 +474,11 @@ COURSE = {
 							"title": "Pumps",
 							"body": (
 								"<p>A circle with the suction and discharge shown differently. Which "
-								"side is which matters: almost every pump problem is a suction-side "
-								"problem, and the schematic tells you what is on that side.</p>"
+								"side is which matters: most of the pump faults a drawing can help "
+								"you chase — strainer, air ingress, prime, a starved suction — live "
+								"on the suction side, and the schematic tells you what is on it. "
+								"Mechanical and electrical faults are a different hunt and the "
+								"schematic will not show them.</p>"
 							),
 						},
 						{
@@ -1379,8 +1382,10 @@ COURSE = {
 						"<p><b>Design the velocity down.</b> The surge follows the velocity you stopped, "
 						"so a system laid out at sensible velocities has less to give up in the first "
 						"place.</p>"
-						"<p>One case none of those covers: a pump tripping on a power failure. Nothing "
-						"is closing slowly there, so it is handled in the design. A feature that bangs "
+						"<p>One case the first two do not cover: a pump tripping on a power failure. "
+						"Nothing is closing slowly there, and the VFD has no power either. That one is "
+						"handled in the design — non-slam check valves, a surge vessel or air chamber "
+						"sized for the pump trip, and a sensible design velocity. A feature that bangs "
 						"on every power blip has an engineering problem, not a maintenance one.</p>"
 					),
 				},
@@ -1505,8 +1510,9 @@ COURSE = {
 						"<li><b>Alkalinity</b> is the buffer that decides how hard pH is to move at all. "
 						"Chasing pH without looking at alkalinity is a losing game — you keep adding, it "
 						"keeps coming back.</li>"
-						"<li><b>Calcium hardness</b> only goes up, unless water is removed and replaced "
-						"with softer water.</li>"
+						"<li><b>Calcium hardness</b> climbs on its own and there is nothing you dose "
+						"to bring it down. It comes down two ways only: water removed and replaced "
+						"with softer water, or calcium dropping out of solution as scale.</li>"
 						"<li><b>Temperature</b> is not something you dose. It is in the equation anyway, "
 						"and it changes on its own.</li>"
 						"<li><b>TDS</b> climbs as the feature evaporates and everything except the water "
@@ -1660,8 +1666,11 @@ COURSE = {
 						"arrives with a condition attached.</p>"
 						"<p>Both errors are real. Under-torqued, the joint moves, the fastener works "
 						"loose or fatigues, and the gasket weeps. Over-torqued, you take the fastener "
-						"past its yield point and it stays stretched — it is now a bolt that cannot "
-						"produce clamp load, and it looks exactly like a tight bolt.</p>"
+						"past its yield point and it stays permanently stretched. There is almost "
+						"nothing left in it — a little more turning, or the next shock load, necks "
+						"it and snaps it, or tears the thread out of the casting. And it cannot be "
+						"trusted again: a bolt stretched past yield will not reliably reach the "
+						"specified clamp load a second time, so it is replaced, not re-used.</p>"
 						"<p>Grade markings say how much the fastener can take: radial lines on the head "
 						"of an inch bolt, a number on a metric one. The grade and the torque figure "
 						"belong together, so substituting a same-size bolt from the bin can be a "

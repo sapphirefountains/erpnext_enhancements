@@ -576,13 +576,13 @@ COURSE = {
 						"question": "Why does fail-safe wiring hold a low-water interlock circuit closed while the basin has water in it?",
 						"type": "Single Choice",
 						"explanation": (
-							"Every wiring failure — a cut cable, a corroded connector, a loose terminal — produces "
+							"Every break in the wiring — a cut cable, a corroded connector, a loose terminal — produces "
 							"an open circuit. Wiring it this way means the failure produces the stop rather than a "
 							"false permission to run."
 						),
 						"options": [
 							{
-								"text": "Because a failure always produces an open circuit, so the stop state is the one a failure creates",
+								"text": "Because a broken wire always produces an open circuit, so the stop state is the one a wiring failure creates",
 								"is_correct": True,
 							},
 							{
@@ -685,7 +685,7 @@ COURSE = {
 					"content": (
 						"<p>A breaker that trips repeatedly is a message, and the message is that "
 						"something downstream is drawing more current than that conductor is rated to "
-						"carry. A motor with a failing bearing. A pump running against a blockage. Water "
+						"carry. A motor with a failing bearing. A pump whose impeller is jammed by debris. Water "
 						"where water should not be. A conductor damaged during a pull.</p>"
 						"<p><b>Fitting a larger breaker to stop the tripping is a way to start a fire.</b> "
 						"The breaker was sized to protect the wire in the wall, and swapping the breaker "
@@ -1463,7 +1463,7 @@ COURSE = {
 						"because the two conventions multiply together.</p>"
 						"<p>A low-water switch wired fail-safe holds its input <b>on</b> while the basin "
 						"has water. The program then uses a normally-<b>open</b> instruction on that bit "
-						"to mean <i>all is well</i>. Two negatives that cancel — and if you swap "
+						"to mean <i>all is well</i>. Two separate conventions that have to agree — and if you swap "
 						"<i>either</i> one without the other, the machine runs happily in exactly the "
 						"condition that was supposed to stop it.</p>"
 						"<p>So when a field device is replaced with one of the other contact "
@@ -1620,8 +1620,9 @@ COURSE = {
 						"has been running for years, the version in the controller very often contains a "
 						"field change that was never sent back to anybody — so the laptop file is a "
 						"different program, and restoring it wipes out whatever that change was doing.</p>"
-						"<p>The other half of the warning: an online edit takes effect on live equipment "
-						"as you make it. There is no preview and no staging area. Before you download or "
+						"<p>The other half of the warning: an online edit acts on live equipment the moment "
+						"it is accepted or downloaded, and staging an edit is not the same as testing it — "
+						"nothing simulates what the machine will do. Before you download or "
 						"accept an edit, know what is going to move.</p>"
 					),
 				},

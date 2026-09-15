@@ -115,24 +115,27 @@ COURSE = {
 						"membrane off the substrate from underneath — blisters, days later, on work "
 						"that went on perfectly. What counts as dry enough, and how it is measured, is "
 						"on the data sheet.</p>"
-						"<p>When this goes wrong it does not look like a bonding failure. It looks "
-						"like the membrane failed — until you turn the piece over and the top few "
-						"millimetres of concrete are stuck to the back of it.</p>"
+						"<p>When the substrate was not sound this does not look like a bonding "
+						"failure. It looks like the membrane failed — until you turn the piece over "
+						"and the top few millimetres of concrete are stuck to the back of it.</p>"
 					),
 				},
 				{
 					"block_type": "Rich Text",
 					"heading": "Sand in the last wet coat is what the mortar grips",
 					"content": (
-						"<p>A cured liquid membrane is usually a smooth, slightly rubbery film. Thinset "
-						"mortar has almost nothing to hold on to on a surface like that, and a mortar "
-						"bed that is not held on takes the tile with it.</p>"
-						"<p>So while the <b>final coat is still wet</b>, clean dry sand is broadcast "
-						"into it — thrown so it lands and settles rather than poured in a heap — until "
-						"the surface will not take any more. The resin cures around the lower half of "
-						"each grain and leaves the upper half standing proud. That gives the mortar a "
-						"<b>mechanical key</b>: it is gripping a rough surface instead of trying to "
-						"stick to a slick one.</p>"
+						"<p>Many liquid membranes — epoxy, urethane and polyurea systems especially — "
+						"cure to a smooth, slightly rubbery film that thinset mortar has almost "
+						"nothing to hold on to, and those systems call for a sand broadcast. Others, "
+						"including the tile-industry membranes tested to ANSI A118.10, are made for "
+						"mortar to bond to the cured film directly. Which one you have is on the data "
+						"sheet, and it is not a field choice.</p>"
+						"<p>Where the system calls for it, while the <b>final coat is still wet</b>, "
+						"clean dry sand is broadcast into it — thrown so it lands and settles rather "
+						"than poured in a heap — until the surface will not take any more. The resin "
+						"cures around the lower half of each grain and leaves the upper half standing "
+						"proud. That gives the mortar a <b>mechanical key</b>: it is gripping a rough "
+						"surface instead of trying to stick to a slick one.</p>"
 						"<p>Two things make or break it.</p>"
 						"<p><b>The sand has to be clean and dry.</b> Damp sand clumps, does not "
 						"broadcast evenly, and carries whatever it picked up into the coating. Dirty "
@@ -159,13 +162,15 @@ COURSE = {
 						"penetrations, the ceiling below. Staining and damp are as much a result as a "
 						"number on a tape.</p>"
 						"<p>Two things will fool you. Water evaporates from an open surface, so a drop "
-						"is not automatically a leak. Evaporation follows the weather — sun, wind and "
-						"dry air drive it, and it falls away to almost nothing overnight — while a "
-						"leak runs day and night. The way to separate them is to float a container of "
-						"water in the vessel and mark that too: it loses evaporation and nothing else, "
-						"so the gap between the two marks is the leak. And a slow leak into "
-						"free-draining ground or a sealed void produces no visible water anywhere, "
-						"which makes it easier to talk yourself out of.</p>"
+						"is not automatically a leak. Evaporation follows the weather — sun, wind, dry "
+						"air and the gap between water and air temperature all drive it, and it slows "
+						"at night without stopping, because water warmer than the air goes on "
+						"evaporating in the dark. So a drop cannot be read against the clock. The way "
+						"to separate them is to float a container of water in the vessel and mark that "
+						"too: it loses evaporation and nothing else, so the gap between the two marks "
+						"is the leak. And a slow leak into free-draining ground or a sealed void "
+						"produces no visible water anywhere, which makes it easier to talk yourself "
+						"out of.</p>"
 						"<p><b>It happens before anything covers it.</b> A membrane that fails a test "
 						"on bare concrete is a morning's repair. The same failure found after the "
 						"mortar bed, the tile, the grout and the coping are on is demolition — and "
@@ -213,8 +218,9 @@ COURSE = {
 						"question": "Why is clean dry sand broadcast into the final coat of a liquid-applied membrane while it is still wet?",
 						"type": "Single Choice",
 						"explanation": (
-							"A cured membrane is too smooth for thinset to bond to. Sand half-locked into the resin "
-							"leaves a rough surface the mortar can key into mechanically."
+							"On the systems that call for it, the cured membrane is too smooth for thinset to bond "
+							"to. Sand half-locked into the resin leaves a rough surface the mortar can key into "
+							"mechanically."
 						),
 						"options": [
 							{
@@ -439,7 +445,7 @@ COURSE = {
 						},
 						{
 							"front": "Class A GFCI",
-							"back": "A ground-fault circuit interrupter that trips at roughly 4 to 6 mA of ground-fault current — far below the level that injures, and the reason it is required around water.",
+							"back": "A ground-fault circuit interrupter that trips at roughly 4 to 6 mA of ground-fault current — set just below the level at which a person's muscles lock and they cannot let go, and far below what it takes to stop a heart, which is why it is required around water.",
 						},
 					],
 				},
@@ -805,8 +811,7 @@ COURSE = {
 						"explanation": (
 							"An open water surface evaporates, and in hot dry windy weather it loses real depth "
 							"with nothing wrong. Evaporation has to be measured and taken off before a drop is "
-							"called a leak, and a floating reference container is the usual way. Loss that carries "
-							"on through a cool, still night is the part evaporation does not explain."
+							"called a leak, and a floating reference container is the usual way."
 						),
 						"options": [
 							{
