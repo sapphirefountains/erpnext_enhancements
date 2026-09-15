@@ -1,22 +1,122 @@
 """Thin Vertex AI (Gemini) client used by the AI drafting endpoints.
 
-Not whitelisted — internal helper imported by
-``erpnext_enhancements.api.communication`` (email/SMS draft generation). Posts
-a single ``generateContent`` request to the Vertex AI REST endpoint for the
+Not whitelisted — internal helper imported by ``api/briefing.py`` (the morning
+briefing narrative), ``api/communication.py`` (email/SMS drafts),
+``api/training_ai.py`` and ``assistant_tools/draft_course_spec.py``. Posts a
+single ``generateContent`` request to the Vertex AI REST endpoint for the
 ``gemini-3.1-pro-preview`` model in the ``sapphire-fountains-poseidon`` GCP
 project (``us-central1``) and splits the response into final answer text vs.
 the model's "thoughts".
 
-Security: the GCP API key is read from the ``Triton Settings`` Single DocType
-(stored in the ``maps_api_key`` password field, shared with Maps) and sent as
-the ``x-goog-api-key`` header. Errors are logged to the Error Log and re-raised
-as plain ``Exception`` so callers can fall back gracefully.
+--------------------------------------------------------------------------
+Auth is an OAuth2 bearer token, because Vertex AI accepts nothing else
+--------------------------------------------------------------------------
+
+This used to send the ``Triton Settings.maps_api_key`` GCP API key as the
+``x-goog-api-key`` header, and **that call could never have worked.** Vertex AI
+(``aiplatform.googleapis.com``) refuses API keys at the front door, with a 401
+raised before any quota or IAM check::
+
+    "API keys are not supported by this API. Expected OAuth2 access token or
+     other authentication credentials that assert a principal."
+
+Nothing noticed for as long as the feature was dormant, and it was dormant for
+its whole life: ``briefing_use_gemini`` was a drifted Single default reading 0
+on every live row, so the narrative had always fallen back (see
+``patches/enable_briefing_gemini_narrative``). Turning it on in v1.420.0 is what
+finally made the call — and from 2026-09-13 it produced a pair of Error Log rows
+every weekday morning and not one successful generation. **A wrong auth
+mechanism reads exactly like a missing grant**, so the 401 invites you to go
+looking in IAM for a permission that was never the problem.
+
+The token is now minted from the **Drive service account** — the same key
+``google_drive`` and ``google_calendar`` already authenticate with, read through
+``drive_utils.get_service_account_info`` because the field is a ``Password``.
+Two things follow, both deliberate:
+
+* That service account lives in a *different* GCP project from the Vertex one,
+  so it needs ``roles/aiplatform.user`` granted on ``PROJECT_ID``. Until that is
+  done the call still 401/403s — the failure direction is unchanged and safe
+  (every caller falls back) — and ``_vertex_error`` appends the exact grant to
+  the message rather than leaving the next reader to infer it from a status code.
+* A Maps API key stops being posted to a second Google service. It was shared
+  between the two, which made that key's blast radius larger than Maps.
+
+Errors raise plain ``Exception`` so callers can fall back gracefully, and are
+**not** logged here: all five callers already log, so every failure was writing
+two Error Log rows carrying the same text.
 """
 
 import frappe
 import requests
 
 MODEL_ID = "gemini-3.1-pro-preview"
+PROJECT_ID = "sapphire-fountains-poseidon"
+LOCATION = "us-central1"
+# The one scope Vertex AI's REST surface takes; there is no narrower
+# aiplatform-specific scope to ask for.
+TOKEN_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
+REQUEST_TIMEOUT = 120
+
+IAM_HINT = (
+    f"Grant roles/aiplatform.user on GCP project {PROJECT_ID} to the service account in "
+    "Project Folder Google Drive Settings (it belongs to a different project)."
+)
+
+
+def _access_token():
+    """Mint a short-lived Vertex AI bearer token from the Drive service account.
+
+    Through ``get_service_account_info``, never the raw field: it is a
+    ``Password``, so plain attribute access returns Frappe's asterisk
+    placeholder — perfectly truthy, and failing only later inside the JSON parse.
+    """
+    from google.auth.transport.requests import Request
+    from google.oauth2 import service_account
+
+    from erpnext_enhancements.google_drive.drive_utils import get_service_account_info
+
+    info = get_service_account_info()
+    if not info:
+        raise Exception(
+            "Vertex AI needs the Google service account: set Service Account JSON in "
+            "Project Folder Google Drive Settings. " + IAM_HINT
+        )
+    credentials = service_account.Credentials.from_service_account_info(info, scopes=TOKEN_SCOPES)
+    credentials.refresh(Request())
+    return credentials.token
+
+
+def _post(url, payload):
+    """POST to Vertex AI, keeping the bearer token out of every traceback.
+
+    ``headers`` is cleared before anything raises, and that is the point of the
+    function. Frappe renders "Traceback with variables", so an exception leaving
+    a frame that still holds an ``Authorization`` header writes that header into
+    the Error Log, where anyone who can open the list can read it. This app has
+    published a credential into a log that way before, which is why re-raises
+    around secrets here are deliberate rather than incidental.
+    """
+    headers = None
+    try:
+        headers = {
+            "Authorization": f"Bearer {_access_token()}",
+            "Content-Type": "application/json",
+        }
+        return requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        headers = None
+        raise Exception(f"Vertex AI request failed: {detail}") from None
+
+
+def _vertex_error(response, exc):
+    """Message for a non-2xx, naming the fix when the refusal is about identity."""
+    message = f"Vertex AI Request Failed: {exc}\nResponse: {response.text}"
+    if response.status_code in (401, 403):
+        message = f"{message}\n{IAM_HINT}"
+    return message
+
 
 def generate_content_with_vertex_ai(prompt, system_instruction, settings, feature="unknown"):
     """Call Vertex AI ``generateContent`` and return ``(text, thoughts)``.
@@ -24,8 +124,11 @@ def generate_content_with_vertex_ai(prompt, system_instruction, settings, featur
     Args:
         prompt (str): The user-role prompt content.
         system_instruction (str): System instruction / persona text.
-        settings: A loaded ``Triton Settings`` doc, used to read the GCP API
-            key via ``settings.get_password("maps_api_key")``.
+        settings: A loaded ``Triton Settings`` doc. **No longer read.** It held
+            the GCP API key this used to authenticate with; the parameter stays
+            because five call sites and a test double pass it positionally, and
+            because a dead parameter left in place is cheaper than five edits.
+            Do not reach a credential back through it — see the module docstring.
         feature (str): Which app feature is calling (``email_draft``,
             ``sms_draft``, ``morning_briefing``, ...) — recorded on the
             AI Model Usage token-accounting row.
@@ -36,26 +139,16 @@ def generate_content_with_vertex_ai(prompt, system_instruction, settings, featur
         level). Both are stripped; ``final_thoughts`` may be empty.
 
     Raises:
-        Exception: if the API key is missing, the HTTP request fails (non-2xx;
-        full response body logged), or no candidates are returned.
+        Exception: if the service account is missing or cannot mint a token, the
+        HTTP request fails (non-2xx; full response body included), or no
+        candidates are returned. Callers log and fall back.
 
-    Side effects: outbound HTTPS POST to Vertex AI (120s timeout); failures
-    logged to the Error Log.
+    Side effects: outbound HTTPS POST to Vertex AI (120s timeout).
     """
-    # Retrieve the API Key from Triton Settings
-    # The user mentioned API Key from Triton Settings. Usually stored as a password field.
-    # We use the maps_api_key field which contains the GCP API key for both Maps and Vertex AI.
-    api_key = settings.get_password("maps_api_key", raise_exception=False)
-
-    if not api_key:
-        frappe.throw("Vertex AI API Key (maps_api_key) is missing in Triton Settings")
-
-    url = f"https://us-central1-aiplatform.googleapis.com/v1/projects/sapphire-fountains-poseidon/locations/us-central1/publishers/google/models/{MODEL_ID}:generateContent"
-
-    headers = {
-        "x-goog-api-key": api_key,
-        "Content-Type": "application/json"
-    }
+    url = (
+        f"https://{LOCATION}-aiplatform.googleapis.com/v1/projects/{PROJECT_ID}"
+        f"/locations/{LOCATION}/publishers/google/models/{MODEL_ID}:generateContent"
+    )
 
     payload = {
         "contents": [{
@@ -73,22 +166,19 @@ def generate_content_with_vertex_ai(prompt, system_instruction, settings, featur
         }
     }
 
-    response = requests.post(url, headers=headers, json=payload, timeout=120)
+    response = _post(url, payload)
 
     try:
         response.raise_for_status()
     except requests.exceptions.HTTPError as e:
-        error_msg = f"Vertex AI Request Failed: {e}\nResponse: {response.text}"
-        frappe.log_error(message=error_msg, title="Vertex AI API Error")
-        raise Exception(error_msg)
+        raise Exception(_vertex_error(response, e)) from None
 
     data = response.json()
 
     _record_usage(data, feature)
 
     if not data.get("candidates") or len(data["candidates"]) == 0:
-        frappe.log_error(message=f"No candidates returned: {data}", title="Vertex AI Response Error")
-        raise Exception("Vertex AI returned no candidates")
+        raise Exception(f"Vertex AI returned no candidates: {data}")
 
     candidate = data["candidates"][0]
     content_parts = candidate.get("content", {}).get("parts", [])

@@ -1550,7 +1550,19 @@ def update_multiple_docs(project_updates, task_updates):
 
 @frappe.whitelist()
 def delete_task(task_name):
-	"""Deletes a single task."""
+	"""Deletes a single task.
+
+	The two refusals below are **answers, not faults**, and are handled apart from
+	the generic catch for that reason. A task that another task links to (as
+	``parent_task`` or through ``depends_on``) raises ``LinkExistsError``, and one
+	held by an open lock raises ``DocumentLockedError``; both name the blocker in
+	their own message. Collapsing them into "check the logs" told the user nothing
+	they could act on, so they re-clicked — 25 identical tracebacks landed in the
+	Error Log on 2026-09-14 from one person deleting a subtree, each naming the
+	child task that was in the way, none of it ever reaching the screen. Passing
+	the message through is the whole fix; deleting children first is the user's
+	call, not ours to guess.
+	"""
 	if not task_name:
 		return {"status": "error", "message": "Task name is required."}
 
@@ -1560,6 +1572,10 @@ def delete_task(task_name):
 
 		frappe.delete_doc("Task", task_name)
 		return {"status": "success"}
+	except (frappe.LinkExistsError, frappe.DocumentLockedError) as e:
+		# No log_error: an expected refusal the user can read and act on is not an
+		# incident, and a traceback per click is what buried the real ones.
+		return {"status": "error", "message": str(e)}
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), f"Error deleting task {task_name}")
 		return {"status": "error", "message": "Could not delete task. Please check the logs."}

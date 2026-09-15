@@ -117,6 +117,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the suite installs the frappe stub and `python -m unittest` shares a process. All 21 repo-wide
   walking suites re-run green.
 
+## [1.466.2] - 2026-09-15
+
+An Error Log pass. Four fixes, and what they have in common is worth more than any one
+of them: **every single one failed in a direction that looks like nothing is wrong.** A
+dialog that opens correctly and saves nothing, a narrative that falls back silently, a
+sync that logs a traceback for a record no retry can fix, a refusal the user is never
+shown. The Error Log was the only place any of it was visible, and three quarters of it
+was noise: 888 of the 1,173 rows from 2026-09-01 to 09-15 were the retired chat module's
+subscription alerts, which stopped on their own when that module was deleted on 09-13.
+
+### Fixed
+
+- **"Create Child Task" on the Task form has never worked.** `make_quick_entry(doctype,
+  after_insert, init_callback, doc)` looks like it takes the doctype once. It does not:
+  `check_quick_entry_doc` builds a doc via `frappe.model.get_new_doc` **only when the 4th
+  argument is falsy**, so an object literal is used verbatim — no `doctype`, no
+  `__islocal`, no name. `QuickEntryForm.insert()` posts that object straight to
+  `frappe.client.save`, which raises `ValueError: "doctype" is a required key` in
+  `get_doc_from_dict`, before Task's controller is ever consulted. Every press 500'd and
+  created nothing. **Note how it fails**: the dialog opens, renders the right fields and
+  pre-fills project and parent, so it looks entirely normal right up to Save — and the
+  error has no field to attach itself to, which makes it read as a validation problem on
+  the form rather than a broken button.
+- **The morning briefing's Gemini narrative could never have worked, and the 401 says so
+  in a way that sends you to the wrong place.** `api/gemini` authenticated to Vertex AI
+  by sending the `Triton Settings.maps_api_key` GCP API key as `x-goog-api-key`.
+  `aiplatform.googleapis.com` refuses API keys outright — *"API keys are not supported by
+  this API. Expected OAuth2 access token or other authentication credentials that assert
+  a principal"* — a 401 raised at the front door, before any quota or IAM check. **A
+  wrong auth mechanism is indistinguishable from a missing grant**, so the status code
+  invites a hunt through IAM for a permission that was never the problem. It now mints an
+  OAuth2 bearer token from the Drive service account, the same key `google_drive` and
+  `google_calendar` already use. Two consequences, both deliberate: that service account
+  lives in a different GCP project from the Vertex one and needs `roles/aiplatform.user`
+  granted there (until then the failure direction is unchanged and safe — every caller
+  falls back — and the message now names the exact grant); and a Maps API key stops being
+  posted to a second Google service, which had made that key's blast radius larger than
+  Maps.
+- The same failure was also writing **two** Error Log rows: `api/gemini` logged and
+  raised, and all five callers log what they catch. The low-level client no longer logs.
+- The missing-credential path used `frappe.throw`, which is a modal even when it is
+  caught: `msgprint` *queues* before it raises, so a swallowed throw still rides out on
+  the 200 as `_server_messages`. The email-draft caller runs in a web request and handles
+  the exception quietly, so an unconfigured site would have shown the user a red dialog
+  about a setting they were not touching. It raises a plain `Exception` now.
+- Credentials are cleared before anything raises out of the request helper. Frappe
+  renders "Traceback with variables", so an exception escaping a frame that still holds
+  an `Authorization` header writes that header into the Error Log, where anyone who can
+  open the list can read it.
+- **QuickBooks kept asking ERPNext to do something destructive, and only ERPNext was
+  stopping it.** `_ensure_group_parent` promotes a ledger parent Account to a group so a
+  child can be written under it, and part of promoting is clearing `account_type`. On an
+  untouched leaf that is fine — a group never posts. On `25010 - Sales Tax Agency
+  Payable`, which carries 426 GL entries and `account_type: Tax`, clearing it is how
+  taxed invoices end up short by exactly the tax. `validate_group_or_ledger` refused every
+  attempt, correctly, but it refuses by *throwing*, so a record no retry can ever fix —
+  QBO 193, "Sales Tax Payable (deleted)", `Active: false` — logged a fresh 40-frame
+  traceback on every sync run from 2026-09-09. It is now a preflight issue routed to
+  manual review before any write, with the guard repeated at the write itself because
+  that is the line that clears the field.
+  **The message ERPNext throws is no guide to what happened**: "Account with existing
+  transaction cannot be converted to ledger" fires in *both* directions, because the
+  GL-entry branch is checked before the controller looks at which way `is_group` moved.
+- **Deleting a task told the user to check a log they cannot open.** `delete_task`
+  collapsed every exception into "Could not delete task. Please check the logs."
+  `LinkExistsError` and `DocumentLockedError` are answers, not faults — they already name
+  the blocking task in their own message. Passing that through is the whole fix. One
+  person deleting a subtree on 2026-09-14 produced 25 identical tracebacks, each naming
+  the child that was in the way, none of it reaching the screen.
+
+### Notes
+
+- `tests/test_quick_entry_doctype_key.py` (its own CI step; source-only, no stub set)
+  fails the build on any `make_quick_entry` doc literal without a `doctype` key, and
+  separately pins the Task call so deleting the file is not a pass. It strips JS comments
+  first and proves the stripper works, because the comment explaining the trap names
+  `doctype` and would otherwise satisfy the check on its own.
+- Four new cases in the QuickBooks suite, including one asserting that a *clean* ledger
+  parent is still promotable — narrowing the guard to "never promote" would break every
+  legitimate QBO sub-account — and one that fails if `_ensure_group_parent` so much as
+  loads the account it must not modify.
+- Both guards negative-tested by reintroducing the bug.
+- **Not fixed here, because none of it is code.** The Search Console 403 (the Drive
+  service account is not a user on the `sapphirefountains.com` property), the Finance
+  Calendar 404 (the configured calendar id does not exist or is not shared), six Employee
+  `image` values pointing at private files that no longer exist on disk (frappe core
+  re-attaches on every save of those records), and the QBO Estimate import hitting its
+  300s RQ job timeout. The first two already throttle correctly and cost two rows each.
+
 ## [1.466.1] - 2026-09-15
 
 ### Fixed
