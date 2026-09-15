@@ -989,3 +989,14 @@ erpnext_enhancements.patches.seed_quality_training_courses
 # and counted by nobody. Tick Mandatory when the course is published -- two halves of one
 # decision. Insert-only, keyed on (position, course).
 erpnext_enhancements.patches.seed_quality_position_requirements
+# The ten Technician Program course drafts, from Sapphire's own ten-module outline: 72 lessons, a
+# quiz on every one, and one "Course Completed" badge per module. Built through
+# author_course_from_spec like the Quality drafts, so every question is stamped ai_generated with no
+# reviewer and the publish gate holds. Created DRAFT, which is load-bearing: assignment needs
+# Published AND Required AND auto_assign, and these are Required with a rule aimed at the Technician
+# job family. Publishing one is the act of adopting it and WILL assign and email real technicians.
+# The badges are inert by the same chain -- gamification_enabled is 1 on prod, but a Course
+# Completed badge needs a submitted Training Completion, and nobody completes an unpublished course.
+# Insert-only, keyed on course title and badge name; a re-run gives a badge to a course that already
+# has none.
+erpnext_enhancements.patches.seed_technician_training_program

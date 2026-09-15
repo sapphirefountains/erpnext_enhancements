@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Module 3: Water Chemistry">
+<title>Module 3 — Water Chemistry</title>
+<circle cx="128" cy="128" r="124" fill="#62cbc9"/>
+<circle cx="128" cy="128" r="102" fill="#00111c"/>
+<circle cx="128" cy="128" r="112" fill="none" stroke="#f8f8f8" stroke-width="2" opacity=".55"/>
+<circle cx="128" cy="128" r="102" fill="none" stroke="#f8f8f8" stroke-width="1.5" opacity=".35"/>
+
+<path d="M112 62h32v30l30 62a8 8 0 0 1-7 12h-78a8 8 0 0 1-7-12l30-62z" fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M104 62h48" fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M93 138c8-6 16-6 24 0s16 6 24 0 12-4 20 0l10 21a4 4 0 0 1-4 5h-74a4 4 0 0 1-4-5z" fill="#62cbc9"/>
+<circle cx="116" cy="118" r="4" fill="#62cbc9"/>
+<circle cx="132" cy="104" r="3" fill="#62cbc9"/>
+<circle cx="126" cy="126" r="2.5" fill="#62cbc9"/>
+<rect x="96" y="212" width="64" height="30" rx="15" fill="#f8f8f8"/>
+<g transform="translate(116.0 218) scale(1.0)" fill="none" stroke="#00111c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 4.5a3.5 3.5 0 0 1 7 0v9a3.5 3.5 0 0 1-7 0z" transform="translate(0 0)"/><path d="M1.5 3a3.6 3.6 0 1 1 4.6 5.6H4.6h1.5a4 4 0 1 1-4.6 5.8" transform="translate(14 0)"/></g>
+</svg>

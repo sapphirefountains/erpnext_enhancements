@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Module 10: Basic Design &amp; Project Management Principles">
+<title>Module 10 — Basic Design &amp; Project Management Principles</title><defs><linearGradient id="ramp" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00a0df"/><stop offset="1" stop-color="#b14fc5"/></linearGradient></defs>
+<circle cx="128" cy="128" r="124" fill="url(#ramp)"/>
+<circle cx="128" cy="128" r="102" fill="#00111c"/>
+<circle cx="128" cy="128" r="112" fill="none" stroke="#f8f8f8" stroke-width="2" opacity=".55"/>
+<circle cx="128" cy="128" r="102" fill="none" stroke="#f8f8f8" stroke-width="1.5" opacity=".35"/>
+
+<rect x="70" y="72" width="116" height="104" rx="6" fill="none" stroke="#f8f8f8" stroke-width="5"/>
+<path d="M84 160a44 44 0 0 1 88 0" fill="none" stroke="#b14fc5" stroke-width="4" stroke-dasharray="7 6" stroke-linecap="round"/>
+<path d="M128 84l-30 76M128 84l30 76" fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="128" cy="84" r="9" fill="#f8f8f8"/>
+<path d="M128 84v-24" fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round"/>
+<path d="M110 128h36" fill="none" stroke="#f8f8f8" stroke-width="5" stroke-linecap="round"/>
+<path d="M98 158l-4 12M158 158l4 12" fill="none" stroke="#b14fc5" stroke-width="6" stroke-linecap="round"/>
+<rect x="96" y="212" width="64" height="30" rx="15" fill="#f8f8f8"/>
+<g transform="translate(116.0 218) scale(1.0)" fill="none" stroke="#00111c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5 6 0v18" transform="translate(0 0)"/><path d="M1.5 4.5a3.5 3.5 0 0 1 7 0v9a3.5 3.5 0 0 1-7 0z" transform="translate(14 0)"/></g>
+</svg>

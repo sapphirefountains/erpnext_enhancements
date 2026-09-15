@@ -136,7 +136,10 @@ feed it.
   a learner pressed play.
 - `roles.py` — granting the Training Learner role durably. Read this before
   touching role assignment; see **Access** below.
-- `setup.py` — starter Training Categories (`after_migrate`, insert-only).
+- `quality_course_specs.py` — the four WI-075 Quality course drafts, as data.
+- `technician_program/` — the ten Technician Program course drafts, one module file each,
+  plus the badge and assignment tables the seeding patch reads.
+- `setup.py` — starter Training Categories and badges (`after_migrate`, insert-only).
 - `workspace/training/` — the desk workspace.
 
 The learner runtime's front end lives in [`../public/js/training/`](../public/js/training/):
@@ -452,6 +455,64 @@ must happen, who signs what off, what rework rate is acceptable — inventing th
 error as inventing a checklist. Where a course reaches that edge it says *your supervisor
 decides*, and `tests/test_quality_training_courses.py` fails the build on any invented deadline of
 the form "within N days".
+
+### The ten Technician Program drafts
+
+[`technician_program/`](technician_program/) holds ten more Course Specs, seeded by
+`patches/seed_technician_training_program` **through the same `author_course_from_spec` path** — so
+every rule above applies to them too, including that each question is stamped `ai_generated` with no
+reviewer and the publish gate holds. Sapphire supplied a ten-module outline with seventy-two numbered
+topics under it; one module is one course, one topic is one lesson, every lesson carries a quiz, and
+each module has its own **Training Badge**.
+
+They are Required, they carry an assignment rule aimed at the `Technician` job-family Position, and
+they are created **Draft** — which is the only one of `assignment.py`'s three conditions this branch
+does not supply. Publishing one is the act of adopting it.
+
+Two things about them are different from the Quality four, and both are worth not undoing.
+
+**A trade course cannot be written from the code, and that changes what it must refuse.** The Quality
+drafts teach how this software behaves, which is knowable by reading it. These teach solvent welding,
+chemical handling, confined space entry and anchor setting. The dangerous failure is no longer a
+wrong claim about a screen — it is a **plausible number**: a cure time, a torque figure, a dose rate,
+a service interval. A technician reads it here, does not check the label, and makes a joint that
+fails under a slab in three years. So every such figure is replaced by the principle plus an
+`ask_block` naming where the real one lives, and `tests/test_technician_training_program.py` fails
+the build on an invented deadline *or* an invented frequency. Numbers that are genuinely universal —
+water at 8.34 lb/gal, a Class A GFCI at 4–6 mA, 512 DMX channels to a universe, 19.5–23.5% oxygen —
+are stated plainly, because hedging a fact teaches nothing either.
+
+**The badges are inert, and it is worth following the chain rather than assuming it.**
+`gamification_enabled` is **1** on production (measured 2026-09-15, along with `training_enabled = 1`,
+`notifications_enabled = 1`, `auto_assign_enabled = 0`, `portal_enabled = 0` — note that
+`auto_assign_enabled` read **1** a day earlier, so it is a checkbox somebody ticks, not a guardrail).
+So awarding is live. The ten badges are nonetheless unearnable: a `Course Completed` badge is earned
+when `gamification._badge_is_earned` finds its `criteria_course` among a learner's completions, a
+completion is a submitted `Training Completion`, and nobody completes a course that was never
+published. **One decision — adopting the course — turns on its assignment, its certificate and its
+badge together.**
+
+`Course Completed` is also the *only* criterion that means "this specific course"; a count-based one
+would be satisfied by any other course on the site, which would turn "a badge for each module" into
+"a badge for finishing anything". An unrecognised `criteria_type` awards nothing at all, so a drifted
+literal would be ten badges nobody can ever earn with nothing on screen to say so — the test checks
+the literal against `training_badge.json` rather than against a memory of it.
+
+The artwork is ten SVGs in
+[`../public/images/training/badges/`](../public/images/training/badges/), written straight into
+`Training Badge.image` as an `/assets` path. They are **static app assets, not uploaded Files** —
+that field is an `Attach Image` and stores a URL, so there is no `File` record to create and nothing
+to re-parent. Two things follow. A raw `/assets` path is served **immutable for a year with no
+content hash**, so a badge that is redrawn needs a *new filename* rather than an edit in place, or
+the change never reaches a browser that already cached it. And an `Attach Image` pointing at nothing
+renders as an empty box — no broken-image icon, no error, nothing in the log — so the test asserts
+every one of the ten files is actually on disk, and that none of the SVGs carries a script, an
+external reference or an embedded raster.
+
+There is deliberately **no capstone badge** for finishing all ten. The mechanism that would carry it,
+`Category Completed`, means *every published course in the category*, and these ten share their
+categories with courses already on the site — so its meaning would change whenever somebody adds a
+course. A criterion that drifts is worse than no badge.
 
 ### Batches (cohorts)
 

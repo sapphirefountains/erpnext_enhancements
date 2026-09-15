@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Module 9: Jobsite Safety, Best Practices, &amp; Code Requirements">
+<title>Module 9 — Jobsite Safety, Best Practices, &amp; Code Requirements</title>
+<circle cx="128" cy="128" r="124" fill="#00263e"/>
+<circle cx="128" cy="128" r="102" fill="#00111c"/>
+<circle cx="128" cy="128" r="112" fill="none" stroke="#f8f8f8" stroke-width="2" opacity=".55"/>
+<circle cx="128" cy="128" r="102" fill="none" stroke="#f8f8f8" stroke-width="1.5" opacity=".35"/>
+
+<path d="M84 140V124a44 44 0 0 1 88 0v16" fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M66 140h124a6 6 0 0 1 6 6v6a6 6 0 0 1-6 6H66a6 6 0 0 1-6-6v-6a6 6 0 0 1 6-6z" fill="#f8f8f8"/>
+<path d="M118 82h20v34h-20z" fill="#00a0df"/>
+<path d="M96 128c8-6 20-8 32-8s24 2 32 8" fill="none" stroke="#00a0df" stroke-width="5" stroke-linecap="round"/>
+<rect x="96" y="212" width="64" height="30" rx="15" fill="#f8f8f8"/>
+<g transform="translate(116.0 218) scale(1.0)" fill="none" stroke="#00111c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 4.5a3.5 3.5 0 0 1 7 0v9a3.5 3.5 0 0 1-7 0z" transform="translate(0 0)"/><path d="M2 17.5c5.6-2.1 6.5-7.5 6.5-12.1a4 4 0 0 0-8 0 4 4 0 0 0 7.6 1.8" transform="translate(14 0)"/></g>
+</svg>

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Module 4: Materials of Water Features">
+<title>Module 4 — Materials of Water Features</title>
+<circle cx="128" cy="128" r="124" fill="#55265f"/>
+<circle cx="128" cy="128" r="102" fill="#00111c"/>
+<circle cx="128" cy="128" r="112" fill="none" stroke="#f8f8f8" stroke-width="2" opacity=".55"/>
+<circle cx="128" cy="128" r="102" fill="none" stroke="#f8f8f8" stroke-width="1.5" opacity=".35"/>
+
+<g fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="70" y="128" width="36" height="24" rx="3"/>
+  <rect x="112" y="128" width="36" height="24" rx="3"/>
+  <rect x="154" y="128" width="36" height="24" rx="3"/>
+  <rect x="91" y="158" width="36" height="24" rx="3"/>
+  <rect x="133" y="158" width="36" height="24" rx="3"/>
+</g>
+<rect x="112" y="128" width="36" height="24" rx="3" fill="#b14fc5"/>
+<path d="M96 106l44-16 26 8-36 26z" fill="#f8f8f8"/>
+<path d="M160 94l10-24" fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round"/>
+<path d="M168 72l8-20" fill="none" stroke="#b14fc5" stroke-width="10" stroke-linecap="round"/>
+<rect x="96" y="212" width="64" height="30" rx="15" fill="#f8f8f8"/>
+<g transform="translate(116.0 218) scale(1.0)" fill="none" stroke="#00111c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 4.5a3.5 3.5 0 0 1 7 0v9a3.5 3.5 0 0 1-7 0z" transform="translate(0 0)"/><path d="M7.5 18V0L.5 12.5h10" transform="translate(14 0)"/></g>
+</svg>

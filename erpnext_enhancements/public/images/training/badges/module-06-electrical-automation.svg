@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Module 6: Electrical Components, Automation, &amp; Field Diagnostics">
+<title>Module 6 — Electrical Components, Automation, &amp; Field Diagnostics</title>
+<circle cx="128" cy="128" r="124" fill="#b14fc5"/>
+<circle cx="128" cy="128" r="102" fill="#00111c"/>
+<circle cx="128" cy="128" r="112" fill="none" stroke="#f8f8f8" stroke-width="2" opacity=".55"/>
+<circle cx="128" cy="128" r="102" fill="none" stroke="#f8f8f8" stroke-width="1.5" opacity=".35"/>
+
+<path d="M140 52l-38 66h26l-12 46 44-68h-26l16-44z" fill="#b14fc5" stroke="#f8f8f8" stroke-width="5" stroke-linejoin="round"/>
+<g fill="none" stroke="#f8f8f8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M100 178h56M110 190h36M120 202h16"/>
+</g>
+<rect x="96" y="212" width="64" height="30" rx="15" fill="#f8f8f8"/>
+<g transform="translate(116.0 218) scale(1.0)" fill="none" stroke="#00111c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 4.5a3.5 3.5 0 0 1 7 0v9a3.5 3.5 0 0 1-7 0z" transform="translate(0 0)"/><path d="M8 .5C2.4 2.6 1.5 8 1.5 12.6a4 4 0 0 0 8 0 4 4 0 0 0-7.6-1.8" transform="translate(14 0)"/></g>
+</svg>

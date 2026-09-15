@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Module 1: Piping &amp; Hydraulics">
+<title>Module 1 — Piping &amp; Hydraulics</title>
+<circle cx="128" cy="128" r="124" fill="#00a0df"/>
+<circle cx="128" cy="128" r="102" fill="#00111c"/>
+<circle cx="128" cy="128" r="112" fill="none" stroke="#f8f8f8" stroke-width="2" opacity=".55"/>
+<circle cx="128" cy="128" r="102" fill="none" stroke="#f8f8f8" stroke-width="1.5" opacity=".35"/>
+
+<g>
+  <path d="M78 92h62a14 14 0 0 1 14 14v66" fill="none" stroke="#f8f8f8" stroke-width="30" stroke-linecap="butt" stroke-linejoin="round"/>
+  <path d="M78 92h62a14 14 0 0 1 14 14v66" fill="none" stroke="#00111c" stroke-width="18" stroke-linecap="butt" stroke-linejoin="round"/>
+  <rect x="66" y="70" width="16" height="44" rx="3" fill="#f8f8f8"/>
+  <rect x="132" y="166" width="44" height="16" rx="3" fill="#f8f8f8"/>
+  <path d="M84 92h56a14 14 0 0 1 14 14v46" fill="none" stroke="#00a0df" stroke-width="4" stroke-linecap="round" stroke-dasharray="9 8"/>
+  <path d="M146 158l8 10 8-10" fill="none" stroke="#00a0df" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<rect x="96" y="212" width="64" height="30" rx="15" fill="#f8f8f8"/>
+<g transform="translate(116.0 218) scale(1.0)" fill="none" stroke="#00111c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 4.5a3.5 3.5 0 0 1 7 0v9a3.5 3.5 0 0 1-7 0z" transform="translate(0 0)"/><path d="M2 3.5 6 0v18" transform="translate(14 0)"/></g>
+</svg>

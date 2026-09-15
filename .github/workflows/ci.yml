@@ -633,6 +633,21 @@ jobs:
       # assignment rule names a Position or Role that actually exists.
       - name: Quality course drafts (Draft is the only thing between these and real inboxes)
         run: python -m unittest erpnext_enhancements.tests.test_quality_training_courses -v
+      # The ten Technician Program drafts -- Sapphire's own ten-module outline, 72 lessons, a quiz on
+      # every one, one badge per module. Its own step for the same reason as the suite above: it
+      # imports that suite's frappe stub and `python -m unittest` shares a process. It guards the
+      # same Draft property, plus two the Quality suite has no equivalent of, because these teach a
+      # TRADE rather than this software. A wrong claim about a screen is embarrassing; a plausible
+      # cure time, dose rate or torque figure is a joint that fails under a slab in three years and a
+      # technician who never thought to check the label. So: no invented numbers (the notice sends
+      # every reader to the label, the data sheet and the specification, and every module defers at
+      # least once through ask_block), no invented company frequency ("clean it every 6 weeks" is a
+      # policy nobody set that reads as one that was), and no quiz setting its own pass score. Also
+      # pins the badges: `Course Completed` is the ONLY criterion that means *this* course, and an
+      # unrecognised one awards nothing -- so a drifted literal is ten badges nobody can ever earn,
+      # silently. Checked against the DocType JSON rather than against a memory of it.
+      - name: Technician program drafts (a trade course must not invent a number)
+        run: python -m unittest erpnext_enhancements.tests.test_technician_training_program -v
       # The publish_training_course assistant tool. Guards the two ways it could be
       # wrong invisibly: a change_type literal that does not match the DocType (the
       # option that invalidates every completion is one typo away), and a risk
