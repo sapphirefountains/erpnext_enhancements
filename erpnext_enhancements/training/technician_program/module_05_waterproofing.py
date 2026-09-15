@@ -1,9 +1,24 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Module 5 — Waterproofing."""
+"""Module 5 — Waterproofing.
 
-from erpnext_enhancements.training.technician_program._common import ask_block, notice_block
+Rewritten against Sapphire's own document, *Module 4: Structural Masonry, Waterproofing, &
+Tile*. That document spans two courses: its lesson 4.1, the membrane and the sand broadcast, is
+the first lesson here, and the masonry, mortar, tile, coping and scale-removal material is used
+in Module 4. Where it states a figure, the figure is Sapphire's -- the 28-day minimum on a new
+pour, saturated surface dry, typically 30 to 40 mils a coat, the second coat crossed at 90
+degrees, oven-dried silica sand into the second coat while it is wet.
+
+Its rule against bridging a structural expansion joint with tile is carried in the movement-joint
+lesson here as well as in Module 4, because that is where this course details the joint.
+
+The other two lessons -- submersible enclosures and potting, and structural vessels -- go beyond
+what the document reaches. They keep the general-practice content they had, and the rule that
+went with it: no invented figure where a label, a drawing or an engineer owns the answer.
+"""
+
+from erpnext_enhancements.training.technician_program._common import ask_block, sourced_notice_block
 
 COURSE = {
 	"course": {
@@ -36,10 +51,10 @@ COURSE = {
 		{
 			"lesson_title": "Submerged waterproof membranes and sand broadcasting",
 			"chapter": 0,
-			"estimated_minutes": 18,
-			"summary": "What is actually holding the water, how a membrane fails, and the step that decides whether tile stays on.",
+			"estimated_minutes": 20,
+			"summary": "What is actually holding the water, the Rule of Clean the shell has to pass first, the two crossed coats, and the sand that decides whether tile stays on.",
 			"blocks": [
-				notice_block(),
+				sourced_notice_block(),
 				{
 					"block_type": "Rich Text",
 					"heading": "The membrane is the thing holding the water",
@@ -61,11 +76,17 @@ COURSE = {
 						"the seam is the part that leaks.</p>"
 						"<p>Neither one is more waterproof than the other. They just move the risk to "
 						"a different place.</p>"
+						"<p><b>Sapphire's document works in the first of the two.</b> It specifies a "
+						"fluid-applied waterproofing membrane — it names <b>Basecrete</b> and "
+						"<b>Thoroseal</b> as the kind of material — mixed on site and brushed or "
+						"rolled onto the shell. Everything below is written for that, and the fact "
+						"that its thickness is entirely whatever you put on is exactly why the rest "
+						"of this lesson keeps coming back to measurement.</p>"
 					),
 				},
 				{
 					"block_type": "Rich Text",
-					"heading": "A membrane fails where it stops, and where it is thin",
+					"heading": "A membrane fails where it stops",
 					"content": (
 						"<p>Water does not need a big hole and it does not need much pressure. It "
 						"needs one place the barrier is not, and it will find it.</p>"
@@ -82,39 +103,49 @@ COURSE = {
 						"thin over an edge. A liquid system carries a reinforcing fabric bedded into "
 						"the coating at those lines, and a sheet system has pre-formed corner pieces "
 						"for the same reason. Both are part of the system, not an upgrade.</p>"
-						"<p><b>Thickness is a measurement, not an impression.</b> A liquid membrane "
-						"has a required <b>wet film thickness</b>, and you check it with a wet film "
-						"gauge while the coating is still wet, because once it cures there is nothing "
-						"left to measure without cutting it. Coats go on in <b>alternating "
-						"directions</b> — the second crossing the first — so that a streak, a holiday "
-						"or a line the roller missed in one coat is covered by the next. A membrane "
-						"that looks continuous and is half thickness over the high spots of an uneven "
-						"slab is thin exactly where it can least afford to be, and thin is where "
-						"pinholes are. It will pass a casual look every time.</p>"
+						"<p><b>And it fails at the cold joint.</b> The line where the floor pour meets "
+						"the wall pour is the one place in a basin where two separate placements of "
+						"concrete are asked to be one wall. Sapphire's document singles it out: when the "
+						"membrane goes on, that joint gets extra attention rather than the same pass as "
+						"everything else.</p>"
 					),
 				},
 				{
 					"block_type": "Callout",
 					"callout_tone": "Warning",
-					"heading": "Nothing bonds to a substrate that is not ready",
+					"heading": "The Rule of Clean, and the condition the concrete has to be in",
 					"content": (
-						"<p>A membrane is only as good as the surface under it, and four things have "
-						"to be true before any of it goes on.</p>"
-						"<p><b>Sound.</b> If the top skin of the slab can be pulled off, the membrane "
-						"will pull it off. Laitance — the weak, dusty layer that floats to the surface "
-						"of concrete — is the usual culprit, and so is honeycombing at the base of a "
-						"wall.</p>"
-						"<p><b>Clean.</b> Curing compound, form release, oil, dust and old adhesive "
-						"all sit between the membrane and the concrete and stop the bond happening "
-						"there. Most of them are invisible on a grey slab.</p>"
-						"<p><b>Profiled.</b> A steel-trowelled surface is polished. Most systems want "
-						"a specific surface profile, produced by grinding or shot blasting, so there "
-						"is texture for the coating to key into.</p>"
-						"<p><b>Dry enough.</b> Concrete keeps giving off moisture long after it looks "
-						"dry. Coat over a slab that is still emitting and the vapour pushes the "
-						"membrane off the substrate from underneath — blisters, days later, on work "
-						"that went on perfectly. What counts as dry enough, and how it is measured, is "
-						"on the data sheet.</p>"
+						"<p>Sapphire's document calls this <b>the Rule of Clean</b>. A membrane is only "
+						"as good as the surface under it, and none of this is optional.</p>"
+						"<p><b>Cured.</b> A new pour gets a <b>minimum of 28 days</b> before anything "
+						"is applied to it. Green concrete is still shrinking, and a membrane put on it "
+						"is a film stretched over a surface that has not finished moving.</p>"
+						"<p><b>Structurally sound.</b> If the top skin of the slab can be pulled off, "
+						"the membrane will pull it off. Honeycombing at the base of a wall is the same "
+						"problem with a different name.</p>"
+						"<p><b>Clean.</b> Free of <b>laitance</b> — the weak, dusty layer that floats "
+						"to the surface of concrete — and of form-release agents, curing compounds, "
+						"oil, dirt and dust. Every one of those sits between the membrane and the "
+						"concrete and stops the bond happening there, and most of them are invisible "
+						"on a grey slab.</p>"
+						"<p><b>Cracks chased and filled.</b> Any structural crack is <b>chased out</b>, "
+						"filled with an <b>engineering-grade waterproof hydraulic cement</b>, and "
+						"allowed to cure before the membrane goes over it. A crack that is simply "
+						"coated over is a crack with a film stretched across it, and the film is the "
+						"part that tears.</p>"
+						"<p><b>Profiled.</b> This one is not on Sapphire's list; it is on most "
+						"membrane systems' data sheets. A steel-trowelled surface is polished, and "
+						"where the system calls for a surface profile it is produced by grinding or "
+						"shot blasting, so there is texture for the coating to key into.</p>"
+						"<p><b>Damp, not dry.</b> The concrete goes into a <b>saturated surface dry "
+						"(SSD)</b> condition before application: damp, with <b>no standing pooling "
+						"water</b> on the floor. Read that twice, because the instinct on any other "
+						"coating job is to get the substrate as dry as possible, and here that "
+						"instinct is wrong — Sapphire's document says SSD and SSD is what we do. A "
+						"bone-dry slab drinks the mix water straight out of a cementitious membrane "
+						"before it has finished hydrating, and you get a chalky, under-cured coat that "
+						"looks fine. Standing water does the opposite and thins the material where it "
+						"has pooled. Damp, no puddles.</p>"
 						"<p>When the substrate was not sound this does not look like a bonding "
 						"failure. It looks like the membrane failed — until you turn the piece over "
 						"and the top few millimetres of concrete are stuck to the back of it.</p>"
@@ -122,30 +153,64 @@ COURSE = {
 				},
 				{
 					"block_type": "Rich Text",
-					"heading": "Sand in the last wet coat is what the mortar grips",
+					"heading": "Mixing it, and the two coats",
 					"content": (
-						"<p>Many liquid membranes — epoxy, urethane and polyurea systems especially — "
-						"cure to a smooth, slightly rubbery film that thinset mortar has almost "
-						"nothing to hold on to, and those systems call for a sand broadcast. Others, "
-						"including the tile-industry membranes tested to ANSI A118.10, are made for "
-						"mortar to bond to the cured film directly. Which one you have is on the data "
-						"sheet, and it is not a field choice.</p>"
-						"<p>Where the system calls for it, while the <b>final coat is still wet</b>, "
-						"clean dry sand is broadcast into it — thrown so it lands and settles rather "
-						"than poured in a heap — until the surface will not take any more. The resin "
+						"<p><b>Mix it with a heavy-duty drill mixer</b>, to a smooth, lump-free "
+						"consistency. A lump is a place where the film is a different thickness and a "
+						"different material from everything around it, and it is still a lump after it "
+						"cures. A light-duty drill stalls in this material and leaves you mixing by "
+						"hope.</p>"
+						"<p><b>First coat.</b> Apply it with a <b>heavy masonry brush</b> or a "
+						"specialised roller, at the manufacturer's specified thickness — Sapphire's "
+						"document puts that at <b>typically 30 to 40 mils per coat</b>. A mil is a "
+						"thousandth of an inch, so that is not a thickness anybody judges by eye: check "
+						"it with a <b>wet film gauge while the coating is still wet</b>, because once "
+						"it cures there is nothing left to measure without cutting it. Work the "
+						"material uniformly across the floor and <b>wrap it up the basin walls</b>, "
+						"paying extra attention to the <b>cold joints where the floor meets the "
+						"wall</b>.</p>"
+						"<p><b>Second coat, at 90° to the first.</b> Once the first coat is <b>dry to "
+						"the touch</b>, apply the second <b>perpendicular</b> to the direction you ran "
+						"the first. That cross-hatching is the whole point of two coats: a streak, a "
+						"holiday or a line the brush missed running one way is covered by a coat "
+						"running the other, and that is what guarantees complete coverage without "
+						"pinholes. Two coats brushed in the same direction repeat the same misses "
+						"twice.</p>"
+						"<p>A membrane that looks continuous and is half thickness over the high spots "
+						"of an uneven slab is thin exactly where it can least afford to be, and thin is "
+						"where pinholes are. It passes a casual look every time.</p>"
+					),
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "Sand in the second wet coat is what the mortar grips",
+					"content": (
+						"<p>A cured waterproofing membrane is smooth, and smooth is the problem. "
+						"<b>Smooth membranes repel standard tile thinsets and mortars.</b> The bed sits "
+						"on the film rather than gripping it, and under water pressure it delaminates — "
+						"which is a tile job coming off a wall that was, in every other respect, "
+						"correct.</p>"
+						"<p>So while the <b>second coat is still wet and tacky</b>, aggressively "
+						"broadcast <b>oven-dried silica sand</b> over the entire surface until it is "
+						"fully saturated. Throw it so it lands and settles rather than pouring it in a "
+						"heap, and keep going until the surface will not take any more. The coating "
 						"cures around the lower half of each grain and leaves the upper half standing "
-						"proud. That gives the mortar a <b>mechanical key</b>: it is gripping a rough "
-						"surface instead of trying to stick to a slick one.</p>"
-						"<p>Two things make or break it.</p>"
-						"<p><b>The sand has to be clean and dry.</b> Damp sand clumps, does not "
+						"proud. That is a <b>mechanical keyway</b>: a rough, sandpaper-like texture the "
+						"mud bed or the stone mortar can grip permanently, instead of a slick face it "
+						"can only sit against.</p>"
+						"<p><b>The sand is oven-dried for a reason.</b> Damp sand clumps, does not "
 						"broadcast evenly, and carries whatever it picked up into the coating. Dirty "
 						"sand is a bond breaker in its own right.</p>"
-						"<p><b>The excess has to come off.</b> Once the coat has cured, every grain "
-						"that is not locked into the resin is loose, and loose sand under a mortar bed "
-						"is exactly the same failure as dust: the mortar bonds to sand, and the sand "
-						"bonds to nothing. Sweep and vacuum it off before anything is set.</p>"
-						"<p>This is a five-minute step at the end of a long day and it is the step "
-						"that decides whether the tile is still on the wall years from now.</p>"
+						"<p><b>Then the excess has to come off.</b> Once the membrane has cured, sweep "
+						"away all loose, unbonded sand before any tile is laid. Every grain that is not "
+						"locked into the coat is loose, and loose sand under a mortar bed is exactly "
+						"the same failure as dust: the mortar bonds to the sand, and the sand bonds to "
+						"nothing.</p>"
+						"<p>Some tile-industry membranes are sold as taking thinset directly on the "
+						"cured film. Sapphire's document does not offer that as a choice on a submerged "
+						"basin — the broadcast goes in. It is a five-minute step at the end of a long "
+						"day, and it is the step that decides whether the tile is still on the wall "
+						"years from now.</p>"
 					),
 				},
 				{
@@ -178,18 +243,34 @@ COURSE = {
 						"the hole.</p>"
 					),
 				},
+				{
+					"block_type": "Checklist",
+					"heading": "Demonstrated to a Lead Installer before you are signed off",
+					"items": [
+						"Prepare a mock concrete profile to a proper saturated surface dry (SSD) condition",
+						"Mix and apply a two-coat fluid waterproofing membrane layout with zero visible pinholes or holidays",
+						"Execute a uniform sand-broadcast keyway across a wet membrane coat, achieving an even sandpaper finish",
+					],
+				},
 				ask_block(
-					"The thickness, the coats, the cure and the sand are the product's",
-					"<p>Required wet film thickness, the number of coats, how long between coats, how "
-					"long before it can be flooded, which primer it needs, which sand grade to "
-					"broadcast, and what surface profile the substrate has to be brought to — all of "
-					"those belong to the <b>membrane system you are actually holding</b>, and they "
-					"differ between products that look identical in the bucket.</p>"
-					"<p>Read the data sheet and the approved submittal for this job. Mixing products "
-					"across systems — one maker's primer under another's membrane, a fabric that is "
-					"not the one it was tested with — voids the warranty and is a genuine "
-					"incompatibility, not a paperwork problem. How long the flood test is held, and "
-					"what loss is acceptable, come from the specification.</p>",
+					"Sapphire's document gives the shape and the figures; the pail gives the rest",
+					"<p>The numbers above are Sapphire's own: 28 days on a new pour, saturated surface "
+					"dry before you start, two coats crossed at 90°, oven-dried silica sand into the "
+					"second while it is still wet, and a typical 30 to 40 mils a coat. Use them.</p>"
+					"<p>What the document cannot give you is the rest of the data sheet for the "
+					"product in front of you — starting with the thickness. Sapphire's own wording is "
+					"<b>the manufacturer's specified thickness</b>, with 30 to 40 mils given as what "
+					"that typically is; where the data sheet in front of you says something else, the "
+					"data sheet is the figure and 30 to 40 mils is the sanity check. How long between "
+					"coats, how long before it can be flooded, whether it needs a primer, how much "
+					"water goes into the mix, which grade of silica sand, and what surface profile the "
+					"substrate has to be brought to belong there too, and they differ between products "
+					"that look identical in the bucket. Basecrete and Thoroseal are named as the kind "
+					"of material; the pail on this job is the one that governs.</p>"
+					"<p>Mixing products across systems — one maker's primer under another's membrane, "
+					"a fabric that is not the one it was tested with — voids the warranty and is a "
+					"genuine incompatibility, not a paperwork problem. How long the flood test is "
+					"held, and what loss is acceptable, come from the specification.</p>",
 				),
 			],
 			"quiz": {
@@ -215,16 +296,75 @@ COURSE = {
 						],
 					},
 					{
-						"question": "Why is clean dry sand broadcast into the final coat of a liquid-applied membrane while it is still wet?",
-						"type": "Single Choice",
+						"question": "A new concrete basin is ready for its membrane. Which of these does Sapphire's Rule of Clean require first?",
+						"type": "Multiple Choice",
 						"explanation": (
-							"On the systems that call for it, the cured membrane is too smooth for thinset to bond "
-							"to. Sand half-locked into the resin leaves a rough surface the mortar can key into "
-							"mechanically."
+							"Sapphire's document is specific: a minimum 28-day cure on a new pour, the surface free "
+							"of laitance, form release, curing compounds, dirt and dust, structural cracks chased "
+							"out and filled with an engineering-grade waterproof hydraulic cement and allowed to "
+							"cure, and the concrete at saturated surface dry — damp, with no standing pooling "
+							"water. Drying the slab right out is the instinct from other coating work and it is the "
+							"wrong one here: a bone-dry slab pulls the mix water out of the membrane before it has "
+							"hydrated."
 						),
 						"options": [
 							{
-								"text": "To leave a rough surface the mortar bed can key into mechanically",
+								"text": "A minimum 28-day cure on a new pour before anything is applied",
+								"is_correct": True,
+							},
+							{
+								"text": "Laitance, form-release agents and curing compounds removed from the surface",
+								"is_correct": True,
+							},
+							{
+								"text": "Structural cracks chased out, filled with an engineering-grade waterproof hydraulic cement and left to cure",
+								"is_correct": True,
+							},
+							{
+								"text": "The slab dried out as far as possible, so there is no moisture left in the concrete",
+								"is_correct": False,
+							},
+						],
+					},
+					{
+						"question": "The second coat of membrane goes on perpendicular — at 90° to the first — once the first is dry to the touch. What does that cross-hatching achieve?",
+						"type": "Single Choice",
+						"explanation": (
+							"A streak, a holiday or a line the brush missed running one way is covered by a coat "
+							"running the other. Two coats brushed in the same direction repeat the same misses "
+							"twice, which is how a membrane ends up continuous to look at and pinholed in fact."
+						),
+						"options": [
+							{
+								"text": "Complete coverage without pinholes — a miss in one direction is covered by the coat crossing it",
+								"is_correct": True,
+							},
+							{
+								"text": "The required film thickness in one pass, so the wet film gauge is not needed",
+								"is_correct": False,
+							},
+							{
+								"text": "A mechanical key between the two coats, which is what the sand broadcast would otherwise provide",
+								"is_correct": False,
+							},
+							{
+								"text": "A faster cure, because the first coat is still releasing water when the second goes on",
+								"is_correct": False,
+							},
+						],
+					},
+					{
+						"question": "Why is oven-dried silica sand broadcast into the second coat while it is still wet and tacky?",
+						"type": "Single Choice",
+						"explanation": (
+							"A smooth cured membrane repels standard tile thinsets and mortars, and a bed that is "
+							"only sitting on the film delaminates under water pressure. Sand half-locked into the "
+							"coat leaves a sandpaper-like keyway the mud bed can grip. Once it has cured, the loose "
+							"unbonded sand is swept off — the mortar would bond to it, and it bonds to nothing."
+						),
+						"options": [
+							{
+								"text": "To leave a rough mechanical keyway the mortar bed can grip, because a smooth membrane repels thinset",
 								"is_correct": True,
 							},
 							{
@@ -232,44 +372,13 @@ COURSE = {
 								"is_correct": False,
 							},
 							{
-								"text": "To absorb the excess resin so the coat cures faster",
+								"text": "To absorb the excess water so the coat cures faster",
 								"is_correct": False,
 							},
 							{
 								"text": "To protect the cured membrane from being walked on",
 								"is_correct": False,
 							},
-						],
-					},
-					{
-						"question": "Which of these will stop a membrane bonding to a concrete substrate?",
-						"type": "Multiple Choice",
-						"explanation": (
-							"Laitance is a weak layer that takes the membrane off with it, curing compound and form "
-							"release sit between the two, and a slab still emitting moisture blisters the coating "
-							"from underneath. A profiled surface is what you are trying to achieve, not a problem."
-						),
-						"options": [
-							{"text": "Laitance left on the surface of the slab", "is_correct": True},
-							{"text": "Curing compound or form release", "is_correct": True},
-							{"text": "A slab still giving off moisture", "is_correct": True},
-							{
-								"text": "A surface ground or shot blasted to the specified profile",
-								"is_correct": False,
-							},
-						],
-					},
-					{
-						"question": "Flood testing a membrane after the tile is set is acceptable, because water will still find any defect.",
-						"type": "True-False",
-						"explanation": (
-							"It may well show up, but by then the repair means taking the finish off. Water also "
-							"tracks sideways under a mortar bed, so the wet patch appears nowhere near the defect. "
-							"The test belongs on the bare membrane."
-						),
-						"options": [
-							{"text": "True", "is_correct": False},
-							{"text": "False", "is_correct": True},
 						],
 					},
 				]
@@ -615,6 +724,13 @@ COURSE = {
 						"shrinkage and restraint. <b>Penetrations</b>, where a sleeve or a pipe passes "
 						"through and the concrete was cast around something that moves differently "
 						"from it.</p>"
+						"<p>The repairs have a method, and it is not caulk. Sapphire's document is "
+						"explicit about cracks: <b>chase them out</b>, fill them with an "
+						"<b>engineering-grade waterproof hydraulic cement</b>, and let them cure before "
+						"anything is coated over them. The same document holds a new pour to a "
+						"<b>minimum 28-day cure</b> before the waterproofing starts, and puts the "
+						"concrete at <b>saturated surface dry</b> — damp, with no standing pooling "
+						"water — when it does.</p>"
 						"<p>Some of the defences are cast in and cannot be added afterwards — a "
 						"waterstop at a construction joint, a hydrophilic strip, a crystalline "
 						"admixture in the mix. If it was not in the pour it is not in the wall, and "
@@ -666,23 +782,28 @@ COURSE = {
 						"not that detail, and it is the substitution people reach for.</p>"
 						"<p>And the joint has to line up <b>all the way through</b>: through the "
 						"structure, through the waterproofing, through the mortar bed, through the "
-						"tile and the grout, with a compressible sealant at the surface. A structural "
-						"joint that gets tiled over reappears as a crack through the finish in the "
-						"same line, and the repair is the whole run.</p>"
+						"tile and the grout, with a compressible sealant at the surface. Sapphire's "
+						"document states that last part as a flat prohibition — <b>never bridge a "
+						"structural concrete expansion joint with tile</b> — and names what goes "
+						"across it instead: an approved <b>underwater-grade polyurethane or silicone "
+						"expansion sealant</b>, so the shell can flex safely without shattering the "
+						"tile lines. A structural joint that gets tiled over reappears as a crack "
+						"through the finish in the same line, and the repair is the whole run.</p>"
 					),
 				},
 				{
 					"block_type": "Checklist",
 					"heading": "Before a vessel is handed over to the finish trades",
 					"items": [
-						"The substrate is sound, clean, profiled and dry enough for the system specified",
-						"Honeycombing, tie holes and cracks have been repaired by the specified method, not filled with whatever was open",
+						"A new pour has had its minimum 28-day cure before anything was applied to it",
+						"The substrate is sound, clean, profiled, and at saturated surface dry — damp, with no standing pooling water",
+						"Honeycombing and tie holes are repaired by the specified method, and structural cracks were chased out, filled with an engineering-grade waterproof hydraulic cement and left to cure",
 						"Every penetration, sleeve and embedment is sealed and detailed",
 						"Reinforcement is bedded in at every inside corner and change of plane",
 						"Movement joints are detailed with slack, and their positions are marked so the finish trades can carry them through",
 						"The membrane turns up above the working water level everywhere, including behind coping and at overflows",
-						"Wet film thickness was checked while it was wet, or the sheet seams were inspected",
-						"Sand was broadcast where the mortar bed requires it, and the loose excess is off",
+						"Wet film thickness was checked while the coat was wet — the specified thickness, typically 30 to 40 mils a coat — and the second coat crossed the first at 90°",
+						"Oven-dried silica sand was broadcast into the second coat while it was still wet, and the loose unbonded excess has been swept off",
 						"The vessel has been filled and held, with the level read against a fixed reference and evaporation accounted for",
 						"Anything found by that test has been repaired and the test repeated",
 					],

@@ -1009,3 +1009,20 @@ erpnext_enhancements.patches.seed_technician_training_program
 # NULL -- so existence is asked separately with db.exists, or the patch would have skipped every
 # badge and reported success. Idempotent; a second run finds the field set and does nothing.
 erpnext_enhancements.patches.backfill_starter_badge_images
+# Brings the ten Technician Program drafts up to date with Sapphire's own module documents, which
+# arrived after v1.467.0 seeded them from the outline. It exists because neither existing path can
+# do it: seed_technician_training_program is insert-only and skips a course that is already there,
+# and author_course_from_spec can only CREATE -- create_draft_version refuses when an open draft
+# exists. So a rewritten spec would otherwise change what a fresh install gets and nothing at all
+# on prod. A rebuild re-mints lesson_key and every block_key, so it runs only on a course that is
+# still Draft, has no reviewed question, no attempt and no completion -- four guards, checked per
+# course, and any course that fails one is SKIPPED AND NAMED rather than silently passed over.
+erpnext_enhancements.patches.rebuild_technician_course_drafts
+# The Help glossary: 717 terms drawn from the ten Technician Program courses, one entry per word a
+# learner might not know. Insert-only and keyed on the term, so a definition somebody corrects stays
+# corrected. Every entry is stamped ai_generated with no reviewer and NOTHING is gated on that -- a
+# glossary entry is not an answer key, so blocking course publication on glossary review would be
+# the wrong coupling; the panel just says on the entry that nobody has checked it yet. An entry with
+# no short_definition is skipped rather than inserted: that is the field Help shows DURING a quiz,
+# and an empty box mid-question is worse than a term the panel does not know.
+erpnext_enhancements.patches.seed_training_glossary

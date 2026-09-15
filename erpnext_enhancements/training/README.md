@@ -137,6 +137,9 @@ feed it.
 - `roles.py` — granting the Training Learner role durably. Read this before
   touching role assignment; see **Access** below.
 - `quality_course_specs.py` — the four WI-075 Quality course drafts, as data.
+- `help.py` — the Help panel's server half: glossary matching, quiz-mode suppression, the gate.
+- `glossary_seed.py` — the glossary entries, as data, seeded by a patch.
+- `review.py` — the AI question review queue behind `/desk/training-review`.
 - `technician_program/` — the ten Technician Program course drafts, one module file each,
   plus the badge and assignment tables the seeding patch reads.
 - `setup.py` — starter Training Categories and badges (`after_migrate`, insert-only).
@@ -513,6 +516,47 @@ There is deliberately **no capstone badge** for finishing all ten. The mechanism
 `Category Completed`, means *every published course in the category*, and these ten share their
 categories with courses already on the site — so its meaning would change whenever somebody adds a
 course. A criterion that drifts is worse than no badge.
+
+### Help — the words in front of you, explained
+
+A learner reading about bedding a buried pipe meets *haunching*, *invert* and *thrust restraint* in
+three consecutive paragraphs. **Ask-the-author** is the right tool for *"why does this work like
+that"* and the wrong one for *"what does that word mean"*: it costs a round trip through a human and
+an afternoon of waiting, for a question whose answer never changes.
+
+So the lesson and the quiz both carry a **What does that mean?** panel ([`help.py`](help.py),
+served by `api/training.lesson_help`, rendered by `player.js`). Each entry is a
+[`Training Glossary Term`](doctype/training_glossary_term/) with a plain-English definition, the
+concept behind it, and a made-up worked example.
+
+**The glossary is shared and matched at read time**, not written per lesson. `help.py` finds which
+terms actually occur in the lesson's own content, so a term added today appears in every lesson that
+was already using the word, and a lesson written tomorrow arrives already explained. `trade_trap`
+marks the words that mean something *different* in ordinary English — bonding, aggressive, shock,
+weir, invert, hardness — and those render above the definition, because somebody who believes they
+already know the word will not read the definition underneath it.
+
+**Help stays open during a quiz, showing the definition and nothing else.** That is a decision about
+what a quiz measures: a technician who can bed a pipe correctly but has never heard the word *haunch*
+should not fail a question about haunching. Two restrictions, different in kind — `explanation` and
+`example` are **never assembled** in quiz mode, so no version of the reply ever held them; and every
+term whose text appears anywhere in **the lesson's whole quiz pool** is withheld.
+
+The pool rather than the questions this learner was drawn, and that is forced rather than chosen:
+`Training Attempt Question` rows are written at *grading* time, so mid-quiz the server cannot
+discover what was drawn — and letting the client name them is not an alternative, because a client
+that declares its own suppression list can declare an empty one.
+
+**Be honest about the ceiling.** `in_quiz` is asserted by the client and a caller that omits it gets
+the full payload. That is not the threat: somebody who wants the answer can read the options in
+front of them, or open the lesson in a second tab, long before they think to forge a flag. What this
+prevents is the panel *handing* somebody the answer to the question they are staring at, and that is
+all it claims — the same honesty the module owes when it labels watch coverage "watched".
+
+`Training Glossary Term` carries **no DocPerm for Training Learner**, the same stance taken on
+`Training Question`, so `/api/resource` refuses them the raw table and the rules above are the only
+way in. The number of terms withheld is returned and shown on screen: a panel that silently drops
+words teaches a learner that Help is unreliable, where one that states the rule teaches the rule.
 
 ### Reviewing AI-drafted questions
 

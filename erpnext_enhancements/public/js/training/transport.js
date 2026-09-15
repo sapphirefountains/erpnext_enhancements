@@ -100,6 +100,12 @@
 			// directly: PREFIX is single, and this map is the one place endpoint names appear.
 			askQuestion: "ask_lesson_question",
 			lessonQuestions: "lesson_questions",
+			// Help. Ask-the-author answers "why does this work like that"; this answers
+			// "what does that word mean", which has the same answer every time and should
+			// not cost a round trip through a human. Dialled with the question on screen
+			// when there is one -- the server reads that question itself to decide what to
+			// withhold, so the panel stays open during a quiz without becoming an open book.
+			lessonHelp: "lesson_help",
 			// Work submissions (WI-071 Phase F). The learner uploads the file through
 			// Frappe's own upload_file (a different prefix -- see transport.uploadFile
 			// below) and then this hands its URL in. Grading is not here: it is a Desk

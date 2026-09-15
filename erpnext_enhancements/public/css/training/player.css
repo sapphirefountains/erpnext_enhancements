@@ -791,7 +791,7 @@
 }
 
 .tr-queue-age.is-stale {
-	color: var(--tr-danger, #b42318);
+	color: var(--tr-bad, #b42318);
 	font-weight: 600;
 }
 
@@ -2905,6 +2905,104 @@
  * Collapsed by default: a lesson is a place to watch a video, and a permanently open
  * form under every one of them competes with the thing the learner came for.
  */
+/* Help — the glossary panel, above Ask-the-author on a lesson and below the quiz.
+ *
+ * Same disclosure shape as .tr-qa and the leaderboard, so the three collapsed panels a
+ * learner meets read as one family rather than three features. Colours come from the
+ * declared palette with literal fallbacks, the way the rest of this stylesheet does it,
+ * because player.css is pulled into the authoring canvas too and a var() that resolves
+ * to nothing there would render the panel unstyled rather than merely off-palette. */
+.tr-help {
+	margin-top: 1.5rem;
+	border-top: 1px solid var(--tr-border, #d8dde2);
+	padding-top: 1rem;
+}
+
+.tr-help-toggle {
+	font-weight: 600;
+}
+
+.tr-help-body {
+	margin-top: 0.75rem;
+}
+
+.tr-help-term {
+	padding: 0.75rem 0;
+	border-bottom: 1px solid var(--tr-border, #d8dde2);
+}
+
+.tr-help-term:last-child {
+	border-bottom: 0;
+}
+
+.tr-help-word {
+	margin: 0 0 0.25rem;
+	font-size: 1rem;
+	font-weight: 700;
+	color: var(--tr-text, #17212b);
+}
+
+/* The trap line sits ABOVE the definition, and is styled to interrupt. Somebody who
+ * believes they already know the word does not read the definition underneath it —
+ * telling them first that it does not mean what they think is the thing that makes
+ * them read on. */
+.tr-help-trap {
+	margin: 0 0 0.35rem;
+	padding: 0.35rem 0.5rem;
+	border-left: 3px solid var(--tr-warn, #d97706);
+	background: var(--tr-warn-soft, #fef3c7);
+	color: var(--tr-text, #17212b);
+	font-size: 0.9rem;
+}
+
+.tr-help-plain {
+	margin: 0 0 0.35rem;
+	color: var(--tr-text, #17212b);
+}
+
+.tr-help-more {
+	margin: 0 0 0.35rem;
+	color: var(--tr-muted, #5c6670);
+	font-size: 0.92rem;
+}
+
+.tr-help-example {
+	margin: 0 0 0.35rem;
+	color: var(--tr-muted, #5c6670);
+	font-size: 0.92rem;
+}
+
+.tr-help-example-label {
+	font-weight: 600;
+	color: var(--tr-text, #17212b);
+}
+
+.tr-help-seealso {
+	margin: 0;
+	color: var(--tr-muted, #5c6670);
+	font-size: 0.85rem;
+}
+
+.tr-help-draft {
+	margin: 0.35rem 0 0;
+	color: var(--tr-muted, #5c6670);
+	font-size: 0.8rem;
+	font-style: italic;
+}
+
+/* Why something is missing, not just that it is. A panel that silently drops words
+ * teaches a learner that Help is unreliable; one that states the rule teaches the rule. */
+.tr-help-note {
+	margin: 0.75rem 0 0;
+	color: var(--tr-muted, #5c6670);
+	font-size: 0.85rem;
+}
+
+.tr-help-error {
+	margin: 0;
+	color: var(--tr-bad, #b42318);
+}
+
 .tr-qa {
 	margin-top: 1.5rem;
 	border-top: 1px solid var(--tr-border, #d8dde2);

@@ -1433,6 +1433,9 @@
 				main.appendChild(renderSubmission(lesson));
 			}
 
+			// Above Ask-the-author, deliberately: a learner stuck on a word should meet the
+			// answer that already exists before the one that costs somebody an afternoon.
+			main.appendChild(renderHelp(lesson, false));
 			main.appendChild(renderQuestions(lesson));
 
 			renderBottomBar();
@@ -1446,6 +1449,19 @@
 		// it, so the feature shipped and then did nothing.
 
 		var qaState = { lessonKey: null, open: false, busy: false, data: null, error: null };
+
+		// ------------------------------------------------------------------ help
+		//
+		// Ask-the-author answers "why does this work like that". This answers "what does
+		// that word mean", which has the same answer every time and should not cost a
+		// round trip through a human and an afternoon of waiting.
+		//
+		// Keyed on lesson AND on quiz mode, because the two payloads are genuinely
+		// different: during a quiz the server sends definitions only and withholds every
+		// term that appears in the lesson's quiz pool. Reusing a lesson-mode payload on
+		// the quiz screen would show the explanations the server just declined to send.
+		var helpState = { key: null, inQuiz: false, open: false, busy: false, data: null, error: null };
+		var helpWrap = null;
 
 		// The lesson-view work-submission box (WI-071 Phase F). Reset per lesson, same
 		// as qaState: a different lesson is a different hand-in.
@@ -1577,6 +1593,174 @@
 				submitted_on: t("just now"),
 				graded_on: "",
 			});
+		}
+
+		function loadHelp(key, inQuiz) {
+			helpState.busy = true;
+			helpState.error = null;
+			repaintHelp();
+			call("lessonHelp", {
+				// state.courseName, never state.course.name: the course object carries no
+				// `name` key, so that read is undefined and JSON.stringify drops the
+				// argument entirely. That exact bug shipped on Ask-the-author.
+				course: state.courseName,
+				lesson_key: key,
+				// Asserted by the client, and the server treats it as a request to show LESS.
+				// See training/help.py: this stops the panel handing somebody the answer to
+				// the question in front of them; it is not a lock, and is not described as one.
+				in_quiz: inQuiz ? 1 : 0,
+			})
+				.then(function (payload) {
+					helpState.busy = false;
+					helpState.data = payload || {};
+					repaintHelp();
+				})
+				.catch(function (err) {
+					helpState.busy = false;
+					helpState.error = (err && err.message) || t("Help could not be loaded.");
+					repaintHelp();
+				});
+		}
+
+		function repaintHelp() {
+			// Swap just this panel. Repainting the whole view would restart the lesson's
+			// entrance animation and, on the quiz screen, rebuild the question cards under
+			// somebody mid-answer.
+			if (!helpWrap || !helpWrap.parentNode) return;
+			var old = helpWrap;
+			old.parentNode.replaceChild(renderHelp(state.lesson || {}, helpState.inQuiz), old);
+		}
+
+		function renderHelp(lesson, inQuiz) {
+			var key = lesson.lesson_key || "";
+			if (helpState.key !== key || helpState.inQuiz !== !!inQuiz) {
+				helpState = {
+					key: key,
+					inQuiz: !!inQuiz,
+					open: false,
+					busy: false,
+					data: null,
+					error: null,
+				};
+			}
+
+			var wrap = el("div", "tr-help");
+			helpWrap = wrap;
+			var slug = String(key || "lesson").replace(/[^A-Za-z0-9_-]/g, "-");
+			var regionId = "help-region-" + (inQuiz ? "quiz-" : "") + slug;
+
+			var toggle = button(
+				t("What does that mean?"),
+				"tr-button tr-button-quiet tr-help-toggle",
+				function () {
+					helpState.open = !helpState.open;
+					// Fetch on first open, never on render: otherwise this is an extra round
+					// trip per lesson on a portal opened on phones, on site — the same reason
+					// the Q&A panel and the leaderboard are lazy.
+					if (helpState.open && !helpState.data && !helpState.busy) loadHelp(key, inQuiz);
+					else repaintHelp();
+				}
+			);
+			toggle.setAttribute("aria-expanded", helpState.open ? "true" : "false");
+			toggle.setAttribute("aria-controls", regionId);
+			wrap.appendChild(toggle);
+
+			var region = el("div", "tr-help-body");
+			region.id = regionId;
+			if (!helpState.open) {
+				region.hidden = true;
+				wrap.appendChild(region);
+				return wrap;
+			}
+
+			if (helpState.busy) region.appendChild(el("p", "tr-muted", t("Loading…")));
+			if (helpState.error) region.appendChild(el("p", "tr-help-error", helpState.error));
+
+			var data = helpState.data || {};
+			var terms = data.terms || [];
+
+			if (!helpState.busy && !helpState.error && !terms.length) {
+				region.appendChild(
+					el(
+						"p",
+						"tr-muted",
+						data.withheld
+							? t("Every term from this lesson is hidden while you are answering.")
+							: t("No glossary terms were found in this lesson yet.")
+					)
+				);
+			}
+
+			// `entry`, not `term`: test_training_boundary_contract only sees a key as READ when
+			// it is read off one of its RESPONSE_BINDERS, and a row bound to any other name is
+			// invisible to the scan -- which files a real read as a deliberate asymmetry.
+			terms.forEach(function (entry) {
+				region.appendChild(helpTerm(entry));
+			});
+
+			// Said out loud rather than left as a silent gap. A panel that quietly drops
+			// words teaches a learner that Help is unreliable; one that states the rule
+			// teaches them the rule.
+			if (data.withheld) {
+				region.appendChild(
+					el(
+						"p",
+						"tr-help-note",
+						fmt(
+							t("{0} more are hidden while the quiz is open, because they would give an answer away."),
+							[data.withheld]
+						)
+					)
+				);
+			}
+			if (data.more) {
+				region.appendChild(
+					el("p", "tr-help-note", fmt(t("…and {0} more terms in this lesson."), [data.more]))
+				);
+			}
+
+			wrap.appendChild(region);
+			return wrap;
+		}
+
+		function helpTerm(entry) {
+			var item = el("div", "tr-help-term");
+			item.appendChild(el("h3", "tr-help-word", entry.term || ""));
+
+			// The trap line goes ABOVE the definition on purpose. Somebody who thinks they
+			// already know the word does not read the definition — telling them first that
+			// it does not mean what they think is the only thing that makes them read on.
+			if (entry.trade_trap && entry.ordinary_meaning) {
+				item.appendChild(
+					el(
+						"p",
+						"tr-help-trap",
+						fmt(t("Not what it sounds like. In everyday English: {0}"), [entry.ordinary_meaning])
+					)
+				);
+			}
+
+			item.appendChild(el("p", "tr-help-plain", entry.short_definition || ""));
+			if (entry.explanation) item.appendChild(el("p", "tr-help-more", entry.explanation));
+			if (entry.example) {
+				var ex = el("p", "tr-help-example");
+				ex.appendChild(el("span", "tr-help-example-label", t("For example")));
+				ex.appendChild(el("span", null, " " + entry.example));
+				item.appendChild(ex);
+			}
+
+			if ((entry.see_also || []).length) {
+				item.appendChild(
+					el("p", "tr-help-seealso", t("See also") + ": " + entry.see_also.join(", "))
+				);
+			}
+
+			// A definition somebody has stood behind and one a machine wrote last week are
+			// different things to rely on when you are about to go and do the work.
+			if (entry.unreviewed) {
+				item.appendChild(el("p", "tr-help-draft", t("Drafted, not yet checked by a person.")));
+			}
+			return item;
 		}
 
 		function renderQuestions(lesson) {
@@ -2003,6 +2187,17 @@
 							},
 						}
 					);
+
+					// AFTER the mount, never before: TR.Quiz owns everything inside `main`
+					// and clears it, so a panel appended first would vanish without a trace.
+					//
+					// `true` is quiz mode. The server then sends definitions only and
+					// withholds every term whose text appears anywhere in this lesson's quiz
+					// pool -- a learner who has never met the word "haunch" can still find out
+					// what it means without being handed the answer to the question asking
+					// about it. training/help.py is honest about what that does and does not
+					// guarantee.
+					main.appendChild(renderHelp(state.lesson || { lesson_key: state.lessonKey }, true));
 				})
 				.catch(function (err) {
 					clear(main);

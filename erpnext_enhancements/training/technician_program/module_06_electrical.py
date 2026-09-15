@@ -1,17 +1,49 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Module 6 — Electrical Components, Automation & Field Diagnostics."""
+"""Module 6 — Electrical Components, Automation & Field Diagnostics.
 
-from erpnext_enhancements.training.technician_program._common import ask_block, notice_block
+Rewritten against Sapphire's own document, *Module 6: Electrical Automation & Field
+Diagnostics*. Where that document states a figure, a sequence or a rule it is used as written,
+in place of whatever this file said before: lock-out/tag-out before any sub-panel or control
+enclosure is opened, a CAT III or CAT IV meter, a supply within ±10% of specification and
+typically 120 VAC, the Splash Wizard's 24 VDC output to the manifold solenoids, 20 to 60 Ω on a
+healthy solenoid coil against 0 Ω for melted windings and OL for a snapped one, bare solid
+copper no smaller than 8 AWG, the six bonding targets and the 5-foot perimeter, copper or bronze
+split-bolts below the water line with steel fasteners forbidden outright, the four-step GFCI
+isolation ending on the MΩ range from hot line to structural ground, and the five-step potting
+protocol for a submersible lighting junction box.
+
+The document is three lessons — multimeter diagnostics, equipotential bonding, GFCI and potting
+— and this course is nine, a shape pinned by ``tests/test_technician_training_program.py``. So
+its material sits where it belongs rather than as three new lessons: the meter work is the
+multimeter lesson; bonding joins the GFCI lesson, because the document's own reason for bonding
+is the fault a GFCI cannot prevent; the solenoid coil and the controller's two voltages are
+introduced in the automation-components lesson, which is where the gear is named; and the
+potting protocol sits with junction boxes and accessibility in the electrical-equipment lesson.
+Lesson one carries ``sourced_notice_block()`` rather than the generic notice for the same
+reason the other sourced modules do — those figures are Sapphire's, not this course's.
+
+The document's closing *Technical Performance Checklist* — six field skills demonstrated to a
+Lead Installer before a technician graduates Module 6 — is carried whole at the end of the last
+lesson.
+
+The lessons it does not reach — conduit and pulling wire, sensors, DMX, ladder logic and program
+troubleshooting — keep the general-practice content they had, and the rule that went with it: no
+invented figure where a label, a drawing or an engineer owns the answer.
+"""
+
+from erpnext_enhancements.training.technician_program._common import ask_block, sourced_notice_block
 
 COURSE = {
 	"course": {
 		"course_title": "Technician Module 6 — Electrical Components, Automation & Field Diagnostics",
 		"summary": (
 			"Get wire into a raceway without damaging it, name every device in a control panel and say "
-			"what it protects, prove a circuit dead before you open it, read a ladder rung and a DMX run, "
-			"and find the reason a controller is not doing what somebody expected."
+			"what it protects, prove a circuit dead before you open it, measure a supply and a solenoid "
+			"coil, bond the metal around the water so nobody becomes the path, seal a submerged splice, "
+			"read a ladder rung and a DMX run, and find the reason a controller is not doing what "
+			"somebody expected."
 		),
 		"category": "Installation",
 		"weight": "Required",
@@ -38,7 +70,7 @@ COURSE = {
 			"estimated_minutes": 14,
 			"summary": "What conduit is for, why fill and bend limits exist, and the pull that quietly ruins a conductor.",
 			"blocks": [
-				notice_block(),
+				sourced_notice_block(),
 				{
 					"block_type": "Rich Text",
 					"heading": "Conduit is a path, not just armour",
@@ -203,7 +235,7 @@ COURSE = {
 		{
 			"lesson_title": "Basic automation components",
 			"chapter": 0,
-			"estimated_minutes": 13,
+			"estimated_minutes": 15,
 			"summary": "The devices that let a small signal switch a large load, and why a quiet control circuit proves nothing.",
 			"blocks": [
 				{
@@ -214,10 +246,13 @@ COURSE = {
 						"something small and safe — a controller output, a float switch, a pushbutton — "
 						"turn something large and dangerous on and off.</p>"
 						"<p>That splits the panel into two worlds. The <b>control circuit</b> carries the "
-						"decision. It is often low voltage, it carries very little current, and it is the "
-						"part that has wire numbers on it and shows up on the schematic as logic. The "
-						"<b>power circuit</b> carries the motor, the heater and the lighting load at line "
-						"voltage and full current.</p>"
+						"decision. On a Sapphire panel that is the <b>24 VDC</b> a Splash Wizard "
+						"controller puts out to cycle the manifold solenoids, plus whatever a float, an "
+						"activation button or a screen terminal contributes; it carries very little "
+						"current, and it is the part that has wire numbers on it and shows up on the "
+						"schematic as logic. The <b>power circuit</b> carries the motor, the heater and "
+						"the lighting load at line voltage — <b>120 VAC</b> at the main line input, and "
+						"more where the equipment calls for it — at full current.</p>"
 						"<p>They sit inside the same enclosure, frequently on the same DIN rail, and this "
 						"is the fact that hurts people: <b>the control side being dead tells you nothing "
 						"about the power side.</b></p>"
@@ -288,9 +323,31 @@ COURSE = {
 								"sunrise and sunset through the year so a lighting schedule does not have "
 								"to be reset every month. A programmable controller runs a sequence. A "
 								"lighting controller drives a show.</p>"
+								"<p>The one you will meet most on our work is the <b>Splash Wizard</b>. "
+								"Line voltage comes in at its main line input and <b>24 VDC</b> goes out "
+								"of it to cycle the manifold solenoids. Both facts matter when you have "
+								"the meter out: the input is diagnosed on the AC range and the output on "
+								"the DC range, and mixing those up wastes an afternoon.</p>"
 								"<p>All of them are the brain and none of them are the muscle. A "
 								"controller output is a signal; something downstream is doing the "
 								"switching.</p>"
+							),
+						},
+						{
+							"title": "Solenoid valves on the manifold",
+							"body": (
+								"<p>The muscle at the water end. The controller does not move water; it "
+								"energises a coil, and the coil opens a valve. Both kinds turn up on our "
+								"manifolds: <b>fast-acting</b> valves, for effects that have to snap, and "
+								"<b>diaphragm</b> valves, which borrow line pressure to do the work.</p>"
+								"<p>The coil is the part that fails. It is a few tens of ohms of fine "
+								"copper wire living in a wet vault, and it has two ways to die. The "
+								"windings can melt together, which makes the coil a near short across a "
+								"24 VDC output and takes the controller's circuit fuse with it — so one "
+								"drowned coil presents as a controller that has stopped doing anything at "
+								"all. Or the wire simply snaps, the coil goes open, and nothing happens "
+								"and nothing else is damaged. Lesson 5 is how you tell those apart with a "
+								"meter.</p>"
 							),
 						},
 					],
@@ -409,6 +466,24 @@ COURSE = {
 						"options": [
 							{"text": "True", "is_correct": False},
 							{"text": "False", "is_correct": True},
+						],
+					},
+					{
+						"question": "What does a Splash Wizard controller put out to cycle a manifold solenoid?",
+						"type": "Single Choice",
+						"explanation": (
+							"Line voltage arrives at the controller's main line input; 24 VDC leaves it for the "
+							"solenoid coils. Which is why the input is diagnosed on the meter's AC range and the "
+							"output on its DC range."
+						),
+						"options": [
+							{"text": "24 VDC", "is_correct": True},
+							{"text": "120 VAC, the same as its line input", "is_correct": False},
+							{"text": "24 VAC from an internal control transformer", "is_correct": False},
+							{
+								"text": "Nothing — the output is a dry contact and the field wiring supplies the voltage",
+								"is_correct": False,
+							},
 						],
 					},
 				]
@@ -656,8 +731,8 @@ COURSE = {
 		{
 			"lesson_title": "Basic electrical equipment",
 			"chapter": 0,
-			"estimated_minutes": 12,
-			"summary": "What each part of the distribution system protects, and the rule about junction boxes that gets broken on nearly every finished fountain.",
+			"estimated_minutes": 16,
+			"summary": "What each part of the distribution system protects, the rule about junction boxes that gets broken on nearly every finished fountain, and how a submerged splice is sealed.",
 			"blocks": [
 				{
 					"block_type": "Rich Text",
@@ -732,6 +807,45 @@ COURSE = {
 						"knockout in a wet location is a direct path to a splice.</p>"
 					),
 				},
+				{
+					"block_type": "Rich Text",
+					"heading": "Potting an underwater junction box",
+					"content": (
+						"<p>A submersible LED light has a cord that runs back to a water-tight junction "
+						"box sitting just above or just below the water surface. Water under hydrostatic "
+						"pressure does not need a hole to get in. It works at the entries and the seams, "
+						"and once it is inside it only has to bridge a terminal strip once. So on our "
+						"work that box does not merely get closed. It gets <b>potted</b>: filled with a "
+						"compound that encapsulates every splice, so there is nothing left inside for "
+						"water to bridge.</p>"
+						"<p>The compound is a <b>two-part re-enterable polyurethane</b>, and "
+						"<i>re-enterable</i> is the word that carries the weight. It chemically sets into "
+						"a thick, gel-like rubber rather than a rock, so the splices are sealed against "
+						"water and can still be cut away when a fixture has to come out. That is also "
+						"what keeps the box honest against the rule above — a potted box is still an "
+						"accessible box. A box filled with something that cannot be cut, or a potted box "
+						"buried under a coping, is not.</p>"
+						"<p>Two things spoil the job and both happen before the pour. Splices made with "
+						"anything other than <b>water-tight crimp connectors</b> are asking the compound "
+						"to do a job it was only ever meant to back up. And dust or moisture left in the "
+						"shell stops the compound bonding where it lands, which is where <b>voids</b> "
+						"come from. A void is a channel, and a channel is exactly the thing you poured "
+						"the compound to prevent — and it is invisible once the surface skins over.</p>"
+					),
+				},
+				{
+					"block_type": "Checklist",
+					"heading": "The potting protocol",
+					"items": [
+						"Every splice inside the box is made with water-tight crimp connectors before any compound is mixed",
+						"The interior of the junction box shell is cleaned out — no dust, no moisture, nothing loose",
+						"The two-part re-enterable polyurethane compound is mixed thoroughly, to the manufacturer's own guidelines",
+						"The compound is poured slowly, so it flows around the splices instead of trapping air against them",
+						"The pour continues until every wire splice is encapsulated and the housing is filled to the rim",
+						"The compound is left to set chemically into a thick, gel-like solid barrier before the box is handled",
+						"The finished pour is void-free, and the box is still one a technician can re-enter with a knife",
+					],
+				},
 				ask_block(
 					"Who is allowed to open what",
 					"<p>Which electrical work a technician may carry out, and which requires a licensed "
@@ -800,14 +914,41 @@ COURSE = {
 							{"text": "False", "is_correct": True},
 						],
 					},
+					{
+						"question": "Why is the compound used to pot an underwater lighting junction box specified as re-enterable?",
+						"type": "Single Choice",
+						"explanation": (
+							"It sets into a thick, gel-like solid rather than a rock, so it seals the splices "
+							"against water and can still be cut away when a fixture has to be replaced. Sealing a "
+							"splice is not a reason to make it unreachable."
+						),
+						"options": [
+							{
+								"text": "So the set compound can be cut away later and the splices are still reachable when a fixture is replaced",
+								"is_correct": True,
+							},
+							{
+								"text": "So it cures faster than a rigid compound and the light can be energised sooner",
+								"is_correct": False,
+							},
+							{
+								"text": "So any water that does get in can drain back out through the compound",
+								"is_correct": False,
+							},
+							{
+								"text": "So the box may be buried under the coping once the pour has set",
+								"is_correct": False,
+							},
+						],
+					},
 				]
 			},
 		},
 		{
 			"lesson_title": "Multimeter diagnostics (voltage, resistance, continuity)",
 			"chapter": 1,
-			"estimated_minutes": 15,
-			"summary": "Which measurements are valid live, which are only valid dead, and how to prove a meter is still telling the truth.",
+			"estimated_minutes": 20,
+			"summary": "Which measurements are valid live, which are only valid dead, what a supply and a solenoid coil should read, and how to prove a meter is still telling the truth.",
 			"blocks": [
 				{
 					"block_type": "Rich Text",
@@ -829,6 +970,32 @@ COURSE = {
 				},
 				{
 					"block_type": "Callout",
+					"callout_tone": "Warning",
+					"heading": "The golden rule, and the meter that is allowed in the panel",
+					"content": (
+						"<p>Sapphire's rule comes first and it is one sentence: <b>lock out and tag out "
+						"before you open any sub-panel or control enclosure</b>, and treat every circuit "
+						"in it as live until your meter has physically proved otherwise. Not until it "
+						"looks dead, not until somebody says it is off — until the meter says so, in "
+						"your hand, on that conductor.</p>"
+						"<p>The second rule is about the instrument. A meter used on our panels is rated "
+						"<b>CAT III or CAT IV</b>. Those categories describe how much fault energy the "
+						"meter is built to survive if the circuit flashes over while it is connected, and "
+						"a commercial or industrial panel is a CAT III or CAT IV environment. A cheap or "
+						"unrated meter in that panel is not a worse measurement — it is the thing that "
+						"turns a fault into an arc flash across your hands.</p>"
+						"<p>The category comes with a <b>voltage rating</b>, and both have to suit the "
+						"installation in front of you rather than your confidence — a service entrance "
+						"and a 24 VDC control loop are not the same environment, even though the same "
+						"meter comes out of the bag for both.</p>"
+						"<p>The rating covers the <b>leads</b> as well, and this is where it is usually "
+						"lost. A CAT III meter with unrated, cracked or damaged leads is not a rated "
+						"measurement. Cracked insulation, an exposed strand, a probe tip that has been "
+						"filed — those leads get binned, not taped.</p>"
+					),
+				},
+				{
+					"block_type": "Callout",
 					"callout_tone": "Danger",
 					"heading": "Live, dead, live — in that order",
 					"content": (
@@ -842,11 +1009,55 @@ COURSE = {
 						"battery, a blown fuse, a broken lead or a dial left on the wrong function reads "
 						"zero volts on a live bus and is completely convincing while it does it. If the "
 						"meter died between step 1 and step 2, step 3 is what tells you.</p>"
-						"<p>The meter <b>and the leads</b> must carry a CAT rating and a voltage rating "
-						"appropriate to the installation you are probing. A CAT-rated meter with "
-						"unrated or damaged leads is not a rated measurement. Cracked insulation, an "
-						"exposed strand, a probe tip that has been filed — those leads get binned, not "
-						"taped.</p>"
+					),
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "Voltage: AC at the supply, DC in the control loop",
+					"content": (
+						"<p><b>The supply side.</b> Dial to <b>AC volts</b>. When you are chasing a "
+						"supply problem at a pump, a filter or the main line input of a Splash Wizard "
+						"controller, measure across the terminals — line to line, or line to neutral. "
+						"What you are looking for is a <i>stable</i> reading <b>within 10 percent either "
+						"way of the system's specification</b>, which on our work is usually 120 VAC. "
+						"Outside that band, or wandering inside it, the fault is in the supply and not "
+						"in the equipment everybody has been blaming.</p>"
+						"<p><b>The control side.</b> Dial to <b>DC volts</b>. The Splash Wizard's primary "
+						"output is <b>24 VDC</b>, and that is what cycles the manifold solenoids. When an "
+						"external activation button or a digital screen terminal is misbehaving, put the "
+						"leads directly across the output relays and watch whether the 24 V appears when "
+						"the controller says it should. That single measurement splits the job in half: "
+						"if the voltage is there and the valve does nothing, the fault is downstream in "
+						"the coil or its wiring; if the voltage never arrives, it is upstream in the "
+						"controller or whatever is supposed to be commanding it.</p>"
+						"<p>Both of those are live measurements, which is why they come after the two "
+						"rules above and not before them.</p>"
+					),
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "Ohms on a coil, and the buzzer on a long run",
+					"content": (
+						"<p><b>Testing a solenoid coil.</b> Kill all power to the system, <b>disconnect "
+						"the valve leads from the controller's terminal block</b> — that is the isolation "
+						"step, and without it you are measuring the controller as well — and set the "
+						"meter to ohms. Three readings, three different stories:</p>"
+						"<ul>"
+						"<li><b>20 to 60 Ω</b>, steady: a healthy coil. The exact figure depends on the "
+						"manufacturer, so read the valve's own literature before you call a number "
+						"wrong.</li>"
+						"<li><b>0 Ω or near zero</b>: the internal copper windings have melted together. "
+						"That is a short across a 24 VDC output, which is why it usually took the "
+						"controller's circuit fuse with it — replacing the fuse without replacing the "
+						"coil just blows the next fuse.</li>"
+						"<li><b>OL</b> — over limit: the coil wire has snapped and the circuit path is "
+						"broken. Nothing is shorted, nothing blew, and nothing happens.</li>"
+						"</ul>"
+						"<p><b>Tracing a run.</b> Use the continuity buzzer to follow a long wire run from "
+						"a field junction box back to the control panel on the equipment pad. A buzz "
+						"means the path is continuous and unbroken. Silence on a conductor that should "
+						"ring is a break, and now you are looking for where — which is a much smaller "
+						"question than the one you started with.</p>"
 					),
 				},
 				{
@@ -876,13 +1087,18 @@ COURSE = {
 					"heading": "What a standard meter cannot tell you",
 					"content": (
 						"<p>Two limits are worth knowing before you draw a conclusion from a meter.</p>"
-						"<p><b>It cannot judge insulation.</b> Insulation fails under voltage, and a "
-						"handheld meter tests with a few volts from its own battery. A megohmmeter applies "
-						"a high test voltage on purpose and is the right instrument for asking whether a "
-						"motor winding or a long buried cable is sound. It also has its own hazards and "
-						"its own procedure, and connecting one to a circuit with electronics still in it "
-						"destroys them. So <i>the motor ohms out fine</i> is not evidence that the motor "
-						"is not the ground fault tripping your GFCI.</p>"
+						"<p><b>It reads insulation in one direction only.</b> Sapphire's own GFCI "
+						"procedure — Lesson 6 — puts the meter on its <b>megohm (MΩ)</b> range and "
+						"measures from the hot line to structural ground, and <i>a low reading there is "
+						"the answer</i>: water has found a pinhole in the insulation and that cable run "
+						"gets replaced. Use it, because it finds real faults in the field.</p>"
+						"<p>What it cannot do is clear a cable. Insulation fails under <i>voltage</i>, and "
+						"a handheld meter is asking the question with a few volts from its own battery, so "
+						"a clean MΩ reading is not proof the insulation would hold at line voltage. A "
+						"megohmmeter applies a high test voltage on purpose and is the instrument for "
+						"that — with its own hazards, its own procedure, and a habit of destroying any "
+						"electronics still connected to the circuit. So <i>the motor ohms out fine</i> is "
+						"not evidence that the motor is not the ground fault tripping your GFCI.</p>"
 						"<p><b>Continuity answers a smaller question than you think.</b> The beeper says "
 						"there is a path. It does not say the path can carry load current. A conductor "
 						"down to a few surviving strands, a corroded terminal, a contact with a film on "
@@ -892,15 +1108,15 @@ COURSE = {
 					),
 				},
 				ask_block(
-					"Which meter, and which category",
-					"<p>The CAT category and voltage you may safely measure are properties of the "
-					"<b>installation</b>, not of your confidence — a service entrance and a low-voltage "
-					"control circuit are not the same environment, and the meter and leads have to be "
-					"rated for the one in front of you.</p>"
-					"<p>Which meters Sapphire issues, how they are checked, and what the policy is on "
-					"any energised measurement are questions for your supervisor. If you do not know the "
-					"category of the equipment you are about to probe, that is the moment to ask rather "
-					"than the moment to find out.</p>",
+					"Which meter, and whose measurement",
+					"<p>CAT III or CAT IV is the floor, and it is Sapphire's. What sits on top of it is "
+					"not: which meters we issue, how and how often they are checked, what the coil "
+					"resistance is for the specific valve in your hand, and what the policy is on any "
+					"energised measurement at all.</p>"
+					"<p>Those are questions for your supervisor and for the equipment's own literature. "
+					"If you do not know the category of the panel you are about to probe, or the band a "
+					"particular coil should read in, that is the moment to ask rather than the moment to "
+					"find out.</p>",
 				),
 			],
 			"quiz": {
@@ -960,6 +1176,25 @@ COURSE = {
 						],
 					},
 					{
+						"question": "You lift a valve's leads off the controller terminal block and measure the coil on the ohms range. Which reading says the windings have melted together?",
+						"type": "Single Choice",
+						"explanation": (
+							"Near zero ohms is a short through the melted windings — the reading that usually "
+							"came with a blown controller fuse. OL means the coil wire has snapped and the path "
+							"is open. A steady 20 to 60 Ω is a healthy coil, subject to the manufacturer's own "
+							"figure."
+						),
+						"options": [
+							{"text": "0 Ω, or near zero", "is_correct": True},
+							{"text": "OL, over limit", "is_correct": False},
+							{"text": "A steady reading between 20 and 60 Ω", "is_correct": False},
+							{
+								"text": "A reading that climbs for a few seconds and then settles",
+								"is_correct": False,
+							},
+						],
+					},
+					{
 						"question": "Which of these are true about stored energy in equipment that has been switched off?",
 						"type": "Multiple Choice",
 						"explanation": (
@@ -992,8 +1227,8 @@ COURSE = {
 		{
 			"lesson_title": "GFCI",
 			"chapter": 1,
-			"estimated_minutes": 13,
-			"summary": "What a GFCI compares, why it trips at a current the breaker cannot see, and why it is not a substitute for bonding.",
+			"estimated_minutes": 20,
+			"summary": "What a GFCI compares, why it trips at a current the breaker cannot see, how the bonding grid is built, and how to walk a tripping circuit back to the leak.",
 			"blocks": [
 				{
 					"block_type": "Rich Text",
@@ -1002,10 +1237,11 @@ COURSE = {
 						"<p>A ground-fault circuit interrupter watches the current leaving on the "
 						"ungrounded conductor and the current returning on the grounded conductor. On a "
 						"healthy circuit those are equal — everything that went out came back.</p>"
-						"<p>If they are not equal, the difference is going somewhere else. Through a "
-						"damaged fixture into the water. Through wet concrete. Through a person standing "
-						"in a basin. That <b>difference</b> is the only thing the device measures, and a "
-						"Class A GFCI trips on roughly <b>4 to 6 milliamps</b> of it.</p>"
+						"<p>If they are not equal, the difference is going somewhere else. Through wet "
+						"insulation into the earth. Through a damaged fixture into the water. Through "
+						"wet concrete. Through a person standing in a basin. That <b>difference</b> is "
+						"the only thing the device measures, and a Class A GFCI trips on roughly "
+						"<b>4 to 6 milliamps</b> of it, in milliseconds.</p>"
 						"<p>That number is not arbitrary. It is set deliberately <i>below</i> the "
 						"current at which a person's muscles lock and they cannot let go of what is "
 						"shocking them: a few milliamps is already a painful shock, a little more takes "
@@ -1030,10 +1266,69 @@ COURSE = {
 						"The purpose is not to carry fault current away. It is to make sure there is no "
 						"<i>difference</i> in voltage between two things a person can touch at the same "
 						"time, because a difference is what pushes current through them.</p>"
-						"<p>Where the bonding extends, what it is made of and how it is connected is "
-						"engineered and inspected — the engineer designs it from the article and the AHJ "
-						"signs it off. A GFCI on a feature with no bonding is one failure mode covered on "
-						"a structure that still has another.</p>"
+						"<p>How far the bonding has to extend on a particular job is engineered and "
+						"inspected — the engineer designs it from the article and the AHJ signs it off. "
+						"What it is made of, and what it has to reach, Sapphire has written down, and "
+						"that is what the rest of this lesson starts with. A GFCI on a feature with no "
+						"bonding is one failure mode covered on a structure that still has another.</p>"
+					),
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "Bonding is not grounding, and the difference is the one that drowns people",
+					"content": (
+						"<p>They are two different jobs and the words get used as though they were one.</p>"
+						"<p><b>Grounding</b> connects an electrical path to the earth, so that fault "
+						"current has a safe route to travel and the breaker upstream sees enough of it to "
+						"trip. It is about clearing a fault.</p>"
+						"<p><b>Equipotential bonding</b> is a continuous mesh of heavy copper linking "
+						"every single piece of metal in and around the fountain. It is not there to carry "
+						"fault current anywhere. It is there so that no two things a person can touch at "
+						"once are at different voltages.</p>"
+						"<p>That distinction is the whole safety case, and here is the mechanism. Water "
+						"and electricity go wherever there is a <b>differential</b>. If a pump shorts and "
+						"leaks current into the water, a person bridging two zones that sit at different "
+						"electrical potentials becomes the path between them — severe shock, loss of "
+						"muscle control, and then drowning, which is why it has its own name: "
+						"<b>Electric Shock Drowning</b>. Bond everything together and every one of those "
+						"zones sits at the same potential, <b>0 volts relative to each other</b>. There "
+						"is no differential left for a person to bridge.</p>"
+					),
+				},
+				{
+					"block_type": "Checklist",
+					"heading": "What gets bonded, and with what",
+					"items": [
+						"Bare, solid copper wire, no smaller than 8 AWG — that is the minimum conductor, not a target to work down to",
+						"All reinforcing structural steel rebar inside the concrete shell",
+						"Metallic pump frames and filter bodies",
+						"Stainless steel light niches",
+						"Underwater pipe penetrations",
+						"Metal ladders and rails within 5 feet of the water perimeter",
+						"Every mechanical structural connection beneath the water line made with a solid copper or bronze split-bolt connector",
+						"No steel fasteners anywhere below the water line — they are forbidden outright, because they rust out and sever the loop",
+					],
+				},
+				{
+					"block_type": "Callout",
+					"callout_tone": "Danger",
+					"heading": "A severed bond has no symptom",
+					"content": (
+						"<p>Think about what happens the day a submerged steel fastener finally rusts "
+						"through and the loop opens. Nothing stops working. No breaker trips. No light "
+						"goes out. No alarm is raised, nobody is called, and the feature runs exactly as "
+						"it did the day before.</p>"
+						"<p>The grid is a safety system that is only ever asked to do anything on the day "
+						"something else has already failed — so it can sit broken for years and look "
+						"perfect. That is the entire reason the material rule is absolute rather than a "
+						"preference: copper and bronze below the water line, steel never, because there "
+						"is no feedback loop that would tell you when you got it wrong.</p>"
+						"<p>And it is why the grid is <b>proved</b> rather than assumed. Continuity around "
+						"the loop is a measurement — the buzzer in Lesson 5 — and the moment to take it "
+						"is while the connections are still reachable, before anything is poured or "
+						"backfilled over them. When that inspection happens on a given job, and who signs "
+						"it off, belongs to the AHJ and the schedule; that it happens before the "
+						"connections disappear is physics.</p>"
 					),
 				},
 				{
@@ -1053,9 +1348,23 @@ COURSE = {
 						"<b>The great majority of GFCIs that will not reset are reporting a real "
 						"fault</b>: water in a fixture, water in a junction box, a conductor nicked "
 						"against a coupling during a hard pull, a failing pump seal that has wet the "
-						"windings, a heater element gone to ground. Isolate the loads one at a time and "
-						"the circuit will usually tell you which one.</p>"
+						"windings, a heater element gone to ground. When a <b>Splash Wizard or a pump "
+						"sub-panel</b> keeps tripping its GFCI, work the sequence below and the circuit "
+						"will usually tell you which one.</p>"
 					),
+				},
+				{
+					"block_type": "Checklist",
+					"heading": "Isolating a GFCI that keeps tripping",
+					"items": [
+						"Turn off the main breaker first — the diagnosis starts de-energised, not with the circuit live and everybody guessing",
+						"Disconnect the load lines from that specific GFCI breaker, so it is feeding nothing at all",
+						"Turn the breaker back on with no load on it. If it trips with nothing connected, the breaker itself is the fault and gets replaced",
+						"If it holds, reconnect the lines and start disconnecting components one at a time — individual submersible lights first, then the rest of the load",
+						"When the trips stop following you, the last thing you removed is where the leak is",
+						"Confirm it on the meter: megohm (MΩ) range, hot line to structural ground, on the run you suspect",
+						"Any low resistance hot-to-ground is water entering a pinhole in the insulation. That sub-component cable run is replaced — it is not dried out and put back",
+					],
 				},
 				{
 					"block_type": "Callout",
@@ -1089,7 +1398,15 @@ COURSE = {
 						},
 						{
 							"front": "Equipotential bonding",
-							"back": "Tying conductive parts around the water together so there is no voltage difference between two things a person can touch at once. NEC Article 680; engineered and inspected.",
+							"back": "Tying conductive parts around the water together so there is no voltage difference between two things a person can touch at once. Bare solid copper, no smaller than 8 AWG; copper or bronze split-bolts below the water line. NEC Article 680; engineered and inspected.",
+						},
+						{
+							"front": "Electric Shock Drowning (ESD)",
+							"back": "Current leaking into the water, a person bridging two zones at different potential, muscle control lost, drowning. The failure equipotential bonding exists to make impossible.",
+						},
+						{
+							"front": "Pinhole insulation leak",
+							"back": "Water entering a cable through a small break in the insulation. Reads as a low resistance from hot to structural ground on the MΩ range, and is the usual reason a GFCI will not stay in. The cable run gets replaced.",
 						},
 						{
 							"front": "Equipment grounding conductor",
@@ -1156,16 +1473,59 @@ COURSE = {
 						],
 					},
 					{
-						"question": "A working GFCI means equipotential bonding around the fountain is not needed.",
-						"type": "True-False",
+						"question": "Which of these are rules for the bonding grid on a Sapphire fountain?",
+						"type": "Multiple Choice",
 						"explanation": (
-							"They do different jobs. Bonding removes the voltage difference between things a person "
-							"can touch at once; a GFCI disconnects after a fault already exists. Article 680 "
-							"requires the bonding regardless."
+							"The conductor is bare, solid copper, no smaller than 8 AWG. Mechanical connections "
+							"beneath the water line are made with solid copper or bronze split-bolt connectors, "
+							"because steel fasteners rust out and sever the loop without anything appearing to go "
+							"wrong — stainless and galvanised included. And nothing is exempted from bonding by "
+							"the presence of a GFCI: the two do different jobs, and Article 680 asks for both."
 						),
 						"options": [
-							{"text": "True", "is_correct": False},
-							{"text": "False", "is_correct": True},
+							{
+								"text": "The conductor is bare, solid copper, no smaller than 8 AWG",
+								"is_correct": True,
+							},
+							{
+								"text": "Connections beneath the water line are made with solid copper or bronze split-bolt connectors",
+								"is_correct": True,
+							},
+							{
+								"text": "Steel fasteners are acceptable below the water line provided they are stainless or galvanised",
+								"is_correct": False,
+							},
+							{
+								"text": "Metal rails and ladders near the water are exempt once the circuit is on a GFCI",
+								"is_correct": False,
+							},
+						],
+					},
+					{
+						"question": "You disconnect every load line from a GFCI breaker that keeps tripping, turn it back on, and it trips with nothing connected. What does that tell you?",
+						"type": "Single Choice",
+						"explanation": (
+							"With no load on it there is nothing downstream to leak, so the imbalance is being "
+							"produced inside the device. The breaker is faulty and gets replaced. If it had held, "
+							"the next step is reconnecting and removing components one at a time."
+						),
+						"options": [
+							{
+								"text": "The breaker itself is faulty and has to be replaced",
+								"is_correct": True,
+							},
+							{
+								"text": "The fault is in the submersible lights, which are the most common cause",
+								"is_correct": False,
+							},
+							{
+								"text": "The bonding grid has been severed somewhere below the water line",
+								"is_correct": False,
+							},
+							{
+								"text": "It is a nuisance trip from capacitive leakage on the long wire runs",
+								"is_correct": False,
+							},
 						],
 					},
 				]
@@ -1561,8 +1921,8 @@ COURSE = {
 		{
 			"lesson_title": "Program troubleshooting",
 			"chapter": 2,
-			"estimated_minutes": 14,
-			"summary": "Find out what the program believes before changing it, and change one thing at a time.",
+			"estimated_minutes": 16,
+			"summary": "Find out what the program believes before changing it, change one thing at a time, and know what the module asks you to demonstrate at the end.",
 			"blocks": [
 				{
 					"block_type": "Rich Text",
@@ -1653,6 +2013,32 @@ COURSE = {
 						"What you changed and why is written down where the next person will find it",
 						"The feature has been watched through a real cycle, not just started",
 						"Anything you could not resolve is reported rather than left as a surprise",
+					],
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "The end of the module, and what it actually asks you to prove",
+					"content": (
+						"<p>That is the last lesson. Reading it is not the qualification — the module is "
+						"signed off on six things done in front of a <b>Lead Installer</b>, with the "
+						"equipment in your hands, and every one of them is a task somebody has to be "
+						"trusted to do alone at some point.</p>"
+						"<p>Notice what they have in common. Each one is a measurement or a physical "
+						"result that can be observed, not an opinion about whether you understood the "
+						"lesson. A coil either reads what a healthy coil reads or it does not; a pour is "
+						"either void-free or it is not.</p>"
+					),
+				},
+				{
+					"block_type": "Checklist",
+					"heading": "Module 6 sign-off — demonstrate these to a Lead Installer",
+					"items": [
+						"Safely measure line voltage across an active 120/240 VAC supply panel, using a meter and leads of the correct CAT rating",
+						"Test a dead solenoid coil and diagnose its condition from the resistance reading",
+						"Isolate a broken control path along a 100-foot underground wire run using the meter's continuity chime",
+						"Construct a standard multi-point bonding mesh loop on a mock rebar grid in solid 8 AWG bare copper wire",
+						"Systematically isolate a simulated current leak to fix a tripping commercial GFCI breaker loop",
+						"Mix, pour and achieve a flawless, void-free terminal encapsulation inside a lighting potting box",
 					],
 				},
 			],

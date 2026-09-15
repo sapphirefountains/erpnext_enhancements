@@ -76,6 +76,11 @@ SOURCES = {
     "api.training": RUNTIME,
     "grading": APP / "training/grading.py",
     "progress": APP / "training/progress.py",
+    # Help, whose payload `lesson_help` re-exports wholesale. Listed for the same reason
+    # the three below are: its keys are on the wire just as surely as one written into the
+    # endpoint itself, and without this entry the player reads `terms` / `withheld` /
+    # `more` off a reply the harvester believes nothing sends.
+    "help": APP / "training/help.py",
     # The other three modules api/training.py re-exports rather than implements.
     # `lesson_questions` returns qa's `mine`/`public`, `leaderboard` returns
     # gamification's `rows`, and `my_signoff_queue` wraps signoff's queue -- all of

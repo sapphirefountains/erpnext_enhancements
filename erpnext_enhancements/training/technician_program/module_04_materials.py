@@ -1,17 +1,27 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Module 4 — Materials of Water Features."""
+"""Module 4 — Materials of Water Features.
 
-from erpnext_enhancements.training.technician_program._common import ask_block, notice_block
+Rewritten against Sapphire's own document, *Module 4: Structural Masonry, Waterproofing, & Tile*.
+That document spans two courses: the masonry, concrete, mortar, tile and coping material is used
+here, and the membrane application belongs to Module 5. Where it states a figure, the figure is
+Sapphire's and it replaces whatever general practice had put here — the 28-day minimum on a new
+pour, the 1:4 muriatic dilution, 95% to 100% coverage behind a submerged tile, 1/16 inch across a
+weir. Topics it does not reach (metals, galvanic corrosion, stainless fasteners) keep the content
+they had, and keep the rule that went with it: no invented figure where a label owns the answer.
+"""
+
+from erpnext_enhancements.training.technician_program._common import ask_block, sourced_notice_block
 
 COURSE = {
 	"course": {
 		"course_title": "Technician Module 4 — Materials of Water Features",
 		"summary": (
 			"Tell which masonry, stone, concrete and metal survive permanent immersion and which "
-			"quietly do not, read a mortar bed and a tile bond well enough to spot a failure while "
-			"it still looks fine, and set a stainless fastener without galling it."
+			"quietly do not, mix a submerged bed and set a tile bond to Sapphire's own figures, "
+			"level a coping weir to 1/16 inch, take scale off a stone without destroying it, and "
+			"set a stainless fastener without galling it."
 		),
 		"category": "Installation",
 		"weight": "Required",
@@ -35,10 +45,10 @@ COURSE = {
 		{
 			"lesson_title": "Structural masonry, tile and stone",
 			"chapter": 0,
-			"estimated_minutes": 15,
-			"summary": "Which units survive permanent water and freeze-thaw, and the ways a stone is ruined by the products meant to protect it.",
+			"estimated_minutes": 18,
+			"summary": "Which units survive permanent water and freeze-thaw, the scale the water builds on them, and the ways a stone is ruined by the products meant to clean or protect it.",
 			"blocks": [
-				notice_block(),
+				sourced_notice_block(),
 				{
 					"block_type": "Rich Text",
 					"heading": "Immersion is not weather",
@@ -104,6 +114,51 @@ COURSE = {
 					),
 				},
 				{
+					"block_type": "Rich Text",
+					"heading": "Scale is the water handing the calcium back",
+					"content": (
+						"<p>When fountain water goes scale-forming — the balance drifts and the water "
+						"can no longer hold what is dissolved in it — it <b>rejects calcium out of "
+						"solution</b>. That calcium binds with carbon dioxide and forms <b>calcium "
+						"carbonate</b>: a hard, white, crystalline crust that runs down water walls "
+						"and cascades and shows worst of all on dark tile.</p>"
+						"<p>Two things follow from where it came from. The crust is a <b>report on the "
+						"chemistry</b>, so taking it off without correcting the balance buys you a "
+						"clean wall and the same crust again. And the crust is alkaline, which is why "
+						"acid is what removes it — the fizzing you see is the acid chemically breaking "
+						"the carbonate shell down.</p>"
+						"<p>It is <i>not</i> efflorescence, however similar the two look. "
+						"Efflorescence arrives from behind, through the assembly. Scale arrives from "
+						"the water, onto the face. Same colour, opposite direction, different "
+						"fix.</p>"
+					),
+				},
+				{
+					"block_type": "Callout",
+					"callout_tone": "Danger",
+					"heading": "Which acid goes on which surface",
+					"content": (
+						"<p>This is Sapphire's rule, and it decides whether a cleaning job ends with a "
+						"clean surface or a ruined one.</p>"
+						"<p><b>Granite, glass tile and dense concrete.</b> Diluted muriatic acid, "
+						"<b>1 part acid to 4 parts water</b>, applied with a chemical-resistant pump "
+						"sprayer or a thick fibre brush.</p>"
+						"<p><b>Limestone, travertine and other porous natural stone: never muriatic "
+						"acid.</b> The stone is carbonate too, so the acid does not stop politely at "
+						"the scale — it eats aggressively into the stone underneath and permanently "
+						"etches the finish somebody paid a great deal for. On those surfaces use a "
+						"specialised <b>sulfamic or phosphoric acid gel</b>, which loosens the scale "
+						"without dissolving the soft stone beneath it.</p>"
+						"<p>Then dislodge the softened crust with a heavy masonry scraper or a stiff "
+						"nylon brush, rinse the area thoroughly with clean water, and <b>capture the "
+						"runoff with an industrial wet-vac</b> before it spills into the main basin. "
+						"Acidic runoff reaching the pool throws the water chemistry out of balance, "
+						"and you have traded a cosmetic problem for a chemical one.</p>"
+						"<p>Acid goes into water, never water into acid, and full chemical PPE applies "
+						"the moment the container is open.</p>"
+					),
+				},
+				{
 					"block_type": "Callout",
 					"callout_tone": "Warning",
 					"heading": "The sealer is often the thing that ruins the stone",
@@ -125,11 +180,15 @@ COURSE = {
 				},
 				{
 					"block_type": "Accordion",
-					"heading": "Four things that look like dirt and are not",
+					"heading": "Five things that look like dirt and are not",
 					"panels": [
 						{
 							"title": "Efflorescence",
 							"body": "A white salt deposit at the face. Water moved through the assembly, dissolved salts on the way, reached the surface and evaporated, leaving them behind. It is a <b>symptom of water movement</b>, not a cleanliness problem — scrub it off and it returns until the water path changes.",
+						},
+						{
+							"title": "Calcium carbonate scale",
+							"body": "A hard white crystalline crust down a water wall, a cascade or a run of dark tile. It came out of the <b>water</b>, not out of the assembly: scale-forming water rejecting calcium, which binds with carbon dioxide and sets on the face. That is why it answers to acid, and why it comes straight back if the chemistry is not corrected.",
 						},
 						{
 							"title": "Spalling",
@@ -147,13 +206,21 @@ COURSE = {
 				},
 				ask_block(
 					"Which unit, which stone, which sealer",
-					"<p>Absorption limits, freeze-thaw grades, whether a given stone or manufactured "
-					"unit is approved for <b>continuous immersion</b>, and which sealer or cleaner may "
-					"go near it are all product and project answers. They live on the submittal, the "
-					"stone supplier's own data, and the manufacturer's written statement.</p>"
-					"<p>If a unit arrives that is not the one named, or if somebody wants to clean a "
-					"stone with whatever is on the truck, that is a stop-and-ask. A cleaner is the "
-					"cheapest thing on the job and the fastest way to write off the most expensive.</p>",
+					"<p>Absorption limits, freeze-thaw grades and whether a given stone or "
+					"manufactured unit is approved for <b>continuous immersion</b> are product and "
+					"project answers. They live on the submittal, the stone supplier's own data, and "
+					"the manufacturer's written statement.</p>"
+					"<p>Sapphire's document settles the cleaning question for the surfaces it names — "
+					"diluted muriatic on granite, glass tile and dense concrete, a sulfamic or "
+					"phosphoric gel on porous stone. What no document can settle for you is "
+					"<b>which stone you are standing in front of</b>. A pale slab is limestone or it "
+					"is a dense manufactured unit, the two take opposite treatments, and the wrong "
+					"guess is not reversible. If nobody can say which it is, that is a "
+					"stop-and-ask.</p>"
+					"<p>Sealers stay open. Most are not approved for submerged service, the only "
+					"proof is the manufacturer's written statement, and the test panel is an offcut — "
+					"never the finished face. A cleaner or a sealer is the cheapest thing on the job "
+					"and the fastest way to write off the most expensive.</p>",
 				),
 			],
 			"quiz": {
@@ -185,51 +252,69 @@ COURSE = {
 						],
 					},
 					{
-						"question": "Somebody cleans scale off a travertine coping with an acidic scale remover. What has happened?",
+						"question": "Calcium scale has built up on a travertine coping. Which product goes on it?",
 						"type": "Single Choice",
 						"explanation": (
-							"Travertine is calcium carbonate and acid dissolves it. The dull patch is missing stone, "
-							"not a residue, so no amount of cleaning brings it back."
+							"Travertine is calcium carbonate itself, so muriatic acid does not stop at the scale — it "
+							"eats into the stone underneath and etches the finish permanently, and an etch is missing "
+							"material that no cleaning brings back. Sapphire's rule for porous natural stone is a "
+							"specialised sulfamic or phosphoric acid gel, which loosens the crust without dissolving "
+							"what is under it."
 						),
 						"options": [
 							{
-								"text": "The stone is etched — material has been dissolved away and cannot be cleaned back",
+								"text": "A specialised sulfamic or phosphoric acid gel",
 								"is_correct": True,
 							},
 							{
-								"text": "A residue has been left that will rinse off once it dries",
+								"text": "Muriatic acid diluted 1 part acid to 4 parts water",
 								"is_correct": False,
 							},
 							{
-								"text": "The stone is stained, and a stronger cleaner will lift it",
+								"text": "Muriatic acid at full strength, rinsed off quickly",
 								"is_correct": False,
 							},
-							{"text": "Nothing, as long as it was rinsed promptly", "is_correct": False},
+							{
+								"text": "Any acid, as long as the surface is neutralised afterwards",
+								"is_correct": False,
+							},
 						],
 					},
 					{
-						"question": "White deposit keeps returning at the joints of a stone-clad wall after every cleaning. What is it telling you?",
-						"type": "Single Choice",
+						"question": "Which of these are true of taking calcium scale off a granite water wall?",
+						"type": "Multiple Choice",
 						"explanation": (
-							"Efflorescence is salt left behind by water that travelled through the assembly and "
-							"evaporated at the face. It is a report on a water path, so it returns until the path changes."
+							"Sapphire's dilution for granite, glass tile and dense concrete is 1 part muriatic acid to "
+							"4 parts water. The fizzing is the acid breaking down the alkaline carbonate shell, and the "
+							"runoff is captured with a wet-vac so it never reaches the basin and unbalances the water. "
+							"The same solution on a limestone coping would etch it."
 						),
 						"options": [
 							{
-								"text": "Water is moving through the assembly and evaporating at the face",
+								"text": "The muriatic acid is diluted 1 part acid to 4 parts water",
 								"is_correct": True,
 							},
-							{"text": "The cleaning product is being left on too long", "is_correct": False},
-							{"text": "The stone was sealed too soon after installation", "is_correct": False},
-							{"text": "It is airborne dust and only a cosmetic matter", "is_correct": False},
+							{
+								"text": "It will fizz, which is the acid breaking the alkaline crust down",
+								"is_correct": True,
+							},
+							{
+								"text": "The acidic runoff is wet-vacced up before it can reach the basin",
+								"is_correct": True,
+							},
+							{
+								"text": "The same solution can go straight onto a limestone coping above it",
+								"is_correct": False,
+							},
 						],
 					},
 					{
-						"question": "Sealing a stone in a water feature always protects it.",
+						"question": "Calcium scale on a water wall and efflorescence at a masonry joint are the same deposit arriving the same way.",
 						"type": "True-False",
 						"explanation": (
-							"A sealer slows water in both directions. On a stone fed with water from behind it can trap "
-							"moisture, cloud, peel, hold salts under the film and make a freeze worse."
+							"Both are white and neither is dirt, but scale precipitates out of scale-forming water onto "
+							"the face, while efflorescence is salt carried through the assembly from behind and left at "
+							"the surface when the water evaporates. Same colour, opposite direction, different fix."
 						),
 						"options": [
 							{"text": "True", "is_correct": False},
@@ -242,8 +327,8 @@ COURSE = {
 		{
 			"lesson_title": "Basics of concrete and rebar",
 			"chapter": 0,
-			"estimated_minutes": 16,
-			"summary": "What the steel is actually doing, why cover decides whether it lasts, and the fact that a concrete basin does not hold water by itself.",
+			"estimated_minutes": 18,
+			"summary": "What the steel is actually doing, why cover decides whether it lasts, Sapphire's 28-day floor on a new pour, and the fact that a concrete basin does not hold water by itself.",
 			"blocks": [
 				{
 					"block_type": "Rich Text",
@@ -345,6 +430,32 @@ COURSE = {
 						"and still dust, craze, scale and wear through at the top, because the skin "
 						"never finished hydrating. Sun, wind and low humidity all pull water out "
 						"faster, and wind is the one people underestimate.</p>"
+						"<p><b>Sapphire's floor for a new pour is a minimum of 28 days.</b> Until "
+						"that has passed the shell is not treated as fully cured, and nothing that "
+						"has to bond to it — waterproofing, a mortar bed, a tile assembly — goes on "
+						"top. That is a floor and not a target: where the product data sheet or the "
+						"specification asks for longer, longer wins.</p>"
+					),
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "What has to come off before anything goes on",
+					"content": (
+						"<p>A cured shell is not automatically a surface anything will bond to. "
+						"Sapphire's document is specific about what has to be gone first: "
+						"<b>laitance</b> — the weak, dusty layer of fines that rises to the top of a "
+						"pour — along with form-release agents, curing compounds, dirt and dust. The "
+						"concrete also has to be structurally sound, which is a separate question "
+						"from whether it is clean.</p>"
+						"<p>There is a trap in that list. The <b>curing compound</b> is the product "
+						"that protected the slab while it cured, and it is also the film that will "
+						"stop the next layer sticking. Doing the right thing at the pour leaves you "
+						"something to remove later, and nobody removes it by accident.</p>"
+						"<p><b>Structural cracks are repaired, not covered.</b> They are chased out, "
+						"filled with an engineering-grade waterproof hydraulic cement, and allowed to "
+						"cure before anything goes over the top. A crack bridged by a coating is a "
+						"crack that will keep moving under the coating and split it — and the coating "
+						"is what everyone will blame.</p>"
 					),
 				},
 				{
@@ -377,7 +488,11 @@ COURSE = {
 					"job.</p>"
 					"<p>Where something on site will not fit what is drawn, the answer is a question "
 					"before the pour. After the pour it becomes an engineering investigation and a "
-					"demolition estimate.</p>",
+					"demolition estimate.</p>"
+					"<p>Sapphire's 28-day minimum on a new pour sits under all of that as a floor, "
+					"not as a substitute for it. It says when the concrete stops being the thing you "
+					"are waiting on. It does not say what goes on top of it, or how thick, or "
+					"how.</p>",
 				),
 			],
 			"quiz": {
@@ -436,8 +551,9 @@ COURSE = {
 						"type": "Multiple Choice",
 						"explanation": (
 							"Cement hydrates rather than dries, so curing means retaining water. Strength not gained "
-							"before it dried is not made back up later, and sun, wind and dry air all accelerate "
-							"the loss."
+							"before it dried is not made back up later, and sun, wind and dry air all accelerate the "
+							"loss. Sapphire's floor for a new pour is a minimum of 28 days before the shell counts as "
+							"cured at all."
 						),
 						"options": [
 							{
@@ -451,6 +567,14 @@ COURSE = {
 							{
 								"text": "Wind and low humidity make it harder, not just heat",
 								"is_correct": True,
+							},
+							{
+								"text": "A new pour is not treated as cured until a minimum of 28 days have passed",
+								"is_correct": True,
+							},
+							{
+								"text": "It is finished as soon as the surface is hard enough to walk on",
+								"is_correct": False,
 							},
 							{
 								"text": "It means waiting for the concrete to dry out completely",
@@ -723,27 +847,83 @@ COURSE = {
 		{
 			"lesson_title": "Grout, mortar and mud bed mechanics",
 			"chapter": 2,
-			"estimated_minutes": 15,
-			"summary": "How pitch gets built into a surface with dry-pack mud, and why a bed that cannot drain becomes a reservoir.",
+			"estimated_minutes": 18,
+			"summary": "Sapphire's zero-slump snowball test, why every submerged mix is polymer-modified, how pitch gets built into a surface, and why a bed that cannot drain becomes a reservoir.",
 			"blocks": [
 				{
 					"block_type": "Rich Text",
 					"heading": "Four materials, and people call them all mud",
 					"content": (
-						"<p><b>Deck mud</b>, or dry pack, is sand and cement with very little water — "
-						"damp enough to hold its shape when you squeeze a handful and not a bit "
-						"wetter. It has almost no bonding strength of its own. It works by being "
-						"<b>compacted into a dense mass</b> and confined, the way a compacted road "
-						"base works.</p>"
-						"<p><b>Fat mud</b>, or wall mud, has lime in it, which makes it sticky enough "
-						"to stay on a vertical surface. <b>Mortar</b> sets masonry units and is "
-						"proportioned for bond and workability. <b>Grout</b> fills the joints between "
-						"tiles once they are already stuck down — it is a filler, not an adhesive, and "
-						"it is not a waterproof layer either.</p>"
+						"<p><b>Deck mud</b>, or dry pack, is sand and cement with very little "
+						"water — <b>zero slump</b>, in Sapphire's words, and not a drop wetter. It "
+						"has almost no bonding strength of its own. It works by being <b>compacted "
+						"into a dense mass</b> and confined, the way a compacted road base "
+						"works.</p>"
+						"<p><b>Fat mud</b>, or wall mud, has lime in it, which makes it sticky "
+						"enough to stay on a vertical surface. <b>Mortar</b> sets masonry units and "
+						"is proportioned for bond and workability. <b>Grout</b> fills the joints "
+						"between tiles once they are already stuck down — it is a filler, not an "
+						"adhesive, and it is not a waterproof layer either.</p>"
 						"<p>They are not interchangeable, and the commonest single error on a bed is "
-						"adding water to make it easier to work. A wet deck mud mix slumps, will not "
-						"hold the plane you screeded, shrinks as it dries, and cures weak. The mix "
-						"being unpleasantly dry is the point of it.</p>"
+						"adding water to make it easier to trowel. A wet mix slumps, will not hold "
+						"the plane you screeded, shrinks as it dries, and cures weak. The mix being "
+						"unpleasantly dry is the point of it.</p>"
+					),
+				},
+				{
+					"block_type": "Callout",
+					"callout_tone": "Tip",
+					"heading": "Zero slump, and the test for it",
+					"content": (
+						"<p>Sapphire's document is exact about this, so the test is not a matter of "
+						"feel developed over years. Squeeze a handful of the mix in a gloved hand. It "
+						"should <b>clump together like a snowball</b>. If it crumbles apart it is too "
+						"dry. If it <b>stains your glove with water</b> it is too wet.</p>"
+						"<p>It is worth doing on every batch because the penalty for getting it wrong "
+						"is invisible on the day. Extra water makes the mix pleasant to work and it "
+						"<b>destroys the compressive strength of the cured product and dramatically "
+						"increases its porosity</b> — a bed weaker and thirstier than the one that "
+						"was designed, on an assembly that is going to live under water.</p>"
+					),
+				},
+				{
+					"block_type": "Rich Text",
+					"heading": "Polymer-modified, and rated for continuous submersion",
+					"content": (
+						"<p>Sapphire's rule has no exceptions written into it: <b>always use "
+						"polymer-modified mortars, thinsets and grouts specifically rated for "
+						"continuous submersion or pool use</b>. Not where the specification happens "
+						"to call for it — always.</p>"
+						"<p>The mechanism is the reason. Cement cures with a network of micro-pores "
+						"running through it, and a plain cementitious bed lets water travel that "
+						"network. The integrated polymers <b>seal the micro-pores</b>, so water "
+						"cannot work its way through the bed and break down the structural bond over "
+						"time. A bed that is holding perfectly today and has quietly let go a few "
+						"years from now is usually this.</p>"
+						"<p>So a product that is excellent on an interior floor is not a candidate "
+						"here, however good it is. The words to look for on the bag are "
+						"<i>continuous submersion</i> or <i>pool</i>. If they are not on it, it is "
+						"the wrong bag.</p>"
+					),
+				},
+				{
+					"block_type": "Callout",
+					"callout_tone": "Info",
+					"heading": "What the bed is actually gripping",
+					"content": (
+						"<p>A waterproofed shell is smooth, and a smooth membrane <b>repels</b> "
+						"thinset and mortar — the bed sits on it rather than bonding to it, and under "
+						"water pressure it delaminates. That is why the second membrane coat is "
+						"broadcast with oven-dried silica sand while it is still wet and tacky: the "
+						"embedded sand turns the surface into a <b>mechanical keyway</b>, a "
+						"sandpaper texture the mud bed and the stone mortar can grip permanently.</p>"
+						"<p>Two things there are yours even though the membrane itself belongs to the "
+						"waterproofing module. <b>Sweep off all the loose, unbonded sand</b> before "
+						"you lay anything — sand that never keyed into the membrane is a layer of "
+						"ball bearings between your bed and the wall. And if you meet a membrane with "
+						"no broadcast on it at all, stop and ask, because you are about to bond a bed "
+						"to a surface designed to shed water and nothing will look wrong until the "
+						"basin is full.</p>"
 					),
 				},
 				{
@@ -817,47 +997,58 @@ COURSE = {
 						"it is easy. Inconsistent compaction gives you a perfect plane on the day and "
 						"a dished area a year later, and by then the tile on top is telling the story "
 						"for you.</p>"
-						"<p>Working time is the other discipline. Once cement has begun to hydrate, "
-						"adding water to loosen a stiffening mix does not restore it — it destroys it, "
-						"permanently, in a way that will not show until the bed is loaded. Mix what "
-						"you can place and place what you mixed.</p>"
+						"<p>Working time is the other discipline. Once cement has begun to "
+						"hydrate, adding water to loosen a stiffening mix does not restore it — it "
+						"destroys it, permanently, in a way that will not show until the bed is "
+						"loaded. Sapphire writes the prohibition against the mortar that has skinned "
+						"on a wall — <b>never re-temper it with extra water</b> — and a mud bed that "
+						"has started to go off is the same act on the same cement. Throw it out and "
+						"mix again.</p>"
+						"<p>Which reduces to one habit. Mix what you can place, and place what "
+						"you mixed.</p>"
 					),
 				},
 				ask_block(
 					"The mix, the thickness, the fall and the additives",
 					"<p>Proportions, minimum and maximum bed thickness, whether reinforcement is "
-					"required, whether the mix is to be latex- or polymer-modified, which membrane and "
-					"which bond coat, and whether every one of those products is rated for "
-					"<b>continuous immersion</b> come from the product data sheets and from the "
-					"assembly method the drawing names.</p>"
-					"<p>The required fall comes from the drawing too. A pitch remembered from the last "
-					"job is a pitch you are about to tile over.</p>",
+					"required, which membrane and which bond coat, and which particular product "
+					"answers all of those come from the data sheets and from the assembly method the "
+					"drawing names.</p>"
+					"<p>One item that used to sit on that list is <b>no longer open</b>. Sapphire's "
+					"document settles whether the mix is polymer-modified: it always is, and it is "
+					"always a product rated for continuous submersion or pool use. What the data "
+					"sheet still tells you is which one, how it is mixed, and how long it has before "
+					"it skins.</p>"
+					"<p>The required fall comes from the drawing too. A pitch remembered from the "
+					"last job is a pitch you are about to tile over.</p>",
 				),
 			],
 			"quiz": {
 				"questions": [
 					{
-						"question": "Why is a deck mud mix made deliberately dry?",
+						"question": "How do you know a submerged dry-pack mix has the right amount of water in it?",
 						"type": "Single Choice",
 						"explanation": (
-							"Its strength comes from being compacted to density, not from cement content. Extra water "
-							"makes it slump, shrink and cure weak, and it will not hold the plane you screeded."
+							"Sapphire's test is the snowball: squeezed in a gloved hand the mix clumps together and "
+							"holds. Crumbling means too dry; water staining the glove means too wet. The mix is zero "
+							"slump, and the extra water that makes it pleasant to trowel destroys its compressive "
+							"strength and dramatically increases its porosity."
 						),
 						"options": [
 							{
-								"text": "Its strength comes from compaction, and extra water makes it slump, shrink and cure weak",
+								"text": "Squeezed in a gloved hand it clumps like a snowball — neither crumbling apart nor staining the glove with water",
 								"is_correct": True,
 							},
 							{
-								"text": "So it sets faster and the tile can go down sooner",
+								"text": "It slumps into a smooth pat when a handful is dropped on the board",
 								"is_correct": False,
 							},
 							{
-								"text": "So it bonds chemically to the substrate without a bond coat",
+								"text": "It flows off a trowel held at an angle without being pushed",
 								"is_correct": False,
 							},
 							{
-								"text": "So it stays permeable and lets water pass through freely",
+								"text": "It holds a wet sheen on the surface after it is screeded",
 								"is_correct": False,
 							},
 						],
@@ -915,11 +1106,14 @@ COURSE = {
 						],
 					},
 					{
-						"question": "The grout between the tiles is the waterproof layer of the assembly.",
+						"question": "A mortar or grout that performs well on an interior floor is fine in a submerged basin, provided it is mixed correctly.",
 						"type": "True-False",
 						"explanation": (
-							"Grout is a joint filler and it is porous. The waterproofing is a membrane or coating below "
-							"the bed, and the bed is expected to get wet and drain."
+							"Sapphire requires polymer-modified mortars, thinsets and grouts specifically rated for "
+							"continuous submersion or pool use. The polymers seal the micro-pores in the cement so "
+							"water cannot travel through the bed and break the bond down over time. It still does not "
+							"make grout the waterproof layer — the membrane under the bed is doing that, and the bed is "
+							"expected to get wet and drain."
 						),
 						"options": [
 							{"text": "True", "is_correct": False},
@@ -932,35 +1126,41 @@ COURSE = {
 		{
 			"lesson_title": "Tile adhesion and precast coping installation",
 			"chapter": 2,
-			"estimated_minutes": 18,
-			"summary": "Getting full contact behind a tile that lives under water, and setting a coping stone without crushing a hand.",
+			"estimated_minutes": 21,
+			"summary": "Sapphire's 95% to 100% coverage rule behind a submerged tile, levelling a coping weir to 1/16 inch, and setting a heavy stone without crushing a hand.",
 			"blocks": [
 				{
 					"block_type": "Rich Text",
 					"heading": "Under water, every void behind a tile is a problem",
 					"content": (
-						"<p>On a dry interior floor a tile with gaps behind it is usually fine forever. "
-						"Submerged, it is not, because the gaps do not stay empty. They fill with "
-						"water, and then that water freezes, grows biofilm, dissolves salts out of the "
-						"bed and carries them out through the grout, and leaves the tile held by less "
-						"mortar than anybody designed for.</p>"
-						"<p>Immersion work therefore asks for <b>full contact</b>, and full contact is "
-						"a technique, not an instruction to use more mortar.</p>"
-						"<p><b>Comb in one direction.</b> A notched trowel is meant to leave straight "
-						"parallel ridges. When the tile is pressed down, those ridges collapse "
-						"sideways and the air between them has a straight path out. Swirls and arcs "
-						"trap air in the curve of every loop, and no amount of pressing gets it out — "
-						"the trowel pattern is a ventilation design.</p>"
-						"<p><b>Set across the ridges.</b> Lay the tile perpendicular to the combing and "
-						"move it back and forth across the ridges to collapse them, rather than "
-						"dropping it in place.</p>"
-						"<p><b>Back-butter.</b> A skim of mortar pressed onto the back of the tile "
-						"fills the keying pattern moulded into it and wets the surface, so the mortar "
-						"on the tile and the mortar on the substrate join as one rather than meeting "
-						"as two skins.</p>"
-						"<p><b>Then check.</b> Pull a tile back up while everything is still fresh and "
-						"look at the back of it. That is the only honest measurement of coverage, and "
-						"whatever you see there is what the rest of the wall looks like.</p>"
+						"<p>On a dry interior floor a tile with gaps behind it is usually fine "
+						"forever. Submerged, it is not, because the gaps do not stay empty. They "
+						"fill with water — and in a cold climate that trapped water freezes, "
+						"expands, and <b>cracks the tiles and pops them off the wall in chunks</b>. "
+						"Even where it never freezes the voids grow biofilm, dissolve salts out of "
+						"the bed and carry them out through the grout, and leave the tile held by "
+						"less mortar than anybody designed for.</p>"
+						"<p>So Sapphire sets a number rather than a sentiment. <b>The Back-Butter "
+						"Rule: 95% to 100% mortar coverage behind every single tile.</b> That is a "
+						"technique, not an instruction to use more mortar.</p>"
+						"<p><b>Comb the wall in one direction.</b> Apply thinset to the "
+						"sand-broadcasted wall with a notched trowel, leaving straight parallel "
+						"ridges. When the tile is pressed down those ridges collapse sideways and "
+						"the air between them has a straight path out. Swirls and arcs trap air in "
+						"the curve of every loop, and no amount of pressing gets it out — the trowel "
+						"pattern is a ventilation design.</p>"
+						"<p><b>Back-butter the tile.</b> Flat-trowel a layer of thinset directly "
+						"onto the back of the tile panel before it goes up. It fills the keying "
+						"pattern moulded into the back and wets the surface, so the mortar on the "
+						"tile and the mortar on the wall join as one rather than meeting as two "
+						"skins.</p>"
+						"<p><b>Beat it in across the ridges.</b> Set the tile perpendicular to the "
+						"combing and work it back and forth across the ridges to collapse them, "
+						"rather than dropping it in place.</p>"
+						"<p><b>Then check.</b> Pull a tile back up while everything is still fresh "
+						"and look at the back of it. That is the only honest measurement of "
+						"coverage, and whatever you see there is what the rest of the wall looks "
+						"like.</p>"
 					),
 				},
 				{
@@ -976,9 +1176,15 @@ COURSE = {
 						"genuinely bonded — <b>to a skin</b>, rather than into the body of the mortar. "
 						"It lets go later, usually with its neighbours, usually under water, and "
 						"usually in a place that costs a drain-down to reach.</p>"
-						"<p>Pressing harder does not fix it. Rake it off, throw it away and re-spread. "
-						"And remember open time collapses in heat, in wind, in dry air and over a "
-						"thirsty substrate, so spread only what you can actually set.</p>"
+						"<p>Pressing harder does not fix it. Sapphire's instruction is to "
+						"<b>scrape it off, down to the sand-broadcasted base</b>, and apply fresh "
+						"material — and <b>never re-temper the skinned mortar with extra water</b>. "
+						"Water added to a mix that has begun to hydrate gives you something that "
+						"looks workable and has lost its strength.</p>"
+						"<p>Open time is shorter in direct sunlight and in wind, which between them "
+						"describe most of a working day on an open site. It is shorter again in dry "
+						"air and over a thirsty substrate. Spread only what you can actually "
+						"set.</p>"
 					),
 				},
 				{
@@ -1007,13 +1213,18 @@ COURSE = {
 						"tile — at different rates, with temperature, with wetting, and with the load "
 						"of the water itself. Movement joints are the designed place for that to "
 						"happen without breaking something.</p>"
-						"<p>Two rules get broken constantly. First, a movement joint must run through "
-						"<b>every layer</b>: the grout joint, the tile, the bed, down to and lining up "
-						"with the joint in the structure it is following. A joint that is honoured in "
-						"the tile and bridged by the bed underneath is decorative. Second, it is "
-						"filled with a <b>flexible sealant</b>, never with grout. Grout in a movement "
-						"joint is a rigid strut across the one gap that was supposed to close: either "
-						"it cracks, or the tiles on both sides lift into a tented ridge and come "
+						"<p>Two rules get broken constantly. First, <b>never bridge a structural "
+						"concrete expansion joint with tile</b>. The joint has to run through "
+						"<b>every layer</b>: the grout joint, the tile, the bed, down to and lining "
+						"up with the joint in the structure it is following. A joint that is "
+						"honoured in the tile and bridged by the bed underneath is decorative, and "
+						"the shell flexing under it shatters the tile line anyway.</p>"
+						"<p>Second, it is filled with a <b>flexible sealant</b>, never with grout — "
+						"and Sapphire names the family: an approved <b>underwater-grade polyurethane "
+						"or silicone</b> expansion sealant, so the shell can flex safely. Grout in a "
+						"movement joint is a rigid strut across the one gap that was supposed to "
+						"close: either it cracks, or the tiles on both sides lift into a tented "
+						"ridge and come "
 						"off.</p>"
 						"<p>Joints also belong where the assembly changes — at a perimeter, where a "
 						"floor turns up into a wall, at a change of plane or of material, and over "
@@ -1024,12 +1235,18 @@ COURSE = {
 					"block_type": "Rich Text",
 					"heading": "Coping sits on a full bed, and it is anchored on purpose",
 					"content": (
-						"<p>A precast or cut stone coping is set on a <b>full, continuous setting "
-						"bed</b> — not dabs, not a mound at each end. The bearing has to be even along "
-						"the whole piece, for two reasons: a stone that rocks will keep rocking and "
-						"will break its joints open, and a piece bearing on two high points has all of "
-						"its load and all of the load of anybody who sits on it concentrated there. "
-						"That is how a corner cracks off a coping that nobody dropped.</p>"
+						"<p>Precast coping stones form the visible architectural edge of the "
+						"fountain, and on a negative-edge feature they frequently <b>are the "
+						"weir</b> — the spillover edge the whole effect is built on.</p>"
+						"<p>They are heavy, and Sapphire sets them on a <b>thick, non-sag mortar "
+						"bed</b> — full and continuous, not dabs, not a mound at each end. Non-sag "
+						"is what holds a heavy stone at the height you set it instead of letting it "
+						"settle out of line while you work down the run. The bearing has to be even "
+						"along the whole piece, for two reasons: a stone that rocks will keep "
+						"rocking and will break its joints open, and a piece bearing on two high "
+						"points has all of its load, and all of the load of anybody who sits on it, "
+						"concentrated there. That is how a corner cracks off a coping that nobody "
+						"dropped.</p>"
 						"<p>Anchorage is a detail, not a habit. Dowels, anchors, adhesive, slip "
 						"sheets, expansion allowance at joints — whichever the drawing shows is there "
 						"because somebody decided what this edge has to resist. A coping detailed "
@@ -1037,6 +1254,27 @@ COURSE = {
 						"<p>And the anchor is a metal sitting in water, so everything from the metals "
 						"lesson applies to it: its alloy is specified, and a substituted anchor is a "
 						"galvanic couple buried in a stone you will have to break to reach.</p>"
+					),
+				},
+				{
+					"block_type": "Callout",
+					"callout_tone": "Warning",
+					"heading": "1/16 inch, across the entire length",
+					"content": (
+						"<p>The top overflow edge of a negative-edge weir wall must be level to "
+						"<b>within 1/16 inch across its entire length</b>. That is Sapphire's "
+						"tolerance. It is not a target to aim at and miss politely; it is the "
+						"specification for the edge.</p>"
+						"<p>The reason is that water does not average — it goes to the low point. If "
+						"one side of the weir dips even slightly, <b>all</b> of the flow funnels "
+						"through that dip, the sheet breaks up, and the rest of the edge beads or "
+						"runs dry. The uniform glass-sheet waterfall the client paid for simply "
+						"stops existing, and nothing downstream rescues it: more pump does not fix "
+						"it and a bigger basin does not fix it.</p>"
+						"<p>A spirit level off a bucket will not resolve 1/16 inch over a long run. "
+						"Use a <b>machinist level or a digital smart level</b> alongside your "
+						"<b>laser transit</b>, work the length as one edge rather than piece to "
+						"piece, and check it again after the bed has taken the weight.</p>"
 					),
 				},
 				{
@@ -1058,62 +1296,89 @@ COURSE = {
 						"in the last six inches of the movement.</p>"
 					),
 				},
+				{
+					"block_type": "Checklist",
+					"heading": "Demonstrated to a Lead Installer before you graduate Module 4",
+					"items": [
+						"Mix a zero-slump dry pack mortar bed that passes the handheld snowball compaction test",
+						"Set a 12-inch by 12-inch section of glass tile panel using back-butter mechanics, confirming 100% mortar coverage when a tile is lifted for inspection",
+						"Align two adjacent precast coping stones on a mock weir wall, matching elevations to within a strict 1/16 inch",
+					],
+				},
 				ask_block(
 					"Rated for immersion, and set to the detail",
-					"<p>Setting mortars, grouts and sealants are rated, and a product that is ideal on "
-					"an interior floor can soften, discolour, harbour growth or be attacked outright by "
-					"treated water. Epoxy grout, an immersion-rated cementitious grout and ordinary "
-					"wall grout are three different answers to three different questions.</p>"
-					"<p>Required coverage, movement joint spacing and location, anchorage and the anchor "
-					"alloy, how long the assembly must cure before it is flood-tested and before it is "
-					"filled for service, and whether the water may be chemically treated during the "
-					"first fill all come from the manufacturer's data and the project specification. "
+					"<p>Sapphire's document answers two of these outright. Coverage behind a "
+					"submerged tile is 95% to 100%, and an expansion joint takes an approved "
+					"underwater-grade polyurethane or silicone sealant. Neither is a figure to "
+					"negotiate down because the tile is going slowly.</p>"
+					"<p>Which setting mortar and which grout is still a product answer. They are "
+					"rated, and one that is ideal on an interior floor can soften, discolour, "
+					"harbour growth or be attacked outright by treated water. Epoxy grout, an "
+					"immersion-rated cementitious grout and ordinary wall grout are three different "
+					"answers to three different questions.</p>"
+					"<p>Movement joint spacing and location, anchorage and the anchor alloy, how "
+					"long the assembly must cure before it is flood-tested and before it is filled "
+					"for service, and whether the water may be chemically treated during the first "
+					"fill all come from the manufacturer's data and the project specification. "
 					"Ask before the tile goes down, not after the basin is full.</p>",
 				),
 			],
 			"quiz": {
 				"questions": [
 					{
-						"question": "Why is partial mortar coverage behind a tile tolerated on a dry interior floor but not in a basin?",
-						"type": "Single Choice",
+						"question": "Which of these does Sapphire's Back-Butter Rule require when setting submerged tile?",
+						"type": "Multiple Choice",
 						"explanation": (
-							"The voids do not stay empty under water. They fill, then freeze, grow biofilm, carry salts "
-							"out through the grout, and leave the tile held by less mortar than was designed for."
+							"95% to 100% mortar coverage behind every single tile, thinset combed onto the "
+							"sand-broadcasted wall with a notched trowel, and a flat-troweled layer on the back of the "
+							"tile before it is beaten in. The voids left by anything less fill with water, and in a "
+							"cold climate that water freezes, expands and pops the tiles off the wall in chunks."
 						),
 						"options": [
 							{
-								"text": "Submerged, every void fills with water and becomes a freeze, growth and salt problem",
+								"text": "95% to 100% mortar coverage behind every single tile",
 								"is_correct": True,
 							},
 							{
-								"text": "Submerged tiles are heavier, so they need more mortar to hold their weight",
-								"is_correct": False,
+								"text": "Thinset combed onto the sand-broadcasted wall with a notched trowel",
+								"is_correct": True,
 							},
 							{
-								"text": "Water pressure pushes tiles off unless the mortar area is increased",
-								"is_correct": False,
+								"text": "A flat-troweled layer of thinset on the back of the tile before it is beaten in",
+								"is_correct": True,
 							},
 							{
-								"text": "It is tolerated in both cases; only the grout choice changes",
+								"text": "Dabs of thinset at the corners and the centre, which is faster and holds just as well",
 								"is_correct": False,
 							},
 						],
 					},
 					{
-						"question": "Why comb mortar into straight parallel ridges rather than swirls?",
+						"question": "How level must the top overflow edge of a negative-edge weir wall be, and why?",
 						"type": "Single Choice",
 						"explanation": (
-							"Straight ridges collapse sideways when the tile is pressed across them and the trapped air "
-							"has a path out. A swirl closes a loop around the air and there is nowhere for it to go."
+							"Sapphire's tolerance is 1/16 inch across the entire length. Water does not average — it "
+							"goes to the low point — so a dip at one end funnels the whole flow through it, the sheet "
+							"breaks up and the rest of the edge beads or runs dry. Holding that over a long run takes a "
+							"machinist or digital smart level alongside a laser transit."
 						),
 						"options": [
 							{
-								"text": "Straight ridges collapse and give trapped air a path out; swirls seal it in",
+								"text": "Level to 1/16 inch across its entire length, or the flow funnels through the low point and the sheet breaks up",
 								"is_correct": True,
 							},
-							{"text": "Swirls use more mortar than straight ridges do", "is_correct": False},
-							{"text": "Straight ridges make the mortar cure more evenly", "is_correct": False},
-							{"text": "It only affects appearance at the grout joints", "is_correct": False},
+							{
+								"text": "Level to 1/4 inch across its entire length, which the eye cannot pick up in moving water",
+								"is_correct": False,
+							},
+							{
+								"text": "Level at each end, with the middle left to follow the coping joints",
+								"is_correct": False,
+							},
+							{
+								"text": "Pitched slightly towards the drop so the water leaves the edge cleanly",
+								"is_correct": False,
+							},
 						],
 					},
 					{
@@ -1121,7 +1386,9 @@ COURSE = {
 						"type": "Single Choice",
 						"explanation": (
 							"It bonds to the skin rather than into the mortar. It feels and sounds solid and passes "
-							"every casual check, then lets go later — usually under water and usually with its neighbours."
+							"every casual check, then lets go later — usually under water and usually with its "
+							"neighbours. Sapphire's instruction is to scrape it off down to the sand-broadcasted base "
+							"and apply fresh material, never to re-temper it with water."
 						),
 						"options": [
 							{
@@ -1146,15 +1413,20 @@ COURSE = {
 						"question": "Which of these must be true of a movement joint in a tiled water feature?",
 						"type": "Multiple Choice",
 						"explanation": (
-							"A joint only works if it runs through every layer down to the structural joint it follows, "
-							"and if it is filled with something that can move. Grout in a movement joint is a rigid strut."
+							"Tile never bridges a structural expansion joint. The joint runs through every layer "
+							"down to the one it is following, and it is filled with something that can move — on this "
+							"work an approved underwater-grade polyurethane or silicone sealant. Grout in a movement "
+							"joint is a rigid strut across the one gap that was supposed to close."
 						),
 						"options": [
 							{
 								"text": "It runs through the tile, the bed and down to the joint it is following",
 								"is_correct": True,
 							},
-							{"text": "It is filled with a flexible sealant", "is_correct": True},
+							{
+								"text": "It is filled with an approved underwater-grade polyurethane or silicone expansion sealant",
+								"is_correct": True,
+							},
 							{
 								"text": "It is located over the structural joint, at perimeters, and at changes of plane or material",
 								"is_correct": True,

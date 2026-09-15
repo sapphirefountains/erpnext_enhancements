@@ -60,51 +60,51 @@ _SPEC_TTL_SECONDS = 3600
 
 
 def _require_author():
-    if not set(AUTHOR_ROLES) & set(frappe.get_roles()):
-        frappe.throw(_("Not permitted."), frappe.PermissionError)
+	if not set(AUTHOR_ROLES) & set(frappe.get_roles()):
+		frappe.throw(_("Not permitted."), frappe.PermissionError)
 
 
 def _ai_model_id():
-    """The Vertex model name to stamp on generated questions, or ``""``.
+	"""The Vertex model name to stamp on generated questions, or ``""``.
 
-    Copied (not imported) from ``training_ai._model_id`` so this module does not
-    depend on that one's import surface; the value is provenance, never gating."""
-    try:
-        from erpnext_enhancements.api.gemini import MODEL_ID
+	Copied (not imported) from ``training_ai._model_id`` so this module does not
+	depend on that one's import surface; the value is provenance, never gating."""
+	try:
+		from erpnext_enhancements.api.gemini import MODEL_ID
 
-        return MODEL_ID
-    except Exception:
-        return ""
+		return MODEL_ID
+	except Exception:
+		return ""
 
 
 # ------------------------------------------------------------- spec stash
 
 
 def stash_spec(spec):
-    """Store a validated spec for this user and return a short token."""
-    token = frappe.generate_hash(length=16)
-    frappe.cache().set_value(
-        f"{_SPEC_CACHE_PREFIX}|{frappe.session.user}|{token}",
-        json.dumps(spec),
-        expires_in_sec=_SPEC_TTL_SECONDS,
-    )
-    return token
+	"""Store a validated spec for this user and return a short token."""
+	token = frappe.generate_hash(length=16)
+	frappe.cache().set_value(
+		f"{_SPEC_CACHE_PREFIX}|{frappe.session.user}|{token}",
+		json.dumps(spec),
+		expires_in_sec=_SPEC_TTL_SECONDS,
+	)
+	return token
 
 
 def pop_spec(token):
-    """Return (and forget) a spec stashed for this user, or ``None``."""
-    token = (token or "").strip()
-    if not token:
-        return None
-    key = f"{_SPEC_CACHE_PREFIX}|{frappe.session.user}|{token}"
-    raw = frappe.cache().get_value(key)
-    if not raw:
-        return None
-    frappe.cache().delete_value(key)
-    try:
-        return json.loads(raw)
-    except (ValueError, TypeError):
-        return None
+	"""Return (and forget) a spec stashed for this user, or ``None``."""
+	token = (token or "").strip()
+	if not token:
+		return None
+	key = f"{_SPEC_CACHE_PREFIX}|{frappe.session.user}|{token}"
+	raw = frappe.cache().get_value(key)
+	if not raw:
+		return None
+	frappe.cache().delete_value(key)
+	try:
+		return json.loads(raw)
+	except (ValueError, TypeError):
+		return None
 
 
 # ------------------------------------------------------------- materializer
@@ -112,214 +112,342 @@ def pop_spec(token):
 
 @frappe.whitelist()
 def list_starters():
-    """The starter gallery. Read-only; an author sees what shapes exist."""
-    from erpnext_enhancements.training import templates_gallery
+	"""The starter gallery. Read-only; an author sees what shapes exist."""
+	from erpnext_enhancements.training import templates_gallery
 
-    _require_author()
-    return {"starters": templates_gallery.list_templates()}
+	_require_author()
+	return {"starters": templates_gallery.list_templates()}
 
 
 @frappe.whitelist()
 def create_from_starter(starter, course_title=None):
-    """Build a draft course from a starter shape.
+	"""Build a draft course from a starter shape.
 
-    **The whole point is that this is not a second scaffolder.** A starter is a
-    Course Spec, so it goes through ``validate_course_spec`` and
-    ``author_course_from_spec`` exactly as an AI-drafted course does — same
-    validator, same builder, same block vocabulary, same review gate. If a starter
-    could express something the AI path cannot, one of the two would be wrong, and
-    the drift would only surface when a template produced a course the builder
-    could not render.
+	**The whole point is that this is not a second scaffolder.** A starter is a
+	Course Spec, so it goes through ``validate_course_spec`` and
+	``author_course_from_spec`` exactly as an AI-drafted course does — same
+	validator, same builder, same block vocabulary, same review gate. If a starter
+	could express something the AI path cannot, one of the two would be wrong, and
+	the drift would only surface when a template produced a course the builder
+	could not render.
 
-    Answers the half of "anyone can build a training" that is not about the
-    editor: most of what stops people is opening a blank course and having to
-    invent the content and the shape at once. The starter gives away the shape and
-    leaves prose that says *replace this with…* — never filler, because filler is
-    worse than an empty page. Filler gets published.
-    """
-    from erpnext_enhancements.training import templates_gallery
+	Answers the half of "anyone can build a training" that is not about the
+	editor: most of what stops people is opening a blank course and having to
+	invent the content and the shape at once. The starter gives away the shape and
+	leaves prose that says *replace this with…* — never filler, because filler is
+	worse than an empty page. Filler gets published.
+	"""
+	from erpnext_enhancements.training import templates_gallery
 
-    _require_author()
-    return author_course_from_spec(templates_gallery.spec_for(starter, course_title))
+	_require_author()
+	return author_course_from_spec(templates_gallery.spec_for(starter, course_title))
 
 
 @frappe.whitelist()
 def author_course_from_spec(spec):
-    """Create a Training Course and an unpublished draft from a Course Spec.
+	"""Create a Training Course and an unpublished draft from a Course Spec.
 
-    ``spec`` is a :mod:`~erpnext_enhancements.training.course_spec` dict (or its JSON
-    string). Returns ``{course, course_title, draft_version, url, ...counts}``. The
-    course is left as a ``Draft`` with every AI question awaiting human review.
-    """
-    _require_author()
-    if not frappe.has_permission("Training Course", "create"):
-        frappe.throw(_("You are not allowed to create Training Courses."), frappe.PermissionError)
+	``spec`` is a :mod:`~erpnext_enhancements.training.course_spec` dict (or its JSON
+	string). Returns ``{course, course_title, draft_version, url, ...counts}``. The
+	course is left as a ``Draft`` with every AI question awaiting human review.
+	"""
+	_require_author()
+	if not frappe.has_permission("Training Course", "create"):
+		frappe.throw(_("You are not allowed to create Training Courses."), frappe.PermissionError)
 
-    spec = validate_course_spec(spec)
-    course_name = _create_course(spec["course"])
+	spec = validate_course_spec(spec)
+	course_name = _create_course(spec["course"])
 
-    # An empty draft: a brand-new course has no live version to clone, so
-    # create_draft_version mints a bare docstatus-0 version to fill.
-    draft_version = training_author.create_draft_version(course_name)
+	# An empty draft: a brand-new course has no live version to clone, so
+	# create_draft_version mints a bare docstatus-0 version to fill.
+	draft_version = training_author.create_draft_version(course_name)
 
-    modified = str(frappe.db.get_value("Training Course Version", draft_version, "modified"))
-    chapter_keys = _apply_chapters(draft_version, spec["chapters"], modified)
-    if chapter_keys is not None:
-        modified = chapter_keys.pop("_modified")
+	modified = str(frappe.db.get_value("Training Course Version", draft_version, "modified"))
+	chapter_keys = _apply_chapters(draft_version, spec["chapters"], modified)
+	if chapter_keys is not None:
+		modified = chapter_keys.pop("_modified")
 
-    modified, lesson_names = _apply_lessons(draft_version, spec["lessons"], chapter_keys, modified)
-    _apply_quizzes(draft_version, spec["lessons"], lesson_names, modified)
+	modified, lesson_names = _apply_lessons(draft_version, spec["lessons"], chapter_keys, modified)
+	_apply_quizzes(draft_version, spec["lessons"], lesson_names, modified)
 
-    summary = spec_summary(spec)
-    return {
-        "course": course_name,
-        "course_title": summary["course_title"],
-        "draft_version": draft_version,
-        "status": "Draft",
-        "chapters": summary["chapters"],
-        "lessons": summary["lessons"],
-        "blocks": summary["blocks"],
-        "questions": summary["questions"],
-        "url": f"/app/training-course/{course_name}",
-        "note": (
-            "Created as an unpublished Draft. Every quiz question is flagged as "
-            "AI-generated and must be reviewed by a person in the Training Builder "
-            "before the course can be published."
-        ),
-    }
+	summary = spec_summary(spec)
+	return {
+		"course": course_name,
+		"course_title": summary["course_title"],
+		"draft_version": draft_version,
+		"status": "Draft",
+		"chapters": summary["chapters"],
+		"lessons": summary["lessons"],
+		"blocks": summary["blocks"],
+		"questions": summary["questions"],
+		"url": f"/app/training-course/{course_name}",
+		"note": (
+			"Created as an unpublished Draft. Every quiz question is flagged as "
+			"AI-generated and must be reviewed by a person in the Training Builder "
+			"before the course can be published."
+		),
+	}
 
 
 def _create_course(course):
-    data = {
-        "doctype": "Training Course",
-        "course_title": course["course_title"],
-        "weight": course["weight"],
-        "audience": course["audience"],
-        "author": frappe.session.user,
-    }
-    if course.get("summary"):
-        data["summary"] = course["summary"]
-    # A category the model named that does not exist is dropped rather than fatal —
-    # the author can set it on the draft. Naming a real one is the common case.
-    category = course.get("category")
-    if category and frappe.db.exists("Training Category", category):
-        data["category"] = category
+	data = {
+		"doctype": "Training Course",
+		"course_title": course["course_title"],
+		"weight": course["weight"],
+		"audience": course["audience"],
+		"author": frappe.session.user,
+	}
+	if course.get("summary"):
+		data["summary"] = course["summary"]
+	# A category the model named that does not exist is dropped rather than fatal —
+	# the author can set it on the draft. Naming a real one is the common case.
+	category = course.get("category")
+	if category and frappe.db.exists("Training Category", category):
+		data["category"] = category
 
-    doc = frappe.get_doc(data)
-    doc.insert()  # as the user: create permission was checked above
-    return doc.name
+	doc = frappe.get_doc(data)
+	doc.insert()  # as the user: create permission was checked above
+	return doc.name
 
 
 def _apply_chapters(draft_version, chapters, modified):
-    """Create the chapters, returning ``{index: chapter_key, "_modified": token}``.
+	"""Create the chapters, returning ``{index: chapter_key, "_modified": token}``.
 
-    ``None`` when the spec has no chapters. The keys are minted by
-    ``TrainingCourseVersion`` on save and read back out of the response, so a
-    lesson can reference the chapter it belongs to by the real key.
-    """
-    if not chapters:
-        return None
-    payload = {"chapters": [{"chapter_title": ch["title"], "description": ch["description"]} for ch in chapters]}
-    result = training_author.save_draft_version(draft_version, payload, modified)
-    # save_draft_version returns chapters ordered by idx — the same order we sent.
-    keys = {index: row["chapter_key"] for index, row in enumerate(result.get("chapters") or [])}
-    keys["_modified"] = result["modified"]
-    return keys
+	``None`` when the spec has no chapters. The keys are minted by
+	``TrainingCourseVersion`` on save and read back out of the response, so a
+	lesson can reference the chapter it belongs to by the real key.
+	"""
+	if not chapters:
+		return None
+	payload = {
+		"chapters": [{"chapter_title": ch["title"], "description": ch["description"]} for ch in chapters]
+	}
+	result = training_author.save_draft_version(draft_version, payload, modified)
+	# save_draft_version returns chapters ordered by idx — the same order we sent.
+	keys = {index: row["chapter_key"] for index, row in enumerate(result.get("chapters") or [])}
+	keys["_modified"] = result["modified"]
+	return keys
 
 
 def _block_to_payload(block):
-    """One spec block as a builder block-payload dict (allowlisted fields only)."""
-    payload = {"block_type": block["block_type"], "heading": block.get("heading", "")}
-    if block["block_type"] in ("Rich Text", "Callout"):
-        payload["content"] = block.get("content", "")
-    if block.get("callout_tone"):
-        payload["callout_tone"] = block["callout_tone"]
+	"""One spec block as a builder block-payload dict (allowlisted fields only)."""
+	payload = {"block_type": block["block_type"], "heading": block.get("heading", "")}
+	if block["block_type"] in ("Rich Text", "Callout"):
+		payload["content"] = block.get("content", "")
+	if block.get("callout_tone"):
+		payload["callout_tone"] = block["callout_tone"]
 
-    data = None
-    if block["block_type"] == "Checklist":
-        data = {"items": block.get("items") or []}
-    elif block["block_type"] == "Flashcards":
-        data = {"cards": block.get("cards") or []}
-    elif block["block_type"] == "Accordion":
-        data = {"panels": block.get("panels") or []}
-    if data is not None:
-        payload["data"] = json.dumps(data)
-    return payload
+	data = None
+	if block["block_type"] == "Checklist":
+		data = {"items": block.get("items") or []}
+	elif block["block_type"] == "Flashcards":
+		data = {"cards": block.get("cards") or []}
+	elif block["block_type"] == "Accordion":
+		data = {"panels": block.get("panels") or []}
+	if data is not None:
+		payload["data"] = json.dumps(data)
+	return payload
 
 
 def _apply_lessons(draft_version, lessons, chapter_keys, modified):
-    """Create every lesson with its blocks (no quiz yet). Returns the new lock
-    token and a list of the created lesson names, in spec order."""
-    patches = []
-    for index, lesson in enumerate(lessons):
-        patch = {
-            "temp_id": f"L{index}",
-            "lesson_title": lesson["lesson_title"],
-            "summary": lesson.get("summary", ""),
-            "estimated_minutes": cint(lesson.get("estimated_minutes")),
-            "blocks": [_block_to_payload(b) for b in lesson["blocks"]],
-        }
-        if chapter_keys and "chapter" in lesson:
-            patch["chapter_key"] = chapter_keys.get(lesson["chapter"], "")
-        patches.append(patch)
+	"""Create every lesson with its blocks (no quiz yet). Returns the new lock
+	token and a list of the created lesson names, in spec order."""
+	patches = []
+	for index, lesson in enumerate(lessons):
+		patch = {
+			"temp_id": f"L{index}",
+			"lesson_title": lesson["lesson_title"],
+			"summary": lesson.get("summary", ""),
+			"estimated_minutes": cint(lesson.get("estimated_minutes")),
+			"blocks": [_block_to_payload(b) for b in lesson["blocks"]],
+		}
+		if chapter_keys and "chapter" in lesson:
+			patch["chapter_key"] = chapter_keys.get(lesson["chapter"], "")
+		patches.append(patch)
 
-    result = training_author.save_draft_version(draft_version, {"lessons": patches}, modified)
-    by_temp = {row["temp_id"]: row["name"] for row in result.get("created_lessons") or []}
-    # Ordered back into spec order so the caller can line questions up by index.
-    lesson_names = [by_temp.get(f"L{index}") for index in range(len(lessons))]
-    return result["modified"], lesson_names
+	result = training_author.save_draft_version(draft_version, {"lessons": patches}, modified)
+	by_temp = {row["temp_id"]: row["name"] for row in result.get("created_lessons") or []}
+	# Ordered back into spec order so the caller can line questions up by index.
+	lesson_names = [by_temp.get(f"L{index}") for index in range(len(lessons))]
+	return result["modified"], lesson_names
 
 
 def _apply_quizzes(draft_version, lessons, lesson_names, modified):
-    """Create the AI questions (flagged, unreviewed) and attach each lesson's pool.
+	"""Create the AI questions (flagged, unreviewed) and attach each lesson's pool.
 
-    A second pass over the lessons: questions are created first so the quiz rows can
-    reference them by name, then one ``save_draft_version`` marks the pools. Lessons
-    without a quiz are left untouched (no ``blocks`` key, so their content stands).
-    """
-    patches = []
-    for index, lesson in enumerate(lessons):
-        quiz = lesson.get("quiz")
-        if not quiz or not quiz.get("questions"):
-            continue
-        lesson_name = lesson_names[index]
-        if not lesson_name:
-            # A lesson we failed to place cannot own a quiz; skip rather than orphan
-            # the questions. In practice every lesson is created, so this is defensive.
-            continue
+	A second pass over the lessons: questions are created first so the quiz rows can
+	reference them by name, then one ``save_draft_version`` marks the pools. Lessons
+	without a quiz are left untouched (no ``blocks`` key, so their content stands).
+	"""
+	patches = []
+	for index, lesson in enumerate(lessons):
+		quiz = lesson.get("quiz")
+		if not quiz or not quiz.get("questions"):
+			continue
+		lesson_name = lesson_names[index]
+		if not lesson_name:
+			# A lesson we failed to place cannot own a quiz; skip rather than orphan
+			# the questions. In practice every lesson is created, so this is defensive.
+			continue
 
-        question_names = []
-        for question in quiz["questions"]:
-            doc = frappe.get_doc(
-                {
-                    "doctype": "Training Question",
-                    "question_text": question["question"],
-                    "question_type": question["type"],
-                    "explanation": question.get("explanation", ""),
-                    "source_lesson": lesson_name,
-                    "is_bank_question": 0,
-                    "options": [
-                        {"option_text": option["text"], "is_correct": option["is_correct"]}
-                        for option in question["options"]
-                    ],
-                    "ai_model": _ai_model_id(),
-                    # ai_generated WITHOUT ai_reviewed_by: the pair the publish gate
-                    # reads. This is what forces a human to review before it goes live.
-                    "ai_generated": 1,
-                }
-            )
-            doc.insert(ignore_permissions=True)
-            question_names.append(doc.name)
+		question_names = []
+		for question in quiz["questions"]:
+			doc = frappe.get_doc(
+				{
+					"doctype": "Training Question",
+					"question_text": question["question"],
+					"question_type": question["type"],
+					"explanation": question.get("explanation", ""),
+					"source_lesson": lesson_name,
+					"is_bank_question": 0,
+					"options": [
+						{"option_text": option["text"], "is_correct": option["is_correct"]}
+						for option in question["options"]
+					],
+					"ai_model": _ai_model_id(),
+					# ai_generated WITHOUT ai_reviewed_by: the pair the publish gate
+					# reads. This is what forces a human to review before it goes live.
+					"ai_generated": 1,
+				}
+			)
+			doc.insert(ignore_permissions=True)
+			question_names.append(doc.name)
 
-        patches.append(
-            {
-                "name": lesson_name,
-                "has_quiz": 1,
-                "quiz_pass_score": cint(quiz.get("pass_score")),
-                "quiz_questions_to_ask": cint(quiz.get("questions_to_ask")),
-                "quiz": [{"question": name} for name in question_names],
-            }
-        )
+		patches.append(
+			{
+				"name": lesson_name,
+				"has_quiz": 1,
+				"quiz_pass_score": cint(quiz.get("pass_score")),
+				"quiz_questions_to_ask": cint(quiz.get("questions_to_ask")),
+				"quiz": [{"question": name} for name in question_names],
+			}
+		)
 
-    if patches:
-        training_author.save_draft_version(draft_version, {"lessons": patches}, modified)
+	if patches:
+		training_author.save_draft_version(draft_version, {"lessons": patches}, modified)
+
+
+def rebuild_draft_from_spec(course, spec):
+	"""Replace an **untouched** draft's content with the spec's, in place.
+
+	``author_course_from_spec`` can only ever create: it mints a course and then a draft, and
+	``create_draft_version`` refuses outright when an open draft already exists. So a course whose
+	spec has been rewritten in the repo cannot be brought up to date by re-running the seeder --
+	the seeder is insert-only and keyed on title, and it skips. Without this, editing a spec file
+	changes what a *fresh install* gets and nothing at all on a site that already has the course.
+
+	This is the missing half, and it is deliberately **not** whitelisted: it deletes every lesson
+	on the draft and builds new ones, which is a migration's job and nobody's to invoke from a
+	browser. The caller is responsible for deciding the draft is safe to rebuild --
+	``patches/rebuild_technician_course_drafts.py`` holds those guards and states them.
+
+	**Keys are re-minted, and that is why the caller must check.** A rebuilt lesson is a new
+	``Training Lesson`` with a new ``lesson_key`` and new ``block_key`` values. Everything in this
+	module joins on those keys, so a learner part-way through a course would be stranded -- which
+	is exactly why the patch refuses to touch a course anybody has started. On an unpublished draft
+	that nobody can have taken, there is nothing to strand.
+
+	Returns ``{course, draft_version, lessons, questions, removed_questions}``, or ``None`` when
+	there is no open draft to rebuild.
+	"""
+	spec = validate_course_spec(spec)
+
+	draft_version = frappe.db.get_value("Training Course Version", {"course": course, "docstatus": 0}, "name")
+	if not draft_version:
+		return None
+
+	old_lessons = frappe.get_all("Training Lesson", filters={"course_version": draft_version}, pluck="name")
+	# The questions those lessons drew, captured BEFORE the pools are deleted -- afterwards there
+	# is nothing left pointing at them and they would sit in the table for ever, unreferenced and
+	# invisible, still counting toward the review queue.
+	old_questions = set()
+	if old_lessons:
+		old_questions = set(
+			frappe.get_all(
+				"Training Quiz Question",
+				filters={"parent": ["in", old_lessons], "parenttype": "Training Lesson"},
+				pluck="question",
+			)
+		)
+
+	modified = str(frappe.db.get_value("Training Course Version", draft_version, "modified"))
+	if old_lessons:
+		result = training_author.save_draft_version(draft_version, {"deleted_lessons": old_lessons}, modified)
+		modified = result["modified"]
+
+	# From here it is the create path exactly, against a version that already exists. Sharing these
+	# three helpers is the point: a rebuilt course comes out in the identical shape to a seeded one,
+	# and there is no second mapping of a spec onto the model to drift.
+	chapter_keys = _apply_chapters(draft_version, spec["chapters"], modified)
+	if chapter_keys is not None:
+		modified = chapter_keys.pop("_modified")
+	modified, lesson_names = _apply_lessons(draft_version, spec["lessons"], chapter_keys, modified)
+	_apply_quizzes(draft_version, spec["lessons"], lesson_names, modified)
+
+	removed = _drop_orphaned_questions(old_questions)
+	_refresh_course_fields(course, spec["course"])
+
+	summary = spec_summary(spec)
+	return {
+		"course": course,
+		"draft_version": draft_version,
+		"lessons": summary["lessons"],
+		"questions": summary["questions"],
+		"removed_questions": removed,
+	}
+
+
+def _drop_orphaned_questions(names):
+	"""Delete AI-drafted questions the rebuild left pointing at nothing.
+
+	Guarded three ways, because deleting somebody's content is the one thing here that cannot be
+	undone by running the patch again: only questions that were **AI-drafted**, only ones **nobody
+	has reviewed**, and only ones **no remaining pool draws**. A hand-written question, a reviewed
+	one, or one a second lesson still uses is left alone -- it becomes an unreferenced bank entry,
+	which is untidy and recoverable, rather than gone.
+	"""
+	if not names:
+		return 0
+
+	still_used = set(
+		frappe.get_all(
+			"Training Quiz Question",
+			filters={"question": ["in", list(names)], "parenttype": "Training Lesson"},
+			pluck="question",
+		)
+	)
+	candidates = [n for n in names if n not in still_used]
+	if not candidates:
+		return 0
+
+	droppable = frappe.get_all(
+		"Training Question",
+		filters={
+			"name": ["in", candidates],
+			"ai_generated": 1,
+			"ai_reviewed_by": ["is", "not set"],
+			"is_bank_question": 0,
+		},
+		pluck="name",
+	)
+	for name in droppable:
+		frappe.delete_doc("Training Question", name, ignore_permissions=True, force=True)
+	return len(droppable)
+
+
+def _refresh_course_fields(course, spec_course):
+	"""Bring the course record itself back in line with the spec.
+
+	A rewritten spec can change the summary or the category, and neither lives on the version --
+	they are on the course, which the seeder set once and nothing has touched since. `weight` and
+	`audience` are deliberately NOT re-applied: those are the adopter's to change and a rebuild of
+	the *content* has no business reaching into policy.
+	"""
+	updates = {}
+	if spec_course.get("summary"):
+		updates["summary"] = spec_course["summary"]
+	category = spec_course.get("category")
+	if category and frappe.db.exists("Training Category", category):
+		updates["category"] = category
+	if updates:
+		frappe.db.set_value("Training Course", course, updates, update_modified=False)

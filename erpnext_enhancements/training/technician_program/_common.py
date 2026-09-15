@@ -32,6 +32,25 @@ DRAFT_NOTICE = (
 )
 
 
+#: Shown instead of :data:`DRAFT_NOTICE` on a course built from one of Sapphire's own module
+#: documents. The distinction is not decoration: the generic notice tells a reader that every
+#: figure came from general practice and should be checked against the product in their hands,
+#: which is exactly the wrong thing to say about a number Sapphire wrote down itself. A course
+#: carrying the wrong notice is either overclaiming or underclaiming its own authority.
+SOURCED_NOTICE = (
+	"<p><b>This course is a draft, built from Sapphire's own training document for this "
+	"module.</b> Where that document gives a figure, a sequence or a rule, it is used as written "
+	"— those are Sapphire's, not this course's. It has still <b>not been reviewed or adopted</b>, "
+	"so read it as a faithful transcription to correct rather than as settled policy.</p>"
+	"<p>Some topics in this module go beyond what the source document covers. Those parts are "
+	"written from general practice, and where they reach a number that belongs to a product or a "
+	"job they say <b>where to read it</b> rather than inventing one — the label, the data sheet, "
+	"the submittal and the engineer's specification win over anything written here.</p>"
+	"<p>It does not replace certified training. Confined space entry, lock-out/tag-out, electrical "
+	"work and first aid each have a formal standard and a written program behind them.</p>"
+)
+
+
 def notice_block():
 	"""The draft notice, as the first block of a course's first lesson."""
 	return {
@@ -39,6 +58,16 @@ def notice_block():
 		"callout_tone": "Warning",
 		"heading": "Draft — not yet adopted",
 		"content": DRAFT_NOTICE,
+	}
+
+
+def sourced_notice_block():
+	"""The draft notice for a course built from Sapphire's own module document."""
+	return {
+		"block_type": "Callout",
+		"callout_tone": "Warning",
+		"heading": "Draft — built from Sapphire's own module document",
+		"content": SOURCED_NOTICE,
 	}
 
 
