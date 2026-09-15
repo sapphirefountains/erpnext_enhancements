@@ -64,6 +64,7 @@ HELP_CLASSES = (
     "tr-help-seealso-link",
     "tr-help-search",
     "tr-help-search-input",
+    "tr-help-search-all",
     "tr-help-found",
     "tr-help-found-head",
     "tr-gloss",

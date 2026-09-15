@@ -3112,6 +3112,16 @@
 	font-size: 0.92rem;
 }
 
+/* The second step, offered rather than taken. Full width so it reads as an action on the
+ * panel rather than a control floating beside the results above it. */
+.tr-help-search-all {
+	display: block;
+	width: 100%;
+	margin: 0.4rem 0 0;
+	text-align: left;
+	font-size: 0.9rem;
+}
+
 .tr-help-found {
 	margin: 0;
 }
