@@ -763,6 +763,14 @@ jobs:
       # one learn.js can write, checked in both directions.
       - name: Learner routes and rail (a view the host cannot write is silently the catalogue)
         run: python -m unittest erpnext_enhancements.tests.test_learner_nav -v
+      # Stray ASCII control characters. A backslash escape written into a file through a shell
+      # can be eaten on the way in: `\25B8` reached desk_nav.css as a literal 0x15 byte plus the
+      # text "B8" and drew a tofu box beside every rail group on production, and `\b` reached
+      # test_training_help.py as a backspace, which made an absence guard unable to fire against
+      # any data at all. Nothing raises on either -- a control character is legal in a Python
+      # string, a CSS value and a Markdown paragraph -- so the byte is what gets checked.
+      - name: No stray control characters (a shell-eaten escape parses fine and is still wrong)
+        run: python -m unittest erpnext_enhancements.tests.test_no_control_characters -v
       - name: Training help (a second learner payload, held to the first one's rules)
         run: python -m unittest erpnext_enhancements.tests.test_training_help -v
       # The publish_training_course assistant tool. Guards the two ways it could be

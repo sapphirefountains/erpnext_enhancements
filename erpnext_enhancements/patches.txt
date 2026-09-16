@@ -1062,3 +1062,10 @@ erpnext_enhancements.patches.drop_fragment_glossary_aliases
 # have filed under nothing. Fill-only: a department somebody has set is never overwritten, and a
 # Department that does not exist is skipped and named rather than created.
 erpnext_enhancements.patches.set_position_departments
+# v1.473.0: the other half of the fragment sweep above. That one dropped an alias that was a word
+# out of the term's own name; these seven are ordinary words that appear nowhere in it, so it never
+# looked at them -- `open` on OL, `miss`/`misses`/`skip` on Holiday, `fall` on Drop and on Pitch,
+# `hot` on Ungrounded conductor. Opening one lesson on production marked exactly two words and both
+# were wrong. Named rather than ruled: `fall` is both ordinary English and the trade word for the
+# slope on a deck, and deciding which side a word lands on is knowing the trade.
+erpnext_enhancements.patches.drop_ordinary_word_glossary_aliases

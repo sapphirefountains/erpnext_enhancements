@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.473.0] - 2026-09-16
+
+Everything here was found by verifying v1.472.0 against production rather than by a test or a
+report, and four of the five were invisible to every check the repo has.
+
+### Fixed
+
+- **A backslash escape eaten by a shell, in five files over three days.** `\25B8` — the CSS
+  escape for the caret in the rail's new catalogue submenu — reached
+  `public/css/training/desk_nav.css` as a literal `0x15` byte followed by the text `B8`.
+  Something between the editor and the file read `\2` `5` as an octal escape. Production drew a
+  tofu box and the letters "B8" beside *Production*, *Everyone* and *Other* from the moment
+  v1.472.0 deployed. The same accident, the same day, in four more places:
+  - `tests/test_training_help.py` asked for `\b(?:within|inside|no later than)` and got a
+    literal **backspace** where each word boundary should be. The compiled pattern then required
+    an actual `0x08` character either side of the phrase, which no glossary entry has ever
+    contained — so `assertIsNone(hit)` held for all 704 entries regardless of what they said.
+    The guard exists to stop an entry inventing a company policy ("backwash every 6 weeks"); from
+    the day it was written it could not have caught one. **The failure direction is that it
+    passes**, which is the third time that shape has cost this repo something.
+  - `training/README.md` documents anchoring a grep on `\btn-`, and rendered it as `tn-` — the
+    exact unanchored pattern the sentence warns against.
+  - `CHANGELOG.md` lost the `\1` out of a regex backreference.
+  - `www/training_preview.html` had two `\0` separators collapse to raw NUL bytes.
+
+  None of it raises. A control character is legal in a Python string, a CSS `content` value, a
+  Markdown paragraph and a JS string literal, so the file parses, the suite runs and the page
+  renders. `tests/test_no_control_characters.py` now fails the build on the byte, carries its own
+  positive control, and asserts the sweep reaches more than 200 files — the last of those caught
+  a real bug on its first run, because a git worktree of this repo lives under `.claude/` and an
+  absolute-path skip list had been silently skipping the entire checkout.
+
+- **The catalogue submenu rendered at the bottom of the Learn section.** `appendChild` put the
+  group tree below *Leaderboard*, *People* and *Team activity*, where it reads as a fourth peer
+  heading rather than as the breakdown of *All courses* directly above it — which is the one
+  thing it has to say. Inserted after the catalogue row instead, with the append kept as a
+  fallback for the case where `reachable()` filters that link out entirely.
+
+- **A term claiming an everyday word that is nowhere in its own name.** `drop_fragment_glossary_aliases`
+  (v1.471.0) fixed the reported `flooded` → *Flooded suction* case and missed the class. Opening
+  the first lesson of *Using the Training Module* on production afterwards, exactly two words in
+  the whole lesson were marked up and both were wrong: "**Open** My Training in the sidebar"
+  offered *OL*, a meter reading, and "goes overdue if you **miss** it" offered *Holiday*, a missed
+  spot in a coating. Neither word appears in either term, so the fragment rule never looked at
+  them. `drop_ordinary_word_glossary_aliases` drops seven aliases across five terms — `open`,
+  `miss`, `misses`, `skip`, `fall` (twice) and `hot` — and every term keeps a spelling that is
+  unambiguous in prose: *Ungrounded conductor* still answers to `the hot`, `hot line` and `hot
+  conductor`, so the trade usage survives and only the bare adjective goes. Named rather than
+  ruled, deliberately: `fall`, `drop`, `head`, `return`, `run` and `bed` are all both ordinary
+  English and trade words, and deciding which side a word lands on is knowing the trade. The
+  durable home for this is the glossary review queue, not a longer stop-word list.
+
 ## [1.472.0] - 2026-09-16
 
 ### Fixed
@@ -3385,7 +3437,7 @@ redirect.**
   requests, graded submissions, evaluation invites — and every one of those messages is
   still in somebody's inbox. Deleting the route would 404 all of them, and a 404 on a link
   somebody was told to follow reads as the feature being gone. New mail points at
-  `/app/learn` and lands in the Desk through frappe's own `/app/(.*)` → `/desk/`
+  `/app/learn` and lands in the Desk through frappe's own `/app/(.*)` → `/desk/\1`
   redirect, the same hop this app's other emailed desk links already take.
 
 - **It is not an unconditional redirect.** A user with no desk access sent to `/desk` gets

@@ -390,8 +390,8 @@
 			var typed = normaliseText(isArrayish(mine) ? mine[0] : mine);
 			return !!typed && (entry.accepted_text || []).indexOf(typed) !== -1;
 		}
-		var want = (entry.correct || []).slice().sort().join(" ");
-		var got = (isArrayish(mine) ? mine : [mine]).slice().sort().join(" ");
+		var want = (entry.correct || []).slice().sort().join("\u0000");
+		var got = (isArrayish(mine) ? mine : [mine]).slice().sort().join("\u0000");
 		return want.length > 0 && want === got;
 	}
 

@@ -328,7 +328,7 @@
 /* A caret that turns, so a collapsed group reads as collapsed rather than as a heading
  * that happens to do nothing. */
 .tn-group-toggle::before {
-	content: "B8";
+	content: "▸";
 	display: inline-block;
 	font-size: 10px;
 	transition: transform 0.12s ease;
