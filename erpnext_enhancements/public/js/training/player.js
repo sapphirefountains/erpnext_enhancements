@@ -335,6 +335,11 @@
 				// lesson. That asymmetry is original and deliberate -- do not tidy the two
 				// into agreement.
 				lesson: inCourse ? state.lessonKey : null,
+				// Who the person view is about. Null everywhere else, so the Desk host writes
+				// `learn/person/<user>` for this view and `learn/<view>` for the rest. Without
+				// it the route could name the view and still not say whose profile it is, and
+				// Back would land on somebody arbitrary.
+				user: state.view === "person" ? state.viewingUser || null : null,
 			};
 		}
 
@@ -620,6 +625,7 @@
 			else if (view === "people") renderDirectory();
 			else if (view === "feed") renderFeed();
 			else if (view === "person") renderPerson();
+			else if (view === "board") renderBoardView();
 			// A light entrance so a view change reads as a transition, not a cut.
 			// .is-entering is a state class (exempt from the CSS class contract) and
 			// player.css disables it under prefers-reduced-motion. The forced reflow
@@ -854,6 +860,29 @@
 			}
 		}
 
+		// The board as a destination of its own, reached from the rail.
+		//
+		// It has existed as a collapsed toggle at the foot of the catalogue since the panel was
+		// built, below every course shelf — which is to say it existed and nobody could find it.
+		// gamification.py has been computing points, badges and streaks since v1.215.0; a
+		// leaderboard nobody reaches is the same as one nobody wrote.
+		//
+		// Reuses `renderLeaderboard` rather than drawing a second board: the panel and the page
+		// must not be able to disagree about who is winning. It opens expanded, because arriving
+		// somewhere called Leaderboard and being shown a closed box is a wasted click.
+		function renderBoardView() {
+			var bar = el("div", "tr-subhead-row");
+			bar.appendChild(button("← " + t("All courses"), "tr-button tr-button-quiet", function () {
+				go("catalog");
+			}));
+			bar.appendChild(el("h1", "tr-title", t("Leaderboard")));
+			head.appendChild(bar);
+
+			boardState.open = true;
+			if (!boardState.data && !boardState.busy) loadBoard();
+			main.appendChild(renderLeaderboard());
+		}
+
 		function renderLeaderboard() {
 			var wrap = el("div", "tr-board");
 			// Captured so render() can swap this exact node in place (see render()).
@@ -1050,6 +1079,14 @@
 		}
 
 		// ---------------------------------------------------------------- course
+
+		// One way into the person view, so `state.viewingUser` and the route cannot disagree
+		// about whose profile is open. The View button used to set the field and call `go`
+		// separately, which was fine until the route needed the user as well.
+		function openPerson(user) {
+			state.viewingUser = user || null;
+			go("person");
+		}
 
 		function openCourse(courseName, lessonKey) {
 			state.courseName = courseName;
@@ -3549,8 +3586,7 @@
 			}
 			item.appendChild(
 				button(t("View"), "tr-button tr-button-quiet", function () {
-					state.viewingUser = person.user;
-					go("person");
+					openPerson(person.user);
 				})
 			);
 			return item;
@@ -3987,6 +4023,18 @@
 				openCourse(course, lessonKey || null);
 				return;
 			}
+			// A deep link straight to a colleague's profile. Without the user it falls back to
+			// the directory rather than to `go("person")`, which would draw a profile header
+			// over your own payload -- a "← People" heading above your own record reads as a
+			// privacy bug even though it is not one.
+			if (b.view === "person") {
+				if (startAt.user) {
+					openPerson(startAt.user);
+					return;
+				}
+				go("people");
+				return;
+			}
 			go(b.view || "catalog");
 		}
 
@@ -3998,6 +4046,7 @@
 			go: go,
 			openCourse: openCourse,
 			openLesson: openLesson,
+			openPerson: openPerson,
 			flush: flush,
 			destroy: function () {
 				runTeardowns();

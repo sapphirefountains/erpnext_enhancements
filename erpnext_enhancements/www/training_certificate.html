@@ -121,7 +121,6 @@
 			Certificate {{ certificate.name | e }} &middot;
 			{{ certificate.status | e }}{% if certificate.expires_on %} until {{ frappe.utils.formatdate(certificate.expires_on) }}{% endif %}
 		</p>
-		<p><button type="button" class="btn btn-primary btn-sm" onclick="window.print()">Print</button></p>
 	</div>
 
 	{#- The stored snapshot, rendered as-is. NOT re-rendered from the print format:
@@ -179,4 +178,35 @@
 {%- endif %}
 
 </div>
+
+{#- The saved certificate carries frappe's own print banner -- a Print link and a Get PDF link --
+    because `certificate_html` is the whole rendered print view, captured at issue. The Get PDF
+    link has an href and works; the **Print link has neither an href nor a handler**:
+
+        <a class="p-2" rel="noopener noreferrer">Print</a>
+
+    In frappe's own print view a script binds it at load. That script is not part of the markup,
+    so in the stored snapshot the link is inert, and the page grew a second Print button above the
+    card to work around it. Binding the one that is already there is the smaller fix, and it is the
+    one a reader's eye goes to -- it sits with Get PDF, where you would look for it.
+
+    The snapshot itself is NOT rewritten. What the holder was given must not change because a
+    template was edited; this only attaches behaviour to it in the browser. -#}
+<script>
+	document.addEventListener("DOMContentLoaded", function () {
+		var banner = document.querySelector(".tc-doc .action-banner");
+		if (!banner) return;
+		Array.prototype.forEach.call(banner.querySelectorAll("a"), function (link) {
+			// The one with no destination is the Print link. Matching on that rather than on the
+			// word means it keeps working in a translated certificate.
+			if (link.getAttribute("href")) return;
+			link.setAttribute("href", "#");
+			link.style.cursor = "pointer";
+			link.addEventListener("click", function (event) {
+				event.preventDefault();
+				window.print();
+			});
+		});
+	});
+</script>
 {% endblock %}

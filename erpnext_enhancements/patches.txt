@@ -1056,3 +1056,9 @@ erpnext_enhancements.patches.merge_named_glossary_acronyms
 # fragment is what people actually say. Nothing stops matching: the term still answers to its own
 # full name.
 erpnext_enhancements.patches.drop_fragment_glossary_aliases
+# v1.472.0: every Position gets a Department, so the learner rail can group the catalogue by the
+# part of the business a course is for. 19 of 20 were empty -- nothing depended on the field, so
+# nobody filled it in, and the ten technician courses (all assigned to Position "Technician") would
+# have filed under nothing. Fill-only: a department somebody has set is never overwritten, and a
+# Department that does not exist is skipped and named rather than created.
+erpnext_enhancements.patches.set_position_departments

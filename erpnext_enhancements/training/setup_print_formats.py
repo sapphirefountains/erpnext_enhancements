@@ -55,6 +55,29 @@ _CERTIFICATE_HTML = """
       <h1 style="margin:10px 0 0 0; font-size:26px; font-weight:normal;">{{ (doc.course_title or doc.course or "") | e }}</h1>
     </div>
 
+    {#- The badge this course awards, printed above the holder's name.
+
+        Keyed on the COURSE, not on the learner's award, and that is forced rather than chosen:
+        `certificates.after_completion` issues and renders the certificate FIRST and calls
+        `_award_badges` afterwards -- deliberately, because the certificate is the only one of the
+        three anybody outside the company will ask to see. So at the moment this template runs, a
+        `Training Badge Award` for this completion does not exist yet. A query for one would find
+        nothing, render an empty space, and raise nothing: the silent-pass shape this repo keeps
+        being bitten by. `Training Badge` with `criteria_type = "Course Completed"` is the same
+        fact, available now, and one per course (checked: no duplicates on production).
+
+        `width`/`height` are load-bearing. The badge SVGs carry width="256" height="256", so
+        unsized they print at 256px and take over the page.
+
+        The `if` is what keeps the certificates that already exist rendering exactly as they do:
+        none of the three courses currently issuing one has a Course Completed badge. -#}
+    {%- set badge_image = frappe.db.get_value("Training Badge", {"criteria_type": "Course Completed", "criteria_course": doc.course, "enabled": 1}, "image") %}
+    {%- if badge_image %}
+    <div style="text-align:center; margin-bottom:18px; page-break-inside:avoid;">
+      <img src="{{ badge_image }}" alt="" width="96" height="96" style="width:96px; height:96px;">
+    </div>
+    {%- endif %}
+
     <div style="text-align:center; margin-bottom:24px;">
       <div style="color:#777; font-size:11px; text-transform:uppercase; letter-spacing:1px;">This certifies that</div>
       <div style="font-size:24px; margin:8px 0 10px 0;"><b>{{ (doc.holder_name or "") | e }}</b></div>

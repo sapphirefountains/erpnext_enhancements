@@ -96,7 +96,7 @@ SOURCES = {
     "social": APP / "training/social.py",
 }
 
-JS_FILES = [JS_DIR / name for name in ("player.js", "video.js", "quiz.js", "blocks.js")] + [
+JS_FILES = [JS_DIR / name for name in ("player.js", "video.js", "quiz.js", "blocks.js", "desk_nav.js")] + [
     APP / "public/js/training/transport.js"
 ]
 

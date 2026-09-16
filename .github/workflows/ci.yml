@@ -755,6 +755,14 @@ jobs:
       # server outage while the server returned 200 with the full payload.
       - name: JS calls no Python-only frappe.utils helper
         run: python -m unittest erpnext_enhancements.tests.test_js_frappe_namespace -v
+      # The learner's routes and rail. The bug it exists for: clicking View on a colleague took
+      # the learner back to the catalogue, because the Desk host's URL writer has no `else` --
+      # a view missing from LEARN_VIEWS is written as bare /desk/learn, which is a legitimate URL,
+      # so nothing failed and nothing was logged. The person view was built and thrown away in the
+      # same task. The test that matters is the SYMMETRY: every view player.js can route to must be
+      # one learn.js can write, checked in both directions.
+      - name: Learner routes and rail (a view the host cannot write is silently the catalogue)
+        run: python -m unittest erpnext_enhancements.tests.test_learner_nav -v
       - name: Training help (a second learner payload, held to the first one's rules)
         run: python -m unittest erpnext_enhancements.tests.test_training_help -v
       # The publish_training_course assistant tool. Guards the two ways it could be

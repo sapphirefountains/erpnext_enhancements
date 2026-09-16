@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.472.0] - 2026-09-16
+
+### Fixed
+
+- **Clicking View on a colleague took you back to the catalogue.** The Desk host's URL writer is
+  `if (next.course) {…} else if (LEARN_VIEWS.indexOf(next.view) !== -1) {…}` — and `"person"` was
+  not in `LEARN_VIEWS`. **There is no `else`**, so neither branch ran, the URL collapsed to
+  `/desk/learn`, and the route event that followed drove the player to the catalogue. The person
+  view was built and thrown away inside the same task, with no error, no log line and nothing in
+  the console: an unknown view is written as the catalogue, which is a legitimate URL.
+- **The route now carries who it is about** — `/desk/learn/person/<user>` — and the loop guard's key
+  includes the user. Without that every profile is `person||`, so moving from one colleague to
+  another is swallowed as "already showing this" and Back shows the wrong person. Both halves of
+  `learn.js` were changed together; the file's own comment records that they disagreed once before.
+- **A new CI suite checks the symmetry in both directions**: every view `player.js` can route to
+  must be one `learn.js` can write, and vice versa. `test_training_desk_page` already asserted that
+  `LEARN_VIEWS` *exists* — it never asked what was in it, which is why CI was green throughout.
+- **Two Print buttons on a certificate, and the official-looking one did nothing.** `certificate_html`
+  is frappe's whole rendered print view, captured at issue, and the Print link inside it has neither
+  an `href` nor a handler — the script that binds it lives in frappe's print page and is not part of
+  the markup. The page had grown a second button above the card to work around it. The one that was
+  already there is now wired up; the stored snapshot is not rewritten, because what the holder was
+  given must not change because a template was edited.
+
+### Added
+
+- **The catalogue is grouped by the part of the business each course is for**, as a submenu under
+  *All courses* in the rail. Derived rather than stored: a course's assignment rules already say who
+  it is for — a rule naming a Department gives one directly, a rule naming a Position gives one
+  through `Position.department`. A course written for a project manager *and* a sales rep appears
+  under both, which is the point rather than a wart.
+- **Every Position now has a Department.** 19 of 20 were empty — nothing depended on the field, so
+  nobody filled it in, and the ten technician courses (all assigned to Position *Technician*) would
+  have filed under nothing. The mapping is a table somebody can read and correct, it never
+  overwrites a department already set, and it never creates a Department that does not exist.
+- **The leaderboard is a destination.** It has existed as a collapsed toggle at the foot of the
+  catalogue, below every course shelf — which is the same as not shipping it. `gamification.py` has
+  been computing points, badges and streaks since v1.215.0. It reuses the one board rather than
+  drawing a second that could disagree about who is winning.
+- **The certificate carries the badge for its course.** Keyed on the course rather than the
+  learner's award, and that is forced rather than chosen: `after_completion` issues and renders the
+  certificate *before* `_award_badges` runs, so a `Training Badge Award` does not exist yet and a
+  query for one would render an empty space and raise nothing. Sized explicitly, because the badge
+  SVGs carry `width="256"` and would otherwise take over the page. **Nothing shows on the
+  certificates that exist today** — none of the three courses currently issuing one has a Course
+  Completed badge, and an issued certificate is a snapshot that a template edit cannot reach.
+
+### Changed
+
+- **The rail is now inside the learner payload boundary scan.** `desk_nav.js` reads server replies
+  like every other runtime file and was the one the contract could not see.
+
 ## [1.471.0] - 2026-09-16
 
 ### Fixed

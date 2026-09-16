@@ -289,3 +289,91 @@
 		padding-top: 8px;
 	}
 }
+
+/* The catalogue folded by the part of the business each course is for, under the
+ * "All courses" link. Collapsed by default: a learner with forty courses would
+ * otherwise get a rail longer than the page, and the groups they do not work in are
+ * the majority of it. Desk tokens only, like the rest of this file. */
+.tn-groups {
+	margin: 2px 0 6px 8px;
+}
+
+/* One group. Nothing but a box for the toggle and its list, and it earns a rule of its
+ * own so the class contract can see it rather than so it can carry a border. */
+.tn-group {
+	margin: 0;
+}
+
+.tn-group-toggle {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	padding: 4px 8px;
+	border: 0;
+	border-radius: var(--border-radius-md, 8px);
+	background: none;
+	color: var(--text-muted);
+	font: inherit;
+	font-size: 12px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.tn-group-toggle:hover {
+	background: var(--bg-color);
+	color: var(--text-color);
+}
+
+/* A caret that turns, so a collapsed group reads as collapsed rather than as a heading
+ * that happens to do nothing. */
+.tn-group-toggle::before {
+	content: "B8";
+	display: inline-block;
+	font-size: 10px;
+	transition: transform 0.12s ease;
+}
+
+.tn-group-toggle.is-open::before {
+	transform: rotate(90deg);
+}
+
+.tn-group-name {
+	flex: 1 1 auto;
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tn-group-list {
+	margin: 0 0 4px;
+	padding: 0 0 0 18px;
+	list-style: none;
+}
+
+.tn-group-item {
+	margin: 0;
+}
+
+.tn-group-course {
+	display: block;
+	width: 100%;
+	padding: 3px 8px;
+	border: 0;
+	border-radius: var(--border-radius-md, 8px);
+	background: none;
+	color: var(--text-muted);
+	font: inherit;
+	font-size: 12px;
+	text-align: left;
+	cursor: pointer;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tn-group-course:hover {
+	background: var(--bg-color);
+	color: var(--text-color);
+}

@@ -619,6 +619,68 @@ def get_learner_bootstrap():
     }
 
 
+#: What a course targeting everybody is filed under. Named rather than left ungrouped, because
+#: "Using the Training Module" genuinely is for everyone and burying it under *Other* would be a
+#: worse answer than a heading that says so.
+EVERYONE_GROUP = "Everyone"
+
+
+def _course_groups():
+    """Which part of the business each course is for, keyed by course name.
+
+    **Derived, not stored.** A course already says who it is for — its `Training Assignment Rule`
+    rows name a Department, a Position or a Role — and a `functional_group` field on the course
+    would be a second place for the same fact to live and a second place for it to go stale. A rule
+    naming a Department gives one directly; a rule naming a Position gives one through
+    `Position.department`, which `patches/set_position_departments` fills in.
+
+    **A course can belong to more than one**, and that is right rather than a wart: *Writing scope
+    that can be inspected* is assigned to a Project Manager and a Sales Representative, and it
+    belongs under both headings. Filing it under one would hide it from half the people it was
+    written for.
+
+    A Role rule contributes nothing. `Production Team` is a permission, not a part of the business,
+    and mapping roles to departments would be a third guess layered on two.
+
+    Computed once per request: the rail asks for the whole catalogue at once, and this would
+    otherwise be two queries per card.
+    """
+    cached = getattr(frappe.local, "_ee_course_groups", None)
+    if cached is not None:
+        return cached
+
+    groups = {}
+    if frappe.db.exists("DocType", "Training Assignment Rule"):
+        departments = {}
+        if frappe.db.exists("DocType", "Position") and frappe.db.has_column("Position", "department"):
+            for row in frappe.get_all("Position", fields=["name", "department"]):
+                if row.get("department"):
+                    departments[row["name"]] = row["department"]
+
+        for rule in frappe.get_all(
+            "Training Assignment Rule",
+            filters={"enabled": 1, "parenttype": "Training Course"},
+            fields=["parent", "applies_to", "applies_to_value"],
+        ):
+            group = None
+            if rule.applies_to == "Department":
+                group = rule.applies_to_value
+            elif rule.applies_to == "Position":
+                group = departments.get(rule.applies_to_value)
+            elif rule.applies_to == "All Employees":
+                group = EVERYONE_GROUP
+            if not group:
+                continue
+            held = groups.setdefault(rule.parent, [])
+            if group not in held:
+                held.append(group)
+
+    for held in groups.values():
+        held.sort()
+    frappe.local._ee_course_groups = groups
+    return groups
+
+
 def _course_card(course, assignment, attempt, completion=None):
     total_lessons = cint(
         frappe.db.get_value("Training Course Version", course.current_version, "total_lessons")
@@ -632,6 +694,10 @@ def _course_card(course, assignment, attempt, completion=None):
         "weight": course.weight,
         "category": course.category or "",
         "minutes": cint(course.estimated_minutes),
+        # The part of the business this course is for, so the rail can list the catalogue under
+        # Production / Design / Sales rather than as one flat pile. Plural because a course
+        # written for a project manager and a sales rep belongs under both.
+        "groups": _course_groups().get(course.name) or [],
         "version": course.current_version,
         "lessons": total_lessons,
         "self_enrol": bool(cint(course.allow_self_enrollment)),
