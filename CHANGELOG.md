@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.473.2] - 2026-09-16
+
+### Changed
+
+- **`scripts/probe_menu_stacking.mjs` now transcribes both sides of the button-focus
+  argument, and has a control that catches it when it doesn't.** The probe's value is
+  fidelity to Frappe v16, and its `#frappe` block was incomplete in two places that happened
+  to cancel: bootstrap raises `.btn-group > .btn` to `z-index: 1` on **four** states —
+  `:hover`, `:focus`, `:active` and `.active` (`_button-group.scss:14-23`) — and the probe
+  had copied only two; and Frappe's `common/buttons.scss:106-115` kills `:hover`/`:active`
+  for every `.btn-default` (it ties bootstrap at (0,3,0) and wins on source order, because
+  `desk/index.scss` imports `../common/buttons` after bootstrap), which the probe had not
+  copied at all. Green for the wrong reason: complete either side alone and it reports a
+  break no browser produces. Verified in both directions — restoring bootstrap's `:hover`
+  without Frappe's counter-rule makes the run report one false failure; with both written
+  down it is clean.
+
+  Both are now in the file with their citations, and a new **`--stock`** mode runs the probe
+  with no app stylesheet at all. Stock Frappe v16 has no menu bug, so anything but all-PASS
+  means the *transcription* is wrong rather than the desk — the one failure mode a harness
+  like this cannot otherwise self-report. Run it before trusting a FAIL.
+
+- The v1.473.1 comment block and guard test described bootstrap's rule as `:focus` alone and
+  Frappe's answer as one scoped guard. Both now name all four states and both upstream
+  counter-rules, and say which of the four still has a scope gap (`:focus`, on the
+  `hide_page_form` path) and why it is inert there anyway (the button sits in `.page-head`'s
+  level-6 context, which clears the sticky list row at 2). **The conclusion is unchanged:
+  `z-index: auto` is there to state the invariant once, not to fix a live break**, and the
+  shipped CSS is byte-for-byte the same in its declarations. Nothing that renders changed in
+  this release — the rule block's prose did.
+
 ## [1.473.1] - 2026-09-16
 
 ### Fixed

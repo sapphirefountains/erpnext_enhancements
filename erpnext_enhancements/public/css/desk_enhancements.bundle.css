@@ -1250,15 +1250,23 @@ mark {
       2). The page menu is NOT affected by either -- its `<ul>` is a SIBLING of
       its button, not a child.
 
-      `z-index: auto` is the third way a button becomes a stacking context and is
-      here to COMPLETE the invariant, not because it was broken: bootstrap's
-      `.btn-group > .btn:focus { z-index: 1 }` fires on the very click that opens
-      the menu, and Frappe already neutralises it -- but only for this one
-      widget, at `.page-form .sort-selector .btn-group .btn:focus { z-index:
-      unset }` (list.scss:547-554). That guard is scoped to a sort selector
-      inside `.page-form`, and base_list.js:647-653 has a path (`hide_page_form`)
-      that puts the filter area somewhere else. A rule that says "a button
-      holding a menu is not a stacking context" should say all three.
+      `z-index: auto` is the third way a button becomes a stacking context. It is
+      here to COMPLETE the invariant, not because it is broken today -- and it
+      lists four states because bootstrap declares four: `.btn-group > .btn`
+      takes `z-index: 1` on `:hover`, `:focus`, `:active` AND `.active`
+      (_button-group.scss:14-23). Frappe already answers most of that, in two
+      separate places, which is why neither is obvious: `common/buttons.scss:
+      106-115` kills `:hover` and `:active` for EVERY `.btn-default` (it ties
+      bootstrap at (0,3,0) and wins on source order, since desk/index.scss
+      imports ../common/buttons after bootstrap), and list.scss:547-554 kills
+      `:focus` -- but only for `.page-form .sort-selector .btn-group .btn`. So
+      `:focus` is the one with a scope gap, on the `hide_page_form` path where
+      base_list.js:647-653 puts the filter area outside `.page-form`; and even
+      there the button sits in `.page-head`'s level-6 context, which clears the
+      sticky row at 2 anyway. Nothing to fix, then -- but a rule that says "a
+      button holding a menu is not a stacking context" should say it once, for
+      every state that can make one, rather than track which of two upstream
+      counter-rules currently covers which.
 
       The cost is the 1px hover lift on the one button that holds a menu inside
       itself, and bootstrap's focus-ring lift over its `.btn-group` sibling. Both

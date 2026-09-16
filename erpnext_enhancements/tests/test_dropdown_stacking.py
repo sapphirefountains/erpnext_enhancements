@@ -162,12 +162,14 @@ class TestAButtonHoldingAMenuIsNotAStackingContext(unittest.TestCase):
         """`.btn-group > .btn:focus { z-index: 1 }` is bootstrap's, and it fires
         on the very click that opens the menu.
 
-        Completing the invariant rather than fixing a live break: frappe already
-        neutralises this one, at `.page-form .sort-selector .btn-group .btn:focus
-        { z-index: unset }` (list.scss:547-554). That guard is scoped to a sort
-        selector inside `.page-form`, and base_list.js:647-653 has a path that
-        puts the filter area elsewhere -- so the declaration stays, and this pins
-        it so nobody trims it as redundant without reading that scope.
+        Completing the invariant rather than fixing a live break. Bootstrap
+        declares `z-index: 1` on `.btn-group > .btn` for FOUR states -- `:hover`,
+        `:focus`, `:active`, `.active` (_button-group.scss:14-23) -- and frappe
+        answers most of them in two separate places: `common/buttons.scss:106-115`
+        for `:hover`/`:active` on every `.btn-default`, and list.scss:547-554 for
+        `:focus`, but only inside `.page-form`. The declaration stays, and this
+        pins it, so nobody trims it as redundant without first reading BOTH of
+        those upstream scopes.
         """
         css = stylesheet()
         self.assertIn(f"{self.BASE}:focus", css)

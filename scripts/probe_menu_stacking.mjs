@@ -13,6 +13,7 @@
  *     npm i --no-save playwright-core
  *     node scripts/probe_menu_stacking.mjs                 # the working tree
  *     node scripts/probe_menu_stacking.mjs --ref origin/main
+ *     node scripts/probe_menu_stacking.mjs --stock        # control: must be green
  *
  * Exits non-zero if any menu is covered. On this repo's remote sessions Chromium
  * is already at $PLAYWRIGHT_BROWSERS_PATH; pass --chromium <path> otherwise.
@@ -27,17 +28,29 @@
  * question worth asking is "what does the browser paint on top", and
  * `document.elementFromPoint` over the open menu answers exactly that.
  *
- * It found two live traps the app had shipped, and it also *corrected* a wrong
- * diagnosis: a first run said bootstrap's `.btn-group > .btn:focus { z-index: 1 }`
- * was a third live trap, which was an artefact of this file not yet carrying
- * Frappe's own counter-rule at list.scss:547-554. Which is the standing warning:
+ * It found the two live traps the app had shipped. It has also been wrong twice,
+ * both times for the same reason, which is the standing warning:
  *
  * THE FRAPPE SIDE OF THE PAGE BELOW IS A TRANSCRIPTION, AND A TRANSCRIPTION CAN
- * BE INCOMPLETE. Every value in the `#frappe` block is copied from
- * frappe/frappe at branch **version-16** with its source file and line beside
- * it, because the sibling ../frappe checkout is v17 and lies about production
- * (CLAUDE.md). A rule that is missing here is a trap this reports that does not
- * exist, or misses one that does. On a Frappe upgrade, re-derive it:
+ * BE INCOMPLETE IN BOTH DIRECTIONS. Every value in the `#frappe` block is copied
+ * from frappe/frappe at branch **version-16** with its source file and line
+ * beside it, because the sibling ../frappe checkout is v17 and lies about
+ * production (CLAUDE.md). A rule missing here is a trap this reports that no
+ * browser produces, or one it never reports at all:
+ *
+ *   - Missing Frappe's `list.scss:547-554` guard, a first run blamed bootstrap's
+ *     `.btn-group > .btn:focus { z-index: 1 }` as a live trap. It is not.
+ *   - Then the bootstrap rule itself turned out to be transcribed short --
+ *     upstream raises z-index on `:hover`, `:focus`, `:active` AND `.active`
+ *     (_button-group.scss:14-23) -- while Frappe's OTHER counter-rule,
+ *     `common/buttons.scss:106-115`, was missing too. The two omissions
+ *     cancelled, so the file was green for the wrong reason.
+ *
+ * Which is what `--stock` is for. Run with no app stylesheet at all: stock
+ * Frappe v16 has no menu bug, so anything but all-PASS means this transcription
+ * is wrong, not that the desk is. Removing either of those two rules alone makes
+ * `--stock` report a break that does not exist -- verified, both directions.
+ * Run it before trusting a FAIL. On a Frappe upgrade, re-derive from source:
  *
  *     git show origin/version-16:frappe/public/scss/desk/page.scss
  *     curl -sS https://raw.githubusercontent.com/frappe/frappe/version-16/<path>
@@ -68,7 +81,12 @@ const PAGE = String.raw`<!doctype html>
 .dropdown-menu-right { right: 0; left: auto; }
 .btn-group { position: relative; display: inline-flex; vertical-align: middle; }
 .btn-group > .btn { position: relative; flex: 1 1 auto; }
-.btn-group > .btn:focus, .btn-group > .btn:active { z-index: 1; }
+/* _button-group.scss:14-23 -- ALL FOUR states, not just :focus. Getting this
+   list wrong in either direction is how this transcription lies. */
+.btn-group > .btn:hover,
+.btn-group > .btn:focus,
+.btn-group > .btn:active,
+.btn-group > .btn.active { z-index: 1; }
 .modal { position: fixed; top: 0; left: 0; z-index: 1050; display: none; width: 100%; height: 100%; }
 .modal-backdrop { position: fixed; top: 0; left: 0; z-index: 1040; width: 100vw; height: 100vh; background: #000; }
 .sticky-top { position: sticky; top: 0; z-index: 1020; }
@@ -100,6 +118,14 @@ body { margin: 0; display: flex; flex-direction: row; flex-wrap: nowrap;
 /* list.scss:547-554 — frappe's OWN guard against bootstrap's focus z-index,
    scoped to a sort selector that sits inside .page-form */
 .page-form .sort-selector .btn-group .btn:focus { z-index: unset; }
+/* common/buttons.scss:106-115 -- frappe's OTHER counter-rule, and the one that
+   covers :hover and :active for EVERY .btn-default. Ties bootstrap's
+   ".btn-group > .btn:hover" at (0,3,0) and wins on source order, because
+   desk/index.scss imports ../common/buttons AFTER ~bootstrap/scss/bootstrap.
+   Omitting this while omitting bootstrap's :hover above cancelled out, and the
+   probe was green for the wrong reason until both were written down. */
+.btn.btn-default:hover,
+.btn.btn-default:active { z-index: unset; }
 .datatable { background: #fff; }
 .dt-row { height: 35px; border-bottom: 1px solid #eee; padding: 8px; }
 .btn { padding: 4px 8px; border: 1px solid #ccc; background: #f5f5f5; border-radius: 6px; }
@@ -213,13 +239,21 @@ const chromium_path =
 	argOf('--chromium') ||
 	`${process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/pw-browsers'}/chromium-1194/chrome-linux/chrome`
 
-const css = ref
+// --stock: run with NO app stylesheet at all. Stock Frappe v16 has no menu bug,
+// so this must come back all-PASS. It is a control on the transcription below:
+// a rule missing from the `#frappe` block shows up here as a break that no real
+// desk has, which is the one failure mode a probe like this cannot self-report.
+const stock = args.includes('--stock')
+const css = stock
+	? ''
+	: ref
 	? execFileSync('git', ['-C', REPO, 'show', `${ref}:${STYLESHEET}`], { encoding: 'utf8', maxBuffer: 1 << 26 })
 	: readFileSync(join(REPO, STYLESHEET), 'utf8')
 
 let chromium
 try {
-	;({ chromium } = await import('playwright-core'))
+	const playwright = await import('playwright-core')
+	chromium = playwright.chromium
 } catch {
 	// Deliberately not a dependency: nothing else in this repo drives a browser,
 	// and `npm ci` runs on every CI job.
@@ -242,7 +276,7 @@ const context = await browser.newContext({ viewport: { width: 414, height: 896 }
 const page = await context.newPage()
 
 let failures = 0
-console.log(`probing ${ref ? `${ref}:${STYLESHEET}` : 'the working tree'}\n`)
+console.log(`probing ${stock ? 'STOCK frappe v16 (no app stylesheet)' : ref ? `${ref}:${STYLESHEET}` : 'the working tree'}\n`)
 
 for (const [pageName, menuName, cfg] of CASES) {
 	// Button state only matters where the <ul> lives INSIDE the button. The page
