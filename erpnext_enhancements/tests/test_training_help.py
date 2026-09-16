@@ -788,7 +788,7 @@ class TestTheWordsInTheLessonAreMarked(unittest.TestCase):
         reader has already found the answer another way."""
         block = self.js.split("function renderHelp(", 1)[1][:2000]
         self.assertIn("loadHelp(key, inQuiz)", block)
-        toggle = self.js.split('t("What does that mean?")', 1)[1][:600]
+        toggle = self.js.split("tr-help-toggle", 1)[1][:600]
         self.assertNotIn("loadHelp(", toggle)
 
     def test_only_the_first_occurrence_of_a_term_is_marked(self):
@@ -833,6 +833,84 @@ class TestTheWordsInTheLessonAreMarked(unittest.TestCase):
         self.assertIn("entry.short_definition", block)
         self.assertNotIn("entry.explanation", block)
         self.assertNotIn("entry.example", block)
+
+
+class TestThePanelCanBeReached(unittest.TestCase):
+    """Reported from the live page: the definition vanished on the way to it.
+
+    The popover opened on hover and closed on `mouseleave` of the word. Between the word and the
+    panel there is a gap — they are two elements in flowing prose, not one rectangle — so the
+    pointer is over neither while it crosses, the close fires, and the "Full entry" button inside
+    the panel can never be clicked. A tooltip you cannot travel to is a tooltip with no controls.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js = _strip_js_comments(_raw(PLAYER))
+
+    def test_leaving_the_word_does_not_close_it_immediately(self):
+        self.assertIn("function glossRelease()", self.js)
+        self.assertIn("setTimeout(hideGloss", self.js)
+
+    def test_the_panel_cancels_the_pending_close_when_the_pointer_arrives(self):
+        block = self.js.split("function showGloss(", 1)[1][:2200]
+        self.assertIn('pop.addEventListener("mouseenter", glossHold)', block)
+        self.assertIn('pop.addEventListener("mouseleave", glossRelease)', block)
+
+    def test_focus_moving_into_the_panel_holds_it_too(self):
+        """Tab from the marked word lands on Full entry, which is inside the thing being closed."""
+        block = self.js.split("function showGloss(", 1)[1][:2200]
+        self.assertIn('pop.addEventListener("focusin", glossHold)', block)
+
+    def test_the_word_no_longer_closes_it_outright(self):
+        block = self.js.split("function bindGloss(", 1)[1][:900]
+        self.assertNotIn('addEventListener("mouseleave", hideGloss)', block)
+        self.assertIn('addEventListener("mouseleave", glossRelease)', block)
+
+
+class TestTheHelpButtonIsInTheHeader(unittest.TestCase):
+    """A question you have WHILE reading, answered by a control you can see while reading."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js = _strip_js_comments(_raw(PLAYER))
+        cls.css = _raw(PLAYER_CSS)
+
+    def test_it_is_built_into_the_header_row(self):
+        """The LESSON's header. `tr-subhead-row` is built by the catalog and course views too, and
+        splitting on the class name alone finds whichever comes first in the file."""
+        lesson = self.js.split("function renderLesson(", 1)[1]
+        head = lesson.split('el("div", "tr-subhead-row")', 1)[1][:900]
+        self.assertIn("renderHelp(lesson, false)", head)
+
+    def test_it_is_no_longer_appended_below_the_content(self):
+        """Under the blocks it was a button you had to scroll past your own problem to find."""
+        lesson = self.js.split('el("div", "tr-blocks")', 1)[1][:1500]
+        self.assertNotIn("main.appendChild(renderHelp(lesson, false))", lesson)
+
+    def test_the_label_is_one_plain_word(self):
+        self.assertIn('t("Help")', self.js)
+        self.assertNotIn("What does that mean?", self.js)
+
+    def test_the_panel_opens_over_the_content_and_scrolls_itself(self):
+        """It hangs off the header now, and a lesson matches around fifty-seven terms."""
+        rule = self.css.split(".tr-help-body {", 1)[1].split("}", 1)[0]
+        self.assertIn("position: absolute", rule)
+        self.assertIn("overflow-y: auto", rule)
+        self.assertIn("max-height", rule)
+
+    def test_the_button_is_outlined_and_keeps_the_gradient(self):
+        """Filled would compete with the lesson title beside it. The gradient moves to the border:
+        a flat surface clipped to the padding box over the gradient clipped to the border box."""
+        rule = self.css.split(".tr-help-toggle {", 1)[1].split("}", 1)[0]
+        self.assertIn("--tr-accent-grad", rule)
+        self.assertIn("background-clip: padding-box, border-box", rule)
+        self.assertIn("border: 1px solid transparent", rule)
+
+    def test_the_anchor_is_positioned(self):
+        """Without `position: relative` on .tr-help the absolute panel escapes to the viewport."""
+        rule = self.css.split("\n.tr-help {", 1)[1].split("}", 1)[0]
+        self.assertIn("position: relative", rule)
 
 
 class TestSeeAlsoIsReachable(unittest.TestCase):

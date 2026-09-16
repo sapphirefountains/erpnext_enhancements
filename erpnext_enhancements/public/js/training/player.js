@@ -335,6 +335,11 @@
 				// lesson. That asymmetry is original and deliberate -- do not tidy the two
 				// into agreement.
 				lesson: inCourse ? state.lessonKey : null,
+				// Who the person view is about. Null everywhere else, so the Desk host writes
+				// `learn/person/<user>` for this view and `learn/<view>` for the rest. Without
+				// it the route could name the view and still not say whose profile it is, and
+				// Back would land on somebody arbitrary.
+				user: state.view === "person" ? state.viewingUser || null : null,
 			};
 		}
 
@@ -620,6 +625,7 @@
 			else if (view === "people") renderDirectory();
 			else if (view === "feed") renderFeed();
 			else if (view === "person") renderPerson();
+			else if (view === "board") renderBoardView();
 			// A light entrance so a view change reads as a transition, not a cut.
 			// .is-entering is a state class (exempt from the CSS class contract) and
 			// player.css disables it under prefers-reduced-motion. The forced reflow
@@ -854,6 +860,29 @@
 			}
 		}
 
+		// The board as a destination of its own, reached from the rail.
+		//
+		// It has existed as a collapsed toggle at the foot of the catalogue since the panel was
+		// built, below every course shelf — which is to say it existed and nobody could find it.
+		// gamification.py has been computing points, badges and streaks since v1.215.0; a
+		// leaderboard nobody reaches is the same as one nobody wrote.
+		//
+		// Reuses `renderLeaderboard` rather than drawing a second board: the panel and the page
+		// must not be able to disagree about who is winning. It opens expanded, because arriving
+		// somewhere called Leaderboard and being shown a closed box is a wasted click.
+		function renderBoardView() {
+			var bar = el("div", "tr-subhead-row");
+			bar.appendChild(button("← " + t("All courses"), "tr-button tr-button-quiet", function () {
+				go("catalog");
+			}));
+			bar.appendChild(el("h1", "tr-title", t("Leaderboard")));
+			head.appendChild(bar);
+
+			boardState.open = true;
+			if (!boardState.data && !boardState.busy) loadBoard();
+			main.appendChild(renderLeaderboard());
+		}
+
 		function renderLeaderboard() {
 			var wrap = el("div", "tr-board");
 			// Captured so render() can swap this exact node in place (see render()).
@@ -1050,6 +1079,14 @@
 		}
 
 		// ---------------------------------------------------------------- course
+
+		// One way into the person view, so `state.viewingUser` and the route cannot disagree
+		// about whose profile is open. The View button used to set the field and call `go`
+		// separately, which was fine until the route needed the user as well.
+		function openPerson(user) {
+			state.viewingUser = user || null;
+			go("person");
+		}
 
 		function openCourse(courseName, lessonKey) {
 			state.courseName = courseName;
@@ -1398,6 +1435,11 @@
 				go("course");
 			}));
 			bar.appendChild(el("h1", "tr-title", lesson.title || ""));
+			// Help lives in the header, beside the title, rather than under the content. It
+			// answers a question a reader has WHILE reading — meeting a word they do not know
+			// halfway down — and a button they have to scroll past the thing they are stuck on
+			// to find is a button they use once. The panel opens over the content from here.
+			bar.appendChild(renderHelp(lesson, false));
 			head.appendChild(bar);
 			// Where this lesson sits in the course, above the within-lesson meter. The
 			// meter answers "how far through this page am I"; this answers "how far
@@ -1434,9 +1476,6 @@
 				main.appendChild(renderSubmission(lesson));
 			}
 
-			// Above Ask-the-author, deliberately: a learner stuck on a word should meet the
-			// answer that already exists before the one that costs somebody an afternoon.
-			main.appendChild(renderHelp(lesson, false));
 			main.appendChild(renderQuestions(lesson));
 
 			renderBottomBar();
@@ -1690,8 +1729,8 @@
 			var regionId = "help-region-" + (inQuiz ? "quiz-" : "") + slug;
 
 			var toggle = button(
-				t("What does that mean?"),
-				"tr-button tr-button-quiet tr-help-toggle",
+				t("Help"),
+				"tr-button tr-help-toggle",
 				function () {
 					helpState.open = !helpState.open;
 					// The fetch has already been started by the render above, for the marks in
@@ -1905,18 +1944,47 @@
 			// only to hover does not exist on the phone this course is read on, and one that cannot
 			// be reached by Tab is one a screen reader never announces.
 			mark.addEventListener("mouseenter", function () {
+				glossHold();
 				showGloss(mark, entry);
 			});
 			mark.addEventListener("focus", function () {
+				glossHold();
 				showGloss(mark, entry);
 			});
-			mark.addEventListener("mouseleave", hideGloss);
-			mark.addEventListener("blur", hideGloss);
+			mark.addEventListener("mouseleave", glossRelease);
+			mark.addEventListener("blur", glossRelease);
 			mark.addEventListener("click", function (event) {
 				event.preventDefault();
 				if (glossOpenFor === entry.term) hideGloss();
-				else showGloss(mark, entry);
+				else {
+					glossHold();
+					showGloss(mark, entry);
+				}
 			});
+		}
+
+		// Leaving the word closes the panel -- but the panel is somewhere you have to be able to
+		// GO. Reported from the live page: the definition appears on hover and vanishes the moment
+		// the pointer travels toward it, which makes the "Full entry" button inside it unclickable.
+		// The pointer has to cross the gap between the two, and during that crossing it is over
+		// neither, so a close-on-mouseleave that fires immediately is a panel nobody can reach.
+		//
+		// A delay rather than a hover-bridge element: the gap is a line-break in flowing prose, so
+		// there is no rectangle to span. The panel's own mouseenter cancels the pending close, so
+		// once the pointer arrives it stays open until it leaves again.
+		var GLOSS_LINGER_MS = 260;
+		var glossTimer = null;
+
+		function glossHold() {
+			if (glossTimer) {
+				clearTimeout(glossTimer);
+				glossTimer = null;
+			}
+		}
+
+		function glossRelease() {
+			glossHold();
+			glossTimer = setTimeout(hideGloss, GLOSS_LINGER_MS);
 		}
 
 		function showGloss(mark, entry) {
@@ -1941,12 +2009,23 @@
 				})
 			);
 
+			// The panel keeps itself open while the pointer is in it, and closes on the way out.
+			// Without this pair the pending close from leaving the word still fires while the
+			// reader is reading, and the panel disappears under the cursor.
+			pop.addEventListener("mouseenter", glossHold);
+			pop.addEventListener("mouseleave", glossRelease);
+			// Focus moving into the panel is the keyboard equivalent of arriving at it: Tab from
+			// the marked word lands on "Full entry", which is inside the panel being closed.
+			pop.addEventListener("focusin", glossHold);
+			pop.addEventListener("focusout", glossRelease);
+
 			mark.setAttribute("aria-describedby", pop.id);
 			mark.parentNode.insertBefore(pop, mark.nextSibling);
 			glossPop = pop;
 		}
 
 		function hideGloss() {
+			glossHold();
 			if (glossPop && glossPop.parentNode) {
 				var owner = glossPop.previousSibling;
 				if (owner && owner.removeAttribute) owner.removeAttribute("aria-describedby");
@@ -3099,21 +3178,13 @@
 			}
 			if (facts.childNodes.length) card.appendChild(facts);
 
-			card.appendChild(
-				profileList(
-					t("Badges"),
-					// `award`, not `b`: `b` is the boot payload throughout this file, and
-					// shadowing it inside a callback reads as "the boot payload has a
-					// badge field" to a human and to the boundary scan alike.
-					(person.badges || []).map(function (award) {
-						return {
-							title: award.badge,
-							note: award.awarded_on ? String(award.awarded_on).slice(0, 10) : "",
-						};
-					}),
-					t("No badges yet.")
-				)
-			);
+			// The artwork, not a list of names. A badge is a thing somebody earned and the
+			// picture is the whole point of having drawn one -- the profile payload has carried
+			// `image` on every award since the shelf was built, and this screen was throwing it
+			// away and printing the name as a line of text. `award`, not `b`: `b` is the boot
+			// payload throughout this file, and shadowing it inside a callback reads as "the boot
+			// payload has a badge field" to a human and to the boundary scan alike.
+			card.appendChild(badgeShelf(person.badges || []));
 
 			card.appendChild(
 				profileList(
@@ -3515,8 +3586,7 @@
 			}
 			item.appendChild(
 				button(t("View"), "tr-button tr-button-quiet", function () {
-					state.viewingUser = person.user;
-					go("person");
+					openPerson(person.user);
 				})
 			);
 			return item;
@@ -3791,6 +3861,48 @@
 			);
 		}
 
+		// Every badge this person holds, as artwork. Shares the medal shape with the post-quiz
+		// celebration rather than inventing a second one: the badge somebody sees the moment they
+		// earn it and the badge on their record should be recognisably the same object.
+		function badgeShelf(awards) {
+			var section = el("section", "tr-profile-block");
+			section.appendChild(el("h3", "tr-profile-block-title", t("Badges")));
+			if (!awards.length) {
+				section.appendChild(el("p", "tr-muted", t("No badges yet.")));
+				return section;
+			}
+
+			var shelf = el("div", "tr-badge-shelf");
+			awards.forEach(function (award) {
+				var item = el("div", "tr-badge-held");
+				var medal = el("div", "tr-badge-medal");
+				if (award.image) {
+					var img = el("img", "tr-badge-img");
+					img.src = award.image;
+					// The name is already below the medal, so alt text here would have a screen
+					// reader say it twice. Empty alt marks it decorative, which is what it is.
+					img.alt = "";
+					img.loading = "lazy";
+					medal.appendChild(img);
+				} else {
+					// A badge nobody has drawn artwork for yet. A star beats a broken image.
+					medal.textContent = "★";
+					medal.setAttribute("aria-hidden", "true");
+				}
+				item.appendChild(medal);
+				item.appendChild(el("div", "tr-badge-name", award.badge || ""));
+				if (award.awarded_on) {
+					item.appendChild(
+						el("div", "tr-badge-date", String(award.awarded_on).slice(0, 10))
+					);
+				}
+				if (award.description) item.title = award.description;
+				shelf.appendChild(item);
+			});
+			section.appendChild(shelf);
+			return section;
+		}
+
 		function newBadgeCard(badge) {
 			var card = el("div", "tr-new-badge");
 			var medal = el("div", "tr-new-badge-medal");
@@ -3911,6 +4023,18 @@
 				openCourse(course, lessonKey || null);
 				return;
 			}
+			// A deep link straight to a colleague's profile. Without the user it falls back to
+			// the directory rather than to `go("person")`, which would draw a profile header
+			// over your own payload -- a "← People" heading above your own record reads as a
+			// privacy bug even though it is not one.
+			if (b.view === "person") {
+				if (startAt.user) {
+					openPerson(startAt.user);
+					return;
+				}
+				go("people");
+				return;
+			}
 			go(b.view || "catalog");
 		}
 
@@ -3922,6 +4046,7 @@
 			go: go,
 			openCourse: openCourse,
 			openLesson: openLesson,
+			openPerson: openPerson,
 			flush: flush,
 			destroy: function () {
 				runTeardowns();

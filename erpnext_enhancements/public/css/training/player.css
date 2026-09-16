@@ -2912,18 +2912,62 @@
  * declared palette with literal fallbacks, the way the rest of this stylesheet does it,
  * because player.css is pulled into the authoring canvas too and a var() that resolves
  * to nothing there would render the panel unstyled rather than merely off-palette. */
+/* The disclosure sits in the sticky header row now, so it anchors the panel that opens
+ * beneath it — hence `position: relative`, without which the absolute panel escapes to
+ * the viewport. `margin-left: auto` pushes it past the title, which grows to fill the row.
+ *
+ * The margin-top / border-top separator it used to carry went with the move: that was
+ * dividing it from the lesson content it sat under, and there is nothing above it now. */
 .tr-help {
-	margin-top: 1.5rem;
-	border-top: 1px solid var(--tr-border, #d8dde2);
-	padding-top: 1rem;
+	position: relative;
+	flex: 0 0 auto;
+	margin-left: auto;
 }
 
+/* Outlined, not filled, and the gradient is in the border rather than behind the
+   label. Two stacked backgrounds do it: a flat surface clipped to the padding box
+   sits on top of the gradient clipped to the border box, so the gradient shows only
+   in the 1px the border occupies. A filled button here would compete with the
+   lesson title it stands beside — this is a way out of the page, not the action on
+   it. */
 .tr-help-toggle {
 	font-weight: 600;
+	min-height: 36px;
+	padding: 0.3rem 0.85rem;
+	border: 1px solid transparent;
+	border-radius: var(--tr-radius, 8px);
+	background-image: linear-gradient(var(--tr-surface, #fff), var(--tr-surface, #fff)),
+		var(--tr-accent-grad);
+	background-origin: border-box;
+	background-clip: padding-box, border-box;
+	color: var(--tr-accent, #2b6cb0);
 }
 
+.tr-help-toggle:hover,
+.tr-help-toggle[aria-expanded="true"] {
+	background-image: linear-gradient(var(--tr-accent-soft, #e6f0fa), var(--tr-accent-soft, #e6f0fa)),
+		var(--tr-accent-grad);
+}
+
+/* A panel over the content rather than a block pushing it down. It hangs off the
+   header, so it must scroll itself: a lesson matches around fifty-seven terms and a
+   list that long would otherwise run off the bottom of the screen with no way back
+   to the lesson. Right-aligned because the button is at the end of the row, and
+   capped at the viewport width so it cannot hang off the edge of a phone. */
 .tr-help-body {
-	margin-top: 0.75rem;
+	position: absolute;
+	right: 0;
+	top: calc(100% + 6px);
+	z-index: 30;
+	width: min(30rem, 92vw);
+	max-height: 60vh;
+	overflow-y: auto;
+	padding: 0.85rem 1rem;
+	border: 1px solid var(--tr-border, #d8dde2);
+	border-radius: var(--tr-radius, 8px);
+	background: var(--tr-surface, #fff);
+	box-shadow: var(--tr-shadow-lg, 0 12px 32px rgba(15, 23, 42, 0.18));
+	text-align: left;
 }
 
 .tr-help-term {
@@ -4397,6 +4441,54 @@
 	flex-wrap: wrap;
 	gap: 6px;
 	margin-bottom: 4px;
+}
+
+/* The badge shelf on My record. Artwork rather than a list of names: the profile payload
+ * has carried `image` on every award since the shelf was built and this screen printed
+ * the name as text instead. Wraps rather than scrolls -- ten technician badges plus the
+ * five starters is a shelf you should be able to see all of at once. */
+.tr-badge-shelf {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.9rem;
+	margin-top: 0.4rem;
+}
+
+.tr-badge-held {
+	width: 6.5rem;
+	text-align: center;
+}
+
+.tr-badge-medal {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 4.5rem;
+	height: 4.5rem;
+	margin: 0 auto 0.35rem;
+	border-radius: 50%;
+	background: var(--tr-surface-alt, #f4f6f8);
+	font-size: 1.6rem;
+	color: var(--tr-accent, #2b6cb0);
+}
+
+.tr-badge-img {
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+	border-radius: 50%;
+}
+
+.tr-badge-name {
+	color: var(--tr-text, #17212b);
+	font-size: 0.8rem;
+	font-weight: 600;
+	line-height: 1.25;
+}
+
+.tr-badge-date {
+	color: var(--tr-muted, #5c6670);
+	font-size: 0.72rem;
 }
 
 .tr-profile-block {

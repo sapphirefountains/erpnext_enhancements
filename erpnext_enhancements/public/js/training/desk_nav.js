@@ -217,7 +217,16 @@
 		var mine = this.mine();
 		if (mine) this.body.appendChild(mine);
 		var learn = this.learnLinks();
-		if (learn.length) this.body.appendChild(this.section(t("Learn"), learn));
+		if (learn.length) {
+			var learnSection = this.section(t("Learn"), learn);
+			// The catalogue, broken out by the part of the business each course is for, folded
+			// under the "All courses" link it belongs to. Inserted after the section is built
+			// rather than expressed as a link spec, because `link()` draws one anchor and this
+			// is a disclosure holding a tree.
+			var groups = this.catalogueSubmenu();
+			if (groups) learnSection.appendChild(groups);
+			this.body.appendChild(learnSection);
+		}
 		var manage = this.manageLinks();
 		if (manage.length) this.body.appendChild(this.section(t("Manage"), manage));
 		this.paint();
@@ -306,11 +315,106 @@
 
 	// ------------------------------------------------------------------ the links
 
+	// Every course this person can see, filed under the part of the business it is for.
+	//
+	// `groups` comes off each card from `_course_groups` on the server, which derives it from the
+	// course's own assignment rules — a rule naming a Department gives one directly, a rule naming
+	// a Position gives one through `Position.department`. A course can appear under two headings
+	// when it was written for two jobs, which is the point rather than a bug.
+	//
+	// Drawn from the boot payload, so it costs no request. A learner with one course gets no
+	// submenu at all: a single heading over a single row is furniture.
+	DeskNav.prototype.catalogueSubmenu = function () {
+		var b = this.learner || {};
+		if (!b.assigned) return null;
+
+		var seen = {};
+		var byGroup = {};
+		var ungrouped = [];
+		[b.assigned, b.library, b.completed].forEach(function (shelf) {
+			(shelf || []).forEach(function (card) {
+				if (!card || seen[card.course]) return;
+				seen[card.course] = true;
+				var groups = card.groups || [];
+				if (!groups.length) {
+					ungrouped.push(card);
+					return;
+				}
+				groups.forEach(function (name) {
+					(byGroup[name] = byGroup[name] || []).push(card);
+				});
+			});
+		});
+
+		var names = Object.keys(byGroup).sort();
+		// `Everyone` last whatever it sorts to: it is the catch-all, and a reader scanning for
+		// their own part of the business should not meet it first.
+		names = names.filter(function (name) {
+			return name !== "Everyone";
+		});
+		if (byGroup.Everyone) names.push("Everyone");
+		if (ungrouped.length) {
+			byGroup[t("Other")] = ungrouped;
+			names.push(t("Other"));
+		}
+		if (!names.length) return null;
+
+		var wrap = el("div", "tn-groups");
+		names.forEach(function (name) {
+			wrap.appendChild(this.catalogueGroup(name, byGroup[name]));
+		}, this);
+		return wrap;
+	};
+
+	DeskNav.prototype.catalogueGroup = function (name, cards) {
+		var group = el("div", "tn-group");
+		var toggle = el("button", "tn-group-toggle");
+		toggle.type = "button";
+		toggle.appendChild(el("span", "tn-group-name", name));
+		toggle.appendChild(el("span", "tn-count", String(cards.length)));
+
+		var list = el("ul", "tn-group-list");
+		list.hidden = true;
+		cards
+			.slice()
+			.sort(function (left, right) {
+				return String(left.title || "").localeCompare(String(right.title || ""));
+			})
+			.forEach(function (card) {
+				var item = el("li", "tn-group-item");
+				var link = el("button", "tn-group-course");
+				link.type = "button";
+				link.appendChild(el("span", null, card.title || card.course));
+				link.addEventListener("click", function () {
+					frappe.set_route("learn", card.course);
+				});
+				item.appendChild(link);
+				list.appendChild(item);
+			});
+
+		toggle.setAttribute("aria-expanded", "false");
+		toggle.addEventListener("click", function () {
+			var open = list.hidden;
+			list.hidden = !open;
+			toggle.setAttribute("aria-expanded", open ? "true" : "false");
+			toggle.classList.toggle("is-open", open);
+		});
+
+		group.appendChild(toggle);
+		group.appendChild(list);
+		return group;
+	};
+
 	DeskNav.prototype.learnLinks = function () {
 		var b = this.learner || {};
 		var links = [
 			{ key: "catalog", label: t("All courses"), route: ["learn"] },
 			{ key: "record", label: t("My record"), route: ["learn", "record"] },
+			// Its own destination rather than a panel folded under the bottom of the catalogue.
+			// gamification.py has computed points, badges and streaks since v1.215.0 and the
+			// board was reachable only by scrolling past every course shelf to find a collapsed
+			// toggle — which is indistinguishable from not shipping it.
+			{ key: "board", label: t("Leaderboard"), route: ["learn", "board"] },
 		];
 		// Drawn only when the payload says this person has one. `is_staff` is
 		// employment rather than a role, because a customer contact holds Training

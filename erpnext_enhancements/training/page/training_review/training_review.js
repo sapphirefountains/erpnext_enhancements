@@ -245,7 +245,7 @@ function tq_lines(text) {
 }
 
 function tq_num(value) {
-	return frappe.utils.cint(value);
+	return cint(value);
 }
 
 // ------------------------------------------------------------------- answer flags

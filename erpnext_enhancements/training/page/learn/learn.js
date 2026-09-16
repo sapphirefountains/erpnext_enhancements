@@ -87,7 +87,7 @@ const LEARN_NAV_ASSETS = [
 // names come from a `TRN-CRS-` naming series so a collision is not currently
 // possible — which is exactly why it is written down rather than left to the series
 // to guarantee. Mirrors COURSE_SCOPED_VIEWS in player.js from the other side.
-const LEARN_VIEWS = ["record", "queue", "people", "feed"];
+const LEARN_VIEWS = ["record", "queue", "people", "feed", "board", "person"];
 
 class LearnPage {
 	constructor(page, wrapper) {
@@ -185,10 +185,14 @@ class LearnPage {
 	// own "is this a different page" guard.
 	handle_route() {
 		const route = frappe.get_route() || [];
-		const target = { course: null, lesson_key: null, view: null };
+		const target = { course: null, lesson_key: null, view: null, user: null };
 
 		if (route[1] && LEARN_VIEWS.indexOf(route[1]) !== -1) {
 			target.view = route[1];
+			// `person` is the one view that is about somebody: /desk/learn/person/<user>.
+			// frappe's parse() has already decoded the segment, and write() lets its own
+			// make_url encode it, so both sides compare the decoded form.
+			if (target.view === "person" && route[2]) target.user = route[2];
 		} else if (route[1]) {
 			target.course = route[1];
 			if (route[2]) target.lesson_key = route[2];
@@ -240,6 +244,10 @@ class LearnPage {
 		this.mark(target);
 		if (target.course) {
 			this.player.openCourse(target.course, target.lesson_key || null);
+		} else if (target.view === "person" && target.user) {
+			// `go("person")` alone would render whoever the player last had in
+			// `viewingUser` -- which on a fresh load or a Back is nobody.
+			this.player.openPerson(target.user);
 		} else {
 			this.player.go(target.view || "catalog");
 		}
@@ -263,7 +271,11 @@ class LearnPage {
 			const lesson = target.lesson_key || target.lesson || "";
 			return `${lesson ? "lesson" : "course"}|${target.course}|${lesson}`;
 		}
-		return `${target.view || "catalog"}||`;
+		// The user is part of the position for the person view. Without it every profile
+		// shares the key `person||`, so navigating from one colleague to another is
+		// swallowed by the guard above as "already showing this" -- and Back shows the
+		// wrong person. Both halves of this file must agree; see the comment above.
+		return `${target.view || "catalog"}|${target.user || ""}|`;
 	}
 
 	// The other half: what the player tells the Desk. Returns the adapter handed to
@@ -293,6 +305,12 @@ class LearnPage {
 					// The outline names a course and no single lesson, matching what the
 					// portal puts in its query string.
 					if (next.lesson && next.view !== "course") parts.push(next.lesson);
+				} else if (next.view === "person" && next.user) {
+					// Two segments: the view and who it is about. Before this, `person` was
+					// not in LEARN_VIEWS at all, so NEITHER branch ran, `parts` stayed as
+					// ["learn"], and the set_route below bounced the learner to the
+					// catalogue the moment they clicked View on a colleague.
+					parts.push("person", next.user);
 				} else if (next.view && LEARN_VIEWS.indexOf(next.view) !== -1) {
 					parts.push(next.view);
 				}
@@ -358,6 +376,9 @@ class LearnPage {
 			boot.start = { course: target.course, lesson_key: target.lesson_key || null };
 		} else if (target.view) {
 			boot.view = target.view;
+			// Deep-linking straight to a colleague's profile: the player needs to know who
+			// before it draws, not after.
+			if (target.view === "person" && target.user) boot.start = { user: target.user };
 		}
 		boot.translate = (text) => __(text);
 

@@ -46,7 +46,7 @@ frappe.ui.form.on("Training Question Thread", {
 					fieldtype: "HTML",
 					fieldname: "question_html",
 					options: `<blockquote class="text-muted">${frappe.utils.escape_html(
-						frappe.utils.strip_html(frm.doc.question || "")
+						strip_html(frm.doc.question || "")
 					)}</blockquote>`,
 				},
 				{
