@@ -283,6 +283,19 @@ jobs:
       # would quietly stop matching and the feed would follow you around again.
       - name: Activity feed on the first tab only (JS + CSS agree)
         run: python -m unittest erpnext_enhancements.tests.test_activity_first_tab_only -v
+      # The glass theme blurs `.page-head` and `.btn`, and `backdrop-filter` makes a
+      # STACKING CONTEXT of whatever carries it -- so both menus frappe opens INSIDE
+      # those elements (the page "..." menu, the list sort menu) were sealed into a
+      # context the page body then painted over. Every rule that undoes it is an
+      # override of an earlier rule in the same stylesheet, three of them
+      # `!important`, and an override that loses the cascade fails SILENTLY: the
+      # menu is simply behind the page again. So this resolves the cascade rather
+      # than grepping for the strings, the way the activity-feed suite above does --
+      # that one shipped inert for six weeks with a green test written the naive way.
+      # It also pins the deleted band-aid absent: `position: relative` plus a z-index
+      # on `.sort-selector` is what trapped the sort menu in the first place.
+      - name: Desk menus are not trapped in a stacking context (cascade resolved)
+        run: python -m unittest erpnext_enhancements.tests.test_dropdown_stacking -v
       # The payment step's follow-up button and its two whitelisted endpoints.
       # The suites that exercise the real behaviour need a bench and so never
       # run here -- which is why the seam is pinned statically: a renamed
