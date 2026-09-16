@@ -745,6 +745,16 @@ jobs:
       # `Scale (on a drawing)`, which is two concepts sharing a word and must NOT be merged.
       - name: Glossary review (a merge must not narrow what Help can find)
         run: python -m unittest erpnext_enhancements.tests.test_glossary_review -v
+      # `frappe.utils.cint` does not exist in the browser. In Frappe's Python it does; in its
+      # JS the same helpers are put on `window` and nowhere else, so `frappe.utils.cint(x)` is a
+      # TypeError on the first call. Two Desk pages shipped with it and neither ever worked --
+      # training-insights broken from v1.431.0 (the release that created the file, 39 releases)
+      # and training-review from v1.467.0. What hid it is the part worth guarding: both wrote
+      # `.then(render).catch(show_error)`, and a trailing catch swallows what the render throws,
+      # so a client TypeError was relabelled "Could not load training analytics" and shown as a
+      # server outage while the server returned 200 with the full payload.
+      - name: JS calls no Python-only frappe.utils helper
+        run: python -m unittest erpnext_enhancements.tests.test_js_frappe_namespace -v
       - name: Training help (a second learner payload, held to the first one's rules)
         run: python -m unittest erpnext_enhancements.tests.test_training_help -v
       # The publish_training_course assistant tool. Guards the two ways it could be

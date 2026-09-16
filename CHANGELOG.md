@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.471.0] - 2026-09-16
+
+### Fixed
+
+- **Two Desk pages were broken in the browser and blaming the server.** `frappe.utils.cint` does
+  not exist in Frappe's JavaScript — the same helpers Python keeps on `frappe.utils` are put on
+  `window` and nowhere else, so the call is a `TypeError` on the first use. `/desk/training-insights`
+  has been broken since **v1.431.0, the release that created the file — thirty-nine releases** — and
+  `/desk/training-review` since v1.467.0, the release that created it. Both pages have never once
+  worked.
+- **What hid it is worth more than the fix.** Both wrote `xcall(...).then(render).catch(show_error)`,
+  and a trailing `.catch()` catches whatever the `then` handler throws as well as a failed call. So
+  a client-side TypeError was caught, relabelled *"Could not load training analytics"*, and shown as
+  a server outage — while the server returned **200 with the full payload**. Nothing reached the
+  console, nothing reached the Error Log, and the message accused the one component that was
+  working. The handler is now the two-argument `.then(onSuccess, onError)` and rethrows, so a render
+  bug surfaces as a bug. A new CI suite fails the build on `frappe.utils.cint`, `flt`, `strip_html`
+  or `strip_number_groups` in any `.js` — Jinja templates are Python and are left alone.
+- **`frappe.utils.strip_html` in `training_question_thread.js`**, the same mistake: the
+  "Answer this question" dialog threw before opening.
+- **Hovering a glossary word closed the definition before you could reach it.** The popover opened
+  on hover and closed on `mouseleave` of the word — but the word and the panel are two elements in
+  flowing prose with a gap between them, so the pointer was over neither while crossing, the close
+  fired, and the **Full entry** button inside could never be clicked. It now lingers, and the panel
+  holds itself open on `mouseenter` and `focusin`.
+- **`flooded` offered *Flooded suction*.** Reported from a sentence about flooding a planter bed.
+  The entry carried `flooded` as an alias, and that is a shape rather than one bad row: an alias
+  which is a single word **taken out of the term's own name** is a fragment, not a synonym —
+  `Mechanical seal`/`seal`, `Circuit breaker`/`breaker`, `Sub-panel`/`panel`, `Water hammer`/`hammer`.
+  Dropped only when the fragment is lower case, which spares `ASHRAE`, `NEMA`, `NFPA`, `PTFE`, `IP`,
+  `UV` and `Langelier`, where the fragment is what people actually say, and spares numbers like
+  `316` and `680`. Nothing stops matching: each term still answers to its own full name.
+
+### Changed
+
+- **Help moved into the lesson header and is now called "Help".** It answers a question a reader has
+  *while* reading, and a button below the content is one you have to scroll past your own problem to
+  find. Outlined rather than filled — the gradient moves into the border, so it does not compete
+  with the lesson title beside it — and the panel opens over the content and scrolls itself, because
+  a lesson matches around fifty-seven terms.
+- **My record shows the badge artwork** instead of a list of names. The profile payload has carried
+  `image` on every award since the shelf was built; the screen was throwing it away.
+- **`AHJ`, `ISPSC`, `LSI`, `TDS` and `VFD` folded into their spelled-out entries.** Named explicitly
+  rather than matched by a rule: knowing that LSI is the Langelier Saturation Index and not
+  large-scale integration is knowing the trade, and a rule loose enough to pair them would pair
+  things that merely look alike. Each acronym survives as an alias.
+
 ## [1.470.0] - 2026-09-16
 
 ### Added

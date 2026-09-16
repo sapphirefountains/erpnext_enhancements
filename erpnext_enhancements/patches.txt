@@ -1045,3 +1045,14 @@ erpnext_enhancements.patches.reload_training_workspace_for_glossary
 # UPPER CASE and its letters appear in order inside the base term, which spares `Scale (on a
 # drawing)`: that bracket is a disambiguator, not an abbreviation, and those are two real concepts.
 erpnext_enhancements.patches.merge_acronym_glossary_terms
+# v1.471.0: the five bare acronym entries folded into the terms they abbreviate -- AHJ, ISPSC, LSI,
+# TDS, VFD. Named explicitly rather than matched by a rule: knowing that LSI is the Langelier
+# Saturation Index and not large-scale integration is knowing the trade, and a rule loose enough to
+# pair them would pair things that merely look alike. The acronym survives as an alias.
+erpnext_enhancements.patches.merge_named_glossary_acronyms
+# And the aliases that were one ordinary word taken out of the term's own name. Reported live:
+# hovering "flooded" -- about flooding a planter bed -- offered `Flooded suction`. Dropped only when
+# the fragment is lower case, which spares ASHRAE, NEMA, NFPA, PTFE, IP, UV and Langelier, where the
+# fragment is what people actually say. Nothing stops matching: the term still answers to its own
+# full name.
+erpnext_enhancements.patches.drop_fragment_glossary_aliases

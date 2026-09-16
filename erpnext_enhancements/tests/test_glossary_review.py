@@ -536,6 +536,135 @@ class TestTheAcronymRule(unittest.TestCase):
         )
 
 
+class TestTheFragmentAliasRule(unittest.TestCase):
+    """Reported live: hovering **flooded** — about flooding a planter bed — offered *Flooded
+    suction*, a way of mounting a pump. The entry carried `flooded` as an alias, so every ordinary
+    use of the word claimed it. That is a shape, not one bad row.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib
+
+        cls.saved = _install(_Site([]), ["Training Author"])
+        cls.patch = importlib.import_module(
+            "erpnext_enhancements.patches.drop_fragment_glossary_aliases"
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        _restore(cls.saved)
+
+    def _drops(self, term, aliases):
+        return self.patch._split(term, aliases)[1]
+
+    def test_the_reported_case(self):
+        self.assertEqual(
+            self._drops("Flooded suction", "flooded-suction\nflooded\nflooded suction line"),
+            ["flooded"],
+        )
+
+    def test_the_term_still_matches_its_own_name(self):
+        """Nothing is lost. A lesson actually discussing flooded suction still finds the entry —
+        what goes is the claim on the bare word."""
+        keep, _gone = self.patch._split("Flooded suction", "flooded\nflooded-suction")
+        self.assertIn("flooded-suction", keep)
+
+    def test_the_other_ordinary_words(self):
+        for term, alias in (
+            ("Mechanical seal", "seal"),
+            ("Circuit breaker", "breaker"),
+            ("Sub-panel", "panel"),
+            ("Float switch", "float"),
+            ("Return inlet", "return"),
+            ("Water hammer", "hammer"),
+            ("Conduit body", "body"),
+            ("Head loss", "loss"),
+        ):
+            with self.subTest(f"{term} / {alias}"):
+                self.assertEqual(self._drops(term, alias), [alias])
+
+    # ------------------------------------------------------------------ what is spared
+
+    def test_an_acronym_fragment_is_kept(self):
+        """Nobody writes NEMA or PTFE meaning anything else, so there the fragment IS the word
+        people say. Dropping these would lose real matches and prevent nothing."""
+        for term, alias in (
+            ("ASHRAE Standard 188", "ASHRAE"),
+            ("NEMA Type 6P", "NEMA"),
+            ("NFPA 70E", "NFPA"),
+            ("PTFE tape", "PTFE"),
+            ("IP rating", "IP"),
+            ("UV chamber", "UV"),
+        ):
+            with self.subTest(f"{term} / {alias}"):
+                self.assertEqual(self._drops(term, alias), [])
+
+    def test_a_proper_noun_fragment_is_kept(self):
+        self.assertEqual(self._drops("Langelier Saturation Index", "Langelier"), [])
+
+    def test_a_number_fragment_is_kept(self):
+        """`316` for 316 stainless, `680` for Article 680 — an identifier, not a word."""
+        self.assertEqual(self._drops("316 stainless", "316"), [])
+        self.assertEqual(self._drops("Article 680", "680"), [])
+
+    def test_a_real_synonym_is_kept(self):
+        """`haunch` is not a word of "Haunching" — it is a different spelling of the same idea."""
+        self.assertEqual(self._drops("Haunching", "haunch\nhaunches"), [])
+
+    def test_a_multi_word_alias_is_kept(self):
+        self.assertEqual(self._drops("Flooded suction", "flooded suction line"), [])
+
+    def test_a_single_word_term_gives_nothing_away(self):
+        """Its only word IS the term, and `_clean_aliases` already refuses an alias equal to it."""
+        self.assertEqual(self._drops("Weir", "weirs\nspillway"), [])
+
+
+class TestTheNamedAcronymMerges(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import importlib
+
+        cls.saved = _install(_Site([]), ["Training Author"])
+        cls.patch = importlib.import_module(
+            "erpnext_enhancements.patches.merge_named_glossary_acronyms"
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        _restore(cls.saved)
+
+    def test_the_five_pairs_are_named_not_derived(self):
+        """No rule can tell that LSI means Langelier Saturation Index rather than large-scale
+        integration. One loose enough to pair them would pair things that merely look alike."""
+        pairs = dict(self.patch.PAIRS)
+        self.assertEqual(pairs["AHJ"], "Authority having jurisdiction")
+        self.assertEqual(pairs["LSI"], "Langelier Saturation Index")
+        self.assertEqual(len(self.patch.PAIRS), 5)
+
+    def test_the_acronym_is_the_one_that_goes(self):
+        """It survives as an alias, so a lesson saying LSI still matches — it just reaches one
+        entry instead of two."""
+        for acronym, spelled_out in self.patch.PAIRS:
+            with self.subTest(acronym):
+                self.assertLess(len(acronym), len(spelled_out))
+
+    def test_it_reuses_the_review_screens_merge(self):
+        self.assertIn("from erpnext_enhancements.training.glossary_review import merge_into", _raw(self.PATCH_SRC))
+
+    PATCH_SRC = APP_ROOT / "patches" / "merge_named_glossary_acronyms.py"
+
+    def test_it_never_creates_the_survivor(self):
+        """If the spelled-out entry is gone somebody has already reorganised this, and guessing
+        which entry should absorb the acronym is not a guess a patch gets to make."""
+        self.assertIn("is not there to merge into", _raw(self.PATCH_SRC))
+
+    def test_both_patches_are_registered(self):
+        registered = _raw(APP_ROOT / "patches.txt")
+        self.assertIn("erpnext_enhancements.patches.merge_named_glossary_acronyms", registered)
+        self.assertIn("erpnext_enhancements.patches.drop_fragment_glossary_aliases", registered)
+
+
 # ----------------------------------------------------------------------------- the page
 
 

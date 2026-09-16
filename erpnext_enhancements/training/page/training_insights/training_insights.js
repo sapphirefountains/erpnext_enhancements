@@ -164,13 +164,25 @@ class TrainingInsights {
 				this.loaded = true;
 				this.render(data || {});
 			})
-			.catch(() => {
-				// xcall has already shown the server's message. Leave a line behind so
-				// the page is not silently blank.
+			.then(null, (err) => {
+				// `.then(onSuccess, onError)` rather than `.catch()`, and the difference is the
+				// whole reason this page was broken for thirty-nine releases. A trailing
+				// `.catch()` also catches whatever `render()` throws, so a client-side TypeError
+				// -- `frappe.utils.cint` is not a function; `cint` is a window global in frappe
+				// and `frappe.utils` has never carried it -- was caught, relabelled "Could not
+				// load training analytics", and shown as a server failure. The server was
+				// returning 200 with the full payload the whole time. Nothing reached the
+				// console, nothing reached the Error Log, and the message pointed at the one
+				// component that was working.
+				//
+				// Two arguments confine this handler to an actual call failure. A render bug now
+				// surfaces as an unhandled rejection in the console, where it is somebody's bug
+				// rather than somebody's outage.
 				this.$body.empty().append(
 					$('<div class="ti-empty"></div>').text(__("Could not load training analytics."))
 				);
 				this.page.set_indicator(__("Unavailable"), "red");
+				throw err;
 			})
 			.finally(() => {
 				this.loading = false;
@@ -211,7 +223,7 @@ class TrainingInsights {
 	render_tiles(totals, data) {
 		const $row = $('<div class="ti-tiles"></div>').appendTo(this.$body);
 		TI_TILES.forEach(([key, label]) => {
-			const value = frappe.utils.cint(totals[key]);
+			const value = cint(totals[key]);
 			const filter = ti_drill(key, data);
 			const $tile = $(
 				filter ? '<button type="button" class="ti-tile is-clickable"></button>' : '<div class="ti-tile"></div>'
@@ -268,7 +280,7 @@ class TrainingInsights {
 	}
 
 	bar(percent) {
-		const value = Math.max(0, Math.min(100, frappe.utils.cint(percent)));
+		const value = Math.max(0, Math.min(100, cint(percent)));
 		const $wrap = $('<div class="ti-bar"></div>');
 		$wrap.attr("role", "progressbar");
 		$wrap.attr("aria-valuenow", value);
@@ -336,7 +348,7 @@ class TrainingInsights {
 					? '<button type="button" class="ti-tile is-clickable"></button>'
 					: '<div class="ti-tile"></div>'
 			);
-			$tile.append($('<div class="ti-tile-value"></div>').text(frappe.utils.cint(summary[key])));
+			$tile.append($('<div class="ti-tile-value"></div>').text(cint(summary[key])));
 			$tile.append($('<div class="ti-tile-label"></div>').text(frappe.unscrub(key)));
 			if (filter) {
 				$tile.on("click", () => frappe.set_route("List", "Training Submission", filter));
