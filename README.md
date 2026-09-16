@@ -56,7 +56,7 @@ erpnext_enhancements/                 ← the Python package (one folder per Fra
 ├── script_migrations/               ← Python ports of legacy DB-stored Client/Server Scripts
 ├── patches/                          ← one-time migration scripts (run by `bench migrate`)
 ├── setup/                            ← idempotent setup run after every migrate (custom fields, etc.)
-├── scripts/                          ← build/codegen tools (contract template pipeline, form-layout generator)
+├── scripts/                          ← build/codegen tools (contract template pipeline, form-layout generator) + hand-run probes
 ├── utils/                            ← shared helpers (global Triton sync, delete patching)
 ├── custom_html_blocks/               ← source of truth for the "Custom HTML Block" dashboard widgets
 ├── fixtures/                         ← exported records installed on migrate (custom fields, workflows…)

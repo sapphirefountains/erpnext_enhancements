@@ -7,6 +7,171 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.473.2] - 2026-09-16
+
+### Changed
+
+- **`scripts/probe_menu_stacking.mjs` now transcribes both sides of the button-focus
+  argument, and has a control that catches it when it doesn't.** The probe's value is
+  fidelity to Frappe v16, and its `#frappe` block was incomplete in two places that happened
+  to cancel: bootstrap raises `.btn-group > .btn` to `z-index: 1` on **four** states —
+  `:hover`, `:focus`, `:active` and `.active` (`_button-group.scss:14-23`) — and the probe
+  had copied only two; and Frappe's `common/buttons.scss:106-115` kills `:hover`/`:active`
+  for every `.btn-default` (it ties bootstrap at (0,3,0) and wins on source order, because
+  `desk/index.scss` imports `../common/buttons` after bootstrap), which the probe had not
+  copied at all. Green for the wrong reason: complete either side alone and it reports a
+  break no browser produces. Verified in both directions — restoring bootstrap's `:hover`
+  without Frappe's counter-rule makes the run report one false failure; with both written
+  down it is clean.
+
+  Both are now in the file with their citations, and a new **`--stock`** mode runs the probe
+  with no app stylesheet at all. Stock Frappe v16 has no menu bug, so anything but all-PASS
+  means the *transcription* is wrong rather than the desk — the one failure mode a harness
+  like this cannot otherwise self-report. Run it before trusting a FAIL.
+
+- The v1.473.1 comment block and guard test described bootstrap's rule as `:focus` alone and
+  Frappe's answer as one scoped guard. Both now name all four states and both upstream
+  counter-rules, and say which of the four still has a scope gap (`:focus`, on the
+  `hide_page_form` path) and why it is inert there anyway (the button sits in `.page-head`'s
+  level-6 context, which clears the sticky list row at 2). **The conclusion is unchanged:
+  `z-index: auto` is there to state the invariant once, not to fix a live break**, and the
+  shipped CSS is byte-for-byte the same in its declarations. Nothing that renders changed in
+  this release — the rule block's prose did.
+
+- **Recorded the fix that was not taken, because it is a close call and the next person will
+  reach for it.** Dropping the blur on the query-report head
+  (`#page-query-report .page-head { backdrop-filter: none !important }`) fixes symptom 1 just
+  as well, and costs nothing visually: a `position: static` head has nothing scrolling behind
+  it, so blurring a flat background returns that flat background. It was passed over because
+  it needs `!important` to beat the glass rule (the level fix needs none) and because it
+  leaves the head at level 0, which depends on nothing in a report body ever being positioned
+  above it. Both shapes were measured; this is a judgement about which one ages better, not a
+  correctness claim. The note now sits in the stylesheet beside the rule, with the condition
+  that would make it the better choice.
+
+- The `public/README.md` rule this episode produced said "never blur an element Frappe opens
+  a menu inside", which the fix itself does not obey — the blur stays on `.page-head`
+  everywhere, carried by its level. Restated as what is actually true: a menu is pinned to
+  its ancestor's stacking level, so there are exactly two ways out — do not create the
+  context, or make the context's own level clear the page — and a bigger number on the menu
+  is never one of them.
+
+## [1.473.1] - 2026-09-16
+
+### Fixed
+
+- **Desk menus opened behind the page, and the rule filed as fixing it was one of the
+  reasons.** On a query report — General Ledger, Stock Balance, any Query or Script Report —
+  the page **"..." Menu** and **Actions** menus opened *underneath* the filter row, the
+  "report was generated" line and the report rows, so the entries were there and unreadable
+  and unclickable. On a **list view**, the **sort-order** menu opened behind the sticky
+  header row the same way. Both are the same mistake, made by this app's glass theme.
+
+  `backdrop-filter` creates a **stacking context** on whatever carries it — unconditionally,
+  whatever that element's `position` or `z-index` is (Filter Effects 2 §2.2). A menu cannot
+  paint outside its ancestor's stacking context, so the menu's own `z-index` is read *inside*
+  the context that is losing and cannot rescue it. Frappe opens both of these menus inside
+  elements we blur:
+
+  - **The page menu lives inside `.page-head`** (`page.html` nests `ul.dropdown-menu` under
+    `.page-actions > .standard-actions > .menu-btn-group`; `page.js:154` reads it from there
+    and never moves it to `<body>`). `page.scss` gives `.page-head` `position: sticky;
+    z-index: 6`, which carries the trapped menu over the page body on an ordinary page. But
+    `report.scss:2-5` declares `#page-query-report .page-head { position: unset }`, and
+    `z-index` does nothing on a static element — so on a report the page head painted at
+    level 0, under `#page-query-report .page-form` (`report.scss:7-10`, z-index 5) and under
+    the datatable — and on a phone under the whole page body, because `mobile.scss:12-24`
+    gives `.layout-main` `position: relative` below 991px, which puts it in the same paint
+    step as the trapped head and later in tree order. **Stock Frappe is fine there precisely
+    *because* the head is static:** no position, no stacking context, and the menu's own
+    z-index 1000 reaches the root. Our blur put the stacking context back and took Frappe's
+    escape hatch away. Fixed by restoring a level instead of the blur —
+    `#page-query-report .page-head { position: relative; z-index: 1000 }`. 1000 is
+    bootstrap's own `$zindex-dropdown` and clears everything a report body holds
+    (`.page-form` 5, `.dt-cell--sticky-top` 4, `.dt-dropdown__list` 10) while staying under
+    the desk's top bar and `.filter-popover` (both 1019), the desk sidebar (1020–1023),
+    `.frappe-menu` (1030), the modal backdrop (1040) and `#freeze` / `#alert-container`
+    (2000). `relative` and never `sticky`: Frappe took the stickiness off this page on
+    purpose. `relative` changes exactly one other thing, and it is unreachable today:
+    `page.js:58-73` writes an inline `top: -15px` onto every `.page-head` on scroll when the
+    site is read-only or somebody is impersonating, and `top` is inert on a static element
+    but not on a relative one. That handler listens on `.main-section` and then guards on
+    `document.documentElement.scrollTop` — and the desk's own layout gives `.main-section`
+    `height: 100vh; overflow: scroll` inside a flex `body`, so the document never scrolls.
+    Measured: `.main-section.scrollTop` 1200, `documentElement.scrollTop` 0. (The same dead
+    expression is why the page head's `drop-shadow` class never appears — upstream, not
+    ours.) Flagged in the CSS as the line to re-check on a Frappe upgrade.
+  - **The sort menu lives inside its own `<button>`** — `sort_selector.html` nests the
+    `<ul class="dropdown-menu">` *inside* `<button class="btn ... sort-selector-button">`, so
+    two of our own rules closed a stacking context around it: `backdrop-filter` from our
+    `.btn` rule, and `transform: translateY(-1px)` from our `.btn-default:hover`, which fires
+    during the hover you are doing while you click. Trapped, the menu lost to Frappe's sticky
+    first list row (`list.scss:11-15`, z-index 2). The page menu is unaffected by both — its
+    `<ul>` is a *sibling* of its button, not a child. The new rule also sets `z-index: auto`,
+    which is the third way a button becomes a stacking context: bootstrap's
+    `.btn-group > .btn:focus { z-index: 1 }` fires on the very click that opens the menu, and
+    Frappe already neutralises it — but only for this one widget, at
+    `.page-form .sort-selector .btn-group .btn:focus { z-index: unset }`
+    (`list.scss:547-554`), and `base_list.js:647-653` has a path that puts the filter area
+    outside `.page-form`. That declaration completes the invariant; it is not a live fix, and
+    is listed here rather than claimed as one. The cost is the 1px hover lift on the one
+    button that holds a menu inside itself, and bootstrap's focus-ring lift over its
+    `.btn-group` sibling. Both are worth less than a menu you can read.
+
+- **Removed "FIX: List View Sort Dropdown Z-Index", which never worked and made the bug
+  permanent.** It read `.sort-selector, .list-filter-main, .filter-section { z-index: 2
+  !important; position: relative }` alongside `.sort-selector .dropdown-menu,
+  .list-sort-dropdown { z-index: 1005 !important }`, and it is the reason the sort menu was
+  still broken after the CHANGELOG recorded it as fixed. `position: relative` *with* a
+  z-index made `.sort-selector` and `.filter-section` into two **more** stacking contexts,
+  pinned at 2, so the 1005 was clamped to 2 — a tie with the sticky list row, lost on tree
+  order. Two of its three targets, `.list-filter-main` and `.list-sort-dropdown`, **exist
+  nowhere in Frappe v16 at all**, so the rule also read as covering surfaces it was not.
+  Worth stating as a rule: **out-bidding a stacking context with a bigger number cannot
+  work.** If a menu is behind the page, raising its z-index is the wrong move — find the
+  ancestor that closed a context around it.
+
+  The history is the argument, and it is all in this repo. `42a6704a` (2025-12-10, "Add
+  frosted glass effect to modals and headers") laid the traps. `68f0631c` (2026-01-27, 48
+  days later, "increase z-index of list view sort dropdown") answered the symptom with
+  `z-index: 102 !important` — which out-ranked `.page-head`'s own 6 and made the filter bar
+  paint *over* the sticky page header, so `76ce3364` (2026-02-07, "adjust filter-section
+  z-index to 2") dropped it to 2, straight into the tie with the sticky list row, leaving the
+  trailing comment `/* Higher than typical sticky headers (1-100) */` in place and false.
+  `ae3397b3` the same day added `.list-row-container { z-index: 1 }` as a second
+  compensation; it is inert for a third reason — the rows are not positioned, and Frappe's
+  own `:first-child` rule outguns it 0,7,0 to 0,1,0 — and is left alone here only because
+  deleting it would change nothing. Three commits, two of them making it worse, none of them
+  looking one element up.
+
+- Guarded by `tests/test_dropdown_stacking.py`, wired into CI. It **resolves the cascade**
+  rather than grepping for the strings, because every rule in the fix is an override of an
+  earlier rule in the same stylesheet — three of them `!important` — and an override that
+  loses the cascade fails silently, leaving the menu exactly where it was. That is not
+  hypothetical here: the activity-feed fix shipped inert for six weeks in v1.259.4 with a
+  green test written the naive way. The suite also pins the deleted band-aid *absent*, since
+  re-adding `position: relative` and a z-index to `.sort-selector` puts the trap straight
+  back. The behavioural check that found all of this ships as
+  `scripts/probe_menu_stacking.mjs`: Frappe v16's real page markup and stylesheet values
+  rendered in Chromium, reading `document.elementFromPoint` over the open menu in every
+  button state — 5 failures against `main` (`--ref origin/main`), none against this change.
+  It is **not** wired to CI, and its header says so and why: the runners have no browser
+  engine. Run it by hand after touching the glass theme. That header also carries the
+  standing warning that the Frappe half of its page is a *transcription*, because an
+  incomplete one produced the single wrong diagnosis in this investigation — a first run
+  blamed bootstrap's focus z-index, because Frappe's own counter-rule at `list.scss:547-554`
+  had not been copied across yet.
+
+### Known, not fixed here
+
+- `.modal-content` carries the same `backdrop-filter`, so it is a stacking context **and** a
+  containing block for `position: fixed` descendants around every desk dialog. Nothing
+  reported is caused by it — the controls inside a dialog only need to clear the dialog — but
+  it is the same trap, and a `position: fixed` overlay opened inside a dialog would be
+  positioned against the dialog rather than the viewport. `.btn-primary` and `.btn-danger`
+  carry it too; both are dormant only because no menu is currently nested inside one of those
+  buttons, which is exactly how the sort selector was dormant until Frappe nested one.
+
 ## [1.473.0] - 2026-09-16
 
 Everything here was found by verifying v1.472.0 against production rather than by a test or a

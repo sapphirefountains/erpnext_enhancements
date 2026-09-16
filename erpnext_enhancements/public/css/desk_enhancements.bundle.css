@@ -1189,22 +1189,139 @@ mark {
 }
 
 /* ==========================================================================
-   FIX: List View Sort Dropdown Z-Index
+   MENUS THAT OPEN BEHIND THE PAGE
+
+   `backdrop-filter` creates a STACKING CONTEXT on whatever carries it, always,
+   whatever that element's `position` or `z-index` is (Filter Effects 2 s2.2). A
+   menu cannot paint outside its ancestor's stacking context, so its own z-index
+   is read INSIDE the context that is losing and cannot rescue it. Two of the
+   glass rules earlier in this file sit on ancestors of menus Frappe opens, and
+   both were reported the same way: the menu opens, and the page draws on top.
+
+   1. THE PAGE MENU, ON A QUERY REPORT (General Ledger et al). Frappe puts the
+      "..." Menu and the Actions menu INSIDE `.page-head` -- page.html nests
+      `ul.dropdown-menu` under `.page-actions > .standard-actions >
+      .menu-btn-group`, and page.js:154 reads it from there; it is never moved to
+      <body>. `page.scss` gives `.page-head` `position: sticky; z-index: 6`,
+      which carries the trapped menu over the page body on every ordinary page.
+      But `report.scss:2-5` declares `#page-query-report .page-head { position:
+      unset }`, and `z-index` does nothing on a static element -- so on a report
+      the page head paints at level 0, under `#page-query-report .page-form`
+      (report.scss:7-10, z-index 5) and under the datatable -- and on a phone
+      under the whole page body, since mobile.scss:12-24 gives `.layout-main`
+      `position: relative` below 991px, which puts it in the same paint step as
+      the trapped head and later in tree order. Stock Frappe is fine there
+      precisely BECAUSE the head is static: no position, no stacking context, and
+      the menu's own z-index 1000 reaches the root. Our blur put the stacking
+      context back and took Frappe's escape hatch away.
+
+      So restore a level rather than the blur: 1000 is bootstrap's own
+      `$zindex-dropdown`, and it clears everything a report body holds
+      (`.page-form` 5, `.dt-cell--sticky-top` 4, `.dt-dropdown__list` 10) while
+      staying under the desk's top bar and `.filter-popover` (both 1019 -- the
+      top bar is `div.sticky-top`; `header.navbar`, which the glass rule above
+      also names, matches nothing on a v16 desk, because toolbar.js replaces
+      `<header>` with that div), the desk sidebar (1020-1023), `.frappe-menu`
+      (1030), the modal backdrop (1040) and `#freeze` / `#alert-container`
+      (2000). `relative`, never `sticky`: Frappe took the stickiness off this
+      page on purpose and this must not give it back. No `!important` needed --
+      this selector ties report.scss's on specificity and wins on source order,
+      because app CSS loads after Frappe's desk bundle.
+
+      THE OTHER WAY OUT, and why not: dropping the blur here instead
+      (`#page-query-report .page-head { backdrop-filter: none !important }`)
+      also works, and costs nothing visually -- a static head has nothing
+      scrolling behind it, so blurring a flat background returns that flat
+      background. It was rejected for two reasons, neither overwhelming: it needs
+      `!important` to beat the glass rule above, where this needs none; and it
+      leaves the report head at level 0, so it depends on nothing in the report
+      body ever being positioned above it, where a level of 1000 simply out-ranks
+      the lot. If the coupling below ever becomes real, that is the fix to switch
+      to, not a bigger number.
+
+      ONE THING `relative` CHANGES, and why it is safe today: page.js:58-73
+      writes an inline `top: -15px` onto EVERY `.page-head` in the DOM on scroll,
+      when the site is read-only or somebody is impersonating. `top` is inert on
+      a static element and is not on a relative one, so that would shift the
+      report's header up 15px. It cannot fire: the handler listens on
+      `.main-section` but guards on `document.documentElement.scrollTop`, and the
+      desk's own layout gives `.main-section` `height: 100vh; overflow: scroll`
+      inside a flex `body`, so the document itself never scrolls -- measured at
+      `.main-section.scrollTop` 1200 with `documentElement.scrollTop` still 0.
+      The same dead expression is why the page head's `drop-shadow` class never
+      appears either. If a Frappe upgrade fixes that handler, this is the line to
+      re-check -- and the answer will be to let it move, not to pin `top`.
+
+   2. THE LIST VIEW SORT MENU. Frappe's `sort_selector.html` nests the
+      `<ul class="dropdown-menu">` INSIDE the `<button>` that opens it, so two of
+      our own rules close a stacking context around it: `backdrop-filter` from
+      `.btn` above, and `transform: translateY(-1px)` from `.btn-default:hover`
+      above, which fires during the hover you are doing while you click. Trapped,
+      the menu lost to Frappe's sticky first list row (list.scss:11-15, z-index
+      2). The page menu is NOT affected by either -- its `<ul>` is a SIBLING of
+      its button, not a child.
+
+      `z-index: auto` is the third way a button becomes a stacking context. It is
+      here to COMPLETE the invariant, not because it is broken today -- and it
+      lists four states because bootstrap declares four: `.btn-group > .btn`
+      takes `z-index: 1` on `:hover`, `:focus`, `:active` AND `.active`
+      (_button-group.scss:14-23). Frappe already answers most of that, in two
+      separate places, which is why neither is obvious: `common/buttons.scss:
+      106-115` kills `:hover` and `:active` for EVERY `.btn-default` (it ties
+      bootstrap at (0,3,0) and wins on source order, since desk/index.scss
+      imports ../common/buttons after bootstrap), and list.scss:547-554 kills
+      `:focus` -- but only for `.page-form .sort-selector .btn-group .btn`. So
+      `:focus` is the one with a scope gap, on the `hide_page_form` path where
+      base_list.js:647-653 puts the filter area outside `.page-form`; and even
+      there the button sits in `.page-head`'s level-6 context, which clears the
+      sticky row at 2 anyway. Nothing to fix, then -- but a rule that says "a
+      button holding a menu is not a stacking context" should say it once, for
+      every state that can make one, rather than track which of two upstream
+      counter-rules currently covers which.
+
+      The cost is the 1px hover lift on the one button that holds a menu inside
+      itself, and bootstrap's focus-ring lift over its `.btn-group` sibling. Both
+      are worth less than a menu you can read. `backdrop-filter` needs
+      `!important` because `.btn-primary` above declares it `!important`; the
+      other two declarations have no important competitor and do not.
+
+   WHAT WAS HERE BEFORE. A rule reading `.sort-selector, .list-filter-main,
+   .filter-section { z-index: 2 !important; position: relative }` plus
+   `.sort-selector .dropdown-menu, .list-sort-dropdown { z-index: 1005
+   !important }`, under the heading "FIX: List View Sort Dropdown Z-Index". It
+   never worked, and it could not have: `position: relative` with a z-index made
+   `.sort-selector` and `.filter-section` two more stacking contexts, pinned at
+   2, so the 1005 was clamped to 2 -- a tie with the sticky list row, lost on
+   tree order. Two of its three targets, `.list-filter-main` and
+   `.list-sort-dropdown`, exist nowhere in Frappe v16 at all. The rule it did
+   land on made the bug permanent, and the CHANGELOG recorded it as fixed.
+   `.list-row-container { z-index: 1 }` further down is from the same episode and
+   is inert for a third reason (the rows are not positioned); it is left alone
+   only because deleting it changes nothing.
+
+   Verified by rendering Frappe v16's real page markup and stylesheet values in
+   Chromium and reading `document.elementFromPoint` over the open menu in every
+   button state: 5 failures against main, none against this. That probe is
+   `scripts/probe_menu_stacking.mjs` -- run it by hand after touching anything
+   here; it needs a browser engine, so it cannot be a CI job. What CI does check
+   is tests/test_dropdown_stacking.py, which RESOLVES THE CASCADE rather than
+   grepping for the strings -- every rule below is an override of one earlier in
+   this same file, three of them `!important`, and an override that loses the
+   cascade leaves the menu exactly where it was, silently.
    ========================================================================== */
-/*
-  The sort dropdown in the list view (top right) was being hidden behind
-  the sticky list header or other elements. This ensures it stays on top.
-*/
-.sort-selector,
-.list-filter-main,
-.filter-section {
-    z-index: 2 !important; /* Higher than typical sticky headers (1-100) */
+#page-query-report .page-head {
     position: relative;
+    z-index: 1000;
 }
 
-.sort-selector .dropdown-menu,
-.list-sort-dropdown {
-    z-index: 1005 !important;
+.btn:has(.dropdown-menu),
+.btn:has(.dropdown-menu):hover,
+.btn:has(.dropdown-menu):focus,
+.btn:has(.dropdown-menu):active {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    transform: none;
+    z-index: auto;
 }
 
 /* ==========================================================================
