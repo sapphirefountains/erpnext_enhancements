@@ -1228,6 +1228,17 @@ mark {
       this selector ties report.scss's on specificity and wins on source order,
       because app CSS loads after Frappe's desk bundle.
 
+      THE OTHER WAY OUT, and why not: dropping the blur here instead
+      (`#page-query-report .page-head { backdrop-filter: none !important }`)
+      also works, and costs nothing visually -- a static head has nothing
+      scrolling behind it, so blurring a flat background returns that flat
+      background. It was rejected for two reasons, neither overwhelming: it needs
+      `!important` to beat the glass rule above, where this needs none; and it
+      leaves the report head at level 0, so it depends on nothing in the report
+      body ever being positioned above it, where a level of 1000 simply out-ranks
+      the lot. If the coupling below ever becomes real, that is the fix to switch
+      to, not a bigger number.
+
       ONE THING `relative` CHANGES, and why it is safe today: page.js:58-73
       writes an inline `top: -15px` onto EVERY `.page-head` in the DOM on scroll,
       when the site is read-only or somebody is impersonating. `top` is inert on

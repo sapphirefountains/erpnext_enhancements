@@ -38,6 +38,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shipped CSS is byte-for-byte the same in its declarations. Nothing that renders changed in
   this release — the rule block's prose did.
 
+- **Recorded the fix that was not taken, because it is a close call and the next person will
+  reach for it.** Dropping the blur on the query-report head
+  (`#page-query-report .page-head { backdrop-filter: none !important }`) fixes symptom 1 just
+  as well, and costs nothing visually: a `position: static` head has nothing scrolling behind
+  it, so blurring a flat background returns that flat background. It was passed over because
+  it needs `!important` to beat the glass rule (the level fix needs none) and because it
+  leaves the head at level 0, which depends on nothing in a report body ever being positioned
+  above it. Both shapes were measured; this is a judgement about which one ages better, not a
+  correctness claim. The note now sits in the stylesheet beside the rule, with the condition
+  that would make it the better choice.
+
+- The `public/README.md` rule this episode produced said "never blur an element Frappe opens
+  a menu inside", which the fix itself does not obey — the blur stays on `.page-head`
+  everywhere, carried by its level. Restated as what is actually true: a menu is pinned to
+  its ancestor's stacking level, so there are exactly two ways out — do not create the
+  context, or make the context's own level clear the page — and a bigger number on the menu
+  is never one of them.
+
 ## [1.473.1] - 2026-09-16
 
 ### Fixed
