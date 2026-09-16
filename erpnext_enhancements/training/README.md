@@ -274,7 +274,7 @@ The Desk's own left sidebar could not do this job: it lists **workspaces**, so i
 `tr-` is the learner render ([`../public/css/training/player.css`](../public/css/training/player.css)),
 `tc-` the authoring canvas, `tl-` the learner Desk host, `ti-` the insights page, `tn-` the
 shared rail. One grep trap in that last one: an unanchored search for `tn-` also matches
-every Bootstrap `btn-` in the repo, so anchor on `tn-` or on the leading dot.
+every Bootstrap `btn-` in the repo, so anchor on `\btn-` or on the leading dot.
 **`--tr-*` is declared in `player.css` and nowhere else** (plus `quiz.js`'s injected
 fallback sheet), which is what lets the canvas inherit a palette fix for free — and is
 pinned by [`../tests/test_training_desk_theme.py`](../tests/test_training_desk_theme.py).

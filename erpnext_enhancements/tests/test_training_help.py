@@ -1237,15 +1237,43 @@ class TestTheGlossaryContent(unittest.TestCase):
                 with self.subTest(t["term"]):
                     self.assertIn(t["category"], live)
 
+    #: Shared by the guard below and by its positive control, so the control cannot drift off
+    #: the pattern it is meant to be proving.
+    _DEADLINE = re.compile(
+        r"\b(?:within|inside|no later than)\s+\d+\s*(?:hour|hours|day|days|week|weeks)\b", re.I
+    )
+    _FREQUENCY = re.compile(
+        r"\bevery\s+\d+\s*(?:day|days|week|weeks|month|months|year|years)\b", re.I
+    )
+
+    def test_the_deadline_guard_can_actually_fire(self):
+        """The positive control, and it is here because the guard below spent its whole life
+        unable to fail.
+
+        Both patterns were written with `\\b` word boundaries and reached the file with the
+        backslash-b replaced by a literal backspace character -- eaten by a shell on the way
+        in. The compiled regex then demanded an actual 0x08 byte either side of the phrase.
+        No glossary entry has ever contained one, so `assertIsNone` held for all 704 entries
+        no matter what they said, and a term reading 'backwash every 6 weeks' would have
+        sailed through the check written to stop exactly that.
+
+        Nothing about that was visible: the file parsed, the suite ran, 124 tests passed.
+        `tests/test_no_control_characters.py` now fails the build on the byte itself; this
+        asserts the repaired patterns match the sentences they were written for."""
+        for phrase in ("Report it within 24 hours.", "Inspect it no later than 3 days after."):
+            with self.subTest(phrase):
+                self.assertIsNotNone(self._DEADLINE.search(phrase))
+        for phrase in ("Backwash every 6 weeks.", "Replace it every 2 years."):
+            with self.subTest(phrase):
+                self.assertIsNotNone(self._FREQUENCY.search(phrase))
+        # And the boundaries are real boundaries: `everyone` is not `every one`.
+        self.assertIsNone(self._FREQUENCY.search("everyone gets 2 weeks of induction"))
+
     def test_no_entry_invents_a_company_deadline_or_frequency(self):
         """Same two guards the course specs carry. A glossary is exactly where somebody writes
         'backwash every 6 weeks' without noticing they have just set a maintenance policy."""
-        deadline = re.compile(
-            r"(?:within|inside|no later than)\s+\d+\s*(?:hour|hours|day|days|week|weeks)", re.I
-        )
-        frequency = re.compile(
-            r"every\s+\d+\s*(?:day|days|week|weeks|month|months|year|years)", re.I
-        )
+        deadline = self._DEADLINE
+        frequency = self._FREQUENCY
         for t in self.terms:
             text = " ".join(
                 str(t.get(f) or "") for f in ("short_definition", "explanation", "example", "ordinary_meaning")

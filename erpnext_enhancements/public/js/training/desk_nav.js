@@ -223,8 +223,24 @@
 			// under the "All courses" link it belongs to. Inserted after the section is built
 			// rather than expressed as a link spec, because `link()` draws one anchor and this
 			// is a disclosure holding a tree.
+			//
+			// `insertBefore(…, catalog.nextSibling)` rather than `appendChild`, and the
+			// difference is the whole feature: appended, the tree landed at the BOTTOM of the
+			// Learn section, below Leaderboard, People and Team activity. It reads there as a
+			// fourth peer heading rather than as the breakdown of the link above it, and the
+			// one thing it has to say -- these groups are what "All courses" contains -- is the
+			// thing the position destroyed. `link()` files every anchor in `this.rows`, so the
+			// catalogue row can be found by key; falling back to appending keeps the tree
+			// reachable if it ever cannot be (`reachable()` can filter the link out entirely).
 			var groups = this.catalogueSubmenu();
-			if (groups) learnSection.appendChild(groups);
+			if (groups) {
+				var catalogRow = this.rows.catalog;
+				if (catalogRow && catalogRow.parentNode === learnSection) {
+					learnSection.insertBefore(groups, catalogRow.nextSibling);
+				} else {
+					learnSection.appendChild(groups);
+				}
+			}
 			this.body.appendChild(learnSection);
 		}
 		var manage = this.manageLinks();
