@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"fh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"fh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Invoice\",\"col\":4}},{\"id\":\"fh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Invoice\",\"col\":4}},{\"id\":\"fh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Payment Entry\",\"col\":4}},{\"id\":\"fh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Journal Entry\",\"col\":4}},{\"id\":\"fh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Bank Reconciliation Tool\",\"col\":4}},{\"id\":\"fh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Document Intake\",\"col\":4}},{\"id\":\"fh_08\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Invoices without Project\",\"col\":4}},{\"id\":\"fh_09\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Finance Dashboard\",\"col\":4}},{\"id\":\"fh_10\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"fh_11\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Intake needing review\",\"col\":6}},{\"id\":\"fh_12\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Invoices overdue\",\"col\":6}},{\"id\":\"fh_13\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"fh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Daily entry\",\"col\":4}},{\"id\":\"fh_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"fh_16\",\"type\":\"card\",\"data\":{\"card_name\":\"Period end\",\"col\":4}},{\"id\":\"fh_17\",\"type\":\"card\",\"data\":{\"card_name\":\"Analysis\",\"col\":4}}]",
+ "content": "[{\"id\":\"fh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"fh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Invoice\",\"col\":4}},{\"id\":\"fh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Invoice\",\"col\":4}},{\"id\":\"fh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Payment Entry\",\"col\":4}},{\"id\":\"fh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Journal Entry\",\"col\":4}},{\"id\":\"fh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Bank Reconciliation Tool\",\"col\":4}},{\"id\":\"fh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Document Intake\",\"col\":4}},{\"id\":\"fh_08\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Invoices without Project\",\"col\":4}},{\"id\":\"fh_09\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Finance Dashboard\",\"col\":4}},{\"id\":\"fh_18\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"QuickBooks Matching\",\"col\":4}},{\"id\":\"fh_10\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"fh_11\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Intake needing review\",\"col\":6}},{\"id\":\"fh_12\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Invoices overdue\",\"col\":6}},{\"id\":\"fh_13\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"fh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Daily entry\",\"col\":4}},{\"id\":\"fh_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"fh_16\",\"type\":\"card\",\"data\":{\"card_name\":\"Period end\",\"col\":4}},{\"id\":\"fh_17\",\"type\":\"card\",\"data\":{\"card_name\":\"Analysis\",\"col\":4}}]",
  "creation": "2026-08-03 12:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -263,7 +263,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-11 20:00:00.000000",
+ "modified": "2026-09-17 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Accounting Intake",
  "name": "Finance Hub",
@@ -352,6 +352,11 @@
    "label": "Finance Dashboard",
    "type": "URL",
    "url": "/app/finance-dashboard"
+  },
+  {
+   "label": "QuickBooks Matching",
+   "link_to": "quickbooks-record-matching",
+   "type": "Page"
   }
  ],
  "title": "Finance Hub",

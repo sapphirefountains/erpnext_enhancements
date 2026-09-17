@@ -1069,3 +1069,8 @@ erpnext_enhancements.patches.set_position_departments
 # were wrong. Named rather than ruled: `fall` is both ordinary English and the trade word for the
 # slope on a deck, and deciding which side a word lands on is knowing the trade.
 erpnext_enhancements.patches.drop_ordinary_word_glossary_aliases
+# v1.474.0: the Record Matching page gets a shortcut on the QuickBooks Online workspace and on
+# the Finance Hub. A Workspace JSON is age-gated on import and silently skipped when the row is
+# not older, so the bumped `modified` in each JSON needs a forced reload beside it to reach a
+# site that already has the workspace -- same shape as reload_training_workspace_for_glossary.
+erpnext_enhancements.patches.reload_workspaces_for_qbo_matching
