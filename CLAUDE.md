@@ -201,6 +201,15 @@ Verified, and all of them expensive to rediscover:
   do with the change being merged; it is the confirmed cause of a batch of Drive folders
   that were never created. If a change enqueues work that matters, it must be re-drivable
   after a deploy rather than assumed to have run.
+- **Frappe 16 refuses a SQL function written as a string field in `get_all`/`get_list`.**
+  `fields=["count(name) as n"]` raises `SQL functions are not allowed as strings in SELECT` from
+  `frappe/database/query.py`, and nothing bench-free can see it: the test stub's `get_all`
+  accepts anything, ruff sees a plain string, and the endpoint fails only when a browser asks
+  for it. v1.474.0 shipped two on a green build and the Record Matching page could not load; a
+  third, in `api/feedback.py`, sat inside a `try/except` and had been returning an empty tally
+  in silence. Aggregates go through `frappe.db.sql` with bound params, `frappe.db.count`, or
+  v16's dict form (`{"COUNT": "name", "as": "n"}`). `tests/test_quickbooks_matching.py`
+  walks every call site now.
 
 ## Conventions
 

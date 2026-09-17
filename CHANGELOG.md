@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.474.0] - 2026-09-17
+## [1.475.0] - 2026-09-17
 
 ### Fixed
 
@@ -65,6 +65,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that project must have the platform API enabled. Either the tile goes green, or the
   recorded error names the grant (403). A 404 on the *global* endpoint would now mean the
   project or the model id, not the region.
+
+## [1.474.1] - 2026-09-17
+
+### Fixed
+
+- **The Record Matching page could not load on production.** Both of its queue queries counted
+  rows with `frappe.get_all(..., fields=["count(name) as total"])`, and Frappe 16's query engine
+  refuses a SQL function written as a string field: *"SQL functions are not allowed as strings in
+  SELECT … Use dict syntax like {'COUNT': '*'} instead."* Nik hit it minutes after v1.474.0
+  deployed. Nothing bench-free could have caught it — the test stub's `get_all` accepts anything,
+  ruff sees a plain string, and the whole local CI run was green. Both counts are now bound raw
+  SQL through `frappe.db.sql`, the way `status_counts` and `latest_payloads` in the same module
+  already were, and the page's row query now shares its WHERE clause with its count
+  (`_master_where`) so the two cannot disagree. The exact SQL and parameter binding (tuple `IN`,
+  bound `LIKE`, bound `LIMIT`) were run against production before this shipped.
+- **The Enhancement Request status tally had the same shape and was silently empty on 16.**
+  `api/feedback.py`'s `_status_counts` passed `"count(name) as n"` inside a `try/except` that
+  returned `{}` on the refusal, so the denominator the feedback list is read against vanished
+  without an error. Same fix.
+- **An app-wide guard now walks every `get_all` / `get_list` call for a function-shaped string in
+  `fields`** (`tests/test_quickbooks_matching.py`), so the next one fails the build instead of the
+  page. It found the feedback one.
+
+## [1.474.0] - 2026-09-17
+
+### Added
+
+- **A matching queue the accountant can actually work from: the QuickBooks Record Matching
+  page** (`quickbooks-record-matching`, a shortcut on both the Finance Hub and the QuickBooks
+  Online workspace, and the "Record Matching" button on the QBO dashboard). Every master-record
+  Sync Mapping — Customer, Vendor, Item, Account, Class, Term, PaymentMethod, TaxCode — in one
+  table: what the import decided (linked by name, created fresh, parked, in conflict), the
+  ERPNext records it could have picked instead with a similarity score and the rule behind each,
+  a Link picker for anything else, and three actions per row. **Link** re-points the QBO id;
+  **Keep** records that a person looked and left it; **Retry** re-syncs a parked row after its
+  cause is fixed. "Accept suggestions on this page" links every row whose best suggestion
+  clears a threshold in one call. A second tab lists the transactions parked in Pending Review
+  (Invoices, Purchases, Bill Payments…) with the stored reason, the draft if one exists, and
+  Retry, singly or for the page.
+
+  Why a new page rather than a fix to the old dialog: the dashboard's "Link Existing Records"
+  only ever listed QBO records with **no** Sync Mapping row at all, and after Import All that is
+  none of them — every master record gets a row on import. On production it answered "No
+  unlinked QuickBooks raw payloads were found" to the one person who had ~2,300 master links to
+  check, ~1,480 of them records the import *created* and 288 parked. It also scanned only the
+  newest 100 payloads and asked for the exact ERPNext docname in a free-text box, on a site where
+  the docname has drifted from the title on 125 of 1,662 Customers. The old dialog's population
+  is still reachable as the *Unmapped payloads* filter, for the pre-import flow.
+
+- **Linking folds away the copy the import made.** When the accountant points a QBO id at a
+  record that already existed and the import had created its own copy, that copy is merged into
+  the chosen record with Frappe's model-level `rename_doc(merge=True, ignore_permissions=True)` — the
+  function under `frappe.model`, not the `frappe.rename_doc` alias, which on 16.30 has no
+  `ignore_permissions` and is the keyword that wedged migrations on 2026-08-07 — which re-points every Link and
+  Dynamic Link, so transactions already posted against the copy follow it, and so does any
+  *other* QBO id that was linked to the copy. The policy is deliberately narrow and is pinned by
+  tests: only a record whose mapping says `Created` is ever merged — a record a person made, one
+  the import linked *to*, or one already decided is never folded because a QBO id was
+  re-pointed; a Customer is never folded into a Project; Projects are never merged here at all
+  (the Project Merge tool cancels rather than deletes, which is right for a record with Tasks on
+  it). Account merges are pre-checked on the four properties ERPNext's own `merge_account`
+  insists on, because `rename_doc` alone would fold a Liability into an Asset. The link is
+  committed **before** the merge is attempted, and a merge ERPNext refuses (a currency
+  mismatch, a stock item with a different UOM) comes back in the response as a failed merge with
+  its message, never as an exception — the decision stands, the duplicate is simply still there
+  and the page says so. Merges are one-way; the merged record's Drive folder, if it had one, is
+  left where it is.
+
+- **`reviewed_by` / `reviewed_on` on QuickBooks Sync Mapping.** Review state is two new columns
+  rather than a new `match_status` option, because the existing statuses carry meaning
+  (`Created` says the import made the record) that "a person looked" would erase. The queue's
+  default filter, *Needs decision*, is simply "not stamped and not already a manual match". New
+  columns on a normal doctype reach every existing row as NULL, which is the right starting
+  value here, so there is no backfill patch to get wrong.
+
+- **Five whitelisted endpoints under `quickbooks_online.core.api`**, all behind the existing
+  operator gate (System Manager / Accounts Manager — the same roles the page carries):
+  `get_match_queue`, `get_parked_transactions`, `decide_match`, `decide_matches`,
+  `confirm_match`. Re-exported from `quickbooks_online.api` like the rest.
+
+- **`tests/test_quickbooks_matching.py`**, its own pytest step in CI. It guards the merge policy
+  above (the one action on the page that deletes something), that a refused merge is reported
+  rather than undoing the link, that a bulk accept isolates one failure, and the wiring that
+  fails silently when wrong: a workspace shortcut without its content block, a Page whose roles
+  differ from the endpoint gate, a doctype JSON whose `modified` was not bumped.
+
+### Changed
+
+- **`QuickBooks Raw Payload.qbo_id` is now indexed.** The table holds ~433k rows on production
+  and had indexes on nothing but `creation`, `modified` and the primary key, so every
+  `_latest_raw_payload` lookup — the dashboard's link action, and `_top_level_customer` on
+  every job sync — was a full scan. The queue also fetches the newest payload for a page of rows
+  in one query per entity type rather than one per row. `bench migrate` builds the index as
+  part of the schema sync; expect that step to take a little longer once.
+
+- **The QBO dashboard's "Link Existing Records" button and menu item now open the Record
+  Matching page.** The dialog code behind them is removed (its endpoints,
+  `preview_existing_matches` and `link_existing_record`, stay — the page uses both).
+
+- **Both workspaces re-import by force** (`patches.reload_workspaces_for_qbo_matching`). A
+  Workspace JSON is age-gated on import and silently skipped when the site's row is not older;
+  both JSONs carry a bumped `modified` and the patch is the half a later forgotten bump cannot
+  undo.
 
 ## [1.473.2] - 2026-09-16
 

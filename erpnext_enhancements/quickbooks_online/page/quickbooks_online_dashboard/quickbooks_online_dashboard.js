@@ -17,9 +17,10 @@
  *      * Preview Resync      -> `preview_resync`, show a summary, then optionally
  *                               `run_resync` to overwrite QBO-owned fields (previewResync()).
  *      * Retry Failed        -> `retry_failed` (retryFailed()).
- *      * Link Existing Records -> `preview_existing_matches`, then a dialog whose
- *                               "Link" button calls `link_existing_record`
- *                               (previewExistingMatches() / showMatchDialog()).
+ *      * Record Matching     -> routes to the quickbooks-record-matching page, the
+ *                               accountant's review queue. Its predecessor here was a
+ *                               dialog that listed only QBO records with NO mapping
+ *                               row -- after a full import, none of them.
  *
  * The page is otherwise stateless; all data comes from the RPCs above.
  */
@@ -32,7 +33,7 @@ frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 
 	page.set_primary_action(__("Import All"), () => runImportAll(), "download");
 	page.add_action_item(__("Open Settings"), () => frappe.set_route("Form", "QuickBooks Online Settings"));
-	page.add_action_item(__("Link Existing Records"), () => previewExistingMatches());
+	page.add_action_item(__("Record Matching"), () => frappe.set_route("quickbooks-record-matching"));
 	page.add_action_item(__("Preview Resync"), () => previewResync());
 	page.add_action_item(__("Retry Failed"), () => retryFailed());
 	page.add_action_item(__("Compare Balances"), () =>
@@ -64,7 +65,7 @@ frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 			<div class="qbo-toolbar">
 				<button class="btn btn-default" data-action="connect">${__("Connect QuickBooks")}</button>
 					<button class="btn btn-default" data-action="disconnect">${__("Disconnect QuickBooks")}</button>
-				<button class="btn btn-default" data-action="matches">${__("Link Existing Records")}</button>
+				<button class="btn btn-default" data-action="matches">${__("Record Matching")}</button>
 				<button class="btn btn-default" data-action="preview">${__("Preview Resync")}</button>
 				<button class="btn btn-primary" data-action="import">${__("Import All")}</button>
 			</div>
@@ -81,7 +82,7 @@ frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 
 	root.on("click", "[data-action='connect']", () => connectQuickBooks());
 	root.on("click", "[data-action='disconnect']", () => disconnectQuickBooks());
-	root.on("click", "[data-action='matches']", () => previewExistingMatches());
+	root.on("click", "[data-action='matches']", () => frappe.set_route("quickbooks-record-matching"));
 	root.on("click", "[data-action='preview']", () => previewResync());
 	root.on("click", "[data-action='import']", () => runImportAll());
 	root.on("click", "[data-entity]", (event) => {
@@ -328,91 +329,6 @@ function retryFailed() {
 			);
 		},
 	});
-}
-
-function previewExistingMatches() {
-	frappe.call({
-		method: "erpnext_enhancements.quickbooks_online.core.api.preview_existing_matches",
-		freeze: true,
-		freeze_message: __("Scanning existing ERPNext records..."),
-		callback(response) {
-			const matches = response.message || [];
-			if (!matches.length) {
-				frappe.msgprint(__("No unlinked QuickBooks raw payloads were found. Run Preview Resync or Import All first."));
-				return;
-			}
-			showMatchDialog(matches);
-		},
-	});
-}
-
-function showMatchDialog(matches) {
-	const dialog = new frappe.ui.Dialog({
-		title: __("Link Existing ERPNext Records"),
-		size: "extra-large",
-		fields: [{ fieldtype: "HTML", fieldname: "matches_html" }],
-	});
-	const rows = matches
-		.map((match, index) => {
-			const auto = match.match && match.match.status === "matched";
-			const label = auto
-				? `${__("Suggested")}: ${match.match.name} (${match.match.rule})`
-				: match.match && match.match.status === "ambiguous"
-					? __("Needs manual review")
-					: __("No match found");
-			return `
-				<div class="qbo-match-row" data-index="${index}">
-					<div>
-						<div class="qbo-entity-name">${match.entity_type} ${match.qbo_id}</div>
-						<div class="text-muted">${frappe.utils.escape_html(match.qbo_name || "")}</div>
-						<div class="text-muted">${label}</div>
-					</div>
-					<div>
-						<input class="form-control input-sm" data-doctype="${index}" value="${frappe.utils.escape_html(match.erpnext_doctype || "")}" placeholder="${__("ERPNext DocType")}" />
-					</div>
-					<div>
-						<input class="form-control input-sm" data-name="${index}" value="${auto ? frappe.utils.escape_html(match.match.name) : ""}" placeholder="${__("ERPNext Record Name")}" />
-					</div>
-					<div>
-						<label class="checkbox-inline">
-							<input type="checkbox" data-apply="${index}" />
-							${__("Fill blanks")}
-						</label>
-					</div>
-					<button class="btn btn-xs btn-primary" data-link-index="${index}">${__("Link")}</button>
-				</div>
-			`;
-		})
-		.join("");
-	dialog.fields_dict.matches_html.$wrapper.html(`<div class="qbo-match-list">${rows}</div>`);
-	dialog.fields_dict.matches_html.$wrapper.on("click", "[data-link-index]", (event) => {
-		const index = $(event.currentTarget).attr("data-link-index");
-		const match = matches[index];
-		const erpnextDoctype = dialog.fields_dict.matches_html.$wrapper.find(`[data-doctype='${index}']`).val();
-		const erpnextName = dialog.fields_dict.matches_html.$wrapper.find(`[data-name='${index}']`).val();
-		const applyQboData = dialog.fields_dict.matches_html.$wrapper.find(`[data-apply='${index}']`).is(":checked") ? 1 : 0;
-		if (!erpnextDoctype || !erpnextName) {
-			frappe.msgprint(__("Choose an ERPNext DocType and record name before linking."));
-			return;
-		}
-		frappe.call({
-			method: "erpnext_enhancements.quickbooks_online.core.api.link_existing_record",
-			args: {
-				entity_type: match.entity_type,
-				qbo_id: match.qbo_id,
-				erpnext_doctype: erpnextDoctype,
-				erpnext_name: erpnextName,
-				apply_qbo_data: applyQboData,
-			},
-			freeze: true,
-			freeze_message: __("Linking record..."),
-			callback(linkResponse) {
-				frappe.msgprint(__("Created mapping {0}", [linkResponse.message]));
-				$(event.currentTarget).closest(".qbo-match-row").remove();
-			},
-		});
-	});
-	dialog.show();
 }
 
 function syncEntity(entity, qboId) {

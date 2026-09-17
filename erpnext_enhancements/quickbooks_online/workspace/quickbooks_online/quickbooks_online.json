@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"qbo_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"qbo_sc_dash\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"QuickBooks Online Dashboard\",\"col\":4}},{\"id\":\"qbo_sc_settings\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"QuickBooks Online Settings\",\"col\":4}},{\"id\":\"qbo_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"qbo_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Sync &amp; Settings</b></span>\",\"col\":12}},{\"id\":\"qbo_card_sync\",\"type\":\"card\",\"data\":{\"card_name\":\"Sync\",\"col\":4}},{\"id\":\"qbo_card_settings\",\"type\":\"card\",\"data\":{\"card_name\":\"Settings\",\"col\":4}}]",
+ "content": "[{\"id\":\"qbo_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"qbo_sc_dash\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"QuickBooks Online Dashboard\",\"col\":4}},{\"id\":\"qbo_sc_match\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Record Matching\",\"col\":4}},{\"id\":\"qbo_sc_settings\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"QuickBooks Online Settings\",\"col\":4}},{\"id\":\"qbo_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"qbo_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Sync &amp; Settings</b></span>\",\"col\":12}},{\"id\":\"qbo_card_sync\",\"type\":\"card\",\"data\":{\"card_name\":\"Sync\",\"col\":4}},{\"id\":\"qbo_card_settings\",\"type\":\"card\",\"data\":{\"card_name\":\"Settings\",\"col\":4}}]",
  "creation": "2026-06-15 00:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -25,10 +25,10 @@
    "is_query_report": 0,
    "label": "QuickBooks Sync Log",
    "link_count": 0,
+   "link_to": "QuickBooks Sync Log",
    "link_type": "DocType",
    "onboard": 0,
-   "type": "Link",
-   "link_to": "QuickBooks Sync Log"
+   "type": "Link"
   },
   {
    "dependencies": "",
@@ -36,10 +36,10 @@
    "is_query_report": 0,
    "label": "QuickBooks Sync Mapping",
    "link_count": 0,
+   "link_to": "QuickBooks Sync Mapping",
    "link_type": "DocType",
    "onboard": 0,
-   "type": "Link",
-   "link_to": "QuickBooks Sync Mapping"
+   "type": "Link"
   },
   {
    "dependencies": "",
@@ -47,10 +47,10 @@
    "is_query_report": 0,
    "label": "QuickBooks Raw Payload",
    "link_count": 0,
+   "link_to": "QuickBooks Raw Payload",
    "link_type": "DocType",
    "onboard": 0,
-   "type": "Link",
-   "link_to": "QuickBooks Raw Payload"
+   "type": "Link"
   },
   {
    "hidden": 0,
@@ -66,13 +66,13 @@
    "is_query_report": 0,
    "label": "QuickBooks Online Settings",
    "link_count": 0,
+   "link_to": "QuickBooks Online Settings",
    "link_type": "DocType",
    "onboard": 0,
-   "type": "Link",
-   "link_to": "QuickBooks Online Settings"
+   "type": "Link"
   }
  ],
- "modified": "2026-06-15 00:00:00.000000",
+ "modified": "2026-09-17 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "QuickBooks Online",
  "name": "QuickBooks Online",
@@ -86,6 +86,11 @@
   {
    "label": "QuickBooks Online Dashboard",
    "link_to": "quickbooks-online-dashboard",
+   "type": "Page"
+  },
+  {
+   "label": "Record Matching",
+   "link_to": "quickbooks-record-matching",
    "type": "Page"
   },
   {

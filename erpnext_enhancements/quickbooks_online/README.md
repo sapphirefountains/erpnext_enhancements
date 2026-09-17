@@ -28,7 +28,8 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 | File | Purpose | Key functions / classes |
 |---|---|---|
 | `api.py` (module root) | Re-exports the QBO whitelisted endpoints (browser + Intuit webhook URL) | re-exports from `core/api.py` |
-| `core/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `disconnect`, `disconnect_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `compare_account_balances`, `reconcile_transactions`, `sync_opening_balances`, `quickbooks_webhook`, `get_dashboard_status` |
+| `core/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `disconnect`, `disconnect_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `compare_account_balances`, `reconcile_transactions`, `sync_opening_balances`, `quickbooks_webhook`, `get_dashboard_status`, `get_sync_log_summary`, `get_match_queue`, `get_parked_transactions`, `decide_match`, `decide_matches`, `confirm_match` |
+| `core/matching.py` | The Record Matching page's engine (v1.474.0): the master-record review queue with candidates, the parked-transactions list, and the link/merge/confirm decisions -- see [Record matching review](#record-matching-review-v14740) | `master_queue`, `parked_transactions`, `decide`, `decide_many`, `confirm`, `merge_plan`, `similar_records`, `latest_payloads` |
 | `core/client.py` | OAuth2 + REST transport | `QuickBooksClient` (`build_authorization_url`, `exchange_code`, `refresh_access_token`, `revoke_tokens`, `request`, `query`, `get_entity`, `cdc`, `report`, `download_attachable`), `QuickBooksAPIError`, `QuickBooksDownloadTicketError` |
 | `core/attachments.py` | Mirror QBO `Attachable` files onto their ERPNext docs as private Files (WI-071); self-protecting daily pass, fresh-ticket batching | `sync_attachments`, `reset_attachable`, `DOWNLOAD_URI_BATCH`, `MAX_ATTEMPTS`, `STALE_ATTEMPT_SECONDS`, `SAVE_TIMEOUT_SECONDS` |
 | `core/constants.py` | Endpoints, entity catalogue, DocType map | `ENTITY_DOCTYPE_MAP`, `*_ENTITIES`, `ENVIRONMENT_BASE_URLS`, `OAUTH_SCOPE`, `MINOR_VERSION` |
@@ -42,14 +43,68 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 | `core/utils.py` | Shared helpers | `get_settings`, `get_secret`/`set_secret`, `clear_oauth_tokens`, `json_dumps`/`loads`, `parse_qbo_datetime`, `is_token_expiring`, `verify_intuit_signature`, `update_settings_status` |
 | `core/webhooks.py` | Inbound webhook handling | `handle_webhook`, `_iter_events` |
 | `doctype/*/*.py` | Doctype controllers | `QuickBooksOnlineSettings` (has `validate`), `QuickBooksRawPayload`, `QuickBooksSyncLog`, `QuickBooksSyncMapping` |
-| `page/quickbooks_online_dashboard/*.py` / `*.js` | Status dashboard page | `get_context`; render/refresh/match-dialog |
+| `page/quickbooks_online_dashboard/*.py` / `*.js` | Status dashboard page | `get_context`; render/refresh; the Record Matching button routes to the page below |
+| `page/quickbooks_record_matching/*.py` / `*.js` | The accountant's matching queue (Masters + Parked transactions tabs) | `get_context`; renders `get_match_queue` / `get_parked_transactions`, dials `decide_match` / `decide_matches` / `confirm_match` / `sync_entity` |
 
 ## Doctypes
 
 - **QuickBooks Online Settings** (Single) — credentials (`client_id`, encrypted `client_secret`, `webhook_verifier_token`, `redirect_uri`), OAuth state (encrypted `access_token`/`refresh_token`, `realm_id`, `token_expires_at`), cursors (`last_full_import`, `last_cdc_sync`, `last_webhook_at`), `status`/`status_message`, and tuning (`environment`, `company`, `sync_enabled`, `cdc_poll_minutes`, `retry_limit`).
-- **QuickBooks Sync Mapping** — the link ledger keyed on (`qbo_entity_type`, `qbo_id`); stores `erpnext_doctype`/`erpnext_name`, `sync_token`, `last_qbo_updated_at`, `deleted`, `conflict_status`, `match_status`/`match_rule`/`match_confidence`, and `owned_fields` (JSON of QBO-owned values, for conflict detection).
+- **QuickBooks Sync Mapping** — the link ledger keyed on (`qbo_entity_type`, `qbo_id`); stores `erpnext_doctype`/`erpnext_name`, `sync_token`, `last_qbo_updated_at`, `deleted`, `conflict_status`, `match_status`/`match_rule`/`match_confidence`, `owned_fields` (JSON of QBO-owned values, for conflict detection), and `reviewed_by`/`reviewed_on` (stamped by the Record Matching page; NULL until a person decides, and deliberately not a `match_status` option because `Created` already says something). `qbo_id` is indexed.
 - **QuickBooks Sync Log** — one per run; `sync_type`, `status`, lifecycle timestamps, per-action counters, `retry_count`, `preview_payload`, `error_message`.
-- **QuickBooks Raw Payload** — append-only audit of every fetched/received payload; `source`, entity type/id, `realm_id`, `sync_log` link, `received_at`, verbatim `payload`.
+- **QuickBooks Raw Payload** — append-only audit of every fetched/received payload; `source`, entity type/id, `realm_id`, `sync_log` link, `received_at`, verbatim `payload`. ~433k rows on production; `qbo_id` is indexed (v1.474.0) because every newest-payload lookup was a full scan without it.
+
+## Record matching review (v1.474.0)
+
+The **QuickBooks Record Matching** desk page (`page/quickbooks_record_matching/`, shortcut on
+the Finance Hub and on this workspace, roles System Manager + Accounts Manager — the same gate
+as the endpoints) is the accountant's queue for deciding which QBO records link to which
+ERPNext records. Logic in `core/matching.py`; the whitelisted surface is `get_match_queue`,
+`get_parked_transactions`, `decide_match`, `decide_matches`, `confirm_match` in `core/api.py`.
+
+**Why it replaced the dashboard's "Link Existing Records" dialog.** That dialog listed QBO
+records with *no* Sync Mapping row, and after Import All that is none of them — every master
+record gets a row on import (`Created`, `Auto Matched` or `Pending Review`). On production it
+was empty for the person with ~2,300 master links to check. Its population survives as the
+*Unmapped payloads* filter, for the pre-import flow (Preview Resync → link → Import All).
+
+**The Masters tab** shows every master mapping with a filter by entity type and status
+(*Needs decision* is the default: not yet reviewed and not already a manual match), the QBO
+record's identifying facts, the current link and its status, up to five other candidates —
+the sync's own matcher first (`find_existing_match`), then the stored candidates of an
+ambiguous match, then name-similar records (`similar_records`: a SQL `like` on the two longest
+words of the normalised name, ranked by `difflib` in Python) — a Link picker pre-filled with
+the best one, and per row:
+
+| Action | Endpoint | What it does |
+|---|---|---|
+| **Link** | `decide_match` | `link_existing_record` to the picked record (optionally filling its blank fields from QBO), stamps `reviewed_by`/`reviewed_on`, then applies the merge policy below |
+| **Keep** | `confirm_match` | stamps the row reviewed; changes no status (a `Pending Review` row stays pending until its cause is fixed and it is retried) |
+| **Retry** | `sync_entity` | re-syncs a parked row from QBO |
+| **Accept suggestions on this page** | `decide_matches` | Link for every row whose best suggestion clears the threshold; one failure never stops the rest |
+
+**Merge policy** (`matching.merge_plan`, pinned by `tests/test_quickbooks_matching.py`): when
+the link moves off a record whose mapping said `Created` — i.e. the import made it — onto a
+different record of the *same* doctype, the import's copy is folded into the chosen record
+with the model-level `frappe.model.rename_doc.rename_doc(merge=True, force=True,
+ignore_permissions=True)` (not the `frappe.rename_doc` alias, which on 16.30 has no
+`ignore_permissions` — `tests/test_uom_cleanup.py` guards every call site), which re-points
+every Link and Dynamic Link (so posted transactions and any other QBO id mapped to the copy
+follow). Nothing else is ever merged: not a record a person made, not one the import linked
+*to* (`Auto Matched`), not one already decided (`Manual Matched`), never a Customer into a
+Project, and never a Project (use the Project Merge tool, which cancels rather than deletes).
+Account merges are pre-checked on `is_group`/`root_type`/`company`/`account_currency`, the
+four properties ERPNext's `merge_account` insists on. The link is **committed before** the
+merge is attempted; a merge ERPNext refuses comes back as `merge.status == "failed"` with the
+message and the decision stands. The merged record's Drive folder is not touched.
+
+**The Parked transactions tab** lists `Pending Review` mappings of transaction types with the
+stored preflight `issues`, the draft document if one exists, and Retry (per row, or the whole
+page sequentially).
+
+**Performance.** The newest payload for a page of rows comes from one query per entity type
+(`latest_payloads`), never one per row: `tabQuickBooks Raw Payload` holds ~433k rows and until
+v1.474.0 had no index on `qbo_id` (it does now — `search_index` on the doctype). Candidate
+lookups and title lookups are likewise batched per doctype.
 
 ## Scheduler / webhook entry points
 
@@ -93,6 +148,8 @@ OAuth2 authorization-code flow with `client_secret_basic` token requests. Tokens
 ## Gotchas
 
 - **Idempotency** hinges on the (entity_type, qbo_id) Sync Mapping; re-running import/webhook/CDC is safe. Transactions are never fuzzy-matched (always created); only master entities (Account/Customer/Vendor/Item/TaxCode/Term/PaymentMethod/Class) auto-link.
+- **The Record Matching page's Link action can delete a record, and the rule for when is in `matching.merge_plan`, not in the UI.** Only a record whose mapping said `Created` (the import made it) is ever merged into the chosen record, and only into the same doctype; Projects never. A refused merge leaves the link in place and the duplicate in the queue -- it is reported, not raised. Do not widen the policy from the page.
+- **`preview_existing_matches` lists only QBO records with NO mapping row**, which after Import All is none of them. That is why the dashboard's old "Link Existing Records" dialog read empty on production, and why the Record Matching page exists; the old population is its *Unmapped payloads* filter.
 - **Reconciliation is read-only.** `compare_account_balances` (Trial Balance vs GL) and `reconcile_transactions` (payload total vs document total) never write — they surface discrepancies for you to act on. Run the **QuickBooks Balance Comparison** report after an import.
 - **Opening balances are a draft by default.** `sync_opening_balances` creates one balanced Opening Entry; review it before submitting (pass `auto_submit` to post it). A/R and A/P are broken out per party from QBO's *current* open balances (correct for a present-day cut-over; for a historical cutoff, check the draft against QBO's aging). Stock accounts are excluded — post opening stock via a Stock Reconciliation — and any residual squares off against the company's **Temporary Opening** account.
 - **CDC cursor** advances only on a clean run, so failures reprocess the same window. The first run looks back 24h. `TaxCode` is excluded from CDC (Term/PaymentMethod/Class are included).

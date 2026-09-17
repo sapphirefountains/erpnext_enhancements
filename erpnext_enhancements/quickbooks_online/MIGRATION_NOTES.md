@@ -82,8 +82,10 @@ Other prerequisites:
   the GL/Trial Balance until submitted. Review, then bulk-submit when ready.
 - **Chart of Accounts mismatch.** QBO account names carry numeric prefixes
   (`13000 US Bank Checking`). If you let the integration create accounts, expect a
-  large COA. If you pre-built a COA, use the dashboard's **Link Existing Records** to
-  map QBO accounts to yours first, so transactions post to the right ledgers.
+  large COA. If you pre-built a COA, use the **QuickBooks Record Matching** page (Finance
+  Hub → QuickBooks Matching; filter to Account) to link QBO accounts to yours first, so
+  transactions post to the right ledgers. Linking a QBO account away from one the import
+  created folds that created account into the one you chose.
 
 ---
 

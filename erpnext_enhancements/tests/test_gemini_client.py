@@ -7,7 +7,7 @@ and both failures were in a string literal no test exercised:
   reads like a missing IAM grant), until v1.466.2 minted an OAuth2 token;
 * it then posted to the ``us-central1`` regional host for a model Google serves
   only on ``global`` (a 404 that reads like a missing IAM grant), every weekday
-  from 2026-09-16 until v1.474.0.
+  from 2026-09-16 until v1.475.0.
 
 So this module asserts the shape of the request rather than the behaviour of
 the model: the global host with ``locations/global`` in the path, a bearer
