@@ -40,6 +40,7 @@ BACKFILL_PATCH = APP / "patches/backfill_po_order_stage.py"
 OPTIONS_PATCH = APP / "patches/update_po_order_stage_options.py"
 MOVE_PATCH = APP / "patches/move_po_order_stage_to_header.py"
 SEED_PATCH = APP / "patches/seed_po_list_columns.py"
+RECEIVED_PATCH = APP / "patches/add_po_list_received_column.py"
 LIST_JS = APP / "public/js/purchase_order_list.js"
 
 # Every patch that writes the field. A spec written out twice is two option lists waiting
@@ -605,6 +606,51 @@ class TestTheListColumnsArePinned(unittest.TestCase):
             "erpnext_enhancements.patches.seed_po_list_columns",
             PATCHES_TXT.read_text(encoding="utf-8"),
         )
+
+    def test_received_sits_immediately_after_the_status_pill(self):
+        """ER-2026-458194: the pill says an order is still to receive; this says how much."""
+        self.assertEqual(
+            self.fieldnames.index(po_order_stage.RECEIVED_COLUMN),
+            self.fieldnames.index("status_field") + 1,
+        )
+
+    def test_grand_total_and_billed_are_still_left_out(self):
+        """Nobody asked for them; the original reason stands."""
+        for fieldname in ("grand_total", "base_grand_total", "per_billed"):
+            with self.subTest(fieldname):
+                self.assertNotIn(fieldname, self.fieldnames)
+
+    def test_the_received_column_has_its_own_insert_if_missing_patch(self):
+        """`seed_po_list_columns` leaves a row alone once it names the stage, so a column
+        added to the spec reaches no existing site through it -- and production has that
+        row. The patch must read the one spec and the shared name, and must not rewrite a
+        row that already carries the column."""
+        source = RECEIVED_PATCH.read_text(encoding="utf-8")
+        self.assertIn("list_view_columns", source)
+        self.assertIn("RECEIVED_COLUMN", source)
+        self.assertIn("frappe.db.exists", source)
+        self.assertIn("already carry", source)
+        self.assertIn(
+            "erpnext_enhancements.patches.add_po_list_received_column",
+            PATCHES_TXT.read_text(encoding="utf-8"),
+        )
+
+
+class TestTheListScriptDrawsReceived(unittest.TestCase):
+    """The pinned `% Received` column would render as a right-aligned number; the script
+    draws the figure over a bar. It must format the fieldname the spec pins, not a
+    lookalike, and must not claim a percentage for an order that was never submitted."""
+
+    def setUp(self):
+        self.source = LIST_JS.read_text(encoding="utf-8")
+
+    def test_it_formats_the_pinned_fieldname(self):
+        self.assertIn(f"{po_order_stage.RECEIVED_COLUMN}: function (value, df, doc)", self.source)
+
+    def test_a_draft_or_cancelled_order_shows_a_dash_not_zero(self):
+        block = self.source[self.source.index(f"{po_order_stage.RECEIVED_COLUMN}: function") :]
+        self.assertIn("cint(doc.docstatus) !== 1", block)
+        self.assertIn("&mdash;", block)
 
 
 class TestTheListScriptCoversEveryStage(unittest.TestCase):

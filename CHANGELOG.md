@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.479.0] - 2026-09-17
+
+### Added
+
+- **`% Received` sits beside the status pill in the Purchase Order list** (ER-2026-458194,
+  TASK-2026-02047; the third and last task from that request). The list is where the buyer
+  hunts for what is still outstanding — Parker's saved views filter on `status = To Receive
+  and Bill` and a stage other than Received — and the pill alone cannot say *how much* of an
+  order is still to come. erpnext's own doctype marks `per_received` `in_list_view`, but the
+  pinned column set from v1.336.0 deliberately reproduced the five columns the list showed
+  before and left the percent columns out, because nobody had asked. Now somebody has. The
+  column joins `po_order_stage.list_view_columns()` directly after the pill, and the list
+  script draws it as the figure over a thin bar, so "half here" is visible down a list of a
+  hundred orders without reading; a draft or cancelled order shows a dash rather than 0%,
+  which would claim a fact about goods never on order. Grand Total and `% Billed` are still
+  left out for the original reason.
+  **Adding a column to the spec reaches no existing site by itself.** `seed_po_list_columns`
+  leaves a `List View Settings` row alone once it names the stage — by design, the row is
+  someone's answer — and production has exactly that row, so re-running the seed is a no-op
+  there. `patches/add_po_list_received_column` is the same shape one column narrower: insert
+  `per_received` after `status_field` only when the row does not already carry it, touch
+  nothing else, safe twice. `tests/test_po_order_stage.py` pins the position, the patch and
+  its registration, that the script formats the pinned fieldname and shows a dash for an
+  unsubmitted order, and that Grand Total and `% Billed` stay out.
+
 ## [1.478.0] - 2026-09-17
 
 ### Added

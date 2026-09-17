@@ -106,6 +106,32 @@ frappe.listview_settings["Purchase Order"] = frappe.listview_settings["Purchase 
 			const editable = frappe.model.can_write(DOCTYPE) && cint(doc.docstatus) !== 2;
 			return stage_pill(value, doc.name, editable);
 		},
+		// % Received (ER-2026-458194). Frappe renders a Percent as a right-aligned number,
+		// which is true and unreadable at a glance down a list of a hundred orders; the
+		// figure over a thin bar makes "half here" visible without reading. Nothing is
+		// computed here -- the value is erpnext's own per_received, maintained from
+		// submitted receipts. A draft or cancelled order shows a dash rather than 0%,
+		// which would claim a fact about goods that were never on order.
+		per_received: function (value, df, doc) {
+			if (cint(doc.docstatus) !== 1) {
+				return `<span class="text-muted">&mdash;</span>`;
+			}
+			const actual = flt(value);
+			const width = Math.max(0, Math.min(100, actual));
+			const label = frappe.utils.escape_html(format_number(actual, null, actual % 1 ? 1 : 0) + "%");
+			const colour =
+				actual >= 100
+					? "var(--green-500, #2f9e44)"
+					: actual > 0
+						? "var(--blue-500, #1c7ed6)"
+						: "var(--gray-400, #adb5bd)";
+			return `<div title="${label} ${__("received")}" style="min-width: 64px;">
+				<div style="font-variant-numeric: tabular-nums;">${label}</div>
+				<div style="height: 4px; border-radius: 2px; background: var(--gray-200, #e9ecef); overflow: hidden;">
+					<div style="height: 100%; width: ${width}%; background: ${colour};"></div>
+				</div>
+			</div>`;
+		},
 	});
 
 	function close_menu() {
