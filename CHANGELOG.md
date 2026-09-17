@@ -166,6 +166,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `test_location_timeline_page`, `test_workforce_tracking_health`, `test_workforce_overtime`,
   `test_time_correction_requests`, `test_workforce_report_labor_cost`, and — on their own
   steps because they stub `frappe` — `test_workforce_costing` and `test_workforce_sweeper`.
+  `test_field_systems.py`'s stub gained `get_datetime` (a pure conversion the overtime split
+  reads timestamps through), and its column-contract test was re-pinned to the new rule:
+  Regular and Overtime hours are written, Qualified OT and the six provider amount columns are
+  not, and no `1.5` premium appears anywhere — resolving `COL_*` names, since an absence check
+  that only saw literal indices had started passing vacuously.
 
 ### Changed
 
