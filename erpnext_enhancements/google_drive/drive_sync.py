@@ -7,10 +7,11 @@ backfill below), this module keeps attachments and Drive files in step:
 * **ERPNext → Drive** — a ``File`` ``after_insert`` hook uploads every new
   attachment on a linked document into its Drive folder (background job).
   The Drive file id is stamped on ``File.custom_drive_file_id``.
-* **Drive → ERPNext** — an hourly job walks every linked folder's whole tree
-  (files **and** subfolders, nested; time-boxed, resuming across runs — see
-  :func:`run_shadow_sync`) and creates **link-only shadow
-  attachments** for Drive items ERPNext doesn't know yet: a ``File`` row whose
+* **Drive → ERPNext** — an hourly job lists the Shared Drive **once**
+  (:func:`_build_drive_index`) and walks every linked folder's whole tree —
+  files **and** subfolders, nested — through that in-memory index (time-boxed,
+  resuming across runs — see :func:`run_shadow_sync`), creating **link-only
+  shadow attachments** for Drive items ERPNext doesn't know yet: a ``File`` row whose
   ``file_url`` is the Drive ``webViewLink`` (no bytes copied — Drive stays the
   source of truth). Subfolders are mirrored as link-only ``File`` rows too, so
   the folder structure is visible on the document; nested file names are
@@ -231,9 +232,10 @@ def upload_attachment_to_drive(file_docname, attempts=1):
 
 def sync_shadow_attachments():
 	"""Hourly scheduler entry: hand the Drive→ERPNext shadow walk to a long
-	worker. Walking every linked document's whole Drive tree (a network round-trip
-	per folder) and inserting shadows must not run on a short 300s worker — a
-	large first-time sync blew that budget mid-insert (PRJ-00275)."""
+	worker. Listing the Shared Drive (tens of pages) and inserting shadows for
+	every linked document must not run on a short 300s worker — back when the
+	walk was a network round-trip per folder, a large first-time sync blew that
+	budget mid-insert (PRJ-00275)."""
 	if not _sync_enabled():
 		return
 	frappe.enqueue(
@@ -308,6 +310,12 @@ def _recover_after_document_failure(exc):
 # timeout in sync_shadow_attachments absorbs one slow tree walk straddling the
 # budget line. The cursor is best-effort by design: a prod deploy FLUSHDBs
 # Redis, and a lost cursor merely restarts the rotation from the top.
+#
+# Since v1.475.0 the walk reads one whole-drive listing instead of paying a
+# Drive call per folder (see _build_drive_index), so a full pass takes minutes
+# and this budget is not expected to trigger. It stays as the safety net for
+# the per-folder fallback in _sync_folder_shadows and for a slow Drive during
+# the listing itself — which is why the deadline now starts *before* it.
 SHADOW_SYNC_TIME_BUDGET = 3000
 SHADOW_SYNC_CURSOR_KEY = "drive_shadow_sync_cursor"
 
@@ -346,6 +354,11 @@ def run_shadow_sync():
 	skipped — it never aborts the whole run, and a commit-per-document keeps
 	finished work durable if a later one fails.
 
+	One Google listing per run, not one per folder: the whole Shared Drive is
+	read into memory first (:func:`_build_drive_index`) and every document's tree
+	is walked through it. Only a linked root that is *not* in the listing pays a
+	live round-trip (see :func:`_sync_folder_shadows`).
+
 	Time-boxed against the worker's hard timeout: stops cleanly at
 	``SHADOW_SYNC_TIME_BUDGET`` and resumes after the last finished document on
 	the next hourly run (see the cursor notes above)."""
@@ -353,10 +366,27 @@ def run_shadow_sync():
 	if not _sync_enabled(settings):
 		return
 	try:
-		service, _drive = get_drive_service()
+		service, shared_drive_id = get_drive_service()
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Drive Shadow Sync (service)")
 		return
+
+	# The budget covers the listing too: a slow Drive during those pages must
+	# eat into the walk, not push the worker into its hard timeout.
+	deadline = time.monotonic() + SHADOW_SYNC_TIME_BUDGET
+
+	index = None
+	if shared_drive_id:
+		try:
+			index = _build_drive_index(service, shared_drive_id)
+		except Exception:
+			# Degrade rather than skip the hour: with no index every document
+			# takes the per-folder walk it took before the index existed.
+			log_error_throttled(
+				f"Drive listing failed; falling back to the per-folder walk\n{frappe.get_traceback()}",
+				"Drive Shadow Sync",
+				key="drive-index",
+			)
 
 	worklist = []
 	for doctype, folder_field in SYNCED_DOCTYPES.items():
@@ -381,7 +411,6 @@ def run_shadow_sync():
 		start = positions.index(cursor) + 1
 		worklist = worklist[start:] + worklist[:start]
 
-	deadline = time.monotonic() + SHADOW_SYNC_TIME_BUDGET
 	last_done = None
 	drive_id_cache = {}
 	for doctype, docname, folder_id in worklist:
@@ -390,7 +419,7 @@ def run_shadow_sync():
 				_set_cursor(last_done)
 			return
 		try:
-			_sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache)
+			_sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache, index)
 			frappe.db.commit()
 		except Exception as exc:
 			traceback = frappe.get_traceback()
@@ -479,6 +508,60 @@ def _walk_drive_folder(service, folder_id, drive_id, rel_path, depth, visited, i
 			)
 
 
+def _build_drive_index(service, drive_id):
+	"""Every non-trashed item in the Shared Drive — files **and** folders — from
+	one flat, paginated listing, indexed by parent so the per-document walk is a
+	dictionary lookup instead of a Google round-trip per folder.
+
+	Returns ``{"children": {parent_id: [item, ...]}, "ids": {every item id}}``.
+
+	Why this rather than the Drive Changes API: at ~2,700 linked documents the
+	hourly walk was on the order of 12,000 calls and ~50 minutes to find, on
+	average, less than one new file (measured 2026-09-17). The listing is a few
+	dozen pages and about a minute, keeps every existing semantic (full-tree
+	compare, Stale detection) and needs no persisted token — which would have to
+	survive the deploy's Redis flush. Changes would save that last minute at the
+	cost of a second code path. Same request shape as
+	``drive_link_manager._list_all_folders``; this one keeps files too, plus the
+	``webViewLink``/``mimeType`` the shadow insert needs."""
+	children, ids, page_token = {}, set(), None
+	kwargs = {
+		"q": "trashed=false",
+		"fields": "nextPageToken, files(id, name, mimeType, webViewLink, parents)",
+		"pageSize": 1000,
+		"supportsAllDrives": True,
+		"includeItemsFromAllDrives": True,
+		"corpora": "drive",
+		"driveId": drive_id,
+	}
+	while True:
+		if page_token:
+			kwargs["pageToken"] = page_token
+		result = service.files().list(**kwargs).execute(num_retries=GOOGLE_API_RETRIES)
+		for item in result.get("files", []):
+			ids.add(item["id"])
+			for parent in item.get("parents") or ():
+				children.setdefault(parent, []).append(item)
+		page_token = result.get("nextPageToken")
+		if not page_token:
+			return {"children": children, "ids": ids}
+
+
+def _walk_drive_index(index, folder_id, rel_path, depth, visited, items):
+	"""The same depth-first walk as :func:`_walk_drive_folder` — same ``items``
+	shape, same ``rel_path`` prefixing, same cycle and depth guards — read off
+	the in-memory index instead of one ``files.list`` per folder."""
+	if depth > MAX_SHADOW_DEPTH or folder_id in visited:
+		return
+	visited.add(folder_id)
+	for child in index["children"].get(folder_id, ()):
+		items.append((child, rel_path))
+		if child.get("mimeType") == FOLDER_MIME:
+			_walk_drive_index(
+				index, child["id"], f"{rel_path}{child.get('name')}/", depth + 1, visited, items,
+			)
+
+
 def _flag_missing_drive_item(doctype, docname, drive_file_id, file_name, message,
 			action="Shadow Attachment"):
 	"""Record a single ``Stale`` Drive Sync Log row for a Drive item that can no
@@ -506,30 +589,36 @@ def _flag_missing_root_folder(doctype, docname, folder_id):
 	set_folder_missing(doctype, docname, 1)
 
 
-def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache):
-	# Resolve the Shared Drive id once per root folder. A 404 here means the
-	# linked folder itself was deleted or moved out of the service account's
-	# reach — flag it once and bail for this document rather than letting the
-	# error abort the hourly run (this is what crashed PRJ-00694 every hour).
-	if folder_id not in drive_id_cache:
+def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache, index=None):
+	items = []
+	if index is not None and folder_id in index["ids"]:
+		# The linked root is in the Shared Drive listing, so its whole tree —
+		# files and subfolders, nested — is already in memory: this document
+		# costs no Google round-trip at all.
+		_walk_drive_index(index, folder_id, "", 0, set(), items)
+	else:
+		# Absent from the listing (or no listing) means gone, trashed, or outside
+		# the configured Shared Drive — and only Google can say which. So this
+		# document takes the per-folder walk the sync always used, unchanged: a
+		# 404 on the root flags it missing (the deleted-folder case that crashed
+		# PRJ-00694 every hour), anything else is walked live. On production
+		# every linked folder is in the Shared Drive, so this runs for the
+		# handful of dead links only.
+		if folder_id not in drive_id_cache:
+			try:
+				drive_id_cache[folder_id] = _drive_id_of(service, folder_id)
+			except HttpError as exc:
+				if exc.resp.status == 404:
+					_flag_missing_root_folder(doctype, docname, folder_id)
+					return
+				raise
 		try:
-			drive_id_cache[folder_id] = _drive_id_of(service, folder_id)
+			_walk_drive_folder(service, folder_id, drive_id_cache[folder_id], "", 0, set(), items)
 		except HttpError as exc:
 			if exc.resp.status == 404:
 				_flag_missing_root_folder(doctype, docname, folder_id)
 				return
 			raise
-	drive_id = drive_id_cache[folder_id]
-
-	# Walk the whole tree under the linked folder — files and subfolders, nested.
-	items = []
-	try:
-		_walk_drive_folder(service, folder_id, drive_id, "", 0, set(), items)
-	except HttpError as exc:
-		if exc.resp.status == 404:
-			_flag_missing_root_folder(doctype, docname, folder_id)
-			return
-		raise
 
 	drive_ids = [f["id"] for f, _rel in items]
 

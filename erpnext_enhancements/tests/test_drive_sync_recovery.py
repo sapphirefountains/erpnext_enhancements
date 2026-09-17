@@ -19,9 +19,14 @@ with it. The symptom was an RQ traceback with *nothing* in the Error Log.
 So these assert the contract rather than the implementation: whatever one
 document does, the run reaches the last document, and every failure is recorded.
 
+``TestWholeDriveIndex`` guards the cost model that replaced the per-folder walk
+(v1.475.0): one Shared Drive listing per run, no Google call per document, and
+the live walk kept only for a root the listing does not contain.
+
 Run: python -m unittest erpnext_enhancements.tests.test_drive_sync_recovery
 """
 
+import re
 import sys
 import types
 import unittest
@@ -57,6 +62,157 @@ def _lost_connection(code=2006):
 	return _OperationalError(code, "Server has gone away")
 
 
+class _FakeDoc:
+	"""What ``frappe.get_doc({...})`` hands back: enough Document for the shadow
+	insert (``flags``, ``insert``, ``db_set``) and for ``log_sync``. Inserted docs
+	land in ``STATE["inserted"]`` as the same dict, so a later ``db_set`` shows up
+	in a query — as it does through the real DB."""
+
+	def __init__(self, data):
+		self.data = dict(data)
+		self.flags = _Dict()
+
+	def get(self, key, default=None):
+		return self.data.get(key, default)
+
+	def insert(self, **kwargs):
+		if not STATE["connected"]:
+			raise _lost_connection()
+		STATE["inserted"].append(self.data)
+		return self
+
+	def db_set(self, field, value, **kwargs):
+		self.data[field] = value
+
+
+def _matches(row, filters):
+	"""The filter shapes ``_sync_folder_shadows`` actually uses: equality,
+	``["in", [...]]``, ``["is", "set"]`` and ``["like", "%x%"]``."""
+	for field, cond in (filters or {}).items():
+		value = row.get(field)
+		if isinstance(cond, (list, tuple)):
+			op, arg = cond
+			if op == "in" and value not in arg:
+				return False
+			if op == "is" and bool(value) != (arg == "set"):
+				return False
+			if op == "like" and arg.strip("%") not in (value or ""):
+				return False
+		elif value != cond:
+			return False
+	return True
+
+
+def _query_inserted(doctype, filters=None, pluck=None):
+	rows = [d for d in STATE["inserted"] if d.get("doctype") == doctype and _matches(d, filters)]
+	if pluck:
+		return [d.get(pluck) for d in rows]
+	return [_Dict(d) for d in rows]
+
+
+def _shadows():
+	return [d for d in STATE["inserted"] if d.get("doctype") == "File"]
+
+
+def _logs(status=None):
+	return [
+		d
+		for d in STATE["inserted"]
+		if d.get("doctype") == "Drive Sync Log" and (status is None or d.get("status") == status)
+	]
+
+
+def _shadow_map():
+	"""``{drive id: (attached doctype, attached name, file_name)}``, refusing a
+	duplicate — the contract is one shadow per Drive item, ever."""
+	out = {}
+	for d in _shadows():
+		assert d["custom_drive_file_id"] not in out, f"duplicate shadow for {d['custom_drive_file_id']}"
+		out[d["custom_drive_file_id"]] = (
+			d.get("attached_to_doctype"),
+			d.get("attached_to_name"),
+			d["file_name"],
+		)
+	return out
+
+
+class _Request:
+	def __init__(self, fn):
+		self._fn = fn
+
+	def execute(self, num_retries=None):
+		return self._fn()
+
+
+class _FakeDrive:
+	"""Stand-in for the Drive v3 ``service``. ``items`` is the Shared Drive's
+	content (``{"id", "name", "mimeType", "parents", "webViewLink"}`` each);
+	``elsewhere`` is content Google knows about that is *not* in the Shared Drive
+	(My Drive, another drive). Every call is counted by kind, so a test can say
+	exactly how many round-trips a run cost."""
+
+	def __init__(self, items=(), elsewhere=(), page_size=1000, drive_id="shared-drive", fail_listing=False):
+		self.items = [dict(i) for i in items]
+		self.elsewhere = [dict(i) for i in elsewhere]
+		self.page_size = page_size
+		self.drive_id = drive_id
+		self.fail_listing = fail_listing
+		self.calls = {"list_drive": 0, "list_folder": 0, "get": 0}
+
+	def files(self):
+		return self
+
+	def list(self, **kwargs):
+		match = re.search(r"'([^']+)' in parents", kwargs.get("q", ""))
+		if match:
+			parent = match.group(1)
+			self.calls["list_folder"] += 1
+			rows = [i for i in self.items + self.elsewhere if parent in (i.get("parents") or [])]
+			return _Request(lambda: {"files": rows})
+		self.calls["list_drive"] += 1
+		if self.fail_listing:
+			return _Request(self._boom)
+		start = int(kwargs.get("pageToken") or 0)
+		result = {"files": self.items[start : start + self.page_size]}
+		if start + self.page_size < len(self.items):
+			result["nextPageToken"] = str(start + self.page_size)
+		return _Request(lambda: result)
+
+	def _boom(self):
+		raise RuntimeError("Drive listing is down")
+
+	def get(self, fileId=None, **kwargs):
+		self.calls["get"] += 1
+		known = {i["id"] for i in self.items + self.elsewhere}
+
+		def _execute():
+			if fileId in known:
+				return {"driveId": self.drive_id}
+			raise drive_sync.HttpError(resp=types.SimpleNamespace(status=404))
+
+		return _Request(_execute)
+
+
+def _folder(fid, name, parent):
+	return {
+		"id": fid,
+		"name": name,
+		"mimeType": drive_sync.FOLDER_MIME,
+		"parents": [parent],
+		"webViewLink": f"https://drive.google.com/drive/folders/{fid}",
+	}
+
+
+def _file(fid, name, parent):
+	return {
+		"id": fid,
+		"name": name,
+		"mimeType": "application/pdf",
+		"parents": [parent],
+		"webViewLink": f"https://drive.google.com/file/d/{fid}",
+	}
+
+
 def _reset_state():
 	STATE.clear()
 	STATE.update(
@@ -71,6 +227,8 @@ def _reset_state():
 			"synced": [],  # documents _sync_folder_shadows was reached for
 			"fail_on": {},  # docname -> exception to raise
 			"cache": {},  # what frappe.cache() persists (the resume cursor)
+			"inserted": [],  # every doc .insert()ed: File shadows + Drive Sync Log rows
+			"set_values": [],  # frappe.db.set_value calls (the missing-folder flag)
 		}
 	)
 
@@ -85,7 +243,7 @@ def _install_stubs():
 	frappe.get_traceback = lambda: "traceback"
 	frappe.log_error = lambda *a, **k: STATE["errors"].append(a[0] if a else "")
 	frappe.enqueue = lambda *a, **k: None
-	frappe.get_doc = lambda *a, **k: _Dict()
+	frappe.get_doc = lambda *a, **k: _FakeDoc(a[0]) if a and isinstance(a[0], dict) else _Dict()
 	frappe.get_single = lambda *a, **k: _Dict()
 	frappe.get_cached_doc = lambda *a, **k: _Dict(attachment_sync_enabled=1, service_account_json="{}")
 
@@ -138,11 +296,13 @@ def _install_stubs():
 		has_column=lambda *a, **k: True,
 		exists=lambda *a, **k: None,
 		get_value=lambda *a, **k: None,
-		set_value=lambda *a, **k: None,
+		set_value=lambda *a, **k: STATE["set_values"].append(a),
 	)
 
 	def _get_all(doctype, **kwargs):
 		_require_connection()
+		if doctype == "File":
+			return _query_inserted("File", kwargs.get("filters"), kwargs.get("pluck"))
 		return [
 			_Dict(name=name, custom_drive_folder_id=f"folder-{name}")
 			for name in STATE.get("rows", {}).get(doctype, [])
@@ -260,7 +420,7 @@ class TestRunShadowSyncSurvival(unittest.TestCase):
 		self._real_sync = drive_sync._sync_folder_shadows
 		self._real_service = drive_sync.get_drive_service
 
-		def _fake_sync(service, doctype, docname, folder_id, cache):
+		def _fake_sync(service, doctype, docname, folder_id, cache, index=None):
 			STATE["synced"].append(docname)
 			exc = STATE["fail_on"].get(docname)
 			if exc:
@@ -269,7 +429,7 @@ class TestRunShadowSyncSurvival(unittest.TestCase):
 				raise exc
 
 		drive_sync._sync_folder_shadows = _fake_sync
-		drive_sync.get_drive_service = lambda: (object(), "shared-drive")
+		drive_sync.get_drive_service = lambda: (_FakeDrive(), "shared-drive")
 
 	def tearDown(self):
 		drive_sync._sync_folder_shadows = self._real_sync
@@ -347,12 +507,12 @@ class TestRunShadowSyncTimeBox(unittest.TestCase):
 		self.clock = types.SimpleNamespace(now=0.0)
 		drive_sync.time = types.SimpleNamespace(monotonic=lambda: self.clock.now)
 
-		def _fake_sync(service, doctype, docname, folder_id, cache):
+		def _fake_sync(service, doctype, docname, folder_id, cache, index=None):
 			STATE["synced"].append(docname)
 			self.clock.now += STATE.get("seconds_per_doc", 0)
 
 		drive_sync._sync_folder_shadows = _fake_sync
-		drive_sync.get_drive_service = lambda: (object(), "shared-drive")
+		drive_sync.get_drive_service = lambda: (_FakeDrive(), "shared-drive")
 
 	def tearDown(self):
 		drive_sync._sync_folder_shadows = self._real_sync
@@ -391,6 +551,146 @@ class TestRunShadowSyncTimeBox(unittest.TestCase):
 		drive_sync.run_shadow_sync()
 
 		self.assertEqual(STATE["synced"], ["P1", "P2", "P3"])
+
+
+class TestWholeDriveIndex(unittest.TestCase):
+	"""One Shared Drive listing per run replaces a Google round-trip per folder.
+
+	The production shape being guarded (measured 2026-09-17): 2,743 linked
+	documents cost on the order of 12,000 Drive calls per hourly run — a
+	``files.get`` per document to learn a drive id the run had been handed
+	already, a ``files.list`` per folder, and every Project/Opportunity subtree
+	listed twice because the Customer folder contains it — to find, on average,
+	less than one new file. Now the drive is listed once and walked in memory.
+
+	The tree below mirrors production: the Project folder sits *inside* the
+	Customer folder, and both are linked roots.
+	"""
+
+	def setUp(self):
+		_reset_state()
+		STATE["rows"] = {"Project": ["P1"], "Customer": ["C1"], "Opportunity": []}
+		self._real_service = drive_sync.get_drive_service
+		self.tree = [
+			_folder("folder-C1", "Acme", "shared-drive"),
+			_file("brief", "brief.pdf", "folder-C1"),
+			_folder("folder-P1", "PRJ-1 - Acme", "folder-C1"),
+			_folder("design", "Design", "folder-P1"),
+			_file("front", "front.png", "design"),
+			_file("quote", "quote.pdf", "folder-P1"),
+		]
+
+	def tearDown(self):
+		drive_sync.get_drive_service = self._real_service
+
+	def _run_with(self, drive, shared_drive_id="shared-drive"):
+		drive_sync.get_drive_service = lambda: (drive, shared_drive_id)
+		drive_sync.run_shadow_sync()
+		return drive
+
+	def test_one_listing_and_no_call_per_document(self):
+		drive = self._run_with(_FakeDrive(self.tree, page_size=4))
+
+		# Six items at four per page: two listing calls, and nothing else.
+		self.assertEqual(drive.calls, {"list_drive": 2, "list_folder": 0, "get": 0})
+		# Every item became exactly one shadow, on the first document that reached
+		# it (Projects walk before Customers) and never a second one: the Customer
+		# walk still descends into the Project subtree — in memory — and finds
+		# everything there already known.
+		self.assertEqual(len(_shadows()), 5)
+		self.assertEqual(
+			_shadow_map(),
+			{
+				"design": ("Project", "P1", "Design/"),
+				"front": ("Project", "P1", "Design/front.png"),
+				"quote": ("Project", "P1", "quote.pdf"),
+				"brief": ("Customer", "C1", "brief.pdf"),
+				"folder-P1": ("Customer", "C1", "PRJ-1 - Acme/"),
+			},
+		)
+		self.assertEqual(STATE["commits"], 2)
+		self.assertEqual(STATE["errors"], [])
+
+	def test_a_rerun_creates_nothing_and_flags_what_vanished(self):
+		self._run_with(_FakeDrive(self.tree))
+		before = len(_shadows())
+		# quote.pdf is deleted in Drive before the next hour.
+		remaining = [i for i in self.tree if i["id"] != "quote"]
+
+		self._run_with(_FakeDrive(remaining))
+
+		self.assertEqual(len(_shadows()), before)
+		stale = [(r["reference_name"], r["drive_file_id"]) for r in _logs("Stale")]
+		self.assertEqual(stale, [("P1", "quote")])
+
+	def test_a_root_the_listing_lacks_is_asked_of_google(self):
+		# P2's folder was deleted: it is not in the listing, and Google 404s it.
+		STATE["rows"]["Project"] = ["P1", "P2"]
+		drive = self._run_with(_FakeDrive(self.tree))
+
+		self.assertEqual(drive.calls["get"], 1)
+		self.assertEqual(drive.calls["list_folder"], 0)
+		self.assertEqual([r["reference_name"] for r in _logs("Stale")], ["P2"])
+		self.assertIn(("Project", "P2", drive_sync.MISSING_FLAG_FIELD, 1), STATE["set_values"])
+		# P1 was unaffected.
+		self.assertEqual(_shadow_map()["quote"], ("Project", "P1", "quote.pdf"))
+
+	def test_a_root_outside_the_shared_drive_is_walked_live_not_flagged(self):
+		# Absent from the listing is not the same as gone: a folder linked from
+		# My Drive or another Shared Drive takes the per-folder walk it always did.
+		STATE["rows"]["Project"] = ["P1", "P2"]
+		elsewhere = [
+			_folder("folder-P2", "PRJ-2", "my-drive"),
+			_file("legacy", "legacy.pdf", "folder-P2"),
+		]
+		drive = self._run_with(_FakeDrive(self.tree, elsewhere=elsewhere))
+
+		self.assertEqual(drive.calls["get"], 1)
+		self.assertEqual(drive.calls["list_folder"], 1)
+		self.assertEqual(_logs("Stale"), [])
+		self.assertEqual(_shadow_map()["legacy"], ("Project", "P2", "legacy.pdf"))
+
+	def test_a_failed_listing_degrades_to_the_per_folder_walk(self):
+		drive = self._run_with(_FakeDrive(self.tree, fail_listing=True))
+
+		# Logged once, then every document walked live: one get per root, one
+		# list per folder (P1: itself + Design; C1: itself + P1 + Design).
+		self.assertEqual(len(STATE["errors"]), 1)
+		self.assertIn("listing failed", STATE["errors"][0])
+		self.assertEqual(drive.calls, {"list_drive": 1, "list_folder": 5, "get": 2})
+		self.assertEqual(len(_shadows()), 5)
+
+	def test_no_shared_drive_configured_means_no_listing(self):
+		drive = self._run_with(_FakeDrive(self.tree), shared_drive_id="")
+
+		self.assertEqual(drive.calls, {"list_drive": 0, "list_folder": 5, "get": 2})
+		self.assertEqual(len(_shadows()), 5)
+		self.assertEqual(STATE["errors"], [])
+
+	def test_the_index_walk_matches_the_live_walk(self):
+		# Same tree, same guards: a shortcut loop and a chain deeper than
+		# MAX_SHADOW_DEPTH come out identical either way, and both terminate.
+		tree = list(self.tree)
+		tree.append(_folder("loop-a", "A", "folder-P1"))
+		tree[-1]["parents"].append("loop-b")
+		tree.append(_folder("loop-b", "B", "loop-a"))
+		parent = "folder-P1"
+		for depth in range(1, drive_sync.MAX_SHADOW_DEPTH + 3):
+			tree.append(_folder(f"d{depth}", f"D{depth}", parent))
+			parent = f"d{depth}"
+		drive = _FakeDrive(tree)
+		index = drive_sync._build_drive_index(drive, "shared-drive")
+
+		via_index, via_live = [], []
+		drive_sync._walk_drive_index(index, "folder-P1", "", 0, set(), via_index)
+		drive_sync._walk_drive_folder(drive, "folder-P1", "shared-drive", "", 0, set(), via_live)
+
+		flat = lambda items: [(item["id"], rel) for item, rel in items]  # noqa: E731
+		self.assertEqual(flat(via_index), flat(via_live))
+		ids = {item["id"] for item, _rel in via_index}
+		self.assertIn(f"d{drive_sync.MAX_SHADOW_DEPTH + 1}", ids)
+		self.assertNotIn(f"d{drive_sync.MAX_SHADOW_DEPTH + 2}", ids)
+		self.assertEqual(drive.calls["list_drive"], 1)
 
 
 class TestFindFolderQueryEscaping(unittest.TestCase):

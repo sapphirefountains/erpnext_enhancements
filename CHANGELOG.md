@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.475.0] - 2026-09-17
+
+### Changed
+
+- **The hourly Drive shadow sync lists the Shared Drive once and walks it in memory, instead
+  of paying Google a round-trip per folder.** Measured on production 2026-09-17: 2,743 linked
+  documents (249 Projects, 1,665 Customers, 829 Opportunities), and every one of them cost a
+  `files.get` to learn which Shared Drive its folder was in — the id `get_drive_service()` had
+  already returned and `run_shadow_sync` threw away as `_drive` — plus one `files.list` per
+  folder in its tree, sequentially. And because a Customer's folder *contains* its Project and
+  Opportunity folders, every one of those subtrees was listed twice per run. On the order of
+  12,000 calls and ~50 minutes an hour, straddling the 3000 s time budget (the resume cursor
+  was set on one run and cleared on the next; Drive Sync Log timestamps show a walk still going
+  43 minutes past the hour), to find on average less than one new file: 50 new shadows and
+  2 Stale flags in the preceding seven days. 1,152 of the Customers and 804 of the
+  Opportunities had nothing new to find at all, and paid for the round-trips anyway.
+
+  `_build_drive_index` now reads every non-trashed item in the configured Shared Drive in one
+  paginated listing (`corpora="drive"`, 1,000 per page, with `parents`) and indexes it by
+  parent; `_walk_drive_index` walks each linked root through that map with the same depth and
+  cycle guards, the same path-prefixed naming and the same known-id / Stale comparison as the
+  live walk — a few dozen pages and about a minute for the whole run, and no Google call per
+  document. Nothing else about the sync changed: link-only shadows, deletions never propagate,
+  commit per document, the reconnect guard, and the time-box, which now starts *before* the
+  listing so a slow Drive eats into the walk rather than the worker's hard timeout.
+
+  A linked root that is **absent from the listing** is gone, trashed, or in some other drive,
+  and only Google can say which — so that document alone takes the per-folder walk the sync
+  always used: a 404 flags the root missing (the deleted-folder case that crashed PRJ-00694
+  every hour), anything else is walked live. On production every linked folder is in the
+  Shared Drive, so that path runs for the handful of dead links only. A failed listing is
+  logged once (throttled) and degrades every document to the same path rather than skipping
+  the hour; with no Shared Drive configured no listing is attempted.
+
+  Why this and not the Drive Changes API: Changes would bring the per-run cost to a handful of
+  calls, but it needs a start page token persisted somewhere the prod deploy's Redis `FLUSHDB`
+  cannot reach, a parent-chain resolver to map a changed file to its linked document, and a
+  full-walk fallback for the bootstrap and the expired-token (410) case — two code paths to
+  keep correct, to save the last minute. Worth revisiting only if the drive grows past a few
+  hundred thousand items.
+
+### Added
+
+- **`TestWholeDriveIndex`** in `tests/test_drive_sync_recovery.py` (existing bench-free CI
+  step): a fake Drive service that counts calls by kind, run against a tree shaped like
+  production (the Project folder inside the Customer folder, both linked). Asserts one listing
+  and no call per document; every item shadowed exactly once, on the first document that
+  reaches it, never a second time for the Customer's in-memory descent into the Project
+  subtree; a re-run creates nothing and flags exactly the item that vanished; a root the
+  listing lacks is asked of Google (404 → Stale row + `custom_drive_folder_missing`); a root
+  outside the Shared Drive is walked live, not flagged; a failed listing logs once and degrades
+  to the per-folder walk; no Shared Drive id means no listing; and the index walk produces the
+  identical item sequence to the live walk on a tree with a shortcut loop and a chain deeper
+  than `MAX_SHADOW_DEPTH`. The existing survival and time-box tests now run against the same
+  fake, so the listing is exercised on every run.
+
 ## [1.474.1] - 2026-09-17
 
 ### Fixed
