@@ -17,7 +17,8 @@ The kiosk **PWA shell** lives in [`../www/`](../www/README.md); the backend endp
 
 | Path | Purpose |
 |---|---|
-| `page/time_kiosk/` | The desk-side Time Kiosk page |
+| `page/time_kiosk/` | The desk-side Time Kiosk page (a redirect to `/kiosk`) |
+| `../workspace_sidebar/time_kiosk.json` + `../patches/seed_time_kiosk_desktop_icon.py` | The **Time Kiosk** tile on the Desk home grid (v1.482.0): an External-link `Desktop Icon` straight to `/kiosk`, and the one-item sidebar without which `get_desktop_icons` would silently drop it |
 | `page/location_timeline/` | Per-employee location timeline view (trail + live) |
 | `doctype/job_interval/` | One clock-in **session** (+ `job_interval.js`: health indicator, View on Timeline, Refresh Tracking Health) |
 | `doctype/job_interval_photo/` | Child table — one captured job photo |
