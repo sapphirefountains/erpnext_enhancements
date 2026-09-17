@@ -97,6 +97,14 @@ TILES = {
 	"HR": ("hr", "id-card", PEOPLE),
 	"Workforce": ("workforce", "users-round", PEOPLE),
 	"Training": ("training", "graduation-cap", PEOPLE),
+	# The one tile here that is NOT a workspace (v1.481.0). It is an `External` link
+	# tile straight to the /kiosk PWA, seeded by `patches/seed_time_kiosk_desktop_icon`
+	# because `_create_tile` (rightly) refuses a label with no Workspace behind it, and
+	# `_sync_roles` skips it for the same reason -- so it has no roles and every signed-in
+	# user sees it, which is the point: the time clock is the one thing every technician
+	# touches. FIELD amber, not Workforce's teal: the kiosk leaves the building. `timer`
+	# rather than `clock`, which QuickBooks Time already owns.
+	"Time Kiosk": ("time_kiosk", "timer", FIELD),
 	# The team hubs (WI-074). One per `* Team` role, which are the only roles on this
 	# site that discriminate -- no role at all is held by every System User, but the
 	# Team roles split the company cleanly. Their `Desktop Icon.roles` is NOT listed

@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.480.1] - 2026-09-17
+## [1.481.0] - 2026-09-17
+
+### Added
+
+- **A Time Kiosk tile on the desk home grid.** Every other tile this app ships fronts a
+  workspace; this one is a `Desktop Icon` of link type **External** pointing straight at
+  `/kiosk`, so a technician who lands on the desk is one tap from the clock instead of
+  hunting through Workforce. Seeded insert-only by `patches/seed_time_kiosk_desktop_icon`
+  (`standard = 1`, no roles, so every signed-in user sees it; placed after the Workforce
+  tile) — a patch rather than the after-migrate stamper's own `_create_tile`, which rightly
+  refuses a label with no Workspace behind it, and rather than a shipped `desktop_icon/*.json`,
+  which is age-gated on import like everything else in this release's Fixed entry. The
+  artwork joins `setup/desktop_icon_map.py` (`timer`, FIELD amber: the kiosk leaves the
+  building, and `clock` already belongs to QuickBooks Time), so the stamper keeps its
+  `logo_url` honest on every migrate and `tests/test_desktop_icons.py` keeps the SVG in step
+  with the map. `_sync_roles` skips it because there is no workspace to derive from, which is
+  exactly the visibility wanted. The floating **Desk Shortcut** to the kiosk from v1.30.0 is
+  unchanged; this is the grid tile beside the modules.
 
 ### Fixed
 

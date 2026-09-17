@@ -15,6 +15,7 @@ grouping and ordering that appears alongside each dashboard.
 | `product_dashboard.json` | Product |
 | `hr_dashboard.json` | HR |
 | `kpi_dashboards.json` | The KPI Dashboards module workspace |
+| `time_kiosk.json` | Not a workspace at all: the one-item sidebar (a URL link to `/kiosk`) that lets the **Time Kiosk** desk tile render — see the section below, and `patches/seed_time_kiosk_desktop_icon` for the tile itself (v1.481.0) |
 
 These are app-owned records synced by `bench migrate`, and they pair with the workspaces
 under [`../erpnext_enhancements/kpi_dashboards/`](../erpnext_enhancements/kpi_dashboards/README.md).

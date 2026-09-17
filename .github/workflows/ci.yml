@@ -1538,7 +1538,8 @@ jobs:
           erpnext_enhancements.tests.test_workforce_overtime
           erpnext_enhancements.tests.test_time_correction_requests
           erpnext_enhancements.tests.test_location_timeline_page
-          erpnext_enhancements.tests.test_workforce_report_labor_cost -v
+          erpnext_enhancements.tests.test_workforce_report_labor_cost
+          erpnext_enhancements.tests.test_time_kiosk_desktop_icon -v
       # Its own step: this suite installs a frappe stub in setUpModule. Pins that the
       # rate in force is the latest effective-from on or before the day worked (a rate
       # dated tomorrow must not price today), salaried -> hourly via 2080, the burden
