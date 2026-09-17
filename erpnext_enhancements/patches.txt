@@ -1074,3 +1074,8 @@ erpnext_enhancements.patches.drop_ordinary_word_glossary_aliases
 # not older, so the bumped `modified` in each JSON needs a forced reload beside it to reach a
 # site that already has the workspace -- same shape as reload_training_workspace_for_glossary.
 erpnext_enhancements.patches.reload_workspaces_for_qbo_matching
+# v1.479.0: `% Received` joins the pinned Purchase Order list columns, after the status pill
+# (ER-2026-458194). seed_po_list_columns leaves a row alone once it names the stage -- by
+# design, it is someone's answer -- so a column added to the spec can only reach production
+# through an insert-if-missing patch of the same shape. Safe twice.
+erpnext_enhancements.patches.add_po_list_received_column

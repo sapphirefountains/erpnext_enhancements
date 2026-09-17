@@ -62,6 +62,11 @@ both swallow-and-log: a stage update must never be the reason a receipt fails to
 import frappe
 
 FIELD = "custom_order_stage"
+# The erpnext column that answers "how much of it is here": Purchase Order.per_received,
+# maintained by status_updater from submitted Purchase Receipts. Pinned in the list beside
+# the status pill (ER-2026-458194); the name is shared with the patch that inserts it and
+# the list script that draws it, so the three cannot drift.
+RECEIVED_COLUMN = "per_received"
 
 CREATED = "Created"
 AWAITING_CONFIRMATION = "Awaiting Confirmation"
@@ -178,10 +183,20 @@ def list_view_columns():
 	**Pinning is subtractive as well as ordering**, which is the part worth knowing before
 	editing this: frappe's `reorder_listview_fields` keeps only the columns named here and
 	drops the rest. So this deliberately reproduces the five columns the list already showed
-	— it adds Order Stage and takes nothing away. Grand Total, `per_billed` and
+	— it added Order Stage and took nothing away. Grand Total, `per_billed` and
 	`per_received` carry `in_list_view` on erpnext's own doctype and were not rendering
-	before this; adding them here would be a change nobody asked for, arriving under the
-	banner of one that was.
+	before this; adding them then would have been a change nobody asked for, arriving under
+	the banner of one that was.
+
+	**`% Received` joined in v1.479.0 because somebody did ask** (ER-2026-458194): the list
+	is where the buyer hunts for what is still outstanding — their saved views filter on
+	`status = To Receive and Bill` and a stage other than Received — and the status pill
+	alone cannot say *how much* of an order is still to come. It sits directly after the
+	pill, whose "To Receive and Bill" it qualifies. Grand Total and `% Billed` are still
+	left out for the original reason. **Adding a column here reaches no existing site by
+	itself**: `seed_po_list_columns` leaves a row alone once it names the stage, so each
+	later column needs its own insert-if-missing patch of the same shape
+	(`add_po_list_received_column`).
 
 	The first entry is the title column. Frappe fixes that one in place regardless of what
 	this says — it is listed because the Desk's own List Settings dialog writes it, and a
@@ -195,6 +210,7 @@ def list_view_columns():
 		{"label": "Supplier Name", "fieldname": "supplier_name"},
 		{"label": "Order Stage", "fieldname": FIELD},
 		{"type": "Status", "label": "Status", "fieldname": "status_field"},
+		{"label": "% Received", "fieldname": RECEIVED_COLUMN},
 		{"label": "Date", "fieldname": "transaction_date"},
 		{"label": "Required By", "fieldname": "schedule_date"},
 		{"label": "Project", "fieldname": "project"},
