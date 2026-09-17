@@ -518,6 +518,12 @@ doc_events = {
 			# fires on the conversion insert AND on later saves (its idempotent file_name
 			# guard makes the repeat picks-up-late-additions safe).
 			"erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity",
+			# workforce (v1.480.0): geocode the project's site when its address text
+			# changed or it has no coordinates yet, so the Time Kiosk can tell an
+			# off-site clock-in. Only ENQUEUES (Google is a third-party call and a
+			# Project save must not wait on it), after commit so the worker reads the
+			# saved address. Every custom-field read is getattr-guarded; never raises.
+			"erpnext_enhancements.workforce.sites.on_project_update",
 		],
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
@@ -810,7 +816,24 @@ doc_events = {
 			# and the two people who report to them are all invisible the day after,
 			# so the list is GENERATED from what they hold rather than fixed.
 			"erpnext_enhancements.hr_enhancements.onboarding.on_employee_update",
+			# workforce (v1.480.0): pay rates changed -> re-derive Activity Cost per
+			# (employee, Activity Type) so ERPNext's own Timesheet costing agrees with
+			# the kiosk. Compared against get_doc_before_save() -- an ordinary Employee
+			# save costs nothing -- and every failure is logged and swallowed: a costing
+			# table must never block an Employee save.
+			"erpnext_enhancements.workforce.costing.on_employee_update",
 		],
+		# workforce (v1.480.0): the permlevel-1 Pay Rates table. Every row carries the
+		# amount its pay type needs, no two rows share an effective date, rows are
+		# sorted, hourly_equivalent (annual / 2080) is filled. Reads the table through
+		# getattr(..., None) because this fires during ERPNext's own test bootstrap
+		# before the custom field exists.
+		"validate": "erpnext_enhancements.workforce.costing.validate_employee_pay_rates",
+	},
+	# workforce (v1.480.0): a new activity gets an Activity Cost row for every employee
+	# with a pay rate, so a hand-typed Timesheet against it costs correctly. Never raises.
+	"Activity Type": {
+		"after_insert": "erpnext_enhancements.workforce.costing.on_activity_type_insert",
 	},
 	"Training Assignment": {
 		# training: tell the learner, however the row got here. notify_assigned had
@@ -1071,6 +1094,13 @@ scheduler_events = {
 		# weekday, and the 2026-08-06 meeting asked for Friday mornings
 		# specifically. :30 keeps it clear of the 07:00/07:15 cluster above.
 		"30 7 * * 5": ["erpnext_enhancements.process_steps.send_weekly_sla_digest"],
+		# workforce (v1.480.0): the supervisor digest -- yesterday's hours per person,
+		# auto-closed intervals, tracking gaps, off-site clock-ins and pending time
+		# correction requests, per team (Employee.reports_to) and company-wide for HR
+		# Managers. 06:45 site TZ: after the 06:00 dispatch digest, before the 06:30
+		# briefing batch has finished. Gated by Time Kiosk Settings.send_supervisor_digest;
+		# a recipient with nothing to see gets no email.
+		"45 6 * * *": ["erpnext_enhancements.workforce.digest.send_supervisor_digests"],
 	},
 	"daily": [
 		# quality (WI-075 sub-phase I): tell each project manager which inspection milestones
@@ -1199,6 +1229,16 @@ scheduler_events = {
 		"erpnext_enhancements.crm_enhancements.fountain_move.invites.expire_stale_invites",
 		"erpnext_enhancements.crm_enhancements.fountain_move.notify.digest_stuck_requests",
 		"erpnext_enhancements.crm_enhancements.fountain_move.photos.sweep_unmirrored_photos",
+		# workforce (v1.480.0): pick up Employee Pay Rate rows whose effective date has
+		# arrived. The Employee on_update trigger only fires on a save, so a rate dated
+		# next month would otherwise never reach Activity Cost until somebody touched
+		# the record. Upsert; never touches an existing billing_rate.
+		"erpnext_enhancements.workforce.costing.sync_all_activity_costs",
+		# workforce (v1.480.0): re-drive project geocoding. The one-shot patch only
+		# ENQUEUES, and a deploy FLUSHDBs the queue redis and destroys queued jobs, so
+		# whatever is still missing is enqueued again here, bounded to 200 a day.
+		# geocode_project is idempotent, so the overlap is harmless.
+		"erpnext_enhancements.workforce.sites.backfill_missing_site_coordinates",
 	],
 	"hourly": [
 		# training: drain Training Attempt progress still sitting in Redis from a
@@ -1265,6 +1305,14 @@ scheduler_events = {
 		# already reported success. An Enhancement Request sitting in `Approved` with no
 		# proposal is the observable trace a lost job leaves; nothing else is. ADR 0010.
 		"erpnext_enhancements.product_feedback.breakdown.sweep_stalled_breakdowns",
+		# workforce (v1.480.0): close clock-ins nobody clocked out of. An interval still
+		# Open/Paused auto_close_after_hours (Time Kiosk Settings, 14) after it started
+		# is closed at the pause time, else the last location fix, else start + limit,
+		# flagged auto_closed with the rule that decided, and the employee + supervisor
+		# are emailed. Per-interval try/except + commit, so one bad row cannot stop the
+		# sweep; the candidate query only sees Open/Paused rows, so a closed one is
+		# never revisited.
+		"erpnext_enhancements.workforce.sweeper.auto_close_stale_intervals",
 	],
 	"weekly": [
 		"erpnext_enhancements.tasks.suggest_truck_restocks",
@@ -2004,6 +2052,17 @@ permission_query_conditions = {
 	# frappe.get_doc(), so shipping one without the other leaves the hole in whichever half
 	# you skipped.
 	"Triton Chat Attachment": "erpnext_enhancements.ai_governance.permissions.triton_chat_attachment_query",
+	# workforce (v1.480.0): Job Interval grants read to the Employee role, which every
+	# staff account holds, and a DocPerm is doctype-wide -- so every technician could
+	# browse everybody's clock-ins. System Manager / HR Manager / Accounts Manager /
+	# Projects Manager see all; everyone else their own session Employee's rows. The
+	# permlevel-1 pay block on the row is a separate gate (Custom DocPerm permlevel 1 in
+	# the DocType JSON) and is never widened here.
+	"Job Interval": "erpnext_enhancements.workforce.permissions.job_interval_query_conditions",
+	# workforce (v1.480.0): an employee sees their own requests; their reports_to sees
+	# them too (read), because that person may approve them; HR Manager / Projects
+	# Manager / System Manager see all.
+	"Time Correction Request": "erpnext_enhancements.workforce.permissions.time_correction_request_query_conditions",
 }
 
 has_permission = {
@@ -2062,6 +2121,10 @@ has_permission = {
 	# Per the v16 rule stated at the top of this register: a hook returning None DENIES, so
 	# every path in it returns an explicit bool, exception paths included.
 	"Triton Chat Attachment": "erpnext_enhancements.ai_governance.permissions.triton_chat_attachment_has_permission",
+	# workforce (v1.480.0): the single-document twins of the two query conditions above,
+	# per the parity doctrine. Both return an explicit bool on every path.
+	"Job Interval": "erpnext_enhancements.workforce.permissions.job_interval_has_permission",
+	"Time Correction Request": "erpnext_enhancements.workforce.permissions.time_correction_request_has_permission",
 }
 
 # `notification_skip_email_types` held ["Chat Message", "Chat Mention"] from v1.267.0 until

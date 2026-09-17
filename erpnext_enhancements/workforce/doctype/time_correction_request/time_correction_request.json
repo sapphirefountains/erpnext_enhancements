@@ -1,0 +1,244 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-09-17 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "employee",
+  "employee_name",
+  "job_interval",
+  "column_break_head",
+  "request_type",
+  "status",
+  "requested_on",
+  "proposal_section",
+  "proposed_start",
+  "proposed_end",
+  "column_break_proposal",
+  "proposed_project",
+  "proposed_task",
+  "proposed_activity",
+  "reason_section",
+  "reason",
+  "review_section",
+  "reviewer",
+  "reviewed_on",
+  "column_break_review",
+  "review_note",
+  "applied_interval"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Naming Series",
+   "no_copy": 1,
+   "options": "TCR-.YYYY.-.#####"
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "employee.employee_name",
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "label": "Employee Name",
+   "read_only": 1
+  },
+  {
+   "description": "The clock-in session being corrected. Blank for a Missed Entry — an interval that never existed.",
+   "fieldname": "job_interval",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Job Interval",
+   "options": "Job Interval"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Adjust Times needs a proposed start and end. Change Project needs a proposed project. Missed Clock-Out needs a proposed end. Missed Entry needs start, end and project.",
+   "fieldname": "request_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Request Type",
+   "options": "Adjust Times\nChange Project\nMissed Clock-Out\nMissed Entry",
+   "reqd": 1
+  },
+  {
+   "default": "Requested",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Requested\nApproved\nDeclined\nCanceled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "requested_on",
+   "fieldtype": "Datetime",
+   "label": "Requested On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "proposal_section",
+   "fieldtype": "Section Break",
+   "label": "Proposed Change"
+  },
+  {
+   "depends_on": "eval:['Adjust Times','Missed Entry'].includes(doc.request_type)",
+   "fieldname": "proposed_start",
+   "fieldtype": "Datetime",
+   "label": "Proposed Start"
+  },
+  {
+   "depends_on": "eval:['Adjust Times','Missed Clock-Out','Missed Entry'].includes(doc.request_type)",
+   "fieldname": "proposed_end",
+   "fieldtype": "Datetime",
+   "label": "Proposed End"
+  },
+  {
+   "fieldname": "column_break_proposal",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:['Change Project','Missed Entry'].includes(doc.request_type)",
+   "fieldname": "proposed_project",
+   "fieldtype": "Link",
+   "label": "Proposed Project",
+   "options": "Project"
+  },
+  {
+   "depends_on": "eval:['Change Project','Missed Entry'].includes(doc.request_type)",
+   "fieldname": "proposed_task",
+   "fieldtype": "Link",
+   "label": "Proposed Task",
+   "options": "Task"
+  },
+  {
+   "depends_on": "eval:['Change Project','Missed Entry'].includes(doc.request_type)",
+   "fieldname": "proposed_activity",
+   "fieldtype": "Link",
+   "label": "Proposed Activity Type",
+   "options": "Activity Type"
+  },
+  {
+   "fieldname": "reason_section",
+   "fieldtype": "Section Break",
+   "label": "Reason"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "reqd": 1
+  },
+  {
+   "collapsible": 1,
+   "collapsible_depends_on": "eval:doc.status!='Requested'",
+   "fieldname": "review_section",
+   "fieldtype": "Section Break",
+   "label": "Review"
+  },
+  {
+   "fieldname": "reviewer",
+   "fieldtype": "Link",
+   "label": "Reviewer",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reviewed_on",
+   "fieldtype": "Datetime",
+   "label": "Reviewed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_review",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "review_note",
+   "fieldtype": "Small Text",
+   "label": "Review Note"
+  },
+  {
+   "description": "For a Missed Entry: the Completed interval the approval created. Otherwise the interval that was changed.",
+   "fieldname": "applied_interval",
+   "fieldtype": "Link",
+   "label": "Applied Interval",
+   "options": "Job Interval",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-17 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workforce",
+ "name": "Time Correction Request",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Employee"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -1079,3 +1079,19 @@ erpnext_enhancements.patches.reload_workspaces_for_qbo_matching
 # design, it is someone's answer -- so a column added to the spec can only reach production
 # through an insert-if-missing patch of the same shape. Safe twice.
 erpnext_enhancements.patches.add_po_list_received_column
+# v1.480.0: Time Kiosk Settings gains eleven fields (reliability, payroll & costing, digest)
+# and a default on a NEW field of a Single never reaches the existing row -- fill each one
+# only where tabSingles has no row, then apply Nik's two 2026-09-17 policy flips outright:
+# keep_wake_lock 0 -> 1, retention_days 90 -> 0 (keep forever). Cannot raise; safe twice.
+erpnext_enhancements.patches.backfill_time_kiosk_settings_defaults
+# v1.480.0: pay moves onto the Employee behind permlevel 1 (Employee Pay Rate table). HR
+# Manager and System Manager already hold a permlevel-1 read on prod as unversioned site
+# rows; Accounts Manager holds none and job costing is theirs. Insert-only, keyed on
+# (parent, role, permlevel); setup_custom_perms first, because a Custom DocPerm set replaces
+# the standard perms WHOLESALE and three permlevel-1 rows alone would strip a fresh install.
+erpnext_enhancements.patches.seed_employee_pay_visibility
+# v1.480.0: enqueue a geocode (Google Geocoding REST, requests, no SDK) for every active
+# Project without site coordinates -- 0 of 76 had any on 2026-09-17. Enqueued, bounded to
+# 200, on the long queue; a deploy FLUSHDB may destroy the batch, so the daily
+# backfill_missing_site_coordinates job re-drives whatever is still missing.
+erpnext_enhancements.patches.backfill_project_site_coordinates

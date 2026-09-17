@@ -3,19 +3,33 @@
 
   This is the installable Progressive Web App's HTML shell, not the app itself.
   It is a thin chrome-free page whose only jobs are to:
+    * apply the stored theme BEFORE the stylesheet is parsed (the inline script
+      at the top of head_include — see "Theme" below);
     * declare the PWA (web manifest, theme-color, Apple/standalone meta tags,
       touch icon) so the browser offers "Install app";
     * load the kiosk styles (css/kiosk/kiosk.css) and front-end scripts
-      (js/kiosk/geo.js for geolocation, js/kiosk/app.js for the UI);
+      (js/kiosk/ui.js, geo.js, myday.js, map.js, settings.js, app.js — in that
+      order; app.js mounts the others);
     * hand the server-computed boot payload to the front-end as window.KIOSK_BOOT
-      / window.KIOSK_CSRF (see kiosk.py::get_context).
+      / window.KIOSK_CSRF / window.KIOSK_BUILD (see kiosk.py::get_context).
 
-  The actual clock-in/out UI is rendered client-side by app.js into #kiosk-root.
+  The actual UI is rendered client-side by app.js into #kiosk-root.
+
+  Theme: three-way — light / dark / system, system the default. The user's
+  choice lives in localStorage.tk_theme and is expressed as <html data-theme>;
+  the attribute is ABSENT for system, and kiosk.css's dark palette then follows
+  prefers-color-scheme. The inline script below runs before the stylesheet so
+  the first paint is already the right colour (no flash). It is wrapped in
+  try/catch because localStorage throws in some private / embedded contexts.
+  KioskUI.theme (ui.js) owns every later change and keeps the theme-color meta
+  equal to the resolved --tk-bg. tests/test_kiosk_theme.py pins the ordering.
 
   Offline strategy: the root-scope service worker (kiosk-sw.js, registered by
   app.js) precaches this shell and these assets, so the app launches and runs
   without a network. Geolocation points are queued in IndexedDB and uploaded in
   batches with Background Sync retry. See kiosk-sw.js for the full lifecycle.
+  Leaflet (Map tab) is NOT precached — it is loaded lazily from frappe's
+  vendored copy and the tab says so when offline.
 
   Cache busting: raw /assets are served with a 1-year immutable Cache-Control,
   so every mutable asset URL below carries ?v={{ deploy_version }} (a token
@@ -23,16 +37,26 @@
   therefore gives the browser brand-new URLs, and window.KIOSK_BUILD versions
   the service-worker registration so its cache rotates too. The icons stay
   unversioned on purpose: their content never changes (same rationale as the
-  vendored libraries in hooks.py).
+  vendored libraries in hooks.py). Every js/css URL here must also be in the
+  worker's PRECACHE (tests/test_kiosk_frontend.py checks both directions).
 #}
 {% extends "templates/web.html" %}
 
 {% block title %}Time Kiosk{% endblock %}
 
-{# PWA declaration: manifest, theme/standalone meta, app icons, and kiosk styles. #}
+{# Theme (first, before any stylesheet), then the PWA declaration, then the kiosk styles. #}
 {% block head_include %}
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('tk_theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+      else document.documentElement.removeAttribute('data-theme');
+    } catch (e) { /* storage blocked: system theme */ }
+  })();
+</script>
 <link rel="manifest" href="/kiosk-manifest.json?v={{ deploy_version }}">
-<meta name="theme-color" content="#00a0dd">
+<meta name="theme-color" content="#f4f5f7">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -57,20 +81,21 @@
   .navbar, nav.navbar, .web-footer, footer, .footer,
   .page-breadcrumbs, .breadcrumb-container,
   .page-header, .page-content-wrapper > .page-header { display: none !important; }
-  body { background: var(--tk-bg, #f6f7f9); margin: 0; }
+  body { background: var(--tk-bg, #f4f5f7); margin: 0; }
   main, .main-section, #body, .page_content,
   .page-content-wrapper, .container { padding: 0 !important; margin: 0 !important; max-width: none !important; }
 </style>
 {% endblock %}
 
-{# Mount point: app.js renders the live clock-in/out UI into #kiosk-root. #}
+{# Mount point: app.js renders the whole UI into #kiosk-root. #}
 {% block page_content %}
 <div id="kiosk-root" class="kiosk-shell" aria-busy="true">
-  <div class="kiosk-boot text-center">Loading Time Kiosk…</div>
+  <div class="kiosk-boot">Loading Time Kiosk…</div>
 </div>
 {% endblock %}
 
-{# Boot payload + front-end scripts (geo.js must load before app.js uses it). #}
+{# Boot payload + front-end scripts. Order matters: ui.js first (theme, sheets),
+   geo.js, then the view modules, then app.js which mounts everything. #}
 {% block script %}
 <script>
   // Server-injected boot payload (employee, current interval, settings, csrf).
@@ -78,6 +103,10 @@
   window.KIOSK_CSRF = "{{ csrf_token }}";
   window.KIOSK_BUILD = "{{ deploy_version }}";
 </script>
+<script src="/assets/erpnext_enhancements/js/kiosk/ui.js?v={{ deploy_version }}"></script>
 <script src="/assets/erpnext_enhancements/js/kiosk/geo.js?v={{ deploy_version }}"></script>
+<script src="/assets/erpnext_enhancements/js/kiosk/myday.js?v={{ deploy_version }}"></script>
+<script src="/assets/erpnext_enhancements/js/kiosk/map.js?v={{ deploy_version }}"></script>
+<script src="/assets/erpnext_enhancements/js/kiosk/settings.js?v={{ deploy_version }}"></script>
 <script src="/assets/erpnext_enhancements/js/kiosk/app.js?v={{ deploy_version }}"></script>
 {% endblock %}

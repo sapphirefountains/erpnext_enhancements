@@ -1512,6 +1512,47 @@ jobs:
       # four releases stale that no ?v= could reach.
       - name: Kiosk service worker scope (must not answer for the app's assets)
         run: python -m unittest erpnext_enhancements.tests.test_kiosk_service_worker -v
+      # The kiosk palette answers "is it dark?" three ways -- the OS preference, an
+      # explicit light choice, an explicit dark choice -- and the two dark blocks are
+      # deliberate duplicates that fail silently apart. Also pins that the pre-paint
+      # theme script precedes the stylesheet (a flash of the wrong theme on every launch
+      # otherwise), that no browser confirm/prompt/alert survives in the PWA, that every
+      # asset the shell loads is precached and vice-versa (an unlisted file is a 504 in
+      # a dead zone), and that every api.time_kiosk method the front end dials is a
+      # whitelisted def -- a renamed endpoint raises nowhere, the button just stops
+      # working on a phone in a mechanical room.
+      - name: Kiosk PWA theme + front-end contract
+        run: python -m unittest erpnext_enhancements.tests.test_kiosk_theme erpnext_enhancements.tests.test_kiosk_frontend -v
+      # Workforce pure logic and static contracts (no frappe stub): tracking coverage and
+      # gap arithmetic (a 25-minute silence must not pass a 15-minute setting), the FLSA
+      # workweek overtime split (an interval is credited whole to the day it starts, and
+      # only hours starting inside the period count), the correction-request schema (each
+      # request type's required proposals; the reviewer role sets agree between the JSON,
+      # permissions.py and the api), the Location Timeline page (its roles equal
+      # TIMELINE_MANAGER_ROLES, every method it dials exists, polling stops when the tab
+      # is hidden), and the Labor Cost Analysis report's roles and column contract.
+      - name: Workforce tracking health, overtime, corrections, timeline page, labour report
+        run: >-
+          python -m unittest
+          erpnext_enhancements.tests.test_workforce_tracking_health
+          erpnext_enhancements.tests.test_workforce_overtime
+          erpnext_enhancements.tests.test_time_correction_requests
+          erpnext_enhancements.tests.test_location_timeline_page
+          erpnext_enhancements.tests.test_workforce_report_labor_cost -v
+      # Its own step: this suite installs a frappe stub in setUpModule. Pins that the
+      # rate in force is the latest effective-from on or before the day worked (a rate
+      # dated tomorrow must not price today), salaried -> hourly via 2080, the burden
+      # default, labour cost from the timestamps, and that every pay field on Job
+      # Interval sits at permlevel 1 -- one at permlevel 0 publishes wages to every
+      # employee through /api/resource.
+      - name: Workforce costing (rate resolution + permlevel-1 pay fields)
+        run: python -m unittest erpnext_enhancements.tests.test_workforce_costing -v
+      # Its own step for the same reason. The forgotten-clock-out sweeper's end-time
+      # rule: a paused interval closes at its pause, one with fixes at its last fix, one
+      # with neither at the limit -- and an interval younger than the limit is left
+      # alone. Wrong in any direction pays hours nobody worked or drops hours somebody did.
+      - name: Workforce sweeper (auto-close end-time rule)
+        run: python -m unittest erpnext_enhancements.tests.test_workforce_sweeper -v
       # Semi-monthly commission periods. Every failure mode here is a *plausible*
       # statement -- right shape, wrong rows -- which nothing downstream can
       # notice: a boundary day in neither period (the live report was dropping

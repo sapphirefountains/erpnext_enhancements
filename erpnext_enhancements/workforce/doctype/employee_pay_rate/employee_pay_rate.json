@@ -1,0 +1,87 @@
+{
+ "actions": [],
+ "creation": "2026-09-17 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "effective_from",
+  "pay_type",
+  "hourly_rate",
+  "annual_salary",
+  "hourly_equivalent",
+  "burden_pct",
+  "note"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "description": "The row whose Effective From is the latest date on or before the day worked is the rate in force.",
+   "fieldname": "effective_from",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Effective From",
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "default": "Hourly",
+   "fieldname": "pay_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Pay Type",
+   "options": "Hourly\nSalaried",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "depends_on": "eval:doc.pay_type=='Hourly'",
+   "fieldname": "hourly_rate",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Hourly Rate"
+  },
+  {
+   "columns": 2,
+   "depends_on": "eval:doc.pay_type=='Salaried'",
+   "fieldname": "annual_salary",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Annual Salary"
+  },
+  {
+   "description": "Annual salary / 2080. Computed when the Employee is saved; used as the hourly rate for job costing.",
+   "fieldname": "hourly_equivalent",
+   "fieldtype": "Currency",
+   "label": "Hourly Equivalent",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "description": "Employer burden for job costing. Blank = Time Kiosk Settings > Default Burden %.",
+   "fieldname": "burden_pct",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Burden %"
+  },
+  {
+   "columns": 2,
+   "fieldname": "note",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Note"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-17 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workforce",
+ "name": "Employee Pay Rate",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

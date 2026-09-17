@@ -7,6 +7,206 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.480.0] - 2026-09-17
+
+### Added
+
+- **The Time Kiosk's final pass before adoption.** One release, scoped with Nik on 2026-09-17
+  from a menu of options (everything offered except an SMS nudge), against the live state of
+  the thing: 0 Job Intervals, 0 location points, 0 Timesheets, 0 Activity Cost rows, 15 active
+  employees all Hourly and all with a login, and 0 project sites with coordinates. What follows
+  is organised by the question each part answers.
+- **"Was the phone actually tracking?" — tracking health on every clock-in session.** A
+  browser cannot read GPS with the screen off on any phone (iOS and Android both suspend it for
+  a page that leaves the foreground), and nothing in the app measured the consequence: a
+  manager could not tell a quiet phone from a stationary one. Every `Job Interval` now closes
+  with `fix_count`, `last_fix_at`, `gap_minutes`, `tracking_coverage_pct` and a
+  `tracking_health` of Good / Gaps / None / Off, computed by the frappe-free
+  `workforce/tracking_health.py` — a gap is any silent stretch longer than the new
+  `tracking_gap_minutes` setting, leading and trailing stretches included, so a 25-minute
+  silence cannot pass a 15-minute setting — and `log_geolocation_batch` keeps `last_fix_at` /
+  `fix_count` live on an OPEN interval. Fixes worse than `min_accuracy_m` are **kept and
+  flagged** (`Time Kiosk Log.log_status = Low Accuracy`, gated by `keep_low_accuracy_fixes`)
+  instead of discarded — a mechanical room used to record nothing at all — and every point
+  carries a `fix_source` (Watch / Heartbeat / Catch-up / Anchor). Two defaults flipped as
+  policy: **the screen wake lock is on** while clocked in (`keep_wake_lock` 0 → 1; a phone that
+  sleeps in a pocket stops reporting, and the gaps cost more than the battery) and **location
+  logs are kept forever** (`retention_days` 90 → 0; the trail is the evidence behind a corrected
+  timesheet, and the sixteen August points had already been purged before anyone asked about
+  them). Both are set outright by `patches/backfill_time_kiosk_settings_defaults`, which
+  otherwise fills only the nine new fields' *missing* `tabSingles` rows — the Single-defaults
+  trap in CLAUDE.md, read in raw SQL because `db.get_value("Singles", …)` cannot succeed.
+- **"Were they at the site?" — a deliberate anchor fix at every clock event, and site
+  coordinates to compare it with.** `geo.js` gains `anchorFix()` — high accuracy, up to three
+  attempts inside ~15 s, best fix wins, never rejects — and `log_time` stores start AND end
+  coordinates with accuracy, the site the project resolved to (`site_latitude/longitude`,
+  `site_source`, `site_radius_m`), the distance at each end, and `offsite_start` /
+  `offsite_end` when the geofence radius (ERPNext Enhancements Settings, 250 m) is set and
+  exceeded. The kiosk warns before an off-site clock-in ("You're 3.2 km from <site> — clock
+  in anyway?") and records the answer as `offsite_acknowledged`; it warns and never blocks.
+  Sites resolve in `workforce/sites.py`: Sapphire Maintenance Profile → the project's linked
+  Address (`custom_latitude/longitude`) → new `custom_site_latitude/longitude` on Project
+  (fixture, with `custom_site_location_source` Geocoded / Manual) → nothing, and a project
+  with no coordinates simply gets no check. `geocode_project` fills the Project fields through
+  the Google Geocoding REST API with `requests` (no SDK, ADR 0004) using the Travel Settings
+  key — on Project save when the address changes, and from
+  `patches/backfill_project_site_coordinates` (enqueued, bounded to 200, `long` queue). **A
+  deploy FLUSHDBs the queue**, so the daily `sites.backfill_missing_site_coordinates` job
+  re-drives whatever is still missing. The key in Travel Settings is referrer-restricted for
+  browsers; server calls may log `REQUEST_DENIED` once per project until the console allows
+  them, which is harmless — the project stays uncoordinated.
+- **The kiosk makeover.** Light / dark / **system** theme, system by default: an inline script
+  in `kiosk.html` runs before the stylesheet and sets `<html data-theme>` from
+  `localStorage.tk_theme` (absent = follow the OS), the `--tk-*` tokens live in `:root` with
+  two **identical** dark blocks — `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }`
+  and `:root[data-theme="dark"]`, the three-way rule the training player settled — and
+  `meta[name=theme-color]` follows the effective theme live. New palette and type, a
+  state-coloured hero (idle / working / on break), a bottom tab bar — **Clock · My Day · Map ·
+  Settings** — ≥48 px targets, skeletons, ≤200 ms motion, `prefers-reduced-motion`. **Every
+  browser dialog is gone**: the four `window.confirm` / `prompt` calls (photo gate, skip
+  reason, maintenance-form warning, attachments) became in-app bottom sheets, as did the new
+  off-site warning, the break presets (15 / 30 / 45 / 60 / custom, with a countdown and one
+  buzz at zero), the shift-summary review before Clock Out (today's hours, this job, sites,
+  photos, tracking coverage), the "Day complete" screen after it, and the correction-request
+  form. **My Day** lists today's intervals with health / off-site / auto-closed / corrected
+  badges, a 14-day strip and per-interval detail, replacing the "View My History" button that
+  sent technicians into the desk list. **Map** is the technician's own trail for the day
+  (Leaflet from frappe's vendored copy, OSM or CartoDB dark tiles, site circles) — the
+  transparency the consent notice promises. **Settings** holds the theme control, tracking
+  diagnostics with a reason-specific status (off / ready / on / denied / unavailable /
+  insecure / hidden) and per-platform fix-it guides, queued points and photos, install,
+  refresh and version. The front end is now `ui.js`, `geo.js`, `myday.js`, `map.js`,
+  `settings.js` and `app.js`, all precached; the service worker gained only the PRECACHE
+  entries and a `stats` reply — its scope rules are byte-identical and still test-pinned. The
+  offline photo queue, its register-before-upload ordering and the photo gate's semantics are
+  unchanged.
+- **The Location Timeline, rebuilt** (`workforce/page/location_timeline/`; roles System
+  Manager / HR Manager / **Projects Manager**, and the page JSON's roles equal
+  `api.time_kiosk.TIMELINE_MANAGER_ROLES`, test-pinned). **Trail** replays an employee's date
+  range: a polyline per interval, In / Out anchor markers, hollow Low Accuracy points, dashed
+  red segments across gaps, labelled stop circles ("18 min at <site>", from `detect_stops`),
+  site geofence circles, an accuracy-ring toggle and a playback scrubber (1× / 4× / 16×) with
+  a moving marker; the side panel carries day totals (worked, distance, on site, travelling,
+  gaps), one card per interval, and **Export CSV / GPX** through the new
+  `export_location_history`. **Live** is the who's-where map: every open interval's latest
+  fix, elapsed time and a stale badge, polled every 30 s only while the tab is visible. Tiles
+  follow the desk theme through a `MutationObserver` on `data-theme`. Opened pre-filled from a
+  **View on Timeline** button on the Job Interval form and a **Location Timeline** button on
+  the Employee form. `get_location_history` now returns, per interval, the site, both
+  anchors, stats, gaps, stops and the badges, plus `day_totals`.
+- **Pay rates and labour costing — [ADR 0013](decisions/adr/0013-pay-rates-live-in-erpnext-at-permlevel-1.md).**
+  WI-016 had kept pay out of ERPNext and waited for burdened rates from the payroll firm; a
+  year on, `tabActivity Cost` had 0 rows and the `Labor` budget category reported Not Tracked
+  on every project. Nik reversed it. `Employee Pay Rate` is an effective-dated child table on
+  Employee (`custom_pay_rates`, fixture, **permlevel 1**): hourly or salaried, the rate or the
+  annual salary (÷ 2080), a burden %, an effective-from date; the Employee validate hook
+  refuses two rows on one date. `patches/seed_employee_pay_visibility` grants the permlevel-1
+  read to HR Manager, System Manager and **Accounts Manager**, insert-only and keyed on
+  (parent, role, permlevel) because the first two already existed on prod as unversioned site
+  rows — and it calls `setup_custom_perms` first, because a Custom DocPerm set replaces the
+  standard permissions wholesale and three permlevel-1 rows alone would strip a fresh install.
+  Every Job Interval is stamped at clock-in with `position` and `position_tier` (permlevel 0
+  — a position is not secret) and, in `validate` whenever `end_time` is set, with `pay_type`,
+  `pay_rate`, `burden_pct`, `burdened_rate` and `labor_cost` (all permlevel 1; hours are never
+  stored, so an approved correction re-costs itself). The native path stays and finally
+  carries data: `workforce/costing.py` keeps `Activity Cost` rows in step with rate × burden
+  (on Employee save, Activity Type insert and daily), `sync_interval_to_timesheet` writes
+  `costing_rate` and the new `Timesheet Detail.custom_job_interval` link, so kiosk Timesheets
+  carry `costing_amount` and the `Labor` budget line's actuals fill in from
+  `budget_rollup._timesheet_cost` with no change there — **once the Timesheet is submitted**,
+  which the kiosk does not do; supervisors do.
+- **Labor Cost Analysis** (`workforce/report/labor_cost_analysis/`, Script Report over Job
+  Interval; Accounts Manager, HR Manager, Projects Manager, System Manager): hours, burdened
+  labour cost and straight-time pay for a period, grouped by project, employee, position or
+  activity type, with the project's `Labor` budget line beside its actual where one exists.
+  Its `ref_doctype` is Job Interval, which every listed role can now read — a Script Report
+  whose readers cannot read its reference doctype errors for exactly its intended audience.
+- **Overtime hours in the payroll workbook, and an internal costing sheet.**
+  `workforce/overtime.py` (frappe-free) splits an employee's hours by FLSA workweek
+  (`overtime_week_start`, `overtime_weekly_hours`; defaults Sunday and 40; no daily OT in
+  Utah; an interval is credited whole to the day it starts, as `worked_hours` always has). The
+  Shaw & Nielsen sheet keeps its exact 14-column contract — `Regular Hours` and `Overtime
+  Hours` now carry the split; `Qualified OT` stays blank because it is the federal figure and
+  the firm's — and the workbook gains a second sheet, **Internal Costing**, marked never to be
+  sent: position, tier, pay type, rate, regular and OT hours, straight-time gross ((reg + OT)
+  × rate; no premium arithmetic anywhere in this app) and burdened labour cost. The desk
+  report gains Regular / OT columns.
+- **Time Correction Request** (`TCR-.YYYY.-.#####`): a technician asks from My Day to adjust
+  times, change project, add a missed clock-out or a missed entry, with a reason; the
+  employee's `reports_to` or an HR / Projects / System Manager approves or declines on the desk
+  form. Approval records the original times and project on the interval (`corrected`,
+  `original_*`, `correction_request`), applies the proposal, re-costs it and re-syncs the Draft
+  Timesheet line by `custom_job_interval` — and **refuses when that line's Timesheet is
+  submitted**, saying so, rather than silently diverging from what payroll already received.
+  The supervisor is emailed on request and the employee on decision.
+- **The forgotten-clock-out sweeper** (`workforce/sweeper.py`, hourly): an interval open
+  longer than `auto_close_after_hours` (default 14) is closed at its pause time if paused, else
+  at its last location fix, else at the limit; stamped `auto_closed` with the reason; the photo
+  gate stamped Skipped with that reason rather than thrown; health and cost computed; synced to
+  the Timesheet; the technician and their supervisor emailed. Nothing is deleted.
+- **The supervisor digest** (`workforce/digest.py`, 06:45 daily, gated by
+  `send_supervisor_digest`): each `reports_to` gets yesterday's hours per direct report,
+  auto-closed intervals, tracking gaps, off-site clock-ins and pending correction requests; HR
+  Managers get the company. A team with nothing yesterday and nothing pending gets no email.
+- **Row scoping for Job Interval and Time Correction Request** (`workforce/permissions.py`,
+  wired under both `permission_query_conditions` and `has_permission`): System, HR, Accounts
+  and Projects Managers see every interval; everyone else their own. Both doctypes grant
+  `read` to `Employee`, which every staff account holds, and a DocPerm is doctype-wide — the
+  Training module paid for that combination three times. HR Manager and Accounts Manager also
+  gained a permlevel-0 read on Job Interval, because frappe derives document access from
+  permlevel-0 rows only and their permlevel-1 pay read was unreachable without one.
+- **The native-app question, answered on paper**:
+  [`docs/kiosk-native-app-spike.md`](docs/kiosk-native-app-spike.md) and
+  [WI-076](work-items/WI-076-kiosk-native-app.md) — what a Capacitor shell with a
+  background-geolocation plugin would add (a trail with the screen off, and only that), what it
+  would cost (the store accounts and the annual rebuild, not the code), and the decision gate:
+  measured coverage after a full pay period on this release. Nik prefers the browser where it
+  can work; this is the record of where it cannot.
+- Tests, all bench-free and all in `ci.yml`: `test_kiosk_theme`, `test_kiosk_frontend`,
+  `test_location_timeline_page`, `test_workforce_tracking_health`, `test_workforce_overtime`,
+  `test_time_correction_requests`, `test_workforce_report_labor_cost`, and — on their own
+  steps because they stub `frappe` — `test_workforce_costing` and `test_workforce_sweeper`.
+  `test_field_systems.py`'s stub gained `get_datetime` (a pure conversion the overtime split
+  reads timestamps through), and its column-contract test was re-pinned to the new rule:
+  Regular and Overtime hours are written, Qualified OT and the six provider amount columns are
+  not, and no `1.5` premium appears anywhere — resolving `COL_*` names, since an absence check
+  that only saw literal indices had started passing vacuously.
+
+### Changed
+
+- `Time Kiosk Settings` gains `auto_close_after_hours`, `tracking_gap_minutes`,
+  `keep_low_accuracy_fixes`, `anchor_accuracy_m`, `offsite_warn`, `overtime_week_start`,
+  `overtime_weekly_hours`, `default_burden_pct` and `send_supervisor_digest` (Reliability,
+  Payroll & Costing and Supervision sections); `Time Kiosk Log.log_status` gains `Low Accuracy`
+  and the row a `fix_source`. `Job Interval` gains the anchor, site, tracking-health, break,
+  auto-close, correction, position and (permlevel-1) pay fields, HR Manager write and Accounts
+  Manager / Projects Manager read, and shows `tracking_health`, `auto_closed` and
+  `offsite_start` in its list.
+- `api.time_kiosk`: `log_time` accepts `accuracy`, `offsite_acknowledged` and `break_minutes`
+  and returns an `offsite` block; `get_current_status` reports position, break, site and
+  tracking fields; `get_kiosk_options` adds `recent_projects` and `radius_m`;
+  `log_geolocation_batch` accepts `fix_source`; new `get_my_day`, `get_my_history`,
+  `get_my_trail`, `get_shift_summary`, `submit_correction_request`,
+  `get_my_correction_requests`, `cancel_correction_request`, `get_live_positions`,
+  `get_employees_for_timeline`, `export_location_history`, `refresh_tracking_health`.
+  `TIMELINE_MANAGER_ROLES` gains Projects Manager.
+- `hooks.py`: Employee `validate` / `on_update`, Activity Type `after_insert` and Project
+  `on_update` handlers; hourly sweeper, daily Activity Cost and site-coordinate re-drives,
+  the 06:45 digest cron; query conditions and `has_permission` for both workforce doctypes.
+- `photo_gate.resolve()` — the gate's decision without the throw, for the sweeper and a
+  Missed Clock-Out correction to stamp.
+- Root, `workforce/`, `www/`, `public/`, `api/`, `patches/`, `tests/` and `docs/` READMEs;
+  `docs/field-photos-and-payroll-runbook.md` for the overtime split, the internal sheet and
+  the keep-forever retention.
+
+### Fixed
+
+- **The Location Timeline's "not permitted" state never fired.** A `PermissionError` arrives
+  as HTTP 403, whose handler in frappe v16 `request.js` calls the error callback with no
+  argument, so `frappe.xcall` rejected with `undefined` and the page rendered nothing at all
+  for a user without the role. The page now reads the status off the jqXHR that `frappe.call`
+  returns and says so in words.
+
 ## [1.479.0] - 2026-09-17
 
 ### Added

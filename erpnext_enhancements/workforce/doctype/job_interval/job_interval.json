@@ -16,15 +16,59 @@
   "status",
   "total_paused_seconds",
   "last_pause_time",
+  "planned_break_minutes",
   "naming_series",
+  "position_section",
+  "position",
+  "position_tier",
   "sync_section",
   "sync_status",
   "sync_attempts",
   "location_section",
   "latitude",
   "longitude",
+  "start_accuracy",
+  "start_distance_m",
+  "offsite_start",
+  "offsite_acknowledged",
+  "column_break_location",
+  "end_latitude",
+  "end_longitude",
+  "end_accuracy",
+  "end_distance_m",
+  "offsite_end",
+  "site_section",
+  "site_latitude",
+  "site_longitude",
+  "column_break_site",
+  "site_source",
+  "site_radius_m",
+  "tracking_section",
+  "tracking_health",
+  "tracking_coverage_pct",
+  "gap_minutes",
+  "column_break_tracking",
+  "fix_count",
+  "last_fix_at",
   "description",
   "maintenance_nudge_sent",
+  "auto_close_section",
+  "auto_closed",
+  "auto_close_reason",
+  "correction_section",
+  "corrected",
+  "correction_request",
+  "column_break_correction",
+  "original_start_time",
+  "original_end_time",
+  "original_project",
+  "pay_section",
+  "pay_type",
+  "pay_rate",
+  "burden_pct",
+  "column_break_pay",
+  "burdened_rate",
+  "labor_cost",
   "photo_section",
   "photos",
   "photo_status",
@@ -36,6 +80,7 @@
    "fieldname": "employee",
    "fieldtype": "Link",
    "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Employee",
    "options": "Employee",
    "reqd": 1
@@ -44,6 +89,7 @@
    "fieldname": "project",
    "fieldtype": "Link",
    "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Project",
    "options": "Project",
    "reqd": 1
@@ -79,6 +125,7 @@
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Status",
    "options": "Open\nPaused\nCompleted",
    "reqd": 1
@@ -95,12 +142,38 @@
    "label": "Last Pause Time"
   },
   {
+   "description": "The break length the technician chose when pausing (15 / 30 / 60 / custom). Informational: the break's real length is measured from the pause and resume times.",
+   "fieldname": "planned_break_minutes",
+   "fieldtype": "Int",
+   "label": "Planned Break (minutes)"
+  },
+  {
    "fieldname": "naming_series",
    "fieldtype": "Select",
    "hidden": 1,
    "label": "Naming Series",
    "no_copy": 1,
    "options": "JOB-INT-.#####"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "position_section",
+   "fieldtype": "Section Break",
+   "label": "Position"
+  },
+  {
+   "description": "The employee's Position when this interval was started. Stamped once by workforce/costing.py and never changed after, so a promotion does not rewrite history.",
+   "fieldname": "position",
+   "fieldtype": "Link",
+   "label": "Position",
+   "options": "Position",
+   "read_only": 1
+  },
+  {
+   "fieldname": "position_tier",
+   "fieldtype": "Int",
+   "label": "Position Tier",
+   "read_only": 1
   },
   {
    "fieldname": "sync_section",
@@ -128,6 +201,7 @@
    "label": "Location"
   },
   {
+   "description": "The clock-in anchor fix.",
    "fieldname": "latitude",
    "fieldtype": "Data",
    "label": "Latitude",
@@ -137,6 +211,166 @@
    "fieldname": "longitude",
    "fieldtype": "Data",
    "label": "Longitude",
+   "read_only": 1
+  },
+  {
+   "fieldname": "start_accuracy",
+   "fieldtype": "Float",
+   "label": "Start Accuracy (m)",
+   "precision": "1",
+   "read_only": 1
+  },
+  {
+   "description": "Distance from the clock-in fix to the project site, when both are known.",
+   "fieldname": "start_distance_m",
+   "fieldtype": "Float",
+   "label": "Start Distance to Site (m)",
+   "precision": "0",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "The clock-in fix was outside the site's geofence. Set by the server from the anchor fix regardless of whether the kiosk warned the technician.",
+   "fieldname": "offsite_start",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Off-site Clock-in",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "The technician saw the off-site warning and chose to clock in anyway.",
+   "fieldname": "offsite_acknowledged",
+   "fieldtype": "Check",
+   "label": "Off-site Acknowledged",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_location",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The clock-out anchor fix.",
+   "fieldname": "end_latitude",
+   "fieldtype": "Float",
+   "label": "End Latitude",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "end_longitude",
+   "fieldtype": "Float",
+   "label": "End Longitude",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "end_accuracy",
+   "fieldtype": "Float",
+   "label": "End Accuracy (m)",
+   "precision": "1",
+   "read_only": 1
+  },
+  {
+   "fieldname": "end_distance_m",
+   "fieldtype": "Float",
+   "label": "End Distance to Site (m)",
+   "precision": "0",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "offsite_end",
+   "fieldtype": "Check",
+   "label": "Off-site Clock-out",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "site_section",
+   "fieldtype": "Section Break",
+   "label": "Site"
+  },
+  {
+   "description": "The project site's coordinates as resolved at clock-in (workforce/sites.py): the Sapphire Maintenance Profile, else the linked Address, else the Project's own site coordinates.",
+   "fieldname": "site_latitude",
+   "fieldtype": "Float",
+   "label": "Site Latitude",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "site_longitude",
+   "fieldtype": "Float",
+   "label": "Site Longitude",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_site",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Maintenance Profile / Address / Geocoded / Manual, or blank when the project had no coordinates at clock-in.",
+   "fieldname": "site_source",
+   "fieldtype": "Data",
+   "label": "Site Source",
+   "read_only": 1
+  },
+  {
+   "description": "The geofence radius in force at clock-in (ERPNext Enhancements Settings > Site Geofence Radius). 0 = geofence disabled, so no off-site flag was possible.",
+   "fieldname": "site_radius_m",
+   "fieldtype": "Int",
+   "label": "Site Radius (m)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tracking_section",
+   "fieldtype": "Section Break",
+   "label": "Tracking Health"
+  },
+  {
+   "default": "Pending",
+   "description": "Pending while the interval is open. Good = at least 90% of the interval had a location fix within the configured gap; Gaps = less; None = no fixes at all; Off = tracking was disabled site-wide. Computed at clock-out by workforce/tracking_health.py from the Time Kiosk Log rows for this interval.",
+   "fieldname": "tracking_health",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Tracking Health",
+   "options": "Pending\nGood\nGaps\nNone\nOff",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tracking_coverage_pct",
+   "fieldtype": "Percent",
+   "label": "Tracking Coverage",
+   "read_only": 1
+  },
+  {
+   "description": "Total minutes of the interval with no location fix for longer than the configured gap.",
+   "fieldname": "gap_minutes",
+   "fieldtype": "Float",
+   "label": "Gap Minutes",
+   "precision": "1",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_tracking",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Location fixes recorded for this interval. Kept live by log_geolocation_batch while the interval is open.",
+   "fieldname": "fix_count",
+   "fieldtype": "Int",
+   "label": "Fix Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_fix_at",
+   "fieldtype": "Datetime",
+   "label": "Last Fix At",
    "read_only": 1
   },
   {
@@ -152,6 +386,128 @@
    "hidden": 1,
    "label": "Maintenance Nudge Processed",
    "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "collapsible_depends_on": "auto_closed",
+   "fieldname": "auto_close_section",
+   "fieldtype": "Section Break",
+   "label": "Auto-close"
+  },
+  {
+   "default": "0",
+   "description": "Closed by the hourly sweeper because no clock-out arrived within the configured limit. The end time is an estimate — see the reason — and the hours deserve a second look before payroll.",
+   "fieldname": "auto_closed",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Auto-closed",
+   "read_only": 1
+  },
+  {
+   "depends_on": "auto_closed",
+   "description": "Which rule chose the end time: the pause time, the last location fix, or start + limit.",
+   "fieldname": "auto_close_reason",
+   "fieldtype": "Small Text",
+   "label": "Auto-close Reason",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "collapsible_depends_on": "corrected",
+   "fieldname": "correction_section",
+   "fieldtype": "Section Break",
+   "label": "Corrections"
+  },
+  {
+   "default": "0",
+   "description": "An approved Time Correction Request changed this interval. The original values are kept alongside; the first correction records them and later ones leave them alone.",
+   "fieldname": "corrected",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Corrected",
+   "read_only": 1
+  },
+  {
+   "fieldname": "correction_request",
+   "fieldtype": "Link",
+   "label": "Correction Request",
+   "options": "Time Correction Request",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_correction",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "original_start_time",
+   "fieldtype": "Datetime",
+   "label": "Original Start Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "original_end_time",
+   "fieldtype": "Datetime",
+   "label": "Original End Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "original_project",
+   "fieldtype": "Link",
+   "label": "Original Project",
+   "options": "Project",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "pay_section",
+   "fieldtype": "Section Break",
+   "label": "Pay & Cost",
+   "permlevel": 1
+  },
+  {
+   "description": "Stamped by workforce/costing.py from the Employee Pay Rate row in force on the start date. Permission level 1: visible to HR Manager, Accounts Manager and System Manager only.",
+   "fieldname": "pay_type",
+   "fieldtype": "Select",
+   "label": "Pay Type",
+   "options": "\nHourly\nSalaried",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "description": "Hourly rate in force on the start date (a salaried rate is its hourly equivalent, annual / 2080).",
+   "fieldname": "pay_rate",
+   "fieldtype": "Currency",
+   "label": "Pay Rate (hourly)",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "burden_pct",
+   "fieldtype": "Percent",
+   "label": "Burden %",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_pay",
+   "fieldtype": "Column Break",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "burdened_rate",
+   "fieldtype": "Currency",
+   "label": "Burdened Rate (hourly)",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "description": "Worked hours (span minus pauses — never stored, always derived) times the burdened rate. Recomputed on every save that has an end time, so an approved correction keeps it consistent.",
+   "fieldname": "labor_cost",
+   "fieldtype": "Currency",
+   "label": "Labor Cost",
+   "permlevel": 1,
    "read_only": 1
   },
   {
@@ -195,7 +551,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2024-05-22 10:00:00.000000",
+ "modified": "2026-09-17 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Workforce",
  "name": "Job Interval",
@@ -223,6 +579,48 @@
    "role": "Employee",
    "share": 1,
    "write": 0
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager"
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager"
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "HR Manager",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Accounts Manager"
   }
  ],
  "sort_field": "modified",
