@@ -39,6 +39,12 @@ gated by a role.
 The three terminal states are terminal. `Tasks Created` cannot be walked back, which is what
 stops one proposal being written to a board twice.
 
+**A confirm with nothing ticked is refused, not written.** `create_tasks` throws before the
+writer runs, and the writer's own empty return carries the full result shape;
+`tests/test_feedback_endpoint_surface.py` pins both with AST. The first zero-task breakdown,
+ER-2026-458194, found the gap as a 500 on the button (v1.474.2). A request that needs no work
+is closed with Reject or Duplicate — `Tasks Created` means there is work on a board.
+
 **Which is also why the board shows a "Tasks Completed" pill that is not a status.** A request
 whose tasks are all finished stays on `Tasks Created` forever — correctly; nothing may move it
 — so it read that way while the Work column beside it said `2/2`. The finished state is a

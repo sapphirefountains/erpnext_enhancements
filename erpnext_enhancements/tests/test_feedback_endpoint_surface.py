@@ -194,6 +194,75 @@ class TestOnlyOneWriterCreatesTasks(unittest.TestCase):
 		self.assertIn('"doctype": "Task"', source)
 
 
+class WriterResultShape(unittest.TestCase):
+	"""Every dict ``create_tasks_for`` returns carries every key the endpoint reads off it.
+
+	``create_tasks`` in ``api/feedback.py`` does ``result["complete"]`` with no default, which
+	is right — a missing key there is a bug, not a case. The early return for a proposal with
+	nothing ticked sent three keys where the full return sent five, and the first zero-task
+	breakdown (ER-2026-458194) turned that into a 500 on the confirm button. Asserted with AST
+	so the next early return cannot repeat it, plus the guard that now makes the early return
+	unreachable from the endpoint: a confirm with nothing ticked is refused *before* the
+	writer runs, so ``Tasks Created`` keeps meaning there is work on a board.
+	"""
+
+	WRITER = MODULE / "task_writer.py"
+
+	def _keys_read_by_endpoint(self):
+		endpoint = next(
+			node
+			for node in ast.walk(_tree())
+			if isinstance(node, ast.FunctionDef) and node.name == "create_tasks"
+		)
+		keys = set()
+		for node in ast.walk(endpoint):
+			if (
+				isinstance(node, ast.Subscript)
+				and isinstance(node.value, ast.Name)
+				and node.value.id == "result"
+				and isinstance(node.slice, ast.Constant)
+			):
+				keys.add(node.slice.value)
+		return keys
+
+	def _returned_dicts(self):
+		tree = ast.parse(self.WRITER.read_text(encoding="utf-8"))
+		writer = next(
+			node
+			for node in ast.walk(tree)
+			if isinstance(node, ast.FunctionDef) and node.name == "create_tasks_for"
+		)
+		return [
+			{key.value for key in node.value.keys if isinstance(key, ast.Constant)}
+			for node in ast.walk(writer)
+			if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)
+		]
+
+	def test_the_endpoint_really_reads_keys_off_the_result(self):
+		"""Control: an empty ``needed`` set would make the assertion below pass vacuously."""
+		self.assertTrue({"created", "complete"} <= self._keys_read_by_endpoint())
+
+	def test_every_return_carries_every_key_the_endpoint_reads(self):
+		needed = self._keys_read_by_endpoint()
+		returns = self._returned_dicts()
+		self.assertGreaterEqual(len(returns), 2, "expected the early return and the full one")
+		for keys in returns:
+			self.assertTrue(
+				needed <= keys,
+				f"a return of create_tasks_for lacks {sorted(needed - keys)}; "
+				"the endpoint subscripts it without a default",
+			)
+
+	def test_a_confirm_with_nothing_ticked_is_refused_before_the_writer_runs(self):
+		source = _strip_prose(API.read_text(encoding="utf-8"))
+		body = source[source.index("def create_tasks(") :]
+		self.assertLess(
+			body.index("pending_rows("),
+			body.index("create_tasks_for("),
+			"create_tasks must refuse an empty proposal before it calls the writer",
+		)
+
+
 def _strip_prose(source: str) -> str:
 	"""Source with docstrings and ``#`` comments removed."""
 	tree = ast.parse(source)

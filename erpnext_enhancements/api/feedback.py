@@ -567,6 +567,20 @@ def create_tasks(name, rows=None):
     rejected = _apply_row_edits(doc, rows)
     doc.save(ignore_permissions=True)
 
+    if not task_writer.pending_rows(doc.get("proposed_tasks")):
+        # A confirm with nothing ticked is not a confirm. Until v1.474.2 the writer returned
+        # early here and this function crashed reading a key it had not sent
+        # (ER-2026-458194, where the breakdown proposed no tasks at all). Refusing keeps
+        # `Tasks Created` meaning what it says: a request that reaches it has work on a
+        # board. The two ways to close a request that needs none are Reject and Duplicate.
+        frappe.throw(
+            _(
+                "Nothing here is ticked to be created. Tick at least one proposed task, or "
+                "reject the request or mark it a duplicate if no work is needed."
+            ),
+            frappe.ValidationError,
+        )
+
     try:
         result = task_writer.create_tasks_for(doc.name)
     except task_writer.ProjectRefused as exc:
