@@ -78,6 +78,12 @@ class _FakeDoc:
 	def insert(self, **kwargs):
 		if not STATE["connected"]:
 			raise _lost_connection()
+		if self.data.get("doctype") == "File" and self.data.get("file_name"):
+			# Frappe v16 File.set_file_name: re.sub(r"/", "", file_name) on every
+			# insert — the reason shadow names use SHADOW_PATH_SEPARATOR. Kept
+			# here so a separator Frappe would eat fails the build, not production.
+			self.data["file_name"] = self.data["file_name"].replace("/", "")
+		self.data.setdefault("name", f"{self.data.get('doctype')}-{len(STATE['inserted']) + 1}")
 		STATE["inserted"].append(self.data)
 		return self
 
@@ -213,6 +219,19 @@ def _file(fid, name, parent):
 	}
 
 
+def _tree():
+	"""A Shared Drive shaped like production: the Project folder sits *inside*
+	the Customer folder, and both are linked roots (``folder-<docname>``)."""
+	return [
+		_folder("folder-C1", "Acme", "shared-drive"),
+		_file("brief", "brief.pdf", "folder-C1"),
+		_folder("folder-P1", "PRJ-1 - Acme", "folder-C1"),
+		_folder("design", "Design", "folder-P1"),
+		_file("front", "front.png", "design"),
+		_file("quote", "quote.pdf", "folder-P1"),
+	]
+
+
 def _reset_state():
 	STATE.clear()
 	STATE.update(
@@ -288,6 +307,14 @@ def _install_stubs():
 			raise _lost_connection()
 		STATE["connected"] = True
 
+	def _set_value(doctype, name, field, value, **kwargs):
+		# Recorded for assertions, and applied to the fake rows so a later query
+		# sees the write — as it does through the real DB.
+		STATE["set_values"].append((doctype, name, field, value))
+		for row in STATE["inserted"]:
+			if row.get("doctype") == doctype and row.get("name") == name:
+				row[field] = value
+
 	frappe.db = types.SimpleNamespace(
 		commit=_commit,
 		rollback=_rollback,
@@ -296,7 +323,7 @@ def _install_stubs():
 		has_column=lambda *a, **k: True,
 		exists=lambda *a, **k: None,
 		get_value=lambda *a, **k: None,
-		set_value=lambda *a, **k: STATE["set_values"].append(a),
+		set_value=_set_value,
 	)
 
 	def _get_all(doctype, **kwargs):
@@ -563,22 +590,15 @@ class TestWholeDriveIndex(unittest.TestCase):
 	listed twice because the Customer folder contains it — to find, on average,
 	less than one new file. Now the drive is listed once and walked in memory.
 
-	The tree below mirrors production: the Project folder sits *inside* the
-	Customer folder, and both are linked roots.
+	The tree (``_tree``) mirrors production: the Project folder sits *inside*
+	the Customer folder, and both are linked roots.
 	"""
 
 	def setUp(self):
 		_reset_state()
 		STATE["rows"] = {"Project": ["P1"], "Customer": ["C1"], "Opportunity": []}
 		self._real_service = drive_sync.get_drive_service
-		self.tree = [
-			_folder("folder-C1", "Acme", "shared-drive"),
-			_file("brief", "brief.pdf", "folder-C1"),
-			_folder("folder-P1", "PRJ-1 - Acme", "folder-C1"),
-			_folder("design", "Design", "folder-P1"),
-			_file("front", "front.png", "design"),
-			_file("quote", "quote.pdf", "folder-P1"),
-		]
+		self.tree = _tree()
 
 	def tearDown(self):
 		drive_sync.get_drive_service = self._real_service
@@ -601,11 +621,11 @@ class TestWholeDriveIndex(unittest.TestCase):
 		self.assertEqual(
 			_shadow_map(),
 			{
-				"design": ("Project", "P1", "Design/"),
-				"front": ("Project", "P1", "Design/front.png"),
+				"design": ("Project", "P1", "Design (folder)"),
+				"front": ("Project", "P1", "Design › front.png"),
 				"quote": ("Project", "P1", "quote.pdf"),
 				"brief": ("Customer", "C1", "brief.pdf"),
-				"folder-P1": ("Customer", "C1", "PRJ-1 - Acme/"),
+				"folder-P1": ("Customer", "C1", "PRJ-1 - Acme (folder)"),
 			},
 		)
 		self.assertEqual(STATE["commits"], 2)
@@ -691,6 +711,103 @@ class TestWholeDriveIndex(unittest.TestCase):
 		self.assertIn(f"d{drive_sync.MAX_SHADOW_DEPTH + 1}", ids)
 		self.assertNotIn(f"d{drive_sync.MAX_SHADOW_DEPTH + 2}", ids)
 		self.assertEqual(drive.calls["list_drive"], 1)
+
+
+class TestShadowNames(unittest.TestCase):
+	"""Shadow names survive Frappe and follow Drive.
+
+	Frappe v16's ``File.set_file_name`` runs ``re.sub(r"/", "", file_name)`` on
+	every insert and save, so the "Design/Renderings/front.png" and "Design/"
+	names this module built from the start were stored as
+	"DesignRenderingsfront.png" and "Design" — 0 of 32,654 production shadows had
+	a slash on 2026-09-17, and nothing noticed because the row still saved. The
+	fake ``insert`` strips the same way, so a separator Frappe would eat fails
+	here rather than in production.
+	"""
+
+	def setUp(self):
+		_reset_state()
+		STATE["rows"] = {"Project": ["P1"], "Customer": ["C1"], "Opportunity": []}
+		self._real_service = drive_sync.get_drive_service
+		self.tree = _tree()
+
+	def tearDown(self):
+		drive_sync.get_drive_service = self._real_service
+
+	def _run_with(self, drive):
+		drive_sync.get_drive_service = lambda: (drive, "shared-drive")
+		drive_sync.run_shadow_sync()
+		return drive
+
+	def _renames(self):
+		return [s for s in STATE["set_values"] if s[0] == "File"]
+
+	def test_nested_names_keep_their_path_and_folders_are_marked(self):
+		self._run_with(_FakeDrive(self.tree))
+
+		names = {d["custom_drive_file_id"]: d["file_name"] for d in _shadows()}
+		self.assertEqual(names["front"], "Design › front.png")
+		self.assertEqual(names["design"], "Design (folder)")
+		self.assertEqual(names["quote"], "quote.pdf")
+		self.assertNotIn("/", drive_sync.SHADOW_PATH_SEPARATOR)
+		self.assertNotIn("/", drive_sync.SHADOW_FOLDER_SUFFIX)
+
+	def test_a_name_frappe_keeps_is_not_repaired_on_every_pass(self):
+		# The repair compares the stored name against the computed one. If the
+		# separator were one Frappe strips, every pass would rename every shadow.
+		self._run_with(_FakeDrive(self.tree))
+		self.assertEqual(self._renames(), [])
+
+		self._run_with(_FakeDrive(self.tree))
+		self.assertEqual(self._renames(), [])
+
+	def test_flat_names_from_before_the_fix_are_repaired_in_place(self):
+		# A shadow exactly as production stored it: slashes gone, attached to P1.
+		STATE["inserted"].append(
+			{
+				"doctype": "File",
+				"name": "F-old",
+				"file_name": "Designfront.png",
+				"file_url": "https://drive.google.com/file/d/front",
+				"custom_drive_file_id": "front",
+				"attached_to_doctype": "Project",
+				"attached_to_name": "P1",
+			}
+		)
+
+		self._run_with(_FakeDrive(self.tree))
+
+		self.assertEqual(self._renames(), [("File", "F-old", "file_name", "Design › front.png")])
+		# Repaired, not re-shadowed and not flagged.
+		front = [d for d in _shadows() if d["custom_drive_file_id"] == "front"]
+		self.assertEqual([d["name"] for d in front], ["F-old"])
+		self.assertEqual(_logs("Stale"), [])
+
+	def test_a_rename_or_move_in_drive_follows(self):
+		self._run_with(_FakeDrive(self.tree))
+		(front_row,) = [d for d in _shadows() if d["custom_drive_file_id"] == "front"]
+		moved = [dict(i) for i in self.tree]
+		for item in moved:
+			if item["id"] == "front":
+				item["name"] = "front-v2.png"
+				item["parents"] = ["folder-P1"]  # out of Design, up to the root
+
+		self._run_with(_FakeDrive(moved))
+
+		self.assertEqual(self._renames(), [("File", front_row["name"], "file_name", "front-v2.png")])
+		front = [d for d in _shadows() if d["custom_drive_file_id"] == "front"]
+		self.assertEqual([d["file_name"] for d in front], ["front-v2.png"])
+		self.assertEqual(_logs("Stale"), [])
+
+	def test_a_name_over_the_limit_keeps_its_tail(self):
+		deep = _file("deep", "x" * 20, "folder-P1")
+		prefix = "a" * 150 + drive_sync.SHADOW_PATH_SEPARATOR
+
+		name = drive_sync._shadow_display_name(deep, prefix)
+
+		self.assertEqual(len(name), drive_sync.MAX_FILE_NAME_LENGTH)
+		self.assertTrue(name.startswith("..."))
+		self.assertTrue(name.endswith("x" * 20))
 
 
 class TestFindFolderQueryEscaping(unittest.TestCase):

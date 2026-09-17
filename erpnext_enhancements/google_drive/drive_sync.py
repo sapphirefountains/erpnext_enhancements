@@ -15,7 +15,10 @@ backfill below), this module keeps attachments and Drive files in step:
   ``file_url`` is the Drive ``webViewLink`` (no bytes copied — Drive stays the
   source of truth). Subfolders are mirrored as link-only ``File`` rows too, so
   the folder structure is visible on the document; nested file names are
-  path-prefixed. Shadows are recognised by their stamped
+  path-prefixed with ``SHADOW_PATH_SEPARATOR`` (not "/", which Frappe strips —
+  see :func:`_shadow_display_name`), and names follow Drive: a shadow whose
+  stored name no longer matches its Drive path is renamed on the next walk.
+  Shadows are recognised by their stamped
   ``custom_drive_file_id``, which also prevents echo loops with the upload hook.
 * **Deletions never propagate** in either direction: a shadow whose Drive
   file disappeared is flagged ``Stale`` in the Drive Sync Log, nothing is
@@ -455,6 +458,17 @@ MAX_SHADOW_DEPTH = 10
 # inserting it raises CharacterLengthExceededError and fails the whole sync, so the
 # shadow name is capped to this length (keeping the meaningful tail).
 MAX_FILE_NAME_LENGTH = 140
+# The path prefix on a nested shadow's name, and the marker on a folder's. Not "/":
+# Frappe's File.set_file_name runs re.sub(r"/", "", file_name) on every insert and
+# save (v16; the reason is real — file_name feeds disk paths for local files), so
+# the "Design/Renderings/front.png" and "Design/" names this module built from the
+# start were stored as "DesignRenderingsfront.png" and "Design" — 0 of 32,654
+# production shadows had a slash on 2026-09-17, and nothing noticed because the row
+# still saved. The walk recomputes every name and repairs the stored ones (see
+# _sync_folder_shadows), so changing either constant renames every existing shadow
+# on the next pass.
+SHADOW_PATH_SEPARATOR = " › "
+SHADOW_FOLDER_SUFFIX = " (folder)"
 
 
 def _list_folder_children(service, folder_id, drive_id):
@@ -486,8 +500,9 @@ def _list_folder_children(service, folder_id, drive_id):
 def _walk_drive_folder(service, folder_id, drive_id, rel_path, depth, visited, items):
 	"""Depth-first walk of ``folder_id``'s tree. Every descendant — files and
 	subfolders alike — is appended to ``items`` as a ``(drive_file, rel_path)``
-	pair, where ``rel_path`` is the "/"-joined names of the parent folders below
-	the linked root ("" at the top level). Guards against Drive-shortcut cycles
+	pair, where ``rel_path`` is the names of the parent folders below the linked
+	root, each followed by ``SHADOW_PATH_SEPARATOR`` ("" at the top level).
+	Guards against Drive-shortcut cycles
 	(``visited``) and runaway nesting (``MAX_SHADOW_DEPTH``); a subfolder that
 	404s mid-walk (moved/deleted) is skipped, not fatal."""
 	if depth > MAX_SHADOW_DEPTH or folder_id in visited:
@@ -504,7 +519,7 @@ def _walk_drive_folder(service, folder_id, drive_id, rel_path, depth, visited, i
 		if child.get("mimeType") == FOLDER_MIME:
 			_walk_drive_folder(
 				service, child["id"], drive_id,
-				f"{rel_path}{child.get('name')}/", depth + 1, visited, items,
+				f"{rel_path}{child.get('name')}{SHADOW_PATH_SEPARATOR}", depth + 1, visited, items,
 			)
 
 
@@ -558,7 +573,8 @@ def _walk_drive_index(index, folder_id, rel_path, depth, visited, items):
 		items.append((child, rel_path))
 		if child.get("mimeType") == FOLDER_MIME:
 			_walk_drive_index(
-				index, child["id"], f"{rel_path}{child.get('name')}/", depth + 1, visited, items,
+				index, child["id"], f"{rel_path}{child.get('name')}{SHADOW_PATH_SEPARATOR}",
+				depth + 1, visited, items,
 			)
 
 
@@ -587,6 +603,22 @@ def _flag_missing_root_folder(doctype, docname, folder_id):
 	:func:`run_drive_link_reconcile` covers the rest."""
 	_flag_missing_drive_item(doctype, docname, folder_id, None, FOLDER_GONE_MSG)
 	set_folder_missing(doctype, docname, 1)
+
+
+def _shadow_display_name(drive_file, rel_path):
+	"""The ``File.file_name`` a Drive item gets: its path below the linked root,
+	joined with ``SHADOW_PATH_SEPARATOR`` so the flat attachment list stays
+	legible, ``SHADOW_FOLDER_SUFFIX`` on folders, capped to the Data(140) limit
+	keeping the tail (the real file name is more useful than the leading path).
+	Must come back from Frappe's own ``set_file_name`` unchanged: the walk
+	compares the stored name against this, and a name Frappe rewrites would be
+	"repaired" again on every pass."""
+	name = f"{rel_path}{drive_file.get('name')}"
+	if drive_file.get("mimeType") == FOLDER_MIME:
+		name += SHADOW_FOLDER_SUFFIX
+	if len(name) > MAX_FILE_NAME_LENGTH:
+		name = "..." + name[-(MAX_FILE_NAME_LENGTH - 3):]
+	return name
 
 
 def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache, index=None):
@@ -634,17 +666,20 @@ def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache, i
 		else []
 	)
 
-	for drive_file, rel_path in items:
+	# One name per item, computed from the walk: used for the new shadows below
+	# and to repair the existing ones after them.
+	wanted = {
+		drive_file["id"]: _shadow_display_name(drive_file, rel_path) for drive_file, rel_path in items
+	}
+
+	for drive_file, _rel_path in items:
 		if drive_file["id"] in known_ids:
 			continue
-		is_folder = drive_file.get("mimeType") == FOLDER_MIME
-		# Path-prefixed so the flat attachment list stays legible; a trailing
-		# slash marks folders. Link-only either way — no bytes are copied.
-		display_name = f"{rel_path}{drive_file.get('name')}" + ("/" if is_folder else "")
-		# Cap to the File.file_name limit, keeping the tail (the real file/folder name is
-		# more useful than the leading path) so a deeply-nested item can't crash the sync.
-		if len(display_name) > MAX_FILE_NAME_LENGTH:
-			display_name = "..." + display_name[-(MAX_FILE_NAME_LENGTH - 3):]
+		# An item can be reached twice in one walk (a shortcut loop); the first
+		# insert is the only one.
+		known_ids.add(drive_file["id"])
+		# Link-only, files and folders alike — no bytes are copied.
+		display_name = wanted[drive_file["id"]]
 		# Insert unattached, then link via db_set. Inserting with attached_to_*
 		# set fires File.after_insert -> create_attachment_record, which adds an
 		# "Attachment" comment to the reference doc and publishes realtime per
@@ -669,8 +704,12 @@ def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache, i
 			drive_link=drive_file.get("webViewLink"),
 		)
 
-	# Stale detection: shadows pointing at Drive items no longer anywhere in the
-	# tree. Flag once (deletions never propagate).
+	# Stale detection and name repair, in one pass over this document's shadows.
+	# A shadow whose Drive item is no longer anywhere in the tree is flagged once
+	# (deletions never propagate). One that is still there but whose stored name
+	# differs from what the walk would name it today is renamed in place: that is
+	# how a file renamed or moved within the tree keeps its shadow current, and
+	# how the flat names Frappe's slash-stripping left behind get repaired.
 	shadows = frappe.get_all(
 		"File",
 		filters={
@@ -681,14 +720,19 @@ def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache, i
 		},
 		fields=["name", "file_name", "custom_drive_file_id"],
 	)
-	listed = set(drive_ids)
 	for shadow_row in shadows:
-		if shadow_row.custom_drive_file_id in listed:
-			continue
-		_flag_missing_drive_item(
-			doctype, docname, shadow_row.custom_drive_file_id, shadow_row.file_name,
-			"The Drive file behind this shadow attachment was moved or deleted.",
-		)
+		wanted_name = wanted.get(shadow_row.custom_drive_file_id)
+		if wanted_name is None:
+			_flag_missing_drive_item(
+				doctype, docname, shadow_row.custom_drive_file_id, shadow_row.file_name,
+				"The Drive file behind this shadow attachment was moved or deleted.",
+			)
+		elif shadow_row.file_name != wanted_name:
+			# A db-level write: no hooks, no timeline comment, no modified bump —
+			# the same reasons the insert above links via db_set.
+			frappe.db.set_value(
+				"File", shadow_row.name, "file_name", wanted_name, update_modified=False
+			)
 
 
 # ------------------------------------------------------------------ link reconciliation

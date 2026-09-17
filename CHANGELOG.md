@@ -48,7 +48,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep correct, to save the last minute. Worth revisiting only if the drive grows past a few
   hundred thousand items.
 
+### Fixed
+
+- **Nested shadow names never had their path, and folders never had their marker — Frappe
+  deletes every `/` from a `File.file_name`.** The sync built `Design/Renderings/front.png`
+  for a nested file and `Design/` for a folder, and the README, the changelog and the code
+  comments all describe that as working. Frappe v16's `File.set_file_name` runs
+  `re.sub(r"/", "", file_name)` on every insert and save, so what was stored was
+  `DesignRenderingsfront.png` and `Design`: 0 of 32,654 production shadows contain a slash,
+  and nothing noticed because the row saved fine. Names now use `SHADOW_PATH_SEPARATOR`
+  (` › `) and `SHADOW_FOLDER_SUFFIX` (` (folder)`): `Design › Renderings › front.png`,
+  `Design (folder)`.
+
+  The existing rows are repaired by the walk itself rather than a patch. Every pass now
+  recomputes each item's display name and, for a shadow of the document being walked whose
+  stored name differs, writes the new one with `frappe.db.set_value` (no hooks, no timeline
+  comment, no `modified` bump — the same reasons the insert links via `db_set`). The first
+  pass after deploy therefore renames the ~32k flat names, and every pass after that keeps a
+  shadow's name following its file — a rename or move within the tree in Drive was never
+  reflected before; a shadow kept its first name forever. The repair sits in the same loop as
+  Stale detection, so it costs no extra query. `_shadow_display_name` is the one place a name
+  is built, and its docstring says why it must come back from Frappe unchanged: the repair
+  compares against what Frappe keeps, and a separator Frappe rewrote would be "repaired"
+  again every hour.
+
+  Also in the insert loop: an item reached twice in one walk (a shortcut loop, which the
+  `visited` guard stops recursing into but still lists) could be shadowed twice; the first
+  insert now marks the id known.
+
 ### Added
+
+- **`TestShadowNames`** in `tests/test_drive_sync_recovery.py`: the fake `File.insert` strips
+  slashes exactly as Frappe's does, so a separator Frappe would eat fails the build rather than
+  the data. Asserts nested names keep their path and folders their marker; a name Frappe keeps
+  is not "repaired" on every pass; a flat pre-fix row is renamed in place — not re-shadowed,
+  not flagged; a rename or move in Drive follows on the next pass; and an over-limit name
+  keeps its tail.
 
 - **`TestWholeDriveIndex`** in `tests/test_drive_sync_recovery.py` (existing bench-free CI
   step): a fake Drive service that counts calls by kind, run against a tree shaped like
