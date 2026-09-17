@@ -98,6 +98,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than `MAX_SHADOW_DEPTH`. The existing survival and time-box tests now run against the same
   fake, so the listing is exercised on every run.
 
+## [1.474.2] - 2026-09-17
+
+### Fixed
+
+- **Confirming a proposal with nothing ticked crashed the feedback board's "Create these tasks"
+  button.** `task_writer.create_tasks_for` returned early with three keys when no row was
+  included, and `api.feedback.create_tasks` reads `result["complete"]` with no default —
+  `KeyError: 'complete'`, a 500 on the button. It had never fired because every breakdown until
+  today proposed at least one task; ER-2026-458194 is the first where the model proposed none (it
+  called the request a training issue, which it is not — the request now carries a verified
+  proposal), so the reviewer's confirm arrived with `rows: []`. Three changes. The endpoint now
+  refuses a confirm with nothing ticked, legibly, *before* the writer runs — "tick at least one, or
+  reject / mark duplicate" — because `Tasks Created` should mean there is work on a board. The
+  writer's empty return carries the full result shape, so no caller can trip on it again. And the
+  board checks the tickboxes before it dials. `tests/test_feedback_endpoint_surface.py` now asserts
+  with AST that every `return {...}` in the writer carries every key the endpoint subscripts, and
+  that the guard sits before the write.
+
 ## [1.474.1] - 2026-09-17
 
 ### Fixed
