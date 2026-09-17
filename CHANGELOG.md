@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.474.1] - 2026-09-17
+
+### Fixed
+
+- **The Record Matching page could not load on production.** Both of its queue queries counted
+  rows with `frappe.get_all(..., fields=["count(name) as total"])`, and Frappe 16's query engine
+  refuses a SQL function written as a string field: *"SQL functions are not allowed as strings in
+  SELECT … Use dict syntax like {'COUNT': '*'} instead."* Nik hit it minutes after v1.474.0
+  deployed. Nothing bench-free could have caught it — the test stub's `get_all` accepts anything,
+  ruff sees a plain string, and the whole local CI run was green. Both counts are now bound raw
+  SQL through `frappe.db.sql`, the way `status_counts` and `latest_payloads` in the same module
+  already were, and the page's row query now shares its WHERE clause with its count
+  (`_master_where`) so the two cannot disagree. The exact SQL and parameter binding (tuple `IN`,
+  bound `LIKE`, bound `LIMIT`) were run against production before this shipped.
+- **The Enhancement Request status tally had the same shape and was silently empty on 16.**
+  `api/feedback.py`'s `_status_counts` passed `"count(name) as n"` inside a `try/except` that
+  returned `{}` on the refusal, so the denominator the feedback list is read against vanished
+  without an error. Same fix.
+- **An app-wide guard now walks every `get_all` / `get_list` call for a function-shaped string in
+  `fields`** (`tests/test_quickbooks_matching.py`), so the next one fails the build instead of the
+  page. It found the feedback one.
+
 ## [1.474.0] - 2026-09-17
 
 ### Added
