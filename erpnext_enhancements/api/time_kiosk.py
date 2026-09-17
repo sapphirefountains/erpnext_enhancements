@@ -223,6 +223,177 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
         frappe.throw(_("Invalid action. Must be 'Start', 'Stop', 'Pause', 'Resume', or 'Switch'."))
 
 
+
+@frappe.whitelist()
+def close_interval_for_employee(employee=None, skip_reason=None, source="Triton"):
+    caller_emp = _session_employee()
+    
+    if not employee or employee == caller_emp:
+        target_employee = caller_emp
+    else:
+        if not set(frappe.get_roles(frappe.session.user)).intersection(TIMELINE_MANAGER_ROLES):
+            frappe.throw(_("Not permitted to close intervals for other employees."), frappe.PermissionError)
+        target_employee = employee
+        
+    if not target_employee:
+        frappe.throw(_("Employee is required."))
+
+    now_dt = now_datetime()
+    
+    frappe.db.get_value("Employee", target_employee, "name", for_update=True)
+    active = frappe.db.get_value("Job Interval", {"employee": target_employee, "status": ["in", ["Open", "Paused"]]}, "name", for_update=True)
+    
+    if not active:
+        frappe.throw(_("No active job found to stop."))
+        
+    doc = frappe.get_doc("Job Interval", active)
+    
+    photo_status = photo_gate.resolve(doc, skip_reason=skip_reason)
+    
+    doc.closed_via = source
+    doc.closed_requested_by = frappe.session.user if target_employee != caller_emp else None
+    doc.unanchored_close = 1
+    
+    _close_interval(doc, now_dt, None, None, None, photo_status, skip_reason)
+    
+    return {
+        "status": "success",
+        "message": "Work stopped.",
+        "doc": doc.name,
+        "offsite": _offsite_payload(doc, "end"),
+        "closed_via": doc.closed_via,
+        "closed_requested_by": doc.closed_requested_by,
+        "unanchored_close": doc.unanchored_close
+    }
+
+
+# ---------------------------------------------------------------------------
+# The location stash (Triton clock-in)
+# ---------------------------------------------------------------------------
+#
+# Triton may clock somebody IN, and clocking in demands a real browser fix. The
+# coordinates must therefore reach the server WITHOUT passing through the
+# language model.
+#
+# A lat/lng supplied as an MCP *tool argument* is a number the model typed. It is
+# forgeable and hallucinable, which is exactly what a geofence anchor must never
+# be — and it cannot physically arrive that way in any case: the widget's POST
+# body is a closed contract, frappe silently drops POST keys absent from the
+# Python signature, and ``triton_chat.stream_query`` flattens its structured
+# context into prompt *text* before Triton ever sees it.
+#
+# So the browser hands the fix straight to this endpoint over the user's own
+# session, and the clock-in tool reads it back server-side for the calling user
+# and nobody else. There is deliberately NO way to stash a fix for another user,
+# and no identifier is handed out that could travel through a transcript as a
+# bearer token.
+#
+# The TTL is short on purpose: a fix is evidence of where somebody is standing
+# now, not a standing permission.
+#
+# Note the stash lives in ``frappe.cache()``, which the production deploy
+# FLUSHDBs. That is harmless here and fails safe — a lost stash means "share your
+# location again", never a wrong anchor.
+
+LOCATION_STASH_TTL_SEC = 120
+NO_LOCATION_FIX_MSG = (
+    "No recent location fix. Open the Triton widget in ERPNext, share your "
+    "location, and try again."
+)
+
+
+def _location_stash_key(user=None):
+    return f"ee_kiosk_location_fix::{user or frappe.session.user}"
+
+
+@frappe.whitelist()
+def stash_location_fix(lat=None, lng=None, accuracy=None):
+    """Record the caller's own browser geolocation fix for ``LOCATION_STASH_TTL_SEC``.
+
+    Keyed by ``frappe.session.user``. A caller can only ever stash for themselves.
+    Returns ``{"ok": True, "expires_in": <seconds>}``.
+    """
+    if not _valid_coords(lat, lng):
+        frappe.throw(_("A valid latitude and longitude are required."))
+
+    payload = {
+        "lat": flt(lat),
+        "lng": flt(lng),
+        "accuracy": flt(accuracy) if accuracy not in (None, "") else None,
+        "stamped_at": str(now_datetime()),
+    }
+    frappe.cache().set_value(
+        _location_stash_key(), json.dumps(payload), expires_in_sec=LOCATION_STASH_TTL_SEC
+    )
+    return {"ok": True, "expires_in": LOCATION_STASH_TTL_SEC}
+
+
+def get_stashed_location_fix(user=None):
+    """The caller's stashed fix, or ``None`` when there is none or it has expired.
+
+    Not whitelisted: this is read server-side by the clock-in path. Nothing may
+    ask the server to hand a location back out to a client.
+    """
+    raw = frappe.cache().get_value(_location_stash_key(user))
+    if not raw:
+        return None
+    try:
+        fix = json.loads(raw if isinstance(raw, str) else frappe.safe_decode(raw))
+    except Exception:
+        return None
+    if not _valid_coords(fix.get("lat"), fix.get("lng")):
+        return None
+    return fix
+
+
+def consume_stashed_location_fix(user=None):
+    """Read the stash and delete it. A fix authorises exactly one clock-in, so a
+    second attempt has to be backed by a second, freshly-taken fix."""
+    fix = get_stashed_location_fix(user)
+    if fix is not None:
+        frappe.cache().delete_value(_location_stash_key(user))
+    return fix
+
+
+@frappe.whitelist()
+def clock_in_with_stashed_fix(project=None, task=None, time_category=None,
+                              description=None, offsite_acknowledged=None, source="Triton"):
+    """Clock the CALLER in, anchored to the fix their browser stashed.
+
+    Never accepts an ``employee`` argument: a supervisor's phone is not the crew
+    member's, and opening a job is precisely what the geofence exists to prove.
+    On-behalf is clock-OUT only (``close_interval_for_employee``).
+
+    No stash, no clock-in — the refusal carries ``NO_LOCATION_FIX_MSG`` so an
+    assistant can relay it verbatim.
+    """
+    fix = consume_stashed_location_fix()
+    if not fix:
+        frappe.throw(_(NO_LOCATION_FIX_MSG))
+
+    result = log_time(
+        project=project,
+        action="Start",
+        lat=fix["lat"],
+        lng=fix["lng"],
+        accuracy=fix.get("accuracy"),
+        description=description,
+        task=task,
+        time_category=time_category,
+        offsite_acknowledged=offsite_acknowledged,
+    )
+
+    if result.get("doc"):
+        # Provenance, stamped after the fact rather than threaded through
+        # log_time: that signature is the kiosk PWA's contract and is not widened
+        # for this. db_set writes the one column without re-running validate,
+        # which would recompute the pay block for no reason.
+        doc = frappe.get_doc("Job Interval", result["doc"])
+        doc.db_set("opened_via", source, update_modified=False)
+    result["opened_via"] = source
+    return result
+
+
 def _new_interval(employee, project, task, time_category, description, now_dt,
                   lat, lng, accuracy, offsite_acknowledged):
     """An unsaved Job Interval for a Start / Switch-new, with the start anchor,
@@ -258,7 +429,8 @@ def _new_interval(employee, project, task, time_category, description, now_dt,
 
     distance = _distance_to_site(doc, lat, lng)
     doc.start_distance_m = distance
-    doc.offsite_start = 1 if _is_offsite(doc, distance) else 0
+    offsite = _is_offsite(doc, distance)
+    doc.offsite_start = 1 if offsite else 0 if offsite is False else None
 
     costing.stamp_position(doc)
     costing.stamp_cost(doc)
@@ -278,9 +450,15 @@ def _close_interval(doc, now_dt, lat, lng, accuracy, photo_status, skip_reason):
         doc.end_latitude = flt(lat)
         doc.end_longitude = flt(lng)
         doc.end_accuracy = flt(accuracy) if accuracy not in (None, "") else None
-        distance = _distance_to_site(doc, lat, lng)
-        doc.end_distance_m = distance
-        doc.offsite_end = 1 if _is_offsite(doc, distance) else 0
+    else:
+        doc.end_latitude = None
+        doc.end_longitude = None
+        doc.end_accuracy = None
+
+    distance = _distance_to_site(doc, lat, lng)
+    doc.end_distance_m = distance
+    offsite = _is_offsite(doc, distance)
+    doc.offsite_end = 1 if offsite else 0 if offsite is False else None
 
     photo_gate.stamp(doc, photo_status, skip_reason=skip_reason)
     _stamp_tracking_health(doc)
@@ -289,14 +467,20 @@ def _close_interval(doc, now_dt, lat, lng, accuracy, photo_status, skip_reason):
 
 
 def _distance_to_site(doc, lat, lng):
+    # Null Island failure: previously, missing lat/lng (None) was converted to 0.0 by flt().
+    # This caused the distance to be measured from the site to Null Island (0,0),
+    # returning ~11,160,000 m. As a result, an unknown location silently became a confident
+    # but false "off-site" verdict (offsite_end = 1). We now require valid coords.
     if not _valid_coords(lat, lng) or not (doc.site_latitude or doc.site_longitude):
         return None
     return round(haversine_m(lat, lng, doc.site_latitude, doc.site_longitude))
 
 
 def _is_offsite(doc, distance):
+    if distance is None:
+        return None
     radius = cint(doc.site_radius_m)
-    return bool(radius > 0 and distance is not None and distance > radius)
+    return bool(radius > 0 and distance > radius)
 
 
 def _offsite_payload(doc, phase):
@@ -307,9 +491,11 @@ def _offsite_payload(doc, phase):
     if getattr(doc, "site_latitude", None) or getattr(doc, "site_longitude", None):
         site_title = frappe.db.get_value("Project", doc.project, "project_name") or doc.project
     if phase == "start":
-        flagged, distance = bool(doc.offsite_start), doc.start_distance_m
+        flagged = bool(doc.offsite_start) if doc.offsite_start is not None else None
+        distance = doc.start_distance_m
     elif phase == "end":
-        flagged, distance = bool(doc.offsite_end), doc.end_distance_m
+        flagged = bool(doc.offsite_end) if doc.offsite_end is not None else None
+        distance = doc.end_distance_m
     else:
         flagged, distance = False, None
     return {
@@ -1544,6 +1730,8 @@ def _parse_timestamp(ts):
 
 
 def _valid_coords(lat, lng):
+    if lat in (None, "") or lng in (None, ""):
+        return False
     try:
         lat = flt(lat)
         lng = flt(lng)

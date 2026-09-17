@@ -143,52 +143,7 @@
 	// page-level window.google singleton means whichever consumer loads first
 	// wins and the others reuse it (same convention as travel_trip_map.js and
 	// travel_poi.js).
-	let mapsPromise = null;
-	function ensureGoogleMaps(apiKey) {
-		if (mapsPromise) return mapsPromise;
 
-		// The old fast path returned as soon as `window.google.maps` existed. That is
-		// unsafe now: the singleton is shared with travel_trip_map.js and travel_poi.js,
-		// neither of which imports a library, so whichever consumer loads first decides
-		// what is present. `google.maps.routes` and `google.maps.marker` stay *undefined*
-		// until importLibrary is awaited, even though the root namespace looks complete.
-		// Resolve on the libraries we actually use, not on the namespace.
-		mapsPromise = (async () => {
-			if (!(window.google && window.google.maps && window.google.maps.importLibrary)) {
-				if (!apiKey) throw new Error('Google Maps API key not set');
-				await new Promise((resolve, reject) => {
-					const callbackName = '__eeGoogleMapsPickupReady';
-					window[callbackName] = () => {
-						delete window[callbackName];
-						resolve();
-					};
-					const script = document.createElement('script');
-					script.src =
-						'https://maps.googleapis.com/maps/api/js?key=' +
-						encodeURIComponent(apiKey) +
-						'&callback=' + callbackName +
-						// Keep. Verified against Google bundle v3.65.11b: with this flag the
-						// legacy root namespace (DirectionsService, TravelMode, UnitSystem,
-						// Marker) *is* fully populated when the callback fires. An earlier
-						// theory that this flag emptied the namespace was wrong.
-						'&loading=async';
-					script.async = true;
-					script.onerror = () => reject(new Error('Google Maps failed to load'));
-					document.head.appendChild(script);
-				});
-			}
-			// `maps` and `core` cover everything the legacy path needs; `routes` is
-			// requested lazily in computeViaRoutes so a project without the Routes API
-			// enabled does not fail the whole map load.
-			await window.google.maps.importLibrary('maps');
-			return window.google.maps;
-		})().catch((err) => {
-			mapsPromise = null; // let a later open retry
-			throw err;
-		});
-
-		return mapsPromise;
-	}
 
 	// ------------------------------------------------------------------- style
 
@@ -1131,7 +1086,7 @@
 				return;
 			}
 
-			ensureGoogleMaps(apiKey)
+			window.EEGoogleMaps.load({ apiKey: apiKey, libraries: ['maps'] })
 				.then((maps) => {
 					// Only `destroyed` aborts here, NOT isStale. The map object itself is
 					// not generation-specific; only the route drawn on it is, and route()

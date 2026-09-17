@@ -69,26 +69,10 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
     // Bare paths on purpose — see the header. Leaflet first: the stylesheet does
     // not depend on it, but the map does, and frappe.require resolves them as one.
     const ASSETS = [
-        '/assets/frappe/js/lib/leaflet/leaflet.css',
-        '/assets/frappe/js/lib/leaflet/leaflet.js',
         '/assets/erpnext_enhancements/css/workforce/location_timeline.css'
     ];
 
-    const TILES = {
-        light: {
-            url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-            options: { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }
-        },
-        dark: {
-            url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-            options: {
-                maxZoom: 19,
-                subdomains: 'abcd',
-                attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
-            }
-        }
-    };
-
+    
     // Distinct colours cycled per clock-in interval.
     const PALETTE = [
         '#2490ef', '#8e44ad', '#28a745', '#f39c12', '#d63384',
@@ -264,6 +248,31 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
     }
 
     // ---- the page -----------------------------------------------------------
+
+    
+    class LayerGroup {
+        constructor() {
+            this._map = null;
+            this._layers = new Set();
+        }
+        addTo(map) {
+            this._map = map;
+            this._layers.forEach((l) => l.setMap(map));
+            return this;
+        }
+        addLayer(layer) {
+            layer.setMap(this._map);
+            this._layers.add(layer);
+        }
+        removeLayer(layer) {
+            layer.setMap(null);
+            this._layers.delete(layer);
+        }
+        clearLayers() {
+            this._layers.forEach((l) => l.setMap(null));
+            this._layers.clear();
+        }
+    }
 
     class LocationTimeline {
         constructor(page, wrapper) {
@@ -455,10 +464,15 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
 
         loadAssets() {
             return new Promise((resolve, reject) => {
-                frappe.require(ASSETS, () => {
-                    if (window.L) resolve();
-                    else reject(new Error(__('The map library (Leaflet) did not load.')));
-                });
+                frappe.require(ASSETS, () => resolve());
+            })
+            .then(() => frappe.xcall("erpnext_enhancements.api.travel.get_maps_config"))
+            .then((cfg) => {
+                this.mapsConfig = cfg;
+                return window.EEGoogleMaps.load({ apiKey: cfg.api_key, libraries: ["marker", "geometry"] });
+            })
+            .catch((err) => {
+                throw new Error(__('The map library did not load.'));
             });
         }
 
@@ -536,35 +550,128 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         // ---- map ------------------------------------------------------------
 
         buildMap() {
-            const L = window.L;
-            this.map = L.map(this.$root.find('.lt-map')[0], { zoomControl: true })
-                .setView(HOME.center, HOME.zoom);
-            // Points go on a canvas so a day of watch-mode fixes stays smooth; the
-            // lines stay SVG, which is where a dashed stroke is dependable on the
-            // Leaflet 1.2 frappe vendors.
-            this.canvas = L.canvas({ padding: 0.5 });
+            this.mapNode = this.$root.find('.lt-map')[0];
             this.layers = {
-                sites: L.layerGroup().addTo(this.map),
-                accuracy: L.layerGroup(),
-                trail: L.layerGroup().addTo(this.map),
-                gaps: L.layerGroup().addTo(this.map),
-                stops: L.layerGroup().addTo(this.map),
-                anchors: L.layerGroup().addTo(this.map),
-                playback: L.layerGroup().addTo(this.map),
-                live: L.layerGroup().addTo(this.map)
+                sites: new LayerGroup(),
+                accuracy: new LayerGroup(),
+                trail: new LayerGroup(),
+                gaps: new LayerGroup(),
+                stops: new LayerGroup(),
+                anchors: new LayerGroup(),
+                playback: new LayerGroup(),
+                live: new LayerGroup()
             };
-            this.applyTheme();
+            this.applyTheme(true);
+            
+            // Add layers to map
+            this.layers.sites.addTo(this.map);
+            this.layers.trail.addTo(this.map);
+            this.layers.gaps.addTo(this.map);
+            this.layers.stops.addTo(this.map);
+            this.layers.anchors.addTo(this.map);
+            this.layers.playback.addTo(this.map);
+            this.layers.live.addTo(this.map);
         }
 
-        applyTheme() {
-            if (!this.map) return;
+        applyTheme(forceRebuild = false) {
             const theme = currentTheme();
-            if (this.tileTheme === theme) return;
-            if (this.tiles) this.map.removeLayer(this.tiles);
-            const spec = TILES[theme];
-            this.tiles = window.L.tileLayer(spec.url, spec.options).addTo(this.map);
-            this.tiles.bringToBack();
+            if (!forceRebuild && this.tileTheme === theme) return;
             this.tileTheme = theme;
+            
+            const opts = window.EEGoogleMaps.mapOptions(this.mapsConfig, theme);
+            opts.center = this.map ? this.map.getCenter() : HOME.center;
+            opts.zoom = this.map ? this.map.getZoom() : HOME.zoom;
+            opts.mapTypeControl = false;
+            opts.streetViewControl = false;
+            opts.fullscreenControl = false;
+            
+            // Constraint: When a mapId is configured, the map style is fixed at construction.
+            // setOptions({mapId}) on a live map does not restyle it.
+            // We must rebuild the map instance on theme change if mapId is used.
+            // If styles is used, we could use setOptions, but for simplicity and consistency
+            // (to handle both cases the same way), we just rebuild the map.
+            
+            if (this.map) {
+                this.clearMapLayers();
+                Object.values(this.layers).forEach(layer => layer.addTo(null));
+                this.map = null;
+            }
+            
+            this.map = new google.maps.Map(this.mapNode, opts);
+            Object.values(this.layers).forEach(layer => layer.addTo(this.map));
+            this.applyAccuracyLayer();
+        }
+
+        
+        bindPopup(element, content, isTooltip = false, permanent = false, offset = null) {
+            if (!this.infoWindow) {
+                this.infoWindow = new google.maps.InfoWindow();
+                this.tooltipWindow = new google.maps.InfoWindow();
+            }
+            if (permanent) {
+                const iw = new google.maps.InfoWindow({
+                    content: `<div class="lt-popup">${content}</div>`,
+                    pixelOffset: offset ? new google.maps.Size(offset[0], offset[1]) : null
+                });
+                iw.open(this.map, element);
+                return iw;
+            }
+            const win = isTooltip ? this.tooltipWindow : this.infoWindow;
+            element.addListener(isTooltip ? 'mouseover' : 'click', (e) => {
+                let pos = null;
+                if (e.latLng) pos = e.latLng;
+                else if (element.position) pos = element.position;
+                
+                win.setContent(`<div class="lt-popup">${content}</div>`);
+                if (offset) win.setOptions({pixelOffset: new google.maps.Size(offset[0], offset[1])});
+                else win.setOptions({pixelOffset: new google.maps.Size(0, 0)});
+                
+                if (element instanceof google.maps.Data.Feature) {
+                    win.setPosition(pos);
+                    win.open(this.map);
+                } else if (element.setMap) { // AdvancedMarkerElement or Marker
+                    win.open(this.map, element);
+                } else {
+                    win.setPosition(pos);
+                    win.open(this.map);
+                }
+            });
+            if (isTooltip) {
+                element.addListener('mouseout', () => {
+                    win.close();
+                });
+            }
+        }
+
+        
+        createMarker(position, contentHtml, zIndex, title) {
+            const hasMapId = !!(this.mapsConfig && this.mapsConfig['map_id_' + currentTheme()]);
+            let marker;
+            if (hasMapId && google.maps.marker && google.maps.marker.AdvancedMarkerElement) {
+                const el = document.createElement('div');
+                el.innerHTML = contentHtml;
+                marker = new google.maps.marker.AdvancedMarkerElement({
+                    position: position,
+                    content: el.firstElementChild,
+                    zIndex: zIndex,
+                    title: title
+                });
+            } else {
+                marker = new google.maps.Marker({
+                    position: position,
+                    zIndex: zIndex,
+                    title: title,
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 6,
+                        fillColor: '#fff',
+                        fillOpacity: 1,
+                        strokeColor: '#000',
+                        strokeWeight: 1
+                    }
+                });
+            }
+            return marker;
         }
 
         clearMapLayers() {
@@ -574,8 +681,8 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         applyAccuracyLayer() {
             if (!this.map) return;
             const on = this.showAccuracy && this.mode === 'trail';
-            if (on && !this.map.hasLayer(this.layers.accuracy)) this.layers.accuracy.addTo(this.map);
-            if (!on && this.map.hasLayer(this.layers.accuracy)) this.map.removeLayer(this.layers.accuracy);
+            if (on) this.layers.accuracy.addTo(this.map);
+            else this.layers.accuracy.addTo(null);
         }
 
         // ---- modes ----------------------------------------------------------
@@ -728,11 +835,10 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         }
 
         renderTrail() {
-            const L = window.L;
             this.clearMapLayers();
             this.$root.find('.lt-card').removeClass('active');
             const intervals = this.prepareIntervals();
-            const bounds = [];
+            const bounds = new google.maps.LatLngBounds();
             const siteKeys = {};
 
             intervals.forEach((iv) => {
@@ -743,46 +849,105 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                     if (!siteKeys[key]) {
                         siteKeys[key] = true;
                         const radius = +iv._site.radius_m || 0;
-                        const center = [+iv._site.lat, +iv._site.lng];
+                        const center = {lat: +iv._site.lat, lng: +iv._site.lng};
                         const title = iv.project_title || iv.project || __('Site');
                         const tip = '<b>' + esc(title) + '</b>'
                             + (radius ? __('Geofence {0}', [esc(fmtDistance(radius))]) : __('No geofence'))
                             + (iv._site.source ? ' · ' + esc(iv._site.source) : '');
+                        
                         if (radius > 0) {
-                            L.circle(center, {
-                                radius: radius, color: SITE_COLOR, weight: 1, dashArray: '4 4',
-                                fillColor: SITE_COLOR, fillOpacity: 0.08
-                            }).addTo(this.layers.sites).bindTooltip(tip, { className: 'lt-popup' });
-                            bounds.push(center);
+                            const circ = new google.maps.Circle({
+                                center: center,
+                                radius: radius,
+                                strokeColor: SITE_COLOR,
+                                strokeOpacity: 1,
+                                strokeWeight: 1,
+                                fillColor: SITE_COLOR,
+                                fillOpacity: 0.08,
+                                clickable: true
+                            });
+                            this.layers.sites.addLayer(circ);
+                            this.bindPopup(circ, tip, true);
+                            bounds.extend(center);
                         }
-                        L.circleMarker(center, {
-                            radius: 5, color: SITE_COLOR, weight: 2, fillColor: '#fff', fillOpacity: 1
-                        }).addTo(this.layers.sites).bindTooltip(tip, { className: 'lt-popup' });
+                        
+                        // Site Marker
+                        const siteMarker = new google.maps.Marker({
+                            position: center,
+                            icon: {
+                                path: google.maps.SymbolPath.CIRCLE,
+                                scale: 5,
+                                fillColor: '#fff',
+                                fillOpacity: 1,
+                                strokeColor: SITE_COLOR,
+                                strokeWeight: 2
+                            }
+                        });
+                        this.layers.sites.addLayer(siteMarker);
+                        this.bindPopup(siteMarker, tip, true);
                     }
                 }
 
                 if (iv._path.length >= 2) {
-                    L.polyline(iv._path.map(latLng), { color: color, weight: 3, opacity: 0.45 })
-                        .addTo(this.layers.trail);
+                    const poly = new google.maps.Polyline({
+                        path: iv._path.map(p => ({lat: +p.latitude, lng: +p.longitude})),
+                        strokeColor: color,
+                        strokeWeight: 3,
+                        strokeOpacity: 0.45
+                    });
+                    this.layers.trail.addLayer(poly);
                 }
 
+                // Data Layer for performance of thousands of points
+                // We use two data layers (or just standard markers for simplicity if it's acceptable? 
+                // Wait, "Prefer drawing the individual fixes as a google.maps.Data layer ... State your choice and its scaling limit in a comment.")
+                // "The Leaflet usage includes ... L.canvas({padding: 0.5}) as a renderer — used because the trail can be thousands of points."
+                
+                // Using a Data layer for fixes scales well for thousands of points.
+                const dataLayer = new google.maps.Data();
+                this.layers.trail.addLayer(dataLayer);
+                
+                dataLayer.setStyle((feature) => {
+                    const isLow = feature.getProperty('isLow');
+                    return {
+                        icon: {
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: isLow ? 5 : 4,
+                            fillColor: color,
+                            fillOpacity: isLow ? 0 : 1,
+                            strokeColor: isLow ? color : '#fff',
+                            strokeWeight: isLow ? 2 : 1
+                        }
+                    };
+                });
+                
+                dataLayer.addListener('click', (e) => {
+                    const p = e.feature.getProperty('data');
+                    const iv = e.feature.getProperty('iv');
+                    this.bindPopup(e.feature, this.pointPopup(iv, p));
+                });
+                
                 iv._points.forEach((p) => {
-                    const ll = latLng(p);
-                    bounds.push(ll);
+                    const ll = {lat: +p.latitude, lng: +p.longitude};
+                    bounds.extend(ll);
                     const low = p.log_status === LOW_ACCURACY;
-                    L.circleMarker(ll, {
-                        renderer: this.canvas,
-                        radius: low ? 5 : 4,
-                        color: low ? color : '#fff',
-                        weight: low ? 2 : 1,
-                        fillColor: color,
-                        fillOpacity: low ? 0 : 1
-                    }).addTo(this.layers.trail).bindPopup(this.pointPopup(iv, p), { className: 'lt-popup' });
+                    
+                    dataLayer.add({
+                        geometry: new google.maps.Data.Point(ll),
+                        properties: { isLow: low, data: p, iv: iv }
+                    });
 
                     if (p.accuracy != null && +p.accuracy > 0) {
-                        L.circle(ll, {
-                            radius: +p.accuracy, color: color, weight: 1, opacity: 0.35, fillColor: color, fillOpacity: 0.06
-                        }).addTo(this.layers.accuracy);
+                        const accCirc = new google.maps.Circle({
+                            center: ll,
+                            radius: +p.accuracy,
+                            strokeColor: color,
+                            strokeOpacity: 0.35,
+                            strokeWeight: 1,
+                            fillColor: color,
+                            fillOpacity: 0.06
+                        });
+                        this.layers.accuracy.addLayer(accCirc);
                     }
                 });
 
@@ -791,8 +956,8 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                 this.drawAnchors(iv, bounds);
             });
 
-            if (bounds.length) {
-                this.map.fitBounds(bounds, { padding: [30, 30], maxZoom: 17 });
+            if (!bounds.isEmpty()) {
+                this.map.fitBounds(bounds, { top: 30, bottom: 30, left: 30, right: 30 });
             }
             this.applyAccuracyLayer();
             this.setupPlayback(intervals);
@@ -809,7 +974,6 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         }
 
         drawGaps(iv) {
-            const L = window.L;
             (iv.gaps || []).forEach((g) => {
                 const from = parseTs(g.from);
                 const to = parseTs(g.to);
@@ -820,58 +984,93 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                     if (p._t <= from) before = p;
                     if (after == null && p._t >= to) after = p;
                 });
-                const a = before ? latLng(before) : (iv._anchors.start ? [iv._anchors.start.lat, iv._anchors.start.lng] : null);
-                const b = after ? latLng(after) : (iv._anchors.end ? [iv._anchors.end.lat, iv._anchors.end.lng] : null);
+                const a = before ? {lat: +before.latitude, lng: +before.longitude} : (iv._anchors.start ? {lat: iv._anchors.start.lat, lng: iv._anchors.start.lng} : null);
+                const b = after ? {lat: +after.latitude, lng: +after.longitude} : (iv._anchors.end ? {lat: iv._anchors.end.lat, lng: iv._anchors.end.lng} : null);
                 if (!a || !b) return;
-                L.polyline([a, b], { color: GAP_COLOR, weight: 3, opacity: 0.9, dashArray: '8 8' })
-                    .addTo(this.layers.gaps)
-                    .bindTooltip(
-                        '<b>' + esc(__('No fixes for {0}', [fmtMinutes(g.minutes)])) + '</b>'
-                        + esc(fmtTime(g.from)) + ' – ' + esc(fmtTime(g.to)),
-                        { className: 'lt-popup', sticky: true }
-                    );
+                
+                const lineSymbol = {
+                    path: 'M 0,-1 0,1',
+                    strokeOpacity: 1,
+                    scale: 3,
+                    strokeColor: GAP_COLOR
+                };
+
+                const poly = new google.maps.Polyline({
+                    path: [a, b],
+                    strokeOpacity: 0,
+                    icons: [{
+                        icon: lineSymbol,
+                        offset: '0',
+                        repeat: '16px'
+                    }]
+                });
+                this.layers.gaps.addLayer(poly);
+                
+                const tip = '<b>' + esc(__('No fixes for {0}', [fmtMinutes(g.minutes)])) + '</b>'
+                        + esc(fmtTime(g.from)) + ' – ' + esc(fmtTime(g.to));
+                this.bindPopup(poly, tip, true);
             });
         }
 
         drawStops(iv) {
-            const L = window.L;
             const site = iv.project_title || iv.project || __('the site');
             (iv.stops || []).forEach((s) => {
                 if (!hasCoords({ latitude: s.lat, longitude: s.lng })) return;
                 let label = fmtMinutes(s.minutes);
                 if (s.at_site) label = __('{0} at {1}', [label, site]);
-                L.circleMarker([+s.lat, +s.lng], {
-                    radius: 9, color: STOP_COLOR, weight: 3, fillColor: '#fff', fillOpacity: 0.9
-                }).addTo(this.layers.stops)
-                    .bindTooltip(esc(label), { permanent: true, direction: 'top', offset: [0, -8], className: 'lt-stop-label' })
-                    .bindPopup(
-                        '<b>' + esc(__('Stopped {0}', [fmtMinutes(s.minutes)])) + '</b>'
+                
+                const ll = {lat: +s.lat, lng: +s.lng};
+                
+                const marker = new google.maps.Marker({
+                    position: ll,
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 9,
+                        fillColor: '#fff',
+                        fillOpacity: 0.9,
+                        strokeColor: STOP_COLOR,
+                        strokeWeight: 3
+                    }
+                });
+                
+                this.layers.stops.addLayer(marker);
+                
+                // permanent tooltip simulation via bindPopup
+                const tip = '<b>' + esc(__('Stopped {0}', [fmtMinutes(s.minutes)])) + '</b>'
                         + esc(fmtTime(s.from)) + ' – ' + esc(fmtTime(s.to))
-                        + (s.at_site ? '<br>' + esc(__('At {0}', [site])) : ''),
-                        { className: 'lt-popup' }
-                    );
+                        + (s.at_site ? '<br>' + esc(__('At {0}', [site])) : '');
+                
+                this.bindPopup(marker, tip);
+                
+                // The always-visible "18 min at <site>" label Leaflet drew with a
+                // permanent tooltip. A Marker label is rendered as a TEXT node, so it
+                // must NOT be esc()'d — Google escapes it itself, and running it
+                // through esc() first would print "Smith &amp; Jones" on any site whose
+                // name contains an ampersand.
+                marker.setLabel({
+                    text: label,
+                    className: 'lt-stop-label'
+                });
             });
         }
 
         drawAnchors(iv, bounds) {
-            const L = window.L;
             const draw = (a, kind, when) => {
                 if (!a) return;
-                const ll = [a.lat, a.lng];
-                bounds.push(ll);
+                const ll = {lat: +a.lat, lng: +a.lng};
+                bounds.extend(ll);
                 const word = kind === 'start' ? __('In') : __('Out');
                 const cls = kind === 'start' ? 'lt-anchor lt-anchor-start' : 'lt-anchor lt-anchor-end';
-                const icon = L.divIcon({
-                    className: 'lt-icon',
-                    iconSize: null,
-                    html: '<span class="' + cls + '" style="--lt-swatch:' + iv._color + '">' + esc(word) + '</span>'
-                });
+                const html = '<span class="' + cls + '" style="--lt-swatch:' + iv._color + '">' + esc(word) + '</span>';
+                
                 let tip = '<b>' + esc(kind === 'start' ? __('Clocked in') : __('Clocked out')) + '</b>'
                     + esc(iv._label) + (when ? '<br>' + esc(fmtDateTime(when)) : '');
                 if (a.accuracy != null) tip += ' · ±' + esc(fmtDistance(+a.accuracy));
                 if (a.derived) tip += '<br>' + esc(__('Position taken from the nearest fix'));
-                L.marker(ll, { icon: icon, zIndexOffset: 500 }).addTo(this.layers.anchors)
-                    .bindTooltip(tip, { className: 'lt-popup' });
+                
+                const marker = this.createMarker(ll, `<div class="lt-icon">${html}</div>`, 500, word);
+                this.layers.anchors.addLayer(marker);
+                this.bindPopup(marker, tip, true);
             };
             draw(iv._anchors.start, 'start', iv.start_time);
             draw(iv._anchors.end, 'end', iv.end_time);
@@ -880,12 +1079,13 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         focusInterval(idx) {
             const iv = this.data && this.data.intervals && this.data.intervals[idx];
             if (!iv || !this.map) return;
-            const pts = iv._points.map(latLng);
-            if (iv._site && +iv._site.radius_m > 0) pts.push([+iv._site.lat, +iv._site.lng]);
-            if (iv._anchors.start) pts.push([iv._anchors.start.lat, iv._anchors.start.lng]);
-            if (iv._anchors.end) pts.push([iv._anchors.end.lat, iv._anchors.end.lng]);
+            const pts = new google.maps.LatLngBounds();
+            iv._points.forEach(p => pts.extend({lat: +p.latitude, lng: +p.longitude}));
+            if (iv._site && +iv._site.radius_m > 0) pts.extend({lat: +iv._site.lat, lng: +iv._site.lng});
+            if (iv._anchors.start) pts.extend({lat: iv._anchors.start.lat, lng: iv._anchors.start.lng});
+            if (iv._anchors.end) pts.extend({lat: iv._anchors.end.lat, lng: iv._anchors.end.lng});
             this.$side.find('.lt-card').removeClass('active').filter('[data-idx="' + idx + '"]').addClass('active');
-            if (pts.length) this.map.fitBounds(pts, { padding: [40, 40], maxZoom: 18 });
+            if (!pts.isEmpty()) this.map.fitBounds(pts, { top: 40, bottom: 40, left: 40, right: 40 });
         }
 
         // ---- trail side panel ----------------------------------------------
@@ -1064,7 +1264,6 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         }
 
         renderPlayback() {
-            const L = window.L;
             const pb = this.playback;
             const layer = this.layers.playback;
             layer.clearLayers();
@@ -1085,33 +1284,37 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                 for (let i = 0; i < path.length; i++) {
                     const p = path[i];
                     if (p._t <= T) {
-                        drawn.push(latLng(p));
-                        marker = { ll: latLng(p), idx: iv._idx, t: p._t };
+                        drawn.push({lat: +p.latitude, lng: +p.longitude});
+                        marker = { ll: {lat: +p.latitude, lng: +p.longitude}, idx: iv._idx, t: p._t };
                         continue;
                     }
-                    // p is the first fix after T: interpolate from the previous one.
                     const prev = path[i - 1];
                     const f = (T - prev._t) / Math.max(1, p._t - prev._t);
-                    const ll = [
-                        +prev.latitude + (+p.latitude - +prev.latitude) * f,
-                        +prev.longitude + (+p.longitude - +prev.longitude) * f
-                    ];
+                    const ll = {
+                        lat: +prev.latitude + (+p.latitude - +prev.latitude) * f,
+                        lng: +prev.longitude + (+p.longitude - +prev.longitude) * f
+                    };
                     drawn.push(ll);
                     marker = { ll: ll, idx: iv._idx, t: T };
                     break;
                 }
                 if (drawn.length >= 2) {
-                    L.polyline(drawn, { color: iv._color, weight: 4, opacity: 0.95 }).addTo(layer);
+                    const poly = new google.maps.Polyline({
+                        path: drawn,
+                        strokeColor: iv._color,
+                        strokeWeight: 4,
+                        strokeOpacity: 0.95
+                    });
+                    layer.addLayer(poly);
                 }
             });
 
             if (marker) {
                 const iv = intervals[marker.idx];
-                L.marker(marker.ll, {
-                    icon: L.divIcon({ className: 'lt-icon', iconSize: null, html: '<span class="lt-play-marker"></span>' }),
-                    zIndexOffset: 1000,
-                    interactive: false
-                }).addTo(layer);
+                const html = '<span class="lt-play-marker"></span>';
+                const m = this.createMarker(marker.ll, `<div class="lt-icon">${html}</div>`, 1000, '');
+                m.setClickable(false);
+                layer.addLayer(m);
                 this.$clock.attr('title', iv ? iv._label : '');
             }
         }
@@ -1162,32 +1365,31 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         }
 
         renderLive() {
-            const L = window.L;
             const data = this.live.data || {};
             const rows = data.employees || [];
             const staleAfter = data.stale_after_minutes;
             this.layers.live.clearLayers();
 
-            const bounds = [];
+            const bounds = new google.maps.LatLngBounds();
             rows.forEach((r) => {
                 if (!hasCoords(r)) return;
-                const ll = latLng(r);
-                bounds.push(ll);
+                const ll = {lat: +r.latitude, lng: +r.longitude};
+                bounds.extend(ll);
                 const stale = !!r.stale;
                 const html = '<span class="lt-live-pin' + (stale ? ' stale' : '') + '">'
                     + '<i class="lt-live-dot"></i>'
                     + '<span class="lt-live-label"><b>' + esc(r.employee_name || r.employee) + '</b>'
                     + '<small>' + esc((r.project_title || r.project || __('No project')) + ' · ' + fmtDuration(r.elapsed_seconds)) + '</small>'
                     + '</span></span>';
-                L.marker(ll, {
-                    icon: L.divIcon({ className: 'lt-icon', iconSize: null, html: html }),
-                    zIndexOffset: stale ? 0 : 200
-                }).addTo(this.layers.live).bindPopup(this.livePopup(r), { className: 'lt-popup' });
+                
+                const marker = this.createMarker(ll, `<div class="lt-icon">${html}</div>`, stale ? 0 : 200, r.employee_name || r.employee);
+                this.layers.live.addLayer(marker);
+                this.bindPopup(marker, this.livePopup(r));
             });
 
             const keys = rows.map((r) => r.employee).sort().join('|');
-            if (bounds.length && (keys !== this.live.keys || !this.live.fitted)) {
-                this.map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+            if (!bounds.isEmpty() && (keys !== this.live.keys || !this.live.fitted)) {
+                this.map.fitBounds(bounds, { top: 40, bottom: 40, left: 40, right: 40 });
                 this.live.fitted = true;
             }
             this.live.keys = keys;

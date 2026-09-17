@@ -7,6 +7,147 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.482.0] - 2026-09-17
+
+### Changed
+
+- **Both maps now use Google Maps, and Leaflet is gone from them outright.** The Time Kiosk's
+  map tab and the desk Location Timeline both drew on Leaflet with OpenStreetMap tiles in
+  light and CARTO `dark_all` in dark. They now use the Google Maps JavaScript API — the same
+  platform, and the same browser key, the Travel Trip agenda map, the POI picker, address
+  autocomplete and the Pick Routing Map have always used. There is deliberately **no Leaflet
+  fallback**: one renderer, and if the key is missing the map says so rather than quietly
+  degrading to a second code path nobody tests.
+
+  `Travel Settings` gains **`google_maps_map_id_light` and `google_maps_map_id_dark`**. A
+  cloud Map ID is what unlocks `AdvancedMarkerElement` and vector tiles, which is how the
+  timeline's health pills, name chips and playback marker stay real HTML instead of becoming
+  images. Both are blank until somebody creates them in the Cloud Console, and blank is a
+  working state: `EEGoogleMaps.mapOptions()` falls back to a legacy `styles` array with
+  classic markers. Neither field carries a `default` — on a **Single**, a default on a new
+  field never reaches the row that already exists, so a default would assert a value the site
+  does not have. Blank is the intended value on the existing row, so there is no backfill
+  patch.
+
+  Not a like-for-like port, because Leaflet and Google disagree about the primitives:
+  `L.circleMarker` takes a **pixel** radius and `google.maps.Circle` takes **metres**, so
+  individual fixes are drawn as scaled symbols rather than circles that would swell with
+  zoom; there is no `dashArray`, so the red tracking-gap segments are a transparent polyline
+  with a repeating symbol; and there is no canvas renderer, so the timeline's fixes go
+  through a single `google.maps.Data` layer with one styler rather than thousands of Marker
+  objects. Hollow low-accuracy points, the "18 min at &lt;site&gt;" stop labels, the geofence
+  circles, the In/Out anchors and the playback scrubber all survive; the stop label is now a
+  Marker label, which is always visible for the same reason the Leaflet tooltip was
+  `permanent: true`.
+
+- **One Google Maps loader replaces four.** `travel_trip_map.js`, `pick_routing_map.js`,
+  `address_autocomplete.js` and `fountain_move.js` each carried their own copy of the "inject
+  the Maps API" dance, and the API may only be injected once per page. They now all call
+  `public/js/global_enhancements/google_maps_loader.js`, which is dependency-free so the
+  kiosk PWA can load it with a bare `<script>` tag as well.
+
+  Two rules are encoded in it because both were already paid for here. **Always resolve via
+  `importLibrary`, never on `window.google.maps` being present** — the namespace exists as
+  soon as the bootstrap runs, while `google.maps.marker` and `google.maps.routes` stay
+  `undefined` until their library is awaited (the v1.204.0 bug). And **`mapId` and `styles`
+  are never emitted together**, because the API resolves that combination by silently
+  ignoring `styles`.
+
+  `load()` **always imports the core `maps` library**, even when the caller asks for nothing.
+  The inline bootstrap only *defines* `importLibrary`; the script is fetched by the first
+  `importLibrary` call and by nothing else, so a caller passing no libraries received a
+  `google.maps` carrying `importLibrary` and not one other symbol. `travel_trip_map.js` does
+  exactly that, and its agenda map went blank — caught in review, before it shipped. The
+  `<script src=…>` tag these call sites were written against populated the namespace by
+  itself, and importing the core library is what keeps that contract.
+
+### Added
+
+- **Triton can clock people in and out.** Two MCP tools, and the asymmetry between them is
+  the whole design.
+
+  **Clocking in requires a real browser fix, and the model never carries it.** A latitude
+  passed as a tool argument is a number the language model typed — forgeable and
+  hallucinable, which is precisely what a geofence anchor must never be. It cannot arrive
+  that way in any case: the widget's POST body is a closed contract, Frappe silently drops
+  POST keys absent from the Python signature, and `triton_chat.stream_query` flattens its
+  structured context into prompt *text* before Triton sees it. So the Triton desk widget gets
+  the fix itself and hands it straight to `api.time_kiosk.stash_location_fix` over the user's
+  own session; the clock-in path reads it back server-side, for the calling user and nobody
+  else. The stash lives 120 seconds, is consumed by the clock-in that uses it, and its reader
+  is deliberately **not** whitelisted — a whitelisted reader would turn "where is this person"
+  into an API call. No stash, no clock-in, and the refusal is phrased so the assistant can
+  relay it verbatim. This also makes "widget-only" structural rather than a check: nothing
+  headless has a browser to take a fix with.
+
+  **Clocking out works from anywhere and may be unanchored.** Omitting `employee` closes your
+  own session. Naming someone else requires a role in `TIMELINE_MANAGER_ROLES` and is
+  recorded against the requester — and is **clock-out only**, because a supervisor's phone is
+  not the crew member's, and opening a job is exactly what the geofence exists to prove. The
+  job-photo gate still applies: the on-behalf path uses the non-throwing `photo_gate.resolve`
+  that the sweeper and corrections already use — there is nobody present to prompt — and
+  records the reason Triton collected, verbatim. `photo_gate.check` still has exactly two
+  throwing call sites.
+
+  `Job Interval` gains `opened_via`, `closed_via`, `closed_requested_by` and
+  `unanchored_close`, in the existing provenance section. None carries a `default`: on a
+  **normal** doctype the rule inverts — adding a column with a default is one `ALTER`, and
+  MariaDB writes it into every existing row — so a default would relabel the entire history
+  as assistant-opened.
+
+- **`Projects Manager` can now write `Job Interval`.** On-behalf clock-out was granted to the
+  timeline-manager roles, and Projects Manager sat in that set holding a **read-only**
+  DocPerm — so the endpoint would have granted, through Triton, a write the Desk refuses.
+  The DocPerm was widened to match rather than leaving the two disagreeing. No permlevel-1
+  row was touched; that level guards the pay block.
+
+### Fixed
+
+- **A missing location was being recorded as a confident accusation.** When `lat`/`lng`
+  arrived as `None`, `_close_interval` flattened them to `0`/`0` through `flt()`.
+  `_distance_to_site` then measured from the project site to Null Island — about
+  11,160,000 m — and `_is_offsite` duly recorded **`offsite_end = 1`**: a firm, false "this
+  person was off site" verdict, on a field that is about an employee's conduct. Missing
+  coordinates now stay `None`, an unknown distance returns `None`, and an unknown distance
+  resolves to *unknown* rather than to off-site. Latent until now and newly reachable, since
+  an unanchored Triton clock-out is *expected* to have no coordinates. Production carries
+  zero `Job Interval` rows today, so there is nothing to backfill and no data patch.
+
+- **The kiosk shell-asset guard could not see a new shell asset.** `test_kiosk_frontend`
+  asserts that everything `kiosk.html` loads is precached, and an unlisted file is a 504 in a
+  dead zone — but its pattern only matched `/js/kiosk/` and `/css/kiosk/`, so the new
+  `global_enhancements/` loader script was invisible to it and the guard passed while the
+  file was unlisted. The pattern now matches any of this app's js/css assets the shell loads.
+  The loader is then **explicitly exempted** rather than precached: the service worker is
+  registered at root scope and may only answer for the kiosk's own shell, so precaching an
+  asset the desk also serves would put this worker in front of desk traffic. It costs
+  nothing — the loader's only job is to fetch the Google Maps API, which is third-party and
+  uncacheable, and a device offline enough to be missing it could not draw a map anyway. The
+  same call the vendored Leaflet copy got before this release. An exemption must name a file
+  the shell really loads, which is itself now a test.
+
+- **Stop labels were double-escaped.** A `google.maps.Marker` label renders as a text node, so
+  running it through `esc()` first printed `Smith &amp; Jones` for any site with an ampersand
+  in its name.
+
+### Governance
+
+- **[ADR 0014](decisions/adr/0014-ai-write-gating-decides-per-call.md) — AI write gating
+  decides per call, not per tool**, amending [ADR 0006](decisions/adr/0006-ai-writes-need-desk-confirmation.md).
+  "Clock me out" is a person acting on their own time record, with exactly the authority the
+  Time Kiosk already hands them by tapping a button; "clock Dave out" is authority over
+  someone else's pay. Splitting them into two tools was rejected because the model picks the
+  tool, which would make the model the thing that decides whether a human is consulted — the
+  same collapse ADR 0006 refuses when it refuses a model-callable confirm. The distinction is
+  drawn from the arguments, on the server, after the model has spoken.
+
+  `_gate.py` gains a `PER_CALL_GATED` registry of pure, total deciders, consulted only on the
+  path that would otherwise create an AI Pending Action, failing closed if a decider raises,
+  and logging an auto-approved `AI Action Log` row when a call executes without confirmation.
+  Gating off remains byte-identical. **`ai_write_gating_enabled` is `0` on production**
+  (verified 2026-09-17), so the gate is the human-in-the-loop layer and never the
+  authorization — every real permission check for clocking lives in `api/time_kiosk.py`.
+
 ## [1.481.0] - 2026-09-17
 
 ### Added

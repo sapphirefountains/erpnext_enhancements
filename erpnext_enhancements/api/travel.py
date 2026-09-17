@@ -353,6 +353,19 @@ def get_maps_api_key():
 	return _maps_api_key()
 
 
+@frappe.whitelist()
+def get_maps_config():
+	"""The Google Maps *browser* API key plus Map IDs, for the shared Maps loader.
+	
+	Readable by any logged-in user by design (the key is referrer-restricted).
+	Blank Map IDs mean the caller falls back to a legacy styles array."""
+	return {
+		"api_key": _maps_api_key(),
+		"map_id_light": frappe.db.get_single_value("Travel Settings", "google_maps_map_id_light") or "",
+		"map_id_dark": frappe.db.get_single_value("Travel Settings", "google_maps_map_id_dark") or "",
+	}
+
+
 def _poi_address_location(address_name):
 	"""``(text, lat, lng)`` for a linked Address. Any part may be None.
 

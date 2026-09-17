@@ -6,20 +6,21 @@
  * and geo.js, before app.js — NOT through hooks.py. app.js mounts it into
  * #tk-panel-map with a context object (see app.js init).
  *
- * Leaflet is loaded LAZILY, the first time the tab is opened, from frappe's
- * vendored copy at /assets/frappe/js/lib/leaflet/leaflet.js + leaflet.css. It is
- * deliberately NOT in the service worker's PRECACHE: the worker is registered at
- * root scope and may only answer for the kiosk's own shell
- * (tests/test_kiosk_service_worker.py), and a vendored library never changes,
- * so the browser's own HTTP cache is the right cache for it. Offline, the tab
- * says "The map needs a connection" instead — the tiles need one anyway.
+ * Leaflet has been replaced by Google Maps (Workstream W2). Google Maps
+ * is loaded via the shared loader google_maps_loader.js.
+ * Google Maps needs a connection and cannot be precached, so offline
+ * the tab says "The map needs a connection."
+ * If the API key is missing, it says "The map is not configured with an API key."
  *
- * Tiles follow the theme: OpenStreetMap in light, CARTO dark_all in dark, swapped
- * live through KioskUI.theme.onChange (which also fires on a system-scheme
- * change while in system mode).
+ * Tiles follow the theme, swapped live through KioskUI.theme.onChange.
+ * Platform constraint: mapId cannot be changed on an existing map via setOptions.
+ * Because we use map_id_light and map_id_dark to style the map, we MUST rebuild
+ * the map instance on a theme change to apply the new mapId, while preserving
+ * the current center, zoom, and overlays.
  *
- * Drawing: one polyline per Job Interval (palette per interval), fixes as small
- * circles — Low Accuracy points hollow — start/end anchors as larger rings, and a
+ * Drawing: one polyline per Job Interval (palette per interval), fixes as markers
+ * using AdvancedMarkerElement or SVG (to keep pixel size constant across zooms) —
+ * Low Accuracy points hollow — start/end anchors as larger rings, and a
  * geofence circle per interval that carries site coordinates.
  */
 (function () {
@@ -29,17 +30,11 @@
   var h = UI.h;
   var fmt = UI.fmt;
 
-  var LEAFLET_JS = '/assets/frappe/js/lib/leaflet/leaflet.js';
-  var LEAFLET_CSS = '/assets/frappe/js/lib/leaflet/leaflet.css';
-  var TILES = {
-    light: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap contributors', maxZoom: 19 },
-    dark: { url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attribution: '&copy; OpenStreetMap contributors &copy; CARTO', maxZoom: 19 },
-  };
   var COLORS = ['#0b63c4', '#1d7a3e', '#b45f06', '#7c3aed', '#b42318', '#0e7490', '#a21caf'];
 
   var ctx = null;
   var el = {};
-  var st = { date: null, map: null, tile: null, tileTheme: null, layer: null, loading: null, trail: null, visible: false };
+  var st = { date: null, map: null, layer: [], loading: null, trail: null, visible: false, currentTheme: null };
 
   function mount(container, c) {
     ctx = c;
@@ -55,7 +50,7 @@
     ]));
     container.appendChild(el.map);
     container.appendChild(el.legend);
-    UI.theme.onChange(function (eff) { if (st.map) applyTiles(eff); });
+    UI.theme.onChange(function (eff) { if (st.map) applyTheme(eff); });
     window.addEventListener('online', function () { if (st.visible) show(); });
   }
 
@@ -63,8 +58,15 @@
     st.visible = true;
     if (!st.date) st.date = fmt.toISODate(new Date());
     renderDate();
-    if (!window.L && navigator.onLine === false) { message('The map needs a connection.'); return; }
-    loadLeaflet().then(function () {
+
+    var mapsConfig = window.KIOSK_BOOT && window.KIOSK_BOOT.maps ? window.KIOSK_BOOT.maps : {};
+    if (!mapsConfig.api_key) {
+      message('The map is not configured with an API key.');
+      return;
+    }
+    if (!window.google && navigator.onLine === false) { message('The map needs a connection.'); return; }
+
+    loadGoogleMaps(mapsConfig).then(function () {
       initMap();
       loadTrail();
     }).catch(function () {
@@ -95,41 +97,92 @@
     el.msg.textContent = text || '';
   }
 
-  // -- Leaflet ---------------------------------------------------------------
-  function loadLeaflet() {
-    if (window.L && window.L.map) return Promise.resolve();
+  // -- Google Maps -----------------------------------------------------------
+  function loadGoogleMaps(mapsConfig) {
+    // No early return on `window.google.maps` being present. The namespace exists
+    // as soon as the bootstrap runs, but a library is only there once
+    // importLibrary has been awaited for it — returning early here would hand back
+    // a maps object with no `marker` and fail at the first AdvancedMarkerElement.
+    // EEGoogleMaps.load is single-flight and idempotent, so calling it every time
+    // is both correct and cheap.
     if (st.loading) return st.loading;
-    st.loading = new Promise(function (resolve, reject) {
-      if (!document.getElementById('tk-leaflet-css')) {
-        document.head.appendChild(h('link', { id: 'tk-leaflet-css', rel: 'stylesheet', href: LEAFLET_CSS }));
-      }
-      var s = document.createElement('script');
-      s.src = LEAFLET_JS;
-      s.async = true;
-      s.onload = function () { if (window.L && window.L.map) resolve(); else reject(new Error('leaflet missing')); };
-      s.onerror = function () { st.loading = null; reject(new Error('leaflet failed')); };
-      document.head.appendChild(s);
-    });
+    if (!window.EEGoogleMaps) {
+      // The shared loader is a separate <script> in kiosk.html. It is precached by
+      // the service worker, so this should only be reachable on a device that has
+      // never been online since the deploy -- in which case Google Maps could not
+      // load anyway. Fail with a sentence, not a TypeError.
+      return Promise.reject(new Error('loader-missing'));
+    }
+    st.loading = window.EEGoogleMaps.load({ apiKey: mapsConfig.api_key, libraries: ["marker"] })
+      .then(function() { return window.google.maps; })
+      .catch(function(e) { st.loading = null; throw e; });
     return st.loading;
   }
 
   function initMap() {
-    if (st.map) { st.map.invalidateSize(); return; }
-    st.map = window.L.map(el.map, { zoomControl: true, attributionControl: true, tap: false });
-    st.map.setView([40.76, -111.89], 10); // fitBounds replaces this the moment there is a trail
-    st.layer = window.L.layerGroup().addTo(st.map);
-    applyTiles(UI.theme.effective());
-    // The panel was display:none when Leaflet measured it.
-    setTimeout(function () { if (st.map) st.map.invalidateSize(); }, 50);
+    if (st.map) {
+      window.google.maps.event.trigger(st.map, 'resize');
+      return;
+    }
+    st.currentTheme = UI.theme.effective();
+    buildMapInstance();
   }
 
-  function applyTiles(theme) {
-    var want = theme === 'dark' ? 'dark' : 'light';
-    if (st.tileTheme === want) return;
-    if (st.tile) { st.map.removeLayer(st.tile); st.tile = null; }
-    var t = TILES[want];
-    st.tile = window.L.tileLayer(t.url, { attribution: t.attribution, maxZoom: t.maxZoom }).addTo(st.map);
-    st.tileTheme = want;
+  function buildMapInstance() {
+    var mapsConfig = window.KIOSK_BOOT && window.KIOSK_BOOT.maps ? window.KIOSK_BOOT.maps : {};
+    var opts = window.EEGoogleMaps.mapOptions(mapsConfig, st.currentTheme);
+    var center = st.map ? st.map.getCenter() : { lat: 40.76, lng: -111.89 };
+    var zoom = st.map ? st.map.getZoom() : 10;
+
+    var mapOpts = Object.assign({
+      center: center,
+      zoom: zoom,
+      disableDefaultUI: false,
+      zoomControl: true,
+      mapTypeControl: false,
+      streetViewControl: false,
+      fullscreenControl: false
+    }, opts);
+
+    if (st.map) {
+      clearOverlays();
+      // Keep old map dom clean
+      while (el.map.firstChild) {
+        if (el.map.firstChild === el.msg) break; // keep msg
+        el.map.removeChild(el.map.firstChild);
+      }
+      el.map.appendChild(el.msg); // ensure msg is still there
+    }
+
+    var mapDiv = document.createElement('div');
+    mapDiv.style.width = '100%';
+    mapDiv.style.height = '100%';
+    el.map.appendChild(mapDiv);
+
+    st.map = new window.google.maps.Map(mapDiv, mapOpts);
+
+    if (st.trail) {
+      draw(st.trail);
+    }
+  }
+
+  function applyTheme(theme) {
+    if (st.currentTheme === theme) return;
+    st.currentTheme = theme;
+    /*
+     * Platform constraint: when a mapId is configured, the style is fixed at
+     * map construction — calling setOptions({mapId}) on a live map does NOT
+     * restyle it. Therefore, we rebuild the map instance on a theme change,
+     * preserving center, zoom, and overlays.
+     */
+    buildMapInstance();
+  }
+
+  function clearOverlays() {
+    st.layer.forEach(function (overlay) {
+      overlay.setMap(null);
+    });
+    st.layer = [];
   }
 
   // -- Trail -----------------------------------------------------------------
@@ -152,13 +205,36 @@
       });
   }
 
+  function createMarkerIcon(color, isEnd, low) {
+    // Return SVG data URI string for a marker so it keeps constant pixel size
+    var r = isEnd ? 7 : 4;
+    var w = isEnd ? 3 : (low ? 2 : 1);
+    var stroke = isEnd ? '#ffffff' : color;
+    var fillOpacity = low ? 0 : (isEnd ? 1 : 0.9);
+    var size = (r + w) * 2;
+    var center = size / 2;
+
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '">';
+    svg += '<circle cx="' + center + '" cy="' + center + '" r="' + r + '" ';
+    svg += 'fill="' + color + '" fill-opacity="' + fillOpacity + '" ';
+    svg += 'stroke="' + stroke + '" stroke-width="' + w + '" />';
+    svg += '</svg>';
+
+    return {
+      url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+      anchor: new window.google.maps.Point(center, center)
+    };
+  }
+
   function draw(data) {
-    var L = window.L;
-    st.layer.clearLayers();
+    if (!st.map) return;
+    clearOverlays();
     UI.clear(el.legend);
+
     var points = data.points || [];
     var intervals = data.intervals || [];
-    var bounds = [];
+    var bounds = new window.google.maps.LatLngBounds();
+    var hasBounds = false;
     var byInterval = {};
     var colorOf = {};
 
@@ -174,19 +250,40 @@
       var list = byInterval[key];
       if (!list.length) return;
       var color = colorOf[key] || '#6b7280';
-      var latlngs = list.map(function (p) { return [p.latitude, p.longitude]; });
-      latlngs.forEach(function (ll) { bounds.push(ll); });
-      if (latlngs.length > 1) L.polyline(latlngs, { color: color, weight: 4, opacity: 0.85 }).addTo(st.layer);
+      var path = list.map(function (p) { return { lat: p.latitude, lng: p.longitude }; });
+
+      path.forEach(function (ll) { bounds.extend(ll); hasBounds = true; });
+
+      if (path.length > 1) {
+        var poly = new window.google.maps.Polyline({
+          path: path,
+          strokeColor: color,
+          strokeOpacity: 0.85,
+          strokeWeight: 4,
+          map: st.map
+        });
+        st.layer.push(poly);
+      }
+
       list.forEach(function (p, i) {
         var low = p.log_status === 'Low Accuracy';
         var isEnd = i === 0 || i === list.length - 1;
-        L.circleMarker([p.latitude, p.longitude], {
-          radius: isEnd ? 7 : 4,
-          color: isEnd ? '#ffffff' : color,
-          weight: isEnd ? 3 : (low ? 2 : 1),
-          fillColor: color,
-          fillOpacity: low ? 0 : (isEnd ? 1 : 0.9),
-        }).bindPopup(popupText(p)).addTo(st.layer);
+
+        var marker = new window.google.maps.Marker({
+          position: { lat: p.latitude, lng: p.longitude },
+          map: st.map,
+          icon: createMarkerIcon(color, isEnd, low),
+          title: popupText(p)
+        });
+
+        var infoWindow = new window.google.maps.InfoWindow({
+          content: escapeText(popupText(p))
+        });
+        marker.addListener('click', function() {
+          infoWindow.open(st.map, marker);
+        });
+
+        st.layer.push(marker);
       });
     });
 
@@ -194,14 +291,44 @@
       if (iv.site_latitude == null || iv.site_longitude == null) return;
       var r = iv.site_radius_m || data.radius_m || 0;
       var color = colorOf[iv.name] || '#6b7280';
-      L.circleMarker([iv.site_latitude, iv.site_longitude], { radius: 6, color: color, weight: 2, fillColor: '#ffffff', fillOpacity: 1 })
-        .bindPopup(escapeText(iv.project_title || iv.name) + ' (site)').addTo(st.layer);
-      if (r > 0) L.circle([iv.site_latitude, iv.site_longitude], { radius: r, color: color, weight: 1, fillColor: color, fillOpacity: 0.08, dashArray: '4 4' }).addTo(st.layer);
-      bounds.push([iv.site_latitude, iv.site_longitude]);
+      var pos = { lat: iv.site_latitude, lng: iv.site_longitude };
+
+      // Center marker for site
+      var siteMarker = new window.google.maps.Marker({
+        position: pos,
+        map: st.map,
+        icon: createMarkerIcon(color, false, false), // Or custom site icon
+        title: escapeText(iv.project_title || iv.name) + ' (site)'
+      });
+      var infoWindow = new window.google.maps.InfoWindow({
+        content: escapeText(iv.project_title || iv.name) + ' (site)'
+      });
+      siteMarker.addListener('click', function() {
+        infoWindow.open(st.map, siteMarker);
+      });
+      st.layer.push(siteMarker);
+
+      if (r > 0) {
+        var circle = new window.google.maps.Circle({
+          strokeColor: color,
+          strokeOpacity: 0.8,
+          strokeWeight: 1,
+          fillColor: color,
+          fillOpacity: 0.08,
+          map: st.map,
+          center: pos,
+          radius: r
+        });
+        // We can't do dashArray directly in standard Google Maps Circle without custom SVG overlays,
+        // but this gives the visual radius effect well enough.
+        st.layer.push(circle);
+      }
+      bounds.extend(pos);
+      hasBounds = true;
     });
 
-    if (bounds.length) {
-      try { st.map.fitBounds(bounds, { padding: [24, 24], maxZoom: 17 }); } catch (e) { /* noop */ }
+    if (hasBounds) {
+      try { st.map.fitBounds(bounds, 24); } catch (e) { /* noop */ }
       message('');
     } else {
       message(intervals.length ? 'No location points were recorded for this day.' : 'No jobs on this day.');

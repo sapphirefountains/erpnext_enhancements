@@ -21,6 +21,8 @@
   "mileage_rate",
   "maps_section",
   "google_maps_api_key",
+  "google_maps_map_id_light",
+  "google_maps_map_id_dark",
   "use_routes_api"
  ],
  "fields": [
@@ -120,6 +122,18 @@
    "fieldname": "google_maps_api_key",
    "fieldtype": "Data",
    "label": "Google Maps API Key"
+  },
+  {
+   "description": "Create the Map ID in Google Cloud Console under Google Maps Platform → Map management; the map type must be JavaScript; a Map ID is required for AdvancedMarkerElement and vector maps; leaving both blank falls back to a legacy styles array with classic markers — degraded but working.",
+   "fieldname": "google_maps_map_id_light",
+   "fieldtype": "Data",
+   "label": "Google Maps Map ID (Light)"
+  },
+  {
+   "description": "Create the Map ID in Google Cloud Console under Google Maps Platform → Map management; the map type must be JavaScript; a Map ID is required for AdvancedMarkerElement and vector maps; leaving both blank falls back to a legacy styles array with classic markers — degraded but working.",
+   "fieldname": "google_maps_map_id_dark",
+   "fieldtype": "Data",
+   "label": "Google Maps Map ID (Dark)"
   },
   {
    "default": "0",

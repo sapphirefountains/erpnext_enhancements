@@ -55,6 +55,10 @@
   "auto_close_section",
   "auto_closed",
   "auto_close_reason",
+  "opened_via",
+  "closed_via",
+  "closed_requested_by",
+  "unanchored_close",
   "correction_section",
   "corrected",
   "correction_request",
@@ -414,6 +418,32 @@
    "read_only": 1
   },
   {
+   "fieldname": "opened_via",
+   "fieldtype": "Data",
+   "label": "Opened Via",
+   "read_only": 1,
+   "description": "How this session was opened. Blank means the Time Kiosk, which is every session before v1.481.0 and every ordinary one since. 'Triton' means the assistant opened it against a fix the technician's own browser supplied - no default here on purpose: on a normal doctype a default is written into every existing row by the ALTER, which would relabel the whole history as assistant-opened."
+  },
+  {
+   "fieldname": "closed_via",
+   "fieldtype": "Data",
+   "label": "Closed Via",
+   "read_only": 1
+  },
+  {
+   "fieldname": "closed_requested_by",
+   "fieldtype": "Link",
+   "label": "Closed Requested By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "unanchored_close",
+   "fieldtype": "Check",
+   "label": "Unanchored Close",
+   "read_only": 1
+  },
+  {
    "collapsible": 1,
    "collapsible_depends_on": "corrected",
    "fieldname": "correction_section",
@@ -551,7 +581,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-17 10:00:00.000000",
+ "modified": "2026-09-17 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Workforce",
  "name": "Job Interval",
@@ -586,7 +616,8 @@
    "print": 1,
    "read": 1,
    "report": 1,
-   "role": "Projects Manager"
+   "role": "Projects Manager",
+   "write": 1
   },
   {
    "email": 1,

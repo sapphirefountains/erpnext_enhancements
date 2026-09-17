@@ -950,7 +950,6 @@ body {
   background: var(--tk-surface);
   border-top: 1px solid var(--tk-border);
 }
-.tk-map .leaflet-container { font-family: var(--tk-font); background: var(--tk-map-bg); }
 .tk-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 
 /* ------------------------------------------------------------------------ */
