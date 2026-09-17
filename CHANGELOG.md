@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.480.0] - 2026-09-17
+
+### Added
+
+- **A web-search toggle in the Triton widget.** The globe button in the composer turns
+  Google Search grounding on for the messages that follow it — off by default, remembered
+  in `localStorage` like the model pick. The Triton SPA has had this since the grounding
+  work; the desk widget never sent the flag, so anyone chatting from ERPNext had no web
+  access at all: no toggle, no auto-detection, no Deep Research. `stream_query` now takes
+  `use_search` and forwards it to Triton's existing `ChatQuery.use_search`; nothing changed
+  on the Triton side. Two rules carried over from the SPA: the flag is sent only when on
+  (Triton defaults it False, so an off turn's body is byte-identical to before), and a
+  hidden continuation — the "please proceed" turn the widget sends after an approved
+  action — never searches, because the toggle describes the question the person asked, not
+  the follow-up the widget sends for them. On Triton's side a grounded turn runs in-process
+  rather than on the deployed agent, whose tool set is frozen at deploy, and Google meters
+  grounded requests separately from tokens, which is why this is a per-turn toggle and not a
+  default. `stream_query`'s closed argument list grows from six names to seven, and the
+  widget comment that explains why an extra key must be added in both places at once now
+  says so. Guarded in `tests/test_triton_personas.py` (forwarded when on, omitted when off,
+  never on a hidden turn) and `scripts/test_triton_widget_guards.js` (the body posts it,
+  gated on `!opts.hidden`). A fifth `localStorage` key, `triton_web_search`, joins the four
+  that ADR 0009 row G-10 pins.
+
 ## [1.479.0] - 2026-09-17
 
 ### Added
