@@ -47,6 +47,10 @@ import { renderMarkdown } from "../triton/markdown.js";
 	// Local date (YYYY-MM-DD) the morning briefing was last shown, so it appears
 	// once on the first chat of each day.
 	const LS_BRIEF = "triton_briefing_date";
+	// The web-search toggle ("1"/"0"). Persisted so a person who turned it on
+	// keeps it across reloads, like the model pick — a fifth key alongside the
+	// four ADR 0009 row G-10 pins.
+	const LS_SEARCH = "triton_web_search";
 
 	const state = {
 		config: null,
@@ -55,6 +59,8 @@ import { renderMarkdown } from "../triton/markdown.js";
 		model: "",
 		// Selected persona key ("" = default voice). Persisted in LS_PERSONA.
 		persona: "",
+		// Google Search grounding for outgoing turns. Persisted in LS_SEARCH.
+		search: false,
 		personas: [],
 		contextRefs: [],
 		// Files staged for the NEXT turn, and only the next one. Each row is:
@@ -325,6 +331,7 @@ import { renderMarkdown } from "../triton/markdown.js";
 			<div class="triton-input-bar">
 				<button class="triton-attach" title="Attach a file" aria-label="Attach a file">📎</button>
 				<button class="triton-attach-drive is-hidden" title="Attach from Google Drive" aria-label="Attach from Google Drive"><svg class="triton-drive-icon" aria-hidden="true" focusable="false"><use href="#triton-drive-logo"></use></svg></button>
+				<button class="triton-search" title="Search the web for this message (Google Search grounding)" aria-label="Search the web" aria-pressed="false">🌐</button>
 				<textarea class="triton-text" rows="1" placeholder="Ask about your data…"></textarea>
 				<button class="triton-send" title="Send">➤</button>
 			</div>
@@ -358,6 +365,7 @@ import { renderMarkdown } from "../triton/markdown.js";
 			attach: panel.querySelector(".triton-attach"),
 			attachDrive: panel.querySelector(".triton-attach-drive"),
 			fileInput: panel.querySelector(".triton-file-input"),
+			search: panel.querySelector(".triton-search"),
 			modelSelect: panel.querySelector(".triton-model-select"),
 			personaSelect: panel.querySelector(".triton-persona-select"),
 			personasPanel: panel.querySelector(".triton-personas-panel"),
@@ -388,6 +396,8 @@ import { renderMarkdown } from "../triton/markdown.js";
 		state.els.attach.addEventListener("click", () => state.els.fileInput.click());
 		state.els.fileInput.addEventListener("change", onFilesChosen);
 		state.els.attachDrive.addEventListener("click", onAttachDrive);
+		state.els.search.addEventListener("click", () => setSearch(!state.search));
+		setSearch(localStorage.getItem(LS_SEARCH) === "1");
 		bindDropTarget();
 		state.els.send.addEventListener("click", onSend);
 		state.els.text.addEventListener("keydown", (e) => {
@@ -541,6 +551,23 @@ import { renderMarkdown } from "../triton/markdown.js";
 	function setModel(v) {
 		state.model = v || "";
 		localStorage.setItem(LS_MODEL, state.model);
+	}
+
+	// ---- web search toggle -------------------------------------------------
+	// Google Search grounding for the turns that follow. Off by default: Google
+	// meters grounded requests separately from tokens, and most desk questions
+	// are about our own data. Every model the picker offers is a Gemini model,
+	// and every Gemini model in Triton's catalogue supports grounding, so there
+	// is no per-model disable here the way the SPA has for Claude. Hidden turns
+	// never search — see runStream.
+	function setSearch(on) {
+		state.search = !!on;
+		localStorage.setItem(LS_SEARCH, state.search ? "1" : "0");
+		const btn = state.els && state.els.search;
+		if (btn) {
+			btn.classList.toggle("is-active", state.search);
+			btn.setAttribute("aria-pressed", state.search ? "true" : "false");
+		}
 	}
 
 	// ---- persona picker --------------------------------------------------
@@ -1382,10 +1409,10 @@ import { renderMarkdown } from "../triton/markdown.js";
 	// the user, not a payload.
 	//
 	// These join `state.contextRefs` in the SAME `context` array the widget already
-	// sends, rather than a new POST key. `runStream` posts a closed six-field body
-	// and `triton_chat.stream_query`'s Python signature accepts exactly those six
-	// names; Frappe filters unknown form-dict keys against the signature, so a
-	// seventh field is dropped silently — no error, no 400, and a feature that looks
+	// sends, rather than a new POST key. `runStream` posts a closed seven-field body
+	// and `triton_chat.stream_query`'s Python signature accepts exactly those seven
+	// names; Frappe filters unknown form-dict keys against the signature, so an
+	// eighth field is dropped silently — no error, no 400, and a feature that looks
 	// correct end to end while the model never sees the file.
 	//
 	// No `url`, `href`, `link`, `source_url` or `uri` key on these objects, on
@@ -2660,7 +2687,7 @@ import { renderMarkdown } from "../triton/markdown.js";
 				session_id: state.sessionId,
 				prompt: text,
 				// Attachments ride the EXISTING context channel rather than a new field.
-				// `stream_query`'s Python signature is a closed list of six names and
+				// `stream_query`'s Python signature is a closed list of seven names and
 				// Frappe filters unknown POST keys against it, so a seventh is dropped
 				// silently — the client would look correct while the model never saw the
 				// file. This array is already parsed server-side into the page-context
@@ -2674,6 +2701,10 @@ import { renderMarkdown } from "../triton/markdown.js";
 				model: state.model || "",
 				// Per-message persona; "" means the plain Triton voice.
 				persona_key: state.persona || "",
+				// Google Search grounding for this turn. Never on a hidden
+				// continuation: the toggle describes the question the person
+				// asked, not the "please proceed" the widget sends for them.
+				use_search: !opts.hidden && state.search ? 1 : 0,
 			}),
 		});
 

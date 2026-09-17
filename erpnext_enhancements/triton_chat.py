@@ -691,12 +691,17 @@ def _sse_error(message: str) -> bytes:
 @frappe.whitelist()
 def stream_query(session_id: str, prompt: str | None = None, context: str | None = None,
                  hidden: int | str = 0, model: str | None = None,
-                 persona_key: str | None = None):
+                 persona_key: str | None = None, use_search: int | str = 0):
     """Relay Triton's SSE chat stream back to the browser.
 
     Returns a streaming werkzeug Response (text/event-stream). Everything the
     generator needs is captured before we hand the Response back, so the lazy
     body never touches Frappe's request/DB context after teardown.
+
+    The argument list is a closed contract with `triton_widget.js::runStream`:
+    Frappe filters unknown POST keys against this signature, so a key the widget
+    sends and this function does not name is dropped silently. `use_search` is
+    the widget's web-search toggle — Google Search grounding for the turn.
     """
     settings = get_settings()
     if not settings["enabled"]:
@@ -721,6 +726,15 @@ def stream_query(session_id: str, prompt: str | None = None, context: str | None
     # session's sticky persona, then the account default).
     if persona_key is not None:
         payload["persona_key"] = persona_key
+    # Google Search grounding for this turn. Sent only when on — Triton's
+    # `ChatQuery.use_search` defaults to False, so an omitted field and an
+    # explicit False are the same turn — and never on a hidden continuation
+    # (the "please proceed" the widget sends after an approved action), which
+    # mirrors the Triton SPA. On Triton's side a grounded turn runs in-process
+    # rather than on the deployed agent, whose tool set is frozen at deploy;
+    # that is Triton's routing rule, not something this relay decides.
+    if cint(use_search) == 1 and cint(hidden) != 1:
+        payload["use_search"] = True
 
     url = f"{base_url}/api/v1/assistant/sessions/{cint(session_id)}/query/stream"
 

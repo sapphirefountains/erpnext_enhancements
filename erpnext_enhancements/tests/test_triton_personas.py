@@ -280,3 +280,27 @@ def test_stream_query_forwards_empty_persona_key_as_the_default_voice(monkeypatc
 def test_stream_query_omits_persona_key_when_not_supplied(monkeypatch):
 	sent = _run_stream(monkeypatch, prompt="hi")
 	assert "persona_key" not in sent["json"]
+
+
+def test_stream_query_forwards_web_search_when_on(monkeypatch):
+	"""The widget's web-search toggle. Triton's `ChatQuery.use_search` is what
+	turns Google Search grounding on for the turn; the relay sends it when on."""
+	sent = _run_stream(monkeypatch, prompt="hi", use_search=1)
+	assert sent["json"]["use_search"] is True
+
+
+def test_stream_query_omits_web_search_when_off_or_unsupplied(monkeypatch):
+	# Omitted and False are the same turn to Triton (the field defaults False),
+	# so the relay never sends a False — an off turn's body is byte-identical to
+	# what the widget sent before the toggle existed.
+	assert "use_search" not in _run_stream(monkeypatch, prompt="hi")["json"]
+	assert "use_search" not in _run_stream(monkeypatch, prompt="hi", use_search=0)["json"]
+	assert "use_search" not in _run_stream(monkeypatch, prompt="hi", use_search="0")["json"]
+
+
+def test_stream_query_never_searches_on_a_hidden_continuation(monkeypatch):
+	"""The auto-continuation after an approved action carries the toggle's state
+	from the client; it must not turn a "please proceed" into a web search."""
+	sent = _run_stream(monkeypatch, prompt="proceed", hidden=1, use_search=1)
+	assert "use_search" not in sent["json"]
+	assert sent["json"]["hidden"] is True
