@@ -21,7 +21,27 @@ frappe.ui.form.on("Employee", {
 		if (!frm.doc.__islocal) {
 			frm.trigger("render_comments_section");
 			frm.trigger("ee_tier_review_action");
+			frm.trigger("ee_location_timeline_action");
 		}
+	},
+
+	ee_location_timeline_action: function (frm) {
+		// "Where was this person today" is asked while looking at the person, so
+		// the door to the Location Timeline is here as well as on the Job Interval.
+		// Managers only: the page is role-gated to the same three roles and
+		// get_location_history refuses everyone else, so for anyone else the
+		// button could only open a "not permitted" screen.
+		if (!frappe.user.has_role(["System Manager", "HR Manager", "Projects Manager"])) return;
+
+		frm.add_custom_button(
+			__("Location Timeline"),
+			function () {
+				// The page reads these on show and loads the trail for today.
+				frappe.route_options = { employee: frm.doc.name };
+				frappe.set_route("location-timeline");
+			},
+			__("View")
+		);
 	},
 
 	ee_tier_review_action: function (frm) {

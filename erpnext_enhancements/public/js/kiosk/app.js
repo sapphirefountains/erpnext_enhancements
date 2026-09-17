@@ -1,26 +1,46 @@
 /*
- * Time Kiosk — standalone PWA application (UI / clock state machine).
+ * Time Kiosk — standalone PWA application (state machine + the Clock view).
  *
  * Targets: the Time Kiosk PWA front-end (mounts into #kiosk-root).
- * Loaded via: the web page www/kiosk.html — NOT through hooks.py. The page injects
+ * Loaded via: the web page www/kiosk.html — NOT through hooks.py — after ui.js,
+ * geo.js and the view modules (myday.js, map.js, settings.js). The page injects
  * a boot payload on `window.KIOSK_BOOT` (employee, settings, current status,
- * csrf_token); this script is loaded together with geo.js and a service worker
- * (/kiosk-sw.js) that handles durable queueing/upload of location points.
+ * photo_gate, csrf_token), the CSRF token on `window.KIOSK_CSRF` and the deploy
+ * token on `window.KIOSK_BUILD`; a service worker (/kiosk-sw.js) handles durable
+ * queueing/upload of location points.
  *
  * Self-contained: does NOT depend on the Frappe desk bundle. Talks to whitelisted
  * `erpnext_enhancements.api.time_kiosk.*` endpoints via fetch (+ injected CSRF
  * token) and drives KioskGeo (geo.js) for location tracking, which runs only while
  * clocked in AND active (status "Open").
  *
- * Flow: init() injects the template, caches DOM refs, wires events (incl. the
- * standalone-mode back/forward/refresh bar — see setupNav), configures KioskGeo +
- * warms up the location permission, registers the service worker (versioned per
- * deploy via window.KIOSK_BUILD, with foreground/hourly update checks), seeds
- * the UI from the boot status then confirms via get_current_status. renderState()
- * is the central state machine that switches the card between the idle/clock-in
- * form, the active (Open) view, and the paused (break) view, and starts/stops
- * KioskGeo accordingly. Clock-in/pause/resume/switch/clock-out all post to the
- * log_time endpoint; attachments upload via /api/method/upload_file then link.
+ * Layout: a state-coloured hero (idle / working / break / day complete), one
+ * panel per bottom tab (Clock · My Day · Map · Settings) and a tab bar. The
+ * Clock panel lives here; the other three are modules on window.KioskViews that
+ * receive a small context object (api, state, pickers) from init().
+ *
+ * Every interruption is a KioskUI bottom sheet (ui.js) — the project picker,
+ * the break presets, the off-site warning, the shift summary, the maintenance
+ * warning, the photo gate and its skip reason, the attachments nudge. There is
+ * no window.confirm / prompt / alert in this directory.
+ *
+ * Flow: init() builds the shell, wires events, configures KioskGeo + warms up the
+ * location permission, registers the service worker (versioned per deploy via
+ * window.KIOSK_BUILD, with foreground/hourly update checks), seeds the UI from
+ * the boot status then confirms via get_current_status. renderState() is the
+ * central state machine: idle form / working / break / day complete, and it
+ * starts/stops KioskGeo accordingly.
+ *
+ * Clock events take an ANCHOR fix first (KioskGeo.anchorFix — high accuracy, a
+ * few seconds, never fails) and send it to log_time as lat/lng/accuracy. Before
+ * Start and Switch, when the chosen project has site coordinates, the geofence
+ * radius is > 0, the anchor is outside it and Time Kiosk Settings.offsite_warn
+ * is on, the off-site sheet asks first and the request carries
+ * offsite_acknowledged: 1. The server flags off-site starts regardless.
+ *
+ * Clock Out: get_shift_summary → review sheet → Confirm → the existing gates in
+ * the existing order (maintenance warning → photo gate → attachments nudge) →
+ * log_time Stop → the "Day complete" screen.
  *
  * Maintenance forms: while clocked into a project with an Active Maintenance
  * Contract (or Active form template), the card shows a link to the visit form
@@ -30,6 +50,11 @@
  */
 (function () {
   'use strict';
+
+  var UI = window.KioskUI;
+  var h = UI.h;
+  var fmt = UI.fmt;
+  var toast = UI.toast;
 
   var BOOT = window.KIOSK_BOOT || {};
   var CSRF = window.KIOSK_CSRF || BOOT.csrf_token || '';
@@ -47,122 +72,27 @@
   // kiosk.html). Versions the service-worker registration so every deploy
   // rotates the SW cache automatically.
   var BUILD = window.KIOSK_BUILD || '';
+  var API = 'erpnext_enhancements.api.time_kiosk.';
 
   var app = {
     status: null,            // 'Open' | 'Paused' | 'Idle'
     currentInterval: null,
     attachments: [],
     photoCount: 0,           // photos captured for the ACTIVE interval, incl. ones still queued offline
-    isSwitching: false,
     loading: false,
     maintenance: null,       // { project, ctx } — get_maintenance_context for the active job
-    projectOptions: [],      // raw get_kiosk_options projects (with site lat/lng) — re-sorted as fixes arrive
+    options: { projects: [], activity_types: [], recent_projects: [], radius_m: 0 },
+    tab: 'clock',
+    draft: { project: null, task: null, activity: '', note: '' },
+    breakPlan: null,         // { minutes, startedAt } — the preset chosen at Pause
+    breakAlerted: false,
+    dayComplete: null,       // shift summary shown after a successful Stop
+    swReg: null,
+    installPrompt: null,     // the deferred beforeinstallprompt event
+    badges: {},
   };
 
-  // -- DOM refs (filled after template injection) --------------------------
   var el = {};
-
-  var TEMPLATE = [
-    '<div class="tk-nav" id="tk-nav" hidden>',
-    '  <button class="tk-nav-btn" id="tk-nav-back" type="button" aria-label="Go back">&#8249;</button>',
-    '  <button class="tk-nav-btn" id="tk-nav-forward" type="button" aria-label="Go forward">&#8250;</button>',
-    '  <button class="tk-nav-btn" id="tk-nav-refresh" type="button" aria-label="Refresh">&#8635;</button>',
-    '</div>',
-    '<div class="tk-header">',
-    '  <div class="tk-clock" id="tk-clock">--:--:--</div>',
-    '  <p class="tk-status" id="tk-status">Ready to Work</p>',
-    '</div>',
-    '<div class="tk-card" id="tk-geo-suggest" style="display:none; margin-bottom:14px; text-align:center;">',
-    '  <p id="tk-geo-suggest-text" style="margin:0 0 8px;"></p>',
-    '  <button class="tk-btn tk-btn-success" id="tk-geo-suggest-btn" style="margin-top:0;">Select This Project</button>',
-    '</div>',
-    '<div class="tk-card">',
-    '  <div class="tk-timer" id="tk-timer">--:--:--</div>',
-    '  <div class="tk-active-project" id="tk-active-project" style="display:none;">',
-    '    <span id="tk-active-project-name"></span>',
-    '  </div>',
-    '  <div id="tk-maintenance" style="display:none; text-align:center;">',
-    '    <a class="tk-btn tk-btn-outline" id="tk-maintenance-link" target="_blank" rel="noopener"',
-    '       style="margin-top:0; display:inline-block;">📋 Maintenance Form</a>',
-    '  </div>',
-    '  <div id="tk-inputs">',
-    '    <div class="tk-field"><label>Project</label><div class="tk-combo" id="tk-project-combo"></div></div>',
-    '    <div class="tk-field"><label>Task (optional)</label><div class="tk-combo" id="tk-task-combo"></div></div>',
-    '    <div class="tk-field"><label>Activity Type</label><select id="tk-activity"></select></div>',
-    '    <div class="tk-field"><label>Note (optional)</label>',
-    '      <textarea id="tk-note" rows="3" placeholder="What are you working on?"></textarea></div>',
-    '  </div>',
-    '  <div id="tk-readonly" style="display:none;">',
-    '    <p class="tk-readonly-note" id="tk-readonly-note"></p>',
-    '    <p style="text-align:center;"><span class="tk-badge" id="tk-readonly-cat"></span></p>',
-    '  </div>',
-    '  <div id="tk-attachments" class="tk-attachments" style="display:none;">',
-    '    <h6>Attachments</h6>',
-    '    <div class="tk-attachment-list" id="tk-attachment-list"></div>',
-    '    <div class="tk-row">',
-    '      <button class="tk-btn tk-btn-outline" id="tk-add-attach" style="margin-top:0;">Add Files</button>',
-    '      <button class="tk-btn tk-btn-outline" id="tk-take-pic" style="margin-top:0;">Take Picture</button>',
-    '    </div>',
-    '    <input type="file" id="tk-file-input" multiple style="display:none;">',
-    '    <input type="file" id="tk-camera-input" accept="image/*" capture="environment" style="display:none;">',
-    '  </div>',
-    '  <button class="tk-btn tk-btn-success" id="tk-clock-in">Clock In</button>',
-    '  <div id="tk-active-actions" style="display:none;">',
-    '    <div class="tk-row">',
-    '      <button class="tk-btn tk-btn-warning" id="tk-pause" style="margin-top:0;">Pause Break</button>',
-    '      <button class="tk-btn tk-btn-info" id="tk-resume" style="margin-top:0; display:none;">Resume Work</button>',
-    '      <button class="tk-btn tk-btn-secondary" id="tk-switch" style="margin-top:0;">Switch Task</button>',
-    '    </div>',
-    '    <button class="tk-btn tk-btn-danger" id="tk-clock-out">Clock Out</button>',
-    '  </div>',
-    '  <div class="tk-track" id="tk-track">',
-    '    <span class="tk-track-dot"></span>',
-    '    <span id="tk-track-text">Location tracking off</span>',
-    '  </div>',
-    '</div>',
-    '<div class="tk-card" id="tk-visits" style="display:none; margin-top:14px;">',
-    '  <h6 style="margin:0 0 8px;">Today&#39;s Visits</h6>',
-    '  <div id="tk-visits-list"></div>',
-    '</div>',
-    '<a class="tk-btn tk-btn-outline" id="tk-history" href="/app/job-interval" style="margin-top:14px;">View My History</a>',
-    '<div class="tk-toasts" id="tk-toasts"></div>',
-  ].join('\n');
-
-  // -- Utilities -----------------------------------------------------------
-  function $(id) { return document.getElementById(id); }
-  function show(node) { if (node) node.style.display = ''; }
-  function hide(node) { if (node) node.style.display = 'none'; }
-  function escapeHtml(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  }
-
-  function toast(message, kind, ms) {
-    var box = $('tk-toasts');
-    if (!box) return;
-    var t = document.createElement('div');
-    t.className = 'tk-toast' + (kind ? ' is-' + kind : '');
-    t.textContent = message;
-    box.appendChild(t);
-    setTimeout(function () {
-      t.style.opacity = '0';
-      setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 300);
-    }, ms || 3500);
-  }
-
-  function humanError(e) {
-    var msg = (e && e.message) || 'Something went wrong.';
-    // Try to surface Frappe's _server_messages if present.
-    try {
-      var parsed = JSON.parse(msg);
-      if (Array.isArray(parsed) && parsed.length) {
-        var first = JSON.parse(parsed[0]);
-        if (first && first.message) return String(first.message).replace(/<[^>]*>/g, '');
-      }
-    } catch (ignore) { /* not JSON */ }
-    return String(msg).replace(/<[^>]*>/g, '').slice(0, 200);
-  }
 
   // -- API -----------------------------------------------------------------
   function api(method, args, opts) {
@@ -191,289 +121,411 @@
     });
   }
 
-  // -- Pickers -------------------------------------------------------------
-  function fillSelect(node, items, placeholder) {
-    node.innerHTML = '';
-    var ph = document.createElement('option');
-    ph.value = '';
-    ph.textContent = placeholder;
-    node.appendChild(ph);
-    (items || []).forEach(function (it) {
-      var o = document.createElement('option');
-      o.value = it.value;
-      o.textContent = it.label;
-      node.appendChild(o);
-    });
-  }
-
-  // Searchable picker (project/task). A text input filters a dropdown of
-  // options by label AND value — so "PRJ-0123" (the docname) finds a project
-  // whose displayed title doesn't contain it. Options may carry distance_m
-  // (rendered as a badge). Exposes a <select>-like surface: .value get/set,
-  // onChange(cb), setOptions(items). The input doubles as the display of the
-  // current selection; typing only filters — the value changes when an option
-  // is chosen (or cleared), and blur reverts the text to the selection, so
-  // the displayed text always matches .value by the time an action button
-  // (whose tap blurs the input) reads it.
-  function createCombo(container, cfg) {
-    cfg = cfg || {};
-    var input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = cfg.placeholder || '';
-    input.autocomplete = 'off';
-    input.setAttribute('inputmode', 'search');
-    var clearBtn = document.createElement('button');
-    clearBtn.type = 'button';
-    clearBtn.className = 'tk-combo-clear';
-    clearBtn.setAttribute('aria-label', 'Clear');
-    clearBtn.innerHTML = '&times;';
-    clearBtn.hidden = true;
-    var panel = document.createElement('div');
-    panel.className = 'tk-combo-panel';
-    panel.hidden = true;
-    container.appendChild(input);
-    container.appendChild(clearBtn);
-    container.appendChild(panel);
-
-    var st = { options: [], value: '', typed: false, hi: -1, cbs: [] };
-
-    function find(v) {
-      for (var i = 0; i < st.options.length; i++) {
-        if (st.options[i].value === v) return st.options[i];
+  function humanError(e) {
+    var msg = (e && e.message) || 'Something went wrong.';
+    // Try to surface Frappe's _server_messages if present.
+    try {
+      var parsed = JSON.parse(msg);
+      if (Array.isArray(parsed) && parsed.length) {
+        var first = JSON.parse(parsed[0]);
+        if (first && first.message) return String(first.message).replace(/<[^>]*>/g, '');
       }
-      return null;
-    }
-    function fire() { st.cbs.forEach(function (cb) { cb(st.value); }); }
-    function syncClear() { clearBtn.hidden = !(st.value || input.value); }
-    function matches(o, q) {
-      return String(o.label || '').toLowerCase().indexOf(q) !== -1 ||
-             String(o.value || '').toLowerCase().indexOf(q) !== -1;
-    }
-    function visible() {
-      // Only filter on text the user actually typed — when the input is just
-      // displaying the current selection, opening shows the full list.
-      var q = st.typed ? input.value.trim().toLowerCase() : '';
-      if (!q) return st.options;
-      return st.options.filter(function (o) { return matches(o, q); });
-    }
+    } catch (ignore) { /* not JSON */ }
+    return String(msg).replace(/<[^>]*>/g, '').slice(0, 200);
+  }
 
-    function render() {
-      var list = visible();
-      panel.innerHTML = '';
-      if (!list.length) {
-        var empty = document.createElement('div');
-        empty.className = 'tk-combo-empty';
-        empty.textContent = cfg.emptyText || 'No matches.';
-        panel.appendChild(empty);
-        return;
+  function cint(v) { var n = parseInt(v, 10); return isNaN(n) ? 0 : n; }
+  function $(id) { return document.getElementById(id); }
+
+  // -- Shell ---------------------------------------------------------------
+  var TAB_ICONS = {
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    myday: '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>',
+    map: '<path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15M15 6v15"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  };
+  var TABS = [
+    { id: 'clock', label: 'Clock' },
+    { id: 'myday', label: 'My Day' },
+    { id: 'map', label: 'Map' },
+    { id: 'settings', label: 'Settings' },
+  ];
+
+  function tabButton(t) {
+    // Static markup from this file, never data. Parsed through a div so the SVG
+    // lands in its namespace on engines where SVGElement.innerHTML is missing.
+    var wrap = document.createElement('div');
+    wrap.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + TAB_ICONS[t.id] + '</svg>';
+    var svg = wrap.firstChild;
+    var b = h('button', {
+      type: 'button', class: 'tk-tab', id: 'tk-tab-' + t.id, role: 'tab',
+      on: { click: function () { setTab(t.id); } },
+    }, [svg, h('span', { text: t.label }), h('span', { class: 'tk-tab-badge', id: 'tk-badge-' + t.id, hidden: true })]);
+    return b;
+  }
+
+  function buildShell(root) {
+    UI.clear(root);
+    var hero = h('header', { class: 'tk-hero is-idle', id: 'tk-hero' }, [
+      h('div', { class: 'tk-hero-clock', id: 'tk-clock', text: '--:--' }),
+      h('div', { class: 'tk-hero-elapsed', id: 'tk-elapsed', hidden: true, text: '0:00:00' }),
+      h('div', { class: 'tk-countdown', id: 'tk-countdown', hidden: true, text: '00:00' }),
+      h('p', { class: 'tk-hero-title', id: 'tk-status', text: 'Ready to work' }),
+      h('p', { class: 'tk-hero-sub', id: 'tk-hero-sub', text: BOOT.employee_name || '' }),
+      h('p', { class: 'tk-hero-project', id: 'tk-hero-project', hidden: true }),
+      h('div', { class: 'tk-hero-chips' }, [
+        h('span', { class: 'tk-hero-chip', id: 'tk-chip-activity', hidden: true }),
+        h('span', { class: 'tk-hero-chip', id: 'tk-chip-photos', hidden: true }),
+        h('span', { class: 'tk-hero-chip tk-track', id: 'tk-track' }, [
+          h('span', { class: 'tk-track-dot' }),
+          h('span', { id: 'tk-track-text', text: 'Tracking off' }),
+        ]),
+      ]),
+    ]);
+
+    var idle = h('div', { class: 'tk-stack', id: 'tk-idle' }, [
+      h('div', { class: 'tk-card', id: 'tk-geo-suggest', hidden: true }, [
+        h('p', { class: 'tk-card-title', text: 'Nearby visit' }),
+        h('p', { id: 'tk-geo-suggest-text', style: { margin: '0 0 10px' } }),
+        h('button', { type: 'button', class: 'tk-btn tk-btn-primary', id: 'tk-geo-suggest-btn', text: 'Use this project' }),
+      ]),
+      h('div', { class: 'tk-card' }, [
+        h('p', { class: 'tk-card-title', text: 'Start a job' }),
+        h('div', { class: 'tk-stack' }, [
+          h('div', { class: 'tk-field' }, [h('label', { text: 'Project', for: 'tk-pick-project' }), pickButton('tk-pick-project', 'Choose a project')]),
+          h('div', { class: 'tk-field' }, [h('label', { text: 'Task (optional)', for: 'tk-pick-task' }), pickButton('tk-pick-task', 'Choose a task')]),
+          h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Activity' }), h('div', { class: 'tk-chips', id: 'tk-activity', role: 'group', 'aria-label': 'Activity type' })]),
+          h('div', { class: 'tk-field' }, [h('label', { text: 'Note (optional)', for: 'tk-note' }), h('textarea', { id: 'tk-note', rows: '2', placeholder: 'What are you working on?' })]),
+          h('button', { type: 'button', class: 'tk-btn tk-btn-go tk-btn-lg', id: 'tk-clock-in', text: 'Clock In' }),
+        ]),
+      ]),
+      h('div', { class: 'tk-card', id: 'tk-visits', hidden: true }, [
+        h('p', { class: 'tk-card-title', text: "Today's visits" }),
+        h('div', { class: 'tk-list', id: 'tk-visits-list' }),
+      ]),
+    ]);
+
+    var active = h('div', { class: 'tk-stack', id: 'tk-active', hidden: true }, [
+      h('div', { class: 'tk-card' }, [
+        h('div', { class: 'tk-btn-row' }, [
+          h('button', { type: 'button', class: 'tk-btn tk-btn-break', id: 'tk-pause', text: 'Take a break' }),
+          h('button', { type: 'button', class: 'tk-btn tk-btn-go', id: 'tk-resume', hidden: true, text: 'Resume work' }),
+          h('button', { type: 'button', class: 'tk-btn tk-btn-outline', id: 'tk-switch', text: 'Switch job' }),
+        ]),
+        h('button', { type: 'button', class: 'tk-btn tk-btn-stop tk-btn-lg', id: 'tk-clock-out', style: { marginTop: '10px' }, text: 'Clock Out' }),
+      ]),
+      h('div', { class: 'tk-card', id: 'tk-maintenance', hidden: true }, [
+        h('p', { class: 'tk-card-title', text: 'Maintenance visit' }),
+        h('a', { class: 'tk-btn tk-btn-outline', id: 'tk-maintenance-link', target: '_blank', rel: 'noopener', text: 'Maintenance form' }),
+      ]),
+      h('div', { class: 'tk-card', id: 'tk-note-card' }, [
+        h('p', { class: 'tk-card-title', text: 'Note' }),
+        h('p', { id: 'tk-readonly-note', style: { margin: '0' } }),
+      ]),
+      h('div', { class: 'tk-card', id: 'tk-attachments' }, [
+        h('div', { class: 'tk-card-head' }, [
+          h('p', { class: 'tk-card-title', text: 'Photos & files' }),
+          h('span', { class: 'tk-chip', id: 'tk-photo-chip', hidden: true }),
+        ]),
+        h('div', { class: 'tk-attachment-list', id: 'tk-attachment-list' }),
+        h('div', { class: 'tk-btn-row', style: { marginTop: '10px' } }, [
+          h('button', { type: 'button', class: 'tk-btn tk-btn-primary', id: 'tk-take-pic', text: 'Take photo' }),
+          h('button', { type: 'button', class: 'tk-btn tk-btn-outline', id: 'tk-add-attach', text: 'Add files' }),
+        ]),
+        h('input', { type: 'file', id: 'tk-file-input', multiple: true, hidden: true }),
+        h('input', { type: 'file', id: 'tk-camera-input', accept: 'image/*', capture: 'environment', hidden: true }),
+      ]),
+    ]);
+
+    var done = h('div', { class: 'tk-stack', id: 'tk-done', hidden: true }, [
+      h('div', { class: 'tk-card' }, [
+        h('p', { class: 'tk-card-title', text: 'Day complete' }),
+        h('div', { class: 'tk-tiles', id: 'tk-done-tiles' }),
+        h('p', { class: 'tk-note', id: 'tk-done-sites', style: { marginTop: '10px' } }),
+        h('button', { type: 'button', class: 'tk-btn tk-btn-go tk-btn-lg', id: 'tk-start-another', style: { marginTop: '12px' }, text: 'Start another job' }),
+      ]),
+    ]);
+
+    var clockPanel = h('section', { class: 'tk-panel is-clock', id: 'tk-panel-clock', role: 'tabpanel' }, [idle, active, done]);
+    var view = h('div', { class: 'tk-view', id: 'tk-view' }, [
+      hero,
+      clockPanel,
+      h('section', { class: 'tk-panel', id: 'tk-panel-myday', role: 'tabpanel', hidden: true }),
+      h('section', { class: 'tk-panel is-map', id: 'tk-panel-map', role: 'tabpanel', hidden: true }),
+      h('section', { class: 'tk-panel', id: 'tk-panel-settings', role: 'tabpanel', hidden: true }),
+    ]);
+    var tabbar = h('nav', { class: 'tk-tabbar', 'aria-label': 'Sections' }, [
+      h('div', { class: 'tk-tabbar-inner', role: 'tablist' }, TABS.map(tabButton)),
+    ]);
+    root.appendChild(view);
+    root.appendChild(tabbar);
+    root.appendChild(h('div', { class: 'tk-toasts', id: 'tk-toasts', 'aria-live': 'polite' }));
+  }
+
+  function pickButton(id, placeholder) {
+    return h('button', { type: 'button', class: 'tk-pick', id: id, 'aria-haspopup': 'dialog' }, [
+      h('span', { class: 'tk-pick-text is-placeholder', text: placeholder }),
+      h('span', { class: 'tk-row-chev', 'aria-hidden': 'true', text: '›' }),
+    ]);
+  }
+
+  function setPick(btn, main, sub, placeholder) {
+    var t = btn.querySelector('.tk-pick-text');
+    UI.clear(t);
+    if (main) {
+      t.classList.remove('is-placeholder');
+      t.appendChild(document.createTextNode(main));
+      if (sub) t.appendChild(h('span', { class: 'tk-pick-sub', text: sub }));
+    } else {
+      t.classList.add('is-placeholder');
+      t.textContent = placeholder;
+    }
+  }
+
+  function cacheEls() {
+    el.hero = $('tk-hero');
+    el.clock = $('tk-clock');
+    el.elapsed = $('tk-elapsed');
+    el.countdown = $('tk-countdown');
+    el.status = $('tk-status');
+    el.heroSub = $('tk-hero-sub');
+    el.heroProject = $('tk-hero-project');
+    el.chipActivity = $('tk-chip-activity');
+    el.chipPhotos = $('tk-chip-photos');
+    el.track = $('tk-track');
+    el.trackText = $('tk-track-text');
+    el.idle = $('tk-idle');
+    el.active = $('tk-active');
+    el.done = $('tk-done');
+    el.doneTiles = $('tk-done-tiles');
+    el.doneSites = $('tk-done-sites');
+    el.geoSuggest = $('tk-geo-suggest');
+    el.geoSuggestText = $('tk-geo-suggest-text');
+    el.geoSuggestBtn = $('tk-geo-suggest-btn');
+    el.pickProject = $('tk-pick-project');
+    el.pickTask = $('tk-pick-task');
+    el.activity = $('tk-activity');
+    el.note = $('tk-note');
+    el.clockIn = $('tk-clock-in');
+    el.visits = $('tk-visits');
+    el.visitsList = $('tk-visits-list');
+    el.pause = $('tk-pause');
+    el.resume = $('tk-resume');
+    el.switchBtn = $('tk-switch');
+    el.clockOut = $('tk-clock-out');
+    el.maintenance = $('tk-maintenance');
+    el.maintenanceLink = $('tk-maintenance-link');
+    el.noteCard = $('tk-note-card');
+    el.readonlyNote = $('tk-readonly-note');
+    el.attachmentList = $('tk-attachment-list');
+    el.photoChip = $('tk-photo-chip');
+    el.startAnother = $('tk-start-another');
+  }
+
+  // -- Tabs ----------------------------------------------------------------
+  function views() { return window.KioskViews || {}; }
+
+  function setTab(name) {
+    var prev = app.tab;
+    app.tab = name;
+    TABS.forEach(function (t) {
+      var panel = $('tk-panel-' + t.id);
+      var btn = $('tk-tab-' + t.id);
+      var on = t.id === name;
+      if (panel) panel.hidden = !on;
+      if (btn) {
+        if (on) btn.setAttribute('aria-current', 'page'); else btn.removeAttribute('aria-current');
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
       }
-      list.forEach(function (o, idx) {
-        var row = document.createElement('div');
-        row.className = 'tk-combo-option' +
-          (idx === st.hi ? ' is-hi' : '') +
-          (o.value === st.value ? ' is-selected' : '');
-        var txt = document.createElement('div');
-        txt.className = 'tk-combo-text';
-        var main = document.createElement('div');
-        main.className = 'tk-combo-label';
-        main.textContent = o.label;
-        txt.appendChild(main);
-        if (o.value && o.value !== o.label) {
-          var sub = document.createElement('div');
-          sub.className = 'tk-combo-sub';
-          sub.textContent = o.value;
-          txt.appendChild(sub);
-        }
-        row.appendChild(txt);
-        if (o.distance_m != null) {
-          var dist = document.createElement('span');
-          dist.className = 'tk-combo-dist';
-          dist.textContent = formatDistance(o.distance_m);
-          row.appendChild(dist);
-        }
-        // mousedown would blur the input (closing the panel before click
-        // lands) — suppress it so the tap's click event picks the option.
-        row.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
-        row.addEventListener('click', function () { choose(o); });
-        panel.appendChild(row);
-      });
-    }
-
-    function openPanel() {
-      if (cfg.onOpen) cfg.onOpen();
-      st.hi = -1;
-      render();
-      panel.hidden = false;
-    }
-    function closePanel() { panel.hidden = true; }
-    function revertText() {
-      var o = find(st.value);
-      input.value = o ? o.label : (st.value || '');
-      st.typed = false;
-      syncClear();
-    }
-    function choose(o) {
-      st.value = o.value;
-      st.typed = false;
-      input.value = o.label;
-      closePanel();
-      syncClear();
-      fire();
-    }
-
-    input.addEventListener('focus', function () {
-      input.select();
-      openPanel();
     });
-    input.addEventListener('input', function () {
-      st.typed = true;
-      st.hi = -1;
-      if (panel.hidden) panel.hidden = false;
-      render();
-      syncClear();
-    });
-    input.addEventListener('blur', function () {
-      revertText();
-      closePanel();
-    });
-    input.addEventListener('keydown', function (ev) {
-      var list = visible();
-      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
-        ev.preventDefault();
-        if (panel.hidden) { openPanel(); return; }
-        var step = ev.key === 'ArrowDown' ? 1 : -1;
-        st.hi = Math.max(0, Math.min(list.length - 1, st.hi + step));
-        render();
-        var hiRow = panel.children[st.hi];
-        if (hiRow && hiRow.scrollIntoView) hiRow.scrollIntoView({ block: 'nearest' });
-      } else if (ev.key === 'Enter') {
-        ev.preventDefault();
-        if (st.hi >= 0 && list[st.hi]) choose(list[st.hi]);
-        else if (list.length === 1) choose(list[0]);
-      } else if (ev.key === 'Escape') {
-        revertText();
-        closePanel();
-        input.blur();
-      }
-    });
-    clearBtn.addEventListener('click', function () {
-      st.value = '';
-      input.value = '';
-      st.typed = false;
-      closePanel();
-      syncClear();
-      fire();
-    });
-
-    return {
-      get value() { return st.value; },
-      set value(v) {
-        st.value = v || '';
-        revertText();
-        closePanel();
-        fire();
-      },
-      onChange: function (cb) { st.cbs.push(cb); },
-      setOptions: function (items) {
-        st.options = items || [];
-        st.hi = -1;
-        if (st.value && !find(st.value)) {
-          // Selection no longer offered (e.g. task list of another project) —
-          // drop it silently; callers reload dependents themselves.
-          st.value = '';
-          if (!st.typed) input.value = '';
-          syncClear();
-        } else if (st.value && !st.typed) {
-          revertText();
-        }
-        if (!panel.hidden) render();
-      },
-    };
+    el.hero.hidden = name !== 'clock';
+    var v = views();
+    if (prev !== name && v[prev] && v[prev].hide) { try { v[prev].hide(); } catch (e) { /* noop */ } }
+    if (v[name] && v[name].show) { try { v[name].show(); } catch (e) { /* view's problem */ } }
+    try { window.scrollTo(0, 0); } catch (e) { /* noop */ }
   }
 
-  function formatDistance(m) {
-    if (m < 950) return Math.round(m) + ' m';
-    return (m / 1000).toFixed(1) + ' km';
+  function setBadge(tab, n) {
+    var b = $('tk-badge-' + tab);
+    if (!b) return;
+    app.badges[tab] = n;
+    b.hidden = !n;
+    b.textContent = n > 99 ? '99+' : String(n || '');
   }
 
-  // Same haversine as geo.js (private there); good enough to rank sites.
-  function haversineM(a, b) {
-    var R = 6371000;
-    var toRad = function (d) { return d * Math.PI / 180; };
-    var dLat = toRad(b.lat - a.lat);
-    var dLng = toRad(b.lng - a.lng);
-    var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) *
-            Math.sin(dLng / 2) * Math.sin(dLng / 2);
-    return 2 * R * Math.asin(Math.sqrt(h));
-  }
-
-  // One shared device fix for nearest-first sorting and the geofenced
-  // suggestion; refreshed at most every 2 minutes.
-  var deviceFix = null; // { lat, lng, t }
-  function requestDeviceFix(cb) {
-    if (!('geolocation' in navigator)) { if (cb) cb(deviceFix); return; }
-    if (deviceFix && Date.now() - deviceFix.t < 120000) { if (cb) cb(deviceFix); return; }
-    navigator.geolocation.getCurrentPosition(function (pos) {
-      deviceFix = { lat: pos.coords.latitude, lng: pos.coords.longitude, t: Date.now() };
-      if (cb) cb(deviceFix);
-    }, function () { if (cb) cb(deviceFix); /* stale fix beats none */ },
-    { maximumAge: 120000, timeout: 8000 });
-  }
-
-  // Nearest site first (projects without coordinates follow, alphabetical).
-  function decorateProjects(projects) {
-    var items = (projects || []).map(function (p) {
-      var o = { value: p.value, label: p.label, distance_m: null };
-      if (deviceFix && p.lat != null && p.lng != null) {
-        o.distance_m = haversineM(deviceFix, { lat: p.lat, lng: p.lng });
-      }
-      return o;
-    });
-    items.sort(function (a, b) {
-      var ad = a.distance_m == null ? Infinity : a.distance_m;
-      var bd = b.distance_m == null ? Infinity : b.distance_m;
-      if (ad !== bd) return ad - bd;
-      return String(a.label).localeCompare(String(b.label));
-    });
-    return items;
-  }
-
-  function resortProjects() {
-    if (app.projectOptions && app.projectOptions.length) {
-      el.project.setOptions(decorateProjects(app.projectOptions));
+  // -- Options + pickers ---------------------------------------------------
+  function projectByName(name) {
+    for (var i = 0; i < app.options.projects.length; i++) {
+      if (app.options.projects[i].value === name) return app.options.projects[i];
     }
+    return null;
   }
 
   function loadOptions() {
-    return api('erpnext_enhancements.api.time_kiosk.get_kiosk_options', {}, { method: 'GET' })
+    return api(API + 'get_kiosk_options', {}, { method: 'GET' })
       .then(function (opts) {
-        opts = opts || { projects: [], activity_types: [] };
-        app.projectOptions = opts.projects || [];
-        el.project.setOptions(decorateProjects(app.projectOptions));
-        fillSelect(el.activity, opts.activity_types, 'Select…');
-        el.task.setOptions([]);
-        requestDeviceFix(resortProjects);
+        opts = opts || {};
+        app.options.projects = opts.projects || [];
+        app.options.activity_types = opts.activity_types || [];
+        app.options.recent_projects = opts.recent_projects || [];
+        app.options.radius_m = cint(opts.radius_m);
+        renderActivityChips();
+        if (app.draft.project && !projectByName(app.draft.project.value)) setDraftProject(null);
+        requestDeviceFix();
       })
       .catch(function () { toast('Could not load projects.', 'red'); });
   }
 
-  function loadTasks(project) {
-    el.task.setOptions([]);
-    if (!project) return;
-    api('erpnext_enhancements.api.time_kiosk.get_tasks_for_project',
-      { project: project }, { method: 'GET' })
-      .then(function (tasks) { el.task.setOptions(tasks); })
-      .catch(function () { /* non-fatal */ });
+  function renderActivityChips() {
+    UI.clear(el.activity);
+    app.options.activity_types.forEach(function (a) {
+      var b = h('button', {
+        type: 'button', class: 'tk-choice', text: a.label,
+        'aria-pressed': app.draft.activity === a.value ? 'true' : 'false',
+        on: { click: function () {
+          app.draft.activity = app.draft.activity === a.value ? '' : a.value;
+          renderActivityChips();
+        } },
+      });
+      el.activity.appendChild(b);
+    });
+    if (!app.options.activity_types.length) el.activity.appendChild(h('p', { class: 'tk-note', text: 'No activity types configured.' }));
+  }
+
+  function setDraftProject(p) {
+    app.draft.project = p || null;
+    app.draft.task = null;
+    setPick(el.pickProject, p ? p.label : '', p && p.value !== p.label ? p.value : '', 'Choose a project');
+    setPick(el.pickTask, '', '', 'Choose a task');
+    el.pickTask.disabled = !p;
+  }
+
+  // One shared device fix for nearest-first sorting and the geofenced
+  // suggestion; refreshed at most every 2 minutes. KioskGeo remembers every fix
+  // it sees, so this only asks the OS when nothing recent is known.
+  function requestDeviceFix(cb) {
+    var fix = window.KioskGeo.lastFix();
+    if (fix && Date.now() - fix.t < 120000) { if (cb) cb(fix); return; }
+    if (!('geolocation' in navigator)) { if (cb) cb(fix); return; }
+    navigator.geolocation.getCurrentPosition(function () {
+      if (cb) cb(window.KioskGeo.lastFix());
+    }, function () { if (cb) cb(fix); /* stale fix beats none */ },
+    { maximumAge: 120000, timeout: 8000 });
+  }
+
+  function withDistance(p, fix) {
+    var o = { value: p.value, label: p.label, lat: p.lat, lng: p.lng, distance_m: null };
+    if (fix && p.lat != null && p.lng != null) {
+      o.distance_m = window.KioskGeo.distanceM({ lat: fix.lat, lng: fix.lng }, { lat: p.lat, lng: p.lng });
+    }
+    return o;
+  }
+
+  /**
+   * Full-screen project picker: Recent / Nearest / All, with a search box that
+   * matches title or PRJ-#. opts.selected (docname), opts.title, opts.onPick(p).
+   */
+  function openProjectPicker(opts) {
+    opts = opts || {};
+    var search = h('input', { type: 'search', class: 'tk-input', placeholder: 'Search project name or PRJ-#', 'aria-label': 'Search projects', autocomplete: 'off' });
+    var list = h('div', { class: 'tk-stack' });
+    var body = h('div', { class: 'tk-stack' }, [h('div', { class: 'tk-search' }, [search]), list]);
+    var handle = null;
+
+    function row(p) {
+      return h('button', {
+        type: 'button', class: 'tk-row' + (p.value === opts.selected ? ' is-selected' : ''),
+        on: { click: function () { if (handle) handle.close('action'); if (opts.onPick) opts.onPick(projectByName(p.value) || p); } },
+      }, [
+        h('div', { class: 'tk-row-body' }, [
+          h('div', { class: 'tk-row-main', text: p.label }),
+          p.value !== p.label ? h('div', { class: 'tk-row-sub', text: p.value }) : null,
+        ]),
+        p.distance_m != null ? h('span', { class: 'tk-dist', text: fmt.distance(p.distance_m) }) : null,
+      ]);
+    }
+
+    function group(title, items) {
+      if (!items.length) return null;
+      return h('div', {}, [h('p', { class: 'tk-group-title', text: title }), h('div', { class: 'tk-list' }, items.map(row))]);
+    }
+
+    function render() {
+      UI.clear(list);
+      var fix = window.KioskGeo.lastFix();
+      var all = app.options.projects.map(function (p) { return withDistance(p, fix); });
+      var q = (search.value || '').trim().toLowerCase();
+      if (!all.length) { list.appendChild(h('p', { class: 'tk-empty', text: 'No active projects.' })); return; }
+      if (q) {
+        var hits = all.filter(function (p) {
+          return String(p.label).toLowerCase().indexOf(q) !== -1 || String(p.value).toLowerCase().indexOf(q) !== -1;
+        });
+        hits.sort(function (a, b) { return String(a.label).localeCompare(String(b.label)); });
+        list.appendChild(hits.length ? h('div', { class: 'tk-list' }, hits.map(row)) : h('p', { class: 'tk-empty', text: 'No matching projects.' }));
+        return;
+      }
+      var byName = {};
+      all.forEach(function (p) { byName[p.value] = p; });
+      var recent = app.options.recent_projects.map(function (n) { return byName[n]; }).filter(Boolean).slice(0, 5);
+      var nearest = all.filter(function (p) { return p.distance_m != null; });
+      nearest.sort(function (a, b) { return a.distance_m - b.distance_m; });
+      nearest = nearest.slice(0, 5);
+      var everything = all.slice().sort(function (a, b) { return String(a.label).localeCompare(String(b.label)); });
+      var gRecent = group('Recent', recent);
+      var gNear = group('Nearest', nearest);
+      if (gRecent) list.appendChild(gRecent);
+      if (gNear) list.appendChild(gNear);
+      else if (!fix) list.appendChild(h('p', { class: 'tk-note', text: 'Nearest sites appear once your location is known.' }));
+      list.appendChild(group('All projects', everything));
+    }
+
+    search.addEventListener('input', render);
+    handle = UI.sheet.open({ title: opts.title || 'Choose a project', full: true, body: body, initialFocus: 'input' });
+    render();
+    requestDeviceFix(function () { if (UI.sheet.depth()) render(); });
+    return handle;
+  }
+
+  function openTaskPicker(project, onPick) {
+    var search = h('input', { type: 'search', class: 'tk-input', placeholder: 'Search tasks', 'aria-label': 'Search tasks', autocomplete: 'off' });
+    var list = h('div', {}, [UI.skeleton(4)]);
+    var body = h('div', { class: 'tk-stack' }, [h('div', { class: 'tk-search' }, [search]), list]);
+    var tasks = null;
+    var handle = UI.sheet.open({ title: 'Choose a task', full: true, body: body, initialFocus: 'input' });
+
+    function row(t) {
+      return h('button', {
+        type: 'button', class: 'tk-row',
+        on: { click: function () { handle.close('action'); onPick(t); } },
+      }, [h('div', { class: 'tk-row-body' }, [h('div', { class: 'tk-row-main', text: t ? t.label : 'No task' }), t && t.value !== t.label ? h('div', { class: 'tk-row-sub', text: t.value }) : null])]);
+    }
+    function render() {
+      UI.clear(list);
+      if (!tasks) { list.appendChild(UI.skeleton(4)); return; }
+      var q = (search.value || '').trim().toLowerCase();
+      var hits = tasks.filter(function (t) {
+        return !q || String(t.label).toLowerCase().indexOf(q) !== -1 || String(t.value).toLowerCase().indexOf(q) !== -1;
+      });
+      var rows = [row(null)].concat(hits.map(row));
+      list.appendChild(h('div', { class: 'tk-list' }, rows));
+      if (!hits.length) list.appendChild(h('p', { class: 'tk-empty', text: tasks.length ? 'No matching tasks.' : 'This project has no open tasks.' }));
+    }
+    search.addEventListener('input', render);
+    api(API + 'get_tasks_for_project', { project: project }, { method: 'GET' })
+      .then(function (t) { tasks = t || []; render(); })
+      .catch(function () { tasks = []; render(); });
+    return handle;
   }
 
   // -- Status / rendering --------------------------------------------------
-  function setLoading(on) {
+  function setLoading(on, label) {
     app.loading = on;
     ['tk-clock-in', 'tk-pause', 'tk-resume', 'tk-switch', 'tk-clock-out'].forEach(function (id) {
       var b = $(id);
-      if (b) b.disabled = on;
+      if (b) b.disabled = on || (id === 'tk-clock-in' && !BOOT.employee);
     });
+    if (el.clockIn) el.clockIn.textContent = on && label ? label : 'Clock In';
+    if (el.clockOut) el.clockOut.textContent = on && label ? label : 'Clock Out';
   }
 
   function applyStatus(message) {
@@ -481,7 +533,6 @@
       app.status = message.status;
       app.currentInterval = message;
       app.attachments = message.attachments || [];
-      app.isSwitching = false;
       // Trust the server's count when it sends one, but never let it DROP a
       // photo this device knows it took: an offline capture is real even though
       // the server has not heard about it yet, and lowering the count here would
@@ -489,18 +540,22 @@
       if (typeof message.photo_count === 'number') {
         app.photoCount = Math.max(message.photo_count, app.photoCount || 0);
       }
+      app.dayComplete = null;
     } else {
       app.status = 'Idle';
       app.currentInterval = null;
       app.attachments = [];
       app.photoCount = 0;
+      app.breakPlan = null;
     }
     renderState();
   }
 
+  var statusFetchedAt = 0;
   function fetchStatus() {
+    statusFetchedAt = Date.now();
     setLoading(true);
-    return api('erpnext_enhancements.api.time_kiosk.get_current_status', {}, { method: 'GET' })
+    return api(API + 'get_current_status', {}, { method: 'GET' })
       .then(applyStatus)
       .catch(function (e) { toast(humanError(e), 'red'); })
       .then(function () { setLoading(false); });
@@ -509,63 +564,82 @@
   function renderState() {
     var ci = app.currentInterval || {};
     var active = (app.status === 'Open' || app.status === 'Paused');
+    el.hero.className = 'tk-hero ' + (active ? (app.status === 'Open' ? 'is-working' : 'is-break') : (app.dayComplete ? 'is-done' : 'is-idle'));
+    el.chipActivity.hidden = !(active && ci.time_category);
+    el.chipActivity.textContent = ci.time_category || '';
+    el.heroSub.textContent = '';
 
     if (active) {
-      el.status.textContent = app.status === 'Open' ? 'Clocked In' : 'On Break (Paused)';
-
-      if (app.isSwitching) {
-        show(el.inputs); hide(el.readonly);
-        hide(el.clockIn); show(el.activeActions);
-        el.switchBtn.textContent = 'Confirm & Switch';
-        el.switchBtn.className = 'tk-btn tk-btn-primary';
-        el.switchBtn.style.marginTop = '0';
-      } else {
-        hide(el.inputs); show(el.readonly);
-        el.readonlyNote.textContent = ci.description || 'No description provided.';
-        el.readonlyCat.textContent = ci.time_category || '';
-        el.readonlyCat.style.display = ci.time_category ? '' : 'none';
-        hide(el.clockIn); show(el.activeActions);
-        el.switchBtn.textContent = 'Switch Task';
-        el.switchBtn.className = 'tk-btn tk-btn-secondary';
-        el.switchBtn.style.marginTop = '0';
-      }
-
-      el.pause.style.display = app.status === 'Open' ? '' : 'none';
-      el.resume.style.display = app.status === 'Paused' ? '' : 'none';
-
-      show(el.attachments);
-      renderAttachments();
-      hide(el.visits);
-      hide(el.geoSuggest);
-
-      show(el.activeProject);
+      el.status.textContent = app.status === 'Open' ? 'Working' : 'On break';
+      el.idle.hidden = true; el.done.hidden = true; el.active.hidden = false;
+      el.elapsed.hidden = app.status !== 'Open';
+      el.countdown.hidden = app.status !== 'Paused';
+      el.heroProject.hidden = false;
       var title = ci.project_title || ci.project || '';
-      if (ci.task) title += ' — ' + (ci.task_title || ci.task);
-      el.activeProjectName.textContent = title;
-
+      el.heroProject.textContent = title;
+      el.heroSub.textContent = ci.task ? (ci.task_title || ci.task) : ('Since ' + fmt.timeOf(ci.start_time));
+      el.pause.hidden = app.status !== 'Open';
+      el.resume.hidden = app.status !== 'Paused';
+      el.readonlyNote.textContent = ci.description || '';
+      el.noteCard.hidden = !ci.description;
+      renderAttachments();
+      renderPhotoChip();
       loadMaintenanceContext();
+      if (app.status === 'Paused') app.breakAlerted = false;
+      el.geoSuggest.hidden = true;
 
       // Tracking: only while genuinely active (Open), never on break (Paused).
-      if (app.status === 'Open' && ci.name) {
-        window.KioskGeo.start(ci.name);
-      } else {
-        window.KioskGeo.stop();
-      }
+      if (app.status === 'Open' && ci.name) window.KioskGeo.start(ci.name);
+      else window.KioskGeo.stop();
     } else {
-      el.status.textContent = BOOT.employee ? 'Ready to Work' : 'No employee linked to your user';
-      show(el.inputs); show(el.clockIn);
-      hide(el.activeActions); hide(el.readonly);
-      hide(el.activeProject); hide(el.attachments);
-      hide(el.maintenance);
+      el.elapsed.hidden = true; el.countdown.hidden = true; el.heroProject.hidden = true;
+      el.chipPhotos.hidden = true;
+      el.active.hidden = true;
+      el.maintenance.hidden = true;
       app.maintenance = null;
-      loadVisitsToday();
-      maybeSuggestNearby();
-      el.attachmentList.innerHTML = '';
-      app.attachments = [];
-      el.timer.textContent = '--:--:--';
-      if (!BOOT.employee) el.clockIn.disabled = true;
+      UI.clear(el.attachmentList);
       window.KioskGeo.stop();
+      if (app.dayComplete) {
+        el.status.textContent = 'Day complete';
+        el.heroSub.textContent = 'Nice work.';
+        el.idle.hidden = true; el.done.hidden = false;
+        renderDayComplete();
+      } else {
+        el.status.textContent = BOOT.employee ? 'Ready to work' : 'No employee linked to your user';
+        el.heroSub.textContent = BOOT.employee_name || '';
+        el.idle.hidden = false; el.done.hidden = true;
+        if (!BOOT.employee) el.clockIn.disabled = true;
+        loadVisitsToday();
+        maybeSuggestNearby();
+      }
     }
+    tick();
+  }
+
+  function renderPhotoChip() {
+    var n = app.photoCount || 0;
+    el.chipPhotos.hidden = false;
+    el.chipPhotos.textContent = n === 1 ? '1 photo' : n + ' photos';
+    el.photoChip.hidden = !PHOTO_GATE.require_job_photos;
+    var needed = PHOTO_GATE.min_photos_per_interval || 1;
+    el.photoChip.className = 'tk-chip ' + (n >= needed ? 'is-green' : 'is-amber');
+    el.photoChip.textContent = n >= needed ? 'Photo requirement met' : ('Needs ' + (needed - n) + ' more photo' + (needed - n === 1 ? '' : 's'));
+  }
+
+  function renderDayComplete() {
+    var s = app.dayComplete || {};
+    UI.clear(el.doneTiles);
+    var tiles = [
+      ['Today', fmt.hm(s.today_seconds || 0)],
+      ['Last job', fmt.hm(s.interval_seconds || 0)],
+      ['Photos', String(s.photo_count || 0)],
+      ['Tracking', s.coverage_pct != null ? Math.round(s.coverage_pct) + '%' : '—'],
+    ];
+    tiles.forEach(function (t) {
+      el.doneTiles.appendChild(h('div', { class: 'tk-tile' }, [h('div', { class: 'tk-tile-label', text: t[0] }), h('div', { class: 'tk-tile-value', text: t[1] })]));
+    });
+    var sites = s.sites || [];
+    el.doneSites.textContent = sites.length ? 'Sites: ' + sites.join(', ') : '';
   }
 
   // -- Today's visits + geofenced suggestion (idle screen) -------------------
@@ -573,30 +647,22 @@
   function loadVisitsToday() {
     if (Date.now() - visitsLoadedAt < 60000) return; // renderState re-fires often
     visitsLoadedAt = Date.now();
-    api('erpnext_enhancements.api.time_kiosk.get_my_visits_today', {}, { method: 'GET' })
+    api(API + 'get_my_visits_today', {}, { method: 'GET' })
       .then(function (visits) {
-        var box = el.visitsList;
-        if (!box) return;
-        box.innerHTML = '';
-        if (!visits || !visits.length) { hide(el.visits); return; }
+        UI.clear(el.visitsList);
+        if (!visits || !visits.length) { el.visits.hidden = true; return; }
         visits.forEach(function (v) {
           var label = v.project_title || v.project || '';
-          if (v.visit_label) label += ' — ' + v.visit_label;
-          else if (v.serial_no) label += ' — ' + v.serial_no;
-          var a = document.createElement('a');
-          a.className = 'tk-attachment-item';
-          a.style.display = 'flex';
-          a.style.textDecoration = 'none';
-          a.href = v.route;
-          a.target = '_blank';
-          a.rel = 'noopener';
-          a.innerHTML = '<span>📋</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
-            escapeHtml(label) + '</span>';
-          box.appendChild(a);
+          var sub = v.visit_label || v.serial_no || '';
+          el.visitsList.appendChild(h('a', { class: 'tk-row', href: v.route, target: '_blank', rel: 'noopener' }, [
+            h('span', { class: 'tk-row-icon is-accent', 'aria-hidden': 'true', text: '✓' }),
+            h('div', { class: 'tk-row-body' }, [h('div', { class: 'tk-row-main', text: label }), sub ? h('div', { class: 'tk-row-sub', text: sub }) : null]),
+            h('span', { class: 'tk-row-chev', 'aria-hidden': 'true', text: '›' }),
+          ]));
         });
-        show(el.visits);
+        el.visits.hidden = false;
       })
-      .catch(function () { hide(el.visits); });
+      .catch(function () { el.visits.hidden = true; });
   }
 
   var geoSuggestChecked = false;
@@ -605,46 +671,31 @@
     geoSuggestChecked = true; // one position fix per page load is plenty
     requestDeviceFix(function (fix) {
       if (!fix) return; // permission denied / unavailable — no suggestion
-      resortProjects();
       if (app.status !== 'Idle') return;
-      api('erpnext_enhancements.api.time_kiosk.get_nearby_visit',
-        { lat: fix.lat, lng: fix.lng }, { method: 'GET' })
+      api(API + 'get_nearby_visit', { lat: fix.lat, lng: fix.lng }, { method: 'GET' })
         .then(function (site) {
           if (!site || app.status !== 'Idle') return;
           el.geoSuggestText.textContent =
             'You’re near ' + (site.project_title || site.project) +
             ' (~' + site.distance_m + ' m) and a visit is due.';
           el.geoSuggestBtn.onclick = function () {
-            el.project.value = site.project; // fires change -> loadTasks
-            hide(el.geoSuggest);
+            setDraftProject(projectByName(site.project) || { value: site.project, label: site.project_title || site.project });
+            el.geoSuggest.hidden = true;
             toast('Project selected — ready to clock in.', 'green');
           };
-          show(el.geoSuggest);
+          el.geoSuggest.hidden = false;
         })
         .catch(function () { /* best-effort */ });
     });
   }
 
   // -- Maintenance forms -----------------------------------------------------
-  // Projects under an Active Maintenance Contract (or with an Active form
-  // template) require a maintenance visit form. While clocked into one, the
-  // card shows a link to the form (an open draft when one exists, else a
-  // prefilled new record); clock-out / project-switch warn when nothing was
-  // submitted during the interval (warnIfMaintenancePending below).
   function loadMaintenanceContext() {
     var ci = app.currentInterval;
-    if (!ci || !ci.project) {
-      app.maintenance = null;
-      renderMaintenance();
-      return;
-    }
-    if (app.maintenance && app.maintenance.project === ci.project) {
-      renderMaintenance();
-      return;
-    }
+    if (!ci || !ci.project) { app.maintenance = null; renderMaintenance(); return; }
+    if (app.maintenance && app.maintenance.project === ci.project) { renderMaintenance(); return; }
     app.maintenance = { project: ci.project, ctx: null };
-    api('erpnext_enhancements.api.time_kiosk.get_maintenance_context',
-      { project: ci.project }, { method: 'GET' })
+    api(API + 'get_maintenance_context', { project: ci.project }, { method: 'GET' })
       .then(function (ctx) {
         // The interval may have ended or switched while the request ran.
         if (!app.maintenance || app.maintenance.project !== ci.project) return;
@@ -663,59 +714,70 @@
     var ctx = app.maintenance && app.maintenance.ctx;
     if (active && ctx && ctx.required && ctx.form_route) {
       el.maintenanceLink.href = ctx.form_route;
-      el.maintenanceLink.textContent = ctx.draft ? '📋 Maintenance Form (Draft)' : '📋 New Maintenance Form';
-      show(el.maintenance);
+      el.maintenanceLink.textContent = ctx.draft ? 'Open the draft form' : 'New maintenance form';
+      el.maintenance.hidden = false;
     } else {
-      hide(el.maintenance);
+      el.maintenance.hidden = true;
     }
   }
 
   // Before leaving a maintenance project (clock-out or switch), re-check the
-  // server: was a form submitted by this user since clock-in? If not, warn —
-  // OK = go back and complete it (same semantics as the attachments prompt),
-  // Cancel = proceed anyway. Offline or non-maintenance projects proceed
-  // silently.
-  function warnIfMaintenancePending(actionLabel, proceed) {
+  // server: was a form submitted by this user since clock-in? If not, a sheet
+  // offers the form or lets them continue. Offline or non-maintenance projects
+  // proceed silently. Resolves true to proceed.
+  function warnIfMaintenancePending(verb) {
     var ci = app.currentInterval;
-    if (!ci || !ci.project) { proceed(); return; }
-    api('erpnext_enhancements.api.time_kiosk.get_maintenance_context',
-      { project: ci.project, since: ci.start_time }, { method: 'GET' })
+    if (!ci || !ci.project) return Promise.resolve(true);
+    return api(API + 'get_maintenance_context', { project: ci.project, since: ci.start_time }, { method: 'GET' })
       .then(function (ctx) {
-        if (ctx && ctx.required && !ctx.submitted_since) {
-          if (app.maintenance && app.maintenance.project === ci.project) {
-            app.maintenance.ctx = ctx;
-            renderMaintenance();
-          }
-          if (window.confirm(
-            'No maintenance form has been submitted for this visit. ' +
-            'Press OK to go back and complete it, or Cancel to ' + actionLabel + ' anyway.'
-          )) return; // OK = stay
+        if (!(ctx && ctx.required && !ctx.submitted_since)) return true;
+        if (app.maintenance && app.maintenance.project === ci.project) {
+          app.maintenance.ctx = ctx;
+          renderMaintenance();
         }
-        proceed();
+        return new Promise(function (resolve) {
+          var settled = false;
+          var finish = function (v) { if (!settled) { settled = true; resolve(v); } };
+          var actions = [];
+          if (ctx.form_route) {
+            actions.push({ label: 'Open the form', kind: 'primary', onClick: function () {
+              try { window.open(ctx.form_route, '_blank', 'noopener'); } catch (e) { /* noop */ }
+              finish(false);
+            } });
+          }
+          actions.push({ label: 'Go back', kind: ctx.form_route ? 'outline' : 'primary', onClick: function () { finish(false); } });
+          actions.push({ label: capitalize(verb) + ' anyway', kind: 'ghost', onClick: function () { finish(true); } });
+          UI.sheet.open({
+            title: 'Maintenance form not submitted',
+            body: 'No maintenance form has been submitted for this visit yet.',
+            actions: actions,
+            onClose: function () { finish(false); },
+          });
+        });
       })
-      .catch(function () { proceed(); });
+      .catch(function () { return true; });
   }
+
+  function capitalize(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
 
   // -- Attachments ---------------------------------------------------------
   function renderAttachments() {
-    el.attachmentList.innerHTML = '';
+    UI.clear(el.attachmentList);
     if (!app.attachments.length) {
-      el.attachmentList.innerHTML = '<p class="text-muted" style="margin:0;color:var(--tk-muted);">No attachments yet.</p>';
+      el.attachmentList.appendChild(h('p', { class: 'tk-note', text: 'No files attached yet.' }));
       return;
     }
     app.attachments.forEach(function (att) {
-      var fname = att.file_name || 'Attachment';
-      var item = document.createElement('div');
-      item.className = 'tk-attachment-item';
-      item.innerHTML = '<span>📎</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
-        escapeHtml(fname) + '</span>';
-      el.attachmentList.appendChild(item);
+      el.attachmentList.appendChild(h('div', { class: 'tk-attachment-item' }, [
+        h('span', { 'aria-hidden': 'true', text: '📎' }),
+        h('span', { text: att.file_name || 'Attachment' }),
+      ]));
     });
   }
 
   function linkFile(fileName) {
     var ci = app.currentInterval || {};
-    api('erpnext_enhancements.api.time_kiosk.link_attachment', {
+    api(API + 'link_attachment', {
       file_name: fileName, project: ci.project, task: ci.task || null,
     }).then(function (r) {
       if (r && r.status === 'success') {
@@ -789,6 +851,7 @@
     // Count it locally FIRST, so the gate prompt reflects reality even if every
     // network call below fails.
     app.photoCount = (app.photoCount || 0) + 1;
+    renderPhotoChip();
     var queue = photoQueue();
     queue.push(entry);
     savePhotoQueue(queue);
@@ -801,7 +864,7 @@
   }
 
   function registerPhoto(entry) {
-    return api('erpnext_enhancements.api.time_kiosk.record_job_photo', {
+    return api(API + 'record_job_photo', {
       job_interval: entry.interval,
       client_uid: entry.uid,
       captured_on: entry.at,
@@ -831,7 +894,7 @@
     }).then(function (r) { return r.json(); })
       .then(function (data) {
         if (!(data && data.message && data.message.name)) throw new Error('upload failed');
-        return api('erpnext_enhancements.api.time_kiosk.record_job_photo', {
+        return api(API + 'record_job_photo', {
           job_interval: entry.interval,
           client_uid: entry.uid,
           file_name: data.message.name,
@@ -857,7 +920,7 @@
     });
   }
 
-  // -- The capture gate prompt ---------------------------------------------
+  // -- The capture gate ------------------------------------------------------
 
   function photoGateSatisfied() {
     if (!PHOTO_GATE.require_job_photos) return true;
@@ -866,82 +929,71 @@
   }
 
   /**
-   * Run `cb` only once the photo requirement is met or explicitly skipped.
-   *
-   * `cb` receives the skip reason (or null). The server enforces the same rule
-   * independently — this only saves the technician a round trip and a rejection.
+   * Resolves { ok, reason } — ok=false means "stay". The server enforces the same
+   * rule independently — this only saves the technician a round trip and a
+   * rejection. Sheet instead of confirm/prompt; same three outcomes.
    */
-  function withPhotoGate(verb, cb) {
-    if (photoGateSatisfied()) { cb(null); return; }
+  function withPhotoGate(verb) {
+    if (photoGateSatisfied()) return Promise.resolve({ ok: true, reason: null });
 
     var needed = PHOTO_GATE.min_photos_per_interval || 1;
     var have = app.photoCount || 0;
 
     if (!PHOTO_GATE.allow_photo_skip) {
       toast('Take ' + (needed - have) + ' more photo(s) before you ' + verb + '.', 'red', 6000);
-      return;
+      return Promise.resolve({ ok: false, reason: null });
     }
 
-    var message = 'No photo of this job yet. Press OK to go back and take one, or Cancel to ' +
-      verb + ' without a photo.';
-    if (window.confirm(message)) return;
-
-    var reason = null;
-    if (PHOTO_GATE.require_skip_reason) {
-      reason = window.prompt('Why are you skipping the photo? (for example: customer declined, ' +
-        'nothing visible to photograph, camera not working)');
-      if (reason === null) return;             // changed their mind — do nothing
-      reason = (reason || '').trim();
-      if (!reason) {
-        toast('A reason is needed to finish without a photo.', 'orange', 5000);
-        return;
-      }
-    }
-    cb(reason);
-  }
-
-  // -- Actions -------------------------------------------------------------
-  function handleAction(action, skipReason) {
-    var project = el.project.value;
-    var task = el.task.value;
-    var description = el.note.value;
-    var category = el.activity.value;
-
-    if ((action === 'Start' || action === 'Switch') && !project) {
-      toast('Please select a project.', 'orange');
-      return;
-    }
-
-    setLoading(true);
-    api('erpnext_enhancements.api.time_kiosk.log_time', {
-      project: project, task: task, action: action,
-      description: description, time_category: category,
-      // Only consulted by Switch and Stop. Null on every other action.
-      skip_reason: skipReason || null,
-    }).then(function (r) {
-      if (r && r.status === 'success') {
-        toast(r.message, 'green');
-        el.note.value = '';
-        el.activity.value = '';
-        // A new interval starts with no photos of its own.
-        if (action === 'Start' || action === 'Switch') app.photoCount = 0;
-        if (action === 'Start') maybeConsent();
-        return fetchStatus();
-      }
-      setLoading(false);
-    }).catch(function (e) {
-      setLoading(false);
-      toast(humanError(e), 'red');
+    return new Promise(function (resolve) {
+      var settled = false;
+      var finish = function (v) { if (!settled) { settled = true; resolve(v); } };
+      UI.sheet.open({
+        title: 'No photo of this job yet',
+        body: 'Take a photo before you ' + verb + ', or continue without one.',
+        onClose: function () { finish({ ok: false, reason: null }); },
+        actions: [
+          { label: 'Take a photo now', kind: 'primary', onClick: function () {
+            finish({ ok: false, reason: null });
+            var cam = $('tk-camera-input');
+            if (cam) cam.click();
+          } },
+          { label: capitalize(verb) + ' without a photo', kind: 'ghost', onClick: function (handle) {
+            settled = true; // this branch resolves below, not from onClose
+            handle.close('action');
+            if (!PHOTO_GATE.require_skip_reason) { resolve({ ok: true, reason: null }); return; }
+            UI.askText({
+              title: 'Why no photo?',
+              message: 'A short reason is needed to ' + verb + ' without a photo (for example: customer declined, nothing visible to photograph, camera not working).',
+              placeholder: 'Reason',
+              required: true,
+              requiredMessage: 'A reason is needed to finish without a photo.',
+              ok: capitalize(verb),
+            }).then(function (reason) {
+              resolve(reason ? { ok: true, reason: reason } : { ok: false, reason: null });
+            });
+          } },
+        ],
+      });
     });
   }
 
-  function promptIfNoAttachments(message, cb) {
-    if (app.attachments.length === 0) {
-      // OK = go back and add; Cancel = continue without.
-      if (!window.confirm(message)) cb();
-    } else {
-      cb();
-    }
+  // Resolves true to proceed. A photo counts as an attachment here — the nudge
+  // is "did you record anything about this job", not "did you use the paperclip".
+  function promptIfNoAttachments(verb) {
+    if (app.attachments.length || (app.photoCount || 0) > 0) return Promise.resolve(true);
+    return new Promise(function (resolve) {
+      var settled = false;
+      var finish = function (v) { if (!settled) { settled = true; resolve(v); } };
+      UI.sheet.open({
+        title: 'Nothing attached yet',
+        body: 'No photos or files have been added to this job.',
+        onClose: function () { finish(false); }, // Escape / backdrop = go back
+        actions: [
+          { label: 'Go back and add some', kind: 'primary', onClick: function () { finish(false); } },
+          { label: capitalize(verb) + ' anyway', kind: 'ghost', onClick: function () { finish(true); } },
+        ],
+      });
+    });
   }
 
   function maybeConsent() {
@@ -950,33 +1002,312 @@
       if (localStorage.getItem('tk_consent_shown')) return;
       localStorage.setItem('tk_consent_shown', '1');
     } catch (e) { /* storage may be blocked */ }
-    toast('Your location is recorded while you are clocked in and active.', 'orange', 6000);
+    toast('Your location is recorded only while you are clocked in and active.', 'orange', 6000);
+  }
+
+  // -- Off-site check --------------------------------------------------------
+  function offsiteWarnEnabled() {
+    return SETTINGS.offsite_warn == null ? true : !!cint(SETTINGS.offsite_warn);
+  }
+
+  // Resolves true to proceed (with the acknowledgement flag decided by the
+  // caller from `needsAck`), false to stay. Only asks when every condition holds;
+  // the server flags an off-site start whether or not the sheet was shown.
+  function offsiteCheck(project, anchor, verb) {
+    var radius = app.options.radius_m || 0;
+    if (!project || !anchor || project.lat == null || project.lng == null || radius <= 0 || !offsiteWarnEnabled()) {
+      return Promise.resolve({ proceed: true, ack: 0 });
+    }
+    var d = window.KioskGeo.distanceM({ lat: anchor.lat, lng: anchor.lng }, { lat: project.lat, lng: project.lng });
+    if (d <= radius) return Promise.resolve({ proceed: true, ack: 0 });
+    return UI.ask({
+      title: 'You’re not at the site',
+      message: 'You’re ' + fmt.distance(d) + ' from ' + (project.label || project.value) + '. ' + capitalize(verb) + ' anyway?',
+      ok: capitalize(verb) + ' anyway',
+      okKind: 'break',
+      cancel: 'Cancel',
+    }).then(function (yes) { return { proceed: yes, ack: yes ? 1 : 0 }; });
+  }
+
+  // -- Actions -------------------------------------------------------------
+  function postTime(args) {
+    return api(API + 'log_time', args).then(function (r) {
+      if (r && r.status === 'success') {
+        toast(r.message || 'Done.', 'green');
+        return r;
+      }
+      throw new Error((r && r.message) || 'The server refused the action.');
+    });
+  }
+
+  function clockIn() {
+    var p = app.draft.project;
+    if (!p) { toast('Choose a project first.', 'orange'); return; }
+    setLoading(true, 'Locating…');
+    window.KioskGeo.anchorFix().then(function (anchor) {
+      setLoading(true, 'Clocking in…');
+      return offsiteCheck(p, anchor, 'clock in').then(function (r) {
+        if (!r.proceed) { setLoading(false); return null; }
+        return postTime({
+          project: p.value,
+          task: app.draft.task ? app.draft.task.value : null,
+          action: 'Start',
+          description: (el.note.value || '').trim(),
+          time_category: app.draft.activity || null,
+          skip_reason: null,
+          lat: anchor ? anchor.lat : null,
+          lng: anchor ? anchor.lng : null,
+          accuracy: anchor ? anchor.accuracy : null,
+          offsite_acknowledged: r.ack,
+        }).then(function () {
+          el.note.value = '';
+          app.draft.activity = '';
+          renderActivityChips();
+          setDraftProject(null);
+          app.photoCount = 0; // a new interval starts with no photos of its own
+          maybeConsent();
+          return fetchStatus();
+        });
+      });
+    }).catch(function (e) {
+      setLoading(false);
+      toast(humanError(e), 'red');
+    });
+  }
+
+  function openBreakSheet() {
+    UI.armAudio();
+    var custom = h('input', { type: 'number', class: 'tk-input', inputmode: 'numeric', min: '1', max: '480', placeholder: 'Custom minutes', 'aria-label': 'Custom break minutes' });
+    var handle = UI.sheet.open({
+      title: 'How long a break?',
+      body: h('div', { class: 'tk-stack' }, [
+        h('p', { class: 'tk-note', text: 'The app counts down and buzzes once when time is up. Nothing is sent to your phone in the background.' }),
+        h('div', { class: 'tk-presets' }, [15, 30, 45, 60].map(function (m) {
+          return h('button', { type: 'button', class: 'tk-preset', on: { click: function () { handle.close('action'); pause(m); } } }, [String(m), h('small', { text: 'minutes' })]);
+        })),
+        h('div', { class: 'tk-field' }, [h('label', { text: 'Or a custom length' }), custom]),
+      ]),
+      actions: [
+        { label: 'Start custom break', kind: 'primary', onClick: function () {
+          var m = cint(custom.value);
+          if (m <= 0) { custom.focus(); return false; }
+          pause(m);
+        } },
+        { label: 'Break with no timer', kind: 'ghost', onClick: function () { pause(0); } },
+      ],
+    });
+  }
+
+  function pause(minutes) {
+    setLoading(true);
+    postTime({ action: 'Pause', break_minutes: minutes || null }).then(function () {
+      app.breakPlan = minutes ? { minutes: minutes, startedAt: Date.now() } : null;
+      app.breakAlerted = false;
+      return fetchStatus();
+    }).catch(function (e) { setLoading(false); toast(humanError(e), 'red'); });
+  }
+
+  function resume() {
+    setLoading(true);
+    postTime({ action: 'Resume' }).then(function () {
+      app.breakPlan = null;
+      return fetchStatus();
+    }).catch(function (e) { setLoading(false); toast(humanError(e), 'red'); });
+  }
+
+  // Switch: attachments nudge → picker → confirm sheet (task / activity / note)
+  // → photo gate → maintenance warning (only when leaving the project) →
+  // anchor + off-site check → log_time Switch.
+  function switchJob() {
+    var ci = app.currentInterval || {};
+    promptIfNoAttachments('switch').then(function (go) {
+      if (!go) return;
+      openProjectPicker({
+        title: 'Switch to…',
+        selected: ci.project,
+        onPick: function (p) { openSwitchConfirm(p); },
+      });
+    });
+  }
+
+  function openSwitchConfirm(project) {
+    var ci = app.currentInterval || {};
+    var draft = { task: null, activity: ci.time_category || '', note: '' };
+    var taskBtn = pickButton('tk-switch-task', 'Choose a task');
+    var chips = h('div', { class: 'tk-chips', role: 'group', 'aria-label': 'Activity type' });
+    var note = h('textarea', { rows: '2', placeholder: 'What are you working on?', 'aria-label': 'Note' });
+
+    function renderChips() {
+      UI.clear(chips);
+      app.options.activity_types.forEach(function (a) {
+        chips.appendChild(h('button', {
+          type: 'button', class: 'tk-choice', text: a.label,
+          'aria-pressed': draft.activity === a.value ? 'true' : 'false',
+          on: { click: function () { draft.activity = draft.activity === a.value ? '' : a.value; renderChips(); } },
+        }));
+      });
+    }
+    renderChips();
+    taskBtn.addEventListener('click', function () {
+      openTaskPicker(project.value, function (t) {
+        draft.task = t;
+        setPick(taskBtn, t ? t.label : '', t && t.value !== t.label ? t.value : '', 'Choose a task');
+      });
+    });
+
+    UI.sheet.open({
+      title: 'Switch to ' + (project.label || project.value),
+      body: h('div', { class: 'tk-stack' }, [
+        h('p', { class: 'tk-note', text: 'This closes your current job and starts a new one on ' + (project.label || project.value) + '.' }),
+        h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Task (optional)' }), taskBtn]),
+        h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Activity' }), chips]),
+        h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Note (optional)' }), note]),
+      ]),
+      actions: [
+        { label: 'Confirm switch', kind: 'primary', large: true, onClick: function () {
+          draft.note = (note.value || '').trim();
+          runSwitch(project, draft);
+        } },
+        { label: 'Cancel', kind: 'ghost' },
+      ],
+    });
+  }
+
+  function runSwitch(project, draft) {
+    var ci = app.currentInterval || {};
+    var leaving = !!(project.value && ci.project && project.value !== ci.project);
+    // Photo gate first, then the maintenance warning: both can refuse, and
+    // asking for a skip reason only to then be blocked on maintenance would be
+    // the more annoying order.
+    withPhotoGate('switch jobs').then(function (gate) {
+      if (!gate.ok) return;
+      return (leaving ? warnIfMaintenancePending('switch jobs') : Promise.resolve(true)).then(function (go) {
+        if (!go) return;
+        setLoading(true, 'Locating…');
+        return window.KioskGeo.anchorFix().then(function (anchor) {
+          return offsiteCheck(project, anchor, 'switch').then(function (r) {
+            if (!r.proceed) { setLoading(false); return; }
+            return postTime({
+              project: project.value,
+              task: draft.task ? draft.task.value : null,
+              action: 'Switch',
+              description: draft.note || '',
+              time_category: draft.activity || null,
+              skip_reason: gate.reason || null,
+              lat: anchor ? anchor.lat : null,
+              lng: anchor ? anchor.lng : null,
+              accuracy: anchor ? anchor.accuracy : null,
+              offsite_acknowledged: r.ack,
+            }).then(function () {
+              app.photoCount = 0; // a new interval starts with no photos of its own
+              app.maintenance = null;
+              return fetchStatus();
+            });
+          });
+        });
+      });
+    }).catch(function (e) { setLoading(false); toast(humanError(e), 'red'); });
+  }
+
+  // Clock Out: summary sheet → Confirm → maintenance warning → photo gate →
+  // attachments nudge → anchor → log_time Stop → Day complete.
+  function clockOut() {
+    var ci = app.currentInterval || {};
+    var body = h('div', { class: 'tk-stack' }, [UI.skeleton(5)]);
+    var summary = null;
+    var handle = UI.sheet.open({
+      title: 'Review your day',
+      body: body,
+      actions: [
+        { label: 'Confirm clock out', kind: 'stop', large: true, onClick: function () { finishClockOut(summary); } },
+        { label: 'Not yet', kind: 'ghost' },
+      ],
+    });
+
+    function renderSummary(s, offline) {
+      UI.clear(body);
+      var kv = h('dl', { class: 'tk-kv' });
+      function add(k, v, cls) { kv.appendChild(h('div', {}, [h('dt', { text: k }), h('dd', { class: cls || '', text: v })])); }
+      add('Today', fmt.hm(s.today_seconds || 0));
+      add('This job', fmt.hm(s.interval_seconds || 0));
+      add('Sites', (s.sites && s.sites.length) ? s.sites.join(', ') : (ci.project_title || ci.project || '—'));
+      add('Photos', String(s.photo_count != null ? s.photo_count : (app.photoCount || 0)));
+      var cov = s.coverage_pct;
+      add('Tracking coverage', cov != null ? Math.round(cov) + '%' : '—', cov == null ? '' : (cov >= 90 ? 'is-green' : 'is-amber'));
+      if (s.last_fix_at) add('Last fix', fmt.ago(s.last_fix_at));
+      body.appendChild(kv);
+      if (offline) body.appendChild(h('p', { class: 'tk-note', text: 'Couldn’t reach the server — this is what the app knows on its own.' }));
+    }
+
+    api(API + 'get_shift_summary', {}, { method: 'GET' })
+      .then(function (s) {
+        summary = s || {};
+        if (UI.sheet.depth()) renderSummary(summary, false);
+      })
+      .catch(function () {
+        summary = { interval_seconds: elapsedSeconds(), today_seconds: elapsedSeconds(), photo_count: app.photoCount || 0, sites: [ci.project_title || ci.project].filter(Boolean) };
+        if (UI.sheet.depth()) renderSummary(summary, true);
+      });
+    return handle;
+  }
+
+  function finishClockOut(summary) {
+    warnIfMaintenancePending('clock out').then(function (go) {
+      if (!go) return;
+      return withPhotoGate('clock out').then(function (gate) {
+        if (!gate.ok) return;
+        return promptIfNoAttachments('clock out').then(function (go2) {
+          if (!go2) return;
+          setLoading(true, 'Locating…');
+          return window.KioskGeo.anchorFix().then(function (anchor) {
+            setLoading(true, 'Clocking out…');
+            return postTime({
+              action: 'Stop',
+              skip_reason: gate.reason || null,
+              lat: anchor ? anchor.lat : null,
+              lng: anchor ? anchor.lng : null,
+              accuracy: anchor ? anchor.accuracy : null,
+            }).then(function () {
+              var s = summary || {};
+              app.dayComplete = {
+                today_seconds: s.today_seconds || elapsedSeconds(),
+                interval_seconds: s.interval_seconds || elapsedSeconds(),
+                photo_count: s.photo_count != null ? s.photo_count : app.photoCount,
+                coverage_pct: s.coverage_pct,
+                sites: s.sites || [],
+              };
+              return api(API + 'get_current_status', {}, { method: 'GET' }).then(function (m) {
+                var keep = app.dayComplete;
+                applyStatus(m);
+                if (app.status === 'Idle') { app.dayComplete = keep; renderState(); }
+                setLoading(false);
+              });
+            });
+          });
+        });
+      });
+    }).catch(function (e) { setLoading(false); toast(humanError(e), 'red'); });
   }
 
   // -- Tracking indicator --------------------------------------------------
+  var TRACK_TEXT = {
+    on: 'Tracking on',
+    ready: 'Location ready',
+    off: 'Tracking off',
+    denied: 'Location blocked',
+    unavailable: 'No GPS fix',
+    insecure: 'Needs a secure connection',
+    hidden: 'Paused in background',
+  };
+  var TRACK_CLASS = { on: 'is-on', ready: 'is-ready', denied: 'is-error', insecure: 'is-error', unavailable: 'is-warn', hidden: 'is-warn' };
   var deniedToastShown = false;
   function renderTrack(status) {
-    var box = el.track, text = el.trackText;
-    if (!box) return;
-    box.classList.remove('is-on', 'is-error', 'is-ready');
-    if (status === 'on') {
-      box.classList.add('is-on');
-      text.textContent = 'Location tracking active';
-    } else if (status === 'ready') {
-      box.classList.add('is-ready');
-      text.textContent = 'Location ready';
-    } else if (status === 'denied') {
-      box.classList.add('is-error');
-      text.textContent = 'Location permission denied';
-      if (!deniedToastShown) {
-        deniedToastShown = true;
-        toast('Location access is required while clocked in. Please enable it.', 'orange', 6000);
-      }
-    } else if (status === 'error') {
-      box.classList.add('is-error');
-      text.textContent = 'Location unavailable';
-    } else {
-      text.textContent = 'Location tracking off';
+    if (!el.track) return;
+    el.track.className = 'tk-hero-chip tk-track ' + (TRACK_CLASS[status] || '');
+    el.trackText.textContent = TRACK_TEXT[status] || TRACK_TEXT.off;
+    if (status === 'denied' && !deniedToastShown) {
+      deniedToastShown = true;
+      toast('Location access is required while clocked in. See Settings for how to enable it.', 'orange', 6000);
     }
   }
 
@@ -1005,6 +1336,7 @@
 
     navigator.serviceWorker.register(swUrl)
       .then(function (reg) {
+        app.swReg = reg;
         sendSWConfig();
         watchForUpdates(reg);
       })
@@ -1042,134 +1374,82 @@
     setInterval(check, 60 * 60 * 1000);
   }
 
-  // -- Installed-app navigation ---------------------------------------------
-  // An installed PWA running standalone (or iOS "Add to Home Screen") has no
-  // browser chrome, so back/forward/refresh are impossible — notably after
-  // following the "View My History" link. Render our own bar in that case.
-  // In a normal browser tab — or when the browser honors the manifest's
-  // minimal-ui display_override and draws its own controls — it stays hidden.
-  function isStandaloneDisplay() {
-    if (window.navigator.standalone === true) return true; // iOS home-screen app
-    return !!(window.matchMedia && (
-      window.matchMedia('(display-mode: standalone)').matches ||
-      window.matchMedia('(display-mode: fullscreen)').matches
-    ));
-  }
-
-  function setupNav() {
-    var bar = $('tk-nav');
-    if (!bar || !isStandaloneDisplay()) return;
-    bar.hidden = false;
-    $('tk-nav-back').addEventListener('click', function () { window.history.back(); });
-    $('tk-nav-forward').addEventListener('click', function () { window.history.forward(); });
-    $('tk-nav-refresh').addEventListener('click', function () { window.location.reload(); });
+  // Settings → "Refresh app": check for a new worker, then reload.
+  function refreshApp() {
+    var reload = function () { window.location.reload(); };
+    if (app.swReg) app.swReg.update().then(reload, reload); else reload();
   }
 
   // -- Clock / timer -------------------------------------------------------
-  function tick() {
-    el.clock.textContent = new Date().toLocaleTimeString();
+  function elapsedSeconds() {
     var ci = app.currentInterval;
-    if ((app.status === 'Open' || app.status === 'Paused') && ci && ci.start_time) {
-      var start = new Date(ci.start_time.replace(' ', 'T')).getTime();
-      var now = (app.status === 'Paused' && ci.last_pause_time)
-        ? new Date(ci.last_pause_time.replace(' ', 'T')).getTime()
-        : Date.now();
-      var pausedMs = (ci.total_paused_seconds || 0) * 1000;
-      var diff = now - start - pausedMs;
-      if (diff >= 0) {
-        var h = Math.floor(diff / 3600000);
-        var m = Math.floor((diff % 3600000) / 60000);
-        var s = Math.floor((diff % 60000) / 1000);
-        el.timer.textContent = pad2(h) + ':' + pad2(m) + ':' + pad2(s);
+    if (!ci || !ci.start_time) return 0;
+    var start = fmt.parseDT(ci.start_time);
+    if (!start) return 0;
+    var pausedAt = app.status === 'Paused' && ci.last_pause_time ? fmt.parseDT(ci.last_pause_time) : null;
+    var now = pausedAt ? pausedAt.getTime() : Date.now();
+    var pausedMs = (ci.total_paused_seconds || 0) * 1000;
+    return Math.max(0, Math.floor((now - start.getTime() - pausedMs) / 1000));
+  }
+
+  function breakRemainingSeconds() {
+    var ci = app.currentInterval || {};
+    var minutes = cint(ci.planned_break_minutes) || (app.breakPlan ? app.breakPlan.minutes : 0);
+    if (!minutes) return null;
+    var startedAt = ci.last_pause_time ? fmt.parseDT(ci.last_pause_time) : null;
+    var t0 = startedAt ? startedAt.getTime() : (app.breakPlan ? app.breakPlan.startedAt : Date.now());
+    return Math.floor((t0 + minutes * 60000 - Date.now()) / 1000);
+  }
+
+  function tick() {
+    if (!el.clock) return;
+    el.clock.textContent = fmt.clock(new Date());
+    if (app.status === 'Open') {
+      el.elapsed.textContent = fmt.hms(elapsedSeconds());
+    } else if (app.status === 'Paused') {
+      var rem = breakRemainingSeconds();
+      if (rem == null) {
+        var ci = app.currentInterval || {};
+        var since = ci.last_pause_time ? fmt.parseDT(ci.last_pause_time) : null;
+        var onBreak = since ? Math.max(0, Math.floor((Date.now() - since.getTime()) / 1000)) : 0;
+        el.countdown.textContent = fmt.hms(onBreak);
+        el.countdown.classList.remove('is-over');
+        el.status.textContent = 'On break';
+      } else if (rem > 0) {
+        el.countdown.textContent = fmt.hms(rem);
+        el.countdown.classList.remove('is-over');
+        el.status.textContent = 'Break — time left';
+      } else {
+        el.countdown.textContent = '0:00:00';
+        el.status.textContent = 'Break time is up';
+        if (!app.breakAlerted) {
+          app.breakAlerted = true;
+          el.countdown.classList.add('is-over');
+          UI.buzz();
+          toast('Break time is up.', 'orange', 5000);
+        }
       }
     }
   }
-  function pad2(n) { return n < 10 ? '0' + n : '' + n; }
 
   // -- Wiring --------------------------------------------------------------
-  function cacheEls() {
-    el.clock = $('tk-clock');
-    el.status = $('tk-status');
-    el.timer = $('tk-timer');
-    el.activeProject = $('tk-active-project');
-    el.activeProjectName = $('tk-active-project-name');
-    el.maintenance = $('tk-maintenance');
-    el.maintenanceLink = $('tk-maintenance-link');
-    el.visits = $('tk-visits');
-    el.visitsList = $('tk-visits-list');
-    el.geoSuggest = $('tk-geo-suggest');
-    el.geoSuggestText = $('tk-geo-suggest-text');
-    el.geoSuggestBtn = $('tk-geo-suggest-btn');
-    el.inputs = $('tk-inputs');
-    // Searchable pickers expose a <select>-like surface (.value, onChange).
-    el.project = createCombo($('tk-project-combo'), {
-      placeholder: 'Search project name or PRJ-#…',
-      emptyText: 'No matching projects.',
-      onOpen: function () { requestDeviceFix(resortProjects); },
-    });
-    el.task = createCombo($('tk-task-combo'), {
-      placeholder: 'Search task… (optional)',
-      emptyText: 'No matching tasks.',
-    });
-    el.activity = $('tk-activity');
-    el.note = $('tk-note');
-    el.readonly = $('tk-readonly');
-    el.readonlyNote = $('tk-readonly-note');
-    el.readonlyCat = $('tk-readonly-cat');
-    el.attachments = $('tk-attachments');
-    el.attachmentList = $('tk-attachment-list');
-    el.clockIn = $('tk-clock-in');
-    el.activeActions = $('tk-active-actions');
-    el.pause = $('tk-pause');
-    el.resume = $('tk-resume');
-    el.switchBtn = $('tk-switch');
-    el.clockOut = $('tk-clock-out');
-    el.track = $('tk-track');
-    el.trackText = $('tk-track-text');
-  }
-
   function wire() {
-    el.project.onChange(function (project) { loadTasks(project); });
-    el.clockIn.addEventListener('click', function () { handleAction('Start'); });
-    el.pause.addEventListener('click', function () { handleAction('Pause'); });
-    el.resume.addEventListener('click', function () { handleAction('Resume'); });
-
-    el.clockOut.addEventListener('click', function () {
-      warnIfMaintenancePending('clock out', function () {
-        withPhotoGate('clock out', function (skipReason) {
-          promptIfNoAttachments(
-            'No attachments added. Press OK to go back and add them, or Cancel to clock out anyway.',
-            function () { handleAction('Stop', skipReason); }
-          );
-        });
+    el.pickProject.addEventListener('click', function () {
+      openProjectPicker({ selected: app.draft.project ? app.draft.project.value : null, onPick: setDraftProject });
+    });
+    el.pickTask.addEventListener('click', function () {
+      if (!app.draft.project) { toast('Choose a project first.', 'orange'); return; }
+      openTaskPicker(app.draft.project.value, function (t) {
+        app.draft.task = t;
+        setPick(el.pickTask, t ? t.label : '', t && t.value !== t.label ? t.value : '', 'Choose a task');
       });
     });
-
-    el.switchBtn.addEventListener('click', function () {
-      if (!app.isSwitching) {
-        promptIfNoAttachments(
-          'No attachments added. Press OK to go back and add them, or Cancel to switch anyway.',
-          function () { app.isSwitching = true; renderState(); }
-        );
-      } else {
-        // Only the project being LEFT needs its form; switching tasks within
-        // the same project keeps the visit going.
-        var ci = app.currentInterval || {};
-        var newProject = el.project.value;
-        // Photo gate first, then the maintenance warning: both can refuse, and
-        // asking for a skip reason only to then be blocked on maintenance would
-        // be the more annoying order.
-        withPhotoGate('switch projects', function (skipReason) {
-          if (newProject && ci.project && newProject !== ci.project) {
-            warnIfMaintenancePending('switch projects', function () {
-              handleAction('Switch', skipReason);
-            });
-          } else {
-            handleAction('Switch', skipReason);
-          }
-        });
-      }
-    });
+    el.clockIn.addEventListener('click', clockIn);
+    el.pause.addEventListener('click', openBreakSheet);
+    el.resume.addEventListener('click', resume);
+    el.switchBtn.addEventListener('click', switchJob);
+    el.clockOut.addEventListener('click', clockOut);
+    el.startAnother.addEventListener('click', function () { app.dayComplete = null; renderState(); });
 
     $('tk-add-attach').addEventListener('click', function () {
       if (app.currentInterval) $('tk-file-input').click();
@@ -1193,16 +1473,38 @@
 
     // Drain the offline registration queue whenever the device comes back.
     window.addEventListener('online', flushPhotoQueue);
+
+    // Coming back to the foreground: confirm the interval (the hourly sweeper
+    // may have auto-closed it) — at most every 30 s.
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible' && Date.now() - statusFetchedAt > 30000 && !app.loading) fetchStatus();
+    });
+  }
+
+  // Captured as early as possible — the browser fires this once, before init.
+  window.addEventListener('beforeinstallprompt', function (ev) {
+    ev.preventDefault();
+    app.installPrompt = ev;
+  });
+
+  function promptInstall() {
+    var ev = app.installPrompt;
+    if (!ev) return Promise.resolve(null);
+    app.installPrompt = null;
+    try {
+      ev.prompt();
+      return (ev.userChoice || Promise.resolve(null)).then(function (c) { return c && c.outcome; });
+    } catch (e) { return Promise.resolve(null); }
   }
 
   // -- Init ----------------------------------------------------------------
   function init() {
     var root = $('kiosk-root');
-    root.innerHTML = TEMPLATE;
+    buildShell(root);
     root.removeAttribute('aria-busy');
     cacheEls();
     wire();
-    setupNav();
+    UI.theme.syncMeta();
 
     window.KioskGeo.configure(SETTINGS).onStatus(renderTrack);
     // Ask for location permission on visit, so it's granted before clock-in.
@@ -1212,6 +1514,42 @@
     setInterval(tick, 1000);
     tick();
 
+    // The context the view modules get. Everything they need from here, and
+    // nothing they should not touch.
+    var ctx = {
+      api: api,
+      API: API,
+      humanError: humanError,
+      state: app,
+      boot: BOOT,
+      settings: SETTINGS,
+      build: BUILD,
+      openProjectPicker: openProjectPicker,
+      photoQueueLength: function () { return photoQueue().length; },
+      flushQueues: function () {
+        flushPhotoQueue();
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.ready.then(function (reg) {
+            var t = reg.active || navigator.serviceWorker.controller;
+            if (t) t.postMessage({ type: 'flush' });
+          }).catch(function () { /* noop */ });
+        }
+      },
+      refreshApp: refreshApp,
+      promptInstall: promptInstall,
+      canInstall: function () { return !!app.installPrompt; },
+      setBadge: setBadge,
+      setTab: setTab,
+    };
+    var v = views();
+    TABS.forEach(function (t) {
+      if (t.id !== 'clock' && v[t.id] && v[t.id].mount) {
+        try { v[t.id].mount($('tk-panel-' + t.id), ctx); } catch (e) { /* a broken view must not take the clock down */ }
+      }
+    });
+    setTab('clock');
+
+    setDraftProject(null);
     loadOptions();
     // Seed instantly from the server boot payload, then confirm with a fetch.
     applyStatus(BOOT.status);
@@ -1220,9 +1558,7 @@
     // Drain photos queued in a prior offline session. Reopening the app already online fires
     // no 'online' event, so without this the queue never registers those captures — the Job
     // Photo Compliance report then under-counts and photo_count stays low.
-    if (navigator.onLine) {
-      flushPhotoQueue();
-    }
+    if (navigator.onLine) flushPhotoQueue();
   }
 
   if (document.readyState === 'loading') {

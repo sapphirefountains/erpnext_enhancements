@@ -20,9 +20,11 @@ Two columns exist only for review and are not in the provider's format:
 * **Project** — the breakdown the business asked for on top of the provider's
   format. Indented sub-rows under each employee when switched on.
 
-Blank OT columns are not a bug. See the module docstring in ``payroll_export.py``:
-``hrms`` is not installed on this site, there is no Salary Structure to derive a
-premium from, and inventing a qualified-overtime figure is a tax-reporting error.
+**Regular / Overtime** carry the weekly split since v1.480.0
+(``workforce/overtime.py``). **Qualified OT is still blank and that is not a bug.**
+See the module docstring in ``payroll_export.py``: ``hrms`` is not installed on
+this site, there is no Salary Structure to derive a premium from, and inventing a
+qualified-overtime figure is a tax-reporting error.
 """
 
 import frappe
@@ -54,7 +56,7 @@ def get_columns():
 		{"label": _("S/H"), "fieldname": "classification", "fieldtype": "Data", "width": 60},
 		{"label": _("Regular Hours"), "fieldname": "regular_hours", "fieldtype": "Float", "precision": 2, "width": 120},
 		{"label": _("Qualified OT"), "fieldname": "qualified_ot", "fieldtype": "Data", "width": 110},
-		{"label": _("Overtime"), "fieldname": "overtime", "fieldtype": "Data", "width": 100},
+		{"label": _("Overtime Hours"), "fieldname": "overtime", "fieldtype": "Float", "precision": 2, "width": 120},
 		{"label": _("PTO"), "fieldname": "pto", "fieldtype": "Data", "width": 80},
 		{"label": _("Holiday"), "fieldname": "holiday", "fieldtype": "Data", "width": 80},
 		{"label": _("Healthcare Stipend"), "fieldname": "healthcare_stipend", "fieldtype": "Currency", "width": 150},
@@ -71,9 +73,9 @@ def _shape(row):
 		"employee_label": row["employee_label"] if row["is_employee_row"] else "",
 		"classification": row["classification"],
 		"regular_hours": row["regular_hours"] or 0,
-		# Emitted blank, exactly as they go to the provider.
+		# Qualified OT is emitted blank, exactly as it goes to the provider.
 		"qualified_ot": "",
-		"overtime": "",
+		"overtime": row.get("overtime_hours") or 0,
 		"pto": "",
 		"holiday": "",
 		"healthcare_stipend": row["healthcare_stipend"] or 0,
@@ -86,9 +88,10 @@ def _shape(row):
 def _message(rows, from_date, to_date):
 	"""Warn about the two things that make an export untrustworthy."""
 	notes = [
-		_("Period: {0}. Overtime, PTO, Holiday, Bonus, Commission and Reimbursement are submitted blank — "
+		_("Period: {0}. Regular and Overtime hours are the weekly split (workweek starts {1}, overtime after {2} h). "
+		  "Qualified OT, PTO, Holiday, Bonus, Commission and Reimbursement are submitted blank — "
 		  "this site has no payroll module (hrms is not installed), so they stay with the provider.").format(
-			payroll_export.period_label(from_date, to_date)
+			payroll_export.period_label(from_date, to_date), *payroll_export.overtime_settings()
 		)
 	]
 

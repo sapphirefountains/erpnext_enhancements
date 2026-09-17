@@ -173,7 +173,7 @@ for (const { fn, destructive } of MUST_GUARD) {
 }
 
 // ---------------------------------------------------------------------------
-// The web-search toggle (v1.480.0), two shape rules. First, runStream must post
+// The web-search toggle (v1.481.0), two shape rules. First, runStream must post
 // `use_search`: the relay's Python signature is a closed list, so a key the
 // widget stops sending is not an error anywhere — the toggle just becomes
 // decorative. Second, a hidden continuation (the "please proceed" turn after an

@@ -14,8 +14,22 @@
   "high_accuracy",
   "min_accuracy_m",
   "max_batch_size",
+  "reliability_section",
+  "auto_close_after_hours",
+  "tracking_gap_minutes",
+  "keep_low_accuracy_fixes",
+  "column_break_reliability",
+  "anchor_accuracy_m",
+  "offsite_warn",
   "retention_section",
   "retention_days",
+  "payroll_section",
+  "overtime_week_start",
+  "overtime_weekly_hours",
+  "column_break_payroll",
+  "default_burden_pct",
+  "supervision_section",
+  "send_supervisor_digest",
   "photo_section",
   "require_job_photos",
   "min_photos_per_interval",
@@ -37,8 +51,8 @@
    "label": "Enable Location Tracking"
   },
   {
-   "default": "0",
-   "description": "Hold a Screen Wake Lock while clocked in and active so the screen stays on (improves tracking reliability on dedicated devices, but uses more battery).",
+   "default": "1",
+   "description": "Hold a Screen Wake Lock while clocked in and active so the screen stays on. On by default since v1.480.0 (decided 2026-09-17): a phone that sleeps in a pocket stops reporting, and the tracking gaps that produced cost more than the battery does.",
    "fieldname": "keep_wake_lock",
    "fieldtype": "Check",
    "label": "Keep Screen Awake While Active"
@@ -75,7 +89,7 @@
   },
   {
    "default": "100",
-   "description": "Discard fixes whose reported accuracy is worse than this many meters (0 = accept all).",
+   "description": "Fixes whose reported accuracy is worse than this many meters are stored as Low Accuracy when \"Keep Low-Accuracy Fixes\" is on, and discarded otherwise (0 = accept all).",
    "fieldname": "min_accuracy_m",
    "fieldtype": "Int",
    "label": "Minimum Accuracy (meters)"
@@ -88,16 +102,103 @@
    "label": "Max Batch Size"
   },
   {
+   "fieldname": "reliability_section",
+   "fieldtype": "Section Break",
+   "label": "Reliability"
+  },
+  {
+   "default": "14",
+   "description": "An interval still Open or Paused this many hours after it started is closed by the hourly sweeper (workforce/sweeper.py): end time = the pause time if paused, else the last location fix, else start + this limit. The employee and their supervisor are emailed and the interval is flagged Auto-closed so the hours get a second look.",
+   "fieldname": "auto_close_after_hours",
+   "fieldtype": "Int",
+   "label": "Auto-close After (hours)"
+  },
+  {
+   "default": "15",
+   "description": "A stretch of a clock-in with no location fix longer than this many minutes is a tracking gap. Drives the interval's Tracking Health, the gap segments on the Location Timeline, and the stale badge on the live map.",
+   "fieldname": "tracking_gap_minutes",
+   "fieldtype": "Int",
+   "label": "Tracking Gap (minutes)"
+  },
+  {
+   "default": "1",
+   "description": "Store fixes worse than the minimum accuracy as Low Accuracy rows instead of rejecting them. They still prove the phone was reporting (so they count toward tracking coverage) and the timeline draws them hollow; they are excluded from distance and stop detection.",
+   "fieldname": "keep_low_accuracy_fixes",
+   "fieldtype": "Check",
+   "label": "Keep Low-Accuracy Fixes"
+  },
+  {
+   "fieldname": "column_break_reliability",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "50",
+   "description": "The accuracy (meters) the kiosk tries to reach for the clock-in / clock-out anchor fix before giving up and using the best fix it saw. Anchors are what the off-site check compares against the project site.",
+   "fieldname": "anchor_accuracy_m",
+   "fieldtype": "Int",
+   "label": "Anchor Accuracy Target (meters)"
+  },
+  {
+   "default": "1",
+   "description": "Show the technician an off-site sheet (\"You're 3.2 km from the site. Clock in anyway?\") when the clock-in fix is outside the project's geofence. The server flags the interval as off-site regardless of this setting; this only decides whether the person is asked.",
+   "fieldname": "offsite_warn",
+   "fieldtype": "Check",
+   "label": "Warn When Clocking In Off-site"
+  },
+  {
    "fieldname": "retention_section",
    "fieldtype": "Section Break",
    "label": "Data Retention"
   },
   {
-   "default": "90",
-   "description": "Automatically delete location logs older than this many days (0 = keep forever). Runs daily.",
+   "default": "0",
+   "description": "Automatically delete location logs older than this many days (0 = keep forever). Runs daily. Keep-forever since v1.480.0 (decided 2026-09-17): the trail is the evidence behind a corrected timesheet, and a 90-day purge deleted it before the questions arrived.",
    "fieldname": "retention_days",
    "fieldtype": "Int",
    "label": "Retention (days)"
+  },
+  {
+   "fieldname": "payroll_section",
+   "fieldtype": "Section Break",
+   "label": "Payroll & Costing"
+  },
+  {
+   "default": "Sunday",
+   "description": "First day of the FLSA workweek used for the weekly overtime split on the payroll export.",
+   "fieldname": "overtime_week_start",
+   "fieldtype": "Select",
+   "label": "Workweek Starts On",
+   "options": "Sunday\nMonday"
+  },
+  {
+   "default": "40",
+   "description": "Hours in a workweek beyond which hours are overtime. There is no daily overtime rule (Utah).",
+   "fieldname": "overtime_weekly_hours",
+   "fieldtype": "Float",
+   "label": "Overtime After (hours per week)"
+  },
+  {
+   "fieldname": "column_break_payroll",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Employer burden (payroll taxes, insurance, benefits) added on top of the hourly rate for job costing, used when an Employee Pay Rate row leaves its own Burden % blank. Costing only; never reaches the payroll provider.",
+   "fieldname": "default_burden_pct",
+   "fieldtype": "Percent",
+   "label": "Default Burden %"
+  },
+  {
+   "fieldname": "supervision_section",
+   "fieldtype": "Section Break",
+   "label": "Supervision"
+  },
+  {
+   "default": "1",
+   "description": "Send each supervisor a 06:45 digest of yesterday: hours per person, auto-closed intervals, tracking gaps, off-site clock-ins and pending time correction requests for their team. HR Managers get the whole company. Nobody gets an empty one.",
+   "fieldname": "send_supervisor_digest",
+   "fieldtype": "Check",
+   "label": "Send Supervisor Digest"
   },
   {
    "fieldname": "photo_section",
@@ -142,7 +243,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-06-08 10:00:00.000000",
+ "modified": "2026-09-17 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Workforce",
  "name": "Time Kiosk Settings",

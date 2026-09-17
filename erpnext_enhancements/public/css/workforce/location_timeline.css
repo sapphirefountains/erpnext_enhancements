@@ -1,0 +1,700 @@
+/*
+ * Location Timeline (workforce/page/location_timeline) — desk page styles.
+ *
+ * Loaded by the page through frappe.require with a BARE /assets path. On v16
+ * frappe.require appends ?v=<build version> to a non-bundled same-origin path
+ * itself (frappe/public/js/frappe/assets.js), which is what keeps this file out of
+ * the one-year immutable /assets cache; a path that already carries "?v=" breaks
+ * frappe.assets.extn() and loads as nothing. Do not add a token in the JS.
+ *
+ * Theme: the desk always stamps <html data-theme="light|dark"> (never absent), so
+ * everything here reads the desk's own variables — --bg-color, --card-bg,
+ * --border-color, --text-color, --text-muted, --primary — and follows the theme
+ * without a palette of its own. The only literal colours are the state colours
+ * (good / gaps / off-site / stale) and the interval swatches, which the page sets
+ * per card through --lt-swatch and which must NOT shift with the theme: a red gap
+ * is red in the dark too.
+ *
+ * The Leaflet overrides at the bottom exist because Leaflet's own stylesheet is
+ * light-only; without them a dark desk gets white zoom buttons and white popups
+ * on a dark map.
+ *
+ * Class contract: tests/test_location_timeline_page.py asserts every "lt-" class
+ * the page script emits has a rule here, so an unstyled element cannot ship
+ * silently (the training player once shipped 130 of them).
+ */
+
+.lt-root {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    color: var(--text-color, #1f272e);
+}
+
+/* ---- toolbar ------------------------------------------------------------- */
+
+.lt-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 18px;
+    min-height: 32px;
+}
+
+.lt-modes {
+    display: inline-flex;
+    border: 1px solid var(--border-color, #e2e6e9);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--card-bg, #fff);
+}
+
+.lt-mode-btn {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--text-muted, #6c7680);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 5px 14px;
+    cursor: pointer;
+    min-height: 30px;
+}
+
+.lt-mode-btn + .lt-mode-btn {
+    border-left: 1px solid var(--border-color, #e2e6e9);
+}
+
+.lt-mode-btn.active {
+    background: var(--primary, #2490ef);
+    color: #fff;
+}
+
+.lt-mode-btn:focus-visible {
+    outline: 2px solid var(--primary, #2490ef);
+    outline-offset: -2px;
+}
+
+.lt-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+    margin: 0;
+    cursor: pointer;
+}
+
+.lt-check .lt-accuracy-toggle {
+    margin: 0;
+}
+
+.lt-legend {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    font-size: 11px;
+    color: var(--text-muted, #6c7680);
+}
+
+.lt-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.lt-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--text-muted, #6c7680);
+    box-sizing: border-box;
+}
+
+.lt-swatch-start {
+    border-radius: 3px;
+    background: #15803d;
+}
+
+.lt-swatch-end {
+    border-radius: 3px;
+    background: #b91c1c;
+}
+
+.lt-swatch-hollow {
+    background: transparent;
+    border: 2px solid var(--text-muted, #6c7680);
+}
+
+.lt-swatch-gap {
+    width: 18px;
+    height: 0;
+    border-radius: 0;
+    background: transparent;
+    border-top: 2px dashed #e03636;
+}
+
+.lt-swatch-stop {
+    background: #fff;
+    border: 3px solid #f39c12;
+}
+
+.lt-swatch-site {
+    background: rgba(36, 144, 239, 0.15);
+    border: 1px dashed var(--primary, #2490ef);
+}
+
+.lt-live-status {
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+}
+
+/* Mode switching hides the other mode's controls in CSS so the script only
+   flips one class on the root. */
+.lt-mode-live .lt-trail-only,
+.lt-mode-trail .lt-live-only {
+    display: none !important;
+}
+
+/* ---- layout -------------------------------------------------------------- */
+
+.lt-layout {
+    display: flex;
+    gap: 16px;
+    align-items: stretch;
+}
+
+.lt-map-col {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.lt-map {
+    height: 640px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color, #e2e6e9);
+    background: var(--bg-color, #f8f9fa);
+    z-index: 0; /* below the desk navbar and any dialog */
+}
+
+.lt-side {
+    flex: 0 0 340px;
+    max-height: 700px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* ---- playback ------------------------------------------------------------ */
+
+.lt-playback {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--card-bg, #fff);
+    border: 1px solid var(--border-color, #e2e6e9);
+    border-radius: 8px;
+    padding: 8px 12px;
+}
+
+.lt-playback.lt-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.lt-play-btn {
+    min-width: 34px;
+}
+
+.lt-speeds {
+    display: inline-flex;
+    gap: 2px;
+}
+
+.lt-speed-btn {
+    appearance: none;
+    border: 1px solid var(--border-color, #e2e6e9);
+    background: var(--card-bg, #fff);
+    color: var(--text-muted, #6c7680);
+    font-size: 11px;
+    border-radius: 6px;
+    padding: 2px 7px;
+    cursor: pointer;
+}
+
+.lt-speed-btn.active {
+    background: var(--primary, #2490ef);
+    border-color: var(--primary, #2490ef);
+    color: #fff;
+}
+
+.lt-scrubber {
+    flex: 1 1 auto;
+    min-width: 120px;
+    margin: 0;
+    accent-color: var(--primary, #2490ef);
+}
+
+.lt-clock {
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    color: var(--text-color, #1f272e);
+    min-width: 7em;
+    text-align: right;
+}
+
+/* ---- side panel ---------------------------------------------------------- */
+
+.lt-side-head {
+    padding: 2px 2px 0;
+}
+
+.lt-side-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-color, #1f272e);
+}
+
+.lt-side-sub {
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+}
+
+.lt-side-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.lt-side-actions .lt-export {
+    flex: 1 1 0;
+}
+
+.lt-state {
+    background: var(--card-bg, #fff);
+    border: 1px dashed var(--border-color, #e2e6e9);
+    border-radius: 8px;
+    padding: 14px 14px;
+}
+
+.lt-state-title {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-color, #1f272e);
+}
+
+.lt-state-body {
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+    margin-top: 4px;
+}
+
+.lt-state-empty {
+    border-color: var(--border-color, #e2e6e9);
+}
+
+.lt-state-denied {
+    border-color: #e03636;
+}
+
+.lt-state-error {
+    border-color: #f39c12;
+}
+
+.lt-state-loading .lt-state-title::after {
+    content: "…";
+}
+
+.lt-totals {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 8px;
+}
+
+.lt-total {
+    background: var(--card-bg, #fff);
+    border: 1px solid var(--border-color, #e2e6e9);
+    border-radius: 8px;
+    padding: 8px 10px;
+}
+
+.lt-total-value {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-color, #1f272e);
+    font-variant-numeric: tabular-nums;
+}
+
+.lt-total-label {
+    font-size: 11px;
+    color: var(--text-muted, #6c7680);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.lt-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.lt-card {
+    background: var(--card-bg, #fff);
+    border: 1px solid var(--border-color, #e2e6e9);
+    border-left: 4px solid var(--lt-swatch, var(--primary, #2490ef));
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: border-color 150ms ease;
+}
+
+.lt-card:hover,
+.lt-card.active {
+    border-color: var(--primary, #2490ef);
+    border-left-color: var(--lt-swatch, var(--primary, #2490ef));
+}
+
+.lt-card:focus-visible {
+    outline: 2px solid var(--primary, #2490ef);
+    outline-offset: 1px;
+}
+
+.lt-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.lt-card-title {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-color, #1f272e);
+}
+
+.lt-card-sub {
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+    margin-top: 1px;
+}
+
+.lt-card-stats {
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+    margin-top: 6px;
+    line-height: 1.5;
+}
+
+.lt-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+}
+
+.lt-badges:empty {
+    display: none;
+}
+
+/* ---- pills: state words, never colour alone ------------------------------ */
+
+.lt-pill {
+    display: inline-block;
+    font-size: 11px;
+    line-height: 18px;
+    border-radius: 10px;
+    padding: 0 8px;
+    white-space: nowrap;
+    border: 1px solid transparent;
+    background: var(--bg-color, #f3f5f7);
+    color: var(--text-muted, #6c7680);
+}
+
+.lt-pill-good {
+    background: #e7f7ed;
+    color: #15803d;
+}
+
+.lt-pill-gaps {
+    background: #fef3e2;
+    color: #b45309;
+}
+
+.lt-pill-none {
+    background: #fde8e8;
+    color: #b91c1c;
+}
+
+.lt-pill-off,
+.lt-pill-pending {
+    background: var(--bg-color, #f3f5f7);
+    color: var(--text-muted, #6c7680);
+    border-color: var(--border-color, #e2e6e9);
+}
+
+.lt-pill-warn {
+    background: #fef3e2;
+    color: #b45309;
+}
+
+.lt-pill-info {
+    background: #e6f0fb;
+    color: #1d5fa8;
+}
+
+.lt-pill-muted {
+    background: var(--bg-color, #f3f5f7);
+    color: var(--text-muted, #6c7680);
+    border-color: var(--border-color, #e2e6e9);
+}
+
+.lt-pill-stale {
+    background: #fde8e8;
+    color: #b91c1c;
+}
+
+.lt-pill-live {
+    background: #e7f7ed;
+    color: #15803d;
+}
+
+/* ---- live list ----------------------------------------------------------- */
+
+.lt-live-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.lt-live-row {
+    background: var(--card-bg, #fff);
+    border: 1px solid var(--border-color, #e2e6e9);
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: border-color 150ms ease;
+}
+
+.lt-live-row:hover,
+.lt-live-row:focus-visible {
+    border-color: var(--primary, #2490ef);
+    outline: none;
+}
+
+.lt-live-name {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-color, #1f272e);
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: center;
+}
+
+.lt-live-sub {
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+    margin-top: 1px;
+}
+
+.lt-live-meta {
+    font-size: 11px;
+    color: var(--text-muted, #6c7680);
+    margin-top: 4px;
+}
+
+/* ---- map markers (Leaflet divIcons) -------------------------------------- */
+
+/* Every divIcon uses className "lt-icon" so Leaflet's white leaflet-div-icon box
+   never appears; the visible shape is the child element. */
+.lt-icon {
+    background: none;
+    border: 0;
+}
+
+.lt-anchor {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 16px;
+    padding: 0 5px;
+    border-radius: 4px;
+    color: #fff;
+    background: var(--lt-swatch, #2490ef);
+    border: 2px solid #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    white-space: nowrap;
+    transform: translate(-50%, -50%);
+}
+
+.lt-anchor-start {
+    border-color: #15803d;
+}
+
+.lt-anchor-end {
+    border-color: #b91c1c;
+}
+
+.lt-stop-label {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 6px;
+    background: var(--card-bg, #fff);
+    color: var(--text-color, #1f272e);
+    border: 1px solid #f39c12;
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.lt-stop-label::before {
+    border-top-color: #f39c12;
+}
+
+.lt-play-marker {
+    display: block;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--primary, #2490ef);
+    border: 3px solid #fff;
+    box-shadow: 0 0 0 3px rgba(36, 144, 239, 0.35);
+    transform: translate(-50%, -50%);
+    animation: lt-pulse 1.4s ease-out infinite;
+}
+
+@keyframes lt-pulse {
+    0% { box-shadow: 0 0 0 3px rgba(36, 144, 239, 0.45); }
+    100% { box-shadow: 0 0 0 12px rgba(36, 144, 239, 0); }
+}
+
+.lt-live-pin {
+    position: relative;
+    display: block;
+    white-space: nowrap;
+}
+
+.lt-live-dot {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #15803d;
+    border: 3px solid #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    transform: translate(-50%, -50%);
+}
+
+.lt-live-pin.stale .lt-live-dot {
+    background: #b91c1c;
+}
+
+.lt-live-label {
+    position: absolute;
+    left: 10px;
+    top: -10px;
+    display: flex;
+    flex-direction: column;
+    line-height: 1.2;
+    font-size: 11px;
+    padding: 3px 7px;
+    border-radius: 6px;
+    background: var(--card-bg, #fff);
+    color: var(--text-color, #1f272e);
+    border: 1px solid var(--border-color, #e2e6e9);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.lt-live-label small {
+    font-size: 10px;
+    color: var(--text-muted, #6c7680);
+}
+
+.lt-live-pin.stale .lt-live-label {
+    border-color: #b91c1c;
+}
+
+.lt-popup {
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.lt-popup b {
+    display: block;
+    margin-bottom: 2px;
+}
+
+/* ---- Leaflet in a dark desk ---------------------------------------------- */
+
+.lt-map .leaflet-container {
+    background: var(--bg-color, #f8f9fa);
+    font-family: inherit;
+}
+
+[data-theme="dark"] .lt-map .leaflet-bar a,
+[data-theme="dark"] .lt-map .leaflet-bar a:hover {
+    background: var(--card-bg, #1c1f24);
+    color: var(--text-color, #e6e8eb);
+    border-bottom-color: var(--border-color, #3a3f47);
+}
+
+[data-theme="dark"] .lt-map .leaflet-control-attribution {
+    background: rgba(0, 0, 0, 0.6);
+    color: var(--text-muted, #9aa3ad);
+}
+
+[data-theme="dark"] .lt-map .leaflet-control-attribution a {
+    color: var(--text-color, #e6e8eb);
+}
+
+[data-theme="dark"] .lt-map .leaflet-popup-content-wrapper,
+[data-theme="dark"] .lt-map .leaflet-popup-tip {
+    background: var(--card-bg, #1c1f24);
+    color: var(--text-color, #e6e8eb);
+}
+
+[data-theme="dark"] .lt-map .leaflet-tooltip.lt-stop-label {
+    background: var(--card-bg, #1c1f24);
+    color: var(--text-color, #e6e8eb);
+}
+
+[data-theme="dark"] .lt-pill-good { background: rgba(21, 128, 61, 0.25); color: #6fd39a; }
+[data-theme="dark"] .lt-pill-gaps,
+[data-theme="dark"] .lt-pill-warn { background: rgba(180, 83, 9, 0.25); color: #f5b26b; }
+[data-theme="dark"] .lt-pill-none,
+[data-theme="dark"] .lt-pill-stale { background: rgba(185, 28, 28, 0.25); color: #f19a9a; }
+[data-theme="dark"] .lt-pill-info { background: rgba(29, 95, 168, 0.3); color: #8fbcf0; }
+[data-theme="dark"] .lt-pill-live { background: rgba(21, 128, 61, 0.25); color: #6fd39a; }
+
+/* ---- motion + small screens ---------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+    .lt-play-marker {
+        animation: none;
+    }
+
+    .lt-card,
+    .lt-live-row {
+        transition: none;
+    }
+}
+
+@media (max-width: 900px) {
+    .lt-layout {
+        flex-direction: column;
+    }
+
+    .lt-side {
+        flex-basis: auto;
+        max-height: none;
+    }
+
+    .lt-map {
+        height: 420px;
+    }
+}

@@ -134,9 +134,27 @@ def _install_frappe_stub():
 			return day.replace(day=31)
 		return day.replace(month=day.month + 1, day=1) - _datetime.timedelta(days=1)
 
+	def _get_datetime(value=None):
+		# A pure conversion, like getdate above: the overtime split (v1.480.0) reads
+		# interval timestamps through it. Still no database behind it.
+		if value is None:
+			return _datetime.datetime.now()
+		if isinstance(value, _datetime.datetime):
+			return value
+		if isinstance(value, _datetime.date):
+			return _datetime.datetime(value.year, value.month, value.day)
+		text = str(value).strip().replace("T", " ")[:19]
+		for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+			try:
+				return _datetime.datetime.strptime(text, fmt)
+			except ValueError:
+				continue
+		raise ValueError(f"unparseable datetime: {value!r}")
+
 	for name, fn in (
 		("cint", _cint), ("flt", _flt), ("getdate", _getdate), ("nowdate", _nowdate),
 		("add_days", _add_days), ("get_last_day", _get_last_day),
+		("get_datetime", _get_datetime),
 		("now_datetime", _datetime.datetime.now),
 		("escape_html", lambda v: str(v)),
 	):
@@ -333,29 +351,63 @@ def test_employee_names_use_the_providers_double_space_format():
 	) == "Shellyce Keyes"
 
 
-def test_overtime_columns_are_never_populated():
-	"""hrms is NOT installed on this site — no Salary Structure, no salary slips,
-	no payroll module at all. Emitting a computed 'Qualified OT' would be inventing
-	a federal tax figure. The columns exist, in position, and stay blank."""
+def _workbook_assigned_columns():
+	"""Every ``line[<index>]`` the workbook builder writes, with ``COL_*`` module
+	constants resolved to their integers — the builder names its columns since
+	v1.480.0, and an absence check that only saw literal indices would pass
+	vacuously the moment every write went through a name."""
 	source = (ROOT / "workforce" / "payroll_export.py").read_text(encoding="utf-8")
 	tree = ast.parse(source)
+	constants = {}
+	for node in tree.body:
+		if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+			for target in node.targets:
+				if isinstance(target, ast.Name) and target.id.startswith("COL_"):
+					constants[target.id] = node.value.value
 	builder = next(
 		node for node in ast.walk(tree)
 		if isinstance(node, ast.FunctionDef) and node.name == "workbook_rows"
 	)
-	assigned_indices = set()
+	assigned = set()
 	for node in ast.walk(builder):
 		if isinstance(node, ast.Assign):
 			for target in node.targets:
-				if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name):
-					if target.value.id == "line" and isinstance(target.slice, ast.Constant):
-						assigned_indices.add(target.slice.value)
-	# 4..11 are Qualified OT, Overtime, PTO, Holiday, Bonus, Commission,
-	# Reimbursement and Additional Hourly Pay.
-	for index in range(4, 12):
-		assert index not in assigned_indices, (
+				if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name) \
+						and target.value.id == "line":
+					if isinstance(target.slice, ast.Constant):
+						assigned.add(target.slice.value)
+					elif isinstance(target.slice, ast.Name):
+						assert target.slice.id in constants, (
+							f"line[{target.slice.id}] uses a name this test cannot resolve"
+						)
+						assigned.add(constants[target.slice.id])
+	return assigned
+
+
+def test_qualified_ot_and_the_providers_amount_columns_are_never_populated():
+	"""hrms is NOT installed on this site — no Salary Structure, no salary slips,
+	no payroll module at all. Emitting a computed 'Qualified OT' would be inventing
+	a federal tax figure, and Bonus / Commission / Reimbursement / PTO / Holiday
+	have no home in ERPNext. Those columns exist, in position, and stay blank."""
+	assigned = _workbook_assigned_columns()
+	# 4 is Qualified OT; 6..11 are PTO, Holiday, Bonus, Commission, Reimbursement
+	# and Additional Hourly Pay.
+	for index in (4, 6, 7, 8, 9, 10, 11):
+		assert index not in assigned, (
 			f"workbook_rows writes column {index}, which must be left for the payroll provider"
 		)
+
+
+def test_overtime_hours_are_the_weekly_split_and_nothing_more():
+	"""v1.480.0 (Nik, 2026-09-17): Regular and Overtime HOURS carry the FLSA
+	workweek split from ``workforce/overtime.py``. Hours only — the premium is
+	still the firm's arithmetic, which is why Qualified OT above stays blank.
+	Pins that the Overtime column IS written (a split that never reaches the sheet
+	is invisible) and that the builder never multiplies by a premium."""
+	assigned = _workbook_assigned_columns()
+	assert 3 in assigned and 5 in assigned, "Regular (3) and Overtime (5) hours must both be written"
+	source = (ROOT / "workforce" / "payroll_export.py").read_text(encoding="utf-8")
+	assert "* 1.5" not in source and "1.5 *" not in source, "no overtime premium arithmetic in this app"
 
 
 def test_payroll_seed_refuses_ambiguous_name_matches():

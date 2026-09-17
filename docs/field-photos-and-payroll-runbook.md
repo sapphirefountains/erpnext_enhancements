@@ -133,21 +133,38 @@ Open **Payroll Hours Export** (Workforce; System Manager / HR Manager / Accounts
 check the numbers on screen, then press **Download Workbook**. Leaving the dates blank gives
 you the *previous* period — the one actually being submitted.
 
+### Regular and overtime hours (v1.480.0)
+
+`Regular Hours` and `Overtime Hours` carry the weekly split: hours past
+`Time Kiosk Settings → Overtime Weekly Hours` (default 40) inside an FLSA workweek starting on
+`Overtime Week Start` (default Sunday) are overtime, in chronological order, and only intervals
+that *start* inside the pay period count toward it even when their workweek straddles the
+period boundary. There is no daily overtime (Utah). The arithmetic is `workforce/overtime.py`
+and it is hours only.
+
 ### What it will not do
 
-`Qualified OT`, `Overtime`, `PTO`, `Holiday`, `Bonus`, `Commission`, `Reimbursement` and
-`Services` are emitted **blank**, in position, for the provider to fill exactly as they do
-today.
+`Qualified OT`, `PTO`, `Holiday`, `Bonus`, `Commission`, `Reimbursement` and `Services` are
+still emitted **blank**, in position, for the provider to fill exactly as they do today.
 
-This is a refusal, not an omission. The work package assumed "rates are already configured in
-ERPNext" — they are not, and there is nowhere for them to be. **`hrms` is not installed on
-this site**: no Salary Structure doctype, no salary slips, no payroll module, 0 Timesheets.
-`Qualified OT` is a federal tax figure; reimplementing FLSA premium arithmetic from scratch to
-save a payroll bureau a calculation they already perform correctly is the worst available
-trade. If leadership wants ERPNext to own the OT split, that is an `hrms` installation
-decision and a separate work package.
+This is a refusal, not an omission. **`hrms` is not installed on this site**: no Salary
+Structure doctype, no salary slips, no payroll module. `Qualified OT` is a federal tax figure;
+reimplementing FLSA premium arithmetic from scratch to save a payroll bureau a calculation
+they already perform correctly is the worst available trade. Nothing in this app multiplies
+an hour by 1.5.
 
 Salaried employees report a flat **86.67** hours (2080 / 24), matching the submitted file.
+
+### The second sheet: Internal Costing (v1.480.0)
+
+The workbook now has a second worksheet, **Internal Costing**, with a header row saying it is
+not to be sent. Per employee: position, tier, pay type, hourly rate, regular and OT hours,
+straight-time gross ((regular + OT) × rate) and burdened labour cost. It exists so the
+accountant can reconcile the provider's return against what the clock and the pay-rate table
+say without opening a form per person. The rate comes from `Employee → Pay Rates` (permlevel
+1; HR Manager, Accounts Manager, System Manager) — see the Workforce README's "Pay rates and
+costing" section and ADR 0013. **Delete that sheet before the file leaves the company**; the
+provider's sheet is the first one and is unchanged in shape.
 
 ### Employee numbers
 
@@ -184,7 +201,11 @@ callout. Splitting it would be defensible, but it would silently disagree with h
 
 ## Retention
 
-**Still an open decision.** `Time Kiosk Settings.retention_days` covers location logs only and
-is enforced by `purge_old_location_logs`. **No retention policy has been set or implemented
-for job photos**, deliberately — that decision was flagged as leadership's and nothing here
-quietly assumes an answer. Photos accumulate indefinitely until one is made.
+**Location logs are kept forever as of v1.480.0.** `Time Kiosk Settings.retention_days` is
+`0` (Nik, 2026-09-17): the trail is the evidence behind a corrected timesheet and a labour-cost
+dispute, and the 90-day purge had already deleted the first sixteen points before anyone asked
+about them. Setting a number of days re-enables `purge_old_location_logs`.
+
+**Photos are still an open decision.** No retention policy has been set or implemented for
+job photos, deliberately — that decision was flagged as leadership's and nothing here quietly
+assumes an answer. Photos accumulate indefinitely until one is made.
