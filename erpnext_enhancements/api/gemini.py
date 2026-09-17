@@ -1,71 +1,129 @@
-"""Thin Vertex AI (Gemini) client used by the AI drafting endpoints.
+"""Thin Gemini Enterprise Agent Platform (formerly Vertex AI) client for the AI drafting features.
 
 Not whitelisted — internal helper imported by ``api/briefing.py`` (the morning
 briefing narrative), ``api/communication.py`` (email/SMS drafts),
 ``api/training_ai.py`` and ``assistant_tools/draft_course_spec.py``. Posts a
-single ``generateContent`` request to the Vertex AI REST endpoint for the
-``gemini-3.1-pro-preview`` model in the ``sapphire-fountains-poseidon`` GCP
-project (``us-central1``) and splits the response into final answer text vs.
-the model's "thoughts".
+single ``generateContent`` request for ``MODEL_ID`` on the platform's **global**
+endpoint in the ``sapphire-fountains-poseidon`` GCP project and splits the
+response into final answer text vs. the model's "thoughts".
+
+Google renamed Vertex AI to the Gemini Enterprise Agent Platform at Cloud Next
+2026. The host (``aiplatform.googleapis.com``), the REST shape and the IAM role
+are unchanged; what moved is the name, which is why ``generate_content_with_vertex_ai``
+keeps its name too — five callers and a test double import it.
 
 --------------------------------------------------------------------------
-Auth is an OAuth2 bearer token, because Vertex AI accepts nothing else
+Auth is an OAuth2 bearer token, because the platform accepts nothing else
 --------------------------------------------------------------------------
 
 This used to send the ``Triton Settings.maps_api_key`` GCP API key as the
-``x-goog-api-key`` header, and **that call could never have worked.** Vertex AI
-(``aiplatform.googleapis.com``) refuses API keys at the front door, with a 401
-raised before any quota or IAM check::
+``x-goog-api-key`` header, and **that call could never have worked.** The
+platform refuses API keys at the front door, with a 401 raised before any
+quota or IAM check::
 
     "API keys are not supported by this API. Expected OAuth2 access token or
      other authentication credentials that assert a principal."
 
-Nothing noticed for as long as the feature was dormant, and it was dormant for
-its whole life: ``briefing_use_gemini`` was a drifted Single default reading 0
-on every live row, so the narrative had always fallen back (see
-``patches/enable_briefing_gemini_narrative``). Turning it on in v1.420.0 is what
-finally made the call — and from 2026-09-13 it produced a pair of Error Log rows
-every weekday morning and not one successful generation. **A wrong auth
-mechanism reads exactly like a missing grant**, so the 401 invites you to go
-looking in IAM for a permission that was never the problem.
+Google's own guidance for the platform is "an API key for testing and
+application default credentials for production". **A wrong auth mechanism
+reads exactly like a missing grant**, so that 401 invites a hunt through IAM
+for a permission that was never the problem.
 
-The token is now minted from the **Drive service account** — the same key
+The token is minted from the **Drive service account** — the same key
 ``google_drive`` and ``google_calendar`` already authenticate with, read through
 ``drive_utils.get_service_account_info`` because the field is a ``Password``.
-Two things follow, both deliberate:
+That service account lives in a *different* GCP project from the one these
+calls run in, so it needs ``roles/aiplatform.user`` granted on ``PROJECT_ID``.
+Until that is done the call 403s — the failure direction is safe, every caller
+falls back — and ``_platform_error`` appends the exact grant to the message.
 
-* That service account lives in a *different* GCP project from the Vertex one,
-  so it needs ``roles/aiplatform.user`` granted on ``PROJECT_ID``. Until that is
-  done the call still 401/403s — the failure direction is unchanged and safe
-  (every caller falls back) — and ``_vertex_error`` appends the exact grant to
-  the message rather than leaving the next reader to infer it from a status code.
-* A Maps API key stops being posted to a second Google service. It was shared
-  between the two, which made that key's blast radius larger than Maps.
+--------------------------------------------------------------------------
+The endpoint is global, because the model is only served there
+--------------------------------------------------------------------------
+
+Fixing the auth (v1.466.2) got the request past the door and into a second
+failure that had been hiding behind the first. From 2026-09-16 every weekday
+briefing recorded::
+
+    404 ... Publisher model `projects/sapphire-fountains-poseidon/locations/
+    us-central1/publishers/google/models/gemini-3.1-pro-preview` was not found
+    or your project does not have access to it.
+
+Gemini 3.1 Pro's model page lists exactly one location, ``global``, and this
+client posted to the ``us-central1`` regional host. Note how that message
+reads: "not found *or your project does not have access*" is one more status
+code pointing at IAM. Every current Gemini model is served on ``global``
+(Triton opens every catalogue model there), so the URL uses the location-less
+host with ``locations/global`` in the path — ``build_endpoint`` is a function
+so that shape is testable without a network; the regional literal that failed
+for a week was one nobody could exercise.
+
+--------------------------------------------------------------------------
+The model, and why its id will need changing again
+--------------------------------------------------------------------------
+
+``MODEL_ID`` is Gemini 3.8 Flash (GA 2026-09-02, global endpoint), the fast
+tier Triton answers most turns with. Google's lifecycle table puts the recent
+Flash models (3.6, 3.7, 3.8) in a **short-term** class that retires **45 days
+after a replacement ships**, and a Flash has shipped roughly monthly. A
+retired id is a 404 on every call — safe here, since every caller falls back
+and the Integrations Health tile reports the last narrative's source — but
+this is a constant to revisit when Google announces a Flash, not one to
+forget. The 12-month alternative is ``gemini-3.5-flash`` (retires 2027-05-19
+or later); ``gemini-3.1-pro-preview`` remains the newest Pro and is a public
+preview. Any caller can pin a different id per call with ``model_id``.
 
 Errors raise plain ``Exception`` so callers can fall back gracefully, and are
-**not** logged here: all five callers already log, so every failure was writing
-two Error Log rows carrying the same text.
+**not** logged here: all five callers already log, so every failure was
+writing two Error Log rows carrying the same text.
 """
 
 import frappe
 import requests
 
-MODEL_ID = "gemini-3.1-pro-preview"
+MODEL_ID = "gemini-3.8-flash"
 PROJECT_ID = "sapphire-fountains-poseidon"
-LOCATION = "us-central1"
-# The one scope Vertex AI's REST surface takes; there is no narrower
+# The global endpoint: no region prefix on the host, ``global`` in the path.
+LOCATION = "global"
+# The one scope the platform's REST surface takes; there is no narrower
 # aiplatform-specific scope to ask for.
 TOKEN_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 REQUEST_TIMEOUT = 120
+# 3.8 Flash takes LOW, MEDIUM (its default) and HIGH; MINIMAL is a validation
+# error on it. HIGH, as before: these are one-shot drafts where quality beats
+# latency and nobody is watching a spinner.
+THINKING_LEVEL = "HIGH"
 
 IAM_HINT = (
     f"Grant roles/aiplatform.user on GCP project {PROJECT_ID} to the service account in "
     "Project Folder Google Drive Settings (it belongs to a different project)."
 )
+MODEL_HINT = (
+    "The model was not found on the global endpoint. Recent Flash models retire 45 days after "
+    "a replacement ships: check Google's model lifecycle table and update MODEL_ID in "
+    "erpnext_enhancements/api/gemini.py."
+)
+
+
+def build_endpoint(model_id=MODEL_ID, project_id=PROJECT_ID, location=LOCATION):
+    """The ``generateContent`` URL for ``model_id``.
+
+    ``global`` has no regional host prefix; a region does. The two forms are
+    not interchangeable: a model served only globally (3.1 Pro, and every
+    current Gemini model in practice) is a 404 on a regional host.
+    """
+    if location == "global":
+        host = "aiplatform.googleapis.com"
+    else:
+        host = f"{location}-aiplatform.googleapis.com"
+    return (
+        f"https://{host}/v1/projects/{project_id}/locations/{location}"
+        f"/publishers/google/models/{model_id}:generateContent"
+    )
 
 
 def _access_token():
-    """Mint a short-lived Vertex AI bearer token from the Drive service account.
+    """Mint a short-lived bearer token from the Drive service account.
 
     Through ``get_service_account_info``, never the raw field: it is a
     ``Password``, so plain attribute access returns Frappe's asterisk
@@ -79,8 +137,8 @@ def _access_token():
     info = get_service_account_info()
     if not info:
         raise Exception(
-            "Vertex AI needs the Google service account: set Service Account JSON in "
-            "Project Folder Google Drive Settings. " + IAM_HINT
+            "The Gemini Enterprise Agent Platform needs the Google service account: set "
+            "Service Account JSON in Project Folder Google Drive Settings. " + IAM_HINT
         )
     credentials = service_account.Credentials.from_service_account_info(info, scopes=TOKEN_SCOPES)
     credentials.refresh(Request())
@@ -88,7 +146,7 @@ def _access_token():
 
 
 def _post(url, payload):
-    """POST to Vertex AI, keeping the bearer token out of every traceback.
+    """POST to the platform, keeping the bearer token out of every traceback.
 
     ``headers`` is cleared before anything raises, and that is the point of the
     function. Frappe renders "Traceback with variables", so an exception leaving
@@ -107,31 +165,35 @@ def _post(url, payload):
     except Exception as exc:
         detail = f"{type(exc).__name__}: {exc}"
         headers = None
-        raise Exception(f"Vertex AI request failed: {detail}") from None
+        raise Exception(f"Gemini Enterprise Agent Platform request failed: {detail}") from None
 
 
-def _vertex_error(response, exc):
-    """Message for a non-2xx, naming the fix when the refusal is about identity."""
-    message = f"Vertex AI Request Failed: {exc}\nResponse: {response.text}"
+def _platform_error(response, exc):
+    """Message for a non-2xx, naming the fix when the refusal is about identity or the model."""
+    message = f"Gemini Enterprise Agent Platform request failed: {exc}\nResponse: {response.text}"
     if response.status_code in (401, 403):
         message = f"{message}\n{IAM_HINT}"
+    elif response.status_code == 404:
+        message = f"{message}\n{MODEL_HINT}"
     return message
 
 
-def generate_content_with_vertex_ai(prompt, system_instruction, settings, feature="unknown"):
-    """Call Vertex AI ``generateContent`` and return ``(text, thoughts)``.
+def generate_content_with_vertex_ai(prompt, system_instruction, settings, feature="unknown", model_id=None):
+    """Call ``generateContent`` on the platform and return ``(text, thoughts)``.
 
     Args:
         prompt (str): The user-role prompt content.
         system_instruction (str): System instruction / persona text.
-        settings: A loaded ``Triton Settings`` doc. **No longer read.** It held
-            the GCP API key this used to authenticate with; the parameter stays
+        settings: A loaded ``Triton Settings`` doc. **Not read.** It held the
+            GCP API key this used to authenticate with; the parameter stays
             because five call sites and a test double pass it positionally, and
             because a dead parameter left in place is cheaper than five edits.
             Do not reach a credential back through it — see the module docstring.
         feature (str): Which app feature is calling (``email_draft``,
             ``sms_draft``, ``morning_briefing``, ...) — recorded on the
             AI Model Usage token-accounting row.
+        model_id (str): Override ``MODEL_ID`` for this one call, for a caller
+            that wants Pro. Recorded on the usage row as the model that answered.
 
     Returns:
         tuple[str, str]: ``(final_text, final_thoughts)`` — the generated answer
@@ -140,15 +202,14 @@ def generate_content_with_vertex_ai(prompt, system_instruction, settings, featur
 
     Raises:
         Exception: if the service account is missing or cannot mint a token, the
-        HTTP request fails (non-2xx; full response body included), or no
-        candidates are returned. Callers log and fall back.
+        HTTP request fails (non-2xx; full response body included, plus the IAM
+        grant on 401/403 and the lifecycle note on 404), or no candidates are
+        returned. Callers log and fall back.
 
-    Side effects: outbound HTTPS POST to Vertex AI (120s timeout).
+    Side effects: outbound HTTPS POST to the platform (120s timeout).
     """
-    url = (
-        f"https://{LOCATION}-aiplatform.googleapis.com/v1/projects/{PROJECT_ID}"
-        f"/locations/{LOCATION}/publishers/google/models/{MODEL_ID}:generateContent"
-    )
+    model = model_id or MODEL_ID
+    url = build_endpoint(model)
 
     payload = {
         "contents": [{
@@ -161,7 +222,7 @@ def generate_content_with_vertex_ai(prompt, system_instruction, settings, featur
         "generationConfig": {
             "thinkingConfig": {
                 "includeThoughts": True,
-                "thinkingLevel": "HIGH"
+                "thinkingLevel": THINKING_LEVEL
             }
         }
     }
@@ -171,14 +232,14 @@ def generate_content_with_vertex_ai(prompt, system_instruction, settings, featur
     try:
         response.raise_for_status()
     except requests.exceptions.HTTPError as e:
-        raise Exception(_vertex_error(response, e)) from None
+        raise Exception(_platform_error(response, e)) from None
 
     data = response.json()
 
-    _record_usage(data, feature)
+    _record_usage(data, feature, model)
 
     if not data.get("candidates") or len(data["candidates"]) == 0:
-        raise Exception(f"Vertex AI returned no candidates: {data}")
+        raise Exception(f"The Gemini Enterprise Agent Platform returned no candidates: {data}")
 
     candidate = data["candidates"][0]
     content_parts = candidate.get("content", {}).get("parts", [])
@@ -198,13 +259,14 @@ def generate_content_with_vertex_ai(prompt, system_instruction, settings, featur
     return final_text.strip(), final_thoughts.strip()
 
 
-def _record_usage(data, feature):
+def _record_usage(data, feature, model=MODEL_ID):
     """Best-effort AI Model Usage row from the response's ``usageMetadata``.
 
     Token accounting must never fail (or slow) the draft that triggered it —
     everything is wrapped, and the insert is skipped when the
     ``ai_usage_tracking_enabled`` switch (ERPNext Enhancements Settings → AI
-    Governance) is off or the doctype isn't migrated yet.
+    Governance) is off or the doctype isn't migrated yet. ``model`` is the id
+    that actually answered, so a per-call override is attributed correctly.
     """
     try:
         from frappe.utils import cint
@@ -222,7 +284,7 @@ def _record_usage(data, feature):
         frappe.get_doc(
             {
                 "doctype": "AI Model Usage",
-                "model": MODEL_ID,
+                "model": model or MODEL_ID,
                 "feature": feature or "unknown",
                 "user": frappe.session.user,
                 "prompt_tokens": cint(usage.get("promptTokenCount")),

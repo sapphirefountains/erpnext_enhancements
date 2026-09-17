@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.476.0] - 2026-09-17
+
+### Fixed
+
+- **The morning briefing's Gemini narrative has still never run, and the second reason was
+  hiding behind the first.** v1.466.2 replaced the API key the platform refuses with an OAuth2
+  token from the Drive service account, and that got the request past the door: the
+  `generation_error` on every weekday `Daily Briefing` changed from a **401** (2026-09-13 to
+  09-15) to a **404** (09-16 onward) —
+  *"Publisher model `projects/sapphire-fountains-poseidon/locations/us-central1/publishers/google/models/gemini-3.1-pro-preview`
+  was not found or your project does not have access to it"*. Gemini 3.1 Pro's model page
+  lists exactly one location, `global`; `api/gemini.py` posted to the `us-central1` regional
+  host. **Note how it reads**: "not found *or your project does not have access*" is one more
+  status code that sends you to IAM for a permission that was never the problem — the same
+  trap the 401 set, one layer down. The client now builds the location-less global URL
+  (`aiplatform.googleapis.com/…/locations/global/…`), and `build_endpoint` is a function so
+  the shape is testable: the regional literal that failed for a week was one no test could
+  exercise. A 404 appends a lifecycle note now, not the IAM hint. Every one of the 48
+  briefings in the last fortnight is `Fallback`, and `AI Model Usage` holds no
+  `morning_briefing` row, ever.
+- **The Integrations Health "AI Drafting" tile read green through all of it.** "Configured"
+  meant `Triton Settings.maps_api_key` was set — the credential the platform refuses, and
+  one nothing has read since v1.466.2. It now checks the Drive service account (the
+  credential actually used) and reports the most recent `Daily Briefing`'s `narrative_source`
+  with its recorded error, so it goes red when the narrative falls back and amber when the
+  Gemini switch is deliberately off. The briefing is the one caller that runs unattended
+  every weekday, which makes it the cheapest liveness probe a DB-only page can have. Its
+  links go to the service-account settings, the briefings and the usage rows.
+
+### Changed
+
+- **Every drafting feature runs on Gemini 3.8 Flash** (`api/gemini.py::MODEL_ID`; GA
+  2026-09-02; Google's "most intelligent workhorse model yet") on the Gemini Enterprise Agent
+  Platform — the name Vertex AI has carried since Cloud Next 2026; host, REST shape and IAM
+  role are unchanged, which is why `generate_content_with_vertex_ai` keeps its name. That
+  covers the morning briefing narrative, email/SMS reply drafts, training quiz and
+  checkpoint suggestions, and `draft_course_spec`. It was 3.1 Pro (still a public preview);
+  a per-call `model_id` override is there for any caller that wants Pro back. Thinking stays
+  at HIGH — 3.8 Flash rejects MINIMAL. Two lifecycle facts from Google's model-versions
+  table, written into the module and here so they are not rediscovered: the recent Flash
+  models (3.6, 3.7, 3.8) retire **45 days after a replacement ships**, and a Flash has
+  shipped roughly monthly (Jul 21, Aug 13, Sep 2). `MODEL_ID` is therefore a constant to
+  revisit when Google announces a Flash — a retired id is a 404 on every call, which is safe
+  (every caller falls back, the tile turns red) but silent in the email itself. The 12-month
+  alternative is `gemini-3.5-flash` (retires 2027-05-19 or later).
+- The Triton widget's curated fallback model list — used only when Triton's `/models` is
+  unreachable — mirrors Triton 0.77.0: Flash is `gemini-3.8-flash`, Lite is
+  `gemini-3.5-flash-lite`, Pro is unchanged. `gemini-3.1-flash-lite` leaves the list.
+- `tests/test_gemini_client.py`, bench-free with its own CI step: the global URL, the bearer
+  header and the absence of `x-goog-api-key`, the 404 and 401/403 hints, the usage row's
+  model, and the `Authorization` header cleared from the `_post` frame before anything
+  raises — walked off the traceback — so it cannot reach an Error Log rendered with
+  "Traceback with variables".
+- **Not knowable from this repo, and the next weekday briefing answers it:** the Drive
+  service account must hold `roles/aiplatform.user` on `sapphire-fountains-poseidon`, and
+  that project must have the platform API enabled. Either the tile goes green, or the
+  recorded error names the grant (403). A 404 on the *global* endpoint would now mean the
+  project or the model id, not the region.
+
 ## [1.475.0] - 2026-09-17
 
 ### Changed

@@ -2,7 +2,7 @@
 app depends on is configured, connected, and not failing.
 
 This app talks to a lot of third parties (QuickBooks Online, Google Drive,
-Twilio/"Triton", Vertex AI/Gemini, Google Analytics 4 / Search Console) and
+Twilio/"Triton", the Gemini Enterprise Agent Platform, Google Analytics 4 / Search Console) and
 each fails *quietly* in its own corner: a QuickBooks token lapses, the Drive
 service account was never pasted in, an hourly sync errors into the Error Log.
 ``get_health`` rolls all of that — plus scheduler liveness and a 24 h error
@@ -241,13 +241,75 @@ def _check_triton(key, label, route):
 
 
 def _check_gemini(key, label, route):
-	configured = bool(_single("Triton Settings", "maps_api_key"))
-	links = [{"label": "Settings", "route": route}]
+	"""AI drafting through the Gemini Enterprise Agent Platform (formerly Vertex AI).
+
+	"Configured" used to mean ``Triton Settings.maps_api_key`` was set, which was the wrong
+	credential for the whole life of the feature: the platform refuses API keys, and since
+	v1.466.2 the client mints an OAuth2 token from the Drive service account instead. This
+	tile read "Key configured" in green through the week the briefing narrative 401'd and
+	then 404'd every morning. So it now asks the two questions that decide whether a draft
+	can happen -- is that service account pasted in, and did the most recent morning briefing
+	actually come from the model -- and shows the recorded error when it did not. The
+	briefing is the one caller that runs unattended every weekday, which makes it the
+	cheapest liveness probe a DB-only page can have.
+	"""
+	from frappe.utils import cint
+
+	from erpnext_enhancements.api.gemini import MODEL_ID, PROJECT_ID
+
+	configured = bool(_single("Project Folder Google Drive Settings", "service_account_json"))
+	links = [
+		{"label": "Service account", "route": route},
+		{"label": "Briefings", "route": "/app/daily-briefing"},
+		{"label": "Usage", "route": "/app/ai-model-usage"},
+	]
 	if not configured:
 		return _tile(key, label, "neutral", "Not configured", configured=False, links=links,
-			notes=["Add the Vertex AI / Gemini key in Triton Settings to enable AI email/SMS drafting."])
-	return _tile(key, label, "green", "Key configured", configured=True,
-		metrics=[_metric("API key", "configured", "green")], links=links)
+			notes=["Paste the Google service-account JSON into Project Folder Google Drive Settings "
+				f"and grant it roles/aiplatform.user on GCP project {PROJECT_ID}."])
+
+	tones = ["green"]
+	metrics = [_metric("Service account", "configured", "green"), _metric("Model", MODEL_ID)]
+	notes = []
+
+	last = _last_briefing_narrative()
+	if not last:
+		metrics.append(_metric("Last briefing narrative", "none yet"))
+	elif (last.get("narrative_source") or "") == "Gemini":
+		metrics.append(_metric("Last briefing narrative", f"Gemini ({last.get('date')})", "green"))
+	elif not cint(_single("ERPNext Enhancements Settings", "briefing_use_gemini")):
+		metrics.append(_metric("Last briefing narrative", f"Fallback ({last.get('date')})", "amber"))
+		tones.append("amber")
+		notes.append("The Gemini narrative is switched off (ERPNext Enhancements Settings -> briefing_use_gemini).")
+	else:
+		metrics.append(_metric("Last briefing narrative", f"Fallback ({last.get('date')})", "red"))
+		tones.append("red")
+		error = (last.get("generation_error") or "").strip()
+		notes.append(("Last error: " + error[:300]) if error else "The narrative fell back without a recorded error.")
+
+	tone = worst_tone(tones)
+	status = {"green": "Generating", "amber": "Narrative off", "red": "Falling back"}[tone]
+	return _tile(key, label, tone, status, configured=True, metrics=metrics, links=links, notes=notes)
+
+
+def _last_briefing_narrative():
+	"""The newest Daily Briefing's date, narrative source and error, or ``None``.
+
+	Guarded like every other read on this page: the doctype belongs to the morning_briefing
+	module, and a site can render this tile before it is migrated.
+	"""
+	try:
+		if not frappe.db.exists("DocType", "Daily Briefing"):
+			return None
+		rows = frappe.get_all(
+			"Daily Briefing",
+			fields=["date", "narrative_source", "generation_error"],
+			order_by="date desc, creation desc",
+			limit=1,
+		)
+		return rows[0] if rows else None
+	except Exception:
+		return None
 
 
 def _check_ga4(key, label, route):
@@ -407,7 +469,7 @@ _INTEGRATIONS = [
 	("quickbooks", "QuickBooks Online", "/app/quickbooks-online-settings", _check_quickbooks),
 	("drive", "Google Drive", "/app/project-folder-google-drive-settings", _check_drive),
 	("triton", "Telephony (Triton / Twilio)", "/app/triton-settings", _check_triton),
-	("gemini", "AI Drafting (Vertex / Gemini)", "/app/triton-settings", _check_gemini),
+	("gemini", "AI Drafting (Gemini Enterprise Agent Platform)", "/app/project-folder-google-drive-settings", _check_gemini),
 	("ga4", "Analytics (GA4 / Search Console)", "/app/ga4-settings", _check_ga4),
 	("miradore", "MDM — Miradore (mobile)", "/app/mdm-settings", _check_miradore),
 	("action1", "RMM — Action1 (computers)", "/app/mdm-settings", _check_action1),
