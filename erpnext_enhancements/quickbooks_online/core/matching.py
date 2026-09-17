@@ -540,6 +540,37 @@ def _master_row(row, payload, titles, settings) -> dict:
 	}
 
 
+def _master_where(entity_types, status, search):
+	"""WHERE clause and bound parameters for the master queue, shared by the page query and
+	its count so the two can never disagree. The clause text is assembled only from the
+	literals in this function; every value the caller supplies is a bound parameter.
+
+	Raw SQL rather than ``frappe.get_all`` because Frappe 16's query engine refuses a SQL
+	function written as a string field (``"count(name) as total"`` raises *SQL functions
+	are not allowed as strings in SELECT*), and the bench-free test stub's ``get_all``
+	accepts anything -- so v1.474.0 shipped green and the page could not load. Found live,
+	minutes after the deploy. ``status_counts`` and ``latest_payloads`` in this module were
+	already written this way.
+	"""
+	clauses = ["qbo_entity_type in %(types)s", "coalesce(deleted, 0) = 0"]
+	params = {"types": tuple(entity_types)}
+	if status in ("Pending Review", "Auto Matched", "Created", "Manual Matched"):
+		clauses.append("match_status = %(status)s")
+		params["status"] = status
+	elif status == "Conflict":
+		clauses.append("conflict_status = 'Conflict'")
+	elif status == "Needs decision":
+		clauses.append("reviewed_on is null")
+		# coalesce: a NULL match_status is "not a manual match" too (frappe's != would agree).
+		clauses.append("coalesce(match_status, '') != 'Manual Matched'")
+	term = str(search or "").strip()
+	if term:
+		# The search narrows within the status filter (ANDed), never widens it.
+		clauses.append("(erpnext_name like %(term)s or qbo_id like %(term)s)")
+		params["term"] = "%" + term + "%"
+	return " and ".join(clauses), params
+
+
 def master_queue(
 	entity_types=None, status=None, search=None, start=0, page_length=DEFAULT_PAGE_LENGTH
 ) -> dict:
@@ -551,47 +582,21 @@ def master_queue(
 	if status == "Unmapped":
 		return _unmapped_queue(entity_types, start, page_length)
 
-	filters = {"qbo_entity_type": ["in", entity_types], "deleted": 0}
-	if status == "Pending Review":
-		filters["match_status"] = "Pending Review"
-	elif status == "Conflict":
-		filters["conflict_status"] = "Conflict"
-	elif status in ("Auto Matched", "Created", "Manual Matched"):
-		filters["match_status"] = status
-	elif status == "Needs decision":
-		filters["reviewed_on"] = ["is", "not set"]
-		filters["match_status"] = ["!=", "Manual Matched"]
-	or_filters = None
-	if search and str(search).strip():
-		term = f"%{str(search).strip()}%"
-		or_filters = [["erpnext_name", "like", term], ["qbo_id", "like", term]]
-
-	rows = frappe.get_all(
-		MAPPING_DOCTYPE,
-		filters=filters,
-		or_filters=or_filters,
-		fields=[
-			"name",
-			"qbo_entity_type",
-			"qbo_id",
-			"erpnext_doctype",
-			"erpnext_name",
-			"match_status",
-			"conflict_status",
-			"match_rule",
-			"match_confidence",
-			"owned_fields",
-			"reviewed_by",
-			"reviewed_on",
-		],
-		order_by="qbo_entity_type asc, erpnext_name asc, qbo_id asc",
-		limit_start=start,
-		limit_page_length=page_length,
+	where, params = _master_where(entity_types, status, search)
+	# The clause text is assembled from literals in _master_where; every value is bound.
+	rows = frappe.db.sql(
+		"select name, qbo_entity_type, qbo_id, erpnext_doctype, erpnext_name, match_status,"
+		" conflict_status, match_rule, match_confidence, owned_fields, reviewed_by, reviewed_on"
+		" from `tabQuickBooks Sync Mapping` where "
+		+ where
+		+ " order by qbo_entity_type asc, erpnext_name asc, qbo_id asc"
+		+ " limit %(start)s, %(page_length)s",
+		dict(params, start=start, page_length=page_length),
+		as_dict=True,
 	)
-	total_rows = frappe.get_all(
-		MAPPING_DOCTYPE, filters=filters, or_filters=or_filters, fields=["count(name) as total"]
+	total = cint(
+		frappe.db.sql("select count(*) from `tabQuickBooks Sync Mapping` where " + where, params)[0][0]
 	)
-	total = cint(total_rows[0].total) if total_rows else 0
 
 	settings = frappe.get_single("QuickBooks Online Settings")
 	payloads = latest_payloads([(row.qbo_entity_type, row.qbo_id) for row in rows])
@@ -704,15 +709,14 @@ def parked_transactions(entity_types=None, start=0, page_length=DEFAULT_PAGE_LEN
 		limit_page_length=page_length,
 	)
 	total = frappe.db.count(MAPPING_DOCTYPE, filters)
-	per_type = frappe.get_all(
-		MAPPING_DOCTYPE,
-		filters={
-			"qbo_entity_type": ["in", list(TRANSACTION_ENTITIES)],
-			"match_status": "Pending Review",
-			"deleted": 0,
-		},
-		fields=["qbo_entity_type", "count(name) as n"],
-		group_by="qbo_entity_type",
+	# Raw SQL for the same reason as _master_where: a string aggregate in get_all's fields
+	# is refused by Frappe 16's query engine.
+	per_type = frappe.db.sql(
+		"select qbo_entity_type, count(*) as n from `tabQuickBooks Sync Mapping`"
+		" where qbo_entity_type in %(types)s and match_status = 'Pending Review'"
+		" and coalesce(deleted, 0) = 0 group by qbo_entity_type",
+		{"types": tuple(TRANSACTION_ENTITIES)},
+		as_dict=True,
 	)
 	payloads = latest_payloads([(row.qbo_entity_type, row.qbo_id) for row in rows])
 	items = []

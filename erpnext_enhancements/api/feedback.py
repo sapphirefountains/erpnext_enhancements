@@ -233,9 +233,14 @@ def _status_counts():
     Unfiltered on purpose: it is the denominator the filtered page is read against, and a
     tally that moved with the filter would just restate the row count.
     """
+    # Raw SQL: Frappe 16's query engine refuses a SQL function written as a string field
+    # ("count(name) as n" -> "SQL functions are not allowed as strings in SELECT"), and the
+    # `except` below turned that refusal into an empty tally rather than an error, so the
+    # denominator silently vanished on 16 (v1.474.1).
     try:
-        rows = frappe.get_all(
-            DOCTYPE, fields=["status", "count(name) as n"], group_by="status", order_by="status asc"
+        rows = frappe.db.sql(
+            "select status, count(*) as n from `tab" + DOCTYPE + "` group by status order by status asc",
+            as_dict=True,
         )
     except Exception:
         return {}

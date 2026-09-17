@@ -32,6 +32,7 @@ Run: python -m pytest erpnext_enhancements/tests/test_quickbooks_matching.py -q
 
 import ast
 import json
+import re
 import sys
 import types
 from pathlib import Path
@@ -505,6 +506,66 @@ def test_confirm_stamps_and_changes_no_status(monkeypatch):
 # ---------------------------------------------------------------------------
 # Wiring
 # ---------------------------------------------------------------------------
+
+
+def test_master_where_binds_every_value_and_narrows_within_the_status():
+	"""The page query and its count share this clause; every caller value is bound and the
+	search is ANDed onto the status, never ORed beside it."""
+	matching, _ = _matching()
+	where, params = matching._master_where(["Customer", "Vendor"], "Needs decision", "  acme ")
+	assert where.startswith("qbo_entity_type in %(types)s and coalesce(deleted, 0) = 0")
+	assert params["types"] == ("Customer", "Vendor")
+	assert "reviewed_on is null" in where
+	assert "coalesce(match_status, '') != 'Manual Matched'" in where
+	assert where.endswith("and (erpnext_name like %(term)s or qbo_id like %(term)s)")
+	assert params["term"] == "%acme%"
+	assert "acme" not in where, "user text never reaches the clause"
+
+	where, params = matching._master_where(["Item"], "Conflict", None)
+	assert where.endswith("and conflict_status = 'Conflict'") and "term" not in params
+	where, params = matching._master_where(["Item"], "Created", "")
+	assert where.endswith("and match_status = %(status)s") and params["status"] == "Created"
+	where, params = matching._master_where(["Item"], "All", None)
+	assert where == "qbo_entity_type in %(types)s and coalesce(deleted, 0) = 0"
+	assert set(params) == {"types"}
+
+
+def test_no_sql_function_is_handed_to_get_all_as_a_string_anywhere_in_the_app():
+	"""Frappe 16's query engine refuses ``fields=["count(name) as n"]`` -- *SQL functions are
+	not allowed as strings in SELECT* -- and nothing bench-free can see that: the test stub's
+	``get_all`` accepts anything, ruff sees a plain string, and the page fails only when a
+	browser asks for it. v1.474.0 shipped two of them on a green build and the Record Matching
+	page could not load on production. So the shape is checked at every ``get_all`` /
+	``get_list`` call site in the app: a string field that starts like a function call."""
+	pattern = re.compile(r"^\s*[A-Za-z_][A-Za-z_0-9]*\s*\(")
+	offences = []
+	for path in sorted(APP.rglob("*.py")):
+		if "__pycache__" in path.parts or "tests" in path.parts:
+			continue
+		try:
+			tree = ast.parse(path.read_text(encoding="utf-8"))
+		except SyntaxError:
+			continue
+		for node in ast.walk(tree):
+			if not isinstance(node, ast.Call):
+				continue
+			func = node.func
+			name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+			if name not in {"get_all", "get_list"}:
+				continue
+			for keyword in node.keywords:
+				if keyword.arg != "fields" or not isinstance(keyword.value, ast.List | ast.Tuple):
+					continue
+				for element in keyword.value.elts:
+					if (
+						isinstance(element, ast.Constant)
+						and isinstance(element.value, str)
+						and pattern.match(element.value)
+					):
+						offences.append(f"{path.relative_to(APP)}:{element.lineno} {element.value!r}")
+	assert offences == [], (
+		"Frappe 16 refuses these at runtime; use frappe.db.sql or the dict form:\n" + "\n".join(offences)
+	)
 
 
 def test_the_merge_calls_the_model_level_rename_doc_not_the_alias():
