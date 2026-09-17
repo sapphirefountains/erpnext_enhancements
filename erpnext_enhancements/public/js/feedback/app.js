@@ -846,9 +846,19 @@ export class FeedbackApp {
 		});
 
 		const create = button("Create these tasks", "ee-fb-btn ee-fb-btn-primary", async () => {
+			const rows = collect();
+			if (!rows.some((row) => row.include)) {
+				// The server refuses this too; saying it here saves the round trip and
+				// names the two ways to close a request that needs no work.
+				this.showBanner(
+					"Nothing is ticked. Tick at least one task, or reject the request or mark it a duplicate if no work is needed.",
+					"warn"
+				);
+				return;
+			}
 			this.setBusy(create, true, "Creating…");
 			try {
-				const result = await call(M.CREATE_TASKS, { name: detail.name, rows: collect() }, { timeout: 120000 });
+				const result = await call(M.CREATE_TASKS, { name: detail.name, rows }, { timeout: 120000 });
 				this.reportRejected(result.rejected);
 				if (result.failures && result.failures.length) {
 					this.showBanner(

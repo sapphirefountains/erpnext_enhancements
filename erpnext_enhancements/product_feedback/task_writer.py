@@ -56,6 +56,21 @@ class ProjectRefused(frappe.PermissionError):
 	"""The caller may not write to a Project one of the rows names."""
 
 
+def pending_rows(rows: Any) -> list[Any]:
+	"""The proposed-task rows that still owe a Task: included, and not yet stamped.
+
+	One definition, used three times — to decide whether there is anything to write, to
+	decide afterwards whether the request may close, and by ``api.feedback.create_tasks`` to
+	refuse a confirm that would write nothing. Three inline copies of one predicate is how
+	they drift.
+	"""
+	return [
+		row
+		for row in (rows or [])
+		if cint(row.get("include")) and not (row.get("created_task") or "").strip()
+	]
+
+
 def create_tasks_for(request_name: str) -> dict[str, Any]:
 	"""Create every included, not-yet-created proposed task on ``request_name``.
 
@@ -70,13 +85,14 @@ def create_tasks_for(request_name: str) -> dict[str, Any]:
 	doc = frappe.get_doc("Enhancement Request", request_name)
 	permitted = set(allowed_projects())
 
-	rows = [
-		row
-		for row in (doc.get("proposed_tasks") or [])
-		if cint(row.get("include")) and not (row.get("created_task") or "").strip()
-	]
+	rows = pending_rows(doc.get("proposed_tasks"))
 	if not rows:
-		return {"created": [], "failures": [], "groups": []}
+		# The same keys as the full return at the bottom. The endpoint reads `complete` off
+		# this dict, and the first proposal ever confirmed with nothing ticked
+		# (ER-2026-458194, a breakdown that proposed zero tasks) turned the missing key
+		# into a 500 on the confirm button. `complete` is False: nothing moved, and a
+		# request with no work on any board must not read `Tasks Created`.
+		return {"created": [], "failures": [], "groups": [], "complete": False, "outstanding": 0}
 
 	projects = {(row.get("project") or "").strip() for row in rows}
 	outside = sorted(p for p in projects if p not in permitted)
@@ -107,11 +123,7 @@ def create_tasks_for(request_name: str) -> dict[str, Any]:
 	# create. A partial run stays in `Breakdown Ready` — otherwise the first failed row
 	# would close the request against a proposal that was never fully written, and the
 	# retry the reviewer needs would be refused by the transition table.
-	outstanding = [
-		row
-		for row in (doc.get("proposed_tasks") or [])
-		if cint(row.get("include")) and not (row.get("created_task") or "").strip()
-	]
+	outstanding = pending_rows(doc.get("proposed_tasks"))
 	complete = not outstanding
 	if complete:
 		doc.status = RequestState.TASKS_CREATED.value
