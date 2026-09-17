@@ -23,7 +23,9 @@
  *               our /assets (+ /kiosk-manifest.json) → cache-first with background
  *               refresh. Non-GET and cross-origin requests are passed through.
  *   - message:  'config' stores csrf_token / max_batch_size in IndexedDB; 'enqueue'
- *               persists a point and tries to flush; 'flush' flushes on demand.
+ *               persists a point and tries to flush; 'flush' flushes on demand;
+ *               'stats' answers { queued } over the MessageChannel port the page
+ *               sends with it (the Settings tab's diagnostics).
  *   - sync:     the SYNC_TAG Background Sync event re-runs flushQueue() once the
  *               browser regains connectivity.
  *
@@ -46,9 +48,16 @@ const SYNC_TAG = 'flush-geo';
 const BATCH_ENDPOINT =
   '/api/method/erpnext_enhancements.api.time_kiosk.log_geolocation_batch';
 
+// Every js/css URL kiosk.html loads, and nothing else (tests/test_kiosk_frontend.py
+// checks both directions). Leaflet is deliberately absent: it is frappe's vendored
+// file, never changes, and a root-scope worker may only answer for its own shell.
 const PRECACHE = [
   '/assets/erpnext_enhancements/css/kiosk/kiosk.css',
+  '/assets/erpnext_enhancements/js/kiosk/ui.js',
   '/assets/erpnext_enhancements/js/kiosk/geo.js',
+  '/assets/erpnext_enhancements/js/kiosk/myday.js',
+  '/assets/erpnext_enhancements/js/kiosk/map.js',
+  '/assets/erpnext_enhancements/js/kiosk/settings.js',
   '/assets/erpnext_enhancements/js/kiosk/app.js',
   '/assets/erpnext_enhancements/kiosk/icons/kiosk-icon.svg',
   '/assets/erpnext_enhancements/kiosk/icons/kiosk-icon-192.png',
@@ -326,10 +335,19 @@ self.addEventListener('fetch', (event) => {
 //   config  → persist csrf_token / max_batch_size for later uploads
 //   enqueue → store one point, then attempt an immediate flush
 //   flush   → flush the queue on demand (e.g. on reconnect / app resume)
+//   stats   → reply { queued: <points still in IndexedDB> } on event.ports[0]
+//             (the page sends a MessageChannel port; KioskGeo.queuedCount)
 // 'enqueue' and 'flush' register a Background Sync as a fallback if the flush fails.
 self.addEventListener('message', (event) => {
   const { type, data } = event.data || {};
-  if (type === 'config') {
+  if (type === 'stats') {
+    const port = event.ports && event.ports[0];
+    event.waitUntil((async () => {
+      let queued = 0;
+      try { queued = (await getAllPoints()).length; } catch (e) { queued = 0; }
+      if (port) port.postMessage({ queued });
+    })());
+  } else if (type === 'config') {
     event.waitUntil((async () => {
       if (data.csrf_token) await setMeta('csrf_token', data.csrf_token);
       if (data.max_batch_size) await setMeta('max_batch_size', data.max_batch_size);

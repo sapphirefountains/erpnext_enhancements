@@ -134,6 +134,25 @@ def check(interval, skip_reason=None, settings=None):
 	return STATUS_SKIPPED
 
 
+def resolve(interval, skip_reason=None, settings=None):
+	"""The status ``check`` would stamp, **without ever throwing**.
+
+	For the two closers that have nobody to prompt: the hourly sweeper
+	(``workforce/sweeper.py``) and an approved Missed Clock-Out correction
+	(``workforce/corrections.py``). ``check`` exists to refuse a technician who can
+	still take the photo; there is no technician on the other end of an auto-close,
+	so the honest verdict is Captured when the photos are there and Skipped — with
+	the reason the caller supplies — when they are not. Never Required: that would
+	leave a Completed interval reading as an open gate.
+	"""
+	settings = settings or get_settings()
+	if not gate_enabled(settings) or not _interval_has_photo_fields():
+		return STATUS_NOT_REQUIRED
+	if photos_captured(interval) >= minimum_photos(settings):
+		return STATUS_CAPTURED
+	return STATUS_SKIPPED
+
+
 def stamp(interval, status, skip_reason=None):
 	"""Record the gate's verdict on the interval.
 

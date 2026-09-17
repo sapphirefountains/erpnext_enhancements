@@ -1,9 +1,9 @@
 """Time-tracking kiosk + geolocation backend.
 
-Whitelisted API powering the standalone Time Kiosk PWA (``public/js/kiosk/app.js``
+Whitelisted API powering the standalone Time Kiosk PWA (``public/js/kiosk/``
 and the offline service worker ``www/kiosk-sw.js``), plus the manager
 "Location Timeline" Desk page
-(``enhancements_core/page/location_timeline/location_timeline.js``). The page
+(``workforce/page/location_timeline/location_timeline.js``). The page
 context ``www/kiosk.py`` calls ``get_kiosk_bootstrap``.
 
 Core flow: ``log_time`` opens/pauses/resumes/switches/stops "Job Interval"
@@ -11,44 +11,94 @@ documents; on completion an interval is synced into a Draft Timesheet
 (``sync_interval_to_timesheet``). Geolocation points are streamed in batches
 into "Time Kiosk Log" and visualised per interval.
 
+What was added in v1.480.0 (the kiosk / location overhaul), and where the
+logic actually lives — this file stays the HTTP surface:
+
+- clock-in / clock-out **anchor fixes**, the resolved **site**
+  (``workforce/sites.py``) and the off-site flag;
+- **tracking health** per interval (``workforce/tracking_health.py``, pure
+  functions), stamped at close and kept live by ``log_geolocation_batch``;
+- **position** and the permlevel-1 **pay/cost** block
+  (``workforce/costing.py``), stamped at Start and recomputed by the interval's
+  own ``validate``;
+- the technician's own views — ``get_my_day``, ``get_my_history``,
+  ``get_my_trail``, ``get_shift_summary`` — and **time correction requests**
+  (``workforce/corrections.py`` reviews them);
+- the manager views — ``get_live_positions``, ``get_employees_for_timeline``,
+  an extended ``get_location_history`` and ``export_location_history``.
+
 Security:
         - The employee is derived from the SESSION user, never trusted from the
-          client, for ``log_time``/``log_geolocation_batch``/``get_kiosk_bootstrap``
-          (``_resolve_employee`` rejects a mismatched claimed employee).
+          client, for every endpoint that reads or writes an employee's own data
+          (``_session_employee`` / ``_resolve_employee`` rejects a mismatched
+          claimed employee).
         - The legacy ``log_geolocation`` single-point endpoint trusts the
           supplied ``employee`` for back-compat.
-        - ``get_location_history`` is role-gated: only ``TIMELINE_MANAGER_ROLES``
-          (System Manager / HR Manager) may view another employee's history;
-          everyone else sees only their own.
+        - Manager views are role-gated on ``TIMELINE_MANAGER_ROLES`` (System
+          Manager / HR Manager / Projects Manager — the Location Timeline page's
+          own role list, and ``tests/test_location_timeline_page.py`` pins the
+          two equal); everyone else sees only their own rows.
         - Writes use ``ignore_permissions=True`` after the session-based checks.
 
 Scheduler: ``purge_old_location_logs`` runs daily (hooks.py) to enforce the
-configured retention window. Settings come from the "Time Kiosk Settings"
-Single DocType.
+configured retention window (0 = keep forever, the default since v1.480.0).
+Settings come from the "Time Kiosk Settings" Single DocType.
 """
 
+import csv
+import io
 import json
 from datetime import datetime, timedelta
+from xml.sax.saxutils import escape as _xml_escape
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, cint, flt, get_datetime, now_datetime
+from frappe.utils import add_days, cint, flt, get_datetime, getdate, now_datetime, nowdate
 
-from erpnext_enhancements.workforce import photo_gate
+from erpnext_enhancements.workforce import costing, photo_gate, sites, tracking_health
 from erpnext_enhancements.workforce.doctype.time_kiosk_settings.time_kiosk_settings import (
     get_settings,
 )
+from erpnext_enhancements.workforce.tracking_health import haversine_m
 
-# Roles allowed to view *anyone's* location history. Everyone else can only view
-# their own. Kept here (rather than in Settings) so it can't be widened from the UI.
-TIMELINE_MANAGER_ROLES = {"System Manager", "HR Manager"}
+# Roles allowed to view *anyone's* location history, live positions and the
+# employee picker. Everyone else can only view their own. Kept here (rather
+# than in Settings) so it can't be widened from the UI. Must equal the roles on
+# workforce/page/location_timeline/location_timeline.json.
+TIMELINE_MANAGER_ROLES = {"System Manager", "HR Manager", "Projects Manager"}
+
+#: Log statuses that are real fixes. ``Low Accuracy`` rows prove the phone was
+#: reporting (they count toward coverage) but are excluded from distance and
+#: stop detection, where a 300 m fix would invent movement.
+TRACKED_STATUSES = ("Success", "Low Accuracy")
+PRECISE_STATUS = "Success"
+
+#: Stop detection on the timeline: a run of fixes within this radius lasting
+#: at least this long is "stayed put".
+STOP_RADIUS_M = 40
+STOP_MIN_MINUTES = 5
+
+# Back-compat alias: ``_haversine_m`` moved to workforce/tracking_health.py so
+# the pure trail functions have no reason to import frappe.
+_haversine_m = haversine_m
+
 
 @frappe.whitelist()
 def log_time(project=None, action=None, lat=None, lng=None, description=None, task=None,
-             time_category=None, skip_reason=None):
+             time_category=None, skip_reason=None, accuracy=None, offsite_acknowledged=None,
+             break_minutes=None):
     """
     Logs time for the current employee.
     action: "Start", "Stop", "Pause", "Resume", "Switch"
+
+    ``lat``/``lng``/``accuracy`` are the ANCHOR fix the kiosk took for this
+    event (a deliberate high-accuracy read, see ``KioskGeo.anchorFix``). On
+    Start / Switch-new they become the start anchor and are compared against
+    the project site (``workforce/sites.py``) — outside the geofence sets
+    ``offsite_start``, whether or not the kiosk warned. ``offsite_acknowledged``
+    records that the technician saw the warning and clocked in anyway. On
+    Stop / Switch-old they become the end anchor. ``break_minutes`` is the
+    preset chosen on Pause; informational only.
 
     ``skip_reason`` is only consulted by the two actions that END an interval
     ("Switch" and "Stop"). When the job-photo capture gate is on
@@ -62,6 +112,10 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
 
     Pause/Resume are deliberately NOT gated: pausing for lunch is not the end of
     a job, and demanding a photo for it would train everybody to skip.
+
+    Returns ``{"status", "message", "doc", "offsite": {"flagged", "distance_m",
+    "radius_m", "site"}}`` — the off-site block describes the start anchor for
+    Start/Switch and the end anchor for Stop.
     """
     if not action:
         frappe.throw(_("Action is required."))
@@ -95,21 +149,11 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
         if existing:
             frappe.throw(_("You already have an active job interval. Please stop or switch it first."))
 
-        doc = frappe.get_doc({
-            "doctype": "Job Interval",
-            "employee": employee,
-            "project": project,
-            "task": task,
-            "time_category": time_category,
-            "start_time": now_dt,
-            "status": "Open",
-            "latitude": lat,
-            "longitude": lng,
-            "description": description,
-            "total_paused_seconds": 0.0
-        })
+        doc = _new_interval(employee, project, task, time_category, description, now_dt,
+                            lat, lng, accuracy, offsite_acknowledged)
         doc.insert(ignore_permissions=True)
-        return {"status": "success", "message": "Work started.", "doc": doc.name}
+        return {"status": "success", "message": "Work started.", "doc": doc.name,
+                "offsite": _offsite_payload(doc, "start")}
 
     elif action == "Pause":
         open_interval = frappe.db.get_value("Job Interval", {"employee": employee, "status": "Open"}, "name")
@@ -119,8 +163,10 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
         doc = frappe.get_doc("Job Interval", open_interval)
         doc.status = "Paused"
         doc.last_pause_time = now_dt
+        doc.planned_break_minutes = cint(break_minutes) or None
         doc.save(ignore_permissions=True)
-        return {"status": "success", "message": "Work paused.", "doc": doc.name}
+        return {"status": "success", "message": "Work paused.", "doc": doc.name,
+                "offsite": _offsite_payload(doc, None)}
 
     elif action == "Resume":
         paused_interval = frappe.db.get_value("Job Interval", {"employee": employee, "status": "Paused"}, "name")
@@ -135,7 +181,8 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
         doc.status = "Open"
         doc.last_pause_time = None
         doc.save(ignore_permissions=True)
-        return {"status": "success", "message": "Work resumed.", "doc": doc.name}
+        return {"status": "success", "message": "Work resumed.", "doc": doc.name,
+                "offsite": _offsite_payload(doc, None)}
 
     elif action == "Switch":
         if not project:
@@ -149,30 +196,13 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
             # interval open, or a rejected switch would silently close the job
             # the technician is still standing on.
             photo_status = photo_gate.check(doc, skip_reason=skip_reason)
-            if doc.status == "Paused" and doc.last_pause_time:
-                doc.end_time = doc.last_pause_time
-            else:
-                doc.end_time = now_dt
-            doc.status = "Completed"
-            photo_gate.stamp(doc, photo_status, skip_reason=skip_reason)
-            doc.save(ignore_permissions=True)
-            sync_interval_to_timesheet(doc)
+            _close_interval(doc, now_dt, lat, lng, accuracy, photo_status, skip_reason)
 
-        new_doc = frappe.get_doc({
-            "doctype": "Job Interval",
-            "employee": employee,
-            "project": project,
-            "task": task,
-            "time_category": time_category,
-            "start_time": now_dt,
-            "status": "Open",
-            "latitude": lat,
-            "longitude": lng,
-            "description": description,
-            "total_paused_seconds": 0.0
-        })
+        new_doc = _new_interval(employee, project, task, time_category, description, now_dt,
+                                lat, lng, accuracy, offsite_acknowledged)
         new_doc.insert(ignore_permissions=True)
-        return {"status": "success", "message": "Task switched.", "doc": new_doc.name}
+        return {"status": "success", "message": "Task switched.", "doc": new_doc.name,
+                "offsite": _offsite_payload(new_doc, "start")}
 
     elif action == "Stop":
         active_interval = frappe.db.get_value("Job Interval", {"employee": employee, "status": ["in", ["Open", "Paused"]]}, ["name", "status", "last_pause_time"], as_dict=True)
@@ -184,24 +214,122 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
         # As with Switch: gate before mutating, so a refused clock-out leaves the
         # interval open rather than half-closed.
         photo_status = photo_gate.check(doc, skip_reason=skip_reason)
-        if doc.status == "Paused" and doc.last_pause_time:
-            doc.end_time = doc.last_pause_time
-        else:
-            doc.end_time = now_dt
-        doc.status = "Completed"
-        photo_gate.stamp(doc, photo_status, skip_reason=skip_reason)
-        doc.save(ignore_permissions=True)
+        _close_interval(doc, now_dt, lat, lng, accuracy, photo_status, skip_reason)
 
-        sync_interval_to_timesheet(doc)
-
-        return {"status": "success", "message": "Work stopped.", "doc": doc.name}
+        return {"status": "success", "message": "Work stopped.", "doc": doc.name,
+                "offsite": _offsite_payload(doc, "end")}
 
     else:
         frappe.throw(_("Invalid action. Must be 'Start', 'Stop', 'Pause', 'Resume', or 'Switch'."))
 
+
+def _new_interval(employee, project, task, time_category, description, now_dt,
+                  lat, lng, accuracy, offsite_acknowledged):
+    """An unsaved Job Interval for a Start / Switch-new, with the start anchor,
+    the resolved site, the off-site verdict, the position and the pay rate stamped."""
+    doc = frappe.get_doc({
+        "doctype": "Job Interval",
+        "employee": employee,
+        "project": project,
+        "task": task,
+        "time_category": time_category,
+        "start_time": now_dt,
+        "status": "Open",
+        "latitude": lat,
+        "longitude": lng,
+        "description": description,
+        "total_paused_seconds": 0.0,
+    })
+    doc.start_accuracy = flt(accuracy) if accuracy not in (None, "") else None
+    doc.offsite_acknowledged = cint(offsite_acknowledged)
+
+    site = None
+    try:
+        site = sites.site_coordinates(project)
+    except Exception:
+        frappe.log_error(title=f"Time Kiosk: site lookup failed for {project}")
+    if site:
+        doc.site_latitude = site["lat"]
+        doc.site_longitude = site["lng"]
+        doc.site_source = site["source"]
+        doc.site_radius_m = cint(site["radius_m"])
+    else:
+        doc.site_radius_m = sites.geofence_radius_m()
+
+    distance = _distance_to_site(doc, lat, lng)
+    doc.start_distance_m = distance
+    doc.offsite_start = 1 if _is_offsite(doc, distance) else 0
+
+    costing.stamp_position(doc)
+    costing.stamp_cost(doc)
+    return doc
+
+
+def _close_interval(doc, now_dt, lat, lng, accuracy, photo_status, skip_reason):
+    """Close ``doc`` (Stop / Switch-old): end time, end anchor, off-site verdict,
+    photo verdict, tracking health, save (validate stamps the cost), Timesheet sync."""
+    if doc.status == "Paused" and doc.last_pause_time:
+        doc.end_time = doc.last_pause_time
+    else:
+        doc.end_time = now_dt
+    doc.status = "Completed"
+
+    if _valid_coords(lat, lng):
+        doc.end_latitude = flt(lat)
+        doc.end_longitude = flt(lng)
+        doc.end_accuracy = flt(accuracy) if accuracy not in (None, "") else None
+        distance = _distance_to_site(doc, lat, lng)
+        doc.end_distance_m = distance
+        doc.offsite_end = 1 if _is_offsite(doc, distance) else 0
+
+    photo_gate.stamp(doc, photo_status, skip_reason=skip_reason)
+    _stamp_tracking_health(doc)
+    doc.save(ignore_permissions=True)
+    sync_interval_to_timesheet(doc)
+
+
+def _distance_to_site(doc, lat, lng):
+    if not _valid_coords(lat, lng) or not (doc.site_latitude or doc.site_longitude):
+        return None
+    return round(haversine_m(lat, lng, doc.site_latitude, doc.site_longitude))
+
+
+def _is_offsite(doc, distance):
+    radius = cint(doc.site_radius_m)
+    return bool(radius > 0 and distance is not None and distance > radius)
+
+
+def _offsite_payload(doc, phase):
+    """The ``offsite`` block ``log_time`` returns: the start anchor's verdict for
+    Start/Switch, the end anchor's for Stop, and a neutral block for Pause/Resume."""
+    radius = cint(getattr(doc, "site_radius_m", None))
+    site_title = None
+    if getattr(doc, "site_latitude", None) or getattr(doc, "site_longitude", None):
+        site_title = frappe.db.get_value("Project", doc.project, "project_name") or doc.project
+    if phase == "start":
+        flagged, distance = bool(doc.offsite_start), doc.start_distance_m
+    elif phase == "end":
+        flagged, distance = bool(doc.offsite_end), doc.end_distance_m
+    else:
+        flagged, distance = False, None
+    return {
+        "flagged": flagged,
+        "distance_m": cint(distance) if distance is not None else None,
+        "radius_m": radius,
+        "site": site_title,
+    }
+
+
 def sync_interval_to_timesheet(interval_doc):
     """
     Syncs a completed Job Interval to a Timesheet.
+
+    The new Timesheet Detail line carries ``costing_rate`` / ``costing_amount``
+    from the interval's burdened rate (``workforce/costing.py``) — ERPNext's own
+    ``TimesheetDetail.update_cost`` keeps a non-zero costing_rate and, for a
+    line with no activity type, computes nothing at all — and
+    ``custom_job_interval`` (fixture Custom Field) so a correction can find the
+    line again (``resync_interval_timesheet``).
     """
     try:
         employee = interval_doc.employee
@@ -247,6 +375,13 @@ def sync_interval_to_timesheet(interval_doc):
             "description": interval_doc.description or "Synced from Job Interval"
         }
 
+        rate = flt(getattr(interval_doc, "burdened_rate", None))
+        if rate:
+            new_log["costing_rate"] = rate
+            new_log["costing_amount"] = round(rate * hours, 2)
+        if _timesheet_detail_has_interval_link():
+            new_log["custom_job_interval"] = interval_doc.name
+
         if timesheet_name:
             # Optimized idempotency check using database lookup
             exists = frappe.db.exists("Timesheet Detail", {
@@ -287,6 +422,78 @@ def sync_interval_to_timesheet(interval_doc):
         frappe.log_error(f"Failed to sync Job Interval {interval_doc.name} to Timesheet: {e!s}", "Time Kiosk Sync Error")
         # Update Job Interval sync status to Failed
         interval_doc.db_set("sync_status", "Failed")
+
+
+def _timesheet_detail_has_interval_link():
+    """``has_column`` takes a DOCTYPE and RAISES on an unknown table, hence the guard."""
+    try:
+        return frappe.db.has_column("Timesheet Detail", "custom_job_interval")
+    except Exception:
+        return False
+
+
+def find_timesheet_line(interval_doc):
+    """The Timesheet Detail row this interval produced, as ``{name, parent,
+    docstatus}`` or None. Keyed on ``custom_job_interval`` when the column exists,
+    else on the (employee, project, from_time) triple the sync writes."""
+    if _timesheet_detail_has_interval_link():
+        row = frappe.db.get_value(
+            "Timesheet Detail",
+            {"custom_job_interval": interval_doc.name, "parenttype": "Timesheet"},
+            ["name", "parent", "docstatus"],
+            as_dict=True,
+        )
+        if row:
+            return row
+    if not interval_doc.start_time or not interval_doc.project:
+        return None
+    rows = frappe.db.sql(
+        """
+        select td.name, td.parent, td.docstatus
+        from `tabTimesheet Detail` td
+        inner join `tabTimesheet` ts on ts.name = td.parent
+        where ts.employee = %(employee)s and td.project = %(project)s and td.from_time = %(from_time)s
+        order by td.docstatus desc
+        limit 1
+        """,
+        {"employee": interval_doc.employee, "project": interval_doc.project,
+         "from_time": get_datetime(interval_doc.start_time)},
+        as_dict=True,
+    )
+    return rows[0] if rows else None
+
+
+def resync_interval_timesheet(interval_doc):
+    """Remove the Draft Timesheet line this interval produced and sync it again.
+
+    For an approved correction: the times or project moved, so the old line is
+    wrong. The line is found by ``custom_job_interval`` (or the triple), removed
+    from its Draft Timesheet — the Timesheet is deleted when that was its only
+    line, since ERPNext refuses to save an empty one — and ``sync_interval_to_timesheet``
+    re-adds it on the right day. Refuses (returns False) when the line sits on a
+    SUBMITTED Timesheet; the caller is expected to have checked and said so.
+    """
+    line = find_timesheet_line(interval_doc)
+    if line and cint(line.docstatus) == 1:
+        return False
+    if line:
+        try:
+            ts_doc = frappe.get_doc("Timesheet", line.parent)
+            remaining = [row for row in ts_doc.time_logs if row.name != line.name]
+            if remaining:
+                ts_doc.time_logs = []
+                for row in remaining:
+                    ts_doc.append("time_logs", row.as_dict())
+                ts_doc.save(ignore_permissions=True)
+            else:
+                frappe.delete_doc("Timesheet", ts_doc.name, ignore_permissions=True)
+        except Exception as e:
+            frappe.log_error(f"Failed to remove Timesheet line for {interval_doc.name}: {e!s}", "Time Kiosk Sync Error")
+            interval_doc.db_set("sync_status", "Failed")
+            return False
+    if interval_doc.status == "Completed" and interval_doc.end_time:
+        sync_interval_to_timesheet(interval_doc)
+    return True
 
 
 def update_timesheet_note(timesheet_name, employee, date_obj):
@@ -332,6 +539,73 @@ def update_timesheet_note(timesheet_name, employee, date_obj):
     except Exception as e:
         frappe.log_error(f"Failed to update Timesheet note: {e!s}", "Time Kiosk Sync Error")
 
+
+# ---------------------------------------------------------------------------
+# Tracking health
+# ---------------------------------------------------------------------------
+
+def _fix_times(job_interval, statuses=TRACKED_STATUSES):
+    """Timestamps of the interval's real fixes, oldest first."""
+    if not job_interval:
+        return []
+    rows = frappe.get_all(
+        "Time Kiosk Log",
+        filters={"job_interval": job_interval, "log_status": ["in", list(statuses)]},
+        pluck="timestamp",
+        order_by="timestamp asc",
+    )
+    return [get_datetime(t) for t in rows if t]
+
+
+def _health_inputs(settings=None):
+    settings = settings or get_settings()
+    return {
+        "gap_minutes": cint(settings.get("tracking_gap_minutes")) or 15,
+        "tracking_enabled": bool(cint(settings.get("enable_tracking"))),
+    }
+
+
+def _stamp_tracking_health(doc, settings=None):
+    """Score ``doc``'s trail and write the result onto it (not saved). Returns the
+    dict ``tracking_health.compute_health`` produced. Never raises: an interval
+    that cannot be scored still has to close."""
+    try:
+        end = get_datetime(doc.end_time) if doc.end_time else now_datetime()
+        result = tracking_health.compute_health(
+            get_datetime(doc.start_time), end, _fix_times(doc.name), **_health_inputs(settings)
+        )
+    except Exception:
+        frappe.log_error(title=f"Time Kiosk: tracking health failed for {doc.name}")
+        return None
+    doc.fix_count = cint(result["fix_count"])
+    doc.last_fix_at = result["last_fix_at"]
+    doc.gap_minutes = flt(result["gap_minutes"])
+    doc.tracking_coverage_pct = flt(result["coverage_pct"])
+    doc.tracking_health = result["health"]
+    return result
+
+
+@frappe.whitelist()
+def refresh_tracking_health(job_interval):
+    """Recompute one interval's tracking health from the Time Kiosk Log and save
+    it. Managers, or the interval's own employee. Returns the stored dict."""
+    if not job_interval:
+        frappe.throw(_("Job Interval is required."))
+    doc = frappe.get_doc("Job Interval", job_interval)
+    if not _can_view_employee_logs(doc.employee):
+        frappe.throw(_("Not permitted to refresh this interval."), frappe.PermissionError)
+    result = _stamp_tracking_health(doc)
+    doc.save(ignore_permissions=True)
+    return {
+        "fix_count": doc.fix_count,
+        "last_fix_at": doc.last_fix_at,
+        "gap_minutes": doc.gap_minutes,
+        "coverage_pct": doc.tracking_coverage_pct,
+        "health": doc.tracking_health,
+        "computed": bool(result),
+    }
+
+
 @frappe.whitelist()
 def get_current_status():
     """
@@ -353,7 +627,12 @@ def get_current_status():
     interval = frappe.db.get_value("Job Interval", {
         "employee": employee,
         "status": ["in", ["Open", "Paused"]]
-    }, ["name", "project", "task", "start_time", "description", "status", "time_category", "total_paused_seconds", "last_pause_time"], as_dict=True)
+    }, ["name", "project", "task", "start_time", "description", "status", "time_category",
+        "total_paused_seconds", "last_pause_time",
+        # v1.480.0: what the Working view shows and what the tracking chip reads.
+        "position", "position_tier", "planned_break_minutes", "last_fix_at", "fix_count",
+        "site_latitude", "site_longitude", "site_radius_m", "start_distance_m",
+        "offsite_start", "tracking_health"], as_dict=True)
 
     if interval:
         # Use dictionary access for compatibility with plain dicts (in case of custom queries/mocks)
@@ -411,35 +690,61 @@ def get_projects():
 @frappe.whitelist()
 def get_kiosk_options():
     """Picker options for the standalone kiosk PWA (which has no desk Link controls):
-    active projects and activity types as [{value, label}] lists.
+    active projects and activity types as [{value, label}] lists, the employee's
+    recent projects, and the geofence radius.
 
-    Projects additionally carry ``lat``/``lng`` when the project has a Sapphire
-    Maintenance Profile with site coordinates — the kiosk's searchable picker
-    uses them to sort nearest-site-first and show a distance badge. ``value`` is
-    the Project docname (PRJ-#####), which the picker also matches against, so
-    technicians can search by project number as well as title."""
-    sites = {
-        s.project: s
-        for s in frappe.get_all(
-            "Sapphire Maintenance Profile",
-            filters={"latitude": ["!=", 0], "longitude": ["!=", 0]},
-            fields=["project", "latitude", "longitude"],
-        )
-        if s.project
-    }
+    Projects additionally carry ``lat``/``lng`` when a site resolves for them
+    (``workforce/sites.py``: Maintenance Profile, linked Address, or the
+    Project's own geocoded coordinates) — the kiosk's picker uses them to sort
+    nearest-site-first and show a distance badge, and to warn before an off-site
+    clock-in. ``value`` is the Project docname (PRJ-#####), which the picker also
+    matches against, so technicians can search by project number as well as
+    title. ``recent_projects`` is the last 10 distinct projects this employee
+    clocked into, newest first."""
+    projects_raw = get_projects()
+    coords = {}
+    try:
+        coords = sites.site_coordinates_bulk([p["name"] for p in projects_raw])
+    except Exception:
+        frappe.log_error(title="Time Kiosk: site_coordinates_bulk failed")
     projects = []
-    for p in get_projects():
+    for p in projects_raw:
         item = {"value": p["name"], "label": p.get("project_name") or p["name"]}
-        site = sites.get(p["name"])
+        site = coords.get(p["name"])
         if site:
-            item["lat"] = site.latitude
-            item["lng"] = site.longitude
+            item["lat"] = site["lat"]
+            item["lng"] = site["lng"]
         projects.append(item)
     activity_types = [
         {"value": a["name"], "label": a["name"]}
         for a in frappe.get_all("Activity Type", fields=["name"], order_by="name asc")
     ]
-    return {"projects": projects, "activity_types": activity_types}
+
+    recent = []
+    employee = _session_employee()
+    if employee:
+        recent = [
+            r.project
+            for r in frappe.db.sql(
+                """
+                select project, max(start_time) as last_start
+                from `tabJob Interval`
+                where employee = %(employee)s and coalesce(project, '') != ''
+                group by project
+                order by last_start desc
+                limit 10
+                """,
+                {"employee": employee},
+                as_dict=True,
+            )
+        ]
+
+    return {
+        "projects": projects,
+        "activity_types": activity_types,
+        "recent_projects": recent,
+        "radius_m": sites.geofence_radius_m(),
+    }
 
 
 @frappe.whitelist()
@@ -597,14 +902,14 @@ def get_nearby_visit(lat=None, lng=None):
         return None
 
     lat, lng = flt(lat), flt(lng)
-    sites = frappe.get_all(
+    sites_rows = frappe.get_all(
         "Sapphire Maintenance Profile",
         filters={"latitude": ["!=", 0], "longitude": ["!=", 0]},
         fields=["project", "latitude", "longitude"],
     )
 
     best = None
-    for site in sites:
+    for site in sites_rows:
         distance = _haversine_m(lat, lng, site.latitude, site.longitude)
         if distance <= radius and (best is None or distance < best[0]):
             best = (distance, site.project)
@@ -631,15 +936,6 @@ def get_nearby_visit(lat=None, lng=None):
         "project_title": frappe.db.get_value("Project", project, "project_name") or project,
         "distance_m": round(distance),
     }
-
-
-def _haversine_m(lat1, lng1, lat2, lng2):
-    """Great-circle distance between two WGS84 points, in meters."""
-    from math import asin, cos, radians, sin, sqrt
-
-    lat1, lng1, lat2, lng2 = map(radians, (flt(lat1), flt(lng1), flt(lat2), flt(lng2)))
-    a = sin((lat2 - lat1) / 2) ** 2 + cos(lat1) * cos(lat2) * sin((lng2 - lng1) / 2) ** 2
-    return 6371000 * 2 * asin(sqrt(a))
 
 
 @frappe.whitelist()
@@ -880,6 +1176,333 @@ def _attach_photo_file(row, file_name, interval):
 
 
 # ---------------------------------------------------------------------------
+# The technician's own views (My Day / Map / Clock Out review)
+# ---------------------------------------------------------------------------
+
+def _day_bounds(date=None):
+    """``(day, "YYYY-MM-DD 00:00:00", "YYYY-MM-DD 23:59:59.999999")`` for a site date."""
+    day = getdate(date) if date else getdate(nowdate())
+    return day, f"{day} 00:00:00", f"{day} 23:59:59.999999"
+
+
+def _worked_seconds(row, now=None):
+    """Net seconds of an interval row (dict) — closed, paused, or live."""
+    now = now or now_datetime()
+    start = get_datetime(row.get("start_time"))
+    if row.get("end_time"):
+        end = get_datetime(row.get("end_time"))
+    elif row.get("status") == "Paused" and row.get("last_pause_time"):
+        end = get_datetime(row.get("last_pause_time"))
+    else:
+        end = now
+    return max((end - start).total_seconds() - flt(row.get("total_paused_seconds")), 0.0)
+
+
+def _titles(doctype, names, field):
+    names = sorted({n for n in names if n})
+    if not names:
+        return {}
+    return dict(frappe.get_all(doctype, filters={"name": ["in", names]}, fields=["name", field], as_list=True))
+
+
+def _require_session_employee():
+    employee = _session_employee()
+    if not employee:
+        frappe.throw(_("No Employee record found for this user."), frappe.PermissionError)
+    return employee
+
+
+@frappe.whitelist()
+def get_my_day(date=None):
+    """The session employee's intervals for one site date (default today), with
+    derived durations and the badges the My Day view shows.
+
+    ``worked_seconds`` is live for an open interval and stops at the pause for a
+    paused one; ``total_seconds`` sums them. ``sites`` is the distinct project
+    titles in clock-in order. ``pending_corrections`` counts the employee's
+    ``Requested`` Time Correction Requests (all dates — a pending request is a
+    pending request whichever day it is about).
+    """
+    employee = _require_session_employee()
+    day, start_of_day, end_of_day = _day_bounds(date)
+    now = now_datetime()
+
+    rows = frappe.get_all(
+        "Job Interval",
+        filters={"employee": employee, "start_time": ["between", [start_of_day, end_of_day]]},
+        fields=["name", "project", "task", "time_category", "start_time", "end_time", "status",
+                "total_paused_seconds", "last_pause_time", "tracking_health", "tracking_coverage_pct",
+                "offsite_start", "auto_closed", "corrected", "planned_break_minutes"],
+        order_by="start_time asc",
+    )
+    project_titles = _titles("Project", [r.project for r in rows], "project_name")
+    task_titles = _titles("Task", [r.task for r in rows], "subject")
+
+    intervals = []
+    total = 0.0
+    site_titles = []
+    for r in rows:
+        worked = _worked_seconds(r, now)
+        total += worked
+        title = project_titles.get(r.project) or r.project
+        if title and title not in site_titles:
+            site_titles.append(title)
+        intervals.append({
+            "name": r.name,
+            "project": r.project,
+            "project_title": title,
+            "task": r.task,
+            "task_title": task_titles.get(r.task) or r.task,
+            "time_category": r.time_category,
+            "start_time": r.start_time,
+            "end_time": r.end_time,
+            "status": r.status,
+            "worked_seconds": round(worked),
+            "paused_seconds": round(flt(r.total_paused_seconds)),
+            "photo_count": _gate_photo_count(r.name),
+            "tracking_health": r.tracking_health,
+            "tracking_coverage_pct": r.tracking_coverage_pct,
+            "offsite_start": cint(r.offsite_start),
+            "auto_closed": cint(r.auto_closed),
+            "corrected": cint(r.corrected),
+            "planned_break_minutes": r.planned_break_minutes,
+        })
+
+    pending = 0
+    try:
+        pending = frappe.db.count("Time Correction Request", {"employee": employee, "status": "Requested"})
+    except Exception:
+        pending = 0
+
+    return {
+        "date": str(day),
+        "intervals": intervals,
+        "total_seconds": round(total),
+        "first_start": rows[0].start_time if rows else None,
+        "last_end": rows[-1].end_time if rows else None,
+        "sites": site_titles,
+        "pending_corrections": pending,
+    }
+
+
+@frappe.whitelist()
+def get_my_history(days=14):
+    """One row per calendar day for the last ``days`` days (zero days included),
+    newest first: net seconds of Completed intervals, interval count, distinct
+    sites. Today additionally includes the live open interval, so the strip
+    agrees with My Day."""
+    employee = _require_session_employee()
+    days = max(1, min(cint(days) or 14, 92))
+    today = getdate(nowdate())
+    first_day = add_days(today, -(days - 1))
+
+    rows = frappe.db.sql(
+        """
+        select
+            date(start_time) as day,
+            sum(greatest(timestampdiff(second, start_time, end_time) - coalesce(total_paused_seconds, 0), 0)) as seconds,
+            count(*) as interval_count,
+            count(distinct project) as site_count
+        from `tabJob Interval`
+        where employee = %(employee)s
+          and status = 'Completed'
+          and end_time is not null
+          and start_time >= %(from_dt)s
+          and start_time < %(to_dt)s
+        group by date(start_time)
+        """,
+        {"employee": employee, "from_dt": f"{first_day} 00:00:00", "to_dt": f"{add_days(today, 1)} 00:00:00"},
+        as_dict=True,
+    )
+    by_day = {str(r.day): r for r in rows}
+
+    live = frappe.db.get_value(
+        "Job Interval",
+        {"employee": employee, "status": ["in", ["Open", "Paused"]]},
+        ["start_time", "end_time", "status", "total_paused_seconds", "last_pause_time"],
+        as_dict=True,
+    )
+
+    result = []
+    grand_total = 0.0
+    for offset in range(days):
+        day = add_days(today, -offset)
+        key = str(day)
+        r = by_day.get(key)
+        seconds = flt(r.seconds) if r else 0.0
+        count = cint(r.interval_count) if r else 0
+        site_count = cint(r.site_count) if r else 0
+        if live and getdate(live.start_time) == day:
+            seconds += _worked_seconds(live)
+            count += 1
+            site_count = max(site_count, 1)
+        grand_total += seconds
+        result.append({
+            "date": key,
+            "total_seconds": round(seconds),
+            "interval_count": count,
+            "site_count": site_count,
+        })
+
+    return {"days": result, "total_seconds": round(grand_total)}
+
+
+@frappe.whitelist()
+def get_my_trail(date=None):
+    """The session employee's own fixes and intervals for one site date, for the
+    kiosk's Map tab. Includes ``Low Accuracy`` points (the map draws them hollow)."""
+    employee = _require_session_employee()
+    day, start_of_day, end_of_day = _day_bounds(date)
+
+    points = frappe.get_all(
+        "Time Kiosk Log",
+        filters={
+            "employee": employee,
+            "log_status": ["in", list(TRACKED_STATUSES)],
+            "timestamp": ["between", [start_of_day, end_of_day]],
+        },
+        fields=["timestamp", "latitude", "longitude", "accuracy", "job_interval", "fix_source", "log_status"],
+        order_by="timestamp asc",
+    )
+    intervals = frappe.get_all(
+        "Job Interval",
+        filters={"employee": employee, "start_time": ["between", [start_of_day, end_of_day]]},
+        fields=["name", "project", "start_time", "end_time", "site_latitude", "site_longitude", "site_radius_m"],
+        order_by="start_time asc",
+    )
+    titles = _titles("Project", [i.project for i in intervals], "project_name")
+    for i in intervals:
+        i["project_title"] = titles.get(i.project) or i.project
+        i.pop("project", None)
+
+    return {"date": str(day), "points": points, "intervals": intervals, "radius_m": sites.geofence_radius_m()}
+
+
+@frappe.whitelist()
+def get_shift_summary():
+    """What the Clock Out review sheet shows: today's net seconds, this interval's,
+    the sites, photos and a LIVE tracking coverage for the open interval."""
+    employee = _require_session_employee()
+    now = now_datetime()
+    _day, start_of_day, end_of_day = _day_bounds()
+
+    rows = frappe.get_all(
+        "Job Interval",
+        filters={"employee": employee, "start_time": ["between", [start_of_day, end_of_day]]},
+        fields=["name", "project", "start_time", "end_time", "status", "total_paused_seconds",
+                "last_pause_time", "fix_count", "last_fix_at"],
+        order_by="start_time asc",
+    )
+    titles = _titles("Project", [r.project for r in rows], "project_name")
+    today_seconds = sum(_worked_seconds(r, now) for r in rows)
+    site_titles = []
+    for r in rows:
+        title = titles.get(r.project) or r.project
+        if title and title not in site_titles:
+            site_titles.append(title)
+
+    active = next((r for r in rows if r.status in ("Open", "Paused")), None)
+    if not active:
+        active_row = frappe.db.get_value(
+            "Job Interval",
+            {"employee": employee, "status": ["in", ["Open", "Paused"]]},
+            ["name", "project", "start_time", "end_time", "status", "total_paused_seconds",
+             "last_pause_time", "fix_count", "last_fix_at"],
+            as_dict=True,
+        )
+        active = active_row
+
+    summary = {
+        "today_seconds": round(today_seconds),
+        "interval_seconds": 0,
+        "sites": site_titles,
+        "photo_count": 0,
+        "fix_count": 0,
+        "last_fix_at": None,
+        "coverage_pct": None,
+        "interval": None,
+    }
+    if active:
+        fixes = _fix_times(active.name)
+        health = tracking_health.compute_health(
+            get_datetime(active.start_time), now, fixes, **_health_inputs()
+        )
+        summary.update({
+            "interval": active.name,
+            "interval_seconds": round(_worked_seconds(active, now)),
+            "photo_count": _gate_photo_count(active.name),
+            "fix_count": health["fix_count"],
+            "last_fix_at": health["last_fix_at"],
+            "coverage_pct": health["coverage_pct"],
+        })
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# Time correction requests (the employee's half; review is workforce/corrections.py)
+# ---------------------------------------------------------------------------
+
+TCR_LIST_FIELDS = ["name", "request_type", "status", "job_interval", "reason", "requested_on",
+                   "reviewed_on", "review_note", "proposed_start", "proposed_end", "proposed_project"]
+
+
+@frappe.whitelist()
+def submit_correction_request(request_type, reason, job_interval=None, proposed_start=None,
+                              proposed_end=None, proposed_project=None, proposed_task=None,
+                              proposed_activity=None):
+    """File a Time Correction Request for the session employee. The controller
+    validates the proposal shape and that ``job_interval`` is theirs; the
+    supervisor is emailed on insert."""
+    employee = _require_session_employee()
+    doc = frappe.get_doc({
+        "doctype": "Time Correction Request",
+        "employee": employee,
+        "job_interval": job_interval or None,
+        "request_type": request_type,
+        "proposed_start": get_datetime(proposed_start) if proposed_start else None,
+        "proposed_end": get_datetime(proposed_end) if proposed_end else None,
+        "proposed_project": proposed_project or None,
+        "proposed_task": proposed_task or None,
+        "proposed_activity": proposed_activity or None,
+        "reason": (reason or "").strip(),
+        "status": "Requested",
+        "requested_on": now_datetime(),
+    })
+    doc.insert(ignore_permissions=True)
+    return {"name": doc.name, "status": doc.status}
+
+
+@frappe.whitelist()
+def get_my_correction_requests(limit=20):
+    """The session employee's requests, newest first."""
+    employee = _require_session_employee()
+    return frappe.get_all(
+        "Time Correction Request",
+        filters={"employee": employee},
+        fields=TCR_LIST_FIELDS,
+        order_by="requested_on desc, creation desc",
+        limit=max(1, min(cint(limit) or 20, 100)),
+    )
+
+
+@frappe.whitelist()
+def cancel_correction_request(name):
+    """Withdraw one of the session employee's own requests while it is still
+    ``Requested``. Anything already decided stays as decided."""
+    employee = _require_session_employee()
+    doc = frappe.get_doc("Time Correction Request", name)
+    if doc.employee != employee:
+        frappe.throw(_("You can only cancel your own requests."), frappe.PermissionError)
+    if doc.status != "Requested":
+        frappe.throw(_("This request has already been {0}.").format(doc.status.lower()))
+    doc.flags.ee_review = True
+    doc.status = "Canceled"
+    doc.reviewed_on = now_datetime()
+    doc.save(ignore_permissions=True)
+    return {"status": doc.status}
+
+
+# ---------------------------------------------------------------------------
 # Geolocation telemetry
 # ---------------------------------------------------------------------------
 
@@ -978,6 +1601,30 @@ def _validated_interval(job_interval, employee, _cache=None):
     return result
 
 
+FIX_SOURCES = ("Watch", "Heartbeat", "Catch-up", "Anchor")
+
+
+def _touch_interval_fixes(job_interval, count, latest):
+    """Keep ``fix_count`` / ``last_fix_at`` live on an OPEN interval as batches
+    land, without bumping ``modified`` (a save would race the clock actions).
+    One statement per touched interval; ``greatest`` handles a catch-up batch
+    that arrives after a newer heartbeat."""
+    if not job_interval or not count:
+        return
+    frappe.db.sql(
+        """
+        update `tabJob Interval`
+        set fix_count = coalesce(fix_count, 0) + %(count)s,
+            last_fix_at = case
+                when last_fix_at is null or last_fix_at < %(latest)s then %(latest)s
+                else last_fix_at
+            end
+        where name = %(name)s
+        """,
+        {"count": cint(count), "latest": latest, "name": job_interval},
+    )
+
+
 @frappe.whitelist()
 def log_geolocation_batch(points):
     """
@@ -991,12 +1638,20 @@ def log_geolocation_batch(points):
           "latitude": <float>, "longitude": <float>,
           "accuracy": <m>, "speed": <m/s>, "heading": <deg>, "altitude": <m>,
           "log_status": "Success" | "Offline Sync" | ...,
+          "fix_source": "Watch" | "Heartbeat" | "Catch-up" | "Anchor",
           "device_agent": <ua string>
         }
 
     Employee is taken from the session (never trusted from the client); each
     job_interval is verified to belong to that employee. Returns the list of
     accepted client_ids so the worker can clear exactly those from IndexedDB.
+
+    A fix worse than ``min_accuracy_m`` is stored as ``Low Accuracy`` (and
+    reported as accepted) when ``keep_low_accuracy_fixes`` is on — it still
+    proves the phone was reporting — and rejected with ``low_accuracy`` when it
+    is off. Invalid coordinates are always rejected. Each touched interval's
+    ``fix_count`` / ``last_fix_at`` are updated in place so an open interval
+    reports live.
     """
     employee = _resolve_employee()
     settings = get_settings()
@@ -1008,10 +1663,12 @@ def log_geolocation_batch(points):
 
     max_batch = cint(settings.get("max_batch_size")) or 50
     min_accuracy = cint(settings.get("min_accuracy_m"))
+    keep_low_accuracy = bool(cint(settings.get("keep_low_accuracy_fixes")))
     points = points[:max_batch]
 
     interval_cache = {}
     accepted, rejected = [], []
+    touched = {}
     user = frappe.session.user
     now_iso = now_datetime()
 
@@ -1025,15 +1682,23 @@ def log_geolocation_batch(points):
                     rejected.append({"client_id": cid, "reason": "invalid_coords"})
                     continue
                 if min_accuracy and p.get("accuracy") and flt(p.get("accuracy")) > min_accuracy:
-                    rejected.append({"client_id": cid, "reason": "low_accuracy"})
-                    continue
+                    if not keep_low_accuracy:
+                        rejected.append({"client_id": cid, "reason": "low_accuracy"})
+                        continue
+                    status = "Low Accuracy"
+
+            source = p.get("fix_source") or "Watch"
+            if source not in FIX_SOURCES:
+                source = "Watch"
+            interval = _validated_interval(p.get("job_interval"), employee, interval_cache)
+            timestamp = _parse_timestamp(p.get("timestamp")) or now_iso
 
             doc = frappe.get_doc({
                 "doctype": "Time Kiosk Log",
                 "employee": employee,
                 "user": user,
-                "job_interval": _validated_interval(p.get("job_interval"), employee, interval_cache),
-                "timestamp": _parse_timestamp(p.get("timestamp")) or now_iso,
+                "job_interval": interval,
+                "timestamp": timestamp,
                 "latitude": lat,
                 "longitude": lng,
                 "accuracy": p.get("accuracy"),
@@ -1042,12 +1707,22 @@ def log_geolocation_batch(points):
                 "altitude": p.get("altitude"),
                 "device_agent": p.get("device_agent"),
                 "log_status": status,
+                "fix_source": source,
             })
             doc.insert(ignore_permissions=True)
             accepted.append(cid)
+            if interval and status in TRACKED_STATUSES:
+                count, latest = touched.get(interval, (0, None))
+                touched[interval] = (count + 1, timestamp if latest is None or timestamp > latest else latest)
         except Exception as e:
             frappe.log_error(f"Failed to ingest geo point: {e!s}", "Time Kiosk Location Error")
             rejected.append({"client_id": cid, "reason": "server_error"})
+
+    for interval, (count, latest) in touched.items():
+        try:
+            _touch_interval_fixes(interval, count, latest)
+        except Exception as e:
+            frappe.log_error(f"Failed to update fix count on {interval}: {e!s}", "Time Kiosk Location Error")
 
     return {"status": "success", "accepted": accepted, "rejected": rejected}
 
@@ -1071,21 +1746,252 @@ def get_kiosk_bootstrap():
     }
 
 
+# ---------------------------------------------------------------------------
+# Manager views (Location Timeline page)
+# ---------------------------------------------------------------------------
+
+def _is_manager():
+    return bool(TIMELINE_MANAGER_ROLES.intersection(frappe.get_roles()))
+
+
 def _can_view_employee_logs(employee):
     """True if the session user may view ``employee``'s location history."""
-    if TIMELINE_MANAGER_ROLES.intersection(frappe.get_roles()):
+    if _is_manager():
         return True
     return _session_employee() == employee
 
 
 @frappe.whitelist()
+def get_employees_for_timeline():
+    """The employee picker: every active Employee for managers, only themselves
+    for everyone else. ``[{value, label}]``."""
+    if _is_manager():
+        return [
+            {"value": e.name, "label": e.employee_name or e.name}
+            for e in frappe.get_all("Employee", filters={"status": "Active"},
+                                    fields=["name", "employee_name"], order_by="employee_name asc")
+        ]
+    employee = _session_employee()
+    if not employee:
+        return []
+    return [{"value": employee, "label": frappe.db.get_value("Employee", employee, "employee_name") or employee}]
+
+
+@frappe.whitelist()
+def get_live_positions():
+    """Where everybody who is clocked in was last seen. Managers only.
+
+    One row per Open/Paused interval with its latest real fix (``Success`` or
+    ``Low Accuracy``); ``stale`` when that fix is older than the tracking-gap
+    setting, which is also returned as ``stale_after_minutes`` so the page can
+    say why.
+    """
+    if not _is_manager():
+        frappe.throw(_("Not permitted to view live positions."), frappe.PermissionError)
+
+    gap_minutes = _health_inputs()["gap_minutes"]
+    now = now_datetime()
+
+    intervals = frappe.db.sql(
+        """
+        select ji.name, ji.employee, e.employee_name, ji.project, p.project_name as project_title,
+               t.subject as task_title, ji.status, ji.start_time, ji.total_paused_seconds,
+               ji.last_pause_time, ji.last_fix_at, ji.tracking_health
+        from `tabJob Interval` ji
+        left join `tabEmployee` e on e.name = ji.employee
+        left join `tabProject` p on p.name = ji.project
+        left join `tabTask` t on t.name = ji.task
+        where ji.status in ('Open', 'Paused')
+        order by ji.start_time asc
+        """,
+        as_dict=True,
+    )
+    if not intervals:
+        return {"employees": [], "stale_after_minutes": gap_minutes}
+
+    names = tuple(i.name for i in intervals)
+    latest = {}
+    for row in frappe.db.sql(
+        """
+        select l.job_interval, l.timestamp, l.latitude, l.longitude, l.accuracy
+        from `tabTime Kiosk Log` l
+        inner join (
+            select job_interval, max(timestamp) as ts
+            from `tabTime Kiosk Log`
+            where job_interval in %(names)s and log_status in %(statuses)s
+            group by job_interval
+        ) m on m.job_interval = l.job_interval and m.ts = l.timestamp
+        where l.log_status in %(statuses)s
+        order by l.timestamp desc
+        """,
+        {"names": names, "statuses": TRACKED_STATUSES},
+        as_dict=True,
+    ):
+        latest.setdefault(row.job_interval, row)
+
+    employees = []
+    for i in intervals:
+        fix = latest.get(i.name)
+        last_fix_at = get_datetime(fix.timestamp) if fix else (get_datetime(i.last_fix_at) if i.last_fix_at else None)
+        stale = last_fix_at is None or (now - last_fix_at) > timedelta(minutes=gap_minutes)
+        employees.append({
+            "employee": i.employee,
+            "employee_name": i.employee_name or i.employee,
+            "job_interval": i.name,
+            "project": i.project,
+            "project_title": i.project_title or i.project,
+            "task_title": i.task_title,
+            "status": i.status,
+            "start_time": i.start_time,
+            "elapsed_seconds": round(_worked_seconds(i, now)),
+            "last_fix_at": last_fix_at,
+            "latitude": fix.latitude if fix else None,
+            "longitude": fix.longitude if fix else None,
+            "accuracy": fix.accuracy if fix else None,
+            "stale": bool(stale),
+            "tracking_health": i.tracking_health,
+        })
+    return {"employees": employees, "stale_after_minutes": gap_minutes}
+
+
+INTERVAL_META_FIELDS = [
+    "name", "project", "task", "start_time", "end_time", "status", "total_paused_seconds",
+    "last_pause_time", "latitude", "longitude", "start_accuracy", "end_latitude", "end_longitude",
+    "end_accuracy", "site_latitude", "site_longitude", "site_radius_m", "site_source",
+    "tracking_health", "tracking_coverage_pct", "gap_minutes", "fix_count",
+    "auto_closed", "offsite_start", "offsite_end", "corrected",
+]
+
+
+def _history_window(from_datetime, to_datetime):
+    if not to_datetime:
+        to_datetime = now_datetime()
+    if not from_datetime:
+        from_datetime = add_days(get_datetime(to_datetime), -1)
+    return get_datetime(from_datetime), get_datetime(to_datetime)
+
+
+def _history_rows(employee, from_dt, to_dt):
+    return frappe.get_all(
+        "Time Kiosk Log",
+        filters={
+            "employee": employee,
+            "log_status": ["in", list(TRACKED_STATUSES)],
+            "timestamp": ["between", [from_dt, to_dt]],
+        },
+        fields=["name", "job_interval", "timestamp", "latitude", "longitude",
+                "accuracy", "speed", "heading", "fix_source", "log_status"],
+        order_by="timestamp asc",
+    )
+
+
+def _interval_meta(employee, names, from_dt, to_dt):
+    """Job Interval rows for the grouped points PLUS every interval of the
+    employee that started inside the window — an interval with no fixes at all
+    (health ``None``) still has to appear on the timeline, or the day it
+    describes reads as a day off."""
+    filters = [["employee", "=", employee], ["start_time", "between", [from_dt, to_dt]]]
+    rows = {iv.name: iv for iv in frappe.get_all("Job Interval", filters=filters, fields=INTERVAL_META_FIELDS)}
+    missing = [n for n in names if n not in rows]
+    if missing:
+        for iv in frappe.get_all("Job Interval", filters={"name": ["in", missing]}, fields=INTERVAL_META_FIELDS):
+            rows[iv.name] = iv
+    return rows
+
+
+def _anchor(lat, lng, accuracy):
+    if not _valid_coords(lat, lng) or not (flt(lat) or flt(lng)):
+        return None
+    return {"lat": flt(lat), "lng": flt(lng), "accuracy": flt(accuracy) if accuracy not in (None, "") else None}
+
+
+def _describe_group(meta, points, from_dt, to_dt, now, settings_inputs):
+    """One interval's block for ``get_location_history``: site, anchors, stats,
+    gaps, stops, badges. ``meta`` may be empty for the ``_unassigned`` group."""
+    precise = [p for p in points if p.get("log_status") == PRECISE_STATUS]
+    fix_times = [get_datetime(p["timestamp"]) for p in points]
+
+    site = None
+    if meta and (flt(meta.get("site_latitude")) or flt(meta.get("site_longitude"))):
+        site = {
+            "lat": flt(meta.get("site_latitude")),
+            "lng": flt(meta.get("site_longitude")),
+            "radius_m": cint(meta.get("site_radius_m")),
+            "source": meta.get("site_source") or "",
+        }
+
+    if meta:
+        start = get_datetime(meta.get("start_time"))
+        end = get_datetime(meta.get("end_time")) if meta.get("end_time") else now
+    elif fix_times:
+        start, end = fix_times[0], fix_times[-1]
+    else:
+        start, end = from_dt, to_dt
+    window_start, window_end = max(start, from_dt), min(end, to_dt)
+
+    stored = bool(meta) and meta.get("end_time") and meta.get("tracking_health") not in (None, "", "Pending")
+    if stored:
+        health = {
+            "coverage_pct": flt(meta.get("tracking_coverage_pct")),
+            "gap_minutes": flt(meta.get("gap_minutes")),
+            "health": meta.get("tracking_health"),
+        }
+    else:
+        health = tracking_health.compute_health(start, end, fix_times, **settings_inputs)
+
+    gap_list = tracking_health.gaps(window_start, window_end, fix_times, settings_inputs["gap_minutes"]) \
+        if window_end > window_start else []
+    stops = tracking_health.detect_stops(precise, STOP_RADIUS_M, STOP_MIN_MINUTES)
+    for stop in stops:
+        stop["at_site"] = bool(
+            site and site["radius_m"] > 0
+            and haversine_m(stop["lat"], stop["lng"], site["lat"], site["lng"]) <= site["radius_m"]
+        )
+    dwell = tracking_health.dwell_minutes(precise, site["lat"], site["lng"], site["radius_m"]) if site else 0.0
+    travel = tracking_health.travel_minutes(
+        precise, stops, site["lat"] if site else None, site["lng"] if site else None, site["radius_m"] if site else 0
+    )
+
+    return {
+        "site": site,
+        "anchors": {
+            "start": _anchor(meta.get("latitude"), meta.get("longitude"), meta.get("start_accuracy")) if meta else None,
+            "end": _anchor(meta.get("end_latitude"), meta.get("end_longitude"), meta.get("end_accuracy")) if meta else None,
+        },
+        "stats": {
+            "fix_count": len(points),
+            "distance_m": round(tracking_health.path_distance_m(precise)),
+            "gap_minutes": flt(health["gap_minutes"]),
+            "coverage_pct": flt(health["coverage_pct"]),
+            "health": health["health"],
+            "dwell_minutes": dwell,
+            "travel_minutes": travel,
+        },
+        "gaps": gap_list,
+        "stops": stops,
+        "auto_closed": cint(meta.get("auto_closed")) if meta else 0,
+        "offsite_start": cint(meta.get("offsite_start")) if meta else 0,
+        "offsite_end": cint(meta.get("offsite_end")) if meta else 0,
+        "corrected": cint(meta.get("corrected")) if meta else 0,
+        "worked_seconds": round(_worked_seconds(meta, now)) if meta else 0,
+    }
+
+
+@frappe.whitelist()
 def get_location_history(employee, from_datetime=None, to_datetime=None):
     """
-    Return successful location points for ``employee`` between the two datetimes,
-    grouped by Job Interval (the clock-in session), ordered oldest-first.
+    Return location points for ``employee`` between the two datetimes, grouped by
+    Job Interval (the clock-in session), ordered oldest-first.
 
     Powers the manager "Location Timeline" page. Permission: manager roles can
     view anyone; everyone else only themselves.
+
+    Points include ``Low Accuracy`` rows (with ``fix_source`` / ``log_status`` so
+    the page can draw them hollow). Each interval group carries the resolved
+    ``site``, the two ``anchors``, ``stats`` (fixes, distance, gaps, coverage,
+    health, dwell, travel), the ``gaps`` and ``stops`` lists and the
+    auto-closed / off-site / corrected badges; the top level adds ``day_totals``.
+    Intervals with no fixes still appear, with health ``None``.
     """
     if not employee:
         frappe.throw(_("Employee is required."))
@@ -1093,22 +1999,11 @@ def get_location_history(employee, from_datetime=None, to_datetime=None):
         frappe.throw(_("Not permitted to view this employee's location history."),
                      frappe.PermissionError)
 
-    if not to_datetime:
-        to_datetime = now_datetime()
-    if not from_datetime:
-        from_datetime = add_days(get_datetime(to_datetime), -1)
+    from_dt, to_dt = _history_window(from_datetime, to_datetime)
+    now = now_datetime()
+    settings_inputs = _health_inputs()
 
-    rows = frappe.get_all(
-        "Time Kiosk Log",
-        filters={
-            "employee": employee,
-            "log_status": "Success",
-            "timestamp": ["between", [from_datetime, to_datetime]],
-        },
-        fields=["name", "job_interval", "timestamp", "latitude", "longitude",
-                "accuracy", "speed", "heading"],
-        order_by="timestamp asc",
-    )
+    rows = _history_rows(employee, from_dt, to_dt)
 
     # Group by interval, preserving chronological order of first appearance.
     groups = {}
@@ -1125,41 +2020,177 @@ def get_location_history(employee, from_datetime=None, to_datetime=None):
             "accuracy": r.accuracy,
             "speed": r.speed,
             "heading": r.heading,
+            "fix_source": r.fix_source,
+            "log_status": r.log_status,
         })
 
-    # Decorate each interval group with project/task labels.
-    interval_meta = {}
-    interval_names = [k for k in order if k != "_unassigned"]
-    if interval_names:
-        for iv in frappe.get_all(
-            "Job Interval",
-            filters={"name": ["in", interval_names]},
-            fields=["name", "project", "task", "start_time", "end_time", "status"],
-        ):
-            interval_meta[iv.name] = iv
+    interval_meta = _interval_meta(employee, [k for k in order if k != "_unassigned"], from_dt, to_dt)
+    for name in interval_meta:
+        if name not in groups:
+            groups[name] = []
+            order.append(name)
+
+    def sort_key(key):
+        meta = interval_meta.get(key)
+        if meta:
+            return (0, get_datetime(meta.start_time))
+        first = groups[key][0]["timestamp"] if groups[key] else to_dt
+        return (1, get_datetime(first))
+
+    order.sort(key=sort_key)
+
+    project_titles = _titles("Project", [m.get("project") for m in interval_meta.values()], "project_name")
+    task_titles = _titles("Task", [m.get("task") for m in interval_meta.values()], "subject")
 
     result = []
+    totals = {"worked_seconds": 0, "distance_m": 0, "dwell_minutes": 0.0, "travel_minutes": 0.0, "gap_minutes": 0.0}
     for key in order:
         meta = interval_meta.get(key, {})
         project = meta.get("project") if meta else None
         task = meta.get("task") if meta else None
-        result.append({
+        block = _describe_group(meta, groups[key], from_dt, to_dt, now, settings_inputs)
+        worked = block.pop("worked_seconds")
+        if meta:
+            totals["worked_seconds"] += worked
+            totals["distance_m"] += block["stats"]["distance_m"]
+            totals["dwell_minutes"] += block["stats"]["dwell_minutes"]
+            totals["travel_minutes"] += block["stats"]["travel_minutes"]
+            totals["gap_minutes"] += block["stats"]["gap_minutes"]
+        entry = {
             "job_interval": None if key == "_unassigned" else key,
             "project": project,
-            "project_title": frappe.db.get_value("Project", project, "project_name") if project else None,
+            "project_title": project_titles.get(project) if project else None,
             "task": task,
-            "task_title": frappe.db.get_value("Task", task, "subject") if task else None,
+            "task_title": task_titles.get(task) if task else None,
             "start_time": meta.get("start_time") if meta else None,
             "end_time": meta.get("end_time") if meta else None,
+            "status": meta.get("status") if meta else None,
+            "worked_seconds": worked,
             "points": groups[key],
-        })
+        }
+        entry.update(block)
+        result.append(entry)
 
-    return {"employee": employee, "intervals": result, "point_count": len(rows)}
+    totals["dwell_minutes"] = round(totals["dwell_minutes"], 1)
+    totals["travel_minutes"] = round(totals["travel_minutes"], 1)
+    totals["gap_minutes"] = round(totals["gap_minutes"], 1)
+
+    return {
+        "employee": employee,
+        "from_datetime": from_dt,
+        "to_datetime": to_dt,
+        "intervals": result,
+        "point_count": len(rows),
+        "day_totals": totals,
+    }
+
+
+def _utc_iso(value):
+    """A site-local naive datetime as an ISO-8601 UTC string, for GPX."""
+    dt = get_datetime(value)
+    try:
+        from datetime import timezone
+        from zoneinfo import ZoneInfo
+
+        zone = ZoneInfo(frappe.utils.get_system_timezone())
+        return dt.replace(tzinfo=zone).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def history_csv(rows, project_by_interval):
+    """The CSV body: one line per fix, the columns the contract names."""
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["timestamp", "latitude", "longitude", "accuracy", "speed", "heading",
+                     "fix_source", "log_status", "job_interval", "project"])
+    for r in rows:
+        writer.writerow([
+            r.get("timestamp"), r.get("latitude"), r.get("longitude"), r.get("accuracy"),
+            r.get("speed"), r.get("heading"), r.get("fix_source") or "", r.get("log_status") or "",
+            r.get("job_interval") or "", project_by_interval.get(r.get("job_interval")) or "",
+        ])
+    return out.getvalue()
+
+
+def history_gpx(rows, project_by_interval, employee):
+    """A GPX 1.1 document: one ``<trk>`` per interval (unassigned fixes form their
+    own track), precise fixes only — a 300 m fix in a GPX viewer is a lie."""
+    tracks = {}
+    order = []
+    for r in rows:
+        if r.get("log_status") != PRECISE_STATUS or not _valid_coords(r.get("latitude"), r.get("longitude")):
+            continue
+        key = r.get("job_interval") or "_unassigned"
+        if key not in tracks:
+            tracks[key] = []
+            order.append(key)
+        tracks[key].append(r)
+
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<gpx version="1.1" creator="Sapphire Fountains ERPNext" xmlns="http://www.topografix.com/GPX/1/1">',
+        f"  <metadata><name>{_xml_escape(str(employee))}</name></metadata>",
+    ]
+    for key in order:
+        label = key if key != "_unassigned" else "Unassigned"
+        project = project_by_interval.get(key)
+        if project:
+            label = f"{label} - {project}"
+        lines.append("  <trk>")
+        lines.append(f"    <name>{_xml_escape(label)}</name>")
+        lines.append("    <trkseg>")
+        for r in tracks[key]:
+            lines.append(f'      <trkpt lat="{flt(r.get("latitude")):.6f}" lon="{flt(r.get("longitude")):.6f}">')
+            lines.append(f"        <time>{_utc_iso(r.get('timestamp'))}</time>")
+            lines.append("      </trkpt>")
+        lines.append("    </trkseg>")
+        lines.append("  </trk>")
+    lines.append("</gpx>")
+    return "\n".join(lines) + "\n"
+
+
+@frappe.whitelist()
+def export_location_history(employee, from_datetime=None, to_datetime=None, format="csv"):
+    """Download an employee's fixes for a window as ``csv`` or ``gpx``. Same gate
+    as ``get_location_history``. Sets ``frappe.response`` like
+    ``download_payroll_workbook`` does, with the right MIME type."""
+    if not employee:
+        frappe.throw(_("Employee is required."))
+    if not _can_view_employee_logs(employee):
+        frappe.throw(_("Not permitted to export this employee's location history."),
+                     frappe.PermissionError)
+    fmt = (format or "csv").lower()
+    if fmt not in ("csv", "gpx"):
+        frappe.throw(_("Format must be csv or gpx."))
+
+    from_dt, to_dt = _history_window(from_datetime, to_datetime)
+    rows = _history_rows(employee, from_dt, to_dt)
+    names = sorted({r.job_interval for r in rows if r.job_interval})
+    project_by_interval = {}
+    if names:
+        for iv in frappe.get_all("Job Interval", filters={"name": ["in", names]}, fields=["name", "project"]):
+            project_by_interval[iv.name] = iv.project
+        titles = _titles("Project", project_by_interval.values(), "project_name")
+        project_by_interval = {k: (titles.get(v) or v) for k, v in project_by_interval.items()}
+
+    stamp = f"{getdate(from_dt)}_to_{getdate(to_dt)}"
+    safe_employee = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(employee))
+    if fmt == "csv":
+        content, content_type = history_csv(rows, project_by_interval), "text/csv"
+    else:
+        content, content_type = history_gpx(rows, project_by_interval, employee), "application/gpx+xml"
+
+    frappe.response["filename"] = f"location_{safe_employee}_{stamp}.{fmt}"
+    frappe.response["filecontent"] = content
+    frappe.response["content_type"] = content_type
+    frappe.response["type"] = "download"
 
 
 def purge_old_location_logs():
     """Scheduled daily: delete Time Kiosk Log rows older than the configured
-    retention window. retention_days <= 0 disables purging (keep forever)."""
+    retention window. retention_days <= 0 disables purging (keep forever — the
+    default since v1.480.0)."""
     days = cint(get_settings().get("retention_days"))
     if days <= 0:
         return

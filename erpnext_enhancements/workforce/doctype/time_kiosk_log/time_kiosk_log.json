@@ -18,6 +18,7 @@
   "speed",
   "heading",
   "altitude",
+  "fix_source",
   "device_section",
   "device_agent"
  ],
@@ -58,12 +59,13 @@
    "search_index": 1
   },
   {
+   "description": "Low Accuracy = the fix was worse than the configured minimum accuracy and kept anyway (Time Kiosk Settings > Keep Low-Accuracy Fixes). It proves the phone was reporting and counts toward tracking coverage, but is excluded from distance and stop detection and drawn hollow on the timeline.",
    "fieldname": "log_status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Log Status",
-   "options": "Success\nPermission Denied\nError\nOffline Sync"
+   "options": "Success\nPermission Denied\nError\nOffline Sync\nLow Accuracy"
   },
   {
    "fieldname": "location_section",
@@ -111,6 +113,15 @@
    "precision": "2"
   },
   {
+   "default": "Watch",
+   "description": "How the kiosk obtained this fix. Watch = the continuous position watch; Heartbeat = the periodic stationary sample; Catch-up = flushed from the offline queue after a reconnect; Anchor = the deliberate high-accuracy fix taken at clock-in / clock-out.",
+   "fieldname": "fix_source",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Fix Source",
+   "options": "Watch\nHeartbeat\nCatch-up\nAnchor"
+  },
+  {
    "fieldname": "device_section",
    "fieldtype": "Section Break",
    "label": "Device"
@@ -123,7 +134,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-06-08 10:00:00.000000",
+ "modified": "2026-09-17 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Workforce",
  "name": "Time Kiosk Log",
