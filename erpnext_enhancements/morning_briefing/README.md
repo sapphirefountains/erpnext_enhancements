@@ -25,7 +25,7 @@ unbounded growth.
 
 ## Content
 
-Tasks, calendar, pipeline and ToDos, narrated by Gemini via `api/gemini.py`, with a
+Tasks, calendar, pipeline and ToDos, narrated by Gemini 3.8 Flash on the Gemini Enterprise Agent Platform via `api/gemini.py` (global endpoint, OAuth2 token from the Drive service account), with a
 **deterministic markdown fallback** when the model is unavailable. Optional per-recipient
 email. The master switch is `briefing_enabled` in ERPNext Enhancements Settings.
 

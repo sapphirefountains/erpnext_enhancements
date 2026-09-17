@@ -65,9 +65,9 @@ _DEFAULT_MODEL = ""
 # empty value means "let Triton auto-route per message" based on the prompt.
 TRITON_MODELS = [
     {"value": "", "label": "Auto"},
-    {"value": "gemini-3.5-flash", "label": "Flash"},
+    {"value": "gemini-3.8-flash", "label": "Flash"},
     {"value": "gemini-3.1-pro-preview", "label": "Pro"},
-    {"value": "gemini-3.1-flash-lite", "label": "Lite"},
+    {"value": "gemini-3.5-flash-lite", "label": "Lite"},
 ]
 
 
@@ -438,8 +438,8 @@ def list_sessions() -> list:
 def _pretty_model_label(model_id: str) -> str:
     """Turn a raw model id into a short picker label.
 
-    "gemini-3.5-flash" -> "Flash 3.5", "gemini-3.1-pro-preview" -> "Pro 3.1",
-    "gemini-3.1-flash-lite" -> "Flash Lite 3.1".
+    "gemini-3.8-flash" -> "Flash 3.8", "gemini-3.1-pro-preview" -> "Pro 3.1",
+    "gemini-3.5-flash-lite" -> "Flash Lite 3.5".
     """
     s = (model_id or "").replace("gemini-", "")
     parts = [p for p in s.split("-") if p]

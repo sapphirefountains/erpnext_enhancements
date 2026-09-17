@@ -1710,6 +1710,16 @@ jobs:
       # (the picker just opens on Flash), so it needs a test rather than review.
       - name: Triton widget default model (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_triton_widget_defaults.py -q
+      # Gemini Enterprise Agent Platform client (v1.474.0). Its own step for the reason the
+      # two above have one: it installs its own frappe/requests/google-auth stubs at module
+      # scope. What it pins is the shape of the one request this app sends to the platform:
+      # the global host with `locations/global` in the path (the regional form 404'd every
+      # weekday briefing from 2026-09-16), a bearer token and no `x-goog-api-key`, the
+      # lifecycle note on a 404 rather than an IAM hint, and the bearer cleared from the
+      # frame before anything raises so it cannot reach the Error Log. Two failures in one
+      # string literal went unexercised for the client's whole life; this is the net.
+      - name: Gemini Enterprise Agent Platform client (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_gemini_client.py -q
       # Triton chat attachments (v1.375.0). Its own step for the reason the two above have
       # one: each bench-free suite installs its own frappe stub at module scope, and this one
       # extends `frappe.utils` with three date helpers the other two were never written
