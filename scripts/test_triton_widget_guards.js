@@ -173,6 +173,25 @@ for (const { fn, destructive } of MUST_GUARD) {
 }
 
 // ---------------------------------------------------------------------------
+// The web-search toggle (v1.481.0), two shape rules. First, runStream must post
+// `use_search`: the relay's Python signature is a closed list, so a key the
+// widget stops sending is not an error anywhere — the toggle just becomes
+// decorative. Second, a hidden continuation (the "please proceed" turn after an
+// approved action) must never carry it: the flag is read off client state, which
+// is what the person set for the question they asked, not for the follow-up the
+// widget sends on their behalf.
+{
+	const body = bodyOf('runStream');
+	if (!body.includes('use_search:')) {
+		fail('runStream() no longer posts use_search; the web-search toggle is decorative.');
+	} else if (!/use_search:\s*!opts\.hidden\s*&&\s*state\.search/.test(body)) {
+		fail('runStream() posts use_search without gating it off on hidden continuations.');
+	} else {
+		pass('runStream() posts use_search, gated off on hidden continuations');
+	}
+}
+
+// ---------------------------------------------------------------------------
 // The two keyboard defects fixed at the Phase 3 checkpoint (approved 2026-08-10).
 //
 // Both are ORDERING rules, like the streaming guards above: an early `return`

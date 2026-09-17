@@ -1,4 +1,4 @@
-"""The Time Kiosk desk tile is two records that fail silently apart (v1.481.0).
+"""The Time Kiosk desk tile is two records that fail silently apart (v1.482.0).
 
 A ``Desktop Icon`` of type ``Link`` only renders when a same-named ``Workspace Sidebar``
 has visible items — ``get_desktop_icons`` resolves ``bootinfo.workspace_sidebar_item[label

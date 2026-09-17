@@ -1095,12 +1095,12 @@ erpnext_enhancements.patches.seed_employee_pay_visibility
 # 200, on the long queue; a deploy FLUSHDB may destroy the batch, so the daily
 # backfill_missing_site_coordinates job re-drives whatever is still missing.
 erpnext_enhancements.patches.backfill_project_site_coordinates
-# v1.481.0: the Location Timeline Page JSON was age-gated out of the v1.480.0 deploy -- the prod
+# v1.482.0: the Location Timeline Page JSON was age-gated out of the v1.480.0 deploy -- the prod
 # row was five hours newer than the file's stamp, so Projects Manager never reached the page
 # while the API gate and the report already had it. Bumped stamp + reload_doc(force=True), the
 # workspace shape (reload_workspaces_for_qbo_matching). Cannot raise; safe twice.
 erpnext_enhancements.patches.reload_location_timeline_page
-# v1.481.0: a Time Kiosk tile on the desk home grid -- a Desktop Icon of link_type External to
+# v1.482.0: a Time Kiosk tile on the desk home grid -- a Desktop Icon of link_type External to
 # /kiosk, standard, no roles, placed after Workforce. Insert-only, keyed on the label. The
 # same-named Workspace Sidebar it needs to render ships as workspace_sidebar/time_kiosk.json.
 erpnext_enhancements.patches.seed_time_kiosk_desktop_icon

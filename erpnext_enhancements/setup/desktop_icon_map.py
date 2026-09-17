@@ -97,7 +97,7 @@ TILES = {
 	"HR": ("hr", "id-card", PEOPLE),
 	"Workforce": ("workforce", "users-round", PEOPLE),
 	"Training": ("training", "graduation-cap", PEOPLE),
-	# The one tile here that is NOT a workspace (v1.481.0). It is an `External` link
+	# The one tile here that is NOT a workspace (v1.482.0). It is an `External` link
 	# tile straight to the /kiosk PWA, seeded by `patches/seed_time_kiosk_desktop_icon`
 	# because `_create_tile` (rightly) refuses a label with no Workspace behind it, and
 	# `_sync_roles` skips it for the same reason -- so it has no roles and every signed-in
