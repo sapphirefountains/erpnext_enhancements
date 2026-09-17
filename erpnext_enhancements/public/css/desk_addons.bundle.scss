@@ -28,6 +28,7 @@
 @import "./project_enhancements/frappe-gantt";
 @import "./task_enhancements/task_enhancements";
 @import "./quickbooks_online/qbo_dashboard";
+@import "./quickbooks_online/qbo_matching";
 @import "./collab";
 // NOTE: the embeddable Gantt widget's chrome is deliberately NOT imported here.
 // It ships as its own hashed entry (gantt_widget.bundle.css) which the widget

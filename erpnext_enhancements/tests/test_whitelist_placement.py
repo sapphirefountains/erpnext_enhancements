@@ -63,6 +63,19 @@ MUST_STAY_WHITELISTED = {
     # this list named it from memory and failed here, which is the inventory doing its
     # job on its own author.
     "api/briefing.py": ("get_morning_briefing",),
+    # The Record Matching page's whole surface (v1.474.0). `_entity_list`, a plain helper,
+    # sits between the operator gate and these endpoints in that file -- exactly the shape
+    # of the accident above -- so the endpoints are named here and the helper is caught
+    # by rule 1 if a decorator ever slides onto it.
+    "quickbooks_online/core/api.py": (
+        "get_match_queue",
+        "get_parked_transactions",
+        "decide_match",
+        "decide_matches",
+        "confirm_match",
+        "link_existing_record",
+        "sync_entity",
+    ),
 }
 
 

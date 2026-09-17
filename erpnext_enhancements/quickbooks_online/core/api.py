@@ -5,7 +5,8 @@ page) and by Intuit (the webhook). Functions here are thin ``@frappe.whitelist``
 wrappers that handle permission boundaries, OAuth CSRF state and light argument
 coercion, then delegate to the implementation modules:
 ``client`` (OAuth), ``sync`` (import/resync/entity/retry), ``mapping``
-(link/preview existing matches) and ``webhooks`` (inbound notifications).
+(link/preview existing matches), ``matching`` (the Record Matching page's queue and
+decisions) and ``webhooks`` (inbound notifications).
 
 Access control: the sync engine runs with ``ignore_permissions=True``, so these
 RPC entry points are the *only* access-control boundary. Every privileged
@@ -24,10 +25,12 @@ authorization code.
 
 from __future__ import annotations
 
+import json
 import secrets
 
 import frappe
 
+from erpnext_enhancements.quickbooks_online.core import matching
 from erpnext_enhancements.quickbooks_online.core.client import QuickBooksClient
 from erpnext_enhancements.quickbooks_online.core.mapping import (
 	link_existing_record as run_link_existing_record,
@@ -388,6 +391,104 @@ def get_sync_log_summary(name):
 		},
 		"error_message": log.error_message,
 	}
+
+
+def _entity_list(entity_types):
+	"""Client-supplied entity types -- a JSON list (frappe.call serialises arrays that way),
+	a CSV string, or a real list -- as a clean list, or None when nothing was given.
+
+	Parsed with the standard library rather than ``frappe.parse_json`` so the behaviour is
+	the same under the bench-free test stub as on a site: the first version fell through
+	to the CSV branch there and handed back ``['["Customer"', '"Vendor"]']``.
+	"""
+	if not entity_types:
+		return None
+	if isinstance(entity_types, str):
+		try:
+			parsed = json.loads(entity_types)
+		except ValueError:
+			parsed = None
+		if isinstance(parsed, list):
+			return [str(entity).strip() for entity in parsed if str(entity).strip()]
+		return [entity.strip() for entity in entity_types.split(",") if entity.strip()]
+	return [str(entity).strip() for entity in entity_types if str(entity).strip()]
+
+
+@frappe.whitelist()
+def get_match_queue(entity_types=None, status=None, search=None, start=0, page_length=50):
+	"""RPC: one page of the master-record matching queue (the Record Matching page).
+
+	``status`` is one of ``matching.STATUS_FILTERS`` or anything else for all rows;
+	``search`` narrows within the status (Frappe ANDs ``or_filters`` onto ``filters``).
+	Read-only.
+	"""
+	_require_qbo_operator()
+	return matching.master_queue(
+		entity_types=_entity_list(entity_types),
+		status=status,
+		search=search,
+		start=frappe.utils.cint(start),
+		page_length=frappe.utils.cint(page_length) or matching.DEFAULT_PAGE_LENGTH,
+	)
+
+
+@frappe.whitelist()
+def get_parked_transactions(entity_types=None, start=0, page_length=50):
+	"""RPC: transactions parked in Pending Review, with the stored reason and the draft
+	if one exists (the Record Matching page's second tab). Read-only; Retry there is
+	``sync_entity``.
+	"""
+	_require_qbo_operator()
+	return matching.parked_transactions(
+		entity_types=_entity_list(entity_types),
+		start=frappe.utils.cint(start),
+		page_length=frappe.utils.cint(page_length) or matching.DEFAULT_PAGE_LENGTH,
+	)
+
+
+@frappe.whitelist()
+def decide_match(entity_type, qbo_id, erpnext_name, fill_blanks=0, merge_duplicate=1):
+	"""RPC: link one QBO record to the chosen ERPNext record (the page's Link button).
+
+	Folds the copy the import created into the chosen record unless ``merge_duplicate``
+	is off. A merge ERPNext refuses is reported in the result (``merge.status`` =
+	``failed``), never raised: the link decision has already been committed by then and
+	stays.
+	"""
+	_require_qbo_operator()
+	return matching.decide(
+		entity_type,
+		qbo_id,
+		erpnext_name,
+		fill_blanks=bool(frappe.utils.cint(fill_blanks)),
+		merge_duplicate=bool(frappe.utils.cint(merge_duplicate)),
+	)
+
+
+@frappe.whitelist()
+def decide_matches(decisions, fill_blanks=0, merge_duplicate=1):
+	"""RPC: ``decide_match`` over a list (the page's Accept suggestions), one result per
+	decision in order; one failure never stops the rest."""
+	_require_qbo_operator()
+	if isinstance(decisions, str):
+		try:
+			decisions = json.loads(decisions)
+		except ValueError:
+			decisions = None
+	if not isinstance(decisions, list):
+		frappe.throw("decisions must be a list of {entity_type, qbo_id, erpnext_name}.")
+	return matching.decide_many(
+		decisions,
+		fill_blanks=bool(frappe.utils.cint(fill_blanks)),
+		merge_duplicate=bool(frappe.utils.cint(merge_duplicate)),
+	)
+
+
+@frappe.whitelist()
+def confirm_match(entity_type, qbo_id):
+	"""RPC: stamp a mapping as reviewed without changing it (the page's Keep button)."""
+	_require_qbo_operator()
+	return matching.confirm(entity_type, qbo_id)
 
 
 def _state_key(state):

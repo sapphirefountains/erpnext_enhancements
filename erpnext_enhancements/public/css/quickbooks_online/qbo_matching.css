@@ -1,0 +1,263 @@
+/*
+ * QuickBooks Record Matching page styles.
+ *
+ * What this styles: the accountant's QBO -> ERPNext matching queue (desk page
+ * quickbooks-record-matching): the tab strip, filter toolbar, count chips, the
+ * five-column decision table (QBO record / current link / suggestions / picker /
+ * actions) and the parked-transactions table. Frappe CSS variables throughout so
+ * it holds in both themes; the three score bands are the only literal colours.
+ * Loaded via: desk_addons.bundle.scss (see public/README.md).
+ */
+.qbo-matching {
+	padding: 12px 0 40px;
+}
+
+.qbo-mt-tabs {
+	display: flex;
+	gap: 6px;
+	margin-bottom: 14px;
+}
+
+.qbo-mt-tabs .btn.active {
+	background: var(--control-bg);
+	font-weight: 600;
+}
+
+.qbo-mt-toolbar {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 12px;
+}
+
+.qbo-mt-toolbar select,
+.qbo-mt-toolbar input[data-filter="search"] {
+	width: auto;
+	min-width: 160px;
+}
+
+.qbo-mt-toolbar input[data-filter="search"] {
+	min-width: 240px;
+}
+
+.qbo-mt-spacer {
+	flex: 1 1 auto;
+}
+
+.qbo-mt-threshold {
+	align-items: center;
+	color: var(--text-muted);
+	display: inline-flex;
+	font-size: 12px;
+	gap: 4px;
+	margin: 0;
+}
+
+.qbo-mt-threshold input {
+	width: 64px;
+}
+
+.qbo-mt-counts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 12px;
+}
+
+.qbo-mt-chip {
+	background: var(--card-bg);
+	border: 1px solid var(--border-color);
+	border-radius: 999px;
+	color: var(--text-muted);
+	cursor: pointer;
+	font-size: 12px;
+	padding: 3px 10px;
+}
+
+.qbo-mt-chip b {
+	color: var(--text-color);
+	font-weight: 600;
+}
+
+.qbo-mt-chip.active {
+	border-color: var(--primary);
+	color: var(--text-color);
+}
+
+.qbo-mt-chip-static {
+	cursor: default;
+}
+
+.qbo-mt-table {
+	border-collapse: collapse;
+	font-size: 12.5px;
+	width: 100%;
+}
+
+.qbo-mt-table th {
+	border-bottom: 1px solid var(--border-color);
+	color: var(--text-muted);
+	font-size: 11.5px;
+	font-weight: 600;
+	letter-spacing: 0.03em;
+	padding: 6px 8px;
+	text-align: left;
+	text-transform: uppercase;
+}
+
+.qbo-mt-table td {
+	border-bottom: 1px solid var(--border-color);
+	padding: 10px 8px;
+	vertical-align: top;
+}
+
+.qbo-mt-col-qbo {
+	width: 24%;
+}
+
+.qbo-mt-col-link {
+	width: 22%;
+}
+
+.qbo-mt-col-sugg {
+	width: 24%;
+}
+
+.qbo-mt-col-pick {
+	min-width: 220px;
+}
+
+.qbo-mt-col-actions {
+	white-space: nowrap;
+}
+
+.qbo-mt-col-actions .btn + .btn {
+	margin-left: 4px;
+}
+
+.qbo-mt-name {
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.qbo-mt-sub {
+	color: var(--text-muted);
+	font-size: 11.5px;
+	overflow-wrap: anywhere;
+}
+
+.qbo-mt-status {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 4px;
+}
+
+.qbo-mt-pill {
+	font-size: 11px;
+}
+
+.qbo-mt-agree {
+	color: var(--green-600, #2e7d32);
+	font-size: 11.5px;
+}
+
+.qbo-mt-issue {
+	color: var(--orange-600, #b26a00);
+	font-size: 11.5px;
+	margin-top: 3px;
+	overflow-wrap: anywhere;
+}
+
+.qbo-mt-missing {
+	color: var(--red-500);
+}
+
+.qbo-mt-sugg {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-bottom: 4px;
+}
+
+.qbo-mt-sugg .btn {
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.qbo-mt-score {
+	border-radius: 4px;
+	font-size: 11px;
+	font-weight: 600;
+	padding: 1px 5px;
+}
+
+.qbo-mt-score[data-score="high"] {
+	background: var(--green-100, #e6f4ea);
+	color: var(--green-700, #1e7b34);
+}
+
+.qbo-mt-score[data-score="mid"] {
+	background: var(--yellow-100, #fff6d6);
+	color: var(--yellow-700, #8a6d00);
+}
+
+.qbo-mt-score[data-score="low"] {
+	background: var(--gray-100, #f0f0f0);
+	color: var(--text-muted);
+}
+
+.qbo-mt-picker .frappe-control {
+	margin-bottom: 4px;
+}
+
+.qbo-mt-fill {
+	color: var(--text-muted);
+	display: block;
+	font-size: 11.5px;
+	font-weight: normal;
+	margin: 0;
+}
+
+.qbo-mt-empty {
+	color: var(--text-muted);
+	padding: 40px;
+	text-align: center;
+}
+
+.qbo-mt-pager {
+	align-items: center;
+	display: flex;
+	gap: 10px;
+	margin-top: 12px;
+}
+
+@media (max-width: 900px) {
+	.qbo-mt-table,
+	.qbo-mt-table thead,
+	.qbo-mt-table tbody,
+	.qbo-mt-table tr,
+	.qbo-mt-table td {
+		display: block;
+		width: auto;
+	}
+
+	.qbo-mt-table thead {
+		display: none;
+	}
+
+	.qbo-mt-table td {
+		border-bottom: 0;
+		padding: 4px 8px;
+	}
+
+	.qbo-mt-row {
+		border-bottom: 1px solid var(--border-color);
+		padding: 8px 0;
+	}
+}

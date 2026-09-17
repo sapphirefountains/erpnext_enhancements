@@ -162,6 +162,7 @@ See [`www/README.md`](../www/README.md) for the service-worker / offline side.
 | `project_enhancements/frappe-gantt.css` | **Vendored** frappe-gantt styles | `desk_addons.bundle.scss` |
 | `project_enhancements/task_tree.css` | Hierarchical task grid + dashboard column selector | `desk_addons.bundle.scss` |
 | `quickbooks_online/qbo_dashboard.css` | QBO status dashboard | `desk_addons.bundle.scss` |
+| `quickbooks_online/qbo_matching.css` | QBO Record Matching page (v1.474.0): tab strip, filter toolbar, count chips, the five-column decision table and the parked-transactions table. Frappe variables throughout; the three score bands are the only literal colours | `desk_addons.bundle.scss` |
 | `task_enhancements/task_enhancements.css` | Hierarchical task tree connectors | `desk_addons.bundle.scss` |
 
 ## Gotchas
