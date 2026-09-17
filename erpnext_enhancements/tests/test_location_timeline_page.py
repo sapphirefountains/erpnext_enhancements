@@ -411,5 +411,45 @@ class TestTheScriptsParse(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
 
 
+class TestThePageActuallyReachesTheSite(unittest.TestCase):
+    """A Page JSON is age-gated on import exactly like a Workspace: `import_file` skips the
+    file when the database row is not older than the file's `modified`. v1.480.0 shipped
+    Projects Manager in this JSON stamped 09:00:00 on a day the prod row already read
+    14:12:58, and the deploy installed everything except this file -- nothing errored, the
+    page simply kept its old roles. Two halves stop that recurring: a stamp newer than any
+    row the site held, and a forced reload patch for the edit that forgets the stamp."""
+
+    PATCH = APP / "patches" / "reload_location_timeline_page.py"
+    PATCHES_TXT = APP / "patches.txt"
+    GATED_ROW = "2026-09-17 14:12:58"
+
+    def test_the_stamp_is_newer_than_the_row_that_gated_it(self):
+        record = json.loads(PAGE_JSON.read_text(encoding="utf-8"))
+        self.assertIn("modified", record, "a Page JSON with no `modified` is skipped as 'not older'")
+        self.assertGreater(record["modified"], self.GATED_ROW)
+
+    def test_the_forced_reload_patch_exists_and_targets_this_page(self):
+        source = self.PATCH.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "reload_doc"
+        ]
+        self.assertEqual(len(calls), 1, "exactly one reload_doc call")
+        call = calls[0]
+        self.assertEqual([a.value for a in call.args], ["workforce", "page", "location_timeline"])
+        self.assertTrue(
+            any(k.arg == "force" and k.value.value is True for k in call.keywords),
+            "the reload must be force=True or the age gate applies to it too",
+        )
+
+    def test_the_patch_is_registered_after_the_model_sync(self):
+        text = self.PATCHES_TXT.read_text(encoding="utf-8")
+        post = text.split("[post_model_sync]", 1)[1]
+        self.assertIn("erpnext_enhancements.patches.reload_location_timeline_page", post)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.480.1] - 2026-09-17
+
+### Fixed
+
+- **Projects Manager never reached the Location Timeline page.** The v1.480.0 deploy installed
+  every patch, fixture, column and report, and skipped one file: the page's JSON. A `Page` is
+  age-gated on import exactly like a Workspace — `import_file` compares the file's `modified`
+  against the database row and silently skips the file when the row is not older — and the
+  prod row read `2026-09-17 14:12:58`, five hours newer than the `09:00:00` stamp the file
+  carried. Verified live after the deploy: the page still listed System Manager and HR Manager
+  while `TIMELINE_MANAGER_ROLES` and the Labor Cost Analysis report already had Projects
+  Manager, so a Projects Manager got a permission error from the button the Job Interval form
+  drew for them. The stamp is now later than any row the site can hold, and
+  `patches/reload_location_timeline_page` does `reload_doc(force=True)` — the workspace shape
+  from v1.469.0 and v1.474.0, applied to a Page for the first time. `tests/test_location_timeline_page.py`
+  now pins that the patch exists and is registered, so a future role edit that forgets the
+  stamp still lands.
+
 ## [1.480.0] - 2026-09-17
 
 ### Added
