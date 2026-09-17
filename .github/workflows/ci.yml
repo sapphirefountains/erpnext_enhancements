@@ -418,8 +418,12 @@ jobs:
       # ItemQuickEntryForm subclass leaks fixed-asset defaults into every Item created
       # later in the session; and moving the inspection completeness gates from
       # before_submit to validate makes a half-walked checklist unsaveable.
+      # test_po_received_qty_column (ER-2026-458194) rides the same step: a grid column's
+      # position is the doctype's field order, so `in_list_view` alone puts received_qty
+      # off the right edge; `depends_on` is evaluated per row, so it must be cleared or
+      # unreceived lines show a blank; and the columns before Rate must still sum to 12.
       - name: Feedback ER batch invariants (PO fields, Asset form, rental inspections)
-        run: python -m unittest erpnext_enhancements.tests.test_feedback_er_batch -v
+        run: python -m unittest erpnext_enhancements.tests.test_feedback_er_batch erpnext_enhancements.tests.test_po_received_qty_column -v
       # The maintenance sweeps had NO automated coverage of any kind before this:
       # test_sapphire_maintenance and test_maintenance_sections both build real
       # documents, so neither runs without a bench and neither is named in this file.

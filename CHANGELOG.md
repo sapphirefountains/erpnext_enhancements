@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.478.0] - 2026-09-17
+
+### Added
+
+- **Received Qty is a column in the Purchase Order items grid** (ER-2026-458194,
+  TASK-2026-02046). The number was always there — `Purchase Order Item.received_qty`, kept by
+  ERPNext from submitted receipts — and always hidden: not `in_list_view`, and behind a
+  `depends_on` that shows it only once something has arrived, inside the row editor. Now it
+  sits beside Qty and UOM on every line, read-only, with 0 meaning 0. Three Property Setters
+  and one reorder, each load-bearing. **`in_list_view` alone would have put it off the right
+  edge**: a grid's column order is the doctype's field order, and `received_qty` is native
+  field 75 of 106, behind Rate, Amount, Warehouse and Project — so the `field_order` setter
+  this app already carries moves it to directly after `uom`, which also puts it under Qty on
+  the row form. **`depends_on` is cleared**, because frappe 16 evaluates a column's
+  `depends_on` per row (`grid_row.refresh_dependency`) and an unreceived line would show a
+  blank cell — "unknown", not "nothing yet". **`columns` is 1**, because the default row is
+  12 units and was already full.
+  **Item Status leaves the default grid, not the form.** The 12th unit had to come from
+  somewhere. `custom_item_status` (ER-2026-312391) is set on 0 of 389 lines this year, and its
+  "Received" option is what the new column now says with a number; it stays on the row form,
+  editable after submit, for Delayed / On the way / Different supplier. Buy at 1 unit was the
+  alternative and would have wrapped its buttons. Anyone who wants a different set still picks
+  columns from the grid's gear icon; Parker has no saved grid columns, so the default is what
+  they see. `tests/test_po_received_qty_column.py` pins all of it, including that the columns
+  before Rate still sum to 12.
+
 ## [1.477.0] - 2026-09-17
 
 ### Added
