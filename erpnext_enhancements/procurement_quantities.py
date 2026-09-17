@@ -300,3 +300,86 @@ def _rollup_status(statuses, vocabulary):
 	if distinct == {all_label}:
 		return all_label
 	return partial_label
+
+
+# ---------------------------------------------------------------------------
+# Receiving against an order — Receive Items on the Purchase Order (ER-2026-458194)
+# ---------------------------------------------------------------------------
+
+
+def _plain(value):
+	"""A quantity for a sentence: ``6`` not ``6.0``, ``2.5`` not ``2.500000``."""
+	text = f"{float(value):.6f}".rstrip("0").rstrip(".")
+	return text or "0"
+
+
+def plan_receipt(order_lines, typed):
+	"""Turn "how many of each line arrived" into the lines a Purchase Receipt should carry.
+
+	``order_lines`` are the Purchase Order's item rows as plain dicts: ``name``,
+	``item_code``, ``qty``, ``received_qty``, and optionally ``delivered_by_supplier`` and
+	``allowance_pct`` — the over-receipt allowance ERPNext would apply to that item (the
+	Item's own, else Stock Settings'). ``typed`` maps a row name to the quantity the buyer
+	says arrived now.
+
+	Returns ``(lines, problems)``. ``lines`` is ``[{"purchase_order_item": name, "qty": q}]``
+	for every row with something arriving, in order-line order. ``problems`` is a list of
+	sentences in the buyer's terms, and a non-empty list means no receipt may be written. A
+	row left at zero is simply not on the receipt — that is a partial delivery, not a
+	problem — and a receipt with no lines at all is the caller's to refuse, since it knows
+	how to say so.
+
+	Everything refused here ERPNext would refuse again on submit; checking first means the
+	buyer hears it before a document exists, and hears it as "6 is more than the 4 still to
+	come" rather than as a limits-crossed error naming a target ref field. Pending is
+	``qty - received_qty``, the same arithmetic ``make_purchase_receipt`` uses to pre-fill a
+	receipt, so this and the document it leads to cannot disagree about what is left.
+
+	**Nothing is clamped**, for the same reason as the rest of this module: a quantity that
+	is quietly reduced to fit is a receipt for goods that did not arrive.
+	"""
+	by_name = {}
+	order = []
+	for line in order_lines or []:
+		name = line.get("name")
+		if name and name not in by_name:
+			by_name[name] = line
+			order.append(name)
+
+	typed = typed or {}
+	problems = [f"Row {name} is not on this order." for name in typed if name not in by_name]
+
+	lines = []
+	for name in order:
+		line = by_name[name]
+		arriving = _qty(typed.get(name))
+		item = line.get("item_code") or name
+		if arriving < -TOLERANCE:
+			problems.append(f"{item}: a received quantity cannot be negative.")
+			continue
+		if arriving <= TOLERANCE:
+			continue
+		if line.get("delivered_by_supplier"):
+			problems.append(
+				f"{item} ships from the supplier straight to the customer and is never received here."
+			)
+			continue
+		pending = _qty(line.get("qty")) - _qty(line.get("received_qty"))
+		if pending <= TOLERANCE:
+			problems.append(f"{item} is already fully received.")
+			continue
+		allowance = _qty(line.get("allowance_pct"))
+		allowed = pending * (1 + allowance / 100)
+		if arriving > allowed + TOLERANCE:
+			if allowance > 0:
+				problems.append(
+					f"{item}: {_plain(arriving)} is more than the {_plain(pending)} still to come "
+					f"(up to {_plain(allowed)} with the {_plain(allowance)}% over-receipt allowance)."
+				)
+			else:
+				problems.append(
+					f"{item}: {_plain(arriving)} is more than the {_plain(pending)} still to come."
+				)
+			continue
+		lines.append({"purchase_order_item": name, "qty": arriving})
+	return lines, problems
