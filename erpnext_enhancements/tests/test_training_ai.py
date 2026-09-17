@@ -43,7 +43,7 @@ training_ai = None
 #: Everything the stub serves and records, reset by each test.
 STATE = {}
 
-MODEL_ID = "gemini-3.1-pro-preview"
+MODEL_ID = "gemini-3.8-flash"
 
 LESSON = "TRN-LSN-000001"
 

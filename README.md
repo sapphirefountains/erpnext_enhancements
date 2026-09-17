@@ -164,7 +164,7 @@ This app talks to several third-party services. Credentials live in dedicated **
 | **Google Drive** | Auto-create per-project folder trees on Opportunity→Project | `Project Folder Google Drive Settings` (service-account JSON) |
 | **Google Drive (Shared Drive)** | Offsite backups — a *separate* service account on a *separate* Shared Drive, deliberately not sharing a credential with the folder provisioning above | `Offsite Backup Settings` (service-account JSON; see [Offsite Backup README](erpnext_enhancements/offsite_backup/README.md)) |
 | **Google Analytics 4 + Search Console** | Marketing dashboard | `GA4 Settings` (service-account JSON; see [Enhancements Core README](erpnext_enhancements/enhancements_core/README.md#google-analytics-4--search-console-dashboard)) |
-| **Vertex AI (Gemini)** | AI email/SMS reply drafting | `Triton Settings` (`maps_api_key` password field) |
+| **Gemini Enterprise Agent Platform (formerly Vertex AI)** | Morning briefing narrative, AI email/SMS reply drafting, training quiz/checkpoint and course-spec drafting | the Drive service account in `Project Folder Google Drive Settings` (OAuth2 bearer token; it needs `roles/aiplatform.user` on the GCP project). No API key — the platform refuses them |
 | **Twilio + "Triton" gateway** | Click-to-call softphone, SMS, voicemail, call transcripts | `Triton Settings` |
 | **QuickBooks Online** | Two-way accounting sync (OAuth2) | `QuickBooks Online Settings` |
 | **Google Calendar** | Push Tasks as calendar events | hard-coded shared calendar (see `script_migrations/task.py`) |
