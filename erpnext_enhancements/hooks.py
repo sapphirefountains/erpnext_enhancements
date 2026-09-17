@@ -255,6 +255,10 @@ doctype_js = {
 		"public/js/comments.js",
 		"public/js/procurement_links.js",
 		"public/js/purchase_order_project.js",
+		# Receive Items (ER-2026-458194): what arrived on a submitted order becomes a real
+		# Purchase Receipt through api/procurement.receive_items, so received_qty, the
+		# status pill and the Order Stage all move on their own.
+		"public/js/po_receive_items.js",
 	],
 	"Material Request": [
 		"public/js/vue.global.js",

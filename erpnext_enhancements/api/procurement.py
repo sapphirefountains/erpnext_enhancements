@@ -14,6 +14,7 @@ services.
 
 import frappe
 from frappe import _
+from frappe.utils import flt, getdate, nowtime
 
 #: Roles that may read/write supplier purchase links. Purchasing staff plus the
 #: administrative roles that manage Items. A user outside this set has no business
@@ -130,3 +131,151 @@ def cascade_expected_delivery_date(doc, method=None):
     for row in doc.get("items") or []:
         if not row.get("expected_delivery_date"):
             row.expected_delivery_date = header_date
+
+
+# ---------------------------------------------------------------------------
+# Receive Items on the Purchase Order (ER-2026-458194, TASK-2026-02045)
+# ---------------------------------------------------------------------------
+
+
+def _typed_quantities(rows):
+    """``rows`` as the dialog posts them -> ``{row name: qty}``.
+
+    Junk is dropped rather than raised on: the planner reports a row it cannot place, and a
+    quantity that will not parse is zero, which is "nothing arrived on that line".
+    """
+    if isinstance(rows, str):
+        rows = frappe.parse_json(rows)
+    typed = {}
+    for raw in rows or []:
+        if not isinstance(raw, dict):
+            continue
+        name = (raw.get("purchase_order_item") or "").strip()
+        if name:
+            typed[name] = flt(raw.get("qty"))
+    return typed
+
+
+def _over_receipt_allowance(item_code):
+    """The over-receipt allowance ERPNext applies to this item, in percent.
+
+    Same precedence as ``erpnext.controllers.status_updater.get_allowance_for``: the Item's
+    own ``over_delivery_receipt_allowance`` when set, else Stock Settings'. On production
+    both are 0, so a receipt above pending is refused; the rule is read rather than assumed
+    so the dialog's refusal and ERPNext's own check on submit can never disagree.
+    """
+    item_level = 0.0
+    if item_code and frappe.get_meta("Item").has_field("over_delivery_receipt_allowance"):
+        item_level = flt(frappe.get_cached_value("Item", item_code, "over_delivery_receipt_allowance"))
+    if item_level:
+        return item_level
+    return flt(frappe.db.get_single_value("Stock Settings", "over_delivery_receipt_allowance"))
+
+
+@frappe.whitelist(methods=["POST"])
+def receive_items(purchase_order, rows, posting_date=None):
+    """Write and submit a Purchase Receipt for what just arrived against one order.
+
+    The Receive Items dialog on a submitted Purchase Order (``public/js/po_receive_items.js``,
+    ER-2026-458194 / TASK-2026-02045) posts here. ``rows`` is a list of
+    ``{"purchase_order_item": <row name>, "qty": <arrived now>}``; rows left at zero are
+    not sent, or are dropped.
+
+    Why a real receipt and not a number on the order: submitting the receipt is what moves
+    ``Purchase Order Item.received_qty``, ``per_received`` and the status pill through
+    ERPNext's ``status_updater``, and ``po_order_stage.advance_on_receipt`` then sets the
+    Order Stage to Partially Fulfilled or Received on its own. A quantity typed straight
+    onto the order would diverge from the receipts the packing-slip intake and Create >
+    Purchase Receipt already produce, and from every report that reads ``received_qty``.
+
+    Things this is careful about:
+
+    * **It is ERPNext's own mapping.** ``make_purchase_receipt`` with ``filtered_children``
+      builds the receipt exactly as Create > Purchase Receipt does -- only lines with
+      something pending, quantity pre-filled with the pending amount, taxes reset, drop-ship
+      lines excluded. The one thing done afterwards is to set each line's accepted quantity
+      to what the buyer typed. ``stock_qty``, the received quantity in stock UOM and every
+      amount are recomputed by the receipt's own ``validate``
+      (``buying_controller.set_qty_as_per_stock_uom`` and ``calculate_taxes_and_totals``),
+      so nothing here can drift from the controller's arithmetic.
+    * **Over-receipt is refused before a document exists**, in the buyer's terms, using the
+      allowance ERPNext would apply (the Item's own ``over_delivery_receipt_allowance``, else
+      Stock Settings'). ERPNext re-checks on submit; that check is the backstop, this one is
+      the message. The rule itself is ``procurement_quantities.plan_receipt``, pure and
+      tested bench-free.
+    * **Permissions are the framework's.** ``insert`` and ``submit`` run without
+      ``ignore_permissions``, so a user who could not create and submit a Purchase Receipt by
+      hand cannot do it from here either. The order itself needs read.
+    * **The posting date is optional and defaults to today.** A date is honoured through
+      ``set_posting_time``; without that flag ``validate_posting_time`` resets the date to
+      now, silently.
+    * **A draft receipt already open against the order is not netted off.** Neither is it by
+      Create > Purchase Receipt: ``received_qty`` moves only on submit. Submitting that draft
+      later hits ERPNext's over-limit check, so nothing double-counts in the ledger, but the
+      draft will need editing. The packing-slip intake creates such drafts.
+    """
+    from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
+
+    from erpnext_enhancements.procurement_quantities import plan_receipt
+
+    po = frappe.get_doc("Purchase Order", purchase_order)
+    po.check_permission("read")
+    if po.docstatus != 1:
+        frappe.throw(_("Only a submitted Purchase Order can be received against."))
+    if po.status in ("Closed", "On Hold"):
+        frappe.throw(_("{0} is {1}. Reopen it before receiving against it.").format(po.name, _(po.status)))
+    for ptype in ("create", "submit"):
+        if not frappe.has_permission("Purchase Receipt", ptype):
+            frappe.throw(
+                _("You need permission to {0} a Purchase Receipt.").format(ptype), frappe.PermissionError
+            )
+
+    order_lines = [
+        {
+            "name": row.name,
+            "item_code": row.item_code,
+            "qty": row.qty,
+            "received_qty": row.received_qty,
+            "delivered_by_supplier": row.delivered_by_supplier,
+            "allowance_pct": _over_receipt_allowance(row.item_code),
+        }
+        for row in po.items
+    ]
+    lines, problems = plan_receipt(order_lines, _typed_quantities(rows))
+    if problems:
+        frappe.throw(
+            "<br>".join(frappe.utils.escape_html(problem) for problem in problems),
+            title=_("Nothing was received"),
+        )
+    if not lines:
+        frappe.throw(_("Nothing to receive: every line is at 0."))
+
+    wanted = {line["purchase_order_item"]: line["qty"] for line in lines}
+    receipt = make_purchase_receipt(po.name, args={"filtered_children": list(wanted)})
+    for item in receipt.items:
+        # Accepted quantity is what was typed; nothing rejected. The receipt's own validate
+        # recomputes stock_qty, received_stock_qty and every amount from these.
+        item.qty = wanted[item.purchase_order_item]
+        item.received_qty = item.qty
+        item.rejected_qty = 0
+    if posting_date:
+        receipt.set_posting_time = 1
+        receipt.posting_date = getdate(posting_date)
+        receipt.posting_time = nowtime()
+    receipt.insert()
+    receipt.submit()
+
+    fields = ["per_received", "status"]
+    if frappe.db.has_column("Purchase Order", "custom_order_stage"):
+        fields.append("custom_order_stage")
+    after = frappe.db.get_value("Purchase Order", po.name, fields, as_dict=True) or {}
+    return {
+        "purchase_receipt": receipt.name,
+        "received": [
+            {"purchase_order_item": item.purchase_order_item, "item_code": item.item_code, "qty": item.qty}
+            for item in receipt.items
+        ],
+        "per_received": after.get("per_received"),
+        "status": after.get("status"),
+        "order_stage": after.get("custom_order_stage"),
+    }

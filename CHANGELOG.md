@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.477.0] - 2026-09-17
+
+### Added
+
+- **Receive Items on the Purchase Order: type what arrived and get a real Purchase Receipt**
+  (ER-2026-458194, TASK-2026-02045). A submitted, not-yet-fully-received order now carries a
+  *Receive Items* button beside ERPNext's own *Update Items* — which is where Parker went
+  looking for it, and the one place it could not go: Update Items rewrites the order, and its
+  server half refuses a quantity below what was received. The button opens one table — Item,
+  Ordered, Received, Arriving now (pre-filled with what is still pending) — plus a received-on
+  date, and posts to `api.procurement.receive_items`, which builds the receipt with ERPNext's
+  own `make_purchase_receipt` mapper (`filtered_children`, the same call Create > Purchase
+  Receipt makes), sets each line's accepted quantity to what was typed, and inserts and submits
+  it through the framework's permission checks. Everything downstream is then ERPNext's:
+  `received_qty` and `% Received` move, the status pill moves, and
+  `po_order_stage.advance_on_receipt` sets the Order Stage to Partially Fulfilled or Received.
+  Cancelling the receipt undoes all of it.
+  Why this and not a received-quantity field on the order: the number already exists and is
+  maintained from receipts, the packing-slip intake and Create > Purchase Receipt already
+  produce receipts, and every report reads `received_qty` — a typed number would diverge from
+  all of them. The site's own data made the case: 33 receipts this year, every one for the
+  whole order; no order ever between 0% and 100% received; five orders at the hand-set stage
+  "Partially Fulfilled" with 0% received and no per-line figure anywhere.
+  Over-receipt is refused before a document exists, in the buyer's terms ("B: 3 is more than
+  the 2 still to come"), using the allowance ERPNext would apply (the Item's own
+  `over_delivery_receipt_allowance`, else Stock Settings' — both 0 on prod); ERPNext's own check
+  on submit is the backstop. Drop-ship lines are never offered. A draft receipt already open
+  against the order is not netted off — neither does Create > Purchase Receipt — and submitting
+  that draft later hits ERPNext's over-limit check rather than double-counting. The arithmetic
+  (`procurement_quantities.plan_receipt`) is pure and tested bench-free, nothing is clamped, and
+  `tests/test_po_receive_items.py` pins the wiring: POST-only, no `ignore_permissions`, ERPNext's
+  mapper, the script loaded in `hooks.py` and dialling a method that exists, the button gated the
+  way the endpoint is, and no client-side cap that could drift from the server's allowance.
+
 ## [1.476.0] - 2026-09-17
 
 ### Fixed

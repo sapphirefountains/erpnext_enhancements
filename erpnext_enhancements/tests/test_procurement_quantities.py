@@ -30,6 +30,7 @@ from erpnext_enhancements.procurement_quantities import (
 	RECEIVED,
 	dedupe_lines,
 	order_status,
+	plan_receipt,
 	quantity_progress,
 	receive_status,
 	rollup_quantity_progress,
@@ -270,3 +271,83 @@ def test_vocabularies_are_ordered_worst_first():
 	assert ORDER_STATUSES == (NOT_ORDERED, PARTIALLY_ORDERED, ORDERED, OVER_ORDERED)
 	assert RECEIVE_STATUSES == (NOT_RECEIVED, PARTIALLY_RECEIVED, RECEIVED, OVER_RECEIVED)
 	assert len(set(ORDER_STATUSES) & set(RECEIVE_STATUSES)) == 0
+
+
+# ---------------------------------------------------------------------------
+# Receiving against an order (plan_receipt) — Receive Items on the Purchase Order
+# ---------------------------------------------------------------------------
+
+
+def _order():
+	return [
+		{"name": "row-a", "item_code": "A", "qty": 6, "received_qty": 0},
+		{"name": "row-b", "item_code": "B", "qty": 6, "received_qty": 4},
+		{"name": "row-c", "item_code": "C", "qty": 2, "received_qty": 2},
+	]
+
+
+def test_partial_delivery_puts_only_the_lines_that_arrived_on_the_receipt():
+	lines, problems = plan_receipt(_order(), {"row-a": 2, "row-b": 0})
+	assert problems == []
+	assert lines == [{"purchase_order_item": "row-a", "qty": 2.0}]
+
+
+def test_lines_keep_order_line_order_not_typed_order():
+	lines, _ = plan_receipt(_order(), {"row-b": 1, "row-a": 1})
+	assert [line["purchase_order_item"] for line in lines] == ["row-a", "row-b"]
+
+
+def test_more_than_pending_is_refused_in_the_buyers_terms():
+	lines, problems = plan_receipt(_order(), {"row-b": 3})
+	assert lines == []
+	assert problems == ["B: 3 is more than the 2 still to come."]
+
+
+def test_the_allowance_widens_what_is_accepted_and_is_named_when_it_is_the_limit():
+	order = _order()
+	order[1]["allowance_pct"] = 50
+	lines, problems = plan_receipt(order, {"row-b": 3})
+	assert problems == []
+	assert lines == [{"purchase_order_item": "row-b", "qty": 3.0}]
+	_, problems = plan_receipt(order, {"row-b": 4})
+	assert problems == [
+		"B: 4 is more than the 2 still to come (up to 3 with the 50% over-receipt allowance)."
+	]
+
+
+def test_exactly_pending_is_accepted_through_float_noise():
+	order = [{"name": "r", "item_code": "X", "qty": 0.3, "received_qty": 0.1}]
+	lines, problems = plan_receipt(order, {"r": 0.2})
+	assert problems == []
+	assert lines == [{"purchase_order_item": "r", "qty": 0.2}]
+
+
+def test_a_fully_received_line_cannot_take_more():
+	_, problems = plan_receipt(_order(), {"row-c": 1})
+	assert problems == ["C is already fully received."]
+
+
+def test_negative_and_unknown_rows_are_problems_not_silently_dropped():
+	lines, problems = plan_receipt(_order(), {"row-a": -1, "ghost": 1})
+	assert lines == []
+	assert "Row ghost is not on this order." in problems
+	assert "A: a received quantity cannot be negative." in problems
+
+
+def test_drop_ship_lines_are_never_received_here():
+	order = [{"name": "d", "item_code": "D", "qty": 1, "received_qty": 0, "delivered_by_supplier": 1}]
+	lines, problems = plan_receipt(order, {"d": 1})
+	assert lines == []
+	assert problems == ["D ships from the supplier straight to the customer and is never received here."]
+
+
+def test_all_zero_is_not_a_problem_here_but_yields_no_lines():
+	"""The endpoint refuses an empty receipt with its own sentence; the planner must not
+	pre-empt it, or a table left at zero would read as two errors."""
+	assert plan_receipt(_order(), {"row-a": 0}) == ([], [])
+
+
+def test_nothing_is_clamped():
+	"""A quantity quietly reduced to fit would be a receipt for goods that did not arrive."""
+	lines, problems = plan_receipt(_order(), {"row-a": 7})
+	assert lines == [] and problems

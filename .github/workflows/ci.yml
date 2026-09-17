@@ -1700,6 +1700,12 @@ jobs:
       # of 32 item rows on production were mislabelled.
       - name: Procurement quantity/status math (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_procurement_quantities.py -q
+      # Receive Items on the Purchase Order (ER-2026-458194): the endpoint is POST-only,
+      # the receipt is inserted and submitted through the framework's permission checks
+      # (no ignore_permissions), it is built by ERPNext's own mapper, and the form script
+      # is loaded in hooks.py and dials a method that exists. Plain pytest, own step.
+      - name: Purchase Order Receive Items wiring (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_po_receive_items.py -q
       # The only automated coverage of triton_chat.py, and `grep -c
       # test_triton_personas .github/workflows/ci.yml` returned 0 until this line:
       # the file shipped and then never ran. Everything it guards -- the SSE relay,
