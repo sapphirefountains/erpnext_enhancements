@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.483.2] - 2026-09-18
+
+### Fixed
+
+- **Restricting the Maps key correctly stopped every geocode, and the failure was silent.**
+  `Travel Settings.google_maps_api_key` is handed to browsers, so it must be restricted by
+  HTTP referrer. The moment it was, `workforce/sites.py` began failing on every project:
+
+      workforce.sites: geocode PRJ-00151 -> REQUEST_DENIED
+      API keys with referer restrictions cannot be used with this API.
+
+  Google refuses a referrer-restricted key on **any** server-side web-service call, so no
+  configuration makes one key serve both a browser and this server. The two exits are a
+  second, IP-restricted key or loosening the browser key's restriction — and the second
+  publishes an unrestricted key to every device that loads a map. So there is now a second
+  field, `google_geocoding_api_key`, and `sites.py` prefers it, falling back to the browser
+  key only when it is blank (a site that has not set it up behaves exactly as before rather
+  than quietly becoming a no-op).
+
+  **Why this was worth chasing rather than leaving in the log:** `sites.py` resolves the
+  coordinates the Time Kiosk's geofence measures against. A failing geocoder does not break
+  loudly — it leaves projects with no site coordinates, and an interval with no site simply
+  has no off-site opinion. The geofence stops disagreeing with anyone, which reads exactly
+  like a geofence that is working.
+
+  `tests/test_geocoding_key.py` pins the preference order over the function's *executable*
+  body rather than its source text — the docstring necessarily names the browser key while
+  explaining why it is the fallback, and a naive text search inverts the result. It also
+  fails the build if a second server-side Google caller ever appears in Python, since it
+  would need this key and would otherwise fail the same silent way.
+
+  **Action required:** create the key in the Cloud Console restricted to the Geocoding API
+  and by IP address (not referrer), and set it in Travel Settings. Until then geocoding keeps
+  failing exactly as it does today.
+
 ## [1.483.1] - 2026-09-18
 
 ### Fixed

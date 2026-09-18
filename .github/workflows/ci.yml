@@ -1540,7 +1540,8 @@ jobs:
           python -m unittest
           erpnext_enhancements.tests.test_google_maps_loader
           erpnext_enhancements.tests.test_kiosk_map
-          erpnext_enhancements.tests.test_location_timeline_map -v
+          erpnext_enhancements.tests.test_location_timeline_map
+          erpnext_enhancements.tests.test_geocoding_key -v
       # Workforce pure logic and static contracts (no frappe stub): tracking coverage and
       # gap arithmetic (a 25-minute silence must not pass a 15-minute setting), the FLSA
       # workweek overtime split (an interval is credited whole to the day it starts, and
