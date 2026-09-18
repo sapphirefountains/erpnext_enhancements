@@ -58,6 +58,11 @@ class _OperationalError(Exception):
 	``args[0]`` — the thing ``_is_lost_connection`` keys on."""
 
 
+class _ValidationError(Exception):
+	"""Stand-in for what ``frappe.throw`` raises: a plain, *live* connection
+	failure, so the run must log it and carry on rather than reconnect."""
+
+
 def _lost_connection(code=2006):
 	return _OperationalError(code, "Server has gone away")
 
@@ -78,6 +83,8 @@ class _FakeDoc:
 	def insert(self, **kwargs):
 		if not STATE["connected"]:
 			raise _lost_connection()
+		if self.data.get("doctype") == "File":
+			self._validate_duplicate_entry()
 		if self.data.get("doctype") == "File" and self.data.get("file_name"):
 			# Frappe v16 File.set_file_name: re.sub(r"/", "", file_name) on every
 			# insert — the reason shadow names use SHADOW_PATH_SEPARATOR. Kept
@@ -86,6 +93,29 @@ class _FakeDoc:
 		self.data.setdefault("name", f"{self.data.get('doctype')}-{len(STATE['inserted']) + 1}")
 		STATE["inserted"].append(self.data)
 		return self
+
+	def _validate_duplicate_entry(self):
+		"""Frappe v16 ``File.validate_duplicate_entry``, in the shape a shadow meets it.
+
+		A shadow copies no bytes, so ``content_hash`` stays NULL and the filter is
+		``{"content_hash": None, "is_private": 1}`` — every hashless private File,
+		of which ``frappe.db.get_value`` returns the **newest** (a direction-less
+		``order_by`` is DESC in Frappe's query engine). Frappe then calls
+		``exists_on_disk()`` → ``get_full_path()`` on that unrelated row, which
+		throws if its ``file_name`` holds a path separator. So a single bad row
+		fails every later insert, which is how production lost shadow creation
+		entirely on 2026-09-18. Modelled here, rather than described, so that
+		dropping the ``ignore_duplicate_entry_error`` flag fails the build.
+		"""
+		if self.flags.get("ignore_duplicate_entry_error"):
+			return
+		candidates = [
+			d
+			for d in STATE["inserted"]
+			if d.get("doctype") == "File" and not d.get("content_hash") and d.get("is_private")
+		]
+		if candidates and "/" in (candidates[-1].get("file_name") or ""):
+			raise _ValidationError("File name cannot have /")
 
 	def db_set(self, field, value, **kwargs):
 		self.data[field] = value
@@ -798,6 +828,67 @@ class TestShadowNames(unittest.TestCase):
 		front = [d for d in _shadows() if d["custom_drive_file_id"] == "front"]
 		self.assertEqual([d["file_name"] for d in front], ["front-v2.png"])
 		self.assertEqual(_logs("Stale"), [])
+
+	def test_a_slash_in_a_drive_name_does_not_reach_the_stored_name(self):
+		# Real production folder names: "Fountain Repair / Fill Valve",
+		# "General Repairs 9/18/2025". Choosing a separator Frappe keeps was only
+		# half the problem — the item's own name is not ours to choose.
+		tree = [
+			_folder("folder-C1", "Acme", "shared-drive"),
+			_folder("folder-P1", "PRJ-1 - Acme", "folder-C1"),
+			_folder("repairs", "Repairs 9/18/2025", "folder-P1"),
+			_file("valve", "Fountain Repair / Fill Valve.pdf", "repairs"),
+		]
+
+		self._run_with(_FakeDrive(tree))
+
+		names = {d["custom_drive_file_id"]: d["file_name"] for d in _shadows()}
+		self.assertEqual(names["repairs"], "Repairs 9∕18∕2025 (folder)")
+		self.assertEqual(
+			names["valve"], "Repairs 9∕18∕2025 › Fountain Repair ∕ Fill Valve.pdf"
+		)
+		for name in names.values():
+			self.assertNotIn("/", name)
+
+	def test_a_slashed_drive_name_is_not_repaired_on_every_pass(self):
+		# The insert strips "/" and the repair writes at db level, past the strip:
+		# a computed name holding one is therefore written back on the pass after
+		# it is created, and *stays* wrong. Both halves have to agree.
+		tree = [
+			_folder("folder-C1", "Acme", "shared-drive"),
+			_folder("folder-P1", "PRJ-1 - Acme", "folder-C1"),
+			_file("valve", "Repair / Fill Valve.pdf", "folder-P1"),
+		]
+		self._run_with(_FakeDrive(tree))
+		self.assertEqual(self._renames(), [])
+
+		self._run_with(_FakeDrive(tree))
+		self.assertEqual(self._renames(), [])
+
+	def test_an_unrelated_slashed_row_does_not_fail_the_insert(self):
+		# The 2026-09-18 outage: one File row with a path separator in its name
+		# made Frappe's duplicate probe throw for *every* later hashless private
+		# File — so the shadow sync created nothing, and could not recover, since
+		# the poisoned row stayed newest exactly because inserts kept failing.
+		STATE["inserted"].append(
+			{
+				"doctype": "File",
+				"name": "F-poison",
+				"file_name": "Fountain Repair / Fill Valve (folder)",
+				"file_url": "https://drive.google.com/drive/folders/poison",
+				"custom_drive_file_id": "poison",
+				"is_private": 1,
+				"attached_to_doctype": "Customer",
+				"attached_to_name": "Someone Else",
+			}
+		)
+
+		self._run_with(_FakeDrive(self.tree))
+
+		self.assertEqual(STATE["errors"], [])
+		names = {d["custom_drive_file_id"]: d["file_name"] for d in _shadows()}
+		self.assertEqual(names["front"], "Design › front.png")
+		self.assertEqual(names["quote"], "quote.pdf")
 
 	def test_a_name_over_the_limit_keeps_its_tail(self):
 		deep = _file("deep", "x" * 20, "folder-P1")
