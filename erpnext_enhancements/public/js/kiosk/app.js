@@ -197,6 +197,7 @@
           h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Activity' }), h('div', { class: 'tk-chips', id: 'tk-activity', role: 'group', 'aria-label': 'Activity type' })]),
           h('div', { class: 'tk-field' }, [h('label', { text: 'Note (optional)', for: 'tk-note' }), h('textarea', { id: 'tk-note', rows: '2', placeholder: 'What are you working on?' })]),
           h('button', { type: 'button', class: 'tk-btn tk-btn-go tk-btn-lg', id: 'tk-clock-in', text: 'Clock In' }),
+          h('button', { type: 'button', class: 'tk-btn tk-btn-link', id: 'tk-forgot-clock-in', text: 'I forgot to clock in' }),
         ]),
       ]),
       h('div', { class: 'tk-card', id: 'tk-visits', hidden: true }, [
@@ -307,6 +308,7 @@
     el.activity = $('tk-activity');
     el.note = $('tk-note');
     el.clockIn = $('tk-clock-in');
+    el.forgotClockIn = $('tk-forgot-clock-in');
     el.visits = $('tk-visits');
     el.visitsList = $('tk-visits-list');
     el.pause = $('tk-pause');
@@ -1069,6 +1071,73 @@
     });
   }
 
+  function openBackdatedStartSheet() {
+    var p = app.draft.project;
+    var task = app.draft.task;
+    var pickBtn = pickButton('tk-backdate-project', 'Choose a project');
+    
+    function renderP() {
+      setPick(pickBtn, p ? p.label : '', p && p.value !== p.label ? p.value : '', 'Choose a project');
+    }
+    renderP();
+
+    pickBtn.onclick = function() {
+      openProjectPicker({ selected: p ? p.value : null, onPick: function(picked) {
+        p = picked; task = null; renderP();
+      }});
+    };
+
+    var now = new Date();
+    var m = Math.floor(now.getMinutes() / 15) * 15;
+    now.setMinutes(m);
+    var dTime = ("0" + now.getHours()).slice(-2) + ":" + ("0" + now.getMinutes()).slice(-2);
+
+    var timeInput = h('input', { type: 'time', class: 'tk-input', value: dTime, required: true });
+    var reasonInput = h('textarea', { class: 'tk-input', rows: '2', placeholder: 'Why are you backdating this start?', required: true });
+
+    var handle = UI.sheet.open({
+      title: 'I forgot to clock in',
+      body: h('div', { class: 'tk-stack' }, [
+        h('div', { class: 'tk-field' }, [h('label', { text: 'Project' }), pickBtn]),
+        h('div', { class: 'tk-field' }, [h('label', { text: 'Start time (today)' }), timeInput]),
+        h('div', { class: 'tk-field' }, [h('label', { text: 'Reason' }), reasonInput]),
+      ]),
+      actions: [
+        { label: 'Start backdated job', kind: 'primary', onClick: function () {
+          if (!p) { toast('Choose a project.', 'orange'); return false; }
+          var timeVal = timeInput.value;
+          if (!timeVal) { timeInput.focus(); return false; }
+          var reasonVal = reasonInput.value.trim();
+          if (!reasonVal) { reasonInput.focus(); toast('A reason is required.', 'orange'); return false; }
+
+          var tdy = new Date();
+          var y = tdy.getFullYear();
+          var mo = ("0" + (tdy.getMonth() + 1)).slice(-2);
+          var d = ("0" + tdy.getDate()).slice(-2);
+          var dtStr = y + "-" + mo + "-" + d + " " + (timeVal.length === 5 ? timeVal + ":00" : timeVal);
+
+          setLoading(true, 'Clocking in…');
+          api(API + 'start_backdated', {
+            project: p.value,
+            start_time: dtStr,
+            reason: reasonVal,
+            task: task ? task.value : null,
+            time_category: app.draft.activity || null,
+            description: el.note ? el.note.value : null
+          }).then(function (r) {
+            handle.close('action');
+            toast('Backdated start logged.', 'green');
+            return fetchStatus();
+          }).catch(function (e) {
+            setLoading(false);
+            toast(humanError(e), 'red');
+          });
+          return false;
+        } }
+      ]
+    });
+  }
+
   function clockIn() {
     var p = app.draft.project;
     if (!p) { toast('Choose a project first.', 'orange'); return; }
@@ -1107,12 +1176,21 @@
   function openBreakSheet() {
     UI.armAudio();
     var custom = h('input', { type: 'number', class: 'tk-input', inputmode: 'numeric', min: '1', max: '480', placeholder: 'Custom minutes', 'aria-label': 'Custom break minutes' });
+    
+    function requestPermAndPause(m) {
+      if (m > 0 && 'Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().then(function () { pause(m); }).catch(function () { pause(m); });
+      } else {
+        pause(m);
+      }
+    }
+
     var handle = UI.sheet.open({
       title: 'How long a break?',
       body: h('div', { class: 'tk-stack' }, [
         h('p', { class: 'tk-note', text: 'The app counts down and buzzes once when time is up. Nothing is sent to your phone in the background.' }),
         h('div', { class: 'tk-presets' }, [15, 30, 45, 60].map(function (m) {
-          return h('button', { type: 'button', class: 'tk-preset', on: { click: function () { handle.close('action'); pause(m); } } }, [String(m), h('small', { text: 'minutes' })]);
+          return h('button', { type: 'button', class: 'tk-preset', on: { click: function () { handle.close('action'); requestPermAndPause(m); } } }, [String(m), h('small', { text: 'minutes' })]);
         })),
         h('div', { class: 'tk-field' }, [h('label', { text: 'Or a custom length' }), custom]),
       ]),
@@ -1120,7 +1198,7 @@
         { label: 'Start custom break', kind: 'primary', onClick: function () {
           var m = cint(custom.value);
           if (m <= 0) { custom.focus(); return false; }
-          pause(m);
+          requestPermAndPause(m);
         } },
         { label: 'Break with no timer', kind: 'ghost', onClick: function () { pause(0); } },
       ],
@@ -1456,6 +1534,21 @@
           el.countdown.classList.add('is-over');
           UI.buzz();
           toast('Break time is up.', 'orange', 5000);
+          
+          if ('serviceWorker' in navigator && 'Notification' in window && Notification.permission === 'granted') {
+            navigator.serviceWorker.ready.then(function (reg) {
+              var ci = app.currentInterval || {};
+              var p = ci.project_title || ci.project || 'your job';
+              // Limitation: A web page cannot run a timer while the OS has suspended it.
+              // So this fires reliably when the page is alive-but-hidden (screen on, app switched),
+              // and cannot fire when the page has been frozen.
+              reg.showNotification('Break is over', {
+                body: 'Break is over — clock back in to ' + p,
+                tag: 'break-over',
+                renotify: true
+              });
+            }).catch(function () {});
+          }
         }
       }
     }
@@ -1474,6 +1567,7 @@
       });
     });
     el.clockIn.addEventListener('click', clockIn);
+    if (el.forgotClockIn) el.forgotClockIn.addEventListener('click', openBackdatedStartSheet);
     el.pause.addEventListener('click', openBreakSheet);
     el.resume.addEventListener('click', resume);
     el.switchBtn.addEventListener('click', switchJob);
@@ -1506,7 +1600,10 @@
     // Coming back to the foreground: confirm the interval (the hourly sweeper
     // may have auto-closed it) — at most every 30 s.
     document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'visible' && Date.now() - statusFetchedAt > 30000 && !app.loading) fetchStatus();
+      if (document.visibilityState === 'visible') {
+        tick();
+        if (Date.now() - statusFetchedAt > 30000 && !app.loading) fetchStatus();
+      }
     });
   }
 

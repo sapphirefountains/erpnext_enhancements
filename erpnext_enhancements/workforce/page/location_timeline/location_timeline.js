@@ -977,14 +977,26 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                     });
 
                     if (p.accuracy != null && +p.accuracy > 0) {
+                        // Opacities raised from Leaflet's 0.35/1px/0.06, which the port
+                        // carried over faithfully and which is why the rings looked like
+                        // they were not working at all.
+                        //
+                        // Those values were tuned against light OSM tiles. On the dark
+                        // Google basemap a 6% fill and a 1px 35% stroke of a mid-tone
+                        // palette colour is, in practice, nothing -- the toggle appeared
+                        // dead because what it switched on could not be seen. The radii
+                        // were never the problem: real fixes here run 4.5-29.5 m.
+                        //
+                        // A diagnostic overlay somebody deliberately turned ON should be
+                        // unambiguous; it is drawn over the trail, not under it.
                         const accCirc = new google.maps.Circle({
                             center: ll,
                             radius: +p.accuracy,
                             strokeColor: color,
-                            strokeOpacity: 0.35,
-                            strokeWeight: 1,
+                            strokeOpacity: 0.85,
+                            strokeWeight: 1.5,
                             fillColor: color,
-                            fillOpacity: 0.06
+                            fillOpacity: 0.12
                         });
                         this.layers.accuracy.addLayer(accCirc);
                     }

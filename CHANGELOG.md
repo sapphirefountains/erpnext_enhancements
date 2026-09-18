@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.486.0] - 2026-09-18
+
+### Added
+
+- **A break that runs over now raises a real notification, not just a toast.** Until now the
+  kiosk buzzed and showed an in-page toast — both invisible the moment the phone is in a
+  pocket or the technician has switched apps, which is exactly when a break overruns. It now
+  also fires through the service-worker registration (`reg.showNotification`, **not**
+  `new Notification`, which is the only route that shows while the page is hidden), tagged so
+  repeats replace rather than stack, and naming the job to clock back in to. A
+  `notificationclick` handler focuses an already-open kiosk rather than opening a second one.
+
+  Permission is requested when the technician **picks a break preset** — a real user gesture,
+  and the one moment the request explains itself. Never on load, never re-asked after a
+  refusal, and the break flow proceeds either way.
+
+  **The limit, stated plainly:** a web page cannot run a timer while the OS has suspended it.
+  `docs/kiosk-native-app-spike.md` documents that platform rule for this app already. So this
+  fires when the page is alive-but-hidden (screen on, app switched) and cannot fire once the
+  page is frozen; on iOS it additionally needs the kiosk installed to the Home Screen on
+  16.4+. Returning to the app re-runs `tick()`, so a break that expired while hidden alerts
+  immediately rather than silently. It is a best-effort nudge, strictly better than a toast
+  nobody sees — not an alarm.
+
+- **"I forgot to clock in"** on the Clock tab: a sheet taking a project, a start time and a
+  required reason, calling `start_backdated`. Same day only, unanchored, and the server's
+  refusals (not today, in the future, overlaps an existing job) are shown as it phrased them
+  — it already names the conflicting interval.
+
+- **Edit times on My Day**, gated on the `editable` flag the API now returns, plus **Locked**
+  and **Backdated** badges. Both badges carry a visible label rather than relying on colour.
+
+### Fixed
+
+- **The accuracy rings looked like they were not working, and were merely invisible.** The
+  toggle wired correctly, the layer switched, and the circles were built with real radii
+  (live fixes run 4.5–29.5 m). They were drawn at Leaflet's original
+  `weight: 1, opacity: 0.35, fillOpacity: 0.06` — values the Google port carried over
+  faithfully, and which had been tuned against **light** OSM tiles. On the dark Google
+  basemap a 6% fill and a 1px 35%-opacity stroke of a mid-tone palette colour is, in
+  practice, nothing. Raised to `0.85 / 1.5px / 0.12`.
+
+  `tests/test_timeline_accuracy_rings.py` now pins a legibility floor, so a future tweak
+  cannot quietly return the rings to "present but unseeable", and separately pins that the
+  toggle still gates the layer — a more visible ring must not become permanent chrome over
+  the trail.
+
+  This is the fourth dark-mode contrast bug in this migration (the sheet title, the
+  InfoWindow popups, the basemap itself, now these). They share one cause: styling tuned for
+  a light surface, carried unchanged onto a dark one. The Leaflet → Google move changed the
+  surface under all of it at once.
+
 ## [1.485.0] - 2026-09-18
 
 ### Added
