@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.487.0] - 2026-09-18
+
+### Added
+
+- **Whole blocks of time can be entered by hand on the kiosk** — `api.time_kiosk.add_manual_interval`,
+  reachable from "Add missed time" on the Clock tab and "Add time" on My Day. Give it a start and an
+  end and it books a finished job onto any day the accountant has not yet submitted; that is the
+  case the kiosk had no answer for, and the reason people were losing hours they had actually worked.
+
+### Fixed
+
+- **"I forgot to clock in" refused any time that was actually in the past, and nobody could see why.**
+  Two separate faults compounding, which is why it read as "the backdated time just doesn't work".
+
+  The first is the one that matters. A backdated start created an interval with **no end**, and an
+  interval with no end is still running — `workforce/overlap.py` treats a NULL `end_time` as
+  extending forever, which is correct and is exactly why it is written that way. So backdating a
+  start to 08:00 on a day that already held a 12:49–14:47 job overlapped it, and the save was
+  refused. Reproduced on production: an 08:00 start against `JOB-INT-00008` throws
+  `Time overlap: this interval overlaps with JOB-INT-00008 (PRJ-00580) from 12:49 to 14:47`. Both
+  facts cannot be true at once, so the refusal is right — the missing piece was the shape that *is*
+  true: a block with both ends. `add_manual_interval` takes an optional `end_time` and that single
+  field decides which rules apply. With one it is a completed block on any unlocked day, and the
+  employee's current session is irrelevant. Without one it is the old open-session behaviour:
+  today only, and only when nothing else is running. **The overlap rule was not weakened to make
+  this work** — it is still one check, still in `JobInterval.validate`, still applied on every path
+  that writes an interval.
+
+  The second is why it looked like the time was being ignored rather than rejected. The sheet's
+  default start floored `now` to a quarter hour, which is not a time in the past: at 16:45:13 it
+  offers 16:45. The one backdated interval on production, `JOB-INT-00011`, was created at 16:45:13
+  with `start_time` 16:45:00 — the default, thirteen seconds earlier. Accepting it recorded "I
+  clocked in just now", and changing it to anything genuinely earlier hit the overlap refusal above.
+  The default now steps back a full quarter first, and the server's refusal is rendered in the sheet
+  instead of a toast, so the message — which names the job it collided with — is actually readable.
+
+### Changed
+
+- **Editing another employee's time is gated on `APPROVER_ROLES`, not `TIMELINE_MANAGER_ROLES`.**
+  The old gate was the wrong set twice over. It is pinned by `tests/test_location_timeline_page.py`
+  to the Location Timeline page's roles, so widening it to let a supervisor fix a timesheet would
+  also have handed them everyone's GPS trail — watching people move and correcting their hours are
+  different powers and should not share a switch. And it is the *narrower* set: `System Manager` /
+  `HR Manager` / `Projects Manager` predate the Operations Manager and Production Manager roles the
+  supervisors actually hold, so five of the six people meant to approve a day could not touch one.
+  Both writing endpoints now go through a single `_assert_may_edit_time_for`.
+
+  Naming another employee is allowed for the **block** shape only. A finished block entered for
+  someone else is a historical record and claims nothing about where anybody is; an interval left
+  Open says they are on the clock right now, which is exactly the on-behalf clock-in that was ruled
+  out — a supervisor's phone is not the crew member's. `tests/test_workforce_assistant_clock.py`
+  enforced that rule by refusing *any* endpoint that takes an `employee` and builds an interval, and
+  it caught the first version of this change. Rather than exempt the endpoint, the guard now requires
+  each exemption to carry its own refusal and checks that the refusal runs *before* the interval is
+  built — an exemption nobody verifies is a hole with a comment over it.
+
+- **`update_interval_times` keeps what the kiosk originally recorded.** It now stamps
+  `original_start_time` / `original_end_time` through the same `corrections._record_originals` the
+  reviewer-approved path uses, so a hand-edited day can still be compared with what actually
+  happened; previously the original times were overwritten and gone. It also stops raising
+  `manual_start` on every edit — that badge means "this start was typed in", and correcting a
+  forgotten clock-*out* does not make the start any less real, so flagging it trained everyone to
+  ignore the badge. The operator's words go to a new `Job Interval.time_edit_reason` instead of
+  overwriting `manual_start_reason`, and the two `db_set` calls that wrote to the database *before*
+  `validate` had a chance to refuse the edit are gone.
+
+- **A manual block is not scored for tracking health.** It has no GPS trail — scoring the absence
+  would file it next to the intervals whose tracking genuinely failed, on a row that already carries
+  a "Backdated" badge saying there is no evidence here. Its photo gate *is* resolved, through the
+  non-prompting `photo_gate.resolve`, so a Completed row does not read as a technician who walked
+  away from an open camera prompt.
+
+- **The test helper that asserts an invariant is *absent* now strips docstrings and comments first.**
+  Three assertions in `test_time_editing_api.py` broke the moment the invariants they protect were
+  written down next to the code, because the explanation has to name the token. The first fix was
+  worse than the bug: `ast.get_docstring` returns *cleandoc'd* text — dedented, trimmed — so
+  replacing it in raw source matches nothing and silently leaves the docstring in, and the absence
+  tests go on passing for the wrong reason until a docstring happens to name the token. It strips by
+  line range now, and `TestTheStripperActuallyStrips` fails the build if it ever stops stripping.
+
 ## [1.486.0] - 2026-09-18
 
 ### Added

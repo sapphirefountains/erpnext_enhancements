@@ -15,10 +15,36 @@ class TestKioskTimeEditingUI(unittest.TestCase):
     def test_endpoints_dialled(self):
         app_js = self.read_file(KIOSK_JS_DIR, 'app.js')
         myday_js = self.read_file(KIOSK_JS_DIR, 'myday.js')
-        
-        self.assertIn("'start_backdated'", app_js)
+
+        # Both hand-entry surfaces dial the general endpoint. `start_backdated`
+        # still exists and is still whitelisted -- it is now a thin delegate, kept
+        # because other callers name it -- but the kiosk stopped using it when the
+        # sheet grew an optional end time, and asserting the old name here would
+        # have passed forever on a dial nobody makes.
+        self.assertIn("'add_manual_interval'", app_js)
+        self.assertIn("'add_manual_interval'", myday_js)
         self.assertIn("'update_interval_times'", myday_js)
         self.assertIn("'get_my_day'", myday_js)
+
+    def test_the_clock_tab_can_leave_the_end_blank_and_my_day_cannot(self):
+        """The two sheets are not the same form.
+
+        On the Clock tab a blank end means "and I am still on it", which is only
+        coherent for today. My Day is usually showing a past day, and an interval
+        with no end runs forever -- so it would collide with everything logged
+        after it. Both ends are required there.
+        """
+        app_js = self.read_file(KIOSK_JS_DIR, 'app.js')
+        myday_js = self.read_file(KIOSK_JS_DIR, 'myday.js')
+        self.assertIn("endInput.value ?", app_js)
+        self.assertIn("An end time is needed.", myday_js)
+
+    def test_the_backdated_default_is_actually_in_the_past(self):
+        """Flooring `now` to a quarter hour is not a past time: at :45 it returns
+        :45, so the sheet opened pre-filled with the current minute and "I forgot
+        to clock in" recorded "I clocked in just now"."""
+        app_js = self.read_file(KIOSK_JS_DIR, 'app.js')
+        self.assertIn("Math.floor(now.getMinutes() / 15) * 15 - 15", app_js)
 
     def test_notification_permission_inside_click_handler(self):
         app_js = self.read_file(KIOSK_JS_DIR, 'app.js')

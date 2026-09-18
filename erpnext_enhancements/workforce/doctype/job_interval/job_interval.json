@@ -64,6 +64,7 @@
   "correction_section",
   "corrected",
   "correction_request",
+  "time_edit_reason",
   "column_break_correction",
   "original_start_time",
   "original_end_time",
@@ -477,6 +478,13 @@
    "fieldtype": "Link",
    "label": "Correction Request",
    "options": "Time Correction Request",
+   "read_only": 1
+  },
+  {
+   "description": "Why the times on this interval were last changed from the kiosk. A reviewer-approved Time Correction Request writes correction_request instead; this is the self-service edit's audit trail. NO default: on a normal doctype a default is written into every existing row by the same ALTER that adds the column, which would put a reason on intervals nobody has touched.",
+   "fieldname": "time_edit_reason",
+   "fieldtype": "Small Text",
+   "label": "Time Edit Reason",
    "read_only": 1
   },
   {

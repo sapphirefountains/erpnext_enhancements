@@ -12,11 +12,17 @@
  *   - the chosen day from get_my_day — totals, then one row per Job Interval
  *     with its badges (tracking health, off-site start, auto-closed, corrected,
  *     planned break, photos); tapping a row opens a detail sheet;
+ *   - "Edit times" on an unlocked row and "Add time" for the day → the direct
+ *     endpoints update_interval_times / add_manual_interval. These write
+ *     immediately: a day is the employee's own until the accountant submits it,
+ *     and the overlap rule and the submitted-day lock are enforced server-side on
+ *     every save, so the kiosk never has to decide either.
  *   - "Request a correction" from the detail sheet (Adjust Times / Change
  *     Project / Missed Clock-Out) or "Missed an entry?" for the day (Missed
  *     Entry) → submit_correction_request; the employee's requests from
  *     get_my_correction_requests, cancellable while Requested via
- *     cancel_correction_request.
+ *     cancel_correction_request. This is the route once a day is locked, or when
+ *     the change is somebody else's call.
  *
  * Datetimes cross the wire as Frappe "YYYY-MM-DD HH:MM:SS" (site-local); the
  * datetime-local inputs use "YYYY-MM-DDTHH:MM". KioskUI.fmt converts both ways.
@@ -62,6 +68,12 @@
     root.appendChild(h('div', { class: 'tk-card' }, [
       h('div', { class: 'tk-card-head' }, [
         h('p', { class: 'tk-card-title', text: 'Jobs' }),
+        // Two routes for the same mistake, on purpose. "Add time" writes the
+        // block straight onto the day you are looking at — it is yours until the
+        // accountant submits the day, and the overlap rule still applies.
+        // "Missed an entry?" files a Time Correction Request for a reviewer, which
+        // is the route once the day is locked or the entry is somebody else's call.
+        h('button', { type: 'button', class: 'tk-btn tk-btn-outline', style: { width: 'auto', minHeight: '40px', padding: '6px 10px' }, text: 'Add time', on: { click: function () { openAddTimeSheet(); } } }),
         h('button', { type: 'button', class: 'tk-btn tk-btn-ghost', style: { width: 'auto', minHeight: '40px', padding: '6px 10px' }, text: 'Missed an entry?', on: { click: function () { openCorrectionSheet(null); } } }),
       ]),
       el.list,
@@ -288,6 +300,75 @@
     var d = new Date(v);
     if (isNaN(d.getTime())) return null;
     return fmt.toFrappeDT(d);
+  }
+
+  // Add a whole block of time to the day on screen, without a reviewer.
+  //
+  // Both ends are required here, which is the difference from the Clock tab's
+  // "Add missed time": that one can leave the end blank to mean "and I am still
+  // on it", which only makes sense for today. A day you are looking at in the
+  // strip is usually not today, and an open-ended interval runs forever and so
+  // collides with everything after it — so on this screen an entry is a block.
+  function openAddTimeSheet() {
+    var start = h('input', { type: 'datetime-local', 'aria-label': 'Start', value: st.date + 'T08:00' });
+    var end = h('input', { type: 'datetime-local', 'aria-label': 'End', value: st.date + 'T17:00' });
+    var project = { value: null, label: '' };
+    var projBtn = h('button', { type: 'button', class: 'tk-pick', 'aria-haspopup': 'dialog' }, [
+      h('span', { class: 'tk-pick-text is-placeholder', text: 'Choose the project' }),
+      h('span', { class: 'tk-row-chev', 'aria-hidden': 'true', text: '›' }),
+    ]);
+    projBtn.addEventListener('click', function () {
+      ctx.openProjectPicker({ title: 'Which project?', selected: project.value, onPick: function (p) {
+        project = { value: p.value, label: p.label };
+        var t = projBtn.querySelector('.tk-pick-text');
+        t.classList.remove('is-placeholder');
+        t.textContent = p.label;
+      } });
+    });
+    var reason = h('textarea', { rows: '2', placeholder: 'Why is this being entered by hand?', 'aria-label': 'Reason' });
+    var err = h('p', { class: 'tk-error', hidden: true });
+
+    UI.sheet.open({
+      title: 'Add time',
+      body: h('div', { class: 'tk-stack' }, [
+        h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Project' }), projBtn]),
+        h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Start' }), start]),
+        h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'End' }), end]),
+        h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Reason' }), reason]),
+        err,
+      ]),
+      actions: [
+        { label: 'Add time', kind: 'primary', onClick: function (hnd, btn) {
+          var problem = null;
+          if (!project.value) problem = 'Choose a project.';
+          else if (!fromLocalInput(start.value)) problem = 'A start time is needed.';
+          else if (!fromLocalInput(end.value)) problem = 'An end time is needed.';
+          else if (!(reason.value || '').trim()) problem = 'Please say why.';
+          if (problem) { err.hidden = false; err.textContent = problem; return false; }
+
+          btn.disabled = true;
+          err.hidden = true;
+          ctx.api(ctx.API + 'add_manual_interval', {
+            project: project.value,
+            start_time: fromLocalInput(start.value),
+            end_time: fromLocalInput(end.value),
+            reason: (reason.value || '').trim(),
+          }).then(function (r) {
+            UI.toast((r && r.message) || 'Time added.', 'green');
+            hnd.close('action');
+            refresh();
+          }).catch(function (e) {
+            btn.disabled = false;
+            // Overlaps and locked days are refused by the server, and its message
+            // names the job it collided with. Relay it rather than paraphrasing.
+            err.hidden = false;
+            err.textContent = ctx.humanError(e);
+          });
+          return false;
+        } },
+        { label: 'Cancel', kind: 'ghost' }
+      ]
+    });
   }
 
   function openCorrectionSheet(iv) {

@@ -64,6 +64,15 @@ def _job_interval():
 
 
 class TestOnBehalfIsClockOutOnly(unittest.TestCase):
+    #: Endpoints that may build an interval for a named employee **because they
+    #: refuse to leave it Open**. A finished block entered for someone else is a
+    #: historical record and claims nothing about where anybody is; an Open one
+    #: says they are on the clock right now, which is the thing a supervisor's
+    #: phone cannot prove. Each name here must carry its own refusal, which
+    #: `test_the_on_behalf_exemptions_actually_refuse_an_open_session` checks —
+    #: an exemption nobody verifies is just a hole with a comment over it.
+    MAY_BUILD_A_CLOSED_INTERVAL = {"add_manual_interval"}
+
     def test_no_endpoint_opens_an_interval_for_another_employee(self):
         """The single most important rule in this feature.
 
@@ -74,6 +83,8 @@ class TestOnBehalfIsClockOutOnly(unittest.TestCase):
         for name, node in _functions().items():
             if not _is_whitelisted(node) or "employee" not in _args(node):
                 continue
+            if name in self.MAY_BUILD_A_CLOSED_INTERVAL:
+                continue
             body = _segment(node)
             for token in opens:
                 with self.subTest(func=name, token=token):
@@ -83,6 +94,34 @@ class TestOnBehalfIsClockOutOnly(unittest.TestCase):
                         f"{name}() accepts an employee AND opens an interval — "
                         "that is an on-behalf clock-in",
                     )
+
+    def test_the_on_behalf_exemptions_actually_refuse_an_open_session(self):
+        """The exemption above is only safe while each exempted endpoint refuses
+        the Open shape for somebody else. Checked here so the list cannot quietly
+        become a way to smuggle an on-behalf clock-in past the rule."""
+        fns = _functions()
+        for name in self.MAY_BUILD_A_CLOSED_INTERVAL:
+            with self.subTest(func=name):
+                node = fns.get(name)
+                self.assertIsNotNone(node, f"{name} is exempted but does not exist")
+                body = _segment(node)
+                self.assertIn("on_behalf", body)
+                # The refusal must come before the doc is built, or a rejected
+                # call would already have constructed somebody's session.
+                self.assertLess(
+                    body.index("if on_behalf:"),
+                    body.index("_new_interval("),
+                    "the on-behalf refusal must precede the interval being built",
+                )
+
+    def test_the_exemption_list_names_only_real_endpoints(self):
+        """A stale name is an exemption for nothing, and it hides the day somebody
+        adds a new endpoint with the same name."""
+        fns = _functions()
+        for name in self.MAY_BUILD_A_CLOSED_INTERVAL:
+            with self.subTest(func=name):
+                self.assertIn(name, fns)
+                self.assertIn("employee", _args(fns[name]))
 
     def test_the_clock_in_endpoint_cannot_name_another_employee(self):
         fn = _functions().get("clock_in_with_stashed_fix")
