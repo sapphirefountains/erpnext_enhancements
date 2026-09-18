@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.483.1] - 2026-09-18
+
+### Fixed
+
+- **The Time Kiosk map tab drew a correctly-sized grey box with an invisible map in it.**
+  v1.483.0 attached Google Maps to a `<div>` injected into `.tk-map` and sized it with
+  `height: 100%`. `.tk-map` carries no `height` of its own -- it takes its size from
+  `min-height: 55vh` -- and nothing above it in the kiosk establishes a definite height
+  either: `html`, `body` and `#kiosk-root` are all auto, so `.tk-view`'s `flex: 1` has
+  nothing to stretch against. A percentage height therefore resolved against `auto` and
+  collapsed to **zero**.
+
+  The container still painted its own `--tk-map-bg`, so the tab looked right and merely
+  empty, and the markers were created successfully inside a 0px div -- which is why the
+  console carried no error, only Google's routine `google.maps.Marker` deprecation notice
+  fired from `draw()`. Leaflet never hit this because it attached to `.tk-map` itself;
+  injecting a child is what introduced the dependency on how the parent's height resolves.
+
+  The canvas now fills `.tk-map` by absolute positioning (`.tk-map-canvas`), which works
+  whatever the parent's height turns out to be, and `.tk-map` was already `position:
+  relative`. Measured rather than reasoned about: against the real stylesheet and the real
+  DOM nesting, `.tk-map` is 777px, the `height: 100%` child is **0px**, and the absolute
+  child is 777px.
+
+  Worth recording how nearly this was mis-diagnosed: a first reproduction put `height: 100%`
+  on `html`/`body`, which manufactures the definite height chain the kiosk does not have, and
+  it duly reported that `height: 100%` worked fine. A repro that does not match the page it
+  is standing in for is evidence about the repro. `tests/test_kiosk_map.py` now pins that the
+  canvas is never sized with a percentage height, and that `.tk-map` keeps `position:
+  relative` -- drop that and the canvas escapes to the nearest positioned ancestor, which is
+  the same grey box for a different reason.
+
+  The desk Location Timeline was never affected: it attaches to `.lt-map`, which has an
+  explicit `height: 640px`, with no injected child.
+
 ## [1.483.0] - 2026-09-17
 
 ### Changed

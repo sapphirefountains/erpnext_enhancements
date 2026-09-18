@@ -154,9 +154,26 @@
       el.map.appendChild(el.msg); // ensure msg is still there
     }
 
+    // Fill the container by ABSOLUTE positioning, not height:100%.
+    //
+    // `.tk-map` sizes itself from `min-height: 55vh` and carries no `height`
+    // property, and its parent `.tk-panel` is an auto-height flex item. A
+    // percentage height on this child therefore resolves against `auto` and
+    // collapses to ZERO -- the container still paints its own background, so
+    // the tab showed a correctly-sized grey box with an invisible map inside
+    // it, and markers drew happily into a 0px div. Leaflet never hit this
+    // because it attached to `.tk-map` itself rather than to an injected child.
+    //
+    // `.tk-map` is `position: relative`, so inset-0 fills it whatever its
+    // height turns out to be. Longhands rather than the `inset` shorthand:
+    // this ships to whatever WebView is on a field phone.
     var mapDiv = document.createElement('div');
-    mapDiv.style.width = '100%';
-    mapDiv.style.height = '100%';
+    mapDiv.className = 'tk-map-canvas';
+    mapDiv.style.position = 'absolute';
+    mapDiv.style.top = '0';
+    mapDiv.style.right = '0';
+    mapDiv.style.bottom = '0';
+    mapDiv.style.left = '0';
     el.map.appendChild(mapDiv);
 
     st.map = new window.google.maps.Map(mapDiv, mapOpts);
