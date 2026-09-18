@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.482.0] - 2026-09-17
+## [1.483.0] - 2026-09-17
 
 ### Changed
 
@@ -147,6 +147,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Gating off remains byte-identical. **`ai_write_gating_enabled` is `0` on production**
   (verified 2026-09-17), so the gate is the human-in-the-loop layer and never the
   authorization — every real permission check for clocking lives in `api/time_kiosk.py`.
+
+## [1.482.0] - 2026-09-17
+
+### Added
+
+- **A Time Kiosk tile on the desk home grid.** Every other tile this app ships fronts a
+  workspace; this one is a `Desktop Icon` of link type **External** pointing straight at
+  `/kiosk`, so a technician who lands on the desk is one tap from the clock instead of
+  hunting through Workforce. Seeded insert-only by `patches/seed_time_kiosk_desktop_icon`
+  (`standard = 1`, no roles, so every signed-in user sees it; placed after the Workforce
+  tile) — a patch rather than the after-migrate stamper's own `_create_tile`, which rightly
+  refuses a label with no Workspace behind it, and rather than a shipped `desktop_icon/*.json`,
+  which is age-gated on import like everything else in this release's Fixed entry. The
+  artwork joins `setup/desktop_icon_map.py` (`timer`, FIELD amber: the kiosk leaves the
+  building, and `clock` already belongs to QuickBooks Time), so the stamper keeps its
+  `logo_url` honest on every migrate and `tests/test_desktop_icons.py` keeps the SVG in step
+  with the map. `_sync_roles` skips it because there is no workspace to derive from, which is
+  exactly the visibility wanted. The floating **Desk Shortcut** to the kiosk from v1.30.0 is
+  unchanged; this is the grid tile beside the modules.
+
+### Fixed
+
+- **Projects Manager never reached the Location Timeline page.** The v1.480.0 deploy installed
+  every patch, fixture, column and report, and skipped one file: the page's JSON. A `Page` is
+  age-gated on import exactly like a Workspace — `import_file` compares the file's `modified`
+  against the database row and silently skips the file when the row is not older — and the
+  prod row read `2026-09-17 14:12:58`, five hours newer than the `09:00:00` stamp the file
+  carried. Verified live after the deploy: the page still listed System Manager and HR Manager
+  while `TIMELINE_MANAGER_ROLES` and the Labor Cost Analysis report already had Projects
+  Manager, so a Projects Manager got a permission error from the button the Job Interval form
+  drew for them. The stamp is now later than any row the site can hold, and
+  `patches/reload_location_timeline_page` does `reload_doc(force=True)` — the workspace shape
+  from v1.469.0 and v1.474.0, applied to a Page for the first time. `tests/test_location_timeline_page.py`
+  now pins that the patch exists and is registered, so a future role edit that forgets the
+  stamp still lands.
 
 ## [1.481.0] - 2026-09-17
 
