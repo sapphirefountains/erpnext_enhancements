@@ -931,6 +931,13 @@ body {
   background: var(--tk-map-bg);
   position: relative;
 }
+/* The Google Maps canvas fills .tk-map by absolute positioning, NOT height:100%.
+   .tk-map has no `height` of its own -- it sizes from min-height inside an
+   auto-height flex parent -- so a percentage height on a child resolves against
+   `auto` and collapses to zero, leaving a correctly-sized grey box with an
+   invisible map in it. The `position: relative` above is what this depends on;
+   removing it sends the canvas to the nearest positioned ancestor instead. */
+.tk-map-canvas { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
 .tk-map-msg {
   position: absolute;
   inset: 0;

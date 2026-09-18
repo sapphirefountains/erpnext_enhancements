@@ -91,3 +91,51 @@ class TestKioskMap(unittest.TestCase):
             content = f.read()
             
         self.assertNotIn('maps.googleapis.com', content, "Service worker must not attempt to answer for google maps API")
+
+
+class TestTheMapCanvasActuallyHasHeight(unittest.TestCase):
+    """v1.483.1. The map tab rendered a correctly-sized grey box with nothing in
+    it, and no error: the canvas div was injected with `height: 100%`, but
+    `.tk-map` carries no `height` of its own (it sizes from `min-height: 55vh`
+    inside an auto-height flex parent), so the percentage resolved against `auto`
+    and collapsed to zero. The container still painted its own background, and
+    markers drew happily into a 0px div -- which is why the console showed only a
+    deprecation notice.
+
+    Leaflet never hit this because it attached to `.tk-map` itself. Injecting a
+    child is what introduced the dependency on how the parent's height resolves.
+    """
+
+    def setUp(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "public", "js", "kiosk", "map.js"), encoding="utf-8") as f:
+            self.js = strip_js_comments(f.read())
+        with open(os.path.join(root, "public", "css", "kiosk", "kiosk.css"), encoding="utf-8") as f:
+            self.css = f.read()
+
+    def test_the_canvas_is_not_sized_with_a_percentage_height(self):
+        self.assertNotIn(
+            "style.height = '100%'",
+            self.js,
+            "a percentage height on the canvas collapses to 0 -- .tk-map has no height",
+        )
+        self.assertNotIn('style.height = "100%"', self.js)
+
+    def test_the_canvas_fills_its_container_by_absolute_positioning(self):
+        self.assertIn("style.position = 'absolute'", self.js)
+        for side in ("top", "right", "bottom", "left"):
+            with self.subTest(side=side):
+                self.assertIn(f"style.{side} = '0'", self.js)
+
+    def test_tk_map_stays_positioned(self):
+        """The absolute canvas is positioned against `.tk-map`. Drop this and it
+        escapes to the nearest positioned ancestor, which is a different bug
+        wearing the same grey box."""
+        block = self.css[self.css.index(".tk-map {"):]
+        block = block[: block.index("}")]
+        self.assertIn("position: relative", block)
+
+    def test_the_container_still_has_a_height_of_its_own(self):
+        block = self.css[self.css.index(".tk-map {"):]
+        block = block[: block.index("}")]
+        self.assertIn("min-height", block)
