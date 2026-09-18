@@ -59,6 +59,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a light surface, carried unchanged onto a dark one. The Leaflet → Google move changed the
   surface under all of it at once.
 
+## [1.485.1] - 2026-09-18
+
+### Fixed
+
+- **The Drive shadow sync stopped creating attachments entirely at 12:02 today, and could not
+  have recovered on its own.** Two independent faults, each harmless alone:
+
+  1. **A shadow name could contain a `/`, and the name repair wrote it past the validation
+     that would have removed it.** v1.475.0 taught the hourly walk to rename a shadow whose
+     stored name no longer matches its Drive path, through `frappe.db.set_value` — deliberately,
+     because a `save()` here costs a timeline comment per file. But `File.set_file_name` runs
+     `re.sub(r"/", "", file_name)` on every insert and save, and Drive item names contain
+     slashes: `Fountain Repair / Fill Valve`, `General Repairs 9/18/2025`. So the insert
+     stripped the slash and the repair pass immediately wrote it back at db level. 151
+     production rows ended up holding a `file_name` Frappe itself would never store. Choosing
+     ` › ` as the path separator (v1.475.0) fixed only the half of the name this module owns.
+  2. **Frappe consults an unrelated row's `file_name` during your insert.**
+     `File.validate_duplicate_entry` runs on every insert; a shadow copies no bytes, so
+     `generate_content_hash` returns early, `content_hash` stays NULL, and the filter
+     degenerates to `{"content_hash": None, "is_private": 1}` — 34,437 rows. `db.get_value`
+     returns the **newest** of them (its default `order_by` is `"creation"`, and Frappe's query
+     engine reads a direction-less `order_by` as DESC, not ASC), then calls `exists_on_disk()`
+     → `get_full_path()` on it, which throws `File name cannot have /`.
+
+  A shadow written at 11:02 on 2026-09-18 became the newest hashless private `File`, and from
+  12:02 every shadow insert threw — for a reason with nothing to do with the file being
+  inserted. Self-sealing, too: the poisoned row could only stop being the newest if an insert
+  succeeded. 15 Error Log rows, and zero shadows created after 11:02.
+
+  `_shadow_display_name` now replaces `/` with `SHADOW_SLASH_REPLACEMENT` (`∕`, U+2215
+  DIVISION SLASH — reads as a slash, is not a path separator, survives `set_file_name`), and
+  the insert sets `ignore_duplicate_entry_error`, which is what actually makes it robust:
+  duplicate detection is meaningless for a link-only row, and not running it means no other
+  row in `tabFile` can fail this insert again. `TestShadowNames` models Frappe's probe rather
+  than describing it, so dropping either fix fails the build.
+
+  Two shapes worth keeping: **a db-level write to a field a controller normalises** leaves a
+  value that differs from what everything downstream was written against; and **a validation
+  that never looked at the record being inserted** puts your call site in the traceback and
+  the cause in a row you have never heard of.
+
+### Changed
+
+- `patches/repair_slashed_drive_shadow_names.py` rewrites the 151 shadow `file_name` values
+  that already hold a `/`. The fixed walk would reach most of them on its next full rotation,
+  but not a shadow whose Drive item has since vanished — those are flagged `Stale` and never
+  renamed — and the rows are harmful while they wait: `get_full_path()` throws on them, which
+  the Desk preview and download both reach. Keyed on the rule the writer applies (a name the
+  current `_shadow_display_name` could not have produced), scoped to shadows, idempotent, and
+  guarded on the Custom Field so it cannot abort a fresh-database migrate.
+
+
 ## [1.485.0] - 2026-09-18
 
 ### Added

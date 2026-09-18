@@ -1104,3 +1104,8 @@ erpnext_enhancements.patches.reload_location_timeline_page
 # /kiosk, standard, no roles, placed after Workforce. Insert-only, keyed on the label. The
 # same-named Workspace Sidebar it needs to render ships as workspace_sidebar/time_kiosk.json.
 erpnext_enhancements.patches.seed_time_kiosk_desktop_icon
+# v1.485.1: 151 Drive shadow File rows held a "/" in file_name -- the walk's db-level name
+# repair writes past set_file_name, and Drive item names contain slashes. Frappe reaches
+# such a row from another file's validate_duplicate_entry and throws, which killed every
+# shadow insert from 2026-09-18 12:02. Idempotent; guarded on the Custom Field.
+erpnext_enhancements.patches.repair_slashed_drive_shadow_names
