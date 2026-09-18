@@ -75,9 +75,6 @@ class TestLocationTimelineMap(unittest.TestCase):
         self.assertIsNotNone(match, "ASSETS array not found")
         assets_content = match.group(1)
         self.assertNotIn('?v=', assets_content)
-        
-if __name__ == '__main__':
-    unittest.main()
 
 
 class TestNoLeafletMethodsSurvive(unittest.TestCase):
@@ -133,3 +130,7 @@ class TestNoLeafletMethodsSurvive(unittest.TestCase):
     def test_resizing_uses_the_google_event(self):
         body = _strip_comments(self._sources()["location_timeline.js"].read_text(encoding="utf-8"))
         self.assertIn("google.maps.event.trigger", body)
+
+
+if __name__ == '__main__':
+    unittest.main()

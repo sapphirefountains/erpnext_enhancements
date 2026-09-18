@@ -224,10 +224,6 @@ class TestTheInlineScriptRunsFirst(unittest.TestCase):
         self.assertRegex(html, r"setAttribute\('data-theme', t\)")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestPortalledSheetsKeepTheKioskPalette(unittest.TestCase):
     """A bottom sheet's TITLE rendered near-black on the dark sheet (v1.483.3).
 
@@ -271,3 +267,7 @@ class TestPortalledSheetsKeepTheKioskPalette(unittest.TestCase):
         block = text[text.index(".tk-sheet {"):]
         block = block[: block.index("}")]
         self.assertIn("color: var(--tk-text)", block)
+
+
+if __name__ == "__main__":
+    unittest.main()
