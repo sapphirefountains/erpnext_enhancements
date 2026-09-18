@@ -23,6 +23,7 @@
   "google_maps_api_key",
   "google_maps_map_id_light",
   "google_maps_map_id_dark",
+  "google_geocoding_api_key",
   "use_routes_api"
  ],
  "fields": [
@@ -134,6 +135,12 @@
    "fieldname": "google_maps_map_id_dark",
    "fieldtype": "Data",
    "label": "Google Maps Map ID (Dark)"
+  },
+  {
+   "fieldname": "google_geocoding_api_key",
+   "fieldtype": "Data",
+   "label": "Google Geocoding API Key (server-side)",
+   "description": "A SECOND key, for calls this server makes itself — currently the Geocoding API that turns a Project's address into site coordinates (workforce/sites.py), which is what the Time Kiosk's geofence measures against. It must exist separately because the key above is restricted by HTTP referrer, and Google refuses a referrer-restricted key on any server-side web-service call: it answers REQUEST_DENIED with “API keys with referer restrictions cannot be used with this API”. A browser key cannot be made to work here, and loosening the browser key's restriction to fix it would expose it. In the Cloud Console create a key restricted to the “Geocoding API” only, and restrict it by IP address to this server (not by referrer). Leave blank to fall back to the browser key above, which preserves the old behaviour on a site that has not set this up — geocoding simply keeps failing with REQUEST_DENIED and is logged, never raised."
   },
   {
    "default": "0",

@@ -18,11 +18,19 @@ nothing is ever flagged off-site.
 
 Geocoding goes through the Google Geocoding REST API with ``requests`` — no SDK, per ADR
 0004 and the same reason the QuickBooks and Stripe clients hand-roll theirs: the host
-cannot pip-install. The key is ``Travel Settings.google_maps_api_key``, which the desk
-already uses for maps. Note it is described there as a *browser* key restricted by HTTP
-referrer; a server-side call with such a key returns ``REQUEST_DENIED``, which this
-module logs and walks away from — it never raises, because it runs in a background job
-and on the Project save path.
+cannot pip-install.
+
+**This call needs its own key.** It uses ``Travel Settings.google_geocoding_api_key`` and
+falls back to ``google_maps_api_key`` only when that is blank. The two cannot be one key:
+the maps key is handed to browsers and so is restricted by HTTP referrer, and Google
+refuses a referrer-restricted key on every server-side web-service call — ``REQUEST_DENIED``,
+"API keys with referer restrictions cannot be used with this API". Loosening the browser
+key's restriction to make this work would publish an unrestricted key to every device that
+loads a map, so the answer is a second, IP-restricted key rather than a weaker first one.
+Confirmed on production 2026-09-18: restricting the browser key correctly — which is the
+right thing to do — stopped every geocode with exactly that status. Either way this module
+logs and walks away — it never raises, because it runs in a background job and on the
+Project save path.
 
 Two re-drives, because a deploy ``FLUSHDB``s the queue redis and destroys every queued
 job: the patch enqueues a bounded backfill once, and ``backfill_missing_site_coordinates``
@@ -179,11 +187,37 @@ def project_address_text(project_row):
 	return ", ".join(str(p).strip() for p in parts if p and str(p).strip())
 
 
-def _maps_api_key():
+def _geocoding_api_key():
+	"""The key for THIS SERVER's own calls, falling back to the browser key.
+
+	Two keys, because one cannot do both jobs. ``google_maps_api_key`` is handed to
+	browsers and is therefore restricted by HTTP referrer — and Google refuses a
+	referrer-restricted key on every server-side web-service call, answering
+	``REQUEST_DENIED`` with "API keys with referer restrictions cannot be used with this
+	API". That is not a misconfiguration to fix on the browser key: loosening its
+	restriction so this call worked would publish an unrestricted key to every device
+	that loads a map.
+
+	So ``google_geocoding_api_key`` is a separate, IP-restricted key. The fallback to
+	the browser key is deliberate: on a site that has not set the new key up, behaviour
+	is exactly what it was before this field existed — geocoding fails with
+	REQUEST_DENIED, logs once and walks away — rather than silently becoming a no-op
+	that looks like "no address to geocode".
+	"""
 	try:
+		server_key = (
+			frappe.db.get_single_value("Travel Settings", "google_geocoding_api_key") or ""
+		).strip()
+		if server_key:
+			return server_key
 		return (frappe.db.get_single_value("Travel Settings", "google_maps_api_key") or "").strip()
 	except Exception:
 		return ""
+
+
+#: Back-compat alias. Kept because the name described where the key came from rather than
+#: what it is for, and something may still import it.
+_maps_api_key = _geocoding_api_key
 
 
 def geocode_project(project, force=False):
@@ -221,7 +255,7 @@ def _geocode_project(project, force=False):
 	):
 		return {"lat": flt(row.custom_site_latitude), "lng": flt(row.custom_site_longitude)}
 
-	key = _maps_api_key()
+	key = _geocoding_api_key()
 	if not key:
 		return None
 
@@ -309,7 +343,7 @@ def backfill_missing_site_coordinates(limit=BACKFILL_LIMIT):
 		columns = _has_columns("Project", ("custom_project_address", "custom_customer__lead_address", "custom_site_latitude", "custom_site_longitude"))
 		if "custom_site_latitude" not in columns:
 			return 0
-		if not _maps_api_key():
+		if not _geocoding_api_key():
 			return 0
 		candidates = frappe.get_all(
 			"Project",
