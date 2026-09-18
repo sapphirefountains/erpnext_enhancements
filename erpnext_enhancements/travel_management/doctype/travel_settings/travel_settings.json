@@ -138,9 +138,9 @@
   },
   {
    "fieldname": "google_geocoding_api_key",
-   "fieldtype": "Data",
+   "fieldtype": "Password",
    "label": "Google Geocoding API Key (server-side)",
-   "description": "A SECOND key, for calls this server makes itself — currently the Geocoding API that turns a Project's address into site coordinates (workforce/sites.py), which is what the Time Kiosk's geofence measures against. It must exist separately because the key above is restricted by HTTP referrer, and Google refuses a referrer-restricted key on any server-side web-service call: it answers REQUEST_DENIED with “API keys with referer restrictions cannot be used with this API”. A browser key cannot be made to work here, and loosening the browser key's restriction to fix it would expose it. In the Cloud Console create a key restricted to the “Geocoding API” only, and restrict it by IP address to this server (not by referrer). Leave blank to fall back to the browser key above, which preserves the old behaviour on a site that has not set this up — geocoding simply keeps failing with REQUEST_DENIED and is logged, never raised."
+   "description": "A SECOND key, for calls this server makes itself — currently the Geocoding API that turns a Project's address into site coordinates (workforce/sites.py), which is what the Time Kiosk's geofence measures against. It must exist separately because the key above is restricted by HTTP referrer, and Google refuses a referrer-restricted key on any server-side web-service call: it answers REQUEST_DENIED with “API keys with referer restrictions cannot be used with this API”. A browser key cannot be made to work here, and loosening the browser key's restriction to fix it would expose it.\n\nIn the Cloud Console create a key and restrict it TWO ways: by API to the “Geocoding API” only, and by IP address to this server's egress address (35.194.95.244). Not by referrer — that is what breaks it. This field is a Password: unlike the browser key it never leaves the server, so it is stored encrypted and is not readable through the API or a report view.\n\nLeave blank to fall back to the browser key above, which preserves the old behaviour on a site that has not set this up — geocoding simply keeps failing with REQUEST_DENIED and is logged, never raised."
   },
   {
    "default": "0",
