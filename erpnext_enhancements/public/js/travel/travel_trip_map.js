@@ -35,31 +35,7 @@
 
 	// The Maps JS API can only be injected once per page; share one promise so
 	// repeated form refreshes don't re-add the <script>.
-	let mapsPromise = null;
-	function ensureGoogleMaps(apiKey) {
-		if (window.google && window.google.maps) return Promise.resolve(window.google.maps);
-		if (mapsPromise) return mapsPromise;
-		mapsPromise = new Promise((resolve, reject) => {
-			const callbackName = '__ee_google_maps_ready';
-			window[callbackName] = () => {
-				delete window[callbackName];
-				resolve(window.google.maps);
-			};
-			const script = document.createElement('script');
-			script.src =
-				'https://maps.googleapis.com/maps/api/js?key=' +
-				encodeURIComponent(apiKey) +
-				'&callback=' + callbackName +
-				'&loading=async';
-			script.async = true;
-			script.onerror = () => {
-				mapsPromise = null; // let a later refresh retry
-				reject(new Error('Google Maps failed to load'));
-			};
-			document.head.appendChild(script);
-		});
-		return mapsPromise;
-	}
+
 
 	// Always-visible name chip anchored to a POI (classic markers can't render a
 	// full label). Defined lazily because it extends google.maps.OverlayView,
@@ -254,7 +230,7 @@
 				field._mapObserver.disconnect();
 				field._mapObserver = null;
 			}
-			ensureGoogleMaps(apiKey)
+			window.EEGoogleMaps.load({ apiKey: apiKey })
 				.then((maps) => drawMap(maps, container, pois))
 				.then((plotted) => {
 					if (!plotted) {

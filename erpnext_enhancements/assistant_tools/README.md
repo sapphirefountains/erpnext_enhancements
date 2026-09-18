@@ -110,7 +110,12 @@ For the same reason, do **not** add `frappe_assistant_core` to
   `requires_permission` DocType (gates both execution and per-user tool
   visibility), and a valid JSON Schema `inputSchema` are required.
 - **Read tools vs. write tools.** Most tools here are **read-only** (including
-  `check_ai_pending_action`). The exception is `create_followup_task`
+  `check_ai_pending_action`). **Since ADR 0014 the gate can also decide per *call*:**
+  `_gate.PER_CALL_GATED` maps a tool name to a pure decider over that call's arguments, so
+  `workforce_clock_out` executes self-service ("clock me out" — authority the kiosk already
+  hands that person) and proposes on-behalf. Splitting those into two tools was rejected
+  because the model picks the tool, which would make the model decide whether a human is
+  consulted. The exception is `create_followup_task`
   (v1.29.0) — the first *write* tool. **Every write tool MUST be added to
   `_gate.py`'s `APP_MUTATING` set** so the AI write gate confirms it through a
   human (when gating is on) instead of relying on the fail-closed fallback;
@@ -172,6 +177,8 @@ Listed in `hooks.py` order. Every tool here must also appear in exactly one
 | `contract_signing_status` | Contracts | `esign/api.py::get_signature_state`, `project_contract.py::get_contracts`, and a perm-aware backlog mirroring `esign/tasks.py::digest_awaiting_signature`. `days_out` from **`first_sent_on`**, not `sent_on` — reminders rewrite `sent_on`. Returns **none** of the signing evidence (token hashes, `agreement_html`, `document_snapshot`, `signature_image`, signer IP, `user_agent`, `consent_text`) |
 | `kpi_dashboard_status` | Analytics | `api/kpi.py::visible_departments` + `::get_kpi_dashboard`, plus `source_freshness_json` off the snapshot. Unqualified calls return **Watch/Bad only** across visible departments; `refresh_kpi_dashboard` is deliberately not exposed (it commits) |
 | `workforce_time_status` | Time Kiosk | fresh perm-enforced Job Interval queries + `time_kiosk.get_current_status` |
+| `workforce_clock_in` | Time Kiosk | **write (per-call: never gated)** — starts a session for the **calling user only**. Takes no `employee` and no coordinates: the fix comes from the user's own browser via `time_kiosk.stash_location_fix` and is read back server-side, because a lat/lng arriving as a tool argument is a number the model typed. No fresh fix, no clock-in |
+| `workforce_clock_out` | Time Kiosk | **write (per-call: gated only on-behalf)** — no `employee` closes the caller's own session and executes; naming another employee needs `TIMELINE_MANAGER_ROLES`, is stamped with the requester, and becomes an AI Pending Action. Always an unanchored close; the photo gate's `skip_reason` is recorded verbatim |
 | `check_ai_pending_action` | AI Governance | read-only status/result lookup of gated AI Pending Actions |
 | `create_followup_task` | Productivity | **write (gated)** — creates a ToDo follow-up, optionally linked + assigned |
 | `remote_lock_device` / `remote_wipe_device` / `locate_device` / `reboot_device` / `run_device_script` / `deploy_device_patch` | Device Management | **write (gated)** — remote MDM actions via `mdm_integration.actions` (Miradore mobile / Action1 computers); wipe/lock/run-script are HIGH risk |

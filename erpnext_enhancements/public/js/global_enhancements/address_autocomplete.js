@@ -75,68 +75,15 @@
 		return key_promise;
 	}
 
-	/*
-	 * Load the Maps JS API using Google's own inline bootstrap loader.
-	 *
-	 * NOT a plain <script src="…maps/api/js?loading=async">. That URL returns a
-	 * *loader* which injects main.js/places.js afterwards, and it does not define
-	 * google.maps.importLibrary itself — verified: the returned bootstrap contains
-	 * zero occurrences of the string. So the script's onload fires while
-	 * importLibrary is still undefined and calling it throws (v1.160.2, diagnosed
-	 * live against production over several days). The loader below defines
-	 * importLibrary SYNCHRONOUSLY and queues calls until the library is ready.
-	 */
-	function bootstrap_maps(key) {
-		((g) => {
-			var h,
-				a,
-				k,
-				p = "The Google Maps JavaScript API",
-				c = "google",
-				l = "importLibrary",
-				q = "__ib__",
-				m = document,
-				b = window;
-			b = b[c] || (b[c] = {});
-			var d = b.maps || (b.maps = {}),
-				r = new Set(),
-				e = new URLSearchParams(),
-				u = () =>
-					h ||
-					(h = new Promise((f, n) => {
-						a = m.createElement("script");
-						e.set("libraries", [...r] + "");
-						for (k in g)
-							e.set(
-								k.replace(/[A-Z]/g, (t) => "_" + t[0].toLowerCase()),
-								g[k]
-							);
-						e.set("callback", c + ".maps." + q);
-						a.src = "https://maps." + c + "apis.com/maps/api/js?" + e;
-						d[q] = f;
-						a.onerror = () => (h = n(Error(p + " could not load.")));
-						a.nonce = (m.querySelector("script[nonce]") || {}).nonce || "";
-						m.head.append(a);
-					}));
-			d[l]
-				? console.warn(p + " only loads once. Ignoring:", g)
-				: (d[l] = (f, ...n) => r.add(f) && u().then(() => d[l](f, ...n)));
-		})({ key: key, v: "weekly" });
-	}
-
 	function ensure_places() {
 		if (places_promise) return places_promise;
 
 		places_promise = ensure_key()
 			.then(function (key) {
 				if (!key) throw new Error("Google Maps API key not set in Travel Settings");
-				// Never resolve on `window.google.maps` alone. That singleton is
-				// shared with the trip map, the POI picker and the pick-routing
-				// map, none of which import `places` — the root namespace looks
-				// complete while google.maps.places is still undefined (v1.204.0).
-				if (!(window.google && window.google.maps && window.google.maps.importLibrary)) {
-					bootstrap_maps(key);
-				}
+				return window.EEGoogleMaps.load({ apiKey: key, libraries: ["places"] });
+			})
+			.then(function () {
 				return window.google.maps.importLibrary("places");
 			})
 			.then(function (places) {

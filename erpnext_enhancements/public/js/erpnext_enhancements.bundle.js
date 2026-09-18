@@ -62,6 +62,9 @@ import "./global_enhancements/field_text_wrap.js";
 // pushes the thing you came for off the screen. One shared script rather than a
 // per-doctype hook -- see TASK-2026-00353.
 import "./global_enhancements/activity_first_tab_only.js";
+// Shared Google Maps loader (EEGoogleMaps). Injected first so all map scripts
+// share the same single-flight `importLibrary` boot sequence.
+import "./global_enhancements/google_maps_loader.js";
 // Google Places autocomplete on address_line1 (erpnext_enhancements.address_
 // autocomplete.attach). Global, not doctype_js["Address"], because the Address
 // quick-entry dialog below is a frappe.ui.Dialog — no form script ever fires

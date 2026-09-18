@@ -37,7 +37,8 @@ def get_context(context):
 
 	* ``boot_json`` -- the JSON-serialized bootstrap payload (employee, current
 	  interval, kiosk settings, CSRF token) injected into the template as
-	  ``window.KIOSK_BOOT`` for the front-end to consume on load.
+	  ``window.KIOSK_BOOT`` for the front-end to consume on load. It also
+	  contains ``maps`` (API key and Map IDs).
 	* ``csrf_token`` -- the same CSRF token, injected as ``window.KIOSK_CSRF`` and
 	  forwarded to the service worker so it can authenticate batch uploads.
 	* ``deploy_version`` -- the per-deploy cache-bust token (see
@@ -52,9 +53,20 @@ def get_context(context):
 		raise frappe.Redirect
 
 	boot = get_kiosk_bootstrap()
+	boot["maps"] = _maps_config()
 
 	context.no_cache = 1
 	context.boot_json = frappe.as_json(boot)
 	context.csrf_token = boot.get("csrf_token") or ""
 	context.deploy_version = get_deploy_version()
 	return context
+
+def _maps_config():
+	try:
+		return {
+			"api_key": frappe.db.get_single_value("Travel Settings", "google_maps_api_key") or "",
+			"map_id_light": frappe.db.get_single_value("Travel Settings", "google_maps_map_id_light") or "",
+			"map_id_dark": frappe.db.get_single_value("Travel Settings", "google_maps_map_id_dark") or "",
+		}
+	except Exception:
+		return {"api_key": "", "map_id_light": "", "map_id_dark": ""}

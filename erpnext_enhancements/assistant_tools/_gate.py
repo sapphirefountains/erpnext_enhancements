@@ -110,6 +110,8 @@ EXPLICIT_READONLY = {
 # never depends on the fail-closed fallback to confirm them.
 APP_MUTATING = {
     "create_followup_task",
+    "workforce_clock_in",
+    "workforce_clock_out",
     # mdm_integration remote device actions — all gated (lock/wipe/locate the
     # mobile fleet via Miradore; reboot/run-script/deploy patches via Action1).
     "remote_lock_device",
@@ -165,6 +167,20 @@ LOW_RISK = {
 # Only plain-document create/update may use the settings exempt-doctype
 # allowlist; privileged/irreversible tools never skip confirmation.
 EXEMPTABLE_TOOLS = {"create_document", "update_document"}
+
+# tool name -> callable(arguments) -> bool  (True = this CALL needs confirmation)
+#
+# Why the split exists: self-service is authority the person already has; 
+# on-behalf is authority over someone else's record.
+# Note: ai_write_gating_enabled ships default 0 and is currently OFF in production,
+# so the gate is the human-in-the-loop layer, never the authorization.
+# The role check that actually stops an unauthorised on-behalf clock-out lives inside
+# close_interval_for_employee, and must not be assumed to live here.
+# A decider must be pure and total — it runs inside the gate, and anything it raises must fail closed.
+PER_CALL_GATED = {
+    "workforce_clock_out": lambda args: bool((args or {}).get("employee")),
+    "workforce_clock_in": lambda args: False,
+}
 
 # ------------------------------------------------- private-context denylist
 #
@@ -711,6 +727,42 @@ def _gated_execute(tool, original, arguments):
     # 3) Reads pass through untouched.
     if not is_mutating(tool):
         return original(tool, arguments)
+
+    # 3b) Per-call gating (ADR 0014). Only the DECIDER runs inside the guard.
+    #
+    # Getting this nesting wrong is a double-execution bug rather than a missed
+    # confirmation: if `original(...)` or the logging below sat inside the same
+    # try/except, a failure AFTER the write had already happened would be
+    # swallowed and fall through to the Pending Action path — offering a human a
+    # card for an action that had already run, which executes it a second time on
+    # confirm. So the guard covers the decision and nothing else, and the
+    # execution path below can only be reached by a decider that returned cleanly.
+    name = getattr(tool, "name", "")
+    decider = PER_CALL_GATED.get(name)
+    if decider is not None:
+        try:
+            needs_confirmation = bool(decider(arguments))
+        except Exception:
+            # Fail closed: an undecidable call is one a human should see.
+            needs_confirmation = True
+        if not needs_confirmation:
+            response = original(tool, arguments)
+            # Evidence, not silence: this is the only record that a write ran
+            # without a human seeing it. insert_action_log never raises to its
+            # caller by contract, which is what keeps this off the path above.
+            as_dict = response if isinstance(response, dict) else {}
+            insert_action_log(
+                user=frappe.session.user,
+                tool_name=name,
+                arguments=arguments,
+                success=bool(as_dict.get("success")) if as_dict else True,
+                result=as_dict.get("result", response if not as_dict else None),
+                error=as_dict.get("error"),
+                error_type=as_dict.get("error_type"),
+                auto_approved=1,
+                execution_time=as_dict.get("execution_time"),
+            )
+            return response
 
     try:
         # 4) Allowlisted plain create/update: execute, but log with provenance.

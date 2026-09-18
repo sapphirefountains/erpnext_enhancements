@@ -509,7 +509,7 @@
 
 /* ---- map markers (Leaflet divIcons) -------------------------------------- */
 
-/* Every divIcon uses className "lt-icon" so Leaflet's white leaflet-div-icon box
+/* Every divIcon uses className "lt-icon" so Leaflet's white div-icon box
    never appears; the visible shape is the child element. */
 .lt-icon {
     background: none;
@@ -628,48 +628,6 @@
     display: block;
     margin-bottom: 2px;
 }
-
-/* ---- Leaflet in a dark desk ---------------------------------------------- */
-
-.lt-map .leaflet-container {
-    background: var(--bg-color, #f8f9fa);
-    font-family: inherit;
-}
-
-[data-theme="dark"] .lt-map .leaflet-bar a,
-[data-theme="dark"] .lt-map .leaflet-bar a:hover {
-    background: var(--card-bg, #1c1f24);
-    color: var(--text-color, #e6e8eb);
-    border-bottom-color: var(--border-color, #3a3f47);
-}
-
-[data-theme="dark"] .lt-map .leaflet-control-attribution {
-    background: rgba(0, 0, 0, 0.6);
-    color: var(--text-muted, #9aa3ad);
-}
-
-[data-theme="dark"] .lt-map .leaflet-control-attribution a {
-    color: var(--text-color, #e6e8eb);
-}
-
-[data-theme="dark"] .lt-map .leaflet-popup-content-wrapper,
-[data-theme="dark"] .lt-map .leaflet-popup-tip {
-    background: var(--card-bg, #1c1f24);
-    color: var(--text-color, #e6e8eb);
-}
-
-[data-theme="dark"] .lt-map .leaflet-tooltip.lt-stop-label {
-    background: var(--card-bg, #1c1f24);
-    color: var(--text-color, #e6e8eb);
-}
-
-[data-theme="dark"] .lt-pill-good { background: rgba(21, 128, 61, 0.25); color: #6fd39a; }
-[data-theme="dark"] .lt-pill-gaps,
-[data-theme="dark"] .lt-pill-warn { background: rgba(180, 83, 9, 0.25); color: #f5b26b; }
-[data-theme="dark"] .lt-pill-none,
-[data-theme="dark"] .lt-pill-stale { background: rgba(185, 28, 28, 0.25); color: #f19a9a; }
-[data-theme="dark"] .lt-pill-info { background: rgba(29, 95, 168, 0.3); color: #8fbcf0; }
-[data-theme="dark"] .lt-pill-live { background: rgba(21, 128, 61, 0.25); color: #6fd39a; }
 
 /* ---- motion + small screens ---------------------------------------------- */
 

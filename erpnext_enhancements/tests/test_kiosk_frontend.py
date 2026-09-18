@@ -116,7 +116,13 @@ class TestNoNativeDialogs(unittest.TestCase):
 class TestPrecacheMatchesTheShell(unittest.TestCase):
     def shell_assets(self):
         html = HTML.read_text(encoding="utf-8")
-        return set(re.findall(r"(/assets/erpnext_enhancements/(?:js|css)/kiosk/[\w./-]+)\?v=\{\{ deploy_version \}\}", html))
+        # Deliberately NOT limited to js/kiosk/ or css/kiosk/. v1.481.0 added a
+        # shell <script> from js/global_enhancements/ (the shared Google Maps
+        # loader), and the narrower pattern simply did not see it -- so the
+        # "every shell asset is precached" guard passed while the file was
+        # missing from PRECACHE, which offline is a 504 in a dead zone. Match
+        # any of this app's js/css assets the shell loads.
+        return set(re.findall(r"(/assets/erpnext_enhancements/(?:js|css)/[\w./-]+)\?v=\{\{ deploy_version \}\}", html))
 
     def precache(self):
         code = strip_js_comments(WORKER.read_text(encoding="utf-8"))
@@ -124,9 +130,31 @@ class TestPrecacheMatchesTheShell(unittest.TestCase):
         block = code[start : code.index("];", start)]
         return set(re.findall(r"'([^']+)'", block))
 
+    # Deliberately network-only, and NOT a hole in the rule above.
+    #
+    # The service worker is registered at ROOT scope, so it may only ever answer
+    # for the kiosk's own shell -- precaching an asset the desk also serves would
+    # put this worker in front of desk traffic. The shared Google Maps loader
+    # lives in js/global_enhancements/ for exactly that reason (the desk bundle
+    # imports it too), so it cannot be precached here.
+    #
+    # It costs nothing: the loader's only job is to fetch the Google Maps API,
+    # which is third-party, versioned and uncacheable. A device offline enough to
+    # be missing this file could not render a map anyway, and the map tab says so.
+    # This is the same call the vendored Leaflet copy got before v1.481.0.
+    NOT_PRECACHED = {
+        "/assets/erpnext_enhancements/js/global_enhancements/google_maps_loader.js",
+    }
+
     def test_every_shell_asset_is_precached(self):
-        missing = sorted(self.shell_assets() - self.precache())
+        missing = sorted(self.shell_assets() - self.precache() - self.NOT_PRECACHED)
         self.assertEqual(missing, [], f"loaded by kiosk.html but not precached: {missing}")
+
+    def test_the_precache_exemptions_are_actually_loaded_by_the_shell(self):
+        """An exemption must name a file the shell really loads, or it is a typo
+        quietly widening the rule it was written to narrow."""
+        stale = sorted(self.NOT_PRECACHED - self.shell_assets())
+        self.assertEqual(stale, [], f"exempted but nothing loads them: {stale}")
 
     def test_every_precached_script_or_stylesheet_is_loaded(self):
         precached = {p for p in self.precache() if "/js/kiosk/" in p or "/css/kiosk/" in p}

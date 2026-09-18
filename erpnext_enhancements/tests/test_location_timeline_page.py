@@ -36,8 +36,11 @@ API = APP / "api/time_kiosk.py"
 # and the role change never lands (frappe/modules/import_file.py compares them).
 ROLES_CHANGED_ON = "2026-09-17"
 
-LIGHT_TILES = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+# v1.481.0 replaced Leaflet + OSM/CARTO tiles with the Google Maps JS API. Google
+# supplies the basemap, so there are no tile URLs left to assert; the theme is
+# carried by EEGoogleMaps.mapOptions(), which returns a cloud Map ID when one is
+# configured and a legacy `styles` array when it is not.
+LOADER = "window.EEGoogleMaps"
 
 
 def _text(path):
@@ -47,7 +50,9 @@ def _text(path):
 def _js(path):
     """JS with comments stripped. An assertion about what the code does must not
     be satisfied by the comment describing it; the header of this page names
-    every endpoint and both tile hosts in prose."""
+    every endpoint in prose, and still discusses Leaflet to explain what replaced
+    it -- so an absence assertion would otherwise be satisfied by its own
+    explanation."""
     src = re.sub(r"/\*.*?\*/", "", _text(path), flags=re.S)
     return "\n".join(line for line in src.splitlines() if not line.strip().startswith("//"))
 
@@ -190,10 +195,17 @@ class TestRouteOptions(unittest.TestCase):
 
 
 class TestTheMapFollowsTheDeskTheme(unittest.TestCase):
-    def test_both_tile_urls_are_present(self):
+    def test_the_theme_is_carried_by_map_options_not_by_tiles(self):
+        """Google supplies the basemap, so the light/dark split now lives in
+        EEGoogleMaps.mapOptions(cfg, theme) -- which returns EITHER a cloud Map ID
+        or a legacy styles array, never both."""
         body = _js(PAGE_JS)
-        self.assertIn(LIGHT_TILES, body)
-        self.assertIn(DARK_TILES, body)
+        self.assertIn(LOADER + ".mapOptions", body)
+        self.assertIn(LOADER + ".load", body)
+        self.assertIn("erpnext_enhancements.api.travel.get_maps_config", body)
+        for tile_host in ("tile.openstreetmap.org", "basemaps.cartocdn.com"):
+            with self.subTest(host=tile_host):
+                self.assertNotIn(tile_host, body)
 
     def test_dark_is_chosen_from_the_data_theme_attribute(self):
         """The desk always stamps data-theme (light or dark, never absent), so
@@ -212,9 +224,6 @@ class TestTheMapFollowsTheDeskTheme(unittest.TestCase):
         for var in ("--bg-color", "--card-bg", "--border-color", "--text-color", "--text-muted"):
             with self.subTest(var=var):
                 self.assertIn(f"var({var}", css)
-        # And Leaflet's light-only chrome is overridden for the dark desk.
-        self.assertIn('[data-theme="dark"] .lt-map', css)
-
 
 class TestAssetsLoadThroughFrappeRequireWithBarePaths(unittest.TestCase):
     """On v16 frappe.require appends ?v=<build> to a bare /assets path itself,
@@ -222,10 +231,29 @@ class TestAssetsLoadThroughFrappeRequireWithBarePaths(unittest.TestCase):
     js -- frappe.assets.extn() takes the text after the last "?" as the
     extension. desk_assets.js documents the failure; this keeps it out of here."""
 
-    def test_leaflet_comes_from_frappes_vendored_copy(self):
+    def test_no_leaflet_remains_anywhere_in_the_page(self):
+        """Leaflet was removed outright in v1.481.0 -- there is no fallback renderer.
+
+        Comments are stripped by _js() before this runs, which matters more than
+        usual here: the file explains the migration in prose and names every token
+        below while doing it.
+        """
         body = _js(PAGE_JS)
-        self.assertIn("'/assets/frappe/js/lib/leaflet/leaflet.js'", body)
-        self.assertIn("'/assets/frappe/js/lib/leaflet/leaflet.css'", body)
+        for token in (
+            "leaflet.js", "leaflet.css", "L.map(", "L.tileLayer(", "L.polyline(",
+            "L.circle(", "L.circleMarker(", "L.divIcon(", "L.marker(",
+            "L.layerGroup(", "L.canvas(",
+        ):
+            with self.subTest(token=token):
+                self.assertNotIn(token, body)
+        self.assertNotIn(".leaflet-", _text(PAGE_CSS))
+
+    def test_assets_still_load_through_frappe_require_with_bare_paths(self):
+        """v16 appends its own ?v=<build>; a path that already carries one loads as
+        nothing. Removing Leaflet must not have reintroduced a versioned path."""
+        body = _js(PAGE_JS)
+        self.assertIn("'/assets/erpnext_enhancements/css/workforce/location_timeline.css'", body)
+        self.assertNotIn("?v=", body)
 
     def test_the_stylesheet_is_required_and_exists(self):
         body = _js(PAGE_JS)
@@ -283,9 +311,24 @@ class TestServerStringsAreEscaped(unittest.TestCase):
         body = _js(PAGE_JS)
         self.assertIn("frappe.utils.escape_html(", body)
 
-    def test_nothing_is_written_through_innerhtml_directly(self):
+    def test_innerhtml_is_confined_to_one_reviewed_marker_helper(self):
+        """AdvancedMarkerElement takes a DOM node, so building marker content needs
+        exactly one innerHTML. The original blanket ban on ".innerHTML" was a proxy
+        for the real rule -- no unescaped server string reaches the DOM -- so the
+        rule is asserted directly instead of being dropped: there may be at most one
+        assignment, it must live in createMarker, and it must assign the parameter
+        rather than an inline template that could interpolate a raw server value.
+        """
         body = _js(PAGE_JS)
-        self.assertNotIn(".innerHTML", body)
+        self.assertEqual(body.count(".innerHTML"), 1, "only createMarker may use innerHTML")
+        at = body.index("createMarker(")
+        self.assertIn(".innerHTML = contentHtml", body[at : at + 900])
+        # Every caller hands it markup whose server-derived parts went through esc().
+        for call in re.findall(r"createMarker\(([^;]*?)\)", body):
+            if "contentHtml" in call:
+                continue
+            with self.subTest(call=call[:60]):
+                self.assertIn("lt-icon", call)
 
     def test_the_labels_that_come_from_the_server_go_through_esc(self):
         """A spot check on the fields most likely to carry user-typed text."""
@@ -317,24 +360,40 @@ class TestTheTrailDrawsWhatTheContractDescribes(unittest.TestCase):
     """One assertion per visual the contract lists, on the token that draws it."""
 
     def test_low_accuracy_points_are_hollow(self):
+        """Fixes are drawn through a google.maps.Data layer (one styler for
+        thousands of points, rather than thousands of Marker objects). Hollow still
+        means fillOpacity 0 with a visible ring."""
         body = _js(PAGE_JS)
         self.assertIn("LOW_ACCURACY = 'Low Accuracy'", body)
-        at = body.index("const low = p.log_status === LOW_ACCURACY")
-        self.assertIn("fillOpacity: low ? 0 : 1", body[at : at + 500])
+        at = body.index("dataLayer.setStyle(")
+        block = body[at : at + 600]
+        self.assertIn("fillOpacity: isLow ? 0 : 1", block)
+        self.assertIn("strokeColor: isLow ?", block)
 
     def test_gaps_are_dashed_red(self):
+        """Google's Polyline has no dashArray. A dashed line is strokeOpacity 0 plus
+        a repeating icon symbol -- assert the mechanism, not just the colour, or a
+        solid red line would pass."""
         body = _js(PAGE_JS)
         at = body.index("drawGaps(iv) {")
-        block = body[at : at + 1600]
+        block = body[at : at + 2200]
         self.assertIn("GAP_COLOR", block)
-        self.assertIn("dashArray", block)
+        self.assertIn("strokeOpacity: 0", block)
+        self.assertIn("icons:", block)
+        self.assertIn("repeat:", block)
 
     def test_stops_carry_duration_and_site(self):
+        """The "18 min at <site>" label was a permanent Leaflet tooltip; it is now a
+        Marker label, which is always visible for the same reason."""
         body = _js(PAGE_JS)
         at = body.index("drawStops(iv) {")
-        block = body[at : at + 1200]
+        block = body[at : at + 2000]
         self.assertIn("s.at_site", block)
-        self.assertIn("permanent: true", block)
+        self.assertIn("setLabel(", block)
+        self.assertIn("lt-stop-label", block)
+        # A Marker label renders as a text node; esc()-ing it first would print
+        # "Smith &amp; Jones" for any site with an ampersand in its name.
+        self.assertNotIn("text: esc(", block)
 
     def test_site_geofence_uses_the_payload_radius(self):
         body = _js(PAGE_JS)

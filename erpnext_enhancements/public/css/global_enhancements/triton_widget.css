@@ -695,6 +695,7 @@
    all three pinned to the bottom as autoGrow expands the textarea to its 120px
    cap. Ghost styling for the same reason: these are not the send button. */
 .triton-input-bar .triton-search,
+.triton-input-bar .triton-location,
 .triton-input-bar .triton-attach,
 .triton-input-bar .triton-attach-drive {
 	flex: 0 0 auto;
@@ -710,12 +711,14 @@
 	transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
 }
 .triton-input-bar .triton-search:hover,
+.triton-input-bar .triton-location:hover,
 .triton-input-bar .triton-attach:hover,
 .triton-input-bar .triton-attach-drive:hover {
 	background: rgba(31, 111, 235, 0.08);
 	color: var(--primary, #1f6feb);
 }
 .triton-input-bar .triton-search:active,
+.triton-input-bar .triton-location:active,
 .triton-input-bar .triton-attach:active,
 .triton-input-bar .triton-attach-drive:active {
 	transform: scale(0.9);
@@ -723,6 +726,7 @@
 /* Web search toggle. Pressed is a filled chip rather than a tinted one, so a
    glance at the composer says whether the next message will hit Google Search. */
 .triton-input-bar .triton-search.is-active,
+.triton-input-bar .triton-location.is-active,
 .triton-input-bar .triton-search.is-active:hover {
 	background: var(--primary, #1f6feb);
 	border-color: var(--primary, #1f6feb);

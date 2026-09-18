@@ -108,13 +108,26 @@ filters. **Live** polls `get_live_positions` every 30 s only while the tab is vi
 page is on screen (it stops on `visibilitychange` and on the desk's `hide`); each open interval
 is a marker with a stale badge, and clicking a row opens today's trail for that person.
 
-Tiles are OpenStreetMap in light and CartoDB `dark_all` in dark, switched live from a
-`MutationObserver` on `<html data-theme>` — the desk always stamps one. Leaflet is frappe's
-vendored copy and the stylesheet is `public/css/workforce/location_timeline.css`, both through
-`frappe.require` with **bare** paths: v16 appends `?v=<build>` itself, and a path that already
-carries one loads as nothing. Opened pre-filled via `frappe.route_options {employee, from_date,
-to_date}` from the Job Interval form's **View on Timeline** button and the Employee form's
-**Location Timeline** button.
+The basemap is **Google Maps** (v1.482.0); Leaflet was removed outright, with no fallback
+renderer. Light and dark come from `EEGoogleMaps.mapOptions()` -- a cloud **Map ID** from
+`Travel Settings` when one is set, a legacy `styles` array when it is not -- still driven by a
+`MutationObserver` on `<html data-theme>`, since the desk always stamps one. Note the platform
+constraint the code comments: a `mapId` fixes the style at construction, so a theme flip cannot
+be a `setOptions` call.
+
+Three primitives did not port one-for-one and the differences are load-bearing:
+`L.circleMarker` takes a **pixel** radius while `google.maps.Circle` takes **metres**, so the
+individual fixes are scaled symbols rather than circles that would swell with zoom; there is no
+`dashArray`, so the red gap segments are a transparent polyline carrying a repeating symbol;
+and there is no canvas renderer, so the fixes go through one `google.maps.Data` layer with a
+single styler instead of thousands of Marker objects -- which is the reason Leaflet's canvas
+renderer was there in the first place.
+
+The stylesheet is `public/css/workforce/location_timeline.css`, loaded through `frappe.require`
+with a **bare** path: v16 appends `?v=<build>` itself, and a path that already carries one loads
+as nothing. Opened pre-filled via `frappe.route_options {employee, from_date, to_date}` from the
+Job Interval form's **View on Timeline** button and the Employee form's **Location Timeline**
+button.
 
 One thing worth knowing about the "not permitted" state: a `PermissionError` arrives as HTTP
 403, and frappe's handler calls the error callback with **no argument**, so `frappe.xcall`

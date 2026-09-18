@@ -331,6 +331,7 @@ import { renderMarkdown } from "../triton/markdown.js";
 			<div class="triton-input-bar">
 				<button class="triton-attach" title="Attach a file" aria-label="Attach a file">📎</button>
 				<button class="triton-attach-drive is-hidden" title="Attach from Google Drive" aria-label="Attach from Google Drive"><svg class="triton-drive-icon" aria-hidden="true" focusable="false"><use href="#triton-drive-logo"></use></svg></button>
+				<button class="triton-location" title="Share my location" aria-label="Share my location" aria-pressed="false">📍</button>
 				<button class="triton-search" title="Search the web for this message (Google Search grounding)" aria-label="Search the web" aria-pressed="false">🌐</button>
 				<textarea class="triton-text" rows="1" placeholder="Ask about your data…"></textarea>
 				<button class="triton-send" title="Send">➤</button>
@@ -365,6 +366,7 @@ import { renderMarkdown } from "../triton/markdown.js";
 			attach: panel.querySelector(".triton-attach"),
 			attachDrive: panel.querySelector(".triton-attach-drive"),
 			fileInput: panel.querySelector(".triton-file-input"),
+			location: panel.querySelector(".triton-location"),
 			search: panel.querySelector(".triton-search"),
 			modelSelect: panel.querySelector(".triton-model-select"),
 			personaSelect: panel.querySelector(".triton-persona-select"),
@@ -396,6 +398,7 @@ import { renderMarkdown } from "../triton/markdown.js";
 		state.els.attach.addEventListener("click", () => state.els.fileInput.click());
 		state.els.fileInput.addEventListener("change", onFilesChosen);
 		state.els.attachDrive.addEventListener("click", onAttachDrive);
+		state.els.location.addEventListener("click", onLocationClick);
 		state.els.search.addEventListener("click", () => setSearch(!state.search));
 		setSearch(localStorage.getItem(LS_SEARCH) === "1");
 		bindDropTarget();
@@ -2515,6 +2518,122 @@ import { renderMarkdown } from "../triton/markdown.js";
 		}
 	}
 
+
+	async function onLocationClick() {
+		const btn = state.els.location;
+		if (btn.classList.contains("is-active")) return;
+		
+		if (!navigator.geolocation) {
+			frappe.show_alert({ message: __("Geolocation is not supported by your browser."), indicator: "orange" });
+			return;
+		}
+		
+		// Location is requested only on an explicit click. Never on panel open, never on page load, never speculatively.
+		navigator.geolocation.getCurrentPosition(
+			async (pos) => {
+				try {
+					const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+					await frappe.xcall("erpnext_enhancements.api.time_kiosk.stash_location_fix", { lat, lng, accuracy });
+					
+					frappe.show_alert({ message: __("Location shared — valid for 2 minutes"), indicator: "green" });
+					btn.classList.add("is-active");
+					btn.setAttribute("aria-pressed", "true");
+					
+					setTimeout(() => {
+						btn.classList.remove("is-active");
+						btn.setAttribute("aria-pressed", "false");
+					}, 120000);
+				} catch (e) {
+					frappe.show_alert({ message: __("Clocking in needs location and nothing was shared."), indicator: "orange" });
+				}
+			},
+			(err) => {
+				frappe.show_alert({ message: __("Clocking in needs location and nothing was shared."), indicator: "orange" });
+			},
+			{ enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+		);
+	}
+
+	function renderClockInRequest(container, params) {
+		const card = document.createElement("div");
+		card.className = "triton-action-card";
+		
+		const projectTitle = esc(params.project_title || params.project || "");
+		const summary = "Clock in to " + projectTitle + "?";
+		
+		card.innerHTML = `
+			<div class="triton-action-summary">${summary}</div>
+			<div class="triton-action-slot"></div>`;
+		const slot = card.querySelector(".triton-action-slot");
+		
+		const btns = document.createElement("div");
+		btns.className = "triton-action-btns";
+		btns.innerHTML = `
+			<button class="triton-approve">${__("Confirm")}</button>
+			<button class="triton-decline">${__("Cancel")}</button>`;
+			
+		btns.querySelector(".triton-approve").addEventListener("click", () => decideClockIn(params, true, slot));
+		btns.querySelector(".triton-decline").addEventListener("click", () => decideClockIn(params, false, slot));
+		slot.appendChild(btns);
+		
+		container.appendChild(card);
+		scrollDown();
+	}
+
+	async function decideClockIn(params, approve, slot) {
+		slot.innerHTML = `<span class="text-muted">${approve ? __("Obtaining location…") : __("Declining…")}</span>`;
+		
+		if (!approve) {
+			renderResolved(slot, "cancelled");
+			send(__("Clock-in cancelled."), { hidden: true });
+			return;
+		}
+		
+		if (!navigator.geolocation) {
+			slot.innerHTML = `<span class="triton-action-resolved no">${__("Clocking in needs location and nothing was shared.")}</span>`;
+			send(__("Clock-in cancelled: location was not shared"), { hidden: true });
+			return;
+		}
+
+		navigator.geolocation.getCurrentPosition(
+			async (pos) => {
+				try {
+					const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+					const res = await frappe.xcall("erpnext_enhancements.api.time_kiosk.log_time", {
+						action: "Start",
+						project: params.project,
+						task: params.task,
+						time_category: params.time_category,
+						description: params.description,
+						lat,
+						lng,
+						accuracy
+					});
+					
+					renderResolved(slot, "approved");
+					let msg = __("Clocked in to {0} at {1}", [params.project_title || params.project, "now"]);
+					if (res && res.message) {
+						const m = res.message;
+						if (typeof m === "string") {
+							msg = m;
+						} else if (m.offsite && m.offsite.distance) {
+							msg += ` (${Math.round(m.offsite.distance)} m from site)`;
+						}
+					}
+					send(msg, { hidden: true });
+				} catch (e) {
+					slot.innerHTML = `<span class="triton-action-resolved no">${__("Failed")}: ${esc(e.message || e)}</span>`;
+					send(__("Clock-in failed: {0}", [e.message || "Error"]), { hidden: true });
+				}
+			},
+			(err) => {
+				slot.innerHTML = `<span class="triton-action-resolved no">${__("Clocking in needs location and nothing was shared.")}</span>`;
+				send(__("Clock-in cancelled: location was not shared"), { hidden: true });
+			},
+			{ enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+		);
+	}
+
 	// ---- history ---------------------------------------------------------
 	async function loadHistory() {
 		const saved = localStorage.getItem(LS_SESSION);
@@ -2801,6 +2920,11 @@ import { renderMarkdown } from "../triton/markdown.js";
 					renderChart(live.wrap, ev.params);
 				} else if (ev.command === "render_visualization" || ev.command === "render_3d_simulation") {
 					renderVizFallback(live.wrap, ev.command, ev.params);
+				} else if (ev.command === "clock_in_request") {
+					// Added for W6. Note: this command will only ever arrive once the Triton backend
+					// adds clock_in_request to its own ui_command allowlist (a separate repo).
+					// Until then this arm is dormant and the location button is the working path.
+					renderClockInRequest(live.wrap, ev.params);
 				}
 				// voice_dial / show_native_plan_approval are Desk-side actions and
 				// are intentionally not surfaced in the embedded widget.

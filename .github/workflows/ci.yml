@@ -207,6 +207,7 @@ jobs:
           python -m unittest
           erpnext_enhancements.tests.test_assistant_tools_schema
           erpnext_enhancements.tests.test_ai_gate_unit
+          erpnext_enhancements.tests.test_ai_gate_per_call
           erpnext_enhancements.tests.test_integrations_health
           erpnext_enhancements.tests.test_device_management
           erpnext_enhancements.tests.test_mdm_integration
@@ -1523,6 +1524,23 @@ jobs:
       # working on a phone in a mechanical room.
       - name: Kiosk PWA theme + front-end contract
         run: python -m unittest erpnext_enhancements.tests.test_kiosk_theme erpnext_enhancements.tests.test_kiosk_frontend -v
+      # The v1.481.0 Google Maps migration, which removed Leaflet from both maps
+      # outright. Three static contracts, none needing a browser: that
+      # google_maps_loader.js is the ONLY file that injects the Maps API (four
+      # copies existed before, and the API may only be injected once per page);
+      # that load() always imports the core "maps" library, because the inline
+      # bootstrap only DEFINES importLibrary and a caller passing no libraries
+      # otherwise gets a google.maps carrying nothing else; that mapOptions never
+      # emits mapId and styles together, which the API resolves by silently
+      # ignoring styles; and that no Leaflet token survives in either map or its
+      # stylesheet. The absence assertions strip comments first -- both files
+      # explain the migration in prose and name every token while doing it.
+      - name: Google Maps migration (shared loader, kiosk map, timeline map)
+        run: >-
+          python -m unittest
+          erpnext_enhancements.tests.test_google_maps_loader
+          erpnext_enhancements.tests.test_kiosk_map
+          erpnext_enhancements.tests.test_location_timeline_map -v
       # Workforce pure logic and static contracts (no frappe stub): tracking coverage and
       # gap arithmetic (a 25-minute silence must not pass a 15-minute setting), the FLSA
       # workweek overtime split (an interval is credited whole to the day it starts, and
@@ -1538,6 +1556,7 @@ jobs:
           erpnext_enhancements.tests.test_workforce_overtime
           erpnext_enhancements.tests.test_time_correction_requests
           erpnext_enhancements.tests.test_location_timeline_page
+          erpnext_enhancements.tests.test_workforce_assistant_clock
           erpnext_enhancements.tests.test_workforce_report_labor_cost
           erpnext_enhancements.tests.test_time_kiosk_desktop_icon -v
       # Its own step: this suite installs a frappe stub in setUpModule. Pins that the
@@ -1672,6 +1691,14 @@ jobs:
         run: node scripts/test_triton_markdown.mjs
       - name: Triton inline citation renderer (bench-free, node)
         run: node scripts/test_triton_citations.mjs
+      # The browser half of Triton clock-in. Pins the rules that make it safe rather
+      # than merely working: location is requested ONLY inside a click handler (never
+      # on boot), always with maximumAge 0 and enableHighAccuracy -- a cached or coarse
+      # fix is not evidence of where somebody is standing -- no coordinate is ever put
+      # in localStorage, and the clock-in call always carries a fix, so a refusal means
+      # no clock-in rather than an unanchored one.
+      - name: Triton widget location sharing (clock-in privacy + correctness)
+        run: python -m unittest erpnext_enhancements.tests.test_triton_widget_location -v
       - name: URL boundary must never be looser than the browser (differential fuzz)
         run: node scripts/fuzz_url_safety.mjs | python scripts/fuzz_url_safety_check.py
       # A www/ controller whose filename contains a hyphen is never imported by
