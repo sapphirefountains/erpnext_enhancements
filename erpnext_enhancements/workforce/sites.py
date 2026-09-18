@@ -205,11 +205,22 @@ def _geocoding_api_key():
 	that looks like "no address to geocode".
 	"""
 	try:
-		server_key = (
-			frappe.db.get_single_value("Travel Settings", "google_geocoding_api_key") or ""
-		).strip()
+		# The server key is a PASSWORD field, so it lives in `__Auth` and NOT in
+		# `tabSingles` -- `get_single_value` returns None for it, always, and would
+		# silently fall through to the browser key and the REQUEST_DENIED this whole
+		# mechanism exists to stop. It has to be read with get_password(). This app
+		# has been bitten by that exact shape before: `Triton Settings.maps_api_key`
+		# was stranded the same way (patches/rescue_renamed_doctype_auth_rows.py).
+		#
+		# raise_exception=False because a missing value is an ordinary state here --
+		# the fallback below is the documented behaviour on a site that has not set
+		# this up yet.
+		settings = frappe.get_cached_doc("Travel Settings")
+		server_key = (settings.get_password("google_geocoding_api_key", raise_exception=False) or "").strip()
 		if server_key:
 			return server_key
+		# The browser key stays a plain Data field: it is handed to browsers by
+		# design, so there is nothing to protect by encrypting it at rest.
 		return (frappe.db.get_single_value("Travel Settings", "google_maps_api_key") or "").strip()
 	except Exception:
 		return ""

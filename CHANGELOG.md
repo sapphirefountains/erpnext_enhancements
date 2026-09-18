@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.484.1] - 2026-09-18
+
+### Changed
+
+- **`google_geocoding_api_key` is now a Password field**, done while it is still blank so it
+  costs nothing. Unlike the browser key it never leaves the server, so there is nothing
+  gained by holding it in the clear where any Travel Settings reader, a report view or
+  `/api/resource` can read it back. The browser key stays plain `Data` deliberately: it is
+  handed to browsers by design, and encrypting a value you then publish is theatre.
+
+  **The trap this introduces, and the reason it ships with a test:** a Password value lives
+  in `__Auth`, not in `tabSingles`, so `frappe.db.get_single_value` returns `None` for it —
+  every time, on every site. Read that way, the server key would look unset, the code would
+  fall through to the browser key, and the REQUEST_DENIED this whole mechanism exists to
+  stop would come straight back, now with a key that *is* configured. `sites.py` reads it
+  with `get_password(..., raise_exception=False)`. This app has been bitten by exactly this
+  shape before — `Triton Settings.maps_api_key` was stranded in it
+  (`patches/rescue_renamed_doctype_auth_rows.py`).
+
+  The field description now also names the server's egress IP (**35.194.95.244**) so the
+  Cloud Console restriction can be set without going to look it up.
+
 ## [1.484.0] - 2026-09-18
 
 ### Added

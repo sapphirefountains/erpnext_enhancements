@@ -56,7 +56,29 @@ class TestTheServerKeyExists(unittest.TestCase):
     def test_travel_settings_declares_it(self):
         field = _settings_fields().get("google_geocoding_api_key")
         self.assertIsNotNone(field, "google_geocoding_api_key is missing from Travel Settings")
-        self.assertEqual(field.get("fieldtype"), "Data")
+
+    def test_it_is_a_password_field(self):
+        """It never leaves the server, so there is nothing gained by storing it in
+        the clear where any Travel Settings reader (or a report view, or
+        /api/resource) can see it. The browser key is deliberately NOT a Password:
+        it is handed to browsers by design."""
+        self.assertEqual(_settings_fields()["google_geocoding_api_key"].get("fieldtype"), "Password")
+        self.assertEqual(_settings_fields()["google_maps_api_key"].get("fieldtype"), "Data")
+
+    def test_a_password_field_is_read_with_get_password(self):
+        """The trap that makes this worth a test: a Password value lives in `__Auth`,
+        NOT in `tabSingles`, so `get_single_value` returns None for it -- every time,
+        on every site. Reading it that way would silently fall through to the browser
+        key and reproduce the REQUEST_DENIED this whole mechanism exists to stop.
+        `Triton Settings.maps_api_key` was stranded in exactly this shape before."""
+        fn = _function("_geocoding_api_key")
+        self.assertIsNotNone(fn)
+        body = _segment(fn)
+        self.assertIn("get_password(", body)
+        # and the server key must NOT be read with get_single_value
+        for line in body.splitlines():
+            if "google_geocoding_api_key" in line:
+                self.assertNotIn("get_single_value", line)
 
     def test_it_carries_no_default(self):
         """Travel Settings is a Single: a default on a new field never reaches the row that
