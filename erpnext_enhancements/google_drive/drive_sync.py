@@ -469,6 +469,19 @@ MAX_FILE_NAME_LENGTH = 140
 # on the next pass.
 SHADOW_PATH_SEPARATOR = " › "
 SHADOW_FOLDER_SUFFIX = " (folder)"
+# ...and what a slash *inside a Drive item's own name* becomes. Choosing a separator
+# Frappe keeps is only half the problem: "Fountain Repair / Fill Valve" and
+# "Myers Mortuary - General Repairs 9/18/2025" are real Drive folder names here, so
+# the assembled shadow name carries slashes this module never put there. Frappe eats
+# those on insert, the repair pass below then writes the slashed name straight back
+# through frappe.db.set_value — which runs no controller — and the row ends up
+# holding a file_name Frappe itself would never store. 151 production rows did, and
+# every one of them is a landmine: File.get_full_path() throws
+# "File name cannot have /" on any row whose file_name has a path separator, and
+# Frappe reaches it from validate_duplicate_entry on *other* documents' inserts (see
+# _sync_folder_shadows). U+2215 DIVISION SLASH reads as a slash, is not one, and so
+# comes back from set_file_name unchanged.
+SHADOW_SLASH_REPLACEMENT = "∕"
 
 
 def _list_folder_children(service, folder_id, drive_id):
@@ -612,10 +625,13 @@ def _shadow_display_name(drive_file, rel_path):
 	keeping the tail (the real file name is more useful than the leading path).
 	Must come back from Frappe's own ``set_file_name`` unchanged: the walk
 	compares the stored name against this, and a name Frappe rewrites would be
-	"repaired" again on every pass."""
+	"repaired" again on every pass — which here means written back at db level,
+	past the very validation that rewrote it. Hence ``SHADOW_SLASH_REPLACEMENT``:
+	the separator is ours to choose, but the Drive item's own name is not."""
 	name = f"{rel_path}{drive_file.get('name')}"
 	if drive_file.get("mimeType") == FOLDER_MIME:
 		name += SHADOW_FOLDER_SUFFIX
+	name = name.replace("/", SHADOW_SLASH_REPLACEMENT)
 	if len(name) > MAX_FILE_NAME_LENGTH:
 		name = "..." + name[-(MAX_FILE_NAME_LENGTH - 3):]
 	return name
@@ -694,6 +710,24 @@ def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache, i
 			"custom_drive_file_id": drive_file["id"],
 		})
 		shadow.flags.ignore_permissions = True
+		# A shadow copies no bytes, so File.generate_content_hash() returns early
+		# for it (is_remote_file) and content_hash stays NULL — on which
+		# validate_duplicate_entry happily builds the filter
+		# {"content_hash": None, "is_private": 1}. That is not a duplicate check,
+		# it is "any private file with no hash": 34,437 rows in production, of
+		# which frappe.db.get_value returns whichever is *newest* (its default
+		# order_by is "creation", and Frappe's query engine reads a direction-less
+		# order_by as DESC). Frappe then loads that unrelated row and calls
+		# exists_on_disk() on it — and if its file_name holds a path separator,
+		# get_full_path() throws and the insert dies for a reason that has nothing
+		# to do with the file being inserted. That is exactly what happened on
+		# 2026-09-18: an 11:02 shadow was written with a slashed name, became the
+		# newest hashless private File, and from 12:02 every shadow insert threw
+		# — self-sealing, because the poisoned row could only stop being the
+		# newest if an insert succeeded. Duplicate detection means nothing for a
+		# link-only row, so don't run it: the walk's own custom_drive_file_id
+		# check above is what keeps shadows unique.
+		shadow.flags.ignore_duplicate_entry_error = True
 		shadow.insert(ignore_permissions=True)
 		shadow.db_set("attached_to_doctype", doctype, update_modified=False)
 		shadow.db_set("attached_to_name", docname, update_modified=False)
