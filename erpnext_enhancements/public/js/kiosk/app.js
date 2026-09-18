@@ -197,7 +197,7 @@
           h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Activity' }), h('div', { class: 'tk-chips', id: 'tk-activity', role: 'group', 'aria-label': 'Activity type' })]),
           h('div', { class: 'tk-field' }, [h('label', { text: 'Note (optional)', for: 'tk-note' }), h('textarea', { id: 'tk-note', rows: '2', placeholder: 'What are you working on?' })]),
           h('button', { type: 'button', class: 'tk-btn tk-btn-go tk-btn-lg', id: 'tk-clock-in', text: 'Clock In' }),
-          h('button', { type: 'button', class: 'tk-btn tk-btn-link', id: 'tk-forgot-clock-in', text: 'I forgot to clock in' }),
+          h('button', { type: 'button', class: 'tk-btn tk-btn-link', id: 'tk-forgot-clock-in', text: 'Add missed time' }),
         ]),
       ]),
       h('div', { class: 'tk-card', id: 'tk-visits', hidden: true }, [
@@ -1087,55 +1087,77 @@
       }});
     };
 
+    // Default the start to a round quarter-hour that is genuinely in the PAST.
+    // Flooring `now` to 15 minutes is not that: at :45 it returns :45, so the
+    // sheet opens pre-filled with the current minute and "I forgot to clock in"
+    // silently records "I clocked in just now". Step back one quarter first.
     var now = new Date();
-    var m = Math.floor(now.getMinutes() / 15) * 15;
-    now.setMinutes(m);
-    var dTime = ("0" + now.getHours()).slice(-2) + ":" + ("0" + now.getMinutes()).slice(-2);
+    now.setSeconds(0, 0);
+    now.setMinutes(Math.floor(now.getMinutes() / 15) * 15 - 15);
 
-    var timeInput = h('input', { type: 'time', class: 'tk-input', value: dTime, required: true });
-    var reasonInput = h('textarea', { class: 'tk-input', rows: '2', placeholder: 'Why are you backdating this start?', required: true });
+    var startInput = h('input', { type: 'time', class: 'tk-input', value: hhmm(now), required: true });
+    var endInput = h('input', { type: 'time', class: 'tk-input' });
+    var reasonInput = h('textarea', { class: 'tk-input', rows: '2', placeholder: 'Why are you entering this by hand?', required: true });
+    var err = h('p', { class: 'tk-error', hidden: true });
 
     var handle = UI.sheet.open({
-      title: 'I forgot to clock in',
+      title: 'Add missed time',
       body: h('div', { class: 'tk-stack' }, [
         h('div', { class: 'tk-field' }, [h('label', { text: 'Project' }), pickBtn]),
-        h('div', { class: 'tk-field' }, [h('label', { text: 'Start time (today)' }), timeInput]),
+        h('div', { class: 'tk-field' }, [h('label', { text: 'Started at' }), startInput]),
+        h('div', { class: 'tk-field' }, [
+          h('label', { text: 'Finished at' }),
+          endInput,
+          h('small', { class: 'tk-hint', text: 'Leave blank if you are still on this job — it will clock you in from the start time.' }),
+        ]),
         h('div', { class: 'tk-field' }, [h('label', { text: 'Reason' }), reasonInput]),
+        err,
       ]),
       actions: [
-        { label: 'Start backdated job', kind: 'primary', onClick: function () {
+        { label: 'Add time', kind: 'primary', onClick: function (hnd, btn) {
           if (!p) { toast('Choose a project.', 'orange'); return false; }
-          var timeVal = timeInput.value;
-          if (!timeVal) { timeInput.focus(); return false; }
+          if (!startInput.value) { startInput.focus(); return false; }
           var reasonVal = reasonInput.value.trim();
           if (!reasonVal) { reasonInput.focus(); toast('A reason is required.', 'orange'); return false; }
 
-          var tdy = new Date();
-          var y = tdy.getFullYear();
-          var mo = ("0" + (tdy.getMonth() + 1)).slice(-2);
-          var d = ("0" + tdy.getDate()).slice(-2);
-          var dtStr = y + "-" + mo + "-" + d + " " + (timeVal.length === 5 ? timeVal + ":00" : timeVal);
-
-          setLoading(true, 'Clocking in…');
-          api(API + 'start_backdated', {
+          btn.disabled = true;
+          err.hidden = true;
+          setLoading(true, endInput.value ? 'Adding time…' : 'Clocking in…');
+          api(API + 'add_manual_interval', {
             project: p.value,
-            start_time: dtStr,
+            start_time: todayAt(startInput.value),
+            end_time: endInput.value ? todayAt(endInput.value) : null,
             reason: reasonVal,
             task: task ? task.value : null,
             time_category: app.draft.activity || null,
             description: el.note ? el.note.value : null
           }).then(function (r) {
             handle.close('action');
-            toast('Backdated start logged.', 'green');
+            toast((r && r.message) || 'Time added.', 'green');
             return fetchStatus();
           }).catch(function (e) {
             setLoading(false);
-            toast(humanError(e), 'red');
+            btn.disabled = false;
+            // The server is the authority on overlaps and locked days, and its
+            // message names the job it collided with. Show it, do not summarise it.
+            err.hidden = false;
+            err.textContent = humanError(e);
           });
           return false;
         } }
       ]
     });
+  }
+
+  function hhmm(d) {
+    return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+  }
+
+  // "HH:MM" from an <input type="time"> -> a Frappe datetime on today's date.
+  function todayAt(timeVal) {
+    var d = new Date();
+    return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2)
+      + " " + (timeVal.length === 5 ? timeVal + ":00" : timeVal);
   }
 
   function clockIn() {

@@ -254,9 +254,44 @@ Labor Cost), whose first row says it is not part of the submission. It is built 
 download is still gated on `_may_export` (System Manager / HR Manager / Accounts Manager),
 which is also the set that can read pay.
 
+## Editing time (v1.487.0)
+
+There are two routes to a wrong day, and which one you get depends on whether the day is
+still the employee's own.
+
+**Direct, from the kiosk, until the day is submitted.** `api.time_kiosk.add_manual_interval`
+adds time that was never clocked and `update_interval_times` moves an existing interval's
+start and/or end. Both write immediately — no reviewer — because the accountant's submit is
+already the gate the business chose: a day is editable until it is accepted, and locked
+afterwards unless it is reopened as a draft. Your own intervals need no role; writing time
+for **another** employee needs `approval.APPROVER_ROLES` (`_assert_may_edit_time_for`), which
+is deliberately not `TIMELINE_MANAGER_ROLES` — reusing that set would mean letting a
+supervisor fix a timesheet also hands them everyone's GPS trail.
+
+`add_manual_interval` has two shapes and the difference is load-bearing. **With** an
+`end_time` it is a finished block, and can land on any unlocked day. **Without** one it is an
+open session that began earlier *today* — and an interval with no end is still running, so
+`overlap.py` (correctly) treats it as extending forever. That is why backdating an open start
+onto a day that already holds later work is refused: both facts cannot be true. The answer is
+not to weaken the overlap rule but to enter what actually happened, a block with both ends.
+`start_backdated` is a thin delegate for the open shape, kept because the name is dialled
+elsewhere.
+
+Neither endpoint re-implements the overlap check or the submitted-day lock.
+`JobInterval.validate` runs both on **every** save, so the kiosk, the sweeper, a correction
+and the desk all get the same answer — a second copy here would be a second answer that can
+drift. A manual entry is never anchored (no coordinates: nobody was standing there with a
+phone), is stamped `manual_start` with its reason, resolves the photo gate through the
+non-prompting `photo_gate.resolve`, and is **not** scored for tracking health — there is no
+trail to score, and stamping one would file it beside the intervals whose tracking genuinely
+failed. `update_interval_times` keeps `original_start_time` / `original_end_time` through the
+same `corrections._record_originals` the reviewer path uses, writes the operator's words to
+`time_edit_reason`, and raises `manual_start` only when the *start* moved.
+
 ## Corrections (v1.480.0)
 
-Nobody edits a Job Interval by hand. A technician files a `Time Correction Request` from the
+**Reviewed, and the route once a day is locked or the change is somebody else's call.** A
+technician files a `Time Correction Request` from the
 kiosk's My Day view (`Adjust Times`, `Change Project`, `Missed Clock-Out`, or `Missed Entry`
 for a session that never existed; the controller enforces which proposals each needs and
 that the interval is theirs), the supervisor is emailed, and a reviewer decides on the desk

@@ -26,6 +26,62 @@ def _args(node):
 def _segment(source, node):
     return ast.get_source_segment(source, node) or ""
 
+def _code_only(source, node):
+    """``_segment`` with the docstring and every ``#`` comment removed.
+
+    An absence assertion cannot be written against raw source: the comment that
+    explains why something is absent has to name the thing, so `assertNotIn` fires
+    on the documentation rather than on a regression. That is not hypothetical —
+    it broke three of the tests below the moment the invariants were written down
+    next to the code that relies on them.
+    """
+    lines = source.splitlines()[node.lineno - 1 : node.end_lineno]
+
+    # Blank the docstring by LINE RANGE, not by text. `ast.get_docstring` returns
+    # the cleandoc'd string — dedented, leading/trailing whitespace gone — so a
+    # `.replace()` of it against the raw indented source matches nothing at all
+    # and silently leaves the docstring in. That failure looks exactly like a
+    # regression in the code being tested.
+    first = node.body[0] if node.body else None
+    if (
+        isinstance(first, ast.Expr)
+        and isinstance(first.value, ast.Constant)
+        and isinstance(first.value.value, str)
+    ):
+        for i in range(first.lineno - node.lineno, first.end_lineno - node.lineno + 1):
+            lines[i] = ""
+
+    return "\n".join(line.split("#", 1)[0] for line in lines)
+
+class TestTheStripperActuallyStrips(unittest.TestCase):
+    """A helper that silently fails to strip turns every absence assertion below
+    into a test of the documentation. The first version of `_code_only` did exactly
+    that — `ast.get_docstring` returns cleandoc'd text that never matches the raw
+    indented source — and the absence tests went on passing for the wrong reason
+    right up until a docstring happened to name the token."""
+
+    SAMPLE = (
+        "def f():\n"
+        '    """A docstring naming overlap and assert_not_locked."""\n'
+        "    x = 1  # a comment naming overlap\n"
+        "    return x\n"
+    )
+
+    def setUp(self):
+        tree = ast.parse(self.SAMPLE)
+        self.out = _code_only(self.SAMPLE, tree.body[0])
+
+    def test_the_docstring_is_gone(self):
+        self.assertNotIn("A docstring naming", self.out)
+
+    def test_the_comment_is_gone(self):
+        self.assertNotIn("a comment naming", self.out)
+
+    def test_the_code_survives(self):
+        self.assertIn("x = 1", self.out)
+        self.assertIn("return x", self.out)
+
+
 class TestTimeEditingAPI(unittest.TestCase):
     def test_start_backdated_signature(self):
         """1. start_backdated takes NO employee parameter."""
@@ -35,13 +91,66 @@ class TestTimeEditingAPI(unittest.TestCase):
         self.assertNotIn("employee", _args(fn))
 
     def test_start_backdated_unanchored_and_manual(self):
-        """2. start_backdated passes None for lat/lng/accuracy and sets manual_start."""
-        fn = _functions(TREE).get("start_backdated")
+        """2. A manual entry carries no coordinates and is flagged manual_start.
+
+        The build moved into `add_manual_interval`, which `start_backdated` now
+        delegates to — so the invariant is asserted where the doc is actually
+        constructed. It is the same rule the Triton clock-in tool obeys from the
+        other side: a coordinate nobody's phone produced is not evidence of
+        anything, so an unanchored entry records none at all.
+        """
+        fn = _functions(TREE).get("add_manual_interval")
+        self.assertIsNotNone(fn, "add_manual_interval missing")
         body = _segment(SOURCE, fn)
         self.assertIn("lat=None", body)
         self.assertIn("lng=None", body)
         self.assertIn("accuracy=None", body)
         self.assertIn("manual_start", body)
+
+    def test_start_backdated_still_exists_and_delegates(self):
+        """The kiosk dials `start_backdated` by name, and `tests/test_kiosk_frontend.py`
+        checks every dialled method is whitelisted. Folding it into the general
+        endpoint must not remove it."""
+        fn = _functions(TREE).get("start_backdated")
+        self.assertIsNotNone(fn)
+        body = _code_only(SOURCE, fn)
+        self.assertIn("add_manual_interval(", body)
+        self.assertIn("end_time=None", body)
+
+    def test_start_backdated_takes_no_employee_but_the_general_one_does(self):
+        """Opening a job on someone else's behalf is what the geofence exists to
+        prove, so the live path stays self-only. A *finished* block is a different
+        act — there was never a device there to anchor — so a supervisor may enter
+        one, gated by `_assert_may_edit_time_for`."""
+        self.assertNotIn("employee", _args(_functions(TREE)["start_backdated"]))
+        self.assertIn("employee", _args(_functions(TREE)["add_manual_interval"]))
+
+    def test_an_open_manual_entry_is_today_only_and_a_block_is_not(self):
+        """The distinction the whole endpoint turns on. An interval with no end is
+        still running, so it overlaps everything after its start — backdating an
+        open start onto a day that already has later work is refused, and must be.
+        A block with both ends is the thing that can be added to any open day."""
+        body = _code_only(SOURCE, _functions(TREE)["add_manual_interval"])
+        self.assertIn("end_dt is None", body)
+        self.assertIn("start_dt.date() != now_dt.date()", body)
+        # ... and the future is refused on both ends, whichever shape it is.
+        self.assertIn("Start time cannot be in the future", body)
+        self.assertIn("End time cannot be in the future", body)
+        self.assertIn("End time must be after the start time", body)
+
+    def test_a_completed_block_resolves_the_photo_gate(self):
+        """A Completed row with the gate left at Required reads as a technician who
+        walked away from the prompt. `resolve` never throws and never returns
+        Required — it is the verdict for a closer with nobody to ask."""
+        body = _code_only(SOURCE, _functions(TREE)["add_manual_interval"])
+        self.assertIn("photo_gate.stamp(", body)
+        self.assertIn("photo_gate.resolve(", body)
+
+    def test_a_manual_block_is_not_scored_for_tracking_health(self):
+        """It has no GPS trail to score. Stamping one would file it next to the
+        intervals whose tracking genuinely failed."""
+        body = _code_only(SOURCE, _functions(TREE)["add_manual_interval"])
+        self.assertNotIn("_stamp_tracking_health", body)
 
     def test_update_interval_times_allowlist(self):
         """3. update_interval_times writes ONLY the allowlisted fields."""
@@ -55,11 +164,45 @@ class TestTimeEditingAPI(unittest.TestCase):
         # Assuming manual_start reason is also being set
 
     def test_update_interval_times_checks_roles(self):
-        """4. update_interval_times checks TIMELINE_MANAGER_ROLES."""
-        fn = _functions(TREE).get("update_interval_times")
-        body = _segment(SOURCE, fn)
-        self.assertIn("TIMELINE_MANAGER_ROLES", body)
+        """4. Both writing endpoints go through one permission gate."""
+        for fname in ("update_interval_times", "add_manual_interval"):
+            with self.subTest(func=fname):
+                body = _code_only(SOURCE, _functions(TREE)[fname])
+                self.assertIn("_assert_may_edit_time_for", body)
+
+    def test_editing_someone_elses_time_is_not_gated_on_the_timeline_roles(self):
+        """`TIMELINE_MANAGER_ROLES` is pinned to the Location Timeline page's roles
+        by `test_location_timeline_page.py`. Reusing it as the time-editing gate
+        would mean that giving a supervisor the right to fix a timesheet also hands
+        them everyone's GPS trail — two different powers behind one switch. It is
+        also the narrower set: it predates Operations Manager and Production
+        Manager, the roles the supervisors actually hold.
+        """
+        gate = _functions(TREE).get("_assert_may_edit_time_for")
+        self.assertIsNotNone(gate, "_assert_may_edit_time_for missing")
+        body = _code_only(SOURCE, gate)
+        self.assertIn("APPROVER_ROLES", body)
+        self.assertNotIn("TIMELINE_MANAGER_ROLES", body)
         self.assertIn("PermissionError", body)
+
+    def test_an_edit_keeps_what_the_kiosk_recorded(self):
+        """`original_start_time` / `original_end_time` are the only way to tell a
+        hand-edited day from what actually happened. The reviewer-approved path
+        already records them; a self-service edit that skipped it would leave the
+        two paths disagreeing about the same field."""
+        body = _code_only(SOURCE, _functions(TREE)["update_interval_times"])
+        self.assertIn("_record_originals", body)
+        self.assertIn("corrected = 1", body)
+        self.assertIn("time_edit_reason", body)
+
+    def test_manual_start_is_raised_only_when_the_start_actually_moved(self):
+        """The badge means "this start was typed in". Fixing a forgotten clock-out
+        does not make the start any less real, and flagging it would train everyone
+        to ignore the badge."""
+        body = _code_only(SOURCE, _functions(TREE)["update_interval_times"])
+        self.assertIn("start_moved", body)
+        idx = body.index("start_moved")
+        self.assertIn("manual_start = 1", body[idx:])
 
     def test_approve_and_reopen_call_assert_approver_first(self):
         """5. approve_day / reopen_day call assert_approver BEFORE they submit or cancel anything."""
@@ -100,15 +243,22 @@ class TestTimeEditingAPI(unittest.TestCase):
                 self.assertIn(f.get("default"), (None, ""), "must not carry a default (Single rule)")
 
     def test_no_duplicate_overlap_or_lock_check(self):
-        """9. Neither endpoint re-implements the overlap or lock check."""
-        fn_start = _functions(TREE).get("start_backdated")
-        fn_update = _functions(TREE).get("update_interval_times")
-        body_start = _segment(SOURCE, fn_start)
-        body_update = _segment(SOURCE, fn_update)
-        self.assertNotIn("overlap", body_start.lower())
-        self.assertNotIn("overlap", body_update.lower())
-        self.assertNotIn("assert_not_locked", body_start)
-        self.assertNotIn("assert_not_locked", body_update)
+        """9. No endpoint re-implements the overlap or lock check.
+
+        `JobInterval.validate` runs both on every save, so every path that writes an
+        interval — kiosk, correction, sweeper, desk — gets them. A second copy here
+        is not defence in depth; it is a second answer that can drift from the first,
+        and the one users hit would be whichever ran earlier.
+
+        Read through `_code_only`: the comments and docstrings explaining exactly
+        this invariant have to name `overlap`, and an assertion against raw source
+        fires on the explanation.
+        """
+        for fname in ("start_backdated", "update_interval_times", "add_manual_interval"):
+            with self.subTest(func=fname):
+                body = _code_only(SOURCE, _functions(TREE)[fname])
+                self.assertNotIn("overlap", body.lower())
+                self.assertNotIn("assert_not_locked", body)
 
 
 class TestTheApproverGateIsTheOnlyGate(unittest.TestCase):

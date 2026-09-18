@@ -458,6 +458,9 @@ body {
 }
 .tk-note { color: var(--tk-text-2); font-size: 0.85rem; margin: 0; }
 .tk-error { color: var(--tk-red); font-size: 0.9rem; margin: 0; }
+/* Explanatory text under a field. --tk-text-2 is already defined in all three
+   theme blocks, so this adds no colour of its own to keep in step. */
+.tk-hint { color: var(--tk-text-2); font-size: 0.82rem; line-height: 1.35; display: block; margin-top: 0.3rem; }
 
 /* Key / value list (shift summary, diagnostics) */
 .tk-kv { display: flex; flex-direction: column; margin: 0; }

@@ -1430,7 +1430,8 @@ def get_my_day(date=None):
         filters={"employee": employee, "start_time": ["between", [start_of_day, end_of_day]]},
         fields=["name", "project", "task", "time_category", "start_time", "end_time", "status",
                 "total_paused_seconds", "last_pause_time", "tracking_health", "tracking_coverage_pct",
-                "offsite_start", "auto_closed", "corrected", "planned_break_minutes", "manual_start"],
+                "offsite_start", "auto_closed", "corrected", "planned_break_minutes", "manual_start",
+                "manual_start_reason", "time_edit_reason"],
         order_by="start_time asc",
     )
     project_titles = _titles("Project", [r.project for r in rows], "project_name")
@@ -1463,6 +1464,8 @@ def get_my_day(date=None):
             "offsite_start": cint(r.offsite_start),
             "auto_closed": cint(r.auto_closed),
             "manual_start": cint(r.manual_start),
+            "manual_start_reason": r.manual_start_reason,
+            "time_edit_reason": r.time_edit_reason,
             "locked": bool(timesheet_lock.submitted_timesheet_for(r.name)),
             "editable": not bool(timesheet_lock.submitted_timesheet_for(r.name)) and r.status in ("Open", "Paused", "Completed"),
             "corrected": cint(r.corrected),
@@ -2402,86 +2405,228 @@ def purge_old_location_logs():
     frappe.db.commit()
 
 
-@frappe.whitelist()
-def start_backdated(project=None, start_time=None, reason=None, task=None, time_category=None, description=None):
+def _assert_may_edit_time_for(employee):
+    """The caller may write time for ``employee``.
+
+    Deliberately NOT ``TIMELINE_MANAGER_ROLES``: that set is pinned to the
+    Location Timeline page's roles (``tests/test_location_timeline_page.py``), so
+    widening it to let a supervisor fix a timesheet would also hand them everyone's
+    GPS trail. Editing hours and watching people move are different powers and get
+    different gates. ``APPROVER_ROLES`` is the right one — whoever may *submit* a
+    day may correct it on the way there, and it is the set that actually names the
+    supervisors (Operations Manager, Production Manager) rather than three roles
+    that predate them.
+    """
+    from erpnext_enhancements.workforce.approval import APPROVER_ROLES
+
     user = frappe.session.user
-    employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
-    if not employee:
-        frappe.throw(_("No Employee record found for this user."), frappe.PermissionError)
+    own = frappe.db.get_value("Employee", {"user_id": user}, "name")
+    if employee == own or user == "Administrator":
+        return own
+    if set(APPROVER_ROLES).intersection(frappe.get_roles(user)):
+        return own
+    frappe.throw(_("Not permitted to edit time for this employee."), frappe.PermissionError)
+
+
+@frappe.whitelist()
+def add_manual_interval(project=None, start_time=None, end_time=None, reason=None,
+                        task=None, time_category=None, description=None, employee=None):
+    """Enter time by hand: a whole finished block, or an open session that started
+    earlier than now.
+
+    ``end_time`` is what separates the two, and the difference matters more than it
+    looks. **An interval with no end is still running, so it overlaps everything
+    after its start** (``workforce/overlap.py`` treats a NULL end as extending
+    forever — which is correct, and is why it is checked that way). Backdating an
+    *open* start to 08:00 on a day that already has a 12:49-14:47 job is therefore
+    refused, and must be: those two facts cannot both be true. That refusal is what
+    "I forgot to clock in" hit, and the answer is not to weaken the overlap rule —
+    it is to enter the thing that actually happened, a block with both ends.
+
+    So: no ``end_time`` means "I am on this job right now and started earlier",
+    which is today-only and needs no other session open. With an ``end_time`` it is
+    a completed block on any day that is not locked, and the employee's current
+    session is irrelevant to it.
+
+    Never anchored: a manual entry carries no coordinates, because there was nobody
+    standing there with a phone when it happened. ``_new_interval`` resolves the
+    site and geofence radius anyway, so the row still says *where the job is* — it
+    just records no verdict about where the person was. Both are stamped
+    ``manual_start`` with the reason, which is what an approver sees before they
+    submit the day.
+
+    Overlap and the submitted-day lock are enforced by ``JobInterval.validate`` on
+    the insert below, not here — one implementation, on every path that writes.
+    """
+    caller_employee = _assert_may_edit_time_for(employee) if employee else _require_session_employee()
+    on_behalf = bool(employee) and employee != caller_employee
+    employee = employee or caller_employee
 
     if not project:
         frappe.throw(_("Project is required."))
     if not start_time:
         frappe.throw(_("Start time is required."))
-    if not reason or not reason.strip():
+    if not reason or not str(reason).strip():
         frappe.throw(_("Reason is required."))
 
     start_dt = get_datetime(start_time)
+    end_dt = get_datetime(end_time) if end_time else None
     now_dt = now_datetime()
-    
-    if start_dt.date() != now_dt.date():
-        frappe.throw(_("Backdating is only allowed for today's date."))
-    if start_dt >= now_dt:
-        frappe.throw(_("Start time must be strictly before now."))
 
-    resolved_time_category = time_category or frappe.db.get_single_value("Time Kiosk Settings", "default_time_category")
+    if start_dt > now_dt:
+        frappe.throw(_("Start time cannot be in the future."))
+
+    if end_dt is None:
+        # ON-BEHALF IS CLOCK-OUT ONLY, and this is where that rule has to hold.
+        # A *finished* block entered for someone else is a historical record: it
+        # claims nothing about where anybody is, and a supervisor fixing last
+        # Tuesday is the whole point of the feature. An interval left **Open** is
+        # the opposite — it says this person is on the clock right now, which is
+        # precisely what the geofence exists to prove and what a supervisor's
+        # phone cannot. So the shape is refused, not the caller.
+        if on_behalf:
+            frappe.throw(_("You cannot start an open session for someone else. "
+                           "Enter the time as a finished block with an end time, or ask them "
+                           "to clock in from their own device."))
+        # An open session: today only, and only when nothing else is running.
+        if start_dt.date() != now_dt.date():
+            frappe.throw(_("An open session can only be started for today. "
+                           "To add time for another day, enter an end time as well."))
+        if start_dt >= now_dt:
+            frappe.throw(_("Start time must be strictly before now."))
+        frappe.db.get_value("Employee", employee, "name", for_update=True)
+        existing = frappe.db.get_value(
+            "Job Interval",
+            {"employee": employee, "status": ["in", ["Open", "Paused"]]},
+            "name",
+            for_update=True,
+        )
+        if existing:
+            frappe.throw(_("There is already an active job interval ({0}). Stop or switch it first, "
+                           "or add this time as a finished block with an end time.").format(existing))
+    else:
+        if end_dt <= start_dt:
+            frappe.throw(_("End time must be after the start time."))
+        if end_dt > now_dt:
+            frappe.throw(_("End time cannot be in the future."))
+
+    resolved_time_category = time_category or frappe.db.get_single_value(
+        "Time Kiosk Settings", "default_time_category"
+    )
     if not resolved_time_category:
         frappe.throw(_("Activity type is required. Please pick one."))
-
-    # lock and check existing
-    frappe.db.get_value("Employee", employee, "name", for_update=True)
-    existing = frappe.db.get_value(
-        "Job Interval",
-        {"employee": employee, "status": ["in", ["Open", "Paused"]]},
-        "name",
-        for_update=True,
-    )
-    if existing:
-        frappe.throw(_("You already have an active job interval. Please stop or switch it first."))
 
     doc = _new_interval(employee, project, task, resolved_time_category, description, start_dt,
                         lat=None, lng=None, accuracy=None, offsite_acknowledged=0)
     doc.manual_start = 1
-    doc.manual_start_reason = reason.strip()
+    doc.manual_start_reason = str(reason).strip()
+    doc.opened_via = "Manual"
+
+    if end_dt is not None:
+        doc.end_time = end_dt
+        doc.status = "Completed"
+        doc.closed_via = "Manual"
+        doc.unanchored_close = 1
+        # A block entered after the fact has no photos, so resolve the gate now
+        # rather than leaving a Completed row reading as if the technician walked
+        # away from an open prompt. ``resolve`` never throws and never returns
+        # Required, which is exactly what a closer with nobody to ask needs.
+        photo_gate.stamp(doc, photo_gate.resolve(doc), skip_reason=_("Manual time entry"))
+        # Tracking health is deliberately NOT stamped. It scores a GPS trail, and
+        # a manual block has none — scoring the absence would file it next to the
+        # intervals whose tracking actually failed, and the manual_start badge
+        # already says there is no evidence here.
+
     doc.insert(ignore_permissions=True)
-    
-    return {"status": "success", "message": "Backdated work started.", "doc": doc.name}
+    resync_interval_timesheet(doc)
+
+    return {
+        "status": "success",
+        "message": _("Time added.") if end_dt is not None else _("Backdated work started."),
+        "doc": doc.name,
+    }
+
+
+@frappe.whitelist()
+def start_backdated(project=None, start_time=None, reason=None, task=None, time_category=None, description=None):
+    """"I forgot to clock in" — an open session that began earlier today.
+
+    A thin call through to :func:`add_manual_interval` with no ``end_time``. Kept
+    as its own endpoint because the kiosk dials it by name and its meaning is
+    narrower: the caller's own session, today, still running. It takes no
+    ``employee`` for the same reason ``workforce_clock_in`` does not — opening a
+    job on someone else's behalf is exactly what the geofence exists to prove.
+    """
+    return add_manual_interval(
+        project=project,
+        start_time=start_time,
+        end_time=None,
+        reason=reason,
+        task=task,
+        time_category=time_category,
+        description=description,
+    )
+
 
 @frappe.whitelist()
 def update_interval_times(interval=None, start_time=None, end_time=None, reason=None):
+    """Move an existing interval's start and/or end.
+
+    Writes exactly the two time fields plus the audit block, and nothing else —
+    ``ALLOWED_UPDATE_FIELDS`` is the list, and it is short on purpose: this
+    endpoint is reachable by anyone with a kiosk.
+
+    The original times are kept the first time an interval is touched, through the
+    same ``corrections._record_originals`` the reviewer-approved path uses, so a
+    day that has been hand-edited can still be compared with what the kiosk
+    actually recorded. ``manual_start`` is raised only when the *start* moved:
+    the badge means "this start was typed in", and correcting a forgotten
+    clock-out does not make the start any less real.
+
+    Overlap and the submitted-day lock are enforced by ``JobInterval.validate`` on
+    the save below. Neither is re-implemented here.
+    """
+    from erpnext_enhancements.workforce.corrections import _record_originals
+
     if not interval:
         frappe.throw(_("Interval is required."))
-    if not reason or not reason.strip():
+    if not reason or not str(reason).strip():
         frappe.throw(_("Reason is required."))
 
     doc = frappe.get_doc("Job Interval", interval)
-    
-    # Permission check
-    user = frappe.session.user
-    employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
-    user_roles = frappe.get_roles(user)
-    
-    is_manager = bool(set(TIMELINE_MANAGER_ROLES).intersection(user_roles))
-    if doc.employee != employee and not is_manager and user != "Administrator":
-        frappe.throw(_("Not permitted to edit this interval."), frappe.PermissionError)
+    _assert_may_edit_time_for(doc.employee)
 
-    # Hard field allowlist
-    if start_time:
-        doc.start_time = get_datetime(start_time)
+    new_start = get_datetime(start_time) if start_time else None
+    new_end = get_datetime(end_time) if end_time else None
+    if new_start is None and new_end is None:
+        frappe.throw(_("Give a new start time, an end time, or both."))
+
+    now_dt = now_datetime()
+    effective_start = new_start or doc.start_time
+    effective_end = new_end if end_time else doc.end_time
+    if effective_start and effective_start > now_dt:
+        frappe.throw(_("Start time cannot be in the future."))
+    if effective_end and effective_end > now_dt:
+        frappe.throw(_("End time cannot be in the future."))
+
+    start_moved = bool(new_start and new_start != doc.start_time)
+
+    _record_originals(doc)
+    doc.corrected = 1
+    doc.time_edit_reason = str(reason).strip()
+    if new_start:
+        doc.start_time = new_start
     if end_time:
-        doc.end_time = get_datetime(end_time)
-    
-    # Check if manual_start_reason or similar exists. job_interval.json has manual_start_reason.
-    # What about edit reason? Let's write it to a comment if there's no edit field, or time_correction_reason if it exists.
-    # We will just write it to manual_start_reason for now, or append to it. 
-    # Let's check Job Interval fields via getattr. 
-    doc.db_set("manual_start", 1)
-    doc.db_set("manual_start_reason", reason.strip())
+        doc.end_time = new_end
+    if start_moved:
+        doc.manual_start = 1
+        if not (doc.manual_start_reason or "").strip():
+            doc.manual_start_reason = str(reason).strip()
 
     doc.save(ignore_permissions=True)
     resync_interval_timesheet(doc)
-    
-    return {"status": "success"}
+
+    return {"status": "success", "message": _("Times updated."), "doc": doc.name}
 
 @frappe.whitelist()
 def approve_day(employee=None, date=None):
