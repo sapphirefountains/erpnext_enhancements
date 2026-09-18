@@ -226,3 +226,48 @@ class TestTheInlineScriptRunsFirst(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPortalledSheetsKeepTheKioskPalette(unittest.TestCase):
+    """A bottom sheet's TITLE rendered near-black on the dark sheet (v1.483.3).
+
+    Every typography rule in kiosk.css is scoped to `.kiosk-shell` — and
+    `.kiosk-shell` sits on `#kiosk-root`, a div, not on `<body>`. `ui.js` appends the
+    sheet host to `document.body` so a sheet can escape the app's stacking and
+    overflow, which also puts it OUTSIDE `.kiosk-shell`. The sheet's `<h2>` therefore
+    kept frappe's global website heading colour, which is dark.
+
+    The giveaway was that only the title was wrong: `.tk-sheet` sets `color`, so the
+    body text inherited correctly, while an `<h2>` carries its own colour declaration
+    and inheritance never reaches it.
+
+    The fix is to give the host the `kiosk-shell` class rather than duplicating the
+    rules, which also brings the shell's `[hidden]` and `:focus-visible` rules to
+    sheets — behaviour they already assumed.
+    """
+
+    UI_JS = APP / "public" / "js" / "kiosk" / "ui.js"
+
+    def test_the_sheet_host_carries_the_shell_class(self):
+        body = strip_comments(self.UI_JS.read_text(encoding="utf-8"))
+        host = re.search(r"class:\s*'tk-sheet-host[^']*'", body)
+        self.assertIsNotNone(host, "the sheet host element could not be found")
+        self.assertIn(
+            "kiosk-shell",
+            host.group(0),
+            "a sheet appended to document.body falls outside .kiosk-shell and loses "
+            "the kiosk's heading colours",
+        )
+
+    def test_the_heading_rule_is_still_scoped_to_the_shell(self):
+        """If this ever stops being shell-scoped the fix above is moot — but so is the
+        bug, so the test says which world it is in rather than failing silently."""
+        text = css()
+        self.assertIn(".kiosk-shell h2", text)
+
+    def test_the_sheet_sets_its_own_text_colour(self):
+        """What kept the sheet BODY readable while its title was not."""
+        text = css()
+        block = text[text.index(".tk-sheet {"):]
+        block = block[: block.index("}")]
+        self.assertIn("color: var(--tk-text)", block)

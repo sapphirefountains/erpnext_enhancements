@@ -201,7 +201,19 @@
   function sheetHost() {
     var host = document.getElementById('tk-sheets');
     if (!host) {
-      host = h('div', { class: 'tk-sheet-host', id: 'tk-sheets' });
+      // `kiosk-shell` matters here and is not decoration. The host is appended to
+      // document.body rather than inside #kiosk-root (a sheet must escape the app's
+      // stacking and overflow), which puts it OUTSIDE `.kiosk-shell` — and every
+      // typography rule in kiosk.css is scoped `.kiosk-shell h1, .kiosk-shell h2, …`.
+      // So a sheet's <h2> kept frappe's global website heading colour, which is dark,
+      // on a dark sheet: unreadable. The sheet BODY looked fine throughout, because
+      // `.tk-sheet` sets `color` and the body text merely inherits it — an <h2> carries
+      // its own colour declaration, and that beats inheritance.
+      //
+      // Carrying the class instead of duplicating the rules also brings the shell's
+      // `[hidden] { display: none !important }` and `:focus-visible` rules to sheets,
+      // which is what they always assumed.
+      host = h('div', { class: 'tk-sheet-host kiosk-shell', id: 'tk-sheets' });
       document.body.appendChild(host);
     }
     return host;

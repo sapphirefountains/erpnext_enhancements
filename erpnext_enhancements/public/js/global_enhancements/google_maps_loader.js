@@ -182,12 +182,29 @@
 				});
 			});
 		},
+		// A Map ID does NOT make a map dark. It is only an identifier: creating one in
+		// the Cloud Console and stopping there gives you a default-styled map, which is
+		// exactly what "I set the Map IDs and nothing changed" looks like. Going dark
+		// that way means additionally authoring a cloud map *style* and associating it
+		// with the ID — a per-ID piece of console work that has to be redone for every
+		// environment and can silently drift from the app's own palette.
+		//
+		// `colorScheme` is the answer to that: a built-in dark basemap, no style to
+		// author, available on v=weekly (which the loader pins above). So when a Map ID
+		// is configured we take it — it is what unlocks AdvancedMarkerElement and vector
+		// rendering — and let `colorScheme` do the darkening.
+		//
+		// It is NOT applied on the legacy branch, because DARK_STYLES already darkens
+		// that map and the two together double-darken into mud.
+		//
+		// Both `mapId` and `colorScheme` are fixed at construction: setOptions() on a
+		// live map restyles neither, which is why every caller rebuilds on a theme flip.
 		mapOptions: function(cfg, theme) {
 			cfg = cfg || {};
 			var isDark = theme === "dark";
 			var mapId = isDark ? cfg.map_id_dark : cfg.map_id_light;
 			if (mapId) {
-				return { mapId: mapId };
+				return { mapId: mapId, colorScheme: isDark ? "DARK" : "LIGHT" };
 			}
 			return { styles: isDark ? DARK_STYLES : [] };
 		},

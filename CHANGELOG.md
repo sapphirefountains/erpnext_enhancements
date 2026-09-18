@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.483.3] - 2026-09-18
+
+### Fixed
+
+- **Setting the two Map IDs changed nothing, because a Map ID does not make a map dark.**
+  It is only an identifier. Creating one in the Cloud Console and stopping there yields a
+  default-styled map — which is exactly what "I set the Map IDs and the map is still light"
+  looks like. Darkening through a Map ID otherwise means authoring a cloud map *style* per
+  ID: console work repeated for every environment, which then drifts from the app's own
+  palette. `mapOptions()` now returns `colorScheme` alongside the `mapId` instead — a
+  built-in dark basemap with no style to author, available on the `v=weekly` channel the
+  loader already pins. It is deliberately NOT set on the legacy `styles` branch, where
+  `DARK_STYLES` already darkens the map and the two together make mud.
+
+  The theme plumbing was correct throughout: the page read `data-theme`, chose
+  `map_id_dark`, and rebuilt the map. It simply asked for an identifier that carried no
+  styling.
+
+- **The Location Timeline threw on every return visit.** `onShow()` called
+  `this.map.invalidateSize()` — Leaflet's method, on a `google.maps.Map` that has none. The
+  first visit survived only because `this.map` was still null; every visit after that raised
+  a TypeError and took the rest of `onShow` with it. Now
+  `google.maps.event.trigger(map, 'resize')`, which the map needs for the same reason
+  Leaflet did: the desk can lay this page out while it is hidden.
+
+  The v1.483.0 port asserted that no `L.map(` / `L.polyline(` survived, and passed, while
+  this sat in `onShow` the whole time — a **constructor**-shaped absence test cannot see a
+  **method** call. `tests/test_location_timeline_map.py` now checks both map files for
+  Leaflet-only methods, deliberately excluding `addTo` / `addLayer` / `clearLayers`, which
+  the port's small layer-group shim provides on purpose.
+
+- **A kiosk bottom sheet's title was near-black on the dark sheet.** Every typography rule
+  in `kiosk.css` is scoped to `.kiosk-shell`, which sits on `#kiosk-root` — a div, not
+  `<body>`. `ui.js` appends the sheet host to `document.body` so a sheet can escape the
+  app's stacking and overflow, and that puts it outside `.kiosk-shell`: the sheet's `<h2>`
+  kept frappe's global website heading colour. The tell was that *only* the title was
+  wrong — `.tk-sheet` sets `color`, so the body text inherited correctly, while an `<h2>`
+  carries its own colour declaration and inheritance never reaches it. The host now carries
+  the `kiosk-shell` class, which also brings the shell's `[hidden]` and `:focus-visible`
+  rules to sheets, behaviour they already assumed.
+
 ## [1.483.2] - 2026-09-18
 
 ### Fixed

@@ -431,7 +431,13 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         onShow() {
             const opts = frappe.route_options;
             frappe.route_options = null;
-            if (this.map) this.map.invalidateSize();
+            // `invalidateSize()` is Leaflet's; google.maps.Map has no such method, so
+            // this threw a TypeError on every RETURN visit to the page (the first visit
+            // survived only because `this.map` was still null) and took the rest of
+            // onShow with it. Google's equivalent is a resize event, which the map needs
+            // for the same reason Leaflet did: the desk can lay this page out while it is
+            // hidden, and a map sized then stays wrong until told to re-measure.
+            if (this.map) google.maps.event.trigger(this.map, 'resize');
             this.init().then(() => {
                 if (opts && (opts.employee || opts.from_date || opts.to_date)) {
                     return this.applyRouteOptions(opts);

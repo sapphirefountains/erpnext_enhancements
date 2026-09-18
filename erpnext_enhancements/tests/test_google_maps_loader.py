@@ -122,10 +122,51 @@ class TestGoogleMapsLoader(unittest.TestCase):
 		with open(loader_path, "r", encoding="utf-8") as f:
 			content = f.read()
 
-		# Simple textual check: mapId branch returns only mapId, else branch returns only styles.
-		self.assertRegex(content, r'return\s*\{\s*mapId:\s*mapId\s*\}')
-		self.assertRegex(content, r'return\s*\{\s*styles:.*\}')
-		self.assertNotIn("return { mapId: mapId, styles:", content)
+		# Assert the INVARIANT, not the literal shape. The first version of this test
+		# pinned `return { mapId: mapId }` exactly, and broke the moment `colorScheme`
+		# was legitimately added beside it -- a test that fails on a correct change is
+		# a test measuring the wrong thing.
+		mapid_branch = re.search(r"return \{ mapId:[^}]*\}", content)
+		self.assertIsNotNone(mapid_branch, "the mapId branch is missing")
+		self.assertNotIn("styles", mapid_branch.group(0))
+
+		styles_branch = re.search(r"return \{ styles:[^}]*\}", content)
+		self.assertIsNotNone(styles_branch, "the legacy styles branch is missing")
+		self.assertNotIn("mapId", styles_branch.group(0))
+
+	def test_a_map_id_map_is_darkened_by_colorScheme(self):
+		"""A Map ID does NOT make a map dark -- it is only an identifier.
+
+		Creating the two Map IDs and stopping there yields a default-styled map, which
+		is precisely what "I set the Map IDs and nothing changed" looks like. Darkening
+		via a Map ID otherwise means authoring a cloud map STYLE per ID: console work
+		repeated per environment, which drifts from the app's own palette.
+		`colorScheme` is the built-in alternative and needs no style at all.
+		"""
+		loader_path = os.path.join(self.js_dir, "global_enhancements", "google_maps_loader.js")
+		with open(loader_path, "r", encoding="utf-8") as f:
+			content = f.read()
+		branch = re.search(r"return \{ mapId:[^}]*\}", content)
+		self.assertIsNotNone(branch)
+		self.assertIn("colorScheme", branch.group(0))
+
+	def test_the_legacy_styles_branch_does_not_also_set_colorScheme(self):
+		"""DARK_STYLES already darkens that map; colorScheme on top double-darkens."""
+		loader_path = os.path.join(self.js_dir, "global_enhancements", "google_maps_loader.js")
+		with open(loader_path, "r", encoding="utf-8") as f:
+			content = f.read()
+		branch = re.search(r"return \{ styles:[^}]*\}", content)
+		self.assertIsNotNone(branch)
+		self.assertNotIn("colorScheme", branch.group(0))
+
+	def test_colorScheme_requires_the_weekly_channel(self):
+		"""colorScheme only exists on a recent release channel. The loader pins
+		v=weekly; pinning something older silently drops the option and the map
+		quietly goes light again -- the same symptom this was fixing."""
+		loader_path = os.path.join(self.js_dir, "global_enhancements", "google_maps_loader.js")
+		with open(loader_path, "r", encoding="utf-8") as f:
+			content = f.read()
+		self.assertIn('v: "weekly"', content)
 
 	def test_travel_settings_new_fields(self):
 		"""travel_settings.json must declare both new Map ID fields with NO default.
