@@ -40,6 +40,21 @@ class JobInterval(Document):
 		only way an approved correction — which moves the times — keeps the cost
 		honest is to recompute it here, on the save the correction performs.
 		"""
+		from erpnext_enhancements.workforce.timesheet_lock import assert_not_locked
+		from erpnext_enhancements.workforce.overlap import assert_no_overlap
+
+		# Refuse first. An edit to a locked interval must not have its overlap or cost recomputed on the way to being rejected.
+		assert_not_locked(self)
+
+		# Overlap is a hard block, always.
+		assert_no_overlap(self)
+
+		# If manual_start is set, require a non-blank manual_start_reason
+		if self.manual_start:
+			reason = (self.manual_start_reason or "").strip()
+			if not reason:
+				frappe.throw(_("A manual start reason is required when the interval is manually started."))
+
 		if self.status == "Open":
 			# Check if employee already has an open interval
 			existing = frappe.db.exists("Job Interval", {

@@ -55,6 +55,8 @@
   "auto_close_section",
   "auto_closed",
   "auto_close_reason",
+  "manual_start",
+  "manual_start_reason",
   "opened_via",
   "closed_via",
   "closed_requested_by",
@@ -416,6 +418,17 @@
    "fieldtype": "Small Text",
    "label": "Auto-close Reason",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "manual_start",
+   "fieldtype": "Check",
+   "label": "Manually Started"
+  },
+  {
+   "fieldname": "manual_start_reason",
+   "fieldtype": "Small Text",
+   "label": "Manual Start Reason"
   },
   {
    "fieldname": "opened_via",

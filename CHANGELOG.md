@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.484.0] - 2026-09-18
+
+### Added
+
+- **Job Interval refuses overlapping time, and refuses edits once its Timesheet is
+  submitted.** Both guards live in the controller's `validate()`, not in the kiosk
+  endpoint, because `workforce/sweeper.py` closes intervals, `workforce/corrections.py`
+  rewrites them, the Desk form edits them and new endpoints will too -- a guard in one
+  caller protects one caller.
+
+  The overlap SQL treats a NULL `end_time` as *still running* rather than as no value.
+  That is the whole difficulty: in SQL `NULL > anything` is NULL, so the obvious
+  comparison silently matches nothing and an open interval overlaps everything
+  undetected. Note the failure direction -- it does not error, it approves. Touching
+  endpoints deliberately do not overlap: clocking out at 12:00 and back in at 12:00 is
+  ordinary and legal.
+
+  New fields `manual_start` (Check, default `"0"`) and `manual_start_reason` (Small Text,
+  **no default**) carry a backdated start, and `validate` refuses a `manual_start` whose
+  reason is blank or whitespace. No default on the reason because Job Interval is a
+  *normal* doctype, where a default is written into every existing row by the `ALTER` --
+  it would stamp a reason across the entire clock-in history.
+
+### Fixed
+
+- **The kiosk map drew Null Island and then showed the whole planet.** A site arriving as
+  `0/0` passed the `== null` check -- zero is not null -- so it was drawn as a real marker
+  off the coast of Africa, and `bounds.extend` on it dragged `fitBounds` across the
+  Atlantic. The result was a world map with two pins on it. `workforce/sites.py` already
+  rejected 0,0 and so did the desk timeline's `hasCoords`; the kiosk was the one place
+  that did not, and now shares the same rule for both fixes and site markers.
+
+- **Map popups were invisible in dark mode.** Google renders the InfoWindow on *its own*
+  light surface even when the map's `colorScheme` is DARK, and our popup content inherited
+  the app's text colour -- near-white text on a white bubble. Both maps now set an explicit
+  literal colour on that content. Literal, not a theme var, and that is the point: the
+  bubble belongs to Google, so readability there beats matching the app theme. It is the
+  same call `public/js/travel/travel_trip_map.js` already makes for its label chips.
+
+- **"Needs 1 more photo" never cleared, however many photos were attached.** There are two
+  upload paths and only one fed the chip: the camera writes a `Job Interval Photo` row and
+  updates the count, while the attachment card pushed to `app.attachments` and touched
+  neither -- and the server agreed with it, since `photo_gate.py` counts only those rows.
+  So the chip was telling the truth about the *gate* and lying about the *situation*, which
+  is the worse of the two: a warning that never responds to the thing it asks for reads as
+  broken and gets ignored, which is precisely the erosion the gate's own docstring warns
+  about. An attached **image** now registers as a job photo, so it counts and the chip
+  moves -- images only, and only while clocked in, because a PDF quote is an attachment
+  rather than evidence that the job was photographed. The chip moves only after the write
+  lands, so it never advertises a requirement as met that the server would still refuse.
+
 ## [1.483.4] - 2026-09-18
 
 ### Fixed

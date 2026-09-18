@@ -619,6 +619,27 @@
     border-color: #b91c1c;
 }
 
+
+/* ---- Google InfoWindow ---------------------------------------------------
+   Google renders the InfoWindow on ITS OWN light surface, even on a map whose
+   colorScheme is DARK. Our popup content inherits the page's text colour, which
+   in dark mode is near-white -- so the bubble came up white with near-invisible
+   text on it.
+
+   Literal colours here on purpose, not theme vars: this content sits on
+   Google's surface rather than ours, so readability there beats matching the
+   app theme. That is the same call public/js/travel/travel_trip_map.js makes
+   for its label chips, and for the same reason.
+
+   The wrapper class is applied in JS where the InfoWindow content is built; the
+   .gm-style-iw selectors cover Google's own chrome around it (the close button
+   and the padding container), which otherwise keeps inheriting too. */
+.lt-popup,
+.lt-map .gm-style-iw,
+.lt-map .gm-style-iw-d {
+    color: #202124;
+}
+
 .lt-popup {
     font-size: 12px;
     line-height: 1.45;
