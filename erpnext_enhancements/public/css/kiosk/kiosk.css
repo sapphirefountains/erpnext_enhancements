@@ -569,6 +569,7 @@ body {
 .tk-btn-break { background: var(--tk-amber); color: var(--tk-on-state); }
 .tk-btn-outline { background: var(--tk-surface); border-color: var(--tk-border); color: var(--tk-text); }
 .tk-btn-ghost { background: transparent; color: var(--tk-accent); }
+.tk-btn-link { background: transparent; color: var(--tk-accent); text-decoration: underline; font-weight: normal; }
 .tk-btn-danger-ghost { background: transparent; color: var(--tk-red); }
 .tk-btn-row { display: flex; gap: 10px; }
 .tk-btn-row > .tk-btn { flex: 1; min-width: 0; }

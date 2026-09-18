@@ -371,3 +371,20 @@ self.addEventListener('sync', (event) => {
     event.waitUntil(flushQueue());
   }
 });
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientsArr) => {
+      for (let i = 0; i < clientsArr.length; i++) {
+        const client = clientsArr[i];
+        if (client.url && client.url.includes('/kiosk') && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) {
+        return self.clients.openWindow('/kiosk');
+      }
+    })
+  );
+});

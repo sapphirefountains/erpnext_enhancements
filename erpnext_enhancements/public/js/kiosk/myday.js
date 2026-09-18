@@ -179,6 +179,8 @@
     if (iv.corrected) out.push(h('span', { class: 'tk-chip is-accent', text: 'Corrected' }));
     if (iv.planned_break_minutes) out.push(h('span', { class: 'tk-chip', text: 'Break ' + iv.planned_break_minutes + 'm' }));
     if (iv.photo_count) out.push(h('span', { class: 'tk-chip', text: iv.photo_count + (iv.photo_count === 1 ? ' photo' : ' photos') }));
+    if (iv.locked) out.push(h('span', { class: 'tk-chip', text: 'Locked' }));
+    if (iv.manual_start) out.push(h('span', { class: 'tk-chip', text: 'Backdated' }));
     return out;
   }
 
@@ -220,13 +222,57 @@
     if (iv.corrected) add('Corrected', 'Yes', 'is-green');
     add('Status', iv.status);
     add('Reference', iv.name);
+    
+    var acts = [];
+    if (iv.editable) {
+      acts.push({ label: 'Edit times', kind: 'primary', onClick: function (hdlg) { hdlg.close('action'); openEditTimesSheet(iv); } });
+    }
+    acts.push({ label: 'Request a correction', kind: iv.editable ? 'outline' : 'primary', onClick: function (hdlg) { hdlg.close('action'); openCorrectionSheet(iv); } });
+    acts.push({ label: 'Close', kind: 'ghost' });
+
     UI.sheet.open({
       title: iv.project_title || 'Job',
       body: h('div', { class: 'tk-stack' }, [kv, h('div', { class: 'tk-chips' }, badges(iv))]),
+      actions: acts,
+    });
+  }
+
+  function openEditTimesSheet(iv) {
+    var start = h('input', { type: 'datetime-local', 'aria-label': 'Start', value: toLocalInput(iv.start_time) });
+    var end = h('input', { type: 'datetime-local', 'aria-label': 'End', value: iv.end_time ? toLocalInput(iv.end_time) : '' });
+    var reason = h('textarea', { rows: '2', placeholder: 'Reason for editing (optional)' });
+    var err = h('p', { class: 'tk-error', hidden: true });
+
+    UI.sheet.open({
+      title: 'Edit times',
+      body: h('div', { class: 'tk-stack' }, [
+        h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Start' }), start]),
+        h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'End' }), end]),
+        h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Reason' }), reason]),
+        err,
+      ]),
       actions: [
-        { label: 'Request a correction', kind: 'primary', onClick: function () { openCorrectionSheet(iv); } },
-        { label: 'Close', kind: 'ghost' },
-      ],
+        { label: 'Save', kind: 'primary', onClick: function (hnd, btn) {
+          if (!fromLocalInput(start.value)) { err.hidden = false; err.textContent = 'A start time is needed.'; return false; }
+          btn.disabled = true;
+          ctx.api(ctx.API + 'update_interval_times', {
+            interval: iv.name,
+            start_time: fromLocalInput(start.value),
+            end_time: end.value ? fromLocalInput(end.value) : null,
+            reason: (reason.value || '').trim()
+          }).then(function () {
+            UI.toast('Times updated.', 'green');
+            hnd.close('action');
+            loadDay();
+          }).catch(function (e) {
+            btn.disabled = false;
+            err.hidden = false;
+            err.textContent = ctx.humanError(e);
+          });
+          return false;
+        } },
+        { label: 'Cancel', kind: 'ghost' }
+      ]
     });
   }
 

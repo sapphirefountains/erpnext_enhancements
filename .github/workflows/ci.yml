@@ -1523,7 +1523,7 @@ jobs:
       # whitelisted def -- a renamed endpoint raises nowhere, the button just stops
       # working on a phone in a mechanical room.
       - name: Kiosk PWA theme + front-end contract
-        run: python -m unittest erpnext_enhancements.tests.test_kiosk_theme erpnext_enhancements.tests.test_kiosk_frontend erpnext_enhancements.tests.test_kiosk_photo_gate_chip -v
+        run: python -m unittest erpnext_enhancements.tests.test_kiosk_theme erpnext_enhancements.tests.test_kiosk_frontend erpnext_enhancements.tests.test_kiosk_photo_gate_chip erpnext_enhancements.tests.test_kiosk_time_editing_ui -v
       # The v1.481.0 Google Maps migration, which removed Leaflet from both maps
       # outright. Three static contracts, none needing a browser: that
       # google_maps_loader.js is the ONLY file that injects the Maps API (four
@@ -1541,6 +1541,7 @@ jobs:
           erpnext_enhancements.tests.test_google_maps_loader
           erpnext_enhancements.tests.test_kiosk_map
           erpnext_enhancements.tests.test_location_timeline_map
+          erpnext_enhancements.tests.test_timeline_accuracy_rings
           erpnext_enhancements.tests.test_geocoding_key -v
       # Workforce pure logic and static contracts (no frappe stub): tracking coverage and
       # gap arithmetic (a 25-minute silence must not pass a 15-minute setting), the FLSA
