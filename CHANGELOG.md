@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.483.4] - 2026-09-18
+
+### Fixed
+
+- **Configuring the Map IDs broke the Location Timeline's trail.** `AdvancedMarkerElement`
+  is not a `google.maps.Marker`, and the differences are structural: it has a `map`
+  **property** where everything else has a `setMap()` **method**, and no `setClickable()` at
+  all — clickability is the `gmpClickable` property. `createMarker()` returns a classic
+  Marker until a Map ID exists and an Advanced marker once one does, so the split stayed
+  invisible through development, review and two releases, then broke everything at once the
+  day the Map IDs were set: *"The trail could not be loaded"* and
+  `m.setClickable is not a function`.
+
+  The reported error was the smaller half. The `LayerGroup` shim — which **every** marker,
+  circle and polyline passes through — called `l.setMap(map)` directly, so every anchor,
+  live and playback marker threw as it was added. Both now route through two helpers,
+  `setLayerMap()` and `setLayerClickable()`, which are the entire compatibility surface; a
+  call site cannot know which kind of marker it is holding, so it should not have to.
+
+  Also fixed in the same place, and worse for being silent: `bindPopup` used
+  `else if (element.setMap)` to tell a marker from a `Data.Feature`. That probe is **falsy
+  on every Advanced marker**, so their popups fell through to the unanchored branch and
+  opened detached from their own pin — no error, nothing in the console, just a window
+  floating in the wrong place. Anchoring now covers both marker kinds and only a
+  `Data.Feature` is placed by position.
+
+  `tests/test_location_timeline_map.py` pins the compat surface: the helpers exist and
+  handle both kinds, `LayerGroup` never calls `setMap()` itself, no call site calls
+  `setClickable()` directly, and nothing probes `element.setMap` to identify a marker.
+
 ## [1.483.3] - 2026-09-18
 
 ### Fixed
