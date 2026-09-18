@@ -784,8 +784,37 @@
         app.attachments.push({ file_name: r.file_name, file_url: r.file_url });
         renderAttachments();
         toast('Attachment added.', 'green');
+        countAttachedImageAsJobPhoto(r.file_name, r.file_url);
       }
     }).catch(function (e) { toast(humanError(e), 'red'); });
+  }
+
+  // An attached IMAGE is a job photo, and now counts as one.
+  //
+  // The gate counts `Job Interval Photo` rows, which only the camera path wrote.
+  // Attaching a photo therefore left the chip reading "Needs 1 more photo"
+  // forever, however many photos you added — the warning was telling the truth
+  // about the gate and lying about the situation, which is worse than either.
+  //
+  // Only images, and only while clocked in: a PDF quote is an attachment, not
+  // evidence that the job was photographed. The registration is best-effort —
+  // the gate that actually blocks a clock-out is server-side in
+  // workforce/photo_gate.py, so a failure here costs the chip, not the rule.
+  function countAttachedImageAsJobPhoto(fileName, fileUrl) {
+    var ci = app.currentInterval || {};
+    if (!ci.name) return;
+    if (!/\.(jpe?g|png|heic|heif|webp|gif|bmp)$/i.test(String(fileName || fileUrl || ''))) return;
+
+    api(API + 'record_job_photo', {
+      job_interval: ci.name,
+      client_uid: mintCaptureId(),
+      file_name: fileName,
+    }).then(function () {
+      app.photoCount = (app.photoCount || 0) + 1;
+      renderPhotoChip();
+    }).catch(function () {
+      // Leave the chip alone rather than moving it on a write that did not land.
+    });
   }
 
   function uploadFile(file) {

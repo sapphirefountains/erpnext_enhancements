@@ -139,3 +139,76 @@ class TestTheMapCanvasActuallyHasHeight(unittest.TestCase):
         block = self.css[self.css.index(".tk-map {"):]
         block = block[: block.index("}")]
         self.assertIn("min-height", block)
+
+
+class TestNullIslandIsNotALocation(unittest.TestCase):
+    """0,0 is not a place, it is a missing place -- and `== null` does not catch it.
+
+    A site that arrived as 0/0 was drawn as a real marker off the coast of Africa,
+    and bounds.extend() on it pulled fitBounds across the Atlantic: the map rendered
+    the entire world with two pins on it. The server already rejects 0,0
+    (workforce/sites.py::_valid_coords) and so does the desk timeline (hasCoords).
+    The kiosk was the one place that did not.
+    """
+
+    def setUp(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "public", "js", "kiosk", "map.js"), encoding="utf-8") as f:
+            self.js = strip_js_comments(f.read())
+
+    def _guard(self):
+        g = self.js[self.js.index("function validCoords("):]
+        return g[: g.index("\n  }")]
+
+    def test_a_coordinate_guard_exists(self):
+        self.assertIn("function validCoords(", self.js)
+
+    def test_it_rejects_null_island(self):
+        self.assertIn("lat === 0 && lng === 0", self._guard())
+
+    def test_it_range_checks(self):
+        guard = self._guard()
+        self.assertIn("isFinite", guard)
+        self.assertIn("90", guard)
+        self.assertIn("180", guard)
+
+    def test_both_fixes_and_site_markers_use_it(self):
+        """A guard applied to only one of the two still renders the world."""
+        self.assertIn("validCoords(p.latitude, p.longitude)", self.js)
+        self.assertIn("validCoords(iv.site_latitude, iv.site_longitude)", self.js)
+
+    def test_the_old_null_only_checks_are_gone(self):
+        for dead in ("p.latitude == null || p.longitude == null",
+                     "iv.site_latitude == null || iv.site_longitude == null"):
+            with self.subTest(check=dead):
+                self.assertNotIn(dead, self.js)
+
+
+class TestPopupTextIsReadableOnGooglesSurface(unittest.TestCase):
+    """Google renders the InfoWindow on its OWN light surface even when the map's
+    colorScheme is DARK. Content inheriting the app's text colour is near-white on
+    white, i.e. invisible -- which is what dark mode showed."""
+
+    def setUp(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "public", "js", "kiosk", "map.js"), encoding="utf-8") as f:
+            self.js = f.read()
+        with open(os.path.join(root, "public", "css", "kiosk", "kiosk.css"), encoding="utf-8") as f:
+            self.css = f.read()
+
+    def _rule(self):
+        block = self.css[self.css.index(".tk-gpopup"):]
+        return block[: block.index("}")]
+
+    def test_popup_content_is_wrapped_so_it_can_be_styled(self):
+        self.assertIn("tk-gpopup", self.js)
+
+    def test_the_stylesheet_sets_an_explicit_colour(self):
+        self.assertIn("color:", self._rule())
+
+    def test_the_colour_is_literal_not_a_theme_var(self):
+        """A theme var is precisely what broke this: it follows the APP's surface,
+        and the bubble belongs to Google."""
+        colour = [ln for ln in self._rule().splitlines() if ln.strip().startswith("color:")][0]
+        self.assertNotIn("var(--tk-text", colour)
+        self.assertRegex(colour, r"#[0-9a-fA-F]{3,6}")

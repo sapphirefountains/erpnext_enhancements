@@ -92,6 +92,21 @@
     if (sub) sub.textContent = st.date === fmt.toISODate(new Date()) ? 'Today' : '';
   }
 
+  // 0,0 is not a location, it is a missing one.
+  //
+  // The server writes NULL when it has no fix, but a site can still arrive as
+  // 0/0 -- and `== null` does not catch a zero. One such point drags fitBounds
+  // across the Atlantic and renders the whole world with two pins on it, which
+  // is exactly what a technician saw. Mirrors workforce/sites.py::_valid_coords
+  // and the desk timeline's hasCoords(), which already rejected it.
+  function validCoords(lat, lng) {
+    if (lat == null || lng == null) return false;
+    lat = +lat; lng = +lng;
+    if (!isFinite(lat) || !isFinite(lng)) return false;
+    if (lat === 0 && lng === 0) return false;
+    return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+  }
+
   function message(text) {
     el.msg.hidden = !text;
     el.msg.textContent = text || '';
@@ -257,7 +272,7 @@
 
     intervals.forEach(function (iv, i) { colorOf[iv.name] = COLORS[i % COLORS.length]; byInterval[iv.name] = []; });
     points.forEach(function (p) {
-      if (p.latitude == null || p.longitude == null) return;
+      if (!validCoords(p.latitude, p.longitude)) return;
       var key = p.job_interval && byInterval[p.job_interval] ? p.job_interval : '_none';
       if (!byInterval[key]) byInterval[key] = [];
       byInterval[key].push(p);
@@ -294,7 +309,7 @@
         });
 
         var infoWindow = new window.google.maps.InfoWindow({
-          content: escapeText(popupText(p))
+          content: '<div class="tk-gpopup">' + escapeText(popupText(p)) + '</div>'
         });
         marker.addListener('click', function() {
           infoWindow.open(st.map, marker);
@@ -305,7 +320,7 @@
     });
 
     intervals.forEach(function (iv) {
-      if (iv.site_latitude == null || iv.site_longitude == null) return;
+      if (!validCoords(iv.site_latitude, iv.site_longitude)) return;
       var r = iv.site_radius_m || data.radius_m || 0;
       var color = colorOf[iv.name] || '#6b7280';
       var pos = { lat: iv.site_latitude, lng: iv.site_longitude };
@@ -318,7 +333,7 @@
         title: escapeText(iv.project_title || iv.name) + ' (site)'
       });
       var infoWindow = new window.google.maps.InfoWindow({
-        content: escapeText(iv.project_title || iv.name) + ' (site)'
+        content: '<div class="tk-gpopup">' + escapeText(iv.project_title || iv.name) + ' (site)</div>'
       });
       siteMarker.addListener('click', function() {
         infoWindow.open(st.map, siteMarker);
