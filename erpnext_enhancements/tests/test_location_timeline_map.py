@@ -132,5 +132,67 @@ class TestNoLeafletMethodsSurvive(unittest.TestCase):
         self.assertIn("google.maps.event.trigger", body)
 
 
+class TestAdvancedMarkerCompatibility(unittest.TestCase):
+    """AdvancedMarkerElement is not a Marker, and the difference is not cosmetic.
+
+    It has a `map` PROPERTY where everything else has a `setMap()` METHOD, and no
+    `setClickable()` at all (clickability is the `gmpClickable` property).
+
+    That split is invisible until a Map ID is configured, because createMarker()
+    returns a classic Marker until then. So this page was written, tested, reviewed
+    and shipped green — and broke the day the Map IDs were set, all at once:
+    "The trail could not be loaded" and `m.setClickable is not a function`.
+
+    The lesson this pins: route markers through the two compat helpers rather than
+    calling the methods directly, because a call site cannot know which kind it holds.
+    """
+
+    def _body(self):
+        app = Path(__file__).resolve().parents[1]
+        return _strip_comments(
+            (app / "workforce/page/location_timeline/location_timeline.js").read_text(encoding="utf-8")
+        )
+
+    def test_the_compat_helpers_exist(self):
+        body = self._body()
+        self.assertIn("function setLayerMap(", body)
+        self.assertIn("function setLayerClickable(", body)
+
+    def test_they_handle_both_marker_kinds(self):
+        body = self._body()
+        self.assertIn("layer.map = map", body, "AdvancedMarkerElement needs the map PROPERTY")
+        self.assertIn("gmpClickable", body, "AdvancedMarkerElement has no setClickable()")
+
+    def test_the_layer_group_never_calls_setMap_directly(self):
+        """The shim is what every marker passes through, so a raw setMap() here breaks
+        every advanced marker on the page at once."""
+        body = self._body()
+        group = body[body.index("class LayerGroup"):]
+        group = group[: group.index("class LocationTimeline")]
+        for method in ("addTo", "addLayer", "removeLayer", "clearLayers"):
+            with self.subTest(method=method):
+                self.assertIn(method, group)
+        self.assertNotIn(
+            ".setMap(",
+            group,
+            "LayerGroup must go through setLayerMap(), not call setMap() itself",
+        )
+
+    def test_no_call_site_calls_setClickable_directly(self):
+        body = self._body()
+        outside_helper = body.replace("layer.setClickable(clickable)", "")
+        self.assertNotIn(
+            ".setClickable(",
+            outside_helper,
+            "route clickability through setLayerClickable()",
+        )
+
+    def test_popups_do_not_probe_for_setMap_to_identify_a_marker(self):
+        """`element.setMap` is falsy on an AdvancedMarkerElement, so using it to tell a
+        marker from a Data.Feature silently unanchors every advanced marker's popup."""
+        body = self._body()
+        self.assertNotIn("element.setMap", body)
+
+
 if __name__ == '__main__':
     unittest.main()

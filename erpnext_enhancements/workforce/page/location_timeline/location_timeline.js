@@ -250,6 +250,35 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
     // ---- the page -----------------------------------------------------------
 
     
+    // AdvancedMarkerElement is NOT a google.maps.Marker, and the difference is not
+    // cosmetic: it has a `map` PROPERTY where everything else has a `setMap()` METHOD,
+    // and it has no setClickable() at all (clickability is the `gmpClickable` property).
+    //
+    // That split only bites once a Map ID is configured, because createMarker() returns
+    // a classic Marker until then. So this page worked in testing, shipped, and broke the
+    // day the Map IDs were set — every anchor, live and playback marker at once, with
+    // "The trail could not be loaded" and `m.setClickable is not a function`.
+    //
+    // These two helpers are the whole compatibility surface. Route every marker through
+    // them rather than calling the methods directly, and the call sites stop caring which
+    // kind of marker they hold.
+
+    function setLayerMap(layer, map) {
+        if (typeof layer.setMap === 'function') {
+            layer.setMap(map);       // Marker, Circle, Polyline, Data — everything classic
+        } else {
+            layer.map = map;         // AdvancedMarkerElement
+        }
+    }
+
+    function setLayerClickable(layer, clickable) {
+        if (typeof layer.setClickable === 'function') {
+            layer.setClickable(clickable);
+        } else {
+            layer.gmpClickable = clickable;
+        }
+    }
+
     class LayerGroup {
         constructor() {
             this._map = null;
@@ -257,19 +286,19 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         }
         addTo(map) {
             this._map = map;
-            this._layers.forEach((l) => l.setMap(map));
+            this._layers.forEach((l) => setLayerMap(l, map));
             return this;
         }
         addLayer(layer) {
-            layer.setMap(this._map);
+            setLayerMap(layer, this._map);
             this._layers.add(layer);
         }
         removeLayer(layer) {
-            layer.setMap(null);
+            setLayerMap(layer, null);
             this._layers.delete(layer);
         }
         clearLayers() {
-            this._layers.forEach((l) => l.setMap(null));
+            this._layers.forEach((l) => setLayerMap(l, null));
             this._layers.clear();
         }
     }
@@ -632,14 +661,18 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                 if (offset) win.setOptions({pixelOffset: new google.maps.Size(offset[0], offset[1])});
                 else win.setOptions({pixelOffset: new google.maps.Size(0, 0)});
                 
+                // A Data.Feature is not an anchor, so its window is placed by position.
+                // EVERYTHING else here is a marker of one kind or the other, and
+                // InfoWindow.open accepts both as an anchor — so do not probe for
+                // `setMap` to tell them apart. That probe was wrong in the direction
+                // that hides: AdvancedMarkerElement has no setMap, so every advanced
+                // marker fell through to the unanchored branch and its window drifted
+                // off its own pin, silently, with nothing in the console.
                 if (element instanceof google.maps.Data.Feature) {
                     win.setPosition(pos);
                     win.open(this.map);
-                } else if (element.setMap) { // AdvancedMarkerElement or Marker
-                    win.open(this.map, element);
                 } else {
-                    win.setPosition(pos);
-                    win.open(this.map);
+                    win.open(this.map, element);
                 }
             });
             if (isTooltip) {
@@ -1319,7 +1352,7 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                 const iv = intervals[marker.idx];
                 const html = '<span class="lt-play-marker"></span>';
                 const m = this.createMarker(marker.ll, `<div class="lt-icon">${html}</div>`, 1000, '');
-                m.setClickable(false);
+                setLayerClickable(m, false);
                 layer.addLayer(m);
                 this.$clock.attr('title', iv ? iv._label : '');
             }
