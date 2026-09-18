@@ -26,6 +26,7 @@
   "payroll_section",
   "overtime_week_start",
   "overtime_weekly_hours",
+  "default_time_category",
   "column_break_payroll",
   "default_burden_pct",
   "supervision_section",
@@ -239,6 +240,13 @@
    "fieldname": "require_skip_reason",
    "fieldtype": "Check",
    "label": "Skip Reason is Mandatory"
+  },
+  {
+   "fieldname": "default_time_category",
+   "fieldtype": "Link",
+   "label": "Default Time Category",
+   "options": "Activity Type",
+   "description": "Pre-selected when a technician starts a job, so the common case is one tap. A time category is REQUIRED to clock in as of v1.485.0, and this is what stops that being friction. The requirement is not bureaucracy: an interval with no activity type produces a Timesheet Detail row with no activity_type, and ERPNext refuses to SUBMIT such a Timesheet — naming a row index rather than the job. Left unset, the accountant discovers the problem on payroll day, days after the person who could have answered it in a second has gone home. Leave blank to force an explicit choice every time."
   }
  ],
  "issingle": 1,

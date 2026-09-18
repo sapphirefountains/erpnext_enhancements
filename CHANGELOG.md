@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.485.0] - 2026-09-18
+
+### Added
+
+- **Time can be corrected without leaving the kiosk, and a day can be approved and locked.**
+  Four endpoints, all built on the guards that landed in v1.484.0 rather than re-checking
+  anything themselves — overlap and the submitted-Timesheet lock live in the Job Interval
+  controller's `validate()`, so they hold for the Desk form and the sweeper too.
+
+  - `start_backdated(project, start_time, reason, ...)` — "I forgot to clock in". Same day
+    only, and **no location anchor**: `lat`/`lng` stay `None` so `_is_offsite` returns
+    unknown rather than a fabricated on-site verdict. Sets `manual_start` and records the
+    reason. Takes no `employee` argument, so it can only ever backdate your own time.
+  - `update_interval_times(interval, start_time, end_time, reason)` — with a **hard field
+    allowlist of exactly `{start_time, end_time}`**. That narrowness is the point: 36 fields
+    on Job Interval are `read_only: 1`, and `read_only` is a Desk hint rather than a server
+    gate, so a generic setter here would let a technician clear their own `offsite_start`,
+    `auto_closed` or `tracking_health`. You may edit your own unsubmitted time; the
+    timeline-manager roles may edit anyone's.
+  - `approve_day(employee, date)` / `reopen_day(employee, date, reason)` — the accountant's
+    lock, gated on **our** role set (`workforce/approval.py`): Finance Team, Executive Team,
+    HR Manager, System Manager, Operations Manager, Production Manager.
+
+- **`Time Kiosk Settings.default_time_category`**, and a time category is now required to
+  clock in. Not bureaucracy: an interval with no activity type produces a Timesheet Detail
+  row with no `activity_type`, and ERPNext **refuses to submit** such a Timesheet — naming a
+  row index rather than the job. Without this the accountant discovers it on payroll day,
+  days after the person who could have answered it in a second went home. The setting makes
+  the common case one tap. No `default` on the field: Time Kiosk Settings is a Single, where
+  a default never reaches the row that already exists, so the fallback lives in
+  `get_settings()` instead.
+
+### Governance
+
+- **The approval gate is deliberately NOT Timesheet's DocPerm.** Verified on production
+  2026-09-18: a **Custom DocPerm** on Timesheet replaces the standard set wholesale, and the
+  set in force grants submit/cancel/amend to `Employee Self Service` (14 holders),
+  `Accounts User`, `HR User`, `Manufacturing User` and `Projects User` — and to **none** of
+  the six approver roles. Inheriting it would have been wrong in both directions at once: a
+  technician holding Employee Self Service could lock or reopen their own approved day,
+  while the accountant could not approve anything.
+
+  So `approve_day` and `reopen_day` check `APPROVER_ROLES` themselves and then set
+  `flags.ignore_permissions` before submitting or cancelling. Caught in review that without
+  that flag the DocPerm becomes the gate again and **five of the six approvers are refused**
+  — a failure that would have surfaced at approval time on payroll day, not at build time.
+  The role check runs first, which is what makes bypassing the DocPerm safe.
+
 ## [1.484.1] - 2026-09-18
 
 ### Changed
