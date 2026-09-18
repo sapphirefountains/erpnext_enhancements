@@ -46,6 +46,7 @@ DEFAULTS = {
 	"overtime_week_start": "Sunday",
 	"overtime_weekly_hours": 40.0,
 	"default_burden_pct": 0.0,
+	"default_time_category": "",
 	# Supervision (v1.480.0).
 	"send_supervisor_digest": 1,
 	# Job photo capture gate (v1.241.0). Off by default — the app's staged-rollout

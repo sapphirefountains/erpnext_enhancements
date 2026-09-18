@@ -1559,6 +1559,7 @@ jobs:
           erpnext_enhancements.tests.test_location_timeline_page
           erpnext_enhancements.tests.test_workforce_assistant_clock
           erpnext_enhancements.tests.test_job_interval_guards
+          erpnext_enhancements.tests.test_time_editing_api
           erpnext_enhancements.tests.test_workforce_report_labor_cost
           erpnext_enhancements.tests.test_time_kiosk_desktop_icon -v
       # Its own step: this suite installs a frappe stub in setUpModule. Pins that the

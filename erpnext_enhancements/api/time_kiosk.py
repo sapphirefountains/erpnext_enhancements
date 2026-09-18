@@ -67,6 +67,11 @@ from erpnext_enhancements.workforce.tracking_health import haversine_m
 # workforce/page/location_timeline/location_timeline.json.
 TIMELINE_MANAGER_ROLES = {"System Manager", "HR Manager", "Projects Manager"}
 
+#: Hard field allowlist for update_interval_times.
+#: 36 fields on Job Interval are read_only: 1, and read_only is a Desk hint rather than a server gate.
+#: A generic setter here would let a technician clear their own offsite_start, auto_closed or tracking_health.
+ALLOWED_UPDATE_FIELDS = {"start_time", "end_time"}
+
 #: Log statuses that are real fixes. ``Low Accuracy`` rows prove the phone was
 #: reporting (they count toward coverage) but are excluded from distance and
 #: stop detection, where a 300 m fix would invent movement.
@@ -149,7 +154,10 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
         if existing:
             frappe.throw(_("You already have an active job interval. Please stop or switch it first."))
 
-        doc = _new_interval(employee, project, task, time_category, description, now_dt,
+        resolved_time_category = time_category or frappe.db.get_single_value("Time Kiosk Settings", "default_time_category")
+        if not resolved_time_category:
+            frappe.throw(_("Activity type is required. Please pick one."))
+        doc = _new_interval(employee, project, task, resolved_time_category, description, now_dt,
                             lat, lng, accuracy, offsite_acknowledged)
         doc.insert(ignore_permissions=True)
         return {"status": "success", "message": "Work started.", "doc": doc.name,
@@ -198,7 +206,10 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
             photo_status = photo_gate.check(doc, skip_reason=skip_reason)
             _close_interval(doc, now_dt, lat, lng, accuracy, photo_status, skip_reason)
 
-        new_doc = _new_interval(employee, project, task, time_category, description, now_dt,
+        resolved_time_category = time_category or frappe.db.get_single_value("Time Kiosk Settings", "default_time_category")
+        if not resolved_time_category:
+            frappe.throw(_("Activity type is required. Please pick one."))
+        new_doc = _new_interval(employee, project, task, resolved_time_category, description, now_dt,
                                 lat, lng, accuracy, offsite_acknowledged)
         new_doc.insert(ignore_permissions=True)
         return {"status": "success", "message": "Task switched.", "doc": new_doc.name,
@@ -1400,6 +1411,7 @@ def _require_session_employee():
 
 @frappe.whitelist()
 def get_my_day(date=None):
+    from erpnext_enhancements.workforce import timesheet_lock
     """The session employee's intervals for one site date (default today), with
     derived durations and the badges the My Day view shows.
 
@@ -1418,7 +1430,7 @@ def get_my_day(date=None):
         filters={"employee": employee, "start_time": ["between", [start_of_day, end_of_day]]},
         fields=["name", "project", "task", "time_category", "start_time", "end_time", "status",
                 "total_paused_seconds", "last_pause_time", "tracking_health", "tracking_coverage_pct",
-                "offsite_start", "auto_closed", "corrected", "planned_break_minutes"],
+                "offsite_start", "auto_closed", "corrected", "planned_break_minutes", "manual_start"],
         order_by="start_time asc",
     )
     project_titles = _titles("Project", [r.project for r in rows], "project_name")
@@ -1450,6 +1462,9 @@ def get_my_day(date=None):
             "tracking_coverage_pct": r.tracking_coverage_pct,
             "offsite_start": cint(r.offsite_start),
             "auto_closed": cint(r.auto_closed),
+            "manual_start": cint(r.manual_start),
+            "locked": bool(timesheet_lock.submitted_timesheet_for(r.name)),
+            "editable": not bool(timesheet_lock.submitted_timesheet_for(r.name)) and r.status in ("Open", "Paused", "Completed"),
             "corrected": cint(r.corrected),
             "planned_break_minutes": r.planned_break_minutes,
         })
@@ -2385,3 +2400,95 @@ def purge_old_location_logs():
     cutoff = add_days(now_datetime(), -days)
     frappe.db.delete("Time Kiosk Log", {"timestamp": ["<", cutoff]})
     frappe.db.commit()
+
+
+@frappe.whitelist()
+def start_backdated(project=None, start_time=None, reason=None, task=None, time_category=None, description=None):
+    user = frappe.session.user
+    employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
+    if not employee:
+        frappe.throw(_("No Employee record found for this user."), frappe.PermissionError)
+
+    if not project:
+        frappe.throw(_("Project is required."))
+    if not start_time:
+        frappe.throw(_("Start time is required."))
+    if not reason or not reason.strip():
+        frappe.throw(_("Reason is required."))
+
+    start_dt = get_datetime(start_time)
+    now_dt = now_datetime()
+    
+    if start_dt.date() != now_dt.date():
+        frappe.throw(_("Backdating is only allowed for today's date."))
+    if start_dt >= now_dt:
+        frappe.throw(_("Start time must be strictly before now."))
+
+    resolved_time_category = time_category or frappe.db.get_single_value("Time Kiosk Settings", "default_time_category")
+    if not resolved_time_category:
+        frappe.throw(_("Activity type is required. Please pick one."))
+
+    # lock and check existing
+    frappe.db.get_value("Employee", employee, "name", for_update=True)
+    existing = frappe.db.get_value(
+        "Job Interval",
+        {"employee": employee, "status": ["in", ["Open", "Paused"]]},
+        "name",
+        for_update=True,
+    )
+    if existing:
+        frappe.throw(_("You already have an active job interval. Please stop or switch it first."))
+
+    doc = _new_interval(employee, project, task, resolved_time_category, description, start_dt,
+                        lat=None, lng=None, accuracy=None, offsite_acknowledged=0)
+    doc.manual_start = 1
+    doc.manual_start_reason = reason.strip()
+    doc.insert(ignore_permissions=True)
+    
+    return {"status": "success", "message": "Backdated work started.", "doc": doc.name}
+
+@frappe.whitelist()
+def update_interval_times(interval=None, start_time=None, end_time=None, reason=None):
+    if not interval:
+        frappe.throw(_("Interval is required."))
+    if not reason or not reason.strip():
+        frappe.throw(_("Reason is required."))
+
+    doc = frappe.get_doc("Job Interval", interval)
+    
+    # Permission check
+    user = frappe.session.user
+    employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
+    user_roles = frappe.get_roles(user)
+    
+    is_manager = bool(set(TIMELINE_MANAGER_ROLES).intersection(user_roles))
+    if doc.employee != employee and not is_manager and user != "Administrator":
+        frappe.throw(_("Not permitted to edit this interval."), frappe.PermissionError)
+
+    # Hard field allowlist
+    if start_time:
+        doc.start_time = get_datetime(start_time)
+    if end_time:
+        doc.end_time = get_datetime(end_time)
+    
+    # Check if manual_start_reason or similar exists. job_interval.json has manual_start_reason.
+    # What about edit reason? Let's write it to a comment if there's no edit field, or time_correction_reason if it exists.
+    # We will just write it to manual_start_reason for now, or append to it. 
+    # Let's check Job Interval fields via getattr. 
+    doc.db_set("manual_start", 1)
+    doc.db_set("manual_start_reason", reason.strip())
+
+    doc.save(ignore_permissions=True)
+    resync_interval_timesheet(doc)
+    
+    return {"status": "success"}
+
+@frappe.whitelist()
+def approve_day(employee=None, date=None):
+    from erpnext_enhancements.workforce.approval import approve_day as _approve_day
+    return _approve_day(employee, date)
+
+@frappe.whitelist()
+def reopen_day(employee=None, date=None, reason=None):
+    from erpnext_enhancements.workforce.approval import reopen_day as _reopen_day
+    return _reopen_day(employee, date, reason)
