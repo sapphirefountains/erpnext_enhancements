@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.492.0] - 2026-09-19
+
+### Added
+
+- **The draft preview grades a Short Answer the way production does** — a deliberate,
+  documented exception to the one rule this page had, taken knowingly.
+
+  Since v1.490.0 a learner's Short Answer that the strict comparison rejects goes to an AI
+  (ADR 0015). The preview graded entirely in the browser, so it was **stricter than
+  production**: a wording the AI would accept showed as wrong, and an author tuning their
+  accepted-answer list was tuning against a grader no learner meets. v1.491.0 made the
+  preview *say* so; this makes it stop being true.
+
+  **The rule being excepted, and why it survives the exception.** `training_preview.html`
+  is the one page in the app that makes no network calls — "no new fetch wrapper, no second
+  method map, no new endpoint names" — because *"if draft mode ever dialled api.training for
+  real, the author would be quietly completing their own compliance course."* That hazard is
+  untouched: the single call goes to `api.training_author.judge_draft_short_answer`, **never**
+  `api.training`; it is gated on an authoring role *and* write permission on that specific
+  course; and it writes nothing — no attempt, no answer row, no progress.
+
+  The endpoint reads the accepted answers **server-side from the draft** rather than taking
+  them from the caller. The preview already holds them, so passing them in would have been
+  simpler — and would have made this a whitelisted "judge this arbitrary text against these
+  arbitrary answers" endpoint, which is a general-purpose model call wearing a
+  training-shaped hat.
+
+  Same ordering as the learner path, so the same guarantees follow: the strict comparison
+  runs first and only a rejected answer reaches the model, which means the AI can only be
+  generous here too and a correct answer costs no model call. An unreachable grader falls
+  back to the comparison **and says so on screen**, because at that moment the preview is
+  stricter than production again.
+
+  The page's CSRF token is **read, never minted** — `frappe.sessions.get_csrf_token()`
+  creates one when the session has none, and `www/fountain_move.py` records what that costs.
+  Guest cannot reach this page, so the token is always there in practice; this is the shape
+  of the page that learned the lesson rather than a defence against a case this page has.
+
+### Testing
+
+- `test_draft_mode_still_grades_in_memory` asserted no `/api/method/` anywhere in the page.
+  It is **narrowed, not deleted**: the thing worth preventing was never "a fetch", it was "a
+  fetch that writes learner state", so it now forbids `api.training` under any name. Four
+  tests were added around the exception — the call list must be **exactly** that one endpoint
+  (one exception is a decision, two is a transport growing back), the argument for it must be
+  written in the page, an unreachable grader must fall back rather than break, and only a
+  *rejected* Short Answer may be sent.
+
 ## [1.491.0] - 2026-09-19
 
 ### Fixed
