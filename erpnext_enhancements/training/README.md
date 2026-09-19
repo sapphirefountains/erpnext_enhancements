@@ -304,6 +304,31 @@ endpoint does not count as a caller.
 Open a Training Course and press **Edit Visually**, or go straight to
 `/app/training-canvas?course=TRN-CRS-00001`. That is the authoring surface.
 
+**Or just open the canvas.** As of v1.489.0 `/app/training-canvas` with no course is a
+**home screen**: your open drafts first (each with its version number and lesson count),
+then what is published, then what is retired, searchable, with **Start a new course**
+beside the search box. Two doors that used to end nowhere now land there — the desk rail's
+**Course canvas** link, which `desk_nav.js` has always routed with no arguments, and the
+new **Course canvas** shortcut on the Training workspace. Before that, both landed on a
+heading and one sentence telling the author to open a course elsewhere *or add `?course=…`
+to the URL by hand*, which is the same "you have to already know the URL" problem the
+starters were meant to end. Once a course is open, the **course name in the top bar** is
+the way back out; it flushes the autosave first.
+
+The home screen creates nothing itself. **Start a new course** calls
+`training_course_authoring.create_from_starter` — the same endpoint the Training Course
+list view has called since v1.386.0. Two doors, one scaffolder; the gallery is rendered
+inline there and as a dialog on the list view because the surfaces differ, not the
+behaviour.
+
+A Workspace JSON is **age-gated** on the way in: `import_file` silently skips a file whose
+`modified` is not newer than the row, so an edited workspace reaches a fresh install and no
+existing site. The shortcut therefore ships with a bumped stamp *and*
+[`patches/reload_training_workspace_for_canvas.py`](../patches/reload_training_workspace_for_canvas.py) —
+but the patch alone is what makes it arrive, because `force=True` skips the comparison
+outright. The bumped stamp is for the *next* edit, once this one-shot patch has been
+recorded and will not run again.
+
 The classic builder is **gone**. It was retired in stages, and the order mattered:
 
 | | |
@@ -354,6 +379,49 @@ questions, work-submission gate, and the end-of-lesson quiz settings); and the d
 **lifecycle** — new draft version, submit for review, publish (with the full `change_type`
 strings the DocType stores) — lives in the page menu. A new lesson carries a `temp_id` the save
 maps back to the server-minted name.
+
+#### Creating a whole lesson (v1.489.0)
+
+**`+ Lesson` used to mint a blank one** — `{lesson_title: "New lesson", blocks: []}` — which
+is the defect the course starters exist to fix, one level down and far more often: a course
+built from a starter was well-shaped for its three lessons and blank for the next twenty.
+
+It now opens a gallery of **lesson shapes** from
+[`lesson_starters.py`](lesson_starters.py) — Safety briefing, Step-by-step procedure, Video
+lesson, Equipment walkthrough, Concept and practice, Blank — and each lands a *complete*
+lesson: title, summary, estimated minutes and real blocks whose prose is instructions to
+the author ("Replace with the first check"), never filler. Optionally, **Draft with AI**
+(`training_ai.draft_lesson_content`, shown only where `ai_assist_enabled` is on) writes the
+words from a topic you type.
+
+Four rules hold this together, and each one is a trap that was avoided rather than a
+preference:
+
+- **A shape never sets `has_quiz`.** `TrainingLesson._validate_quiz` throws on `has_quiz`
+  with an empty pool, and the canvas cannot fill a pool — a quiz row allowlists
+  `{question, points, is_required}` and the body is refused by design. A shape that ticked
+  the box would make its own lesson fail on the first autosave, four seconds after the
+  author chose it. A shape that wants one sets `suggests_quiz` and the canvas *says so*.
+- **A shape's media blocks survive an AI draft; its prose blocks do not.** A model cannot
+  attach a file — asked to, it invents a filename that saves fine and is refused at publish
+  months later — so `draft_lesson_content` emits no media at all. If a draft replaced the
+  shape outright, choosing *Video lesson* and then drafting would silently throw away the
+  one block that made it a video lesson.
+- **The module is not a scaffolder.** There is no "create a lesson from this shape"
+  endpoint. A shape is a starting *value* for the structure the canvas already builds in
+  memory, and it is written by the ordinary autosave through `save_draft_version`. Same
+  allowlist, same key minting, same optimistic lock as a hand-added block.
+- **`block_key` is minted in the browser, once.** Not by the shape and not by the model: a
+  shape fetched once and used twice, or a draft accepted twice, must not produce two blocks
+  sharing a key — the single case `_apply_blocks` rewrites without telling anybody.
+
+`draft_lesson_content` persists nothing and there is no acceptance endpoint, which is the
+deliberate asymmetry with `draft_quiz_questions`: accepting a drafted *question* is a
+recorded human review because the question decides whether somebody passed, while accepting
+drafted *content* is indistinguishable from having typed it. Model text is never trusted as
+markup either — every string is stripped, escaped and re-wrapped in a `<p>` the server
+wrote, which is shorter to reason about than a sanitiser and does not depend on one being
+correct.
 
 It authors content completely: **Rich Text** and **Callout** are edited in place with a
 formatting toolbar (bold, italic, headings, lists, link); **Checklist / Flashcards /

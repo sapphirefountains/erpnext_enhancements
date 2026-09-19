@@ -1259,6 +1259,170 @@ def _check_version_not_stale(version, modified):
         )
 
 
+# ------------------------------------------------------------- canvas home
+#
+# The canvas opened with no `course` used to render a dead end: a heading, and a
+# sentence telling the author to "add ?course=… to the URL". Two doors led
+# straight into it -- the desk rail's "Course canvas" link (desk_nav.js routes to
+# `training-canvas` with no arguments) and anyone who bookmarked the page -- so
+# the one link in the sidebar named after the authoring surface landed on
+# instructions for editing a URL by hand. The Training workspace had no shortcut
+# to it at all.
+#
+# These two endpoints make that landing a real surface. Both are reads, both are
+# author-gated, and neither creates anything: "start a new course" from the home
+# screen calls the *existing* `training_course_authoring.create_from_starter`,
+# which is the same endpoint the Training Course list view has called since
+# v1.386.0. Two doors into one scaffolder, not two scaffolders.
+
+
+#: Courses on the home list, newest first. A cap rather than paging because the
+#: list is filtered as you type on the client; a site with more courses than this
+#: searches instead of scrolling, and the endpoint says so in `truncated`.
+HOME_COURSE_LIMIT = 200
+
+#: Drafts first, then the live ones, then what has been taken out of service.
+#: An author opening the canvas is far likelier to be resuming a draft than
+#: browsing the catalogue, and `status` is a Select so this is a sort key rather
+#: than a filter.
+_HOME_STATUS_RANK = {"Draft": 0, "In Review": 1, "Published": 2, "Retired": 3}
+
+
+@frappe.whitelist()
+def list_authorable_courses(search=None):
+    """Courses for the canvas home screen, with each one's open draft.
+
+    Returns ``{"courses": [...], "truncated": bool}``. Each course carries its
+    status, category, when it last changed, its open draft (``version_number``
+    and whether it is out for review) and a lesson count, so the home screen can
+    say "Draft V3 · 7 lessons" rather than making the author open a course to
+    find out whether it is the one they were working on.
+
+    **``frappe.get_list``, not ``get_all``.** They differ in exactly one way that
+    matters here and it is not obvious from the names: ``get_all`` is documented
+    "will **not** check for permissions" -- it is ``get_list`` with
+    ``ignore_permissions=True``. This endpoint *enumerates* documents for a person,
+    which is the one shape of query where that difference is the whole security
+    model, so it goes through the permitted path and User Permissions apply.
+    ``_require_author`` on top of that is about the *page*: the home screen is an
+    authoring surface and a learner has no business listing unpublished drafts from
+    it, whatever their DocPerms say.
+
+    The two follow-up queries below stay on ``get_all`` deliberately. They are keyed
+    to course names this call has *already* filtered through ``get_list``, so they
+    cannot widen what the caller sees; running them permitted as well would add two
+    more permission joins to answer a question already answered.
+    """
+    _require_author()
+
+    filters = {}
+    search = (search or "").strip()
+    if search:
+        # `like` on the title only. Searching the name too looks helpful and is
+        # not: TRN-CRS-00012 shares a prefix with every other course, so a partial
+        # code matches the lot.
+        #
+        # `%` and `_` are escaped: unescaped, a search for "50%" is a wildcard that
+        # matches everything after "50", and the author reads the result as "these
+        # are the courses about 50%".
+        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        filters["course_title"] = ("like", f"%{escaped}%")
+
+    courses = frappe.get_list(
+        "Training Course",
+        filters=filters,
+        fields=["name", "course_title", "status", "category", "weight", "modified"],
+        order_by="modified desc",
+        limit_page_length=HOME_COURSE_LIMIT + 1,
+        ignore_permissions=False,
+    )
+    truncated = len(courses) > HOME_COURSE_LIMIT
+    courses = courses[:HOME_COURSE_LIMIT]
+    if not courses:
+        return {"courses": [], "truncated": False}
+
+    names = [row["name"] for row in courses]
+
+    # One query for every open draft, then one for every lesson in them, tallied
+    # in Python. NOT `fields=["count(name) as n"]`: Frappe 16 raises "SQL functions
+    # are not allowed as strings in SELECT" on that, and nothing bench-free sees it
+    # because the test stub's get_all accepts any string -- it fails only when a
+    # browser asks for the page. Two bounded queries beat one clever one here.
+    drafts = frappe.get_all(
+        "Training Course Version",
+        filters={"course": ("in", names), "docstatus": 0},
+        fields=["name", "course", "version_number", "submitted_for_review"],
+        order_by="version_number desc",
+    )
+    draft_by_course = {}
+    for row in drafts:
+        # `order_by` is version_number desc, so the first one seen per course is
+        # the highest. A course should only ever have one open draft; taking the
+        # highest rather than the last is what keeps a leftover from an aborted
+        # clone out of the card.
+        draft_by_course.setdefault(row["course"], row)
+
+    lesson_counts = {}
+    if draft_by_course:
+        for row in frappe.get_all(
+            "Training Lesson",
+            filters={"course_version": ("in", [d["name"] for d in draft_by_course.values()])},
+            fields=["course_version"],
+            limit_page_length=0,
+        ):
+            key = row["course_version"]
+            lesson_counts[key] = lesson_counts.get(key, 0) + 1
+
+    out = []
+    for row in courses:
+        draft = draft_by_course.get(row["name"])
+        out.append(
+            {
+                "name": row["name"],
+                "course_title": row.get("course_title") or row["name"],
+                "status": row.get("status") or "",
+                "category": row.get("category") or "",
+                "weight": row.get("weight") or "",
+                "modified": str(row.get("modified") or ""),
+                "draft": (
+                    {
+                        "name": draft["name"],
+                        "version_number": cint(draft.get("version_number")),
+                        "submitted_for_review": cint(draft.get("submitted_for_review")),
+                        "lessons": lesson_counts.get(draft["name"], 0),
+                    }
+                    if draft
+                    else None
+                ),
+            }
+        )
+
+    # Sorted twice on purpose and in this order. `modified desc` came off the
+    # database; Python's sort is stable, so ranking by status afterwards keeps the
+    # recency order *within* each status band -- the newest draft is the first card
+    # and the newest published course heads its own group. Expressing both in one
+    # SQL `order_by` would need a CASE over a Select column, and v16's `get_all`
+    # refuses a function written as a string anyway.
+    out.sort(key=lambda c: _HOME_STATUS_RANK.get(c["status"], 9))
+    return {"courses": out, "truncated": truncated}
+
+
+@frappe.whitelist()
+def list_lesson_starters():
+    """The lesson shape gallery — ``{"shapes": [...]}``. Read-only, creates nothing.
+
+    The shapes carry their blocks in the canvas's own edit shape, because the
+    canvas builds the lesson itself and saves it through the ordinary autosave.
+    See :mod:`erpnext_enhancements.training.lesson_starters` for why there is no
+    "create a lesson from this shape" endpoint and why no shape may set
+    ``has_quiz``.
+    """
+    from erpnext_enhancements.training import lesson_starters
+
+    _require_author()
+    return {"shapes": lesson_starters.list_shapes()}
+
+
 # ---------------------------------------------------------------- bootstrap
 
 

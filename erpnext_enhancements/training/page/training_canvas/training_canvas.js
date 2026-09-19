@@ -195,6 +195,10 @@ class TrainingCanvas {
 		this._conflict = false;
 		this._temp = 0;
 		clearTimeout(this._save_timer);
+		// The home screen's search debounce. Harmless if it fires after a course is
+		// opened -- every paint guards on its container still being in the DOM --
+		// but a timer nobody can cancel is how the next person gets a real one.
+		clearTimeout(this._home_search_timer);
 	}
 
 	// ---------------------------------------------------------------- chrome
@@ -256,8 +260,12 @@ class TrainingCanvas {
 		}
 		if (course && (!this.course || this.course.name !== course)) {
 			this.load(course);
-		} else if (!course && !this.course) {
-			this.render_course_picker();
+		} else if (!course && !this.course && !this._home) {
+			// `!this._home` keeps a deliberate return to the home screen from being
+			// undone by the next `on_page_show`. Leaving a course clears the query
+			// string, but a tab switch fires this again and a re-render would throw
+			// away a search the author had typed.
+			this.render_home();
 		}
 	}
 
@@ -268,7 +276,7 @@ class TrainingCanvas {
 		this.lesson_name = keep;
 		this.$app.find(".tc-banner").remove();
 		if (course) this.load(course);
-		else this.render_course_picker();
+		else this.render_home();
 	}
 
 	// ----------------------------------------------------------------- load
@@ -285,20 +293,39 @@ class TrainingCanvas {
 	}
 
 	load(course) {
+		// Opening a course from the home screen sets `route_options` and calls
+		// `set_route`, then loads. Whether that also fires `on_page_show` -- and so
+		// `handle_route`, which would load the same course again while this one is
+		// still in flight -- depends on whether the router treats a same-route push
+		// as a navigation. Rather than depend on that, the in-flight course is the
+		// guard: `handle_route`'s own check compares against `this.course`, which is
+		// not set until the bootstrap lands. Also covers a double-clicked row.
+		if (this._loading === course) return;
+		this._loading = course;
+		this._home = false;
 		this.$blocks.html(`<div class="tc-empty">${__("Loading…")}</div>`);
 		Promise.all([
 			this.load_assets(),
 			frappe.call({ method: "erpnext_enhancements.api.training_author.get_builder_bootstrap", args: { course } }),
 		])
 			.then(([, r]) => {
+				this._loading = null;
 				this.apply_bootstrap((r && r.message) || {});
 				this.render();
 			})
 			.catch(() => {
+				// Cleared here too, not in a `finally`: a failed load must leave the
+				// course retryable, and a stuck `_loading` would make Reload a no-op.
+				this._loading = null;
 				this.$blocks.html(
 					`<div class="tc-empty"><h2>${__("Cannot open this course")}</h2>${__(
 						"You need author access to its draft, and the course must exist."
 					)}</div>`
+				);
+				this.$blocks.append(
+					$('<button class="btn btn-link btn-sm" style="margin-top:8px"></button>')
+						.text(__("All courses"))
+						.on("click", () => this.go_home())
 				);
 			});
 	}
@@ -348,10 +375,12 @@ class TrainingCanvas {
 
 	// --------------------------------------------------------------- render
 	render() {
-		if (!this.course) return this.render_course_picker();
+		if (!this.course) return this.render_home();
 		if (!this.version) return this.render_no_draft();
 
-		this.$app.find(".tc-course-name").text(this.course.course_title || this.course.name || "");
+		this.paint_course_name();
+		this.$app.find(".tc-lessonset").removeAttr("hidden");
+		this.$status.removeAttr("hidden");
 		this.$app.find(".tc-eyebrow").text(this.course.course_title || "");
 		this.$app.toggleClass("is-readonly", !this.editable());
 		this.$title.attr("contenteditable", this.editable() ? "true" : "false");
@@ -361,29 +390,435 @@ class TrainingCanvas {
 		this.paint_status(this.has_dirty() ? "dirty" : "saved");
 	}
 
-	render_course_picker() {
-		this.$app.find(".tc-course-name").text("");
-		this.$title.text(__("Training Canvas"));
+	// ------------------------------------------------------------------ home
+	//
+	// What used to be here was a dead end. `render_course_picker` drew a heading
+	// and one sentence -- "Open a Training Course and choose Edit on the canvas,
+	// or add ?course=… to the URL" -- and that is what the desk rail's "Course
+	// canvas" link landed on, because desk_nav.js routes to `training-canvas`
+	// with no arguments and always has. So the single sidebar link named after
+	// the authoring surface opened a page whose advice was to go somewhere else
+	// and then edit a URL by hand. The Training workspace had no shortcut here at
+	// all, and a bookmark of the bare page hit the same wall.
+	//
+	// It is a real landing surface now: the drafts you have open, then what is
+	// live, then what is retired, searchable, plus the door to a new course. The
+	// two things an author arrives wanting to do -- resume something, or start
+	// something -- are both one click from the page they arrived on.
+	//
+	// It creates nothing itself. "Start a new course" calls
+	// `training_course_authoring.create_from_starter`, the same endpoint the
+	// Training Course list view has called since v1.386.0. Two doors into one
+	// scaffolder, which is the same rule the starters themselves follow.
+
+	// Everything on the page that belongs to a course rather than to the page.
+	// Factored out because `render_home` and `render_no_draft` both need it and
+	// the list is not guessable: the lesson-settings PANEL (`.tc-lessonsettings`)
+	// is a sibling of the sheet, not a child of the block list, so emptying
+	// `.tc-blocks` leaves it on screen — and hiding its toggle button
+	// (`.tc-lessonset`) then removes the only way to close it.
+	//
+	// `.empty()` matters more than the `hidden`. The panel's controls close over
+	// the lesson object, and `reset()` has already dropped that lesson from
+	// `this.lessons`: "Load a .vtt" and the AI drafting buttons are not gated on
+	// `editable()`, and `draft_questions` calls `render_sheet()`, which would
+	// `$blocks.empty()` with no current lesson and wipe the course list the author
+	// is looking at. Hidden-but-live is the worse half of the bug, not the safer one.
+	clear_course_chrome() {
+		this.$app
+			.find(".tc-course-name")
+			.text("")
+			.removeClass("is-link")
+			.removeAttr("role")
+			.removeAttr("tabindex")
+			.removeAttr("title")
+			.off("click.tchome keydown.tchome");
+		this.$app.find(".tc-lessonset").attr("hidden", "hidden");
+		this.$lessonset.attr("hidden", "hidden").empty();
+		this.$quizpool = null;
+		this.$status.attr("hidden", "hidden");
+	}
+
+	go_home() {
+		// Flush first: leaving a course with an unsaved edit in the buffer is how
+		// you lose a paragraph. On failure, stay -- the autosave has already said
+		// what went wrong and a silent navigation would look like it worked.
+		this.save_then(__("Saving before you leave this course")).then(() => {
+			this.reset();
+			this.$app.find(".tc-banner").remove();
+			// Drop `?course=` as well as the in-memory course. `handle_route` reads
+			// the query string first, so leaving it set means the next
+			// `on_page_show` -- a tab switch is enough -- silently reopens the
+			// course just left. `_home` is the belt to that braces: it survives a
+			// route change the framework decides is a no-op.
+			this._home = true;
+			frappe.set_route("training-canvas");
+			this.render_home();
+		}).catch(() => {});
+	}
+
+	render_home() {
+		this._home = true;
+		this.clear_course_chrome();
+		this.$app.removeClass("is-readonly");
+		this.$title.attr("contenteditable", "false").text("");
+		this.$app.find(".tc-eyebrow").text("");
 		this.$rail.empty();
-		this.$blocks.html(
-			`<div class="tc-empty"><h2>${__("Open a course to edit")}</h2>${__(
-				"Open a Training Course and choose Edit on the canvas, or add ?course=… to the URL."
-			)}<br><a href="/app/training-course">${__("Open the course list")}</a></div>`
+		// The status pip is hidden by clear_course_chrome() rather than painted
+		// "Saved". There is nothing here to save, and a green pip claiming otherwise
+		// is the kind of indicator people learn to stop reading — a problem on the
+		// page where it later means their paragraph did or did not reach the server.
+
+		const $home = $(`
+			<div class="tc-home">
+				<div class="tc-home-head">
+					<h2></h2>
+					<p class="tc-muted"></p>
+				</div>
+				<div class="tc-home-actions">
+					<button class="btn btn-primary btn-sm tc-home-new"></button>
+					<input type="search" class="form-control tc-home-search" />
+				</div>
+				<div class="tc-home-note tc-muted" hidden></div>
+				<div class="tc-home-list"></div>
+			</div>
+		`);
+		$home.find(".tc-home-head h2").text(__("Training Canvas"));
+		$home.find(".tc-home-head p").text(
+			__("Pick up a draft, open a published course, or start a new one.")
 		);
+		$home.find(".tc-home-new").text(__("+ Start a new course"));
+		$home.find(".tc-home-search").attr("placeholder", __("Search courses"));
+		this.$blocks.empty().append($home);
+
+		$home.find(".tc-home-new").on("click", () => this.render_starters());
+
+		const $search = $home.find(".tc-home-search");
+		$search.on("input", () => {
+			const query = String($search.val() || "").trim();
+			this.paint_home_list(query);
+			// Gated on `_home_capped`, which records whether the UNFILTERED list
+			// overflowed, not on whether the last response did. Keyed on the last
+			// response it narrows permanently: the first search that happens to match
+			// under the cap comes back `truncated: false`, which cleared the flag and
+			// replaced the cache with those few rows — so clearing the box then
+			// painted three courses out of two hundred, hid the "type to search the
+			// rest" note, and never asked the server again.
+			//
+			// Sending "" below two characters is the other half: it is what brings the
+			// full page back when the author clears the box.
+			if (this._home_capped) {
+				clearTimeout(this._home_search_timer);
+				const term = query.length >= 2 ? query : "";
+				this._home_search_timer = setTimeout(() => this.load_home_courses(term), 300);
+			}
+		});
+
+		this.load_home_courses("");
+	}
+
+	load_home_courses(search) {
+		const $list = this.$blocks.find(".tc-home-list");
+		if (!$list.length) return;
+		$list.html($("<div class='tc-muted'></div>").text(__("Loading…")));
+		frappe
+			.call({
+				method: "erpnext_enhancements.api.training_author.list_authorable_courses",
+				args: { search: search || "" },
+			})
+			.then((r) => {
+				const out = (r && r.message) || {};
+				this._home_courses = out.courses || [];
+				// `_home_capped` is a fact about the SITE -- does the unfiltered list
+				// overflow the cap -- so only an unfiltered load may set it. A filtered
+				// response's `truncated` is a fact about that search and says nothing
+				// about the whole list.
+				if (!(search || "")) this._home_capped = !!out.truncated;
+				const $note = this.$blocks.find(".tc-home-note");
+				if (this._home_capped) {
+					$note
+						.text(__("Showing the most recently changed. Type to search the rest."))
+						.removeAttr("hidden");
+				} else {
+					$note.attr("hidden", "hidden");
+				}
+				// Repainted against whatever is in the box NOW, not against the term
+				// this request was sent with: the author keeps typing while it is in
+				// flight, and painting the stale term would undo two keystrokes.
+				const $search = this.$blocks.find(".tc-home-search");
+				this.paint_home_list(String($search.val() || "").trim());
+			})
+			.catch(() => {
+				$list.html(
+					$("<div class='tc-muted'></div>").text(
+						__("Could not load the course list. Reload the page to try again.")
+					)
+				);
+			});
+	}
+
+	paint_home_list(query) {
+		const $list = this.$blocks.find(".tc-home-list");
+		if (!$list.length) return;
+		$list.empty();
+
+		const needle = (query || "").toLowerCase();
+		const courses = (this._home_courses || []).filter(
+			(c) => !needle || String(c.course_title || "").toLowerCase().indexOf(needle) >= 0
+		);
+
+		if (!courses.length) {
+			const $none = $('<div class="tc-home-none tc-muted"></div>');
+			$none.text(
+				needle
+					? __("No course matches that.")
+					: __("No courses yet. Start a new one to get going.")
+			);
+			$list.append($none);
+			return;
+		}
+
+		// Grouped by the status the server ranked them into, and the headings are
+		// drawn from the data rather than from a fixed list: a Select gaining a
+		// value should not silently drop its courses off this page.
+		let current = null;
+		courses.forEach((course) => {
+			if (course.status !== current) {
+				current = course.status;
+				$('<div class="tc-home-group"></div>')
+					.text(this.home_group_label(current))
+					.appendTo($list);
+			}
+			$list.append(this.home_row(course));
+		});
+	}
+
+	home_group_label(status) {
+		const map = {
+			Draft: __("Drafts"),
+			"In Review": __("Out for review"),
+			Published: __("Published"),
+			Retired: __("Retired"),
+		};
+		return map[status] || status || __("Other");
+	}
+
+	home_row(course) {
+		const $row = $(`
+			<div class="tc-home-row" role="button" tabindex="0">
+				<div class="tc-home-row-main">
+					<div class="tc-home-title"></div>
+					<div class="tc-home-meta tc-muted"></div>
+				</div>
+				<span class="tc-home-pill"></span>
+			</div>
+		`);
+		$row.find(".tc-home-title").text(course.course_title || course.name);
+
+		// What the author is actually deciding between: which of these has work in
+		// it. A draft says so and says how big it is; a published course with no
+		// draft says that opening it will offer to raise one, because otherwise the
+		// canvas looks broken when it lands on "No open draft".
+		const bits = [];
+		if (course.draft) {
+			bits.push(__("Draft V{0}", [String(course.draft.version_number)]));
+			bits.push(
+				course.draft.lessons === 1
+					? __("1 lesson")
+					: __("{0} lessons", [String(course.draft.lessons)])
+			);
+			if (course.draft.submitted_for_review) bits.push(__("out for review"));
+		} else if (course.status === "Published") {
+			bits.push(__("no open draft"));
+		}
+		if (course.category) bits.push(course.category);
+		$row.find(".tc-home-meta").text(bits.join(" · "));
+
+		$row.find(".tc-home-pill")
+			.text(course.status || "")
+			.addClass("is-" + String(course.status || "").toLowerCase().replace(/\s+/g, "-"));
+
+		const open = () => {
+			this._home = false;
+			frappe.route_options = { course: course.name };
+			frappe.set_route("training-canvas");
+			this.load(course.name);
+		};
+		$row.on("click", open);
+		$row.on("keydown", (e) => {
+			// Same contract as the lesson rail rows, and for the same reason: this is
+			// a div with role="button", so Enter and Space are promises it has to keep.
+			if (e.key !== "Enter" && e.key !== " ") return;
+			e.preventDefault();
+			open();
+		});
+		return $row;
+	}
+
+	// --------------------------------------------------------- new course
+	//
+	// The gallery is rendered inline on the home sheet rather than in a dialog,
+	// unlike the Training Course list view's version of it. That is a difference
+	// in surface, not in behaviour: the home screen is already a full empty sheet
+	// and a modal over it would be a box inside a box, while on a list view the
+	// dialog is the only way to interrupt. Both call `list_starters` and
+	// `create_from_starter`; neither builds a course itself.
+
+	render_starters() {
+		const $wrap = $(`
+			<div class="tc-home">
+				<div class="tc-home-head">
+					<button class="btn btn-default btn-xs tc-home-back"></button>
+					<h2></h2>
+					<p class="tc-muted"></p>
+				</div>
+				<div class="tc-starters"></div>
+				<div class="tc-home-actions">
+					<input type="text" class="form-control tc-starter-title" />
+					<button class="btn btn-primary btn-sm tc-starter-go" disabled></button>
+				</div>
+			</div>
+		`);
+		$wrap.find(".tc-home-back").text(__("← Back"));
+		$wrap.find(".tc-home-head h2").text(__("Start from a shape"));
+		$wrap.find(".tc-home-head p").text(
+			__(
+				"Each one creates an unpublished draft with the structure already in place. The text is instructions to you, not content — replace it."
+			)
+		);
+		$wrap.find(".tc-starter-title").attr(
+			"placeholder",
+			__("Call it… (optional — the shape brings its own placeholder title)")
+		);
+		$wrap.find(".tc-starter-go").text(__("Create draft"));
+		this.$blocks.empty().append($wrap);
+
+		$wrap.find(".tc-home-back").on("click", () => this.render_home());
+
+		const $gallery = $wrap.find(".tc-starters");
+		$gallery.html($("<div class='tc-muted'></div>").text(__("Loading…")));
+
+		frappe
+			.call({ method: "erpnext_enhancements.api.training_course_authoring.list_starters" })
+			.then((r) => {
+				const starters = ((r && r.message) || {}).starters || [];
+				$gallery.empty();
+				if (!starters.length) {
+					$gallery.append(
+						$("<div class='tc-muted'></div>").text(__("No starters are available."))
+					);
+					return;
+				}
+				let chosen = null;
+				starters.forEach((starter) => {
+					const $card = $(`
+						<div class="tc-starter" role="button" tabindex="0">
+							<div class="tc-starter-label"></div>
+							<div class="tc-starter-blurb tc-muted"></div>
+							<div class="tc-starter-meta tc-muted"></div>
+						</div>
+					`);
+					// .text(), never interpolation. These strings are ours today, and a
+					// starter somebody adds next year still goes through this renderer.
+					$card.find(".tc-starter-label").text(starter.label || "");
+					$card.find(".tc-starter-blurb").text(starter.blurb || "");
+					$card.find(".tc-starter-meta").text(
+						[
+							starter.lessons === 1
+								? __("1 lesson")
+								: __("{0} lessons", [String(starter.lessons)]),
+							starter.chapters ? __("{0} chapters", [String(starter.chapters)]) : null,
+						]
+							.filter(Boolean)
+							.join(" · ")
+					);
+					const pick = () => {
+						chosen = starter.key;
+						$gallery.find(".tc-starter").removeClass("is-chosen");
+						$card.addClass("is-chosen");
+						$wrap.find(".tc-starter-go").removeAttr("disabled");
+					};
+					$card.on("click", pick);
+					$card.on("keydown", (e) => {
+						if (e.key !== "Enter" && e.key !== " ") return;
+						e.preventDefault();
+						pick();
+					});
+					$gallery.append($card);
+				});
+
+				$wrap.find(".tc-starter-go").on("click", () => {
+					if (!chosen) return;
+					frappe
+						.call({
+							method: "erpnext_enhancements.api.training_course_authoring.create_from_starter",
+							args: {
+								starter: chosen,
+								course_title: String($wrap.find(".tc-starter-title").val() || "").trim() || null,
+							},
+							freeze: true,
+							freeze_message: __("Building the draft…"),
+						})
+						.then((res) => {
+							const out = (res && res.message) || {};
+							if (!out.course) return;
+							// Straight into the editor, which is the whole point of a
+							// starter: the next thing you do is replace the words.
+							this._home = false;
+							frappe.route_options = { course: out.course };
+							frappe.set_route("training-canvas");
+							this.load(out.course);
+						});
+				});
+			})
+			.catch(() => {
+				$gallery.html(
+					$("<div class='tc-muted'></div>").text(__("Could not load the starters."))
+				);
+			});
+	}
+
+	// The course name in the top bar is the way back out. It is the only
+	// persistent chrome on a full-bleed page that otherwise has no navigation at
+	// all -- before this, switching courses meant the browser back button or
+	// retyping the URL, which is the same "know the URL" problem the home screen
+	// exists to end, one level in.
+	paint_course_name() {
+		const $name = this.$app.find(".tc-course-name");
+		$name
+			.text(this.course.course_title || this.course.name || "")
+			.addClass("is-link")
+			.attr("role", "button")
+			.attr("tabindex", "0")
+			.attr("title", __("All courses"))
+			.off("click.tchome keydown.tchome")
+			.on("click.tchome", () => this.go_home())
+			.on("keydown.tchome", (e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				e.preventDefault();
+				this.go_home();
+			});
 	}
 
 	render_no_draft() {
-		this.$app.find(".tc-course-name").text(this.course.course_title || "");
-		this.$title.text("");
+		// Same reset as the home screen -- a course whose draft was just published
+		// lands here with the previous draft's lesson-settings panel still open --
+		// and then the course name is re-armed, because there IS a course.
+		this.clear_course_chrome();
+		this.paint_course_name();
+		this.$title.attr("contenteditable", "false").text("");
 		this.$rail.empty();
 		this.$blocks.html(
 			`<div class="tc-empty"><h2>${__("No open draft")}</h2>${__(
 				"This course has no draft version open for editing. Raise one to start editing."
 			)}<br><button class="btn btn-primary btn-sm tc-raise" style="margin-top:12px">${__(
 				"New draft version"
+			)}</button><br><button class="btn btn-link btn-sm tc-back-home" style="margin-top:6px">${__(
+				"All courses"
 			)}</button></div>`
 		);
 		this.$blocks.find(".tc-raise").on("click", () => this.new_draft());
+		this.$blocks.find(".tc-back-home").on("click", () => this.go_home());
 	}
 
 	// ------------------------------------------------------------ lesson rail
@@ -451,24 +886,326 @@ class TrainingCanvas {
 		return $row;
 	}
 
+	// ----------------------------------------------------------- new lesson
+	//
+	// `+ Lesson` used to mint `{lesson_title: "New lesson", blocks: []}` and drop
+	// the author on a blank sheet. That is the same defect the course starters
+	// were built to fix, one level down and far more often: a course created from
+	// a starter is well-shaped for its three lessons and blank for every lesson
+	// after them, and every course not created from a starter is blank from the
+	// first one. Whatever "an empty page is where authoring stops" is worth at
+	// course level, it is worth more here, because this is the button an author
+	// presses twenty times and that one is pressed once.
+	//
+	// So creating a lesson creates a WHOLE lesson: a shape (from
+	// `training/lesson_starters.py`) lands real blocks, a title, minutes and a
+	// summary, and optionally a model writes the words into it.
+	//
+	// The rule where the two meet, because it is not obvious and it is the only
+	// interesting decision here: **a shape's media blocks survive an AI draft and
+	// its prose blocks do not.** A model cannot attach a photo, a PDF or a video
+	// -- asked to, it invents a filename that saves fine and is refused at
+	// publish months later -- so `draft_lesson_content` refuses to emit media at
+	// all. If an AI draft simply replaced the shape, choosing "Video lesson" and
+	// then drafting would silently throw away the one block that made it a video
+	// lesson. Keeping the empty slots is what lets the two be used together
+	// rather than instead of each other.
+	//
+	// And nothing here may set `has_quiz`. `TrainingLesson._validate_quiz` throws
+	// on `has_quiz` with an empty pool, and the canvas cannot fill a pool without
+	// a Training Question to point at -- so a shape that ticked the box would
+	// make its own lesson fail on the first autosave, four seconds later, with a
+	// red dialog and no way forward. A shape that wants a quiz says so, the
+	// author is told, and they tick it after adding a question.
+
+	new_block_key() {
+		return "blk-" + Math.random().toString(36).slice(2, 10);
+	}
+
+	lesson_shapes() {
+		if (this._shapes) return Promise.resolve(this._shapes);
+		return frappe
+			.call({ method: "erpnext_enhancements.api.training_author.list_lesson_starters" })
+			.then((r) => {
+				this._shapes = ((r && r.message) || {}).shapes || [];
+				return this._shapes;
+			});
+	}
+
 	add_lesson() {
 		if (!this.editable()) return;
-		this.save(); // flush the current lesson's edits before creating a new one
+		this.save(); // flush the current lesson's edits before creating another
+		this.lesson_shapes()
+			.then((shapes) => this.open_new_lesson_dialog(shapes))
+			.catch(() => {
+				// The shapes are a convenience, not the feature. If the endpoint is
+				// unreachable an author must still be able to add a lesson, so this
+				// falls back to exactly what the button did before.
+				this.commit_new_lesson({ lesson_title: __("New lesson"), blocks: [] });
+			});
+	}
+
+	open_new_lesson_dialog(shapes) {
+		const list = shapes && shapes.length ? shapes : [{ key: "blank", label: __("Blank"), blurb: "", blocks: [] }];
+		let chosen = list[0];
+		let drafted = null; // blocks from the model, once accepted
+
+		const dialog = new frappe.ui.Dialog({
+			title: __("New lesson"),
+			size: "large",
+			fields: [
+				{ fieldname: "lesson_title", fieldtype: "Data", label: __("Title") },
+				{ fieldname: "gallery", fieldtype: "HTML" },
+				{ fieldname: "ai", fieldtype: "HTML" },
+			],
+			primary_action_label: __("Add lesson"),
+			primary_action: () => {
+				const values = dialog.get_values(true) || {};
+				dialog.hide();
+				this.commit_new_lesson({
+					// The shape's label as a fallback title, EXCEPT for Blank: "Blank"
+					// is the name of a choice, not of a lesson, and a rail full of
+					// lessons called Blank is worse than one full of New lesson.
+					lesson_title:
+						(values.lesson_title || "").trim() ||
+						(chosen.key === "blank" ? "" : chosen.label) ||
+						__("New lesson"),
+					summary: (drafted && drafted.summary) || chosen.summary || "",
+					estimated_minutes: chosen.minutes || 0,
+					suggests_quiz: !!chosen.suggests_quiz,
+					blocks: drafted ? drafted.blocks : chosen.blocks || [],
+				});
+			},
+		});
+
+		const $gallery = $("<div class='tc-shapes'></div>").appendTo(dialog.fields_dict.gallery.$wrapper);
+		const paint = () => {
+			$gallery.find(".tc-shape").each((_, el) => {
+				$(el).toggleClass("is-chosen", $(el).data("key") === chosen.key);
+			});
+		};
+		list.forEach((shape) => {
+			const $card = $(`
+				<div class="tc-shape" role="button" tabindex="0">
+					<div class="tc-shape-label"></div>
+					<div class="tc-shape-blurb tc-muted"></div>
+					<div class="tc-shape-meta tc-muted"></div>
+				</div>
+			`);
+			$card.data("key", shape.key);
+			$card.find(".tc-shape-label").text(shape.label || "");
+			$card.find(".tc-shape-blurb").text(shape.blurb || "");
+			$card.find(".tc-shape-meta").text(
+				[
+					shape.block_count
+						? shape.block_count === 1
+							? __("1 block")
+							: __("{0} blocks", [String(shape.block_count)])
+						: null,
+					shape.minutes ? __("~{0} min", [String(shape.minutes)]) : null,
+					shape.suggests_quiz ? __("wants a quiz") : null,
+				]
+					.filter(Boolean)
+					.join(" · ")
+			);
+			const pick = () => {
+				chosen = shape;
+				// A draft was written against the shape that was selected when it was
+				// asked for. Silently carrying it onto a different shape would mix a
+				// briefing's prose into an equipment walkthrough's slots, so it is
+				// dropped and the author is told rather than surprised at save time.
+				if (drafted) {
+					drafted = null;
+					frappe.show_alert(
+						{ message: __("Shape changed, so the AI draft was cleared."), indicator: "orange" },
+						4
+					);
+					paintAi();
+				}
+				paint();
+			};
+			$card.on("click", pick);
+			$card.on("keydown", (e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				e.preventDefault();
+				pick();
+			});
+			$gallery.append($card);
+		});
+		paint();
+
+		// ----------------------------------------------------------------- AI
+		const $ai = $("<div class='tc-newai'></div>").appendTo(dialog.fields_dict.ai.$wrapper);
+		// The typed topic, carried across every repaint. paintAi() rebuilds the
+		// textarea from scratch, so without this the button it relabels to "Draft
+		// again" reads an empty box and refuses with "Say what it should cover
+		// first" — a button that cannot work on its first press, and the author has
+		// to retype the sentence they can no longer see. Discarding a draft lost it
+		// the same way.
+		let topicText = "";
+		const paintAi = () => {
+			$ai.empty();
+			if (!this.ai_enabled) return;
+
+			$("<div class='tc-newai-head'></div>")
+				.text(__("Or describe it and have the words drafted"))
+				.appendTo($ai);
+
+			const $topic = $("<textarea class='form-control' rows='2'></textarea>")
+				.attr(
+					"placeholder",
+					__("What should this lesson cover? e.g. changing the cartridge filter on a Model 4 pump skid")
+				)
+				.val(topicText)
+				.on("input", () => {
+					topicText = String($topic.val() || "");
+				})
+				.appendTo($ai);
+
+			const $go = $("<button class='btn btn-default btn-sm'></button>")
+				.text(drafted ? __("Draft again") : __("Draft with AI"))
+				.appendTo($ai);
+
+			$("<div class='tc-muted'></div>")
+				.text(
+					__(
+						"A draft is a starting point, not content. Nothing is saved until you add the lesson, and every word lands in the editor for you to rewrite."
+					)
+				)
+				.appendTo($ai);
+
+			if (drafted) {
+				const $done = $("<div class='tc-newai-done'></div>").appendTo($ai);
+				$done.append(
+					$("<strong></strong>").text(
+						drafted.blocks.length === 1
+							? __("1 block drafted")
+							: __("{0} blocks drafted", [String(drafted.blocks.length)])
+					)
+				);
+				$("<ul class='tc-newai-list'></ul>")
+					.append(
+						drafted.blocks.map((block) =>
+							$("<li></li>")
+								.text([block.block_type, block.heading].filter(Boolean).join(" — "))
+								.get(0)
+						)
+					)
+					.appendTo($done);
+				$("<button class='btn btn-link btn-xs'></button>")
+					.text(__("Discard the draft"))
+					.on("click", () => {
+						drafted = null;
+						paintAi();
+					})
+					.appendTo($done);
+			}
+
+			$go.on("click", () => {
+				const topic = String($topic.val() || "").trim();
+				topicText = String($topic.val() || "");
+				if (!topic) {
+					frappe.show_alert({ message: __("Say what it should cover first."), indicator: "orange" }, 4);
+					return;
+				}
+				$go.attr("disabled", "disabled").text(__("Drafting…"));
+				frappe
+					.call({
+						method: "erpnext_enhancements.api.training_ai.draft_lesson_content",
+						args: {
+							topic,
+							lesson_title: (dialog.get_value("lesson_title") || "").trim(),
+							shape: chosen.key,
+						},
+					})
+					.then((r) => {
+						const out = (r && r.message) || {};
+						if (out.message) {
+							frappe.msgprint({ title: __("Nothing drafted"), message: out.message, indicator: "orange" });
+						}
+						if (!(out.blocks || []).length) {
+							$go.removeAttr("disabled").text(__("Draft with AI"));
+							return;
+						}
+						// The shape's media blocks are appended to the drafted prose --
+						// see the note at the top of this section. `block_key` is minted
+						// here, once, for whatever ends up in the list: a draft asked
+						// for twice must not produce two blocks sharing a key, which is
+						// the one case `_apply_blocks` rewrites without telling anybody.
+						const slots = (chosen.blocks || []).filter(
+							(b) => TC_MEDIA_TYPES[b.block_type]
+						);
+						drafted = {
+							summary: out.summary || "",
+							blocks: (out.blocks || []).concat(slots),
+						};
+						paintAi();
+					})
+					.catch(() => {
+						// frappe has already shown the server's message.
+						$go.removeAttr("disabled").text(__("Draft with AI"));
+					});
+			});
+		};
+		paintAi();
+
+		dialog.show();
+		// Focused rather than left to the gallery: the title is the one field an
+		// author always fills in, and every shape has a usable default for the rest.
+		setTimeout(() => dialog.fields_dict.lesson_title.$input.focus(), 150);
+	}
+
+	commit_new_lesson(spec) {
+		if (!this.editable()) return;
 		const lesson = {
 			__temp: "new-" + ++this._temp,
-			lesson_title: __("New lesson"),
+			lesson_title: spec.lesson_title || __("New lesson"),
 			chapter_key: (this.current_lesson() || {}).chapter_key || (this.chapters[0] || {}).chapter_key || "",
 			blocks: [],
 			quiz: [],
 			checkpoints: [],
 		};
+		if (spec.summary) lesson.summary = spec.summary;
+		if (spec.estimated_minutes) lesson.estimated_minutes = spec.estimated_minutes;
+
+		// Copied field by field through the same allowlist the autosave uses, and
+		// a fresh `block_key` on every one. Trusting the payload wholesale would
+		// let a shape (or a model) set `name`, `idx` or a key the server then has
+		// to reconcile against a lesson that does not exist yet.
+		lesson.blocks = (spec.blocks || []).map((source) => {
+			const block = { block_key: this.new_block_key() };
+			TC_BLOCK_FIELDS.forEach((field) => {
+				if (source[field] !== undefined && source[field] !== null) block[field] = source[field];
+			});
+			return block;
+		});
+
 		this.lessons.push(lesson);
 		const patch = this.dirty_lesson(lesson);
 		patch.lesson_title = lesson.lesson_title;
 		patch.chapter_key = lesson.chapter_key;
+		if (lesson.summary) patch.summary = lesson.summary;
+		if (lesson.estimated_minutes) patch.estimated_minutes = lesson.estimated_minutes;
+		if (lesson.blocks.length) this.dirty_blocks(lesson);
+
 		this.lesson_name = lesson.__temp;
 		this.mark_dirty();
 		this.render();
+
+		// Said once, here, and never written to the document. See the note at the
+		// top of this section for why ticking `has_quiz` for the author would make
+		// the lesson unsaveable rather than helpful.
+		if (spec.suggests_quiz) {
+			frappe.show_alert(
+				{
+					message: __(
+						"This shape works best with a short quiz. Add a question in ⚙ Lesson, then tick End-of-lesson quiz."
+					),
+					indicator: "blue",
+				},
+				8
+			);
+		}
 	}
 
 	remove_lesson(lesson) {
@@ -687,6 +1424,22 @@ class TrainingCanvas {
 		check(__("Require a work submission"), "requires_submission");
 		const $quiz = check(__("End-of-lesson quiz"), "has_quiz");
 
+		// THE POOL IS NO LONGER HIDDEN BEHIND THE TICK BOX, and that is a deadlock
+		// being removed rather than a layout preference.
+		//
+		// `this.$quizpool` -- the list of questions and the "Add a question" button --
+		// used to live inside `$quizbox`, which `paintQuiz` toggles on `has_quiz`. So
+		// the only way to reach the question editor was to tick the box first. But
+		// `TrainingLesson._validate_quiz` throws "marked as having a quiz but no
+		// questions are in the pool" on exactly that state, and the tick marks the
+		// lesson dirty, so the autosave fired 1200ms later and produced a red dialog
+		// on every subsequent save until the author found their way back and unticked
+		// it. The one order the UI allowed was the one the validator refuses, and the
+		// only escape was to guess that unticking would stop it.
+		//
+		// The settings (how many to ask, pass score, the two shuffles) still hide,
+		// because they genuinely mean nothing without a quiz. The pool does not: an
+		// empty pool is the state you are in while building one.
 		const $quizbox = $('<div class="tc-quizset"></div>');
 		const paintQuiz = () => {
 			$quizbox.toggle(!!num(lesson.has_quiz));
@@ -705,9 +1458,12 @@ class TrainingCanvas {
 		};
 		qcheck(__("Shuffle questions"), "quiz_shuffle_questions");
 		qcheck(__("Shuffle options"), "quiz_shuffle_options");
-		this.$quizpool = $('<div class="tc-quizpool"></div>').appendTo($quizbox);
-		this.paint_quiz_pool(lesson);
 		this.$lessonset.append($quizbox);
+		// Appended to the panel, NOT to $quizbox -- see the note above. Ordered after
+		// the settings so the panel reads the same as before for a lesson that
+		// already has a quiz.
+		this.$quizpool = $('<div class="tc-quizpool"></div>').appendTo(this.$lessonset);
+		this.paint_quiz_pool(lesson);
 		$quiz.on("change", paintQuiz);
 		paintQuiz();
 

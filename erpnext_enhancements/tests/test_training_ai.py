@@ -233,6 +233,18 @@ def _install_frappe_stub():
 	utils.today = lambda: "2026-08-01"
 	utils.now_datetime = lambda: "2026-08-01 12:00:00"
 	utils.sanitize_html = lambda s: s or ""
+	# Real enough to prove the point the lesson-drafting tests make: the module
+	# never trusts model HTML, it escapes model *text* and writes the tags itself.
+	# A stub that passed the string through would let an injection test pass on the
+	# stub's leniency rather than on the module's behaviour.
+	utils.escape_html = lambda s: (
+		str(s or "")
+		.replace("&", "&amp;")
+		.replace("<", "&lt;")
+		.replace(">", "&gt;")
+		.replace('"', "&quot;")
+		.replace("'", "&#39;")
+	)
 	frappe.utils = utils
 
 	model = types.ModuleType("frappe.model")
@@ -803,6 +815,418 @@ class TestAcceptance(_Base):
 		still be able to keep or discard them."""
 		STATE["settings"]["ai_assist_enabled"] = 0
 		self.assertEqual(self._accept_quiz()["created"], 1)
+
+
+
+
+# ------------------------------------------------- drafting a lesson's content
+#
+# The third drafting call, added in v1.489.0 so that "+ Lesson" on the canvas can
+# produce a whole lesson rather than a blank one. It differs from the other two in
+# a way worth pinning: there is no acceptance endpoint, because the blocks it
+# returns are spliced into the canvas's in-memory lesson and written by the
+# author's ordinary autosave. That is correct for *content* and would be wrong for
+# a quiz question, and these tests hold both halves of that line.
+
+
+def _block_allowlist():
+	"""``BLOCK_ALLOWED_FIELDS`` read out of the source with ``ast``.
+
+	Read rather than imported: importing ``api.training_author`` under this
+	suite's stub would drag in the doctype controllers it imports at module
+	scope, and the constant is a literal frozenset. Read rather than restated,
+	because a restated allowlist is one that silently stops matching.
+	"""
+	import ast
+
+	source = (REPO_ROOT / "erpnext_enhancements/api/training_author.py").read_text(encoding="utf-8")
+	for node in ast.parse(source).body:
+		if isinstance(node, ast.Assign) and any(
+			isinstance(t, ast.Name) and t.id == "BLOCK_ALLOWED_FIELDS" for t in node.targets
+		):
+			# It is written `frozenset({...})`, which is a Call and therefore not a
+			# literal. Unwrapped rather than the assertion being relaxed to a
+			# substring scan: the point of reading it is to compare against the real
+			# set, and a scan would pass on a field named in a comment.
+			value = node.value
+			if isinstance(value, ast.Call) and getattr(value.func, "id", "") == "frozenset":
+				value = value.args[0]
+			return set(ast.literal_eval(value))
+	raise AssertionError("BLOCK_ALLOWED_FIELDS not found in api/training_author.py")
+
+
+def _lesson_reply(blocks, summary="A one-line summary."):
+	return json.dumps({"summary": summary, "blocks": list(blocks)})
+
+
+class TestLessonDraftingGates(unittest.TestCase):
+	def setUp(self):
+		_reset_state()
+
+	def test_it_refuses_a_non_author(self):
+		STATE["roles"] = ["Training Learner"]
+		with self.assertRaises(Exception):
+			training_ai.draft_lesson_content("How to isolate the pump before service")
+
+	def test_it_refuses_when_ai_is_switched_off(self):
+		STATE["settings"]["ai_assist_enabled"] = 0
+		with self.assertRaises(Exception):
+			training_ai.draft_lesson_content("How to isolate the pump before service")
+
+	def test_it_refuses_a_topic_too_short_to_mean_anything(self):
+		"""A model given "pumps" writes a page about pumps in general, which is
+		exactly the filler the starters exist to avoid — and filler gets published
+		because it looks finished."""
+		STATE["model_text"] = _lesson_reply([])
+		with self.assertRaises(Exception):
+			training_ai.draft_lesson_content("pumps")
+		self.assertEqual(STATE["calls"], [], "the model was asked anyway")
+
+	def test_the_shape_hint_reaches_the_prompt(self):
+		STATE["model_text"] = _lesson_reply(
+			[{"block_type": "Rich Text", "heading": "H", "paragraphs": ["Body text here."]}]
+		)
+		training_ai.draft_lesson_content(
+			"Isolating the pump before opening the strainer", shape="briefing"
+		)
+		self.assertIn("Safety briefing", STATE["calls"][0]["prompt"])
+
+	def test_an_unknown_shape_is_ignored_rather_than_refused(self):
+		"""It is a sentence in a prompt, not a contract. Throwing would break the
+		canvas over a key the server and the client disagree about."""
+		STATE["model_text"] = _lesson_reply(
+			[{"block_type": "Rich Text", "heading": "H", "paragraphs": ["Body text here."]}]
+		)
+		out = training_ai.draft_lesson_content(
+			"Isolating the pump before opening the strainer", shape="no-such-shape"
+		)
+		self.assertEqual(len(out["blocks"]), 1)
+
+	def test_it_is_billed_under_its_own_feature(self):
+		"""Separate from quiz and checkpoint drafting, so lesson authoring's model
+		spend is visible on its own rather than folded into the quiz line."""
+		STATE["model_text"] = _lesson_reply(
+			[{"block_type": "Rich Text", "heading": "H", "paragraphs": ["Body text here."]}]
+		)
+		training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		self.assertEqual(STATE["calls"][0]["feature"], training_ai.LESSON_FEATURE)
+		self.assertNotEqual(training_ai.LESSON_FEATURE, training_ai.QUIZ_FEATURE)
+
+
+class TestLessonDraftingWritesNothing(unittest.TestCase):
+	def setUp(self):
+		_reset_state()
+
+	def test_a_good_draft_persists_nothing(self):
+		STATE["model_text"] = _lesson_reply(
+			[
+				{"block_type": "Rich Text", "heading": "The valve", "paragraphs": ["Close it first."]},
+				{"block_type": "Checklist", "heading": "Steps", "items": ["One", "Two"]},
+			]
+		)
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		self.assertEqual(len(out["blocks"]), 2)
+		self.assertEqual(STATE["inserted"], [])
+		self.assertEqual(STATE["saved"], [])
+
+	def test_no_block_carries_a_key(self):
+		"""`block_key` is a relational identity — learner watch intervals and
+		in-video checkpoints are filed under it. Minting one server-side would mean
+		a draft accepted twice produced two blocks sharing a key, which is the one
+		case `_apply_blocks` rewrites silently. Keys are minted in the browser, once,
+		for whatever ends up in the list."""
+		STATE["model_text"] = _lesson_reply(
+			[{"block_type": "Rich Text", "heading": "H", "paragraphs": ["Body text here."]}]
+		)
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		for block in out["blocks"]:
+			self.assertNotIn("block_key", block)
+
+
+class TestLessonDraftingIsParsedStrictly(unittest.TestCase):
+	def setUp(self):
+		_reset_state()
+
+	def test_prose_yields_nothing(self):
+		STATE["model_text"] = "Sure! Here is a lesson about pumps."
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		self.assertEqual(out["blocks"], [])
+		self.assertTrue(out["message"])
+
+	def test_a_markdown_fence_is_not_salvaged(self):
+		"""Not stripped, for the same reason `_parse_suggestions` does not strip
+		one: the moment this hunts for JSON inside prose it also finds it inside a
+		half-written apology, and the caller cannot tell the difference.
+
+		The fenced payload carries a block that WOULD be accepted unfenced. The
+		first version of this test fenced an EMPTY list, so the salvaging and the
+		non-salvaging paths returned byte-identical results and it asserted
+		nothing at all -- deleting the strictness would not have failed it. The
+		control at the end is the other half: it proves the payload really is
+		acceptable when it is not fenced."""
+		good = [{"block_type": "Rich Text", "heading": "H", "paragraphs": ["Body text here."]}]
+		STATE["model_text"] = "```json\n" + _lesson_reply(good) + "\n```"
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		self.assertEqual(out["blocks"], [], "the fence was stripped and the payload salvaged")
+		self.assertTrue(out["message"])
+
+		_reset_state()
+		STATE["model_text"] = _lesson_reply(good)
+		control = training_ai.draft_lesson_content("Isolating the pump before the strainer")
+		self.assertEqual(len(control["blocks"]), 1, "the control payload is not acceptable either")
+
+	def test_a_bare_list_is_the_wrong_shape(self):
+		STATE["model_text"] = json.dumps([{"block_type": "Rich Text", "paragraphs": ["x"]}])
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		self.assertEqual(out["blocks"], [])
+		self.assertTrue(out["message"])
+
+	def test_one_bad_block_does_not_lose_the_others(self):
+		STATE["model_text"] = _lesson_reply(
+			[
+				{"block_type": "Rich Text", "heading": "Good", "paragraphs": ["Body text here."]},
+				{"block_type": "Rich Text", "heading": "Empty", "paragraphs": []},
+				"not even an object",
+				{"block_type": "Checklist", "heading": "Also good", "items": ["One"]},
+			]
+		)
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		self.assertEqual([b["heading"] for b in out["blocks"]], ["Good", "Also good"])
+
+	def test_a_reply_of_only_bad_blocks_says_so(self):
+		STATE["model_text"] = _lesson_reply([{"block_type": "Rich Text", "paragraphs": []}])
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		self.assertEqual(out["blocks"], [])
+		self.assertTrue(out["message"])
+
+	def test_the_block_count_is_capped(self):
+		STATE["model_text"] = _lesson_reply(
+			[
+				{"block_type": "Rich Text", "heading": f"H{i}", "paragraphs": ["Body text here."]}
+				for i in range(40)
+			]
+		)
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		self.assertEqual(len(out["blocks"]), training_ai.MAX_LESSON_BLOCKS)
+
+
+class TestLessonDraftingBlockShapes(unittest.TestCase):
+	"""The two Selects are the only fields here that *throw* rather than degrade.
+
+	`_validate_selects` runs on child rows and `save_draft_version` performs a full
+	`lesson.save()`, so a `block_type` or `callout_tone` the doctype does not
+	declare does not render oddly — it takes the whole lesson autosave down, four
+	seconds after the author accepted the draft. That is the exact defect that made
+	the canvas's first Callout unsaveable until v1.386.0, arriving this time from a
+	model instead of from a typo.
+	"""
+
+	def setUp(self):
+		_reset_state()
+
+	def _one(self, block):
+		STATE["model_text"] = _lesson_reply([block])
+		return training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+
+	def test_an_undeclared_block_type_is_dropped(self):
+		out = self._one({"block_type": "Karaoke", "heading": "H", "paragraphs": ["x"]})
+		self.assertEqual(out["blocks"], [])
+
+	def test_media_is_never_drafted(self):
+		"""A model cannot attach a file. Asked for an Image block it invents a
+		filename, which saves fine and is refused at publish with "nothing
+		attached" long after anybody remembers why the block is there. Empty media
+		slots come from the lesson *shape*, which is honest about being empty."""
+		for block_type in ("Image", "Video", "PDF", "Downloadable File", "External Embed", "Image Hotspots"):
+			with self.subTest(block_type=block_type):
+				self.assertNotIn(block_type, training_ai.LESSON_BLOCK_TYPES)
+				out = self._one({"block_type": block_type, "heading": "H", "image": "/files/made-up.png"})
+				self.assertEqual(out["blocks"], [])
+
+	def test_an_unknown_tone_defaults_rather_than_dropping_the_block(self):
+		"""A colour is not worth throwing away good prose over."""
+		out = self._one(
+			{"block_type": "Callout", "heading": "H", "tone": "Chartreuse", "paragraphs": ["Body."]}
+		)
+		self.assertEqual(out["blocks"][0]["callout_tone"], "Info")
+
+	def test_every_declared_tone_survives(self):
+		for tone in training_ai.LESSON_CALLOUT_TONES:
+			with self.subTest(tone=tone):
+				out = self._one(
+					{"block_type": "Callout", "heading": "H", "tone": tone, "paragraphs": ["Body."]}
+				)
+				self.assertEqual(out["blocks"][0]["callout_tone"], tone)
+
+	def test_a_lowercase_tone_is_repaired(self):
+		"""The learner-side lowercasing happens on the server at publish. What the
+		DocType stores is capitalised, and a model writing "danger" has made a
+		formatting slip rather than asked for something else."""
+		out = self._one(
+			{"block_type": "Callout", "heading": "H", "tone": "danger", "paragraphs": ["Body."]}
+		)
+		self.assertEqual(out["blocks"][0]["callout_tone"], "Danger")
+
+	def test_interactive_payloads_are_json_strings(self):
+		"""`data` is a JSON string on the wire — that is what BLOCK_ALLOWED_FIELDS
+		carries and what `_parse_block_data` reads at publish. A dict would be
+		coerced to a Python repr by the save and come back unparseable."""
+		cases = {
+			"Checklist": ({"items": ["One", "Two"]}, "items"),
+			"Flashcards": ({"cards": [{"front": "F", "back": "B"}]}, "cards"),
+			"Accordion": ({"panels": [{"title": "T", "body": ["Body."]}]}, "panels"),
+		}
+		for block_type, (payload, key) in cases.items():
+			with self.subTest(block_type=block_type):
+				out = self._one(dict(block_type=block_type, heading="H", **payload))
+				data = out["blocks"][0]["data"]
+				self.assertIsInstance(data, str)
+				self.assertIn(key, json.loads(data))
+
+	def test_a_scalar_where_a_list_belongs_does_not_escape_the_endpoint(self):
+		"""`for row in item.get("items")` over a JSON number raises TypeError, and
+		an uncaught one out of a whitelisted endpoint discards the WHOLE draft over
+		one malformed block. Everywhere else in this module a bad item is dropped
+		individually and only a bad *response* yields nothing."""
+		for block_type, key in (("Checklist", "items"), ("Flashcards", "cards"), ("Accordion", "panels")):
+			for bad in (5, True, {"nested": "object"}):
+				with self.subTest(block_type=block_type, bad=repr(bad)):
+					_reset_state()
+					STATE["model_text"] = _lesson_reply(
+						[
+							{"block_type": block_type, "heading": "Bad", key: bad},
+							{"block_type": "Rich Text", "heading": "Good", "paragraphs": ["Body."]},
+						]
+					)
+					out = training_ai.draft_lesson_content("Isolating the pump before the strainer")
+					self.assertEqual([b["heading"] for b in out["blocks"]], ["Good"])
+
+	def test_a_bare_string_is_not_iterated_character_by_character(self):
+		"""Worse than raising, because it succeeds: a Checklist whose `items` is
+		"Close the valve" becomes fifteen items reading C, l, o, s, e... which saves
+		cleanly and reads as the author's own mistake."""
+		_reset_state()
+		STATE["model_text"] = _lesson_reply(
+			[{"block_type": "Checklist", "heading": "H", "items": "Close the valve"}]
+		)
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		self.assertEqual(out["blocks"], [])
+
+	def test_an_empty_interactive_payload_is_dropped(self):
+		for block_type, key in (("Checklist", "items"), ("Flashcards", "cards"), ("Accordion", "panels")):
+			with self.subTest(block_type=block_type):
+				out = self._one({"block_type": block_type, "heading": "H", key: []})
+				self.assertEqual(out["blocks"], [])
+
+	def test_list_lengths_are_capped(self):
+		out = self._one({"block_type": "Checklist", "heading": "H", "items": [f"i{i}" for i in range(50)]})
+		self.assertEqual(len(json.loads(out["blocks"][0]["data"])["items"]), training_ai.MAX_LIST_ITEMS)
+
+
+class TestLessonDraftingNeverTrustsModelMarkup(unittest.TestCase):
+	"""The module is told to write plain text, and this is what holds it to it.
+
+	Every string goes through `_plain` (which strips tags) and `escape_html`, then
+	is re-wrapped in a `<p>` the module wrote. So `content` is HTML *this app built
+	out of text* rather than HTML a model produced that this app decided to trust —
+	a much shorter thing to reason about than a sanitiser, and one that does not
+	depend on a sanitiser being correct.
+	"""
+
+	def setUp(self):
+		_reset_state()
+
+	def test_text_that_survives_stripping_is_still_escaped(self):
+		"""The one case that tells escaping apart from stripping.
+
+		`_plain` removes anything matching `<[^>]+>`, so a `<script>` tag is gone
+		before `escape_html` is ever reached -- which means the script-tag test
+		below passes with the escaping DELETED, and so did every other test in
+		this class. A bare `<` with no closing `>` is not a tag, so it reaches the
+		escaper; "run at < 40 psi" is not a contrived input for this company."""
+		STATE["model_text"] = _lesson_reply(
+			[
+				{
+					"block_type": "Rich Text",
+					"heading": "H",
+					"paragraphs": ["Run at < 40 psi & watch the seal."],
+				}
+			]
+		)
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		content = out["blocks"][0]["content"]
+		self.assertIn("&lt; 40 psi", content)
+		self.assertIn("&amp; watch", content)
+		self.assertNotIn("< 40", content)
+
+	def test_a_script_tag_does_not_survive(self):
+		STATE["model_text"] = _lesson_reply(
+			[
+				{
+					"block_type": "Rich Text",
+					"heading": "H",
+					"paragraphs": ["Close the valve <script>alert(1)</script> first."],
+				}
+			]
+		)
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		content = out["blocks"][0]["content"]
+		self.assertNotIn("<script", content)
+		self.assertIn("alert(1)", content, "the words should survive; only the markup goes")
+
+	def test_the_heading_is_plain_text(self):
+		STATE["model_text"] = _lesson_reply(
+			[{"block_type": "Rich Text", "heading": "<b>Bold</b>", "paragraphs": ["Body."]}]
+		)
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		self.assertNotIn("<b>", out["blocks"][0]["heading"])
+
+	def test_every_paragraph_is_wrapped_by_us(self):
+		STATE["model_text"] = _lesson_reply(
+			[{"block_type": "Rich Text", "heading": "H", "paragraphs": ["One.", "Two."]}]
+		)
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		self.assertEqual(out["blocks"][0]["content"], "<p>One.</p><p>Two.</p>")
+
+	def test_a_single_string_is_accepted_as_one_paragraph(self):
+		"""A model writing `"paragraphs": "..."` has made a formatting slip, and
+		losing the block over it costs the author a re-roll for nothing."""
+		STATE["model_text"] = _lesson_reply(
+			[{"block_type": "Rich Text", "heading": "H", "paragraphs": "Just the one."}]
+		)
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		self.assertEqual(out["blocks"][0]["content"], "<p>Just the one.</p>")
+
+
+class TestDraftedBlocksFitTheSaveContract(unittest.TestCase):
+	"""Every field a drafted block carries must be one the autosave will apply.
+
+	`save_draft_version` allowlists block fields and reports the rest in
+	`rejected` — which the canvas surfaces. A drafted block carrying a field
+	outside the list would make the canvas accuse the author of writing something
+	it refused, for a field they never touched.
+	"""
+
+	def setUp(self):
+		_reset_state()
+
+	def test_no_drafted_field_is_outside_the_allowlist(self):
+		allowed = _block_allowlist()
+		STATE["model_text"] = _lesson_reply(
+			[
+				{"block_type": "Rich Text", "heading": "H", "paragraphs": ["Body."]},
+				{"block_type": "Callout", "heading": "H", "tone": "Tip", "paragraphs": ["Body."]},
+				{"block_type": "Checklist", "heading": "H", "items": ["One"]},
+				{"block_type": "Flashcards", "heading": "H", "cards": [{"front": "F", "back": "B"}]},
+				{"block_type": "Accordion", "heading": "H", "panels": [{"title": "T", "body": ["B."]}]},
+			]
+		)
+		out = training_ai.draft_lesson_content("Isolating the pump before opening the strainer")
+		self.assertEqual(len(out["blocks"]), 5)
+		for block in out["blocks"]:
+			for field in block:
+				with self.subTest(block_type=block["block_type"], field=field):
+					self.assertIn(field, allowed)
 
 
 if __name__ == "__main__":

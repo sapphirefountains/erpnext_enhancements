@@ -7,6 +7,218 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.489.0] - 2026-09-19
+
+### Added
+
+- **The Training Canvas has a home screen, so opening it is a way to start work rather than a
+  page of instructions.** `/app/training-canvas` with no `course` rendered a heading and one
+  sentence: *"Open a Training Course and choose Edit on the canvas, or add `?course=…` to the
+  URL."* Two doors led straight into that dead end — the desk rail's **Course canvas** link,
+  which `desk_nav.js` has routed with no arguments since the rail shipped in v1.434.0, and any bookmark of the
+  bare page — so the one sidebar link named after the authoring surface opened advice to go
+  somewhere else and then edit a URL by hand. The Training workspace had shortcuts to the
+  learner portal, Insights, sessions and three course lists, and **none to the editor at all**.
+
+  It is a real landing surface now: open drafts first (each with its version number and lesson
+  count), then published, then retired, searchable, with **Start a new course** beside the
+  search box. Once a course is open the **course name in the top bar** is the way back out —
+  the only navigation a full-bleed page has ever had — and it flushes the autosave before
+  leaving, because navigating away with an edit still in the buffer is how you lose a
+  paragraph. Leaving also clears `?course=`, since `handle_route` reads the query string first
+  and a tab switch would otherwise silently reopen the course just left.
+
+  Two new author-gated reads behind it: `list_authorable_courses` (drafts ranked first, each
+  course's open draft and its lesson count) and `list_lesson_starters`. The lesson count is
+  **tallied in Python from one bounded query**, not `fields=["count(name) as n"]` — Frappe 16
+  raises *"SQL functions are not allowed as strings in SELECT"* on that, and nothing bench-free
+  sees it, which is how v1.474.0 shipped two on a green build and broke the Record Matching
+  page.
+
+  **The home screen creates nothing.** *Start a new course* calls
+  `training_course_authoring.create_from_starter`, the same endpoint the Training Course list
+  view has called since v1.386.0. Two doors, one scaffolder — the gallery is inline here and a
+  dialog there because the surfaces differ, not the behaviour.
+
+- **`+ Lesson` creates a whole lesson instead of a blank one.** It used to mint
+  `{lesson_title: "New lesson", blocks: []}`. That is precisely the defect the course starters
+  exist to fix — inventing the content and the shape at once is what stops people — and the
+  starters answered it *once per course*: a course built from one was well-shaped for its three
+  lessons and blank for the next twenty, and a course built any other way was blank from the
+  first. This is the button an author presses twenty times and that one is pressed once.
+
+  New `training/lesson_starters.py` offers six **lesson shapes** — Safety briefing, Step-by-step
+  procedure, Video lesson, Equipment walkthrough, Concept and practice, Blank — each landing a
+  complete lesson: title, summary, estimated minutes and real blocks whose prose is instructions
+  to the author ("Replace with the first check"), never filler. Filler is worse than an empty
+  page, because filler gets published.
+
+  **The module is deliberately not a scaffolder.** There is no "create a lesson from this shape"
+  endpoint and it is never imported by a save path: a shape is a starting *value* for the
+  structure the canvas already builds in memory, written by the ordinary autosave through
+  `save_draft_version` — same allowlist, same key minting, same optimistic lock as a hand-added
+  block. A second writer of lessons is the thing being avoided; the positional replace in
+  `_apply_blocks` is subtle enough with one.
+
+  One capability a lesson shape has that a course starter cannot: **it can place an empty media
+  block.** A course starter is policed by `validate_course_spec`, which excludes uploaded media,
+  so `templates_gallery` writes "add a photo here" in a callout instead. A lesson shape goes
+  through `BLOCK_ALLOWED_FIELDS`, which carries `image`/`file`/`video_asset`, so the Image and
+  Video slots are simply there — they save fine (emptiness stopped throwing in v1.386.0) and
+  `incomplete_blocks` refuses them at publish, which is exactly the wanted behaviour: the slot is
+  visible and it cannot ship unfilled.
+
+- **`training_ai.draft_lesson_content` — the third drafting call, and the first that drafts the
+  lesson rather than a check on it.** From a topic typed into the new-lesson dialog it returns
+  blocks in the canvas's edit shape. Like the other two it **persists nothing**; unlike them
+  there is no acceptance endpoint, and that asymmetry is the design rather than an omission.
+  Accepting a drafted *question* is a recorded human review because the question decides whether
+  somebody passed — `_unreviewed_ai_questions` refuses to publish without one. Accepting drafted
+  *content* is indistinguishable from having typed it, so it rides the author's own autosave.
+
+  Model text is never trusted as markup. Every string is stripped of tags, escaped, and
+  re-wrapped in a `<p>` the server wrote, so `content` is HTML this app built out of text rather
+  than HTML a model produced that this app decided to trust — shorter to reason about than a
+  sanitiser, and it does not depend on one being correct. Billed under its own
+  `training_lesson_draft` feature so lesson authoring's model spend is visible separately from
+  quiz drafting.
+
+- **A lesson shape that ticked "End-of-lesson quiz" would have made its own lesson unsaveable,
+  so none of them do.** `TrainingLesson._validate_quiz` throws *"marked as having a quiz but no
+  questions are in the pool"* the moment `has_quiz` is 1 with an empty pool — and the canvas
+  **cannot** put a question in a pool without a Training Question to point at, because
+  `QUIZ_ROW_ALLOWED_FIELDS` is `{question, points, is_required}` and the body is refused by
+  design. A shape that set it would have failed on the first autosave, four seconds after the
+  author chose it, with a red dialog and no way forward: the helpful-looking default is the one
+  that breaks. Shapes carry `suggests_quiz` instead and the canvas *says* it out loud once. The
+  flag is advice, never a field, and `tests/test_training_lesson_starters.py` fails the build on
+  a shape that grows one.
+
+  Noted because it is the same shape of trap as the Chat Settings defaults (v1.277.3) from the
+  other direction: there a new field's default never reached an existing Single and made a
+  dormant settings page unsaveable; here a default that *would* have been written makes a
+  brand-new lesson unsaveable. Both are "a sensible default, applied where the validator
+  disagrees".
+
+- **An AI draft no longer throws away the shape's media slots.** A model cannot attach a file —
+  asked for an Image block it invents a filename, which saves fine and is refused at publish
+  months later — so `draft_lesson_content` refuses to emit media at all. If a draft simply
+  replaced the chosen shape, picking *Video lesson* and then drafting would have silently
+  dropped the one block that made it a video lesson. The shape's media blocks are appended to
+  the drafted prose; its prose blocks are replaced. Changing the shape after drafting clears the
+  draft and says so, rather than mixing a briefing's words into a walkthrough's slots.
+
+### Fixed
+
+- **The Training workspace could not reach the editor, and the obvious fix would not have
+  arrived.** It had shortcuts to the learner portal, Insights, sessions and three course lists
+  and none to the canvas; it has one now. The half that is a fix rather than an addition is the
+  patch. A Workspace JSON is age-gated on the way in: `import_file` compares the file's
+  `modified` against the row and **silently skips** the file when the row is not older, so a
+  bumped stamp alone reaches a fresh install and no existing site.
+  `patches/reload_training_workspace_for_canvas.py` calls `reload_doc(force=True)`, guarded —
+  a patch that raises aborts `bench migrate`, which on this repo *is* the deploy, and a
+  workspace shortcut is not worth the half-applied install that cost us v1.395.0. The patch
+  is the half that does the work: `force=True` skips the comparison outright, so it lands
+  whatever the row says. The bumped stamp is for the *next* edit to this file, once this
+  one-shot patch is in `tabPatch Log` and will never run again.
+
+- **The canvas's quiz pool was unreachable without triggering the validator that refuses
+  it.** Pre-existing, found while wiring the new lesson shapes' quiz nudge, which pointed
+  straight into it. `this.$quizpool` — the question list and the **Add a question** button —
+  lived inside `.tc-quizset`, which `paintQuiz` toggles on `has_quiz`. So the only route to
+  the question editor was to tick **End-of-lesson quiz** first, and
+  `TrainingLesson._validate_quiz` throws *"marked as having a quiz but no questions are in
+  the pool"* on exactly that state. The tick marks the lesson dirty, so the autosave fired
+  1200ms later and produced a red dialog on every save until the author guessed that
+  unticking would stop it. **The one order the UI permitted was the one the validator
+  refuses.** The pool is now a sibling of the settings box, visible whenever the panel is;
+  the four numeric settings still hide, because they genuinely mean nothing without a quiz.
+
+- **`list_authorable_courses` bypassed permissions while its docstring said it did not.**
+  It used `frappe.get_all`, which frappe documents as "will **not** check for permissions" —
+  it is `get_list` with `ignore_permissions=True`. The docstring claimed the opposite in as
+  many words. On an endpoint whose whole job is to *enumerate documents for a person*, that
+  difference is the security model rather than a detail, so the course query is
+  `frappe.get_list` now and User Permissions apply. The two dependent lookups stay on
+  `get_all` deliberately, keyed to names already filtered through the permitted query. The
+  search term is also escaped for `%` and `_`: unescaped, a search for "50%" is a wildcard
+  matching everything after "50", read as "these are the courses about 50%".
+
+- **A lesson shape put author instructions in `caption`, which learners read.**
+  `blocks.js` renders `caption` as `<p class="tr-block-caption">` under the media *and* uses
+  it as the `<img alt>`, so "A photo of the actual machine, labelled. It beats a manufacturer
+  diagram every time." would have shipped to every learner and every screen reader on any
+  lesson where the author attached the photo and left the caption — the normal case, because
+  in the editor a caption reads as help text. All three media shapes now carry a real heading
+  and nothing else; the empty slot is its own instruction, since the canvas renders "No file
+  attached yet." in place and `incomplete_blocks` refuses the publish while it is empty.
+
+- **A garbled model reply could take the whole lesson draft down.** `draft_lesson_content`
+  iterated `item.get("items")` directly: a JSON scalar there raises `TypeError` out of the
+  whitelisted endpoint and loses every other block with it, and a bare *string* is worse
+  because it succeeds — a Checklist of "Close the valve" became fifteen items reading C, l,
+  o, s, e, which saves cleanly and reads as the author's own mistake. One `_list` helper on
+  all three payload shapes, so a bad item is dropped individually, as everywhere else in that
+  module.
+
+- **Three defects in the new home screen, all invisible until a particular click order.**
+  Leaving a course did not tear down the lesson-settings panel — a sibling of the block list,
+  so emptying the sheet left it on screen, while hiding its toggle button removed the only
+  way to close it; its controls stayed bound to a lesson `reset()` had already dropped, and
+  its AI buttons call `render_sheet()`, which would have wiped the course list underneath.
+  Searching above the 200-course cap and then clearing the box narrowed the list permanently,
+  because the truncation flag was keyed to the last *response* rather than to the unfiltered
+  list. And the AI panel's **Draft again** button could never work on its first press:
+  repainting rebuilt the topic box empty, so it refused with "Say what it should cover first"
+  and the sentence it wanted was no longer on screen.
+
+### Testing
+
+- New `tests/test_training_lesson_starters.py` (53 tests, its own CI step because it stubs
+  `frappe` in `setUpModule`): every shape's `block_type` and `callout_tone` checked against the
+  Training Content Block **DocType JSON** rather than restated — both are Selects, and
+  `_validate_selects` on a child row during `save_draft_version`'s full `lesson.save()` means a
+  value the doctype does not declare throws rather than degrades, which is what made the
+  canvas's first Callout unsaveable until v1.386.0. Also: no shape sets `has_quiz`, no shape
+  mints a `block_key`, nothing a shape emits falls outside `BLOCK_ALLOWED_FIELDS`, `data` stays
+  a JSON string, `shape_for` deep-copies, the dead end is gone from the canvas, both starter
+  galleries call one endpoint, and the workspace shortcut is present in **both** `shortcuts` and
+  the `content` blob — a shortcut missing from `content` exists on the document and renders
+  nowhere.
+- 27 tests added to `tests/test_training_ai.py` for `draft_lesson_content`: both gates, strict
+  parsing (prose, a markdown fence, a bare list and a half-built block all yield nothing), the
+  block and list caps, media never drafted, an unknown tone defaulted rather than dropping good
+  prose, and model markup escaped rather than sanitised.
+- Two absence assertions in the new suite strip comments and docstrings first, and both needed
+  to: the canvas comment explaining why the dead end is gone *quotes the dead end*, and
+  `lesson_starters`'s docstring explains at length why a shape never mints a `block_key`. That
+  trap has now caught this project twelve times.
+
+- An adversarial multi-agent review of this change (7 dimensions, every finding put to two
+  independent skeptics) produced the fixes above. Three of its findings were about **this
+  branch's own tests**, and all three were real:
+  - the 27 new AI tests were appended *after* `if __name__ == "__main__": unittest.main()`,
+    so a direct run of the file collected 63 of 90 while `python -m unittest` — what CI runs
+    — imported the module and saw all of them. Nothing would have reported the gap. The guard
+    now sits at the end, and a test asserts there is no module-level code after it.
+  - `test_a_markdown_fence_is_not_salvaged` fenced an **empty** block list, so the salvaging
+    and non-salvaging paths returned byte-identical results; it now fences a payload that is
+    accepted unfenced, with that acceptance as an explicit control.
+  - the whole "never trusts model markup" class passed with the escaping **deleted**, because
+    `_plain` strips `<script>` before `escape_html` is reached. A bare `<` is not a tag and
+    does reach the escaper, so the new case uses "run at < 40 psi & watch the seal".
+  Each fix was mutation-tested — the escaping and the list guard were reverted in turn to
+  confirm the new assertions actually fail.
+- Two of this branch's own window assertions (`code[at : at + N]`) slid onto the wrong
+  occurrence as the file grew and had to be re-anchored on definitions. Worth recording as
+  the shape of the trap: a source-window assertion needs an anchor that is unique *and* stays
+  unique, or it silently starts asserting something else.
+- The status-pill test hard-coded three of the Training Course status Select's four values,
+  so `Retired` — the one that most needs to not look like `Published` — was unguarded. It
+  reads the DocType now, and immediately failed for a missing `.tc-home-pill.is-retired`
+  rule, which is now there.
+
 ## [1.488.0] - 2026-09-18
 
 ### Fixed

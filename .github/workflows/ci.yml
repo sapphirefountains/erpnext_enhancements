@@ -1408,6 +1408,21 @@ jobs:
       # drift.
       - name: Training authoring entry (the editor is reachable, starters are specs)
         run: python -m unittest erpnext_enhancements.tests.test_training_authoring_entry -v
+      # The same question one level down, and one level further in. The canvas with
+      # no `course` used to render a dead end telling the author to edit the URL by
+      # hand -- which is exactly where the desk rail's only authoring link landed --
+      # and `+ Lesson` minted a blank lesson, so the starters answered "an empty page
+      # is where authoring stops" once per course and never again.
+      #
+      # Its own step, like every other bench-free suite that installs a stub set: it
+      # stubs `frappe` in setUpModule to import training/lesson_starters.py, and
+      # sharing a process with a suite that stubs it differently is how two suites
+      # start testing each other's fake. The three things worth the step: no shape
+      # may set `has_quiz` (an empty pool makes `_validate_quiz` throw, so the shape
+      # would break its own lesson on the first autosave), both Selects are checked
+      # against the DocType JSON rather than restated, and `data` stays a JSON string.
+      - name: Training lesson shapes + canvas home (a whole lesson, and a way in)
+        run: python -m unittest erpnext_enhancements.tests.test_training_lesson_starters -v
       # The team feed, and the one rule it exists to obey: it never carries a
       # number somebody could be judged by. Reactions hang on Training Achievement,
       # a record with NO performance fields at all -- because both reuse routes for
