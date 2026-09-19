@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.488.0] - 2026-09-18
+
+### Fixed
+
+- **Adding time by hand could only ever fail with "Activity type is required. Please pick one."**
+  Both hand-entry sheets shipped in v1.487.0 without an activity picker. `add_manual_interval`
+  requires a time category and falls back to `Time Kiosk Settings.default_time_category` — which is
+  **blank on production** — so the only outcome either sheet could produce was that refusal, on a
+  field the technician was never offered. The Clock tab's sheet passed `app.draft.activity`, which is
+  empty unless you had already selected a chip on the Clock tab first; My Day's passed nothing at all.
+
+  Both now carry a chip row, required before the sheet will submit, so the refusal happens at the
+  keystroke instead of after a round trip. The Clock tab's is seeded from whatever is already selected
+  there, so choosing an activity and *then* realising you forgot to clock in does not make you choose
+  it twice.
+
+  The picker is one shared `activityChipRow` helper on the kiosk context rather than a fourth
+  hand-rolled copy — the Clock tab and the Switch sheet already had their own, and it was going to
+  four that made it worth factoring.
+
+### Added
+
+- **The activity can be corrected when editing an interval**, not just its times.
+  `time_category` joins `ALLOWED_UPDATE_FIELDS`, which is a deliberate widening and stays narrow
+  otherwise: 36 fields on Job Interval are `read_only: 1`, `read_only` is a Desk hint rather than a
+  server gate, and a generic setter would let a technician clear their own `offsite_start`,
+  `auto_closed` or `tracking_health`. `time_category` is safe in a way those are not — the technician
+  chose it in the first place and is asked for it on every clock-in, so correcting it claims nothing
+  they could not have claimed at the time. Previously an activity typed onto the wrong row needed a
+  reviewer to fix.
+
+  A blank is ignored rather than written, so saving the sheet without touching the chips cannot empty
+  the category. That matters beyond tidiness: `approve_day` refuses a day with a missing
+  `time_category`, so a blank written here would have surfaced on payroll day rather than at the
+  keystroke that caused it.
+
+- **The refusal says something useful when there is genuinely nothing to pick.** With no Activity
+  Types on the site and no site default, "Please pick one" sends the reader back to an empty chip row;
+  it now names Time Kiosk Settings and suggests asking an administrator.
+
 ## [1.487.0] - 2026-09-18
 
 ### Added

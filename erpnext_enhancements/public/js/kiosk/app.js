@@ -1071,6 +1071,40 @@
     });
   }
 
+  // A row of activity-type chips for use inside a sheet. Returns { el, get, set }.
+  //
+  // Shared because there are now four places that need one — the Clock tab, the
+  // Switch sheet, and both hand-entry sheets (the second of which lives in
+  // myday.js and reaches this through ctx). `log_time` and `add_manual_interval`
+  // both REQUIRE a category and `Time Kiosk Settings.default_time_category` is
+  // blank on this site, so a sheet without this row is a sheet whose only
+  // possible outcome is "Activity type is required. Please pick one."
+  function activityChipRow(initial) {
+    var chosen = initial || '';
+    var row = h('div', { class: 'tk-chips', role: 'group', 'aria-label': 'Activity type' });
+    function render() {
+      UI.clear(row);
+      var types = app.options.activity_types || [];
+      if (!types.length) {
+        row.appendChild(h('p', { class: 'tk-note', text: 'No activity types configured.' }));
+        return;
+      }
+      types.forEach(function (a) {
+        row.appendChild(h('button', {
+          type: 'button', class: 'tk-choice', text: a.label,
+          'aria-pressed': chosen === a.value ? 'true' : 'false',
+          on: { click: function () { chosen = chosen === a.value ? '' : a.value; render(); } },
+        }));
+      });
+    }
+    render();
+    return {
+      el: row,
+      get: function () { return chosen; },
+      set: function (v) { chosen = v || ''; render(); },
+    };
+  }
+
   function openBackdatedStartSheet() {
     var p = app.draft.project;
     var task = app.draft.task;
@@ -1098,12 +1132,16 @@
     var startInput = h('input', { type: 'time', class: 'tk-input', value: hhmm(now), required: true });
     var endInput = h('input', { type: 'time', class: 'tk-input' });
     var reasonInput = h('textarea', { class: 'tk-input', rows: '2', placeholder: 'Why are you entering this by hand?', required: true });
+    // Seeded from the Clock tab's selection, so picking one there and then
+    // realising you forgot to clock in does not make you pick it twice.
+    var activity = activityChipRow(app.draft.activity);
     var err = h('p', { class: 'tk-error', hidden: true });
 
     var handle = UI.sheet.open({
       title: 'Add missed time',
       body: h('div', { class: 'tk-stack' }, [
         h('div', { class: 'tk-field' }, [h('label', { text: 'Project' }), pickBtn]),
+        h('div', { class: 'tk-field' }, [h('label', { text: 'Activity' }), activity.el]),
         h('div', { class: 'tk-field' }, [h('label', { text: 'Started at' }), startInput]),
         h('div', { class: 'tk-field' }, [
           h('label', { text: 'Finished at' }),
@@ -1116,6 +1154,10 @@
       actions: [
         { label: 'Add time', kind: 'primary', onClick: function (hnd, btn) {
           if (!p) { toast('Choose a project.', 'orange'); return false; }
+          // Checked here rather than left to the server: the refusal is certain
+          // (there is no site default to fall back on) and a round trip to be
+          // told to pick something you were never offered is the bug being fixed.
+          if (!activity.get()) { err.hidden = false; err.textContent = 'Pick an activity.'; return false; }
           if (!startInput.value) { startInput.focus(); return false; }
           var reasonVal = reasonInput.value.trim();
           if (!reasonVal) { reasonInput.focus(); toast('A reason is required.', 'orange'); return false; }
@@ -1129,7 +1171,7 @@
             end_time: endInput.value ? todayAt(endInput.value) : null,
             reason: reasonVal,
             task: task ? task.value : null,
-            time_category: app.draft.activity || null,
+            time_category: activity.get(),
             description: el.note ? el.note.value : null
           }).then(function (r) {
             handle.close('action');
@@ -1673,6 +1715,7 @@
       settings: SETTINGS,
       build: BUILD,
       openProjectPicker: openProjectPicker,
+      activityChipRow: activityChipRow,
       photoQueueLength: function () { return photoQueue().length; },
       flushQueues: function () {
         flushPhotoQueue();
