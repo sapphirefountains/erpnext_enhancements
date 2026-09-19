@@ -1229,7 +1229,7 @@ class TestAMultipleChoiceQuestionSaysItIsOne(unittest.TestCase):
         """The other half of how this was reported: told you were wrong, never told
         what was right. `quiz.js` has carried this line since it was written and had
         no data to draw it with until v1.445.0."""
-        body = _fn_body(_quiz_js(), "function renderReview(entry, i, byId, numberOf, result)")
+        body = _fn_body(_quiz_js(), "function renderReview(entry, i, byId, numberOf, result, ctx, transport)")
         self.assertIn("correct_option_keys", body)
         self.assertIn("Correct answer", body)
 

@@ -23,7 +23,14 @@
   "points_awarded",
   "column_break_result",
   "answered_on",
-  "time_taken_seconds"
+  "time_taken_seconds",
+  "ai_section",
+  "ai_judged",
+  "ai_reasoning",
+  "column_break_ai",
+  "ai_model",
+  "corrected_by",
+  "corrected_on"
  ],
  "fields": [
   {
@@ -154,10 +161,57 @@
    "fieldname": "time_taken_seconds",
    "fieldtype": "Int",
    "label": "Seconds Taken"
+  },
+  {
+   "fieldname": "ai_section",
+   "fieldtype": "Section Break",
+   "label": "AI Adjudication",
+   "depends_on": "eval:doc.ai_judged"
+  },
+  {
+   "default": "0",
+   "description": "Set when the typed answer did NOT match the accepted list exactly and an AI was asked to judge whether it meant the same thing. Unset means the verdict above came from the plain text comparison alone -- an exact match is never sent to a model.",
+   "fieldname": "ai_judged",
+   "fieldtype": "Check",
+   "label": "Judged by AI",
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "description": "Why the AI accepted or rejected the wording. Shown to the learner on the review screen and to the reviewer on a dispute -- an unexplained machine verdict is not something anybody can argue with.",
+   "fieldname": "ai_reasoning",
+   "fieldtype": "Small Text",
+   "label": "AI Reasoning",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_ai",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Which model produced the verdict. Provenance for a dispute raised months later, when the model behind the name has changed.",
+   "fieldname": "ai_model",
+   "fieldtype": "Data",
+   "label": "AI Model",
+   "read_only": 1
+  },
+  {
+   "description": "Set when a Training Manager upheld a dispute and overturned the verdict above. The original machine verdict is not erased -- ai_reasoning still says what the AI decided and why.",
+   "fieldname": "corrected_by",
+   "fieldtype": "Link",
+   "label": "Corrected By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "corrected_on",
+   "fieldtype": "Datetime",
+   "label": "Corrected On",
+   "read_only": 1
   }
  ],
  "links": [],
- "modified": "2026-08-01 12:00:00.000000",
+ "modified": "2026-09-19 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Training",
  "name": "Training Attempt Question",

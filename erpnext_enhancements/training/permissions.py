@@ -95,6 +95,19 @@ def attempt_question_query_conditions(user=None):
 	return _own_rows_condition("Training Attempt Question", _resolve(user))
 
 
+def answer_dispute_query_conditions(user=None):
+	"""A learner sees their own disputes; a supervisor also sees their reports'.
+
+	Same helper and the same shape as every other learner-owned doctype here. It
+	matters more than usual on this one: a dispute carries the accepted answers
+	for a question, snapshotted, so a learner who could list other people's
+	disputes could read answer keys for questions they have not yet been asked.
+	"""
+	if _is_unscoped(user):
+		return ""
+	return _own_rows_condition("Training Answer Dispute", _resolve(user))
+
+
 def completion_query_conditions(user=None):
 	if _is_unscoped(user):
 		return ""
@@ -354,6 +367,12 @@ def attempt_has_permission(doc, ptype=None, user=None):
 
 
 def attempt_question_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	return _own_row(doc, _resolve(user))
+
+
+def answer_dispute_has_permission(doc, ptype=None, user=None):
 	if _is_unscoped(user):
 		return True
 	return _own_row(doc, _resolve(user))

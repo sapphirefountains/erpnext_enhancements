@@ -618,7 +618,7 @@
 			wrap.appendChild(el("h3", "tr-result-h", t("Review")));
 			var list = el("div", "tr-review");
 			review.forEach(function (entry, i) {
-				list.appendChild(renderReview(entry || {}, i, byId, numberOf, result));
+				list.appendChild(renderReview(entry || {}, i, byId, numberOf, result, ctx, transport));
 			});
 			wrap.appendChild(list);
 		}
@@ -769,7 +769,7 @@
 		return box;
 	}
 
-	function renderReview(entry, i, byId, numberOf, result) {
+	function renderReview(entry, i, byId, numberOf, result, ctx, transport) {
 		var card = el("section", "tr-rev");
 		var id = String(entry.question || entry.id || "");
 		var known = byId[id];
@@ -828,7 +828,83 @@
 		}
 
 		if (entry.explanation) card.appendChild(setHtml(el("div", "tr-rev-why"), entry.explanation));
+
+		// What the AI said, and a way to argue with it. Both halves matter: a
+		// machine verdict nobody explains is one nobody can contest, and a
+		// contest with nowhere to go is not a contest. Present only when the AI
+		// was actually consulted -- an exact match is never sent to a model, so
+		// most answers show neither of these.
+		//
+		// `el(..., text)` throughout, never innerHTML: `ai_reasoning` is a
+		// model-authored string and the one place on this screen that is neither
+		// author-written nor server-computed.
+		if (entry.ai_reasoning) {
+			card.appendChild(el("div", "tr-rev-ai", t("Marked by AI") + ": " + entry.ai_reasoning));
+		}
+		if (entry.ai_judged && entry.correct === false && transport && typeof transport.raiseDispute === "function") {
+			card.appendChild(disputeControl(entry, result, ctx, transport));
+		}
 		return card;
+	}
+
+	// "I think this was right" -> one POST, then the button becomes its own
+	// receipt. Deliberately not a dialog: the learner is already looking at the
+	// question, their answer and the accepted ones, which is the whole context a
+	// reviewer needs, and a modal asking them to restate it would mostly collect
+	// blank notes.
+	function disputeControl(entry, result, ctx, transport) {
+		var wrap = el("div", "tr-rev-dispute");
+		var note = document.createElement("textarea");
+		note.className = "tr-rev-dispute-note";
+		note.rows = 2;
+		note.placeholder = t("Why do you think this was right? (optional)");
+
+		var button = document.createElement("button");
+		button.type = "button";
+		button.className = "tr-btn tr-btn-ghost";
+		button.textContent = t("I think this was right");
+
+		var said = el("div", "tr-rev-dispute-said tr-muted", "");
+		said.hidden = true;
+
+		button.addEventListener("click", function () {
+			button.disabled = true;
+			button.textContent = t("Sending…");
+			Promise.resolve(
+				transport.raiseDispute({
+					// The attempt and lesson this card belongs to, from the mount
+					// context rather than from the player's live state -- by the
+					// time anybody reads a review card the player may have moved on
+					// to another lesson entirely. Same reason the run comes off the
+					// graded RESULT. test_training_boot_wire requires every runtime
+					// call to carry its attempt, and it is right to.
+					attempt: ctx.attempt,
+					lesson_key: ctx.lessonKey,
+					quiz_run: result && result.run,
+					question: entry.question,
+					note: note.value || "",
+				})
+			)
+				.then(function () {
+					wrap.removeChild(note);
+					wrap.removeChild(button);
+					said.hidden = false;
+					said.textContent = t(
+						"Sent. A Training Manager will look at this and you will see the outcome on your record."
+					);
+				})
+				.catch(function () {
+					// TR.call has already surfaced the server's message. Re-enable
+					// rather than stranding the learner on a dead button.
+					button.disabled = false;
+					button.textContent = t("I think this was right");
+				});
+		});
+
+		wrap.appendChild(note);
+		wrap.appendChild(button);
+		wrap.appendChild(said);
+		return wrap;
 	}
 
 	function pickedFor(entry, id, result) {
@@ -937,6 +1013,17 @@
 		".tr-rev-key{color:var(--tr-ok)}",
 		".tr-rev-why{margin-top:.5rem;padding:.625rem .75rem;border-radius:.5rem;",
 		"background:rgba(127,127,127,.08);font-size:.9375rem}",
+		// The AI's reasoning and the push-back against it. Visually quieter than
+		// `.tr-rev-why` (the author's explanation), because on a review screen the
+		// author's teaching is the thing worth reading and the machine's reasoning
+		// is there to be checked.
+		".tr-rev-ai{margin-top:.5rem;font-size:.875rem;font-style:italic;opacity:.85}",
+		".tr-rev-dispute{margin-top:.625rem;display:flex;flex-direction:column;",
+		"align-items:flex-start;gap:.375rem}",
+		".tr-rev-dispute-note{width:100%;font:inherit;font-size:.875rem;padding:.5rem;",
+		"border-radius:.5rem;border:1px solid rgba(127,127,127,.35);background:transparent;",
+		"color:inherit;resize:vertical}",
+		".tr-rev-dispute-said{font-size:.875rem}",
 		".tr-result-foot .tr-btn-primary{margin-left:0}",
 		"@media (min-width:720px){.tr-quiz{font-size:1rem}.tr-q{padding:1.25rem 0}}",
 		"@media (prefers-reduced-motion:reduce){.tr-quiz *{scroll-behavior:auto}}",

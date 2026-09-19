@@ -1,0 +1,238 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-09-19 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "attempt_question",
+  "attempt",
+  "course",
+  "lesson",
+  "column_break_head",
+  "user",
+  "question",
+  "status",
+  "raised_on",
+  "answer_section",
+  "question_text",
+  "given_answer",
+  "column_break_answer",
+  "accepted_answers",
+  "ai_reasoning",
+  "learner_section",
+  "learner_note",
+  "review_section",
+  "reviewed_by",
+  "reviewed_on",
+  "column_break_review",
+  "reviewer_note",
+  "outcome_detail"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "options": "TRN-DSP-.#####",
+   "reqd": 1
+  },
+  {
+   "description": "The graded answer being disputed. Everything below is copied from it at the moment the dispute was raised, because a later re-grade or a published edit must not change what the reviewer is looking at.",
+   "fieldname": "attempt_question",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Answer",
+   "options": "Training Attempt Question",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "attempt",
+   "fieldtype": "Link",
+   "label": "Attempt",
+   "options": "Training Attempt",
+   "read_only": 1
+  },
+  {
+   "fieldname": "course",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Course",
+   "options": "Training Course",
+   "read_only": 1
+  },
+  {
+   "fieldname": "lesson",
+   "fieldtype": "Link",
+   "label": "Lesson",
+   "options": "Training Lesson",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The learner. Copied from the attempt so the queue can be filtered and so `permissions.py` can scope a learner to their own disputes with the same helper every other learner-owned doctype uses.",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Learner",
+   "options": "User",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "question",
+   "fieldtype": "Link",
+   "label": "Question",
+   "options": "Training Question",
+   "read_only": 1
+  },
+  {
+   "default": "Open",
+   "description": "Open until a Training Manager rules. Upheld means the learner was right and the answer was re-marked correct; Rejected means the original verdict stands.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Open\nUpheld\nRejected",
+   "reqd": 1
+  },
+  {
+   "fieldname": "raised_on",
+   "fieldtype": "Datetime",
+   "label": "Raised On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "answer_section",
+   "fieldtype": "Section Break",
+   "label": "What Was Asked"
+  },
+  {
+   "description": "The question as it read when it was asked, copied from the answer row.",
+   "fieldname": "question_text",
+   "fieldtype": "Small Text",
+   "label": "Question",
+   "read_only": 1
+  },
+  {
+   "description": "What the learner typed.",
+   "fieldname": "given_answer",
+   "fieldtype": "Small Text",
+   "label": "Their Answer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_answer",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The accepted answers as the published version held them when this was graded. Snapshotted rather than looked up live: a new draft can rewrite the key, and the reviewer has to see what the learner was actually marked against.",
+   "fieldname": "accepted_answers",
+   "fieldtype": "Small Text",
+   "label": "Accepted Answers",
+   "read_only": 1
+  },
+  {
+   "description": "What the AI said, verbatim. Blank when the answer was marked wrong by the plain text comparison and the AI was never reached -- which is itself worth knowing on a dispute.",
+   "fieldname": "ai_reasoning",
+   "fieldtype": "Small Text",
+   "label": "AI Reasoning",
+   "read_only": 1
+  },
+  {
+   "fieldname": "learner_section",
+   "fieldtype": "Section Break",
+   "label": "The Learner's Case"
+  },
+  {
+   "description": "Why the learner believes the answer was right.",
+   "fieldname": "learner_note",
+   "fieldtype": "Small Text",
+   "label": "Learner's Note",
+   "read_only": 1
+  },
+  {
+   "fieldname": "review_section",
+   "fieldtype": "Section Break",
+   "label": "Review"
+  },
+  {
+   "fieldname": "reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reviewed_on",
+   "fieldtype": "Datetime",
+   "label": "Reviewed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_review",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The reviewer's reasoning. Worth writing even on a rejection -- it is what the learner is shown.",
+   "fieldname": "reviewer_note",
+   "fieldtype": "Small Text",
+   "label": "Reviewer's Note"
+  },
+  {
+   "description": "What upholding actually did: the answer re-marked, the run re-scored, and whether the attempt flipped to a pass. Written by the server so the record says what happened rather than what was intended.",
+   "fieldname": "outcome_detail",
+   "fieldtype": "Small Text",
+   "label": "Outcome",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-19 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Answer Dispute",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Training Learner"
+  }
+ ],
+ "search_fields": "user,course,status",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "given_answer",
+ "track_changes": 1
+}

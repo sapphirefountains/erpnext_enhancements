@@ -299,6 +299,56 @@ now fails the build for any whitelisted function in either module that nothing
 calls, and it walks the AST rather than grepping, so a comment *about* an
 endpoint does not count as a caller.
 
+## How a Short Answer is graded (v1.490.0)
+
+**An AI decides, with no human sign-off in front of it, and the learner disputes** —
+[ADR 0015](../../decisions/adr/0015-ai-grades-short-answers-without-sign-off.md). Behind
+`Training Settings.ai_grade_short_answers`, which ships **off** and is separate from
+`ai_assist_enabled`.
+
+Before this, the whole test was `_matches_key`: lowercase both sides, trim, collapse runs of
+spaces, and ask whether the typed string is literally one of the accepted ones. A trailing
+full stop, a hyphen, "the" in front, a plural, `3ppm` for `3 ppm` or one mistyped letter all
+scored zero.
+
+Four constraints, all load-bearing:
+
+1. **Exact match first.** The model sees only an answer the comparison already rejected, so
+   it can turn a wrong into a right and **never the reverse**. This ordering is the entire
+   safety argument, it lives in `grading._judge_text_answer`, and
+   `tests/test_training_disputes.py` pins it by *execution* — reversing it fails five tests.
+2. **The author's list is the only standard.** The model judges equivalence to an answer a
+   human approved; it is not asked what is correct. That is what separates this from
+   `draft_quiz_questions`, where a model invents the key and therefore still cannot publish
+   unreviewed.
+3. **Every failure falls back to the comparison.** Off, unreachable, unparseable, too long —
+   all yield no opinion. Nobody is marked wrong because a model was down.
+4. **The verdict is explained and contestable.** `ai_reasoning` is shown to the learner with
+   a dispute button, and both are filed on the Training Attempt Question row — `AI Model
+   Usage` records token counts only, so that row is the only place the reasoning survives.
+
+`ai_judged` records whether the model was consulted at all. It looks redundant with
+`is_correct` and is not: an outage silently reverts to strict matching, so the same words can
+be marked wrong on Monday and right on Tuesday, and `ai_judged` is how anybody tells those
+cases apart afterwards.
+
+### Disputes
+
+`Training Answer Dispute` ([`disputes.py`](disputes.py)) is the human half. A learner raises
+one from the review screen; everything the reviewer reads is **snapshotted** at that moment,
+including the accepted answers as the published version held them — a new draft can rewrite
+them freely, and the reviewer has to see what the learner was marked against.
+
+Upholding **finishes the job**: re-marks the answer, re-scores the run, and re-drives the
+attempt through `api.training._evaluate_attempt` — the same re-drivable function a
+supervisor's sign-off uses — so the completion, certificate and assignment close are the
+ordinary ones. Two facts made that small: `_evaluate_attempt` was already re-drivable, and
+**nothing in this app ever sets an attempt to `Failed`**, so there is no status to undo.
+
+`reset_quiz_attempts` is the function `start_quiz` has been promising learners since the
+module shipped ("A Training Manager can reset it for you") while none existed. It resets the
+run *count* only — a reset is "have another go", not "lose what you earned".
+
 ## Authoring a course
 
 Open a Training Course and press **Edit Visually**, or go straight to

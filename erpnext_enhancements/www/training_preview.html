@@ -513,6 +513,20 @@
 			if (DRAFT) return gradeDraftQuiz(args);
 			return gradeQuiz(args && args.answers);
 		},
+		// Declined, on purpose, and `null` rather than a function that rejects.
+		//
+		// quiz.js gates the "I think this was right" button on
+		// `typeof transport.raiseDispute === "function"`, so a null here means the
+		// button is never drawn in preview — which is the right outcome. There is
+		// no attempt to dispute (the preview grades a draft in the browser and
+		// files nothing), and a button that always fails on click is worse than no
+		// button: that is the same mistake as the "Open Builder" placeholder that
+		// outlived its feature by three releases.
+		//
+		// Present by name so `test_training_phase3_contracts` can see the preview
+		// answering every method the player calls. Declining IS an answer; being
+		// silently absent is the hole that test exists to find.
+		raiseDispute: null,
 		completeLesson: function (args) {
 			var key = (args && args.lesson_key) || "l1";
 			return { ok: true, coverage: 100, next_lesson_key: key === "l1" ? "l2" : null };

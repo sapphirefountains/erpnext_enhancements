@@ -165,6 +165,13 @@ RESPONSE_BINDERS = (
 # ---------------------------------------------------------------------------
 
 SENT_BUT_NOT_READ = {
+    # Provenance for a dispute raised months later, when the model behind a name
+    # has changed. It is in the reply because `_file_quiz_answers` reads the same
+    # per_question dict the response returns, and the ANSWER ROW is where it is
+    # wanted -- `AI Model Usage` records token counts only. Deliberately not
+    # rendered: a model identifier means nothing to a learner mid-quiz, and the
+    # thing they need ("Marked by AI" plus the reasoning) is shown.
+    "ai_model": "filed on Training Attempt Question for disputes; never shown to a learner",
     # Read off the course object, which TestCourseCardFields and
     # TestOutlineRowFields in test_training_boot_wire already compare.
     "cover_image": "course metadata; covered by TestCourseCardFields",
@@ -213,7 +220,6 @@ SENT_BUT_NOT_READ = {
     # Echoes and diagnostics.
     "response_ms": "echoed back for the desk's integrity view",
     "server_time": "diagnostic on every beat; the player never trusts its own clock anyway",
-    "run": "the run number is tracked client-side from startQuiz",
     "best": "the best score is shown on the course view from the progress map",
     "block_key": "the checkpoint's own block; the player already knows which block it armed",
     # Superseded by the per-question breakdown, which carries points per row.
