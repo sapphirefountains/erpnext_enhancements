@@ -772,13 +772,26 @@ class TestInVideoCheckpointsOnTheCanvas(unittest.TestCase):
         self.assertEqual(len(mints), 1, "exactly one transient mint is allowed")
         self.assertIn("cp.checkpoint_key = saved.checkpoint_key", src)
 
-    def test_the_real_key_goes_back_on_every_save(self):
-        """Omitting it blanks the field and strands every answer already recorded
-        against it — the single most expensive mistake available here."""
+    def test_the_real_key_cannot_be_blanked_by_a_save(self):
+        """Blanking it strands every answer already recorded against it — the
+        single most expensive mistake available here.
+
+        The guarantee moved and got stronger. It used to be "the client remembers
+        to send the key back with every save", which holds only while every
+        future caller remembers. The write now goes through
+        `training_author.save_checkpoint`, whose allowlist EXCLUDES
+        `checkpoint_key` — so the server never overwrites it and no client can
+        blank it, whether it remembers or not."""
         src = _canvas()
         at = src.index("write_checkpoint(lesson, cp) {")
         body = src[at : src.index("after_checkpoint_write() {", at)]
-        self.assertIn("checkpoint_key: cp.checkpoint_key", body)
+        self.assertIn("M_SAVE_CHECKPOINT", body)
+        self.assertNotIn("checkpoint_key: cp.checkpoint_key", body)
+
+        api = (APP / "api/training_author.py").read_text(encoding="utf-8")
+        at = api.index("CHECKPOINT_ALLOWED_FIELDS = frozenset(")
+        allowed = api[at : api.index(")", at)]
+        self.assertNotIn("checkpoint_key", allowed)
 
     def test_a_write_repaints_pins_not_the_sheet(self):
         """A full re-render tears down the rich-text controls, so a checkpoint save
@@ -1261,7 +1274,14 @@ class TestTheQuizPoolIsAuthorableByHand(unittest.TestCase):
         for field in ("question_text", "options"):
             with self.subTest(field):
                 self.assertNotIn(field, body)
-        self.assertIn('doctype: "Training Question"', src)
+        # The separate write exists and goes through the app's own endpoint. It
+        # used to be `frappe.client.insert`/`save` with a hand-built
+        # `doctype: "Training Question"` dict, which could create a question and
+        # could never update one -- `frappe.client.save` reconstructs a Document,
+        # so every constant field the browser omitted read as a change
+        # (CannotChangeConstantError on Created On, then on Created By).
+        self.assertIn("M_SAVE_QUESTION", src)
+        self.assertIn("save_quiz_question", src)
 
     def test_editing_a_shared_question_is_copy_on_write(self):
         """The trap the server's own docstring names: a Training Question is a
@@ -1287,10 +1307,22 @@ class TestTheQuizPoolIsAuthorableByHand(unittest.TestCase):
         """`publish_version` refuses an `ai_generated` question with no
         `ai_reviewed_by`, and until now the only writer of that field always
         constructed a NEW question rather than marking an existing one — so a
-        Triton-authored course carrying a quiz could never be published by anyone."""
+        Triton-authored course carrying a quiz could never be published by anyone.
+        The stamp now happens on the SERVER, from the session, which is the
+        stronger form: a browser that could name the reviewer could walk an
+        AI-drafted answer key past `_unreviewed_ai_questions` with nobody having
+        read it.
+        """
         src = self.canvas()
         start = src.index("\twrite_question(lesson, row) {")
-        self.assertIn("body.ai_reviewed_by = frappe.session.user", src[start : src.index("	save_question(", start)])
+        client = src[start : src.index("	save_question(", start)]
+        self.assertNotIn("body.ai_reviewed_by", client)
+
+        api = (APP / "api/training_author.py").read_text(encoding="utf-8")
+        at = api.index("def save_quiz_question(")
+        body = api[at : api.index("\n@frappe.whitelist", at)]
+        self.assertIn("ai_reviewed_by = frappe.session.user", body)
+        self.assertIn('cint(doc.get("ai_generated"))', body)
 
     def test_the_empty_pool_says_how_to_escape_it(self):
         """`_validate_quiz` throws while `has_quiz` is ticked and the pool is empty,

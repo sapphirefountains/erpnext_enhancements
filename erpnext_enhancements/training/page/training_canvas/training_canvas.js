@@ -140,6 +140,15 @@ const TC_MATERIAL = "Material Change (require retake)";
 
 const TC_SAVE_DEBOUNCE_MS = 1200;
 
+// The app's own question / chapter / checkpoint writers. NOT `frappe.client.save`:
+// that reconstructs a Document from whatever dict the browser sent, so every
+// constant field the browser omitted reads as a change. Verified against prod --
+// omitting `creation` throws on Created On, and supplying it throws on Created By.
+// Editing a question, a chapter or a checkpoint had therefore never worked.
+const M_SAVE_QUESTION = "erpnext_enhancements.api.training_author.save_quiz_question";
+const M_SAVE_CHAPTER = "erpnext_enhancements.api.training_author.save_video_chapter";
+const M_SAVE_CHECKPOINT = "erpnext_enhancements.api.training_author.save_checkpoint";
+
 class TrainingCanvas {
 	constructor(page, wrapper) {
 		this.page = page;
@@ -1423,6 +1432,36 @@ class TrainingCanvas {
 		check(__("Allow learner questions"), "allow_questions");
 		check(__("Require a work submission"), "requires_submission");
 		const $quiz = check(__("End-of-lesson quiz"), "has_quiz");
+		// Ticking this with an empty pool is REFUSED here, in the browser, because
+		// the server refuses it 1200ms later and never stops.
+		//
+		// `TrainingLesson._validate_quiz` throws on has_quiz with no questions.
+		// That throw lands on the AUTOSAVE, and frappe's request.js msgprints
+		// `_server_messages` whatever the caller does with the rejection — so the
+		// author gets a red dialog every few seconds, on a lesson that will not
+		// save at all, with nothing on screen connecting it to the box they just
+		// ticked. The only escape is guessing that unticking stops it.
+		//
+		// v1.490.0 moved the question pool out from behind this box so the right
+		// order (add a question, then tick) became possible. This makes the wrong
+		// order impossible, which is the half that was missing: the box is the
+		// thing an author reaches for first, because it is the thing that names
+		// the feature.
+		$quiz.on("click", (event) => {
+			if (!event.currentTarget.checked) return;
+			if (this.quiz_rows(lesson).length) return;
+			event.preventDefault();
+			event.currentTarget.checked = false;
+			frappe.show_alert(
+				{
+					message: __("Add a question to the pool first — a quiz with none cannot be saved."),
+					indicator: "orange",
+				},
+				6
+			);
+			const pool = this.$quizpool && this.$quizpool[0];
+			if (pool && pool.scrollIntoView) pool.scrollIntoView({ block: "nearest" });
+		});
 
 		// THE POOL IS NO LONGER HIDDEN BEHIND THE TICK BOX, and that is a deadlock
 		// being removed rather than a layout preference.
@@ -1723,9 +1762,23 @@ class TrainingCanvas {
 		} else if (row.question_type === "Short Answer") {
 			row.options = [];
 		} else if (!(row.options || []).length) {
+			// DISTINCT placeholder text, not two blanks.
+			//
+			// `TrainingQuestion._validate_options` rejects duplicate options by
+			// `option_text.strip().lower()`, and two empty strings are duplicates —
+			// so seeding a new Single Choice question with two blanks threw
+			// "Two options both read . A learner cannot tell them apart." on the
+			// insert, every time. "Add a question" therefore never once worked for
+			// a choice question. It went unnoticed because the pool editor lived
+			// behind the End-of-lesson quiz tick box until v1.490.0, and ticking
+			// that with an empty pool threw its own error first — two bugs in a row
+			// where the first one hid the second.
+			//
+			// The author overwrites both of these immediately, so the wording only
+			// has to be distinct and obviously placeholder.
 			row.options = [
-				{ option_text: "", is_correct: 1 },
-				{ option_text: "", is_correct: 0 },
+				{ option_text: __("Option 1"), is_correct: 1 },
+				{ option_text: __("Option 2"), is_correct: 0 },
 			];
 		}
 	}
@@ -1766,6 +1819,22 @@ class TrainingCanvas {
 		// author should have to go and do deliberately.
 		lesson.quiz = this.quiz_rows(lesson).filter((r) => r !== row);
 		this.set_lesson_quiz(lesson);
+		// Emptying the pool while the box is ticked is the same unsaveable state
+		// reached from the other direction, so it unticks itself rather than
+		// letting the autosave start throwing. Said out loud: silently turning a
+		// setting off under somebody is worse than the error it avoids.
+		if (this.num(lesson.has_quiz) && !this.quiz_rows(lesson).length) {
+			this.set_lesson_field(lesson, "has_quiz", 0);
+			frappe.show_alert(
+				{
+					message: __("That was the last question, so End-of-lesson quiz has been switched off."),
+					indicator: "orange",
+				},
+				6
+			);
+			this.render_lesson_settings();
+			return;
+		}
 		this.paint_quiz_pool(lesson);
 	}
 
@@ -1787,27 +1856,32 @@ class TrainingCanvas {
 	write_question(lesson, row) {
 		if (!this.editable()) return Promise.resolve();
 		const body = {
-			doctype: "Training Question",
 			question_text: row.question_text || "",
 			question_type: row.question_type || "Single Choice",
 			explanation: row.explanation || "",
 			correct_text_answers: row.correct_text_answers || "",
 			difficulty: row.difficulty || "Medium",
 			options: (row.options || []).map((o) => ({
-				doctype: "Training Answer Option",
 				option_text: o.option_text || "",
 				is_correct: this.num(o.is_correct) || 0,
 				explanation: o.explanation || "",
 			})),
 		};
-		// Stamping the reviewer is what unblocks publish for an AI-drafted question.
-		// Set on SAVE rather than on render, so it records somebody having actually
-		// changed or confirmed the question rather than merely opened the panel.
-		if (this.num(row.ai_generated)) body.ai_reviewed_by = frappe.session.user;
+		// `ai_reviewed_by` is NOT set here. Saving a drafted question is the review,
+		// and the server stamps it from the session -- a client that could name the
+		// reviewer could walk an AI-drafted answer key past
+		// `_unreviewed_ai_questions` with nobody having read it.
 
 		if (!row.question) {
+			// Through the app's own endpoint, not `frappe.client.insert`. The server
+			// owns `creation`, `modified` and the provenance fields; a document
+			// assembled in a browser is how this path produced "Value cannot be
+			// changed for Created On" on every edit and "Two options both read ."
+			// on every create.
 			return frappe
-				.call("frappe.client.insert", { doc: body })
+				.call(M_SAVE_QUESTION, {
+					patch: JSON.stringify(body),
+				})
 				.then((r) => {
 					const saved = (r && r.message) || {};
 					row.question = saved.name;
@@ -1826,7 +1900,10 @@ class TrainingCanvas {
 
 	save_question(lesson, row, body) {
 		return frappe
-			.call("frappe.client.save", { doc: { ...body, name: row.question, modified: row.modified } })
+			.call(M_SAVE_QUESTION, {
+				question: row.question,
+				patch: JSON.stringify(body),
+			})
 			.then((r) => {
 				const saved = (r && r.message) || {};
 				row.modified = saved.modified;
@@ -1865,11 +1942,13 @@ class TrainingCanvas {
 				primary_action_label: __("Copy it for this lesson"),
 				primary_action: () => {
 					dialog.hide();
-					const fresh = { ...body };
-					delete fresh.name;
+					// No `name`, so the endpoint creates rather than updates -- which is
+					// the whole point of the fork.
 					resolve(
 						frappe
-							.call("frappe.client.insert", { doc: fresh })
+							.call(M_SAVE_QUESTION, {
+								patch: JSON.stringify(body),
+							})
 							.then((r) => {
 								const saved = (r && r.message) || {};
 								row.question = saved.name;
@@ -3768,7 +3847,7 @@ class TrainingCanvas {
 		};
 		if (!row.name) {
 			return frappe
-				.call("frappe.client.insert", { doc })
+				.call(M_SAVE_CHAPTER, { patch: JSON.stringify(doc) })
 				.then((r) => {
 					const saved = (r && r.message) || {};
 					row.name = saved.name;
@@ -3778,7 +3857,7 @@ class TrainingCanvas {
 				.catch((error) => this.chapter_write_failed(error));
 		}
 		return frappe
-			.call("frappe.client.save", { doc: { ...doc, name: row.name, modified: row.modified } })
+			.call(M_SAVE_CHAPTER, { chapter: row.name, patch: JSON.stringify(doc) })
 			.then((r) => {
 				row.modified = ((r && r.message) || {}).modified;
 				this.paint_status("saved");
@@ -3965,7 +4044,7 @@ class TrainingCanvas {
 			// "cp-…" this file hangs the pin on is thrown away the moment a real one
 			// comes back.
 			return frappe
-				.call("frappe.client.insert", { doc })
+				.call(M_SAVE_CHECKPOINT, { patch: JSON.stringify(doc) })
 				.then((r) => {
 					const saved = (r && r.message) || {};
 					cp.name = saved.name;
@@ -3980,10 +4059,13 @@ class TrainingCanvas {
 		}
 		const send = (modified) =>
 			frappe
-				.call("frappe.client.save", {
-					// The real key goes back with EVERY save. Omitting it blanks the field
-					// and strands every answer already recorded against it.
-					doc: { ...doc, name: cp.name, checkpoint_key: cp.checkpoint_key, modified },
+				.call(M_SAVE_CHECKPOINT, {
+					// `checkpoint_key` is NOT sent. The server refuses it from a patch and
+					// never overwrites it, so a save can no longer blank the field that
+					// every recorded answer is filed against -- which is what the old
+					// send-it-back-every-time workaround was defending.
+					checkpoint: cp.name,
+					patch: JSON.stringify(doc),
 				})
 				.then((r) => {
 					cp.modified = ((r && r.message) || {}).modified;
