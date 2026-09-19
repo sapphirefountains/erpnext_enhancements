@@ -1086,14 +1086,24 @@
 /* ------------------------------------------------------------- the quiz pool */
 
 /* The hand-authoring surface that replaced a hint pointing at a deleted page.
-   It sits inside .tc-quizset, so it inherits that panel's surface and only has to
-   separate its own rows. */
+
+   It used to sit INSIDE .tc-quizset and inherit that panel's surface. It does not
+   any more, and the move is load-bearing rather than cosmetic: .tc-quizset is
+   toggled on `has_quiz`, so the only way to reach "Add a question" was to tick the
+   box — and `TrainingLesson._validate_quiz` throws on a ticked box with an empty
+   pool, which the autosave hit 1200ms later. The pool is now a sibling, visible
+   whenever the panel is, so the question can be added first. That means it has to
+   carry its own surface. */
 
 .tc-quizpool {
 	display: flex;
 	flex-direction: column;
 	gap: 10px;
 	margin-top: 4px;
+	padding: 12px;
+	border-radius: 12px;
+	background: var(--tr-surface, #fff);
+	border: 1px solid var(--tr-border, #e2e0f0);
 }
 
 .tc-quizpool-head {
@@ -1159,6 +1169,275 @@
    `visibilitychange` handler exists because "a tablet locking its screen" was
    anticipated — so the script assumed a tablet while the stylesheet assumed one
    could not happen.
+
+/* ============================================================== home screen
+
+   What the canvas shows with no course open. This used to be `.tc-empty` and
+   one sentence of advice about editing the URL; it is the page the desk rail's
+   "Course canvas" link and the Training workspace shortcut both land on, so it
+   has to be somewhere you can start work rather than somewhere you read
+   instructions.
+
+   It renders inside `.tc-blocks`, which sits in `.tr-shell` — the learner's own
+   stylesheet. That is deliberate everywhere else on this page (the thing you
+   edit is the thing a learner sees) and irrelevant here, so these rules set what
+   they need rather than inheriting a reading column meant for lesson prose. */
+
+.tc-home {
+	max-width: 720px;
+	margin: 4vh auto 0;
+}
+
+.tc-home-head {
+	margin-bottom: 18px;
+}
+
+.tc-home-head h2 {
+	margin: 0 0 4px;
+	font-size: 1.35rem;
+	letter-spacing: -0.01em;
+	color: var(--heading-color, #1a1830);
+}
+
+.tc-home-head p {
+	margin: 0;
+	padding: 0;
+	color: var(--tr-muted, #5f6488);
+}
+
+.tc-home-back {
+	margin-bottom: 10px;
+}
+
+.tc-home-actions {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	margin-bottom: 14px;
+}
+
+/* The search box takes the slack, the button keeps its own width. Reversed —
+   a flexed button — and "Start a new course" stretches to half the page on a
+   wide screen, which reads as the only thing you are meant to do. */
+.tc-home-actions .form-control {
+	flex: 1;
+	min-width: 0;
+}
+
+.tc-home-note {
+	padding-top: 0;
+	margin-bottom: 8px;
+	font-size: 0.82rem;
+}
+
+.tc-home-group {
+	margin: 16px 0 6px;
+	font-size: 0.72rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--tr-muted, #5f6488);
+}
+
+.tc-home-group:first-child {
+	margin-top: 0;
+}
+
+.tc-home-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 12px;
+	border: 1px solid var(--border-color, #e2e2e2);
+	border-radius: var(--border-radius-md, 8px);
+	margin-bottom: 6px;
+	cursor: pointer;
+	background: var(--card-bg, #fff);
+}
+
+.tc-home-row:hover,
+.tc-home-row:focus-visible {
+	border-color: var(--primary, #4b3ce8);
+	outline: none;
+}
+
+.tc-home-row-main {
+	flex: 1;
+	min-width: 0;
+}
+
+.tc-home-title {
+	font-weight: 600;
+	color: var(--heading-color, #1a1830);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tc-home-meta {
+	padding: 0;
+	font-size: 0.82rem;
+}
+
+.tc-home-none {
+	padding: 24px 0;
+	text-align: center;
+}
+
+/* Status at a glance, same four states and the same colours as the Training
+   Course list view's indicators. Two surfaces disagreeing about what "In Review"
+   looks like is a small thing that makes both feel unreliable. */
+.tc-home-pill {
+	flex: 0 0 auto;
+	font-size: 0.72rem;
+	font-weight: 600;
+	padding: 2px 8px;
+	border-radius: 999px;
+	background: var(--bg-light-gray, #f4f5f6);
+	color: var(--tr-muted, #5f6488);
+}
+
+.tc-home-pill.is-published {
+	background: var(--bg-green, #e3f5e9);
+	color: var(--text-on-green, #1f7a44);
+}
+
+.tc-home-pill.is-draft {
+	background: var(--bg-orange, #fdf1e0);
+	color: var(--text-on-orange, #9a5b06);
+}
+
+.tc-home-pill.is-in-review {
+	background: var(--bg-blue, #e8eefc);
+	color: var(--text-on-blue, #2f4faa);
+}
+
+/* Retired is the one that most needs to not look like Published, and the one a
+   hard-coded three-status test left unguarded. Deliberately the flattest of the
+   four: out of service is not a state anybody should have to read twice. */
+.tc-home-pill.is-retired {
+	background: var(--bg-light-gray, #f4f5f6);
+	color: var(--text-light, #8d99a6);
+}
+
+/* Both are hidden on the home screen, and both need saying explicitly. The
+   `hidden` attribute is a UA rule of the lowest specificity, so `.tc-status`'s
+   own `display: inline-flex` and bootstrap's `.btn { display: inline-block }`
+   both win against it and the element stays on screen. `.tc-lessonsettings`
+   already carries the same rule a few hundred lines up, for the same reason —
+   whoever wrote it found this out the same way. */
+.tc-status[hidden],
+.tc-lessonset[hidden] {
+	display: none;
+}
+
+/* The course name in the top bar doubles as the way back to the home screen
+   once a course is open. Underlined on hover rather than always, so it does not
+   read as a link on a page where nothing else is one. */
+.tc-course-name.is-link {
+	cursor: pointer;
+}
+
+.tc-course-name.is-link:hover,
+.tc-course-name.is-link:focus-visible {
+	text-decoration: underline;
+	outline: none;
+}
+
+/* ------------------------------------------------- starter / shape cards
+
+   Two galleries, one rule set. `.tc-starter` is a whole course (rendered inline
+   on the home screen) and `.tc-shape` is one lesson (rendered in the new-lesson
+   dialog); they are picked the same way, so they look the same. */
+
+.tc-starters,
+.tc-shapes {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+	gap: 8px;
+	margin-bottom: 14px;
+}
+
+.tc-starter,
+.tc-shape {
+	border: 1px solid var(--border-color, #e2e2e2);
+	border-radius: var(--border-radius-md, 8px);
+	padding: 10px 12px;
+	cursor: pointer;
+	background: var(--card-bg, #fff);
+}
+
+.tc-starter:hover,
+.tc-shape:hover,
+.tc-starter:focus-visible,
+.tc-shape:focus-visible {
+	border-color: var(--primary, #4b3ce8);
+	outline: none;
+}
+
+/* An inset ring rather than a thicker border: a border that changes width on
+   selection reflows the grid, and every other card shifts by a pixel. */
+.tc-starter.is-chosen,
+.tc-shape.is-chosen {
+	border-color: var(--primary, #4b3ce8);
+	box-shadow: inset 0 0 0 1px var(--primary, #4b3ce8);
+}
+
+.tc-starter-label,
+.tc-shape-label {
+	font-weight: 600;
+	color: var(--heading-color, #1a1830);
+}
+
+.tc-starter-blurb,
+.tc-shape-blurb {
+	padding: 2px 0 0;
+	font-size: 0.82rem;
+	line-height: 1.4;
+}
+
+.tc-starter-meta,
+.tc-shape-meta {
+	padding: 6px 0 0;
+	font-size: 0.75rem;
+}
+
+/* --------------------------------------------- AI drafting, in the dialog */
+
+.tc-newai {
+	border-top: 1px solid var(--border-color, #e2e2e2);
+	padding-top: 12px;
+	margin-top: 4px;
+}
+
+.tc-newai-head {
+	font-weight: 600;
+	margin-bottom: 6px;
+	color: var(--heading-color, #1a1830);
+}
+
+.tc-newai textarea {
+	margin-bottom: 8px;
+}
+
+.tc-newai .tc-muted {
+	padding: 6px 0 0;
+	font-size: 0.78rem;
+}
+
+.tc-newai-done {
+	margin-top: 10px;
+	padding: 8px 10px;
+	border-radius: var(--border-radius-md, 8px);
+	background: var(--bg-light-gray, #f4f5f6);
+}
+
+.tc-newai-list {
+	margin: 6px 0 4px;
+	padding-left: 18px;
+	font-size: 0.82rem;
+	color: var(--tr-muted, #5f6488);
+}
 
    991.98px is frappe's own `media-breakpoint-down` value, and the `.98` matters
    for the same reason it does on the learner rail: written as 991 it leaves a

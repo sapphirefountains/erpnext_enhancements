@@ -751,3 +751,257 @@ def _accept_checkpoints(lesson_doc, rows, stamp):
         names.append(checkpoint.name)
 
     return {"created": len(names), "names": names}
+
+
+# --------------------------------------------------------- lesson content
+#
+# The third drafting call, and the only one that drafts the *lesson* rather than
+# a check on it. Same rule as the other two, for the same reason: it persists
+# nothing. What comes back is spliced into the canvas's in-memory lesson and
+# written, if at all, by the ordinary autosave the author's own typing goes
+# through -- so "accepting" an AI-drafted block is indistinguishable from having
+# typed it, which is the right model for *content*. A quiz question is different
+# (it decides whether somebody passed, so acceptance is a recorded review) and
+# that asymmetry is deliberate rather than an oversight.
+#
+# There is no grounding check here and there cannot be one: the whole point is to
+# produce prose where none exists yet, so there is nothing to ground against.
+# What stands in for it is that every word lands in a WYSIWYG the author is
+# looking at, in the learner's own stylesheet, before anything is saved.
+
+LESSON_FEATURE = "training_lesson_draft"
+
+#: Block types the model may produce. Media is absent because a model cannot
+#: attach a file -- asked for an Image block it invents a filename, which saves
+#: fine and is refused at publish with "nothing attached" long after anybody
+#: remembers why the block is there. Empty media slots come from the lesson
+#: *shape* instead, which is honest about being empty.
+LESSON_BLOCK_TYPES = ("Rich Text", "Callout", "Checklist", "Flashcards", "Accordion")
+
+#: ``callout_tone`` verbatim from the Training Content Block Select. A value
+#: outside this set is not a degraded callout: ``_validate_selects`` runs on child
+#: rows and ``save_draft_version`` does a full ``lesson.save()``, so it throws and
+#: takes the whole autosave with it -- the defect that made the canvas's first
+#: Callout unsaveable until v1.386.0, arriving this time from a model rather than
+#: from a typo.
+LESSON_CALLOUT_TONES = ("Info", "Tip", "Warning", "Danger")
+
+#: Bounds on one drafted lesson. Not politeness -- an unbounded list renders a
+#: lesson nobody scrolls to the end of, and the author has to delete it block by
+#: block.
+MAX_LESSON_BLOCKS = 8
+MAX_LIST_ITEMS = 8
+
+#: Below this there is no topic, only a word. A model given "pumps" writes a page
+#: about pumps in general, which is exactly the filler the starters exist to
+#: avoid.
+MIN_TOPIC_CHARS = 12
+
+_LESSON_SYSTEM = """You draft the body of one lesson in a workplace training course, for a company that designs, builds, services and rents water fountains. The reader is a technician or an office colleague, not a student.
+
+Rules you must follow:
+- Answer with ONE JSON object and nothing else. No prose before or after it, and no markdown code fences. A reply that is not parseable JSON is discarded whole.
+- Shape: {"summary": str, "blocks": [{"block_type": ..., "heading": str, ...}]}
+- "summary" is one sentence describing the lesson, for the course outline.
+- Each block is ONE of these shapes:
+  {"block_type": "Rich Text", "heading": str, "paragraphs": [str, ...]}
+  {"block_type": "Callout", "heading": str, "tone": "Info"|"Tip"|"Warning"|"Danger", "paragraphs": [str, ...]}
+  {"block_type": "Checklist", "heading": str, "items": [str, ...]}
+  {"block_type": "Flashcards", "heading": str, "cards": [{"front": str, "back": str}, ...]}
+  {"block_type": "Accordion", "heading": str, "panels": [{"title": str, "body": [str, ...]}, ...]}
+- Write plain text everywhere. No HTML, no markdown, no bullet characters. Paragraphs are separate strings in a list, never one string with newlines in it.
+- Be specific and practical. Say what to do, in what order, and what goes wrong otherwise. A sentence that would be true of any company is a sentence to delete.
+- Never invent a part number, a measurement, a chemical dose, a regulation, a standard or a statistic. Where a specific figure is needed, write the sentence so the author fills it in, like "torque to [value] from the manufacturer's plate".
+- Do not write a quiz. Questions are drafted separately.
+- Between three and six blocks. Vary the type; a lesson that is five Rich Text blocks in a row is a document, not a lesson."""
+
+
+def _list(raw):
+    """``raw`` if it is a list, else ``[]``.
+
+    The one place a model's shape mistake turns into an exception rather than a
+    dropped item: iterating a scalar raises, and iterating a bare string succeeds
+    character by character, which is worse because it produces plausible-looking
+    rubbish instead of an error.
+    """
+    return raw if isinstance(raw, list) else []
+
+
+def _paragraphs_to_html(raw):
+    """``[str, ...]`` of plain text as HTML paragraphs, or ``""``.
+
+    The model is told to write plain text, and this is what holds it to it. Every
+    string goes through ``_plain`` (which strips tags) and ``escape_html``, then is
+    re-wrapped in a ``<p>`` this function wrote. So the block's ``content`` is HTML
+    *this app built out of text*, rather than HTML a model produced that this app
+    decided to trust. That is a much shorter thing to reason about than a
+    sanitiser, and it does not depend on one being correct.
+
+    A single string is accepted as one paragraph: a model writing
+    ``"paragraphs": "..."`` instead of a list has made a formatting slip, and
+    losing the block over it costs the author a re-roll for nothing.
+    """
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return ""
+    out = []
+    for item in raw:
+        text = _plain(item)
+        if text:
+            out.append("<p>" + frappe.utils.escape_html(text) + "</p>")
+    return "".join(out)
+
+
+def _coerce_lesson_block(item):
+    """One validated block in the canvas's edit shape, or ``None``.
+
+    Strict for the same reason ``_coerce_question`` is, and strict about exactly
+    the things that *throw* rather than degrade: the two Selects. Everything else
+    is shaping rather than gatekeeping -- a block with no heading is a block the
+    author retitles, not one worth discarding.
+
+    No ``block_key`` is minted here. Keys are client-side ``blk-...`` values, so
+    that a draft accepted twice cannot produce two blocks sharing one -- the
+    single case ``_apply_blocks`` rewrites without telling anybody.
+    """
+    block_type = item.get("block_type")
+    if block_type not in LESSON_BLOCK_TYPES:
+        return None
+
+    block = {"block_type": block_type, "heading": _plain(item.get("heading"))[:140]}
+
+    if block_type in ("Rich Text", "Callout"):
+        content = _paragraphs_to_html(item.get("paragraphs"))
+        if not content:
+            return None
+        block["content"] = content
+        if block_type == "Callout":
+            tone = _plain(item.get("tone")).title()
+            # Defaulted, never dropped. An unrecognised tone is a cosmetic slip and
+            # the paragraphs are the part worth keeping; refusing the block would
+            # throw away good prose over a colour.
+            block["callout_tone"] = tone if tone in LESSON_CALLOUT_TONES else "Info"
+        return block
+
+    # `_list` on every one of the three, and not defensiveness for its own sake.
+    # `for row in item.get("items")` over a JSON *scalar* raises TypeError, and over
+    # a bare string iterates it one character at a time -- a checklist of single
+    # letters, which saves cleanly and looks like an authoring mistake. The first
+    # would escape this whitelisted endpoint uncaught and lose the whole draft over
+    # one malformed block; the rule everywhere else in this module is that a bad
+    # item is dropped individually and a bad *response* yields nothing.
+    if block_type == "Checklist":
+        items = [_plain(row) for row in _list(item.get("items")) if _plain(row)]
+        if not items:
+            return None
+        block["data"] = json.dumps({"items": items[:MAX_LIST_ITEMS]})
+        return block
+
+    if block_type == "Flashcards":
+        cards = [
+            {"front": _plain(row.get("front")), "back": _plain(row.get("back"))}
+            for row in _list(item.get("cards"))
+            if isinstance(row, dict) and _plain(row.get("front")) and _plain(row.get("back"))
+        ]
+        if not cards:
+            return None
+        block["data"] = json.dumps({"cards": cards[:MAX_LIST_ITEMS]})
+        return block
+
+    if block_type == "Accordion":
+        panels = []
+        for row in _list(item.get("panels")):
+            if not isinstance(row, dict):
+                continue
+            title = _plain(row.get("title"))
+            body = _paragraphs_to_html(row.get("body"))
+            if title and body:
+                panels.append({"title": title, "body": body})
+        if not panels:
+            return None
+        block["data"] = json.dumps({"panels": panels[:MAX_LIST_ITEMS]})
+        return block
+
+    return None
+
+
+@frappe.whitelist()
+def draft_lesson_content(topic, lesson_title=None, shape=None):
+    """Suggest the blocks for one lesson. Persists nothing, and writes no lesson.
+
+    Args:
+        topic: what the lesson should cover, in the author's words. This is the
+            whole prompt -- a short phrase produces a general lesson, which is
+            the author's call to make.
+        lesson_title: the working title, if there is one. Steers the draft and is
+            never written back; the canvas already owns the title field.
+        shape: a ``lesson_starters`` key, passed through as a hint about the kind
+            of lesson wanted. An unknown value is ignored rather than refused --
+            this is a sentence in a prompt, not a contract.
+
+    Returns:
+        dict: ``blocks`` in the canvas's edit shape (``content`` as HTML, ``data``
+        as a JSON string, no ``block_key``), a one-sentence ``summary``, and
+        ``message`` when nothing usable came back.
+    """
+    from erpnext_enhancements.training import lesson_starters
+
+    _require_author()
+    _require_ai_enabled()
+
+    topic = _plain(topic)
+    if len(topic) < MIN_TOPIC_CHARS:
+        frappe.throw(
+            _("Say a little more about what this lesson should cover. A word or two produces a "
+              "page of generalities, which is worse than a blank lesson because it looks finished.")
+        )
+
+    lines = ["Topic: " + topic[:MAX_SOURCE_CHARS]]
+    title = _plain(lesson_title)
+    if title:
+        lines.append("Working title: " + title)
+    hint = lesson_starters.SHAPES.get(shape or "")
+    if hint:
+        lines.append(f"Kind of lesson: {hint['label']} - {hint['blurb']}")
+
+    raw = (_ask_model("\n".join(lines), _LESSON_SYSTEM, LESSON_FEATURE) or "").strip()
+
+    # Parsed here rather than through `_parse_suggestions`, which is shaped for a
+    # `suggestions` list and would have to learn a second payload. Same strictness
+    # and the same refusal to salvage: one JSON object, or nothing drafted.
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return {
+            "blocks": [],
+            "summary": "",
+            "message": _(
+                "The AI service replied with something other than the JSON that was asked for, so "
+                "nothing was drafted. Try again."
+            ),
+        }
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("blocks"), list):
+        return {
+            "blocks": [],
+            "summary": "",
+            "message": _("The AI service replied in an unexpected shape, so nothing was drafted."),
+        }
+
+    blocks = []
+    for item in parsed["blocks"]:
+        if not isinstance(item, dict):
+            continue
+        candidate = _coerce_lesson_block(item)
+        if candidate:
+            blocks.append(candidate)
+        if len(blocks) >= MAX_LESSON_BLOCKS:
+            break
+
+    message = ""
+    if not blocks:
+        message = _(
+            "Nothing the AI drafted could be turned into lesson blocks, so none of it is being "
+            "suggested. Try again, or say more about the topic."
+        )
+    return {"blocks": blocks, "summary": _plain(parsed.get("summary"))[:500], "message": message}

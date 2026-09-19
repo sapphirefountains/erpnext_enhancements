@@ -1109,3 +1109,8 @@ erpnext_enhancements.patches.seed_time_kiosk_desktop_icon
 # such a row from another file's validate_duplicate_entry and throws, which killed every
 # shadow insert from 2026-09-18 12:02. Idempotent; guarded on the Custom Field.
 erpnext_enhancements.patches.repair_slashed_drive_shadow_names
+# v1.489.0: the Training workspace gained a "Course canvas" shortcut. A Workspace JSON is
+# age-gated on the way in -- import_file silently skips a file whose `modified` is not newer
+# than the row -- so the bumped stamp alone reaches a fresh install and no existing site.
+# reload_doc(force=True). Cannot raise; safe twice.
+erpnext_enhancements.patches.reload_training_workspace_for_canvas
