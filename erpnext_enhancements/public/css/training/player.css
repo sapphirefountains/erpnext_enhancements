@@ -2872,6 +2872,50 @@
 .tr-quiz .tr-rev-why p:last-child { margin-bottom: 0; }
 .tr-quiz .tr-rev-why img { max-width: 100%; height: auto; border-radius: 8px; }
 
+/* The AI's reasoning, and the learner's push-back against it (v1.490.0, ADR 0015).
+
+   Quieter than `.tr-rev-why`, which is the AUTHOR's explanation: on a review
+   screen the teaching is the thing worth reading, and the machine's reasoning is
+   there to be checked rather than absorbed.
+
+   Duplicated from the self-contained blob in quiz.js on purpose -- that blob
+   exists so the quiz is legible when mounted somewhere this stylesheet was never
+   loaded (the authoring preview, a dialog), and `test_training_player_css_contract`
+   reads THIS file. A class in one and not the other renders unstyled on the real
+   player, which is not an error and which only a person looking at the page can
+   see. */
+.tr-quiz .tr-rev-ai {
+	margin-top: 10px;
+	font-size: 0.875rem;
+	font-style: italic;
+	color: var(--tr-muted);
+}
+
+.tr-quiz .tr-rev-dispute {
+	margin-top: 12px;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+}
+
+.tr-quiz .tr-rev-dispute-note {
+	width: 100%;
+	font: inherit;
+	font-size: 0.875rem;
+	padding: 8px;
+	border-radius: 8px;
+	border: 1px solid var(--tr-border);
+	background: var(--tr-surface);
+	color: var(--tr-text);
+	resize: vertical;
+}
+
+.tr-quiz .tr-rev-dispute-said {
+	font-size: 0.875rem;
+	color: var(--tr-muted);
+}
+
 /* ------------------------------------------------------------- quiz motion */
 
 @media (prefers-reduced-motion: reduce) {

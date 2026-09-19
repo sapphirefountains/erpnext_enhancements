@@ -1114,3 +1114,8 @@ erpnext_enhancements.patches.repair_slashed_drive_shadow_names
 # than the row -- so the bumped stamp alone reaches a fresh install and no existing site.
 # reload_doc(force=True). Cannot raise; safe twice.
 erpnext_enhancements.patches.reload_training_workspace_for_canvas
+# v1.490.0: the Training workspace gained an "Answer disputes" queue. A SECOND patch, not
+# an edit to reload_training_workspace_for_canvas -- that one is already in tabPatch Log on
+# prod (ran 2026-09-19 10:22:59) and will never run again, so editing it would land a file
+# nothing executes. One workspace edit, one patch. Cannot raise; safe twice.
+erpnext_enhancements.patches.reload_training_workspace_for_disputes

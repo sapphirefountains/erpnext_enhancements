@@ -2522,6 +2522,29 @@ def record_field_signoff(signoff, outcome, competency_notes=None):
 
 
 @frappe.whitelist(methods=["POST"])
+def raise_answer_dispute(attempt, lesson_key, quiz_run, question, note=None):
+    """A learner says the AI marked their Short Answer wrongly. Delegates to
+    :mod:`training.disputes`.
+
+    A thin re-export and nothing more, here for the same reason
+    :func:`ask_lesson_question` is: the player's transport has a single ``PREFIX``
+    and one gate, so a second prefix in the client would be a second place for a
+    rename to break silently.
+
+    This is the learner's half of grading without a human sign-off (ADR 0015). It
+    is the ONLY learner-reachable entry to the dispute flow -- resolving one is a
+    Training Manager act and lives on ``training.disputes`` behind its own role
+    check, deliberately not re-exported here where the learner runtime could
+    reach it.
+    """
+    from erpnext_enhancements.training import disputes
+
+    return disputes.raise_dispute(
+        attempt=attempt, lesson_key=lesson_key, quiz_run=quiz_run, question=question, note=note
+    )
+
+
+@frappe.whitelist(methods=["POST"])
 def ask_lesson_question(course, lesson_key, question, at_seconds=None):
     """File a learner's question against a lesson. Delegates to :mod:`training.qa`.
 

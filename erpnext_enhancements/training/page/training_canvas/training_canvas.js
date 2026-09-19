@@ -1606,8 +1606,21 @@ class TrainingCanvas {
 		$host.append($('<label class="tc-set"></label>').append($("<span></span>").text(__("Type")), $type));
 
 		if (row.question_type === "Short Answer") {
-			const $ans = $('<input type="text" class="form-control" />')
-				.attr("placeholder", __("Accepted answers, comma separated"))
+			// A TEXTAREA, and the placeholder says "one per line". Both halves were
+			// wrong and together they made every Short Answer authored on this page
+			// close to unpassable.
+			//
+			// The field is split on NEWLINES everywhere that reads it --
+			// `TrainingQuestion._validate_short_answer` and `_split_lesson`'s
+			// `accepted_text` both do `.splitlines()`, and the Desk form's own
+			// description says "one per line". This control was a single-line
+			// <input> placeholdered "comma separated", so an author here could not
+			// enter a second accepted answer AT ALL, and one who followed the
+			// placeholder created a single accepted answer reading literally
+			// "gloves, goggles" -- which no learner will ever type. Grading is an
+			// exact match, so the question could then only be failed.
+			const $ans = $('<textarea class="form-control" rows="3"></textarea>')
+				.attr("placeholder", __("Accepted answers, one per line"))
 				.val(row.correct_text_answers || "");
 			$ans.on("change", () => {
 				row.correct_text_answers = $ans.val();

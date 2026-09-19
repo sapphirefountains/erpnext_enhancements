@@ -207,11 +207,19 @@ def grade_quiz(attempt, lesson_key, answers, run=None):
 		possible += points
 
 		answered = name in submitted
-		correct = _matches_key(entry, submitted.get(name)) if answered else False
+		judgement = None
+		if not answered:
+			correct = False
+		elif entry.get("type") == "Short Answer":
+			correct, judgement = _judge_text_answer(
+				entry, submitted.get(name), question.get("text") or ""
+			)
+		else:
+			correct = _matches_key(entry, submitted.get(name))
 		if correct:
 			earned += points
 
-		graded.append((question, entry, points, answered, correct))
+		graded.append((question, entry, points, answered, correct, judgement))
 
 	score = flt(100.0 * earned / possible, 2) if possible else 0.0
 	# The pass mark comes from the published snapshot, not the live lesson row: a
@@ -240,10 +248,28 @@ def grade_quiz(attempt, lesson_key, answers, run=None):
 	# each individual wrong option is wrong, which is the same fact spelled out.
 	# `test_training_grading` treats both names as leak markers for that reason.
 	per_question = []
-	for question, entry, points, answered, correct in graded:
+	for question, entry, points, answered, correct, judgement in graded:
 		is_text = (entry.get("type") or question.get("type")) == "Short Answer"
 		per_question.append(
 			{
+				# The AI's own words, sent straight to the learner. Half of what
+				# was asked for when grading moved to a model: a verdict nobody
+				# explains is a verdict nobody can argue with, and the dispute
+				# button next to it is the other half. Absent when the plain
+				# comparison decided it, which is most of the time.
+				"ai_reasoning": (judgement or {}).get("reasoning") or "",
+				"ai_judged": 1 if judgement else 0,
+				# Here because `_file_quiz_answers` reads this same dict, and the
+				# ANSWER ROW is where provenance is wanted -- `AI Model Usage`
+				# records token counts only, so a dispute raised months later has
+				# nowhere else to learn which model ruled. It rides out to the
+				# browser as a side effect of that and is deliberately NOT
+				# rendered: a model identifier means nothing to a learner
+				# mid-quiz. Recorded as a deliberate asymmetry in
+				# `test_training_boundary_contract.SENT_BUT_NOT_READ`, which is
+				# the file that noticed an earlier comment here claiming it was
+				# shown to the learner when nothing showed it.
+				"ai_model": (judgement or {}).get("model") or "",
 				"question": question.get("question"),
 				"text": question.get("text"),
 				"type": question.get("type"),
@@ -530,13 +556,77 @@ def _normalise_text(value):
 	return " ".join(str(value or "").strip().lower().split())
 
 
+def _first_text(submitted):
+	"""The typed string out of whatever the player sent.
+
+	The player wraps a Short Answer in a one-element list; anything after the
+	first element has never been meaningful and is discarded.
+	"""
+	if isinstance(submitted, (list, tuple)):
+		return submitted[0] if submitted else ""
+	return submitted
+
+
+def _judge_text_answer(entry, submitted, question_text=""):
+	"""``(correct, judgement)`` for one Short Answer.
+
+	**Exact match first, always.** The AI is reached only when the plain
+	comparison has already said wrong, and that ordering is the entire safety
+	argument for grading without a human in front of it (ADR 0015): an answer that
+	matches the key exactly is correct by definition and never goes near a model,
+	so the AI can turn a wrong into a right and cannot do the reverse. Every way
+	this can fail — the switch off, Vertex unreachable, an unparseable reply, an
+	answer too long to be a short answer — returns no judgement, and the learner
+	gets precisely the behaviour they got before v1.490.0.
+
+	``judgement`` is ``None`` when the verdict came from the comparison alone.
+	That is what ``ai_judged`` records on the answer row, and it is how a dispute
+	months later can tell "the AI said no" from "the AI was never asked".
+	"""
+	if _matches_key(entry, submitted):
+		return True, None
+
+	# A blank answer is wrong and there is nothing to judge. `judge_short_answer`
+	# refuses one too, and the duplication is deliberate: this is the function
+	# that decides whether somebody passed, and it should not depend on a helper
+	# in another module remembering a rule for it. Caught by
+	# `test_training_disputes` with a judge stubbed to say yes to everything --
+	# which is what an unguarded blank would have been graded by.
+	if not _normalise_text(_first_text(submitted)):
+		return False, None
+
+	# Imported here rather than at module scope: `api.training_ai` pulls the
+	# checkpoint and question controllers at import, and grading.py is imported by
+	# the learner runtime on every page. A grading module that cannot load because
+	# an AI helper's import chain broke is a worse failure than no AI grading.
+	try:
+		from erpnext_enhancements.api.training_ai import judge_short_answer
+
+		judgement = judge_short_answer(
+			question_text, entry.get("accepted_text") or [], _first_text(submitted)
+		)
+	except Exception:
+		frappe.log_error(
+			"Short Answer AI grading could not be reached; the exact-match verdict stands.",
+			"Training AI",
+		)
+		judgement = None
+
+	if not judgement:
+		return False, None
+	return bool(judgement.get("correct")), judgement
+
+
 def _matches_key(entry, submitted):
-	"""Whether one submitted answer matches the key. The only correctness test."""
+	"""Whether one submitted answer matches the key, by comparison alone.
+
+	Still the only *deterministic* correctness test, and for a Short Answer it is
+	now the FIRST of two — see :func:`_judge_text_answer`, which wraps it. Nothing
+	should call this directly for a Short Answer except that wrapper.
+	"""
 	if entry.get("type") == "Short Answer":
 		accepted = {_normalise_text(text) for text in entry.get("accepted_text") or []}
-		if isinstance(submitted, (list, tuple)):
-			submitted = submitted[0] if submitted else ""
-		answer = _normalise_text(submitted)
+		answer = _normalise_text(_first_text(submitted))
 		return bool(answer) and answer in accepted
 
 	# Choice questions: the exact set. A Multiple Choice answer that is a subset of
@@ -829,6 +919,16 @@ def _file_quiz_answers(attempt, lesson_name, run, drawn, submitted, per_question
 					"given_answer": _answer_in_words(by_name.get(name), (submitted or {}).get(name)),
 					"is_correct": 1 if result.get("correct") else 0,
 					"points_awarded": flt(result.get("awarded")),
+					# The AI's verdict and its reasons, filed with the answer.
+					# `AI Model Usage` records token counts only, so this row is
+					# the ONLY place the reasoning survives -- and a dispute weeks
+					# later is adjudicated on it. Filing is still best-effort (the
+					# whole function is wrapped), which is tolerable because a
+					# dispute works without it: the reviewer then judges the answer
+					# on its merits rather than the machine's argument for it.
+					"ai_judged": 1 if result.get("ai_judged") else 0,
+					"ai_reasoning": (result.get("ai_reasoning") or "")[:1000],
+					"ai_model": (result.get("ai_model") or "")[:140],
 					# time_taken_seconds is deliberately left unset: nothing measures
 					# per-question time yet, and dividing the run's duration by the
 					# question count would invent a number the report acts on. It

@@ -14,6 +14,7 @@
   "gamification_enabled",
   "ai_section",
   "ai_assist_enabled",
+  "ai_grade_short_answers",
   "defaults_section",
   "default_passing_score",
   "default_min_video_coverage",
@@ -106,7 +107,13 @@
    "fieldtype": "Check",
    "label": "AI Question Drafting"
   },
-
+  {
+   "default": "0",
+   "description": "Let an AI decide whether a Short Answer the learner typed means the same as an answer the author accepted. It is asked ONLY when the plain text comparison has already said wrong, so it can turn a wrong into a right and never the other way round; if it is off, or the model is unreachable, grading falls back to that comparison. Unlike question drafting there is no human sign-off in front of it — the learner disputes instead, and a dispute reaches a Training Manager.",
+   "fieldname": "ai_grade_short_answers",
+   "fieldtype": "Check",
+   "label": "AI Grading for Short Answers"
+  },
   {
    "fieldname": "defaults_section",
    "fieldtype": "Section Break",
@@ -279,7 +286,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-08-01 12:00:00.000000",
+ "modified": "2026-09-19 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Training",
  "name": "Training Settings",

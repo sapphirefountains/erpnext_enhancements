@@ -1035,7 +1035,7 @@ class TestQuizReplyKeys(unittest.TestCase):
         self.assertNotIn("attempts_remaining", _player_code())
 
     def test_the_per_question_score_reads_awarded(self):
-        body = _js_body(_quiz_code(), "function renderReview(entry, i, byId, numberOf, result)")
+        body = _js_body(_quiz_code(), "function renderReview(entry, i, byId, numberOf, result, ctx, transport)")
         self.assertIn("entry.awarded", body)
         self.assertNotIn("entry.earned", body)
 

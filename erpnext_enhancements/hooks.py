@@ -1982,6 +1982,11 @@ permission_query_conditions = {
 	"Training Completion": "erpnext_enhancements.training.permissions.completion_query_conditions",
 	"Training Certificate": "erpnext_enhancements.training.permissions.certificate_query_conditions",
 	"Training Signoff": "erpnext_enhancements.training.permissions.signoff_query_conditions",
+	# Training Answer Dispute (v1.490.0): a learner sees their own, a supervisor their
+	# reports'. Scoped for a sharper reason than the others -- a dispute SNAPSHOTS the
+	# accepted answers for its question, so an unscoped list would be an answer key for
+	# every question anybody has ever got wrong.
+	"Training Answer Dispute": "erpnext_enhancements.training.permissions.answer_dispute_query_conditions",
 	"Training Submission": "erpnext_enhancements.training.permissions.submission_query_conditions",
 	# Gamification (WI-072 §0). Both of these grant `read` to "Training Learner" in
 	# their doctype JSON, and Training Learner is held by CUSTOMER Website Users as
@@ -2079,6 +2084,7 @@ has_permission = {
 	"Training Completion": "erpnext_enhancements.training.permissions.completion_has_permission",
 	"Training Certificate": "erpnext_enhancements.training.permissions.certificate_has_permission",
 	"Training Signoff": "erpnext_enhancements.training.permissions.signoff_has_permission",
+	"Training Answer Dispute": "erpnext_enhancements.training.permissions.answer_dispute_has_permission",
 	"Training Submission": "erpnext_enhancements.training.permissions.submission_has_permission",
 	# The single-document twins of the two gamification query conditions above. A
 	# query condition filters lists and says nothing about frappe.get_doc(), so

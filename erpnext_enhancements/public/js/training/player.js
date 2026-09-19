@@ -2702,6 +2702,24 @@
 									lesson_key: state.lessonKey,
 								});
 							},
+							// The review screen's "I think this was right". Takes the run
+							// and the question from the caller, because a review card is
+							// looking at ONE graded run and the player's `state` has
+							// already moved on by the time anybody reads it -- the same
+							// reason submitQuiz reads its answers off the argument.
+							raiseDispute: function (args) {
+								args = args || {};
+								return call("raiseDispute", {
+									// The caller's wins: a review card names the attempt
+									// and lesson it was graded under, which is what must
+									// be disputed even if the player has moved on.
+									attempt: args.attempt || state.attempt,
+									lesson_key: args.lesson_key || state.lessonKey,
+									quiz_run: args.quiz_run,
+									question: args.question,
+									note: args.note || "",
+								});
+							},
 						}
 					);
 

@@ -84,6 +84,14 @@
 			answerCheckpoint: "answer_checkpoint",
 			startQuiz: "get_quiz",
 			submitQuiz: "submit_quiz",
+			// Short Answers are marked by an AI with no human sign-off in front of
+			// them (v1.490.0, ADR 0015). This is the learner's push-back, and it is
+			// the whole reason that was acceptable: the machine decides, and the
+			// person it decided about can send it to a named human. Resolving one
+			// is deliberately NOT here -- that is a Training Manager act on
+			// training/disputes.py, and the learner runtime has no business being
+			// able to dial it.
+			raiseDispute: "raise_answer_dispute",
 			completeLesson: "complete_lesson",
 			mediaUrl: "get_media_url",
 			// video.js flushes the last beat through navigator.sendBeacon on pagehide,
