@@ -2183,3 +2183,216 @@ def get_draft_preview(course):
             frappe.PermissionError,
         )
     return payload
+
+
+# --------------------------------------------------- writing a quiz question
+#
+# The canvas wrote Training Questions with `frappe.client.insert` and
+# `frappe.client.save`, hand-building the whole document as a dict in the
+# browser. Both were broken, in ways that hid each other:
+#
+#   * a NEW choice question was seeded with two options whose `option_text` was
+#     "", and `_validate_options` rejects duplicates by lowercased text, so the
+#     insert threw "Two options both read ." every time. Adding a question had
+#     therefore never once worked for Single or Multiple Choice.
+#   * SAVING an existing one posted `{...body, name, modified}` with no
+#     `creation` -- and `frappe.client.save` reconstructs a Document from that
+#     dict, so the framework saw `creation` being changed and threw "Value cannot
+#     be changed for Created On". `_builder_questions` sends neither `creation`
+#     nor `modified`, so the optimistic lock that line was reaching for was
+#     `undefined` anyway.
+#
+# The fix is not to pass `creation` back. It is to stop assembling a document in
+# a browser: this endpoint owns the write, the server owns `creation`,
+# `modified`, `owner` and the provenance fields, and the client sends a patch of
+# things an author is allowed to change. That is the same discipline
+# `save_draft_version` already applies to lessons and blocks, and this module's
+# own comment about "a naive editor built on frappe.client.save" was written
+# about exactly this hazard.
+
+#: What an author may change on a Training Question from the canvas. Everything
+#: absent is server-owned: `creation`, `modified` and `owner` belong to the
+#: framework, and `ai_generated` / `ai_model` / `ai_source` are provenance —
+#: a browser that could clear `ai_generated` could walk a drafted question past
+#: `_unreviewed_ai_questions` without anybody reviewing it.
+QUESTION_ALLOWED_FIELDS = frozenset(
+    {
+        "question_text",
+        "question_type",
+        "explanation",
+        "correct_text_answers",
+        "difficulty",
+        "points",
+    }
+)
+
+#: Per option. `is_correct` is the answer key, which is why options are replaced
+#: wholesale from the patch rather than merged: a merge would need the client to
+#: send stable option keys, and a wrong key silently moves the right answer.
+OPTION_ALLOWED_FIELDS = frozenset({"option_text", "is_correct", "explanation"})
+
+
+@frappe.whitelist(methods=["POST"])
+def save_quiz_question(patch, question=None):
+    """Create or update one Training Question. Returns ``{name, modified, …}``.
+
+    Args:
+        patch: the allowlisted body. Anything outside
+            :data:`QUESTION_ALLOWED_FIELDS` (plus ``options``) is ignored rather
+            than refused — unlike the draft save, the canvas builds this dict
+            itself and a rejected key here would be a bug in our own client, not
+            author work being dropped.
+        question: the existing question to update, or ``None`` to create one.
+
+    ``ai_reviewed_by`` is stamped by the SERVER, from the session, and only on a
+    question that is actually ``ai_generated``. It is the pair
+    ``_unreviewed_ai_questions`` reads to decide whether a course may be
+    published, so a client that could name an arbitrary reviewer could publish an
+    AI-drafted answer key nobody had read.
+    """
+    _require_author()
+    patch = frappe.parse_json(patch) or {}
+    if not isinstance(patch, dict):
+        frappe.throw(_("Expected a question patch."))
+
+    doc = (
+        frappe.get_doc("Training Question", question)
+        if question
+        else frappe.new_doc("Training Question")
+    )
+
+    for field, value in patch.items():
+        if field in QUESTION_ALLOWED_FIELDS:
+            doc.set(field, value)
+
+    if "options" in patch:
+        doc.set("options", [])
+        for row in patch.get("options") or []:
+            if not isinstance(row, dict):
+                continue
+            doc.append(
+                "options",
+                {field: row[field] for field in OPTION_ALLOWED_FIELDS if field in row},
+            )
+
+    # Saving a drafted question IS the review — the author has read it and either
+    # kept or changed it. Stamped here rather than in the browser so the name on
+    # the record is the session's, not a string the client chose.
+    if cint(doc.get("ai_generated")) and not doc.get("ai_reviewed_by"):
+        doc.ai_reviewed_by = frappe.session.user
+
+    doc.save(ignore_permissions=True) if question else doc.insert(ignore_permissions=True)
+    return {
+        "name": doc.name,
+        "modified": str(doc.modified),
+        "ai_generated": cint(doc.get("ai_generated")),
+        "ai_reviewed_by": doc.get("ai_reviewed_by") or "",
+    }
+
+
+
+
+# ---------------------------------------- the same defect, twice more over
+#
+# `frappe.client.save` with a hand-built dict CANNOT update an existing document
+# on this site, and the canvas did it in four places. Reproduced against
+# production on 2026-09-19, with the write rolled back:
+#
+#     payload without `creation` -> CannotChangeConstantError: Created On
+#     payload WITH    `creation` -> CannotChangeConstantError: Created By
+#
+# That second line is the important one. The tempting fix is to echo `creation`
+# back; it just moves the error to `owner`, and after that to whatever is next.
+# `frappe.client.save` reconstructs a Document from the dict, so every constant
+# field the browser did not think to include reads as a change. The fix is to
+# stop assembling documents in a browser.
+#
+# So: video chapters and checkpoints get the same treatment as questions.
+# **Editing either has never worked** -- only creating them did, because an
+# insert has no prior document to disagree with. Nobody had reported it because
+# `Training Video Chapter` has 0 rows on this site and a checkpoint is usually
+# placed once and left.
+
+
+def _apply_patch(doc, patch, allowed, child_tables=None):
+    """Set allowlisted fields on *doc* from *patch*. The one writer for both.
+
+    A shared helper rather than two near-identical endpoints, and deliberately
+    NOT whitelisted: a generic "save these fields on this doctype" endpoint is
+    the hole this whole change exists to close. The two callers below each name
+    their own doctype and their own allowlist.
+    """
+    for field, value in (patch or {}).items():
+        if field in allowed:
+            doc.set(field, value)
+    for table, table_allowed in (child_tables or {}).items():
+        if table not in (patch or {}):
+            continue
+        doc.set(table, [])
+        for row in patch.get(table) or []:
+            if not isinstance(row, dict):
+                continue
+            doc.append(table, {f: row[f] for f in table_allowed if f in row})
+    return doc
+
+
+CHAPTER_ALLOWED_FIELDS = frozenset({"lesson", "block_key", "at_seconds", "title"})
+
+#: `checkpoint_key` is absent on purpose. The controller mints it, and every
+#: learner answer already recorded is filed against it -- the canvas used to send
+#: it back with every save specifically so a save could not blank it, which is a
+#: workaround for writing the document from the browser in the first place. The
+#: server never overwrites it now, so it cannot be blanked.
+CHECKPOINT_ALLOWED_FIELDS = frozenset(
+    {
+        "lesson",
+        "block_key",
+        "at_seconds",
+        "question_text",
+        "question_type",
+        "explanation",
+        "attempts_allowed",
+        "counts_toward_score",
+    }
+)
+
+CHECKPOINT_OPTION_FIELDS = frozenset({"option_key", "option_text", "is_correct", "explanation"})
+
+
+@frappe.whitelist(methods=["POST"])
+def save_video_chapter(patch, chapter=None):
+    """Create or update one Training Video Chapter. Returns ``{name, modified}``."""
+    _require_author()
+    patch = frappe.parse_json(patch) or {}
+    doc = (
+        frappe.get_doc("Training Video Chapter", chapter)
+        if chapter
+        else frappe.new_doc("Training Video Chapter")
+    )
+    _apply_patch(doc, patch, CHAPTER_ALLOWED_FIELDS)
+    doc.save(ignore_permissions=True) if chapter else doc.insert(ignore_permissions=True)
+    return {"name": doc.name, "modified": str(doc.modified)}
+
+
+@frappe.whitelist(methods=["POST"])
+def save_checkpoint(patch, checkpoint=None):
+    """Create or update one Training Checkpoint. Returns ``{name, checkpoint_key, modified}``.
+
+    ``checkpoint_key`` comes back so the client can adopt the controller-minted
+    one on a create, and is never taken from the patch -- see the note on
+    :data:`CHECKPOINT_ALLOWED_FIELDS`.
+    """
+    _require_author()
+    patch = frappe.parse_json(patch) or {}
+    doc = (
+        frappe.get_doc("Training Checkpoint", checkpoint)
+        if checkpoint
+        else frappe.new_doc("Training Checkpoint")
+    )
+    _apply_patch(doc, patch, CHECKPOINT_ALLOWED_FIELDS, {"options": CHECKPOINT_OPTION_FIELDS})
+    doc.save(ignore_permissions=True) if checkpoint else doc.insert(ignore_permissions=True)
+    return {
+        "name": doc.name,
+        "checkpoint_key": doc.get("checkpoint_key") or "",
+        "modified": str(doc.modified),
+    }

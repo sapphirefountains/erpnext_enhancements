@@ -384,6 +384,16 @@
 	// `grading._matches_key`, and deliberately as strict: a Multiple Choice answer
 	// that is a SUBSET of the correct options is wrong, not partly right. An author
 	// checking their own quiz needs the grader to be the one learners will meet.
+	//
+	// AND FOR A SHORT ANSWER IT IS NO LONGER THAT GRADER. Since v1.490.0 a learner's
+	// Short Answer is adjudicated by an AI when this comparison rejects it (ADR
+	// 0015), so preview is now STRICTER than production: a wording the AI would
+	// accept shows here as wrong. Closing that properly means this page making a
+	// network call, and it is deliberately the one page in the app that makes none
+	// -- see the note above `DRAFT`. So rather than grade differently in silence,
+	// the review screen says so; `shortAnswerNote()` is rendered into every Short
+	// Answer's explanation below. A preview that lies quietly is worse than one that
+	// admits its limits.
 	function draftMatches(entry, submitted) {
 		var mine = submitted || [];
 		if (entry.type === "Short Answer") {
@@ -397,6 +407,15 @@
 
 	function isArrayish(value) {
 		return Object.prototype.toString.call(value) === "[object Array]";
+	}
+
+	// Said once, here, so the wording lives in one place.
+	function shortAnswerNote() {
+		return (
+			"<p><em>Preview grades short answers strictly — it only accepts the wording " +
+			"you listed. Learners also get AI adjudication, which accepts a close or " +
+			"reworded answer, so this may read as wrong when it would be marked right.</em></p>"
+		);
 	}
 
 	function gradeDraftQuiz(args) {
@@ -418,7 +437,11 @@
 			per.push({
 				question: q.question, text: q.text, type: q.type, points: points,
 				awarded: correct ? points : 0, answered: answered, correct: correct,
-				explanation: entry.explanation || "",
+				// The author's own explanation, plus -- on a Short Answer the strict
+				// comparison rejected -- a line saying this preview is harsher than
+				// the real thing. Appended rather than replacing, because the
+				// author's explanation is the part worth reading.
+				explanation: (entry.explanation || "") + (isText && !correct ? shortAnswerNote() : ""),
 				correct_option_keys: isText ? [] : (entry.correct || []),
 				accepted_text: isText ? (entry.accepted_text || []) : []
 			});

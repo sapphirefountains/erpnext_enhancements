@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.491.0] - 2026-09-19
+
+### Fixed
+
+- **Adding a quiz question to a lesson could not work, in three different ways at once.**
+  Reported from the canvas within minutes of AI grading being switched on. Each failure hid
+  the next, which is why none had been noticed:
+
+  1. **A new choice question threw on insert, always.** `normalise_question` seeded a Single
+     or Multiple Choice question with two options whose `option_text` was `""`, and
+     `TrainingQuestion._validate_options` rejects duplicates by lowercased text — so two
+     blanks are duplicates and the insert failed with *"Two options both read . A learner
+     cannot tell them apart."* **Adding a question had therefore never once worked** for a
+     choice question. The options are seeded `Option 1` / `Option 2` now.
+  2. **Ticking "End-of-lesson quiz" with an empty pool bricked the lesson.**
+     `_validate_quiz` throws on that state, the throw lands on the 1200ms autosave, and
+     frappe's `request.js` msgprints `_server_messages` whatever the caller does with the
+     rejection — so the author got a red dialog every few seconds on a lesson that would not
+     save, with nothing connecting it to the box they had ticked. v1.490.0 moved the pool out
+     from behind that box so the right order became *possible*; this makes the wrong order
+     impossible. Emptying the pool while it is ticked now unticks it and says so, which is
+     the same trap from the other direction.
+  3. **Saving an existing question was impossible.** *"Value cannot be changed for Created
+     On."*
+
+- **`frappe.client.save` cannot update an existing document here, and the canvas used it in
+  four places.** Reproduced against production, write rolled back:
+
+  | payload | result |
+  |---|---|
+  | without `creation` | `CannotChangeConstantError: Created On` |
+  | **with** `creation` | `CannotChangeConstantError: Created By` |
+
+  That second row is the whole point, and it is why the obvious fix is wrong: echoing
+  `creation` back just moves the error to `owner`, and then to whatever is next.
+  `frappe.client.save` reconstructs a Document from the dict it is given, so **every
+  constant field the browser did not think to include reads as a change.** A browser cannot
+  win that game.
+
+  So the canvas stops assembling documents. Three new author-gated endpoints —
+  `save_quiz_question`, `save_video_chapter`, `save_checkpoint` — load the real document,
+  apply an allowlisted patch and save, with `creation` / `modified` / `owner` staying the
+  framework's. That is the discipline `save_draft_version` already applies to lessons and
+  blocks, and this module's own comment about "a naive editor built on `frappe.client.save`"
+  was written about exactly this hazard.
+
+  **Editing a video chapter or an in-video checkpoint was broken the same way** and nobody
+  had reported it: `Training Video Chapter` has 0 rows on this site, and a checkpoint is
+  usually placed once and left. Creating either worked, because an insert has no prior
+  document to disagree with.
+
+  Two things got stronger on the way through. `checkpoint_key` is **excluded** from the
+  checkpoint allowlist, so the server cannot overwrite it and no client can blank the field
+  every recorded answer is filed against — previously that was guaranteed only by the client
+  remembering to send it back on every save. And `ai_reviewed_by` is stamped by the server
+  from the session rather than named by the browser: a client that could choose the reviewer
+  could walk an AI-drafted answer key past `_unreviewed_ai_questions` with nobody having
+  read it.
+
+- **The draft preview says that it grades Short Answers more strictly than production
+  does.** Since v1.490.0 a learner's Short Answer gets AI adjudication when the strict
+  comparison rejects it, but the preview grades entirely in the browser — so a wording the
+  AI would accept shows as wrong to the author checking their own quiz, who then tunes the
+  accepted-answer list against the wrong grader.
+
+  Closing that properly means this page making a network call, and it is deliberately **the
+  one page in the app that makes none** ("no new fetch wrapper, no second method map, no new
+  endpoint names"). Rather than grade differently in silence or quietly breach that, the
+  review screen now says so on any Short Answer it marks wrong. A preview that lies quietly
+  is worse than one that admits its limits. Full fidelity is a separate decision, recorded
+  in the PR.
+
+### Testing
+
+- Three assertions in `tests/test_training_canvas.py` were re-pointed rather than deleted:
+  each pinned a client-side mechanism that has been replaced by a server-side one, and in
+  every case the invariant is now **stronger**. "The client sends `checkpoint_key` back on
+  every save" became "the server's allowlist excludes it, so nothing can blank it"; "the
+  client stamps `ai_reviewed_by`" became "the server stamps it from the session, and the
+  client does not".
+- The `frappe.client.save` defect was proven by execution against production inside the
+  read-rollback sandbox, including the control that shows supplying `creation` merely moves
+  the error. Worth recording because the symptom names a field (`Created On`) that is not
+  the cause, and the obvious fix confirms the wrong diagnosis.
+
 ## [1.490.0] - 2026-09-19
 
 ### Added
