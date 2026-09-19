@@ -109,6 +109,11 @@
      this page; a JSON script tag keeps it that way and cannot execute whatever a
      lesson's content happens to contain. -->
 <script type="application/json" id="tp-draft">{{ draft_json }}</script>
+<!-- The CSRF token for the ONE call this page makes. A data island for the same
+     reason the draft payload is one: there is no frappe.* in this page, and an
+     inline assignment cannot be kept clear of whatever a lesson's content
+     happens to contain. -->
+<script type="application/json" id="tp-csrf">{{ csrf_token | tojson }}</script>
 <div class="tp-draft-banner" role="status">
 	Previewing an unpublished draft. Nothing here is recorded, and no learner sees it until the course is published.
 </div>
@@ -409,12 +414,80 @@
 		return Object.prototype.toString.call(value) === "[object Array]";
 	}
 
-	// Said once, here, so the wording lives in one place.
+	// THE ONE NETWORK CALL THIS PAGE MAKES, and a deliberate exception to the rule
+	// stated above `DRAFT` -- "no new fetch wrapper, no second method map, no new
+	// endpoint names". Taken knowingly on 2026-09-19. What follows is the argument,
+	// because an exception nobody wrote down becomes a precedent.
+	//
+	// WHY THE RULE EXISTS: a preview that dialled the learner runtime would create
+	// attempts and progress, and "the author quietly completing their own
+	// compliance course" is the failure it names. That hazard is untouched. This
+	// calls `api.training_author`, never `api.training`; it is gated on an
+	// authoring role AND write permission on this specific course; and it writes
+	// NOTHING -- no attempt, no answer row, no progress.
+	//
+	// WHY THE EXCEPTION IS WORTH IT: without it the preview grades Short Answers
+	// strictly while production does not, so an author tuning their accepted-answer
+	// list tunes against a grader no learner meets. A preview that is wrong about
+	// the thing it exists to show is worse than one more fetch.
+	//
+	// WHAT KEEPS IT FROM BECOMING A TRANSPORT: one function, one endpoint, no
+	// method map, nothing reusable. Every other grading and progress method stays
+	// in memory in both modes. If a second call ever wants to live here, that is
+	// the moment to reopen the rule rather than quietly widen this one.
+	var CSRF = (function () {
+		try {
+			var raw = document.getElementById("tp-csrf");
+			return raw ? JSON.parse(raw.textContent || '""') : "";
+		} catch (e) {
+			return "";
+		}
+	})();
+
+	var PREVIEW_COURSE = (function () {
+		try {
+			return new URLSearchParams(window.location.search).get("course") || "";
+		} catch (e) {
+			return "";
+		}
+	})();
+
+	function judgeShortAnswer(lessonKey, question, typed) {
+		var headers = { "Content-Type": "application/json", Accept: "application/json" };
+		// Only when non-empty: frappe's `validate_csrf_token` short-circuits on a
+		// session with no saved token, and sending "" fails it outright.
+		if (CSRF) headers["X-Frappe-CSRF-Token"] = CSRF;
+		return fetch(
+			"/api/method/erpnext_enhancements.api.training_author.judge_draft_short_answer",
+			{
+				method: "POST",
+				headers: headers,
+				credentials: "same-origin",
+				body: JSON.stringify({
+					course: PREVIEW_COURSE,
+					lesson_key: lessonKey,
+					question: question,
+					submitted: typed
+				})
+			}
+		)
+			.then(function (r) { return r.ok ? r.json() : null; })
+			.then(function (payload) { return (payload && payload.message) || null; })
+			.catch(function () {
+				// Never rejects. The point is fidelity with production, and production
+				// falls back to the strict comparison when the model is unreachable --
+				// so a failed call here does the same rather than break the preview.
+				return null;
+			});
+	}
+
+	// Shown only when the real grader could not be reached, which is exactly when
+	// the preview IS stricter than production again.
 	function shortAnswerNote() {
 		return (
-			"<p><em>Preview grades short answers strictly — it only accepts the wording " +
-			"you listed. Learners also get AI adjudication, which accepts a close or " +
-			"reworded answer, so this may read as wrong when it would be marked right.</em></p>"
+			"<p><em>Could not reach the AI grader just now, so this was judged strictly, " +
+			"on the exact wordings you listed. A learner might have this marked right." +
+			"</em></p>"
 		);
 	}
 
@@ -425,39 +498,77 @@
 		var qkey = draftQuizKey(lessonKey);
 		var passScore = draftPassScore(lessonKey);
 
+		// Two passes. The first is synchronous and settles every choice question plus
+		// any Short Answer the strict comparison already accepts -- most of them, and
+		// none of those cost a model call, exactly as on the learner path. The second
+		// asks the server about the rejects.
 		var earned = 0, possible = 0, correctCount = 0, per = [];
+		var pending = [];
 		drawn.forEach(function (q) {
 			var entry = qkey[q.question] || {};
 			var points = Number(entry.points) || Number(q.points) || 1;
 			possible += points;
 			var answered = Object.prototype.hasOwnProperty.call(answers, q.question);
 			var correct = answered ? draftMatches(entry, answers[q.question]) : false;
-			if (correct) { earned += points; correctCount++; }
 			var isText = (entry.type || q.type) === "Short Answer";
-			per.push({
+			var row = {
 				question: q.question, text: q.text, type: q.type, points: points,
 				awarded: correct ? points : 0, answered: answered, correct: correct,
-				// The author's own explanation, plus -- on a Short Answer the strict
-				// comparison rejected -- a line saying this preview is harsher than
-				// the real thing. Appended rather than replacing, because the
-				// author's explanation is the part worth reading.
-				explanation: (entry.explanation || "") + (isText && !correct ? shortAnswerNote() : ""),
+				explanation: entry.explanation || "",
 				correct_option_keys: isText ? [] : (entry.correct || []),
 				accepted_text: isText ? (entry.accepted_text || []) : []
-			});
+			};
+			per.push(row);
+			if (correct) { earned += points; correctCount++; }
+			// Only a REJECTED Short Answer goes to the server -- the same ordering the
+			// learner path uses, and the reason the AI can only be generous here too.
+			else if (isText && answered) {
+				pending.push({ row: row, typed: answers[q.question] });
+			}
 		});
 
-		var score = possible ? Math.round((earned / possible) * 1000) / 10 : 0;
-		return {
-			score: score, passed: !!possible && score >= passScore, pass_score: passScore,
-			run: 1, points_earned: earned, points_possible: possible,
-			correct_count: correctCount, question_count: drawn.length,
-			per_question: per,
-			// No retry: the draw is fixed for the life of the page, so a "Try again"
-			// here would re-ask the same questions in the same order and look broken.
-			can_retry: false, attempts_left: null,
-			message: "Preview grading. Nothing is recorded — reload the page for a fresh shuffle."
-		};
+		function finish() {
+			var score = possible ? Math.round((earned / possible) * 1000) / 10 : 0;
+			return build(score);
+		}
+
+		if (pending.length) {
+			return Promise.all(
+				pending.map(function (item) {
+					var typed = isArrayish(item.typed) ? item.typed[0] : item.typed;
+					return judgeShortAnswer(lessonKey, item.row.question, typed).then(function (verdict) {
+						if (!verdict) {
+							// Not reached, so this answer WAS judged strictly. Say so rather
+							// than let the author read a stricter verdict as the real one.
+							item.row.explanation = (item.row.explanation || "") + shortAnswerNote();
+							return;
+						}
+						item.row.ai_judged = verdict.ai_judged || 0;
+						item.row.ai_reasoning = verdict.ai_reasoning || "";
+						if (verdict.correct) {
+							item.row.correct = true;
+							item.row.awarded = item.row.points;
+							earned += item.row.points;
+							correctCount++;
+						}
+					});
+				})
+			).then(finish);
+		}
+		return finish();
+
+		function build(score) {
+			return {
+				score: score, passed: !!possible && score >= passScore, pass_score: passScore,
+				run: 1, points_earned: earned, points_possible: possible,
+				correct_count: correctCount, question_count: drawn.length,
+				per_question: per,
+				// No retry: the draw is fixed for the life of the page, so a "Try again"
+				// here would re-ask the same questions in the same order and look broken.
+				can_retry: false, attempts_left: null,
+				message: "Preview grading. Nothing is recorded — reload the page for a fresh shuffle."
+			};
+		}
 	}
 
 

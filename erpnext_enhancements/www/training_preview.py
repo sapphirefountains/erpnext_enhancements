@@ -54,6 +54,24 @@ def get_context(context):
 	context.no_cache = 1
 	context.deploy_version = get_deploy_version()
 	context.draft_json = _draft_payload()
+	# THE ONE REASON THIS PAGE HAS A CSRF TOKEN, and it is a deliberate, narrow
+	# exception to "this page makes no network calls" -- see the long note above
+	# `judgeShortAnswer` in the template.
+	#
+	# Short of it: since v1.490.0 a learner's Short Answer is adjudicated by an AI
+	# when the strict comparison rejects it, so a preview that grades in the browser
+	# is STRICTER than production and an author tunes their accepted answers against
+	# the wrong grader. The single call this token exists for is author-gated, reads
+	# the draft's own key server-side and writes nothing.
+	#
+	# Read, never MINTED. `frappe.sessions.get_csrf_token()` creates one when the
+	# session has none, and `www/fountain_move.py` records what that costs: a
+	# client then sends a token the server never stored. Guest cannot reach this
+	# page at all, so in practice the token is always there -- this is the same
+	# shape as the page that learned the lesson, not a defence against a case this
+	# page has. An empty string makes the client skip the header, and frappe's
+	# `validate_csrf_token` short-circuits on a session with no saved token.
+	context.csrf_token = (getattr(frappe.session, "data", None) or {}).get("csrf_token") or ""
 	return context
 
 

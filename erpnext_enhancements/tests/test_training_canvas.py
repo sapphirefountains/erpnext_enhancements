@@ -958,19 +958,74 @@ class TestThePreviewIsASecondModeNotAThirdTransport(unittest.TestCase):
         html = self.PREVIEW_HTML.read_text(encoding="utf-8")
         self.assertEqual(html.count("var transport = {"), 1)
 
-    def test_draft_mode_still_grades_in_memory(self):
-        """If draft mode ever dialled api.training for real, the author would be quietly
-        completing their own compliance course.
+    def test_draft_mode_never_dials_the_learner_runtime(self):
+        """If draft mode dialled api.training for real, the author would be quietly
+        completing their own compliance course. THAT is the hazard, and it is
+        absolute.
+
+        This used to assert no `/api/method/` at all. v1.491.0 makes one narrow,
+        documented exception — `judge_draft_short_answer`, so the preview grades a
+        Short Answer the way production does instead of more strictly — and the
+        guard is narrowed to match rather than deleted, because the thing worth
+        preventing was never "a fetch", it was "a fetch that writes learner state".
+        The exception is author-gated, reads the draft's own key server-side and
+        persists nothing.
 
         Asserted over the EXECUTABLE script only, with JS comments stripped. The
-        template's own header comment promises "No frappe.call and no server round
-        trips", so a whole-file match fails on the sentence guaranteeing the absence.
-        Tenth occurrence of that trap in this project.
+        template's header comment and the long note above `judgeShortAnswer` both
+        discuss `api.training` and `/api/method/` at length, so a whole-file match
+        is satisfied by the prose explaining the absence. Tenth occurrence of that
+        trap in this project.
         """
         html = self.PREVIEW_HTML.read_text(encoding="utf-8")
         body = _strip_js_comments(html[html.rindex("<script>") : html.rindex("</script>")])
         self.assertNotIn("frappe.call", body)
-        self.assertNotIn("/api/method/", body)
+        # The learner runtime, never — not under any name.
+        self.assertNotIn("api.training.", body)
+        self.assertNotIn("erpnext_enhancements.api.training.", body)
+
+    def test_the_one_network_call_is_the_only_one(self):
+        """One exception is a decision; two is a transport growing back.
+
+        Counted rather than spot-checked, so the next `/api/method/` added here
+        fails this and has to be argued for on its own terms."""
+        html = self.PREVIEW_HTML.read_text(encoding="utf-8")
+        body = _strip_js_comments(html[html.rindex("<script>") : html.rindex("</script>")])
+        calls = re.findall(r"/api/method/([A-Za-z0-9_.]+)", body)
+        self.assertEqual(
+            calls,
+            ["erpnext_enhancements.api.training_author.judge_draft_short_answer"],
+            "the preview page may make exactly one server call; see the note above "
+            "`judgeShortAnswer` before adding another",
+        )
+
+    def test_the_exception_is_written_down(self):
+        """An exception nobody recorded becomes a precedent. The page has to carry
+        the argument, not just the code."""
+        html = self.PREVIEW_HTML.read_text(encoding="utf-8")
+        self.assertIn("THE ONE NETWORK CALL THIS PAGE MAKES", html)
+        self.assertIn("never `api.training`", html)
+
+    def test_an_unreachable_grader_falls_back_rather_than_breaking(self):
+        """Production falls back to the strict comparison when the model is
+        unreachable, so the preview has to do the same — and say so, because at
+        that moment it IS stricter than production again."""
+        html = self.PREVIEW_HTML.read_text(encoding="utf-8")
+        body = _strip_js_comments(html[html.rindex("<script>") : html.rindex("</script>")])
+        at = body.index("function judgeShortAnswer(")
+        self.assertIn("return null;", body[at : at + 1400])
+        self.assertIn("shortAnswerNote()", body)
+
+    def test_only_a_rejected_short_answer_is_sent_to_the_server(self):
+        """The same ordering as the learner path: the strict comparison runs first,
+        so the model only ever sees an answer already marked wrong and can only be
+        generous. It also means a correct answer costs no model call."""
+        html = self.PREVIEW_HTML.read_text(encoding="utf-8")
+        body = _strip_js_comments(html[html.rindex("<script>") : html.rindex("</script>")])
+        at = body.index("function gradeDraftQuiz(")
+        window = body[at : at + 2000]
+        self.assertIn("if (correct) { earned += points; correctCount++; }", window)
+        self.assertIn("else if (isText && answered)", window)
 
     def test_every_content_method_actually_switches_to_the_draft(self):
         """The bug this enumerates rather than spot-checks.

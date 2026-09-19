@@ -2396,3 +2396,92 @@ def save_checkpoint(patch, checkpoint=None):
         "checkpoint_key": doc.get("checkpoint_key") or "",
         "modified": str(doc.modified),
     }
+
+
+@frappe.whitelist(methods=["POST"])
+def judge_draft_short_answer(course, lesson_key, question, submitted):
+    """Grade one typed answer against a DRAFT's key, the way a learner will be graded.
+
+    The preview graded Short Answers in the browser with its own copy of
+    ``_matches_key`` — an exact comparison. That was correct until v1.490.0 and is
+    not any more: a learner now gets the AI adjudication, so an author checking
+    their own quiz was being shown a **stricter** grader than the one their
+    learners meet, and would tune the accepted-answer list against the wrong
+    thing. The preview's own comment already said it needs "the grader to be the
+    one learners will meet"; this is what makes that true again.
+
+    Same ordering and the same guarantees as the learner path (ADR 0015): the
+    exact match runs first and the model is consulted only on an answer it
+    already rejected, so this can be generous and never harsh, and every failure
+    falls back to the comparison.
+
+    **The accepted answers are read server-side from the draft, never taken from
+    the caller.** The preview already holds them — it has to, to grade choice
+    questions locally — so passing them in would have been simpler. It would also
+    have made this a whitelisted "judge this arbitrary text against these
+    arbitrary answers" endpoint, which is a general-purpose model call wearing a
+    training-shaped hat. Taking the question name instead keeps the model pointed
+    at content this author owns.
+
+    Gated exactly like :func:`get_draft_preview`: an authoring role *and* write
+    permission on that specific course. Both are needed — the payload it reasons
+    about is the answer key.
+    """
+    _require_author()
+    course_doc = frappe.get_doc("Training Course", course)
+    course_doc.check_permission("write")
+
+    version = _open_draft_for(course)
+    if not version:
+        frappe.throw(_("{0} has no open draft to preview.").format(course))
+
+    lesson = frappe.db.get_value(
+        "Training Lesson",
+        {"course_version": version, "lesson_key": lesson_key},
+        ["name"],
+        as_dict=True,
+    )
+    if not lesson:
+        frappe.throw(_("That lesson is not in this course's draft."))
+
+    row = frappe.db.get_value(
+        "Training Question", question, ["question_text", "question_type", "correct_text_answers"], as_dict=True
+    )
+    if not row or row.question_type != "Short Answer":
+        frappe.throw(_("That is not a Short Answer question."))
+
+    # Same split as `_split_lesson`'s `accepted_text`: newlines, stripped,
+    # lowercased. Restating it would be a second spelling of the key for the two
+    # to disagree about, so it is kept identical and asserted in the tests.
+    accepted = [line.strip().lower() for line in (row.correct_text_answers or "").splitlines() if line.strip()]
+
+    # Imported at call time, not at module scope. This module is imported by the
+    # canvas bootstrap on every author page load, and `training.grading` pulls the
+    # progress store behind it; the note at the top of this file records a test
+    # that broke the last time an import was added here.
+    from erpnext_enhancements.training import grading
+
+    entry = {"type": "Short Answer", "accepted_text": accepted}
+    correct, judgement = grading._judge_text_answer(entry, submitted, row.question_text or "")
+    return {
+        "correct": bool(correct),
+        "ai_judged": 1 if judgement else 0,
+        "ai_reasoning": (judgement or {}).get("reasoning") or "",
+        "accepted_text": accepted,
+    }
+
+
+def _open_draft_for(course):
+    """The course's open draft version name, or ``None``.
+
+    A local helper rather than reusing ``_draft``: that one takes a version and
+    throws, and this needs to resolve one from a course and say so politely.
+    """
+    rows = frappe.get_all(
+        "Training Course Version",
+        filters={"course": course, "docstatus": 0},
+        fields=["name"],
+        order_by="version_number desc",
+        limit=1,
+    )
+    return rows[0]["name"] if rows else None
