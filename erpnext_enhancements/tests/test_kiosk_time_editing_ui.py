@@ -39,6 +39,40 @@ class TestKioskTimeEditingUI(unittest.TestCase):
         self.assertIn("endInput.value ?", app_js)
         self.assertIn("An end time is needed.", myday_js)
 
+    def test_every_sheet_that_adds_time_offers_an_activity_picker(self):
+        """A sheet that dials an endpoint requiring a field it never offers is a
+        dead end, and the only thing it can produce is the server's refusal.
+
+        `add_manual_interval` requires a time category and falls back to
+        `Time Kiosk Settings.default_time_category`, which is **blank on this
+        site** — so both hand-entry sheets shipped able to do exactly one thing:
+        return "Activity type is required. Please pick one." Neither had a picker.
+        """
+        for fname in ('app.js', 'myday.js'):
+            with self.subTest(file=fname):
+                src = self.read_file(KIOSK_JS_DIR, fname)
+                self.assertIn("'add_manual_interval'", src)
+                self.assertIn('activityChipRow', src)
+                self.assertIn('time_category:', src)
+                self.assertIn('Pick an activity.', src)
+
+    def test_the_activity_picker_is_one_helper_not_four_copies(self):
+        """app.js owns it and hands it to myday.js through ctx. The Clock tab and
+        the Switch sheet already had their own inline copies; a third and fourth
+        were what made this worth factoring."""
+        app_js = self.read_file(KIOSK_JS_DIR, 'app.js')
+        myday_js = self.read_file(KIOSK_JS_DIR, 'myday.js')
+        self.assertIn('function activityChipRow(', app_js)
+        self.assertIn('activityChipRow: activityChipRow', app_js)
+        self.assertIn('ctx.activityChipRow(', myday_js)
+        self.assertNotIn('function activityChipRow(', myday_js)
+
+    def test_editing_an_interval_can_correct_its_activity(self):
+        """The edit sheet pre-selects the interval's own category, so saving
+        without touching the chips is a no-op rather than a way to blank it."""
+        myday_js = self.read_file(KIOSK_JS_DIR, 'myday.js')
+        self.assertIn('ctx.activityChipRow(iv.time_category)', myday_js)
+
     def test_the_backdated_default_is_actually_in_the_past(self):
         """Flooring `now` to a quarter hour is not a past time: at :45 it returns
         :45, so the sheet opened pre-filled with the current minute and "I forgot

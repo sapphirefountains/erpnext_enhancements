@@ -1,6 +1,7 @@
 """Tests for the time-editing API (TS2)."""
 
 import ast
+import re
 import json
 import unittest
 from pathlib import Path
@@ -162,6 +163,40 @@ class TestTimeEditingAPI(unittest.TestCase):
         self.assertIn("start_time", body)
         self.assertIn("end_time", body)
         # Assuming manual_start reason is also being set
+
+    def test_the_allowlist_is_the_three_fields_and_nothing_else(self):
+        """36 fields on Job Interval are `read_only: 1`, and read_only is a Desk
+        hint rather than a server gate — a generic setter here would let a
+        technician clear their own `offsite_start`, `auto_closed` or
+        `tracking_health`. `time_category` joined in v1.488.0 because the
+        technician chose it in the first place and is asked for it on every
+        clock-in, so correcting it claims nothing they could not have claimed then.
+        """
+        allowed = re.search(r"ALLOWED_UPDATE_FIELDS = \{([^}]*)\}", SOURCE).group(1)
+        names = set(re.findall(r'"([a-z_]+)"', allowed))
+        self.assertEqual(names, {"start_time", "end_time", "time_category"})
+
+    def test_update_interval_times_writes_only_allowlisted_fields(self):
+        """The list is worth nothing if the body sets something it does not name."""
+        body = _code_only(SOURCE, _functions(TREE)["update_interval_times"])
+        assigned = set(re.findall(r"doc\.([a-z_]+)\s*=", body))
+        audit = {"corrected", "time_edit_reason", "manual_start", "manual_start_reason"}
+        allowed = {"start_time", "end_time", "time_category"}
+        self.assertEqual(assigned - audit, allowed, f"writes outside the allowlist: {assigned - audit - allowed}")
+
+    def test_a_blank_activity_is_ignored_rather_than_written(self):
+        """Saving the edit sheet without touching the chips must not empty the
+        category — and `approve_day` refuses a day with a missing one, so a blank
+        written here would surface on payroll day rather than at the keystroke."""
+        body = _code_only(SOURCE, _functions(TREE)["update_interval_times"])
+        self.assertIn("if new_category:", body)
+        self.assertLess(body.index("new_category = "), body.index("if new_category:"))
+
+    def test_the_refusal_is_actionable_when_there_is_nothing_to_pick(self):
+        """"Please pick one" is only useful advice when something exists to pick."""
+        body = _code_only(SOURCE, _functions(TREE)["add_manual_interval"])
+        self.assertIn('frappe.db.count("Activity Type")', body)
+        self.assertIn("No Activity Types are set up yet", body)
 
     def test_update_interval_times_checks_roles(self):
         """4. Both writing endpoints go through one permission gate."""

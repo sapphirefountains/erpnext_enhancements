@@ -70,7 +70,12 @@ TIMELINE_MANAGER_ROLES = {"System Manager", "HR Manager", "Projects Manager"}
 #: Hard field allowlist for update_interval_times.
 #: 36 fields on Job Interval are read_only: 1, and read_only is a Desk hint rather than a server gate.
 #: A generic setter here would let a technician clear their own offsite_start, auto_closed or tracking_health.
-ALLOWED_UPDATE_FIELDS = {"start_time", "end_time"}
+#: ``time_category`` joined the list in v1.488.0. It is safe in a way the rest are not: it is
+#: something the technician *chose* in the first place and is asked for on every clock-in, so
+#: letting them correct it claims nothing they could not have claimed at the time. It is here
+#: rather than only in the reviewed correction flow because the kiosk now creates intervals by
+#: hand, and an activity typed into the wrong row otherwise needed a reviewer to fix.
+ALLOWED_UPDATE_FIELDS = {"start_time", "end_time", "time_category"}
 
 #: Log statuses that are real fixes. ``Low Accuracy`` rows prove the phone was
 #: reporting (they count toward coverage) but are excluded from distance and
@@ -2514,6 +2519,12 @@ def add_manual_interval(project=None, start_time=None, end_time=None, reason=Non
         "Time Kiosk Settings", "default_time_category"
     )
     if not resolved_time_category:
+        # "Pick one" is only useful advice when there is something to pick. With no
+        # Activity Types on the site and no site default, the reader needs to be
+        # told where to go instead of being sent back to a chip row that is empty.
+        if not frappe.db.count("Activity Type"):
+            frappe.throw(_("No Activity Types are set up yet. Ask an administrator to add one, "
+                           "or set a default in Time Kiosk Settings."))
         frappe.throw(_("Activity type is required. Please pick one."))
 
     doc = _new_interval(employee, project, task, resolved_time_category, description, start_dt,
@@ -2569,12 +2580,19 @@ def start_backdated(project=None, start_time=None, reason=None, task=None, time_
 
 
 @frappe.whitelist()
-def update_interval_times(interval=None, start_time=None, end_time=None, reason=None):
-    """Move an existing interval's start and/or end.
+def update_interval_times(interval=None, start_time=None, end_time=None, reason=None, time_category=None):
+    """Move an existing interval's start and/or end, and correct its activity.
 
-    Writes exactly the two time fields plus the audit block, and nothing else —
-    ``ALLOWED_UPDATE_FIELDS`` is the list, and it is short on purpose: this
-    endpoint is reachable by anyone with a kiosk.
+    Writes exactly the three fields in ``ALLOWED_UPDATE_FIELDS`` plus the audit
+    block, and nothing else. That list is short on purpose: this endpoint is
+    reachable by anyone with a kiosk, 36 fields on Job Interval are ``read_only``,
+    and ``read_only`` is a Desk hint rather than a server gate — a generic setter
+    would let a technician clear their own ``offsite_start`` or ``auto_closed``.
+
+    ``time_category`` is safe in a way those are not: the technician chose it in
+    the first place and is asked for it on every clock-in, so correcting it claims
+    nothing they could not have claimed at the time. A blank is ignored rather than
+    written, so saving the sheet without touching the chips cannot empty it.
 
     The original times are kept the first time an interval is touched, through the
     same ``corrections._record_originals`` the reviewer-approved path uses, so a
@@ -2598,8 +2616,9 @@ def update_interval_times(interval=None, start_time=None, end_time=None, reason=
 
     new_start = get_datetime(start_time) if start_time else None
     new_end = get_datetime(end_time) if end_time else None
-    if new_start is None and new_end is None:
-        frappe.throw(_("Give a new start time, an end time, or both."))
+    new_category = (time_category or "").strip() or None
+    if new_start is None and new_end is None and new_category is None:
+        frappe.throw(_("Give a new start time, an end time, an activity, or any combination."))
 
     now_dt = now_datetime()
     effective_start = new_start or doc.start_time
@@ -2618,6 +2637,8 @@ def update_interval_times(interval=None, start_time=None, end_time=None, reason=
         doc.start_time = new_start
     if end_time:
         doc.end_time = new_end
+    if new_category:
+        doc.time_category = new_category
     if start_moved:
         doc.manual_start = 1
         if not (doc.manual_start_reason or "").strip():

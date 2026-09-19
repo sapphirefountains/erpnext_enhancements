@@ -252,6 +252,9 @@
   function openEditTimesSheet(iv) {
     var start = h('input', { type: 'datetime-local', 'aria-label': 'Start', value: toLocalInput(iv.start_time) });
     var end = h('input', { type: 'datetime-local', 'aria-label': 'End', value: iv.end_time ? toLocalInput(iv.end_time) : '' });
+    // Pre-selected from the interval, so saving without touching it is a no-op
+    // rather than a way to blank the category by forgetting about it.
+    var activity = ctx.activityChipRow(iv.time_category);
     var reason = h('textarea', { rows: '2', placeholder: 'Reason for editing (optional)' });
     var err = h('p', { class: 'tk-error', hidden: true });
 
@@ -260,17 +263,20 @@
       body: h('div', { class: 'tk-stack' }, [
         h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Start' }), start]),
         h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'End' }), end]),
+        h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Activity' }), activity.el]),
         h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Reason' }), reason]),
         err,
       ]),
       actions: [
         { label: 'Save', kind: 'primary', onClick: function (hnd, btn) {
           if (!fromLocalInput(start.value)) { err.hidden = false; err.textContent = 'A start time is needed.'; return false; }
+          if (!activity.get()) { err.hidden = false; err.textContent = 'Pick an activity.'; return false; }
           btn.disabled = true;
           ctx.api(ctx.API + 'update_interval_times', {
             interval: iv.name,
             start_time: fromLocalInput(start.value),
             end_time: end.value ? fromLocalInput(end.value) : null,
+            time_category: activity.get(),
             reason: (reason.value || '').trim()
           }).then(function () {
             UI.toast('Times updated.', 'green');
@@ -325,6 +331,7 @@
         t.textContent = p.label;
       } });
     });
+    var activity = ctx.activityChipRow('');
     var reason = h('textarea', { rows: '2', placeholder: 'Why is this being entered by hand?', 'aria-label': 'Reason' });
     var err = h('p', { class: 'tk-error', hidden: true });
 
@@ -332,6 +339,7 @@
       title: 'Add time',
       body: h('div', { class: 'tk-stack' }, [
         h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Project' }), projBtn]),
+        h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Activity' }), activity.el]),
         h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Start' }), start]),
         h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'End' }), end]),
         h('div', { class: 'tk-field' }, [h('span', { class: 'tk-label', text: 'Reason' }), reason]),
@@ -341,6 +349,7 @@
         { label: 'Add time', kind: 'primary', onClick: function (hnd, btn) {
           var problem = null;
           if (!project.value) problem = 'Choose a project.';
+          else if (!activity.get()) problem = 'Pick an activity.';
           else if (!fromLocalInput(start.value)) problem = 'A start time is needed.';
           else if (!fromLocalInput(end.value)) problem = 'An end time is needed.';
           else if (!(reason.value || '').trim()) problem = 'Please say why.';
@@ -352,6 +361,7 @@
             project: project.value,
             start_time: fromLocalInput(start.value),
             end_time: fromLocalInput(end.value),
+            time_category: activity.get(),
             reason: (reason.value || '').trim(),
           }).then(function (r) {
             UI.toast((r && r.message) || 'Time added.', 'green');
