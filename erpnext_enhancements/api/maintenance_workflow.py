@@ -574,6 +574,7 @@ def email_customer_service_report(doc):
             title=_("Your service report"),
             eyebrow=_("Maintenance"),
             tagline=True,
+            pillar="service",
         ),
         attachments=[
             frappe.attach_print(

@@ -21,6 +21,7 @@ anything.
 | [FLEET_VEHICLE_MAINTENANCE.md](FLEET_VEHICLE_MAINTENANCE.md) | Fleet vehicle maintenance scheduling |
 | [DOCUMENT_MERGE.md](DOCUMENT_MERGE.md) | Duplicate document merging and its fail-closed philosophy |
 | [email-design-system.md](email-design-system.md) | The one email layout, its components and palette, how to add an email, and an inventory of every email the app sends |
+| [print-design-system.md](print-design-system.md) | The chrome every printed document shares — the pillar stripe, wordmark, display face — how a format composes it, and why the font is a data URI |
 | [UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md](UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md) | Quick Entry and form-layout conventions |
 | [attribution-runbook.md](attribution-runbook.md) | Lead attribution: the settings, the website ingress payload contract, and the one tickbox that turns enforcement off |
 | [website-capture/](website-capture/) | The WordPress half: the first-touch UTM mu-plugin, the Fluent Forms hidden fields and webhook mapping, and why a JS-injected field never reaches ERPNext |

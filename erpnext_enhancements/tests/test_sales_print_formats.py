@@ -176,7 +176,8 @@ class TestTemplatesRender(unittest.TestCase):
             for rows in (1, 10):
                 with self.subTest(f"{name}/{rows}"):
                     out = self._render(html, _sample(doctype, rows))
-                    self.assertIn("LETTERHEAD", out)
+                    self.assertIn("<svg", out, "the wordmark is drawn by the template")
+                    self.assertNotIn("LETTERHEAD", out, "the site's Letter Head must not add a second logo")
                     self.assertIn("ITEM-1", out)
                     self.assertNotIn("{{", out)
 
@@ -319,11 +320,27 @@ class TestTheHeaderCarriesOurContactDetails(unittest.TestCase):
 
 
 class TestSilentFailureModes(unittest.TestCase):
-    def test_letter_head_is_rendered(self):
-        """A custom_format template gets no letterhead injected -- it must render one."""
+    def test_the_wordmark_is_rendered(self):
+        """A custom_format template gets no letterhead injected -- it must draw one.
+
+        Since v1.494.0 `print_style.letterhead()` inlines the wordmark SVG itself, so
+        the site's Letter Head (a bare logo) must NOT also be rendered: two logos on
+        one page is the new version of the old unbranded-for-a-month bug."""
         for name, _doctype, html in formats():
             with self.subTest(name):
-                self.assertIn("{{ letter_head }}", html)
+                self.assertIn("<svg", html)
+                self.assertIn("Sapphire Fountains, LLC", html)
+                self.assertNotIn("{{ letter_head }}", html)
+
+    def test_the_chrome_is_the_pillar_stripe(self):
+        """Every sales document opens and closes with the stripe and carries the
+        display face; a format that lost its chrome would still render, unbranded."""
+        for name, _doctype, html in formats():
+            with self.subTest(name):
+                self.assertEqual(html.count("linear-gradient(90deg"), 2)
+                self.assertIn("@font-face", html)
+                self.assertIn("Big Noodle Titling", html)
+                self.assertNotIn("__OPEN__", html)
 
     def test_description_unescaped_item_name_escaped(self):
         for name, _doctype, html in formats():

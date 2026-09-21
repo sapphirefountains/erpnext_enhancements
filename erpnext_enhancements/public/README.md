@@ -2,6 +2,8 @@
 
 Everything that runs in the browser: desk form/list scripts, desk-wide patches, the Vue comments app, performance hotfixes, and the Time Kiosk PWA front-end. CSS lives under `css/`, JavaScript under `js/`, and PWA icons under `kiosk/`.
 
+`fonts/big_noodle_titling.woff2` is the brand's display face, and it is **not served to a browser by anything here**: `print_style.py` reads it from disk and inlines it into every printed document as a data-URI `@font-face` ([docs/print-design-system.md](../../docs/print-design-system.md)), and email cannot carry a webfont at all (premailer drops `@font-face`). It lives under `public/` only because that is where the app keeps static files.
+
 Assets are loaded via [`../hooks.py`](../hooks.py) — `app_include_js`/`app_include_css` (global), `doctype_js`/`doctype_list_js`/`doctype_css`/`doctype_calendar_js` (per-doctype) — **except** the kiosk front-end, which is loaded by `www/kiosk.html`.
 
 Every file has a top-of-file doc block. This README is the architecture map.

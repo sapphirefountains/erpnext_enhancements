@@ -38,6 +38,10 @@ extends path raises at send time inside ``Notification.send()``'s own
 ``except``, which logs an Error Log and drops the email. Neither failure is
 survivable in a field people edit through the Desk.
 
+The palette and the pillar records are the Sapphire Fountains design system's
+tokens; ``print_style`` holds the pillar records so paper and email agree, and
+this module imports them rather than copying them.
+
 See ``docs/email-design-system.md`` for the guide and the full inventory.
 """
 
@@ -45,6 +49,9 @@ import functools
 
 import frappe
 
+from erpnext_enhancements.print_style import PILLARS as _PILLARS
+from erpnext_enhancements.print_style import pillar as _pillar
+from erpnext_enhancements.print_style import stripe_css as _stripe_css
 from erpnext_enhancements.utils.deploy import get_deploy_version
 from erpnext_enhancements.utils.url_safety import is_safe_url
 
@@ -62,30 +69,50 @@ MAX_WIDTH = 840
 # The palette. These are the only email colours in the app: the guard test
 # asserts every hex literal in _shell.html and _components.html is one of them.
 #
-# Contrast against white is measured, not assumed, because the two values this
-# replaces both fail AA and the app already gates on that rule elsewhere
-# (scripts/test_chat_source_rules.js bans #00a0dd as text at 2.97:1). Rejected:
-# #1E9E5A, the old CTA fill, 3.52:1 with white text; #00A1DE, the old link
-# colour, 2.90:1. Both were carried by all 13 hand-written Notification bodies.
-INK = "#00263E"  # headings — 14.1:1
-BODY_INK = "#1f2d38"  # body copy — 12.5:1
-MUTED = "#5b6b78"  # secondary and footer — 5.6:1
-RULE = "#dbe4ea"  # borders. Never carries text.
-SURFACE = "#f2f9fd"  # table tint. Never carries text.
-ACCENT = "#0077a8"  # links, letterhead rule, primary CTA fill — 4.99:1
-SUCCESS = "#17753f"  # completed, submitted, paid — 5.83:1
-WARNING = "#8a5a00"  # overdue, out of range, needs attention — 5.94:1
-DANGER = "#a02a2a"  # failed, error — 6.51:1
+# Since v1.494.0 every value is a token of the Sapphire Fountains design system
+# (named beside it), applied as the "Pillar Stripe" concept Nik picked from the
+# design canvas on 2026-09-21. The two status colours the token set lacks come
+# from the 2016 brand guide's supportive set, as the design system directs.
+#
+# Contrast against white is measured, not assumed, because the two values the
+# first palette replaced both failed AA and the app already gated on that rule
+# elsewhere (scripts/test_chat_source_rules.js banned #00a0dd as text at 2.97:1).
+# Rejected then and still banned: #1E9E5A, the old CTA fill, 3.52:1 with white
+# text; #00A1DE, the old link colour, 2.90:1.
+INK = "#00263e"  # deep-sea-blue — titles, table rules — 14.1:1
+BODY_INK = "#363636"  # ink-700 — body copy — 12.1:1
+MUTED = "#363636"  # the design system has no muted grey: small print is ink-700, smaller
+ACCENT = "#00609c"  # bahama-blue — links, labels, sub-heads on the light ground — 6.7:1
+SUCCESS = "#316564"  # teal-deep — completed, submitted, paid — 6.4:1
+# The brand has no warm text colour. The guide's Gold (#8e7631) measures 4.39:1
+# on white — under AA — so a warning is ink-700 text under a yellow rule, and the
+# words carry the severity, as they must anyway under Gmail's forced dark mode.
+WARNING = "#363636"
+DANGER = "#bd2e2b"  # red (brand guide supportive set) — failed, error — 5.9:1
+RULE = "#dadbdd"  # border-100 — hairlines. Never carries text.
+SURFACE = "#f8f8f8"  # off-white — the ground of a callout or KPI. Never carries text.
+
+# Fills and rules. fresh-blue is the design system's "signature sapphire" and the
+# fill of every primary button; its label is navy-900 (6.5:1) rather than the
+# website's off-white (2.8:1), which the design system itself flags as its most
+# visible contrast failure. teal and yellow are rule colours only — 1.8:1 and
+# 1.7:1 as text — which is why they appear as `br` and never as `fg`.
+FRESH_BLUE = "#00a0df"
+NAVY_900 = "#00111c"
+TEAL = "#62cbc9"
+YELLOW = "#ffb819"
 
 # Tone fills and tints, mirrored in _components.html. The guard test asserts
 # every hex literal in the two template files appears somewhere in this module,
-# which is what keeps the two copies from drifting.
+# which is what keeps the two copies from drifting. `fg` is the text, `br` the
+# rule along the top of a callout or KPI and the edge of a pill, `fill`/`label`
+# the button.
 TONE_COLORS = {
-	"primary": {"fg": ACCENT, "bg": "#eef7fb", "br": "#b8dced"},
-	"success": {"fg": SUCCESS, "bg": "#edf7f1", "br": "#b6ddc6"},
-	"warning": {"fg": WARNING, "bg": "#fdf6e8", "br": "#e8d5a8"},
-	"danger": {"fg": DANGER, "bg": "#fcefef", "br": "#e8bcbc"},
-	"info": {"fg": ACCENT, "bg": SURFACE, "br": "#b8dced"},
+	"primary": {"fg": ACCENT, "bg": SURFACE, "br": FRESH_BLUE, "fill": FRESH_BLUE, "label": NAVY_900},
+	"success": {"fg": SUCCESS, "bg": SURFACE, "br": TEAL, "fill": SUCCESS, "label": SURFACE},
+	"warning": {"fg": WARNING, "bg": SURFACE, "br": YELLOW, "fill": WARNING, "label": SURFACE},
+	"danger": {"fg": DANGER, "bg": SURFACE, "br": DANGER, "fill": DANGER, "label": SURFACE},
+	"info": {"fg": ACCENT, "bg": SURFACE, "br": FRESH_BLUE, "fill": FRESH_BLUE, "label": NAVY_900},
 }
 
 TONES = tuple(TONE_COLORS)
@@ -94,7 +121,25 @@ TONES = tuple(TONE_COLORS)
 # tinted canvas and no card, because a card is what made the old emails read as
 # a narrow centred box.
 WHITE = "#ffffff"
-FOOTER_MUTED = "#8a97a3"  # the tagline, quieter than MUTED. Decorative only.
+
+# ---------------------------------------------------------------------------
+# The pillars. The four things the company sells each own a colour, and a mail
+# that belongs to one carries its stripe and its name; everything else — alerts,
+# digests, anything internal — takes the brand's dark band and no name. The
+# records themselves live in print_style so paper and email cannot disagree.
+PILLARS = tuple(_PILLARS)
+
+
+def pillar_context(key):
+	"""The shell's `pillar` variable for ``key``: name, open, deep and the
+	stripe's CSS. ``None`` or an unknown key is the neutral dark band."""
+	record = _pillar(key)
+	return {
+		"name": record["name"],
+		"open": record["open"],
+		"deep": record["deep"],
+		"stripe": _stripe_css(key),
+	}
 
 
 @functools.lru_cache(maxsize=1)
@@ -147,7 +192,9 @@ def _components():
 # The two entry points.
 
 
-def wrap(body_html, *, title=None, eyebrow=None, preheader=None, footer_note=None, tagline=False):
+def wrap(
+	body_html, *, title=None, eyebrow=None, preheader=None, footer_note=None, tagline=False, pillar=None
+):
 	"""``body_html`` inside the standard letterhead, heading and footer.
 
 	The body is passed through untouched — this adds chrome, it does not restyle
@@ -155,8 +202,14 @@ def wrap(body_html, *, title=None, eyebrow=None, preheader=None, footer_note=Non
 	``md_to_html`` output in the morning briefing, and ``Auto Email Report``
 	content in the commission report.
 
-	``tagline`` adds "Add water. Make magic." and is for customer-facing mail;
+	``tagline`` adds "Add Water. Make Magic." and is for customer-facing mail;
 	it reads oddly under an Error Log alert, so it is off by default.
+
+	``pillar`` is ``"service"``, ``"build"``, ``"design"`` or ``"rent"`` for a
+	mail that belongs to one of the four things the company sells — it colours
+	the stripe and names the pillar in the letterhead — and ``None`` for
+	everything else, which takes the brand's dark band. Customer-facing mail
+	almost always has one; an Error Log alert does not.
 
 	Never raises. A failure here would take an otherwise-deliverable email down
 	with it, so the unwrapped body is returned instead.
@@ -171,6 +224,7 @@ def wrap(body_html, *, title=None, eyebrow=None, preheader=None, footer_note=Non
 				"preheader": preheader,
 				"footer_note": footer_note,
 				"tagline": tagline,
+				"pillar": pillar_context(pillar),
 				"logo_url": logo_url(),
 				"site_url": frappe.utils.get_url(),
 			},
@@ -320,8 +374,8 @@ def raw(html):
 # and web template on the site.
 
 
-def ee_email(body, title=None, eyebrow=None, preheader=None, tagline=False):
-	return wrap(body, title=title, eyebrow=eyebrow, preheader=preheader, tagline=tagline)
+def ee_email(body, title=None, eyebrow=None, preheader=None, tagline=False, pillar=None):
+	return wrap(body, title=title, eyebrow=eyebrow, preheader=preheader, tagline=tagline, pillar=pillar)
 
 
 def ee_button(url, label, tone="primary"):

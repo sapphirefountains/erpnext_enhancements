@@ -457,6 +457,7 @@ def _email_signed_copy(request, pdf_url):
 				title=frappe._("Your signed agreement"),
 				eyebrow=request.project_contract,
 				tagline=True,
+				pillar="build",
 			),
 			attachments=attachments,
 			reference_doctype="Contract Signature Request",
@@ -516,7 +517,7 @@ def _alert_staff_signed(request):
 				subject=subject,
 				# Wrapped for the inbox only; the Notification Log row above keeps
 				# the unwrapped fragment for the desk bell panel.
-				message=email_style.wrap(content, title=subject, eyebrow="Contracts"),
+				message=email_style.wrap(content, title=subject, eyebrow="Contracts", pillar="build"),
 				reference_doctype="Contract Signature Request",
 				reference_name=request.name,
 			)

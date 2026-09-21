@@ -838,6 +838,12 @@ jobs:
       # (1 item, 10 items, no items, no taxes, every optional field blank).
       - name: Sales print formats (WI-020, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_sales_print_formats -v
+      # The print design system (print_style.py): the chrome the sales formats compose
+      # at after_migrate and the Maintenance Record Print fixture reaches through the
+      # ps_* Jinja globals. Renders the fixture against sample records, because nothing
+      # else compiles a fixture's html before a customer is holding the PDF.
+      - name: Print design system + Maintenance Record Print (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_print_style -v
       - name: PO approval threshold (WI-013, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_po_approval -v
       # Purchase Order Order Stage. Pins the backfill rule, which CANNOT key on an empty
