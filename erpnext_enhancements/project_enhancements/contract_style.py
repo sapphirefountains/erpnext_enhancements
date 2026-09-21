@@ -42,7 +42,7 @@ LOGO_PATH = ("public", "images", "fountain_move", "logo.svg")
 # Which pillar an agreement belongs to, by the Contract Template's `template_key`.
 # The customer-facing agreements each sit under one line of work; the NDA and the
 # employee/contractor agreement belong to the company and take the neutral band.
-# Since v1.494.0 (the print design system, docs/print-design-system.md).
+# Since v1.495.0 (the print design system, docs/print-design-system.md).
 PILLAR_BY_TEMPLATE = {
 	"owner": "build",
 	"architect": "build",

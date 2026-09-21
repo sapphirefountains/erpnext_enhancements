@@ -26,7 +26,7 @@ Two things here are specific to certificates and neither is obvious:
 House rules for a `custom_format = 1` template, all inherited from the Purchase
 Order format and all previously learned the hard way: the letterhead is drawn by
 the template itself (frappe injects one only for *standard* formats — and since
-v1.494.0 `print_style.letterhead()` draws the wordmark, so the site's Letter Head is
+v1.495.0 `print_style.letterhead()` draws the wordmark, so the site's Letter Head is
 no longer rendered beside it), CSS is print-safe — no flexbox, no grid,
 `page-break-inside: avoid` — and styles are inline.
 
@@ -77,7 +77,7 @@ _CERTIFICATE_HTML = (
       block only for *standard* formats, so a template that does not draw one simply goes
       out unbranded. The Purchase Order format spent its first month that way. A certificate
       leaves the company more often than anything else here, so it matters more, not less.
-      Since v1.494.0 print_style.letterhead() inlines the wordmark itself, so `letter_head`
+      Since v1.495.0 print_style.letterhead() inlines the wordmark itself, so `letter_head`
       is deliberately NOT rendered: two logos on one page is worse than one. -#}
 """
 	+ ps.letterhead(

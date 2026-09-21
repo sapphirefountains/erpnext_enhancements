@@ -349,7 +349,7 @@ class TestTheHeaderCarriesOurContactDetails(unittest.TestCase):
                 self.assertIn("Bountiful, UT 84010", self.render(**kwargs))
 
     def test_the_wordmark_is_drawn_and_the_letter_head_is_not(self):
-        """Since v1.494.0 `print_style.letterhead()` inlines the wordmark itself, so the
+        """Since v1.495.0 `print_style.letterhead()` inlines the wordmark itself, so the
         site's Letter Head (a bare logo) must NOT also render: two logos on one page is
         the new version of the old unbranded-for-a-month bug."""
         self.assertNotIn("{{ letter_head }}", _NAMESPACE["_HTML"])

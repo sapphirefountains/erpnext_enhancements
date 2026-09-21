@@ -26,7 +26,7 @@ Design decisions, all confirmed rather than assumed:
   template supplies the whole document, so Frappe never injects one — it only builds the
   `#header-html` block for *standard* formats. `letter_head` is handed to the template in
   the render args and dropped if unused, which is how this format spent its first month
-  going to suppliers unbranded. Since v1.494.0 `print_style.letterhead()` inlines the
+  going to suppliers unbranded. Since v1.495.0 `print_style.letterhead()` inlines the
   wordmark itself and draws our name, address and phone beside it — the site's letter
   head is a bare right-aligned logo and is no longer rendered here, since two logos on
   one page is worse than one. The address prefers the document's own
@@ -262,7 +262,7 @@ _TEMPLATE = (
       Verified on production: the rendered HTML contains no `#header-html` div at all, and
       the PDF was byte-identical with and without a letter head attached to the document.
 
-      Since v1.494.0 print_style.letterhead() draws the wordmark itself, so `letter_head`
+      Since v1.495.0 print_style.letterhead() draws the wordmark itself, so `letter_head`
       is deliberately NOT rendered here: the site's letter head is a bare right-aligned
       logo, and two logos on one page is worse than one.
 

@@ -4,7 +4,8 @@ Every printed document this app composes shares one chrome, defined once, in
 `erpnext_enhancements/print_style.py`. This page is the guide: what the chrome is, how a
 format consumes it, and the three things about it that are not obvious.
 
-Introduced in **v1.494.0**, alongside the matching email chrome
+Introduced in **v1.494.0** (the sales formats and the maintenance report), extended to every
+other printed document in **v1.495.0**, alongside the matching email chrome
 ([email-design-system.md](email-design-system.md)). Both are the *Pillar Stripe* concept
 Nik picked from the design canvas on 2026-09-21, built from the Sapphire Fountains design
 system's own tokens.
@@ -106,12 +107,12 @@ public origin — one more thing to go wrong on a host whose PDF history is
 wkhtmltopdf, still the fallback for report exports, takes a data-URI `@font-face` too.
 The fallback stack is Arial Narrow, a condensed bold that reads as the same idea.
 
-**The site's Letter Head is no longer rendered by the sales formats.** `print_style.
-letterhead()` inlines the wordmark itself, so `{{ letter_head }}` — the site's bare
-right-aligned logo — would put a second logo on the page. `tests/test_sales_print_formats.py`
-now asserts it is *absent*, having asserted its presence since the month the Purchase
-Order format went out unbranded. The Purchase Order format is not on this chrome yet and
-still renders it.
+**The site's Letter Head is no longer rendered by any Python-composed format.**
+`print_style.letterhead()` inlines the wordmark itself, so `{{ letter_head }}` — the site's
+bare right-aligned logo — would put a second logo on the page. The sales, Purchase Order and
+certificate suites now assert it is *absent*, having asserted its presence since the month
+the Purchase Order format went out unbranded. The report sheets are the exception: the
+report wrapper prints the Letter Head above them, so they draw no wordmark at all.
 
 **Print-safe CSS only.** The letterhead, facts row and signature lines are
 `display:table`; nothing is flex or grid, because the PDF backends on this host do not
