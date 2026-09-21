@@ -403,6 +403,17 @@ jobs:
       # `bench migrate`, which on this repo is the deploy, so it half-installed prod.
       - name: Singles table is not queried through the ORM
         run: python -m unittest erpnext_enhancements.tests.test_singles_table_access -v
+      # A cost code that points at the wrong MasterFormat section does not raise -- it
+      # prints on a Schedule of Values and an AIA G702/G703 that a general contractor
+      # reads, and comes back as a rejected submittal weeks later. The catalog this
+      # replaced was the retired 1995 16-division list mechanically reformatted, so
+      # `22 3100` (Pumps) was Domestic Water Softeners and `22 5100` (Nozzles) was
+      # Swimming Pool Plumbing Systems. The gate is the published-section LIST, not a
+      # regex: `01 5433` has a legal Level-4 shape inside a real family whose children
+      # stop at 01 54 26, so a pattern check passes it. Two numbers also became live
+      # collisions AFTER adoption (02 03 00 and 09 03 00 exist in MF2016, not MF2011).
+      - name: Cost codes name real MasterFormat sections (list check, not a regex)
+        run: python -m unittest erpnext_enhancements.tests.test_cost_codes -v
       # The audit roster answers a DATE, not today. Every derived-status write in the
       # HR and Training modules goes through db_set(update_modified=False), which never
       # reaches save_version() -- so a stored status is a fact about TODAY and
