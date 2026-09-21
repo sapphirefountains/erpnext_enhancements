@@ -389,5 +389,52 @@ class TestMaintenanceRecordPrintFixture(unittest.TestCase):
             self.assertNotIn(field, html)
 
 
+class TestFactsRows(unittest.TestCase):
+    def test_a_second_row_can_drop_the_top_rule(self):
+        self.assertIn(f"border-top:1px solid {ps.DEEP_SEA_BLUE}", ps.facts_open())
+        self.assertNotIn("border-top", ps.facts_open(top=False))
+        self.assertIn(f"border-bottom:1px solid {ps.BORDER_100}", ps.facts_open(top=False))
+
+
+class TestProjectBriefClientCopy(unittest.TestCase):
+    """The Project Brief is rendered in the browser (`project_brief.js`) and cannot
+    read print_style, so it carries a copy of the pillar records. This keeps the
+    copy honest, and pins the two assets it loads by raw path."""
+
+    JS = (APP / "public" / "js" / "project_enhancements" / "project_brief.js").read_text(encoding="utf-8")
+
+    def test_the_pillar_copy_matches_print_style(self):
+        for key, record in ps.PILLARS.items():
+            with self.subTest(key):
+                match = re.search(rf'{key}: \{{ name: "([A-Z]+)", open: "(#[0-9a-f]{{6}})", end: "(#[0-9a-f]{{6}})", deep: "(#[0-9a-f]{{6}})" \}}', self.JS)
+                self.assertIsNotNone(match, f"no {key} record in project_brief.js")
+                self.assertEqual(match.group(1), record["name"])
+                self.assertEqual(match.group(2), record["open"])
+                self.assertEqual(match.group(3), record["deep"])
+                self.assertEqual(match.group(4), record["deep"])
+        neutral = re.search(r'NEUTRAL_PILLAR = \{ name: "", open: "(#[0-9a-f]{6})", end: "(#[0-9a-f]{6})", deep: "(#[0-9a-f]{6})" \}', self.JS)
+        self.assertIsNotNone(neutral)
+        self.assertEqual(neutral.group(1), ps.DEEP_SEA_BLUE)
+        self.assertEqual(neutral.group(2), ps.NAVY_900)
+        self.assertEqual(neutral.group(3), ps.NEUTRAL["deep"])
+
+    def test_every_stream_maps_to_a_pillar(self):
+        for stream in ("Design", "Build", "Products", "Service", "Events"):
+            self.assertRegex(self.JS, rf'{stream}: "(design|build|service|rent)"')
+
+    def test_it_loads_the_repo_assets(self):
+        self.assertIn("/assets/erpnext_enhancements/images/fountain_move/logo.svg", self.JS)
+        self.assertIn("/assets/erpnext_enhancements/fonts/big_noodle_titling.woff2", self.JS)
+        self.assertTrue(Path(ps.LOGO_PATH).is_file())
+        self.assertTrue(Path(ps.FONT_PATH).is_file())
+
+    def test_the_print_window_waits_for_the_face_and_keeps_the_stripe(self):
+        """`window.print()` on load fires before the webfont arrives, and a browser
+        drops background colours when printing unless told not to."""
+        self.assertIn("document.fonts.ready", self.JS)
+        self.assertIn("print-color-adjust: exact", self.JS)
+        self.assertIn("linear-gradient(90deg", self.JS)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -85,8 +85,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the wordmark itself, and the site's `Sapphire Fountains Default` letter head is a bare
   right-aligned logo that would now be a second one. `test_sales_print_formats` asserts
   its absence, having asserted its presence since the month the Purchase Order format went
-  out unbranded. The Purchase Order format, the contracts and the report print sheets are
-  not on this chrome yet.
+  out unbranded.
+
+- **The Purchase Order format is on the print chrome** — neutral stripe, wordmark with our
+  address (the document's `billing_address_display`, else the constant) and phone, the
+  `PO-2026-00262-PRJ-00706` identifier and the project's readable name in the meta block,
+  six facts in two ruled rows (supplier, required by, deliver to; status, approved by,
+  questions to), the seven-column line table, totals, display-face section titles for
+  payment terms and delivery. `{{ letter_head }}` is no longer rendered here either, and
+  `company_contact.contact_block` — whose only consumer this was — is gone; the module keeps
+  the two constants `print_style.letterhead()` reads. `print_style.facts_open(top=False)`
+  exists for the second row.
+
+- **The contracts are on it, without touching a signed byte.** The chrome cannot go into an
+  agreement's body — a signed contract prints its frozen `agreement_html`, and chrome inside
+  it could never reach one signed before it existed — so `contract_style.letterhead_html()`
+  now emits the pillar stripe, the wordmark, an eyebrow naming the pillar and the
+  `@font-face` for the display face *inside* the one `.ct-letterhead` element the
+  stylesheet already anchors on. The pillar comes from the Contract Template's key
+  (`PILLAR_BY_TEMPLATE`): owner, architect, SOW and MSA are Build, maintenance is Service,
+  rental is Rent, the NDA and employee agreement take the neutral band. `wrap()` reads it
+  from the document, and the two callers that passed only a name — the public signing page
+  and the executed-PDF wrapper — now look the key up. The `Project Contract Print` fixture
+  CSS moves to the tokens: Lato-or-system body in ink-700 instead of Georgia, display-face
+  document title and section heads in bahama-blue with no left border, hairline-ruled tables
+  with a bahama-blue label column instead of a tint, black signature ink unchanged.
+
+- **The Project Brief is on it**, rendered in the browser: a white sheet under the brief in
+  either desk theme (as the contract viewer already does), the pillar stripe for the job's
+  leading stream (Design, Build and Products, Service, Events as Rent), the wordmark, the
+  display-face title and section heads, ruled rows in place of dotted ones. The pillar
+  records are a *copy* of `print_style.PILLARS`, because the script cannot read the Python
+  module; `tests/test_print_style.py` holds the two equal. The wordmark and the font load
+  by raw `/assets` path — both files are immutable by content, so the one-year cache on raw
+  paths cannot serve a stale one. The print window now waits for `document.fonts.ready`
+  before it prints (on `load`, the title went out in the fallback face) and forces
+  `print-color-adjust: exact` so the stripe survives the print dialog.
+
+  Still not on the chrome: the report print sheets, which the frappe report wrapper
+  letterheads itself, and the training certificate.
 
 ## [1.493.0] - 2026-09-21
 

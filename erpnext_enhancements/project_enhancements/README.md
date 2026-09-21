@@ -322,9 +322,13 @@ superseded originals (DOC-0032/0034/0099/0100/0102) are deliberately NOT templat
   re-pullable via the form's "Pull Scope from Source" button (`compose_scope_of_work`).
 - **Printing** — the "Project Contract Print" Jinja print format (fixtures) calls
   `doc.render_body()`; blanks print as fillable lines so the paper flow still works.
-- **Branding** (`contract_style.py`, v1.194.0) — the letterhead (inline SVG wordmark over a
-  navy rule) and the running footer (contract number + page numbers) that wrap every
-  agreement. Deliberately emitted by the *wrapper*, not by the templates: a signed contract
+- **Branding** (`contract_style.py`, v1.194.0; on the print design system since v1.494.0) —
+  the letterhead (the pillar stripe, the inline SVG wordmark, an eyebrow naming the pillar
+  and the `@font-face` for the display face, all inside one `.ct-letterhead` element) and
+  the running footer (contract number + page numbers) that wrap every agreement. The pillar
+  comes from the template: owner / architect / SOW / MSA are Build, maintenance is Service,
+  rental is Rent, the NDA and employee agreement take the neutral band (`PILLAR_BY_TEMPLATE`,
+  `pillar_for`). Deliberately emitted by the *wrapper*, not by the templates: a signed contract
   prints its frozen `agreement_html` snapshot, so chrome inside the body could never reach
   one, and the templates themselves live in the site-editable `Contract Template` record
   rather than in this repo. The footer's `#footer-html` / `.page` / `.topage` names are
@@ -344,6 +348,10 @@ sheet for every job — Sapphire's scanned paper template, pre-filled. A Design 
 Events job got the same page, so the four times that run an Events job were not on it and
 neither were the design phase fees. `project_brief.py` adds a section per line of work the
 job involves; `public/js/project_enhancements/project_brief.js` renders and prints them.
+Since v1.494.0 the sheet wears the print design system's chrome — the pillar stripe for the
+job's leading stream, the wordmark, the display-face title — rendered client-side from a
+copy of `print_style.PILLARS` that `tests/test_print_style.py` keeps in agreement with the
+Python source ([docs/print-design-system.md](../../docs/print-design-system.md)).
 
 **Which sections a job gets is not `project_type` alone, and that is the load-bearing
 detail.** `project_type` (labelled "Project Stage") is one Link; `custom_value_stream` is a

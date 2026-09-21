@@ -124,12 +124,29 @@ support still paints the pillar's flat colour.
 | Document | Module | Pillar |
 |---|---|---|
 | Quotation, Sales Order, Sales Invoice | `enhancements_core/setup_sales_print_formats.py` | neutral |
+| Purchase Order | `enhancements_core/setup_print_formats.py` | neutral |
 | Maintenance Record Print | `fixtures/print_format.json` via `ps_*` | Service |
+| Contracts (all eight templates) | `project_enhancements/contract_style.py` + the `Project Contract Print` fixture CSS | by template: owner / architect / SOW / MSA → Build, maintenance → Service, rental → Rent, NDA and employee → neutral |
+| Project Brief | `public/js/project_enhancements/project_brief.js` | the job's leading stream: Design, Build (and Products), Service, Events → Rent |
 
-Not yet: the Purchase Order format (supplier-facing; still on `company_contact.contact_block`
-and the site Letter Head), the contracts (`project_enhancements/contract_style.py`, a legal
-document with its own serif conventions), and the report print sheets (crew qualification
-roster, supplier pickup list), which the frappe report wrapper letterheads itself.
+**Contracts are a third door.** The chrome cannot go into the agreement body — a signed
+contract prints its frozen `agreement_html` snapshot, and chrome inside it would never
+reach one signed before it existed — so `contract_style.letterhead_html()` emits the
+stripe, the wordmark, the pillar eyebrow *and* the `@font-face` inside the one
+`.ct-letterhead` element the stylesheet already anchors on, and `wrap()` picks the
+pillar from the document's `template_key`. The `Project Contract Print` fixture CSS
+carries the rest (sans body, display-face titles and section heads, ruled tables, black
+signature ink) and is published to all four surfaces by `_contract_css()`.
+
+**The Project Brief is rendered in the browser**, so it carries a *copy* of the pillar
+records and loads the wordmark and the font by raw `/assets` path — both files are
+immutable by content, so the one-year cache on raw paths cannot serve a stale one.
+`tests/test_print_style.py` holds the copy equal to `print_style.PILLARS`; the print window
+waits for `document.fonts.ready` before it prints and forces `print-color-adjust: exact`
+so the stripe survives the browser's print dialog.
+
+Not yet: the report print sheets (crew qualification roster, supplier pickup list), which
+the frappe report wrapper letterheads itself, and the training certificate.
 
 ## Before you push
 

@@ -32,10 +32,37 @@ import re
 
 import frappe
 
+from erpnext_enhancements import print_style
+
 # The wordmark. Navy #00263E with a #00609C accent — the palette the rest of the
 # contract styling is built from. Shared with www/fountain-move.html, which
 # serves the same file over HTTP; here it is inlined into the document instead.
 LOGO_PATH = ("public", "images", "fountain_move", "logo.svg")
+
+# Which pillar an agreement belongs to, by the Contract Template's `template_key`.
+# The customer-facing agreements each sit under one line of work; the NDA and the
+# employee/contractor agreement belong to the company and take the neutral band.
+# Since v1.494.0 (the print design system, docs/print-design-system.md).
+PILLAR_BY_TEMPLATE = {
+	"owner": "build",
+	"architect": "build",
+	"sow": "build",
+	"msa": "build",
+	"maintenance": "service",
+	"rental": "rent",
+}
+
+
+def pillar_for(doc):
+	"""The pillar key for ``doc``'s template, or ``None`` for the neutral band.
+
+	``doc`` is a Project Contract, a ``frappe._dict`` carrying ``template_key``, or
+	``None`` — every caller of :func:`wrap` hands over whichever it has.
+	"""
+	if doc is None:
+		return None
+	key = doc.get("template_key") if hasattr(doc, "get") else getattr(doc, "template_key", None)
+	return PILLAR_BY_TEMPLATE.get((key or "").strip().lower())
 
 # Rendered width of the wordmark (its natural aspect is 276x100). Set as an
 # attribute as well as in CSS: wkhtmltopdf sizes inline SVG from the attributes.
@@ -78,20 +105,46 @@ def logo_svg():
 	return f'{head} width="{LOGO_WIDTH}" height="{LOGO_HEIGHT}">{tail}'
 
 
-def letterhead_html():
+def letterhead_html(pillar=None):
 	"""The branded header block that opens every agreement.
 
-	Logo and rule only — no address. Six of the eight shipped templates already
-	open with their own company/address block, and duplicating it under the
-	wordmark would read as a mistake. The two that do not (the architect
-	agreement and the NDA) carry Sapphire's address in their body text.
+	The print design system's letterhead, minus the address: the pillar stripe,
+	the wordmark, and an eyebrow naming the pillar. No address, because six of
+	the eight shipped templates already open with their own company/address
+	block, and duplicating it under the wordmark would read as a mistake. The two
+	that do not (the architect agreement and the NDA) carry Sapphire's address in
+	their body text.
+
+	The ``@font-face`` for the display face rides inside the block as an inline
+	``<style>``: the block is chrome, emitted outside the signed snapshot, so the
+	face reaches every surface — desk print, viewer, signing page, executed PDF —
+	and every contract, including those signed before it existed. The stripe is a
+	flat colour before a gradient, so wkhtmltopdf, which paints no gradients,
+	still paints the pillar's colour.
+
+	One element, always: the stylesheet finds the document title by adjacent
+	sibling (``.ct-letterhead + h3``).
 	"""
 	logo = logo_svg()
 	if not logo:
-		# No asset: keep the rule and set the name in type, so the document still
-		# opens with a header rather than jumping straight into the agreement.
+		# No asset: set the name in type, so the document still opens with a
+		# header rather than jumping straight into the agreement.
 		logo = '<div class="ct-letterhead-name">Sapphire Fountains, LLC</div>'
-	return f'<div class="ct-letterhead">{logo}</div>'
+	record = print_style.pillar(pillar)
+	eyebrow = (
+		f'<div class="ct-eyebrow" style="color:{record["deep"]};">{record["name"]} &middot; AGREEMENT</div>'
+		if record["name"]
+		else ""
+	)
+	stripe = (
+		f'<div style="{print_style.stripe_css(pillar)};height:10px;line-height:10px;'
+		'font-size:1px;margin-bottom:14px;">&nbsp;</div>'
+	)
+	return (
+		'<div class="ct-letterhead">'
+		f"<style>{print_style.font_face_css()}</style>"
+		f"{stripe}{logo}{eyebrow}</div>"
+	)
 
 
 def footer_html(doc):
@@ -118,7 +171,7 @@ def footer_html(doc):
 	  ``.contract-doc`` ancestor), which is exactly the behaviour wanted.
 	"""
 	label = frappe.utils.escape_html(frappe.utils.cstr(_footer_label(doc)))
-	base = "font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:8pt;color:#3b4a56;"
+	base = "font-family:Lato,'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:8pt;color:#363636;"
 	return (
 		f'<div id="footer-html" style="{base}border-top:1px solid #00263E;'
 		'padding-top:4px;margin:0 15mm;">'
@@ -146,6 +199,7 @@ def wrap(body_html, doc=None):
 
 	``body_html`` is passed through untouched — for a signed contract it is the
 	executed instrument, and rewriting so much as its whitespace would defeat the
-	snapshot.
+	snapshot. ``doc`` names the agreement in the footer and, through its
+	``template_key``, picks the pillar the letterhead is coloured for.
 	"""
-	return f"{letterhead_html()}{body_html or ''}{footer_html(doc)}"
+	return f"{letterhead_html(pillar_for(doc))}{body_html or ''}{footer_html(doc)}"
