@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.493.0] - 2026-09-21
+
+### Added
+
+- **The cost code catalog, renumbered onto real MasterFormat sections** —
+  `erpnext_enhancements/quality/cost_codes.py`, bench-free and importing no frappe, guarded by
+  `tests/test_cost_codes.py` on its own CI step. 57 cost codes, 12 resource codes, 48 verified
+  sections, and an `OLD_TO_NEW` map total over all 73 codes of the previous catalog so a historical
+  estimate always reads forward. Nothing is seeded yet; this is the authority the seed patch will read.
+
+  Context in v1.492.1: the old catalog was MasterFormat **1995** numbers wearing the post-2004
+  format, so codes read as current sections and pointed at unrelated ones. Nik ruled that where
+  Sapphire's usage conflicts with the standard, the standard wins, and the PM approved the
+  renumbering.
+
+  **The gate is a published-section list, not a regex, and that distinction is the whole point.**
+  `01 5433` has a perfectly legal Level-4 shape inside a real family — 01 54 00 Construction Aids,
+  whose children stop at 01 54 26 — so every pattern check passes it and only a list check fails it.
+  `MASTERFORMAT_SECTIONS` carries each section with its verbatim CSI title, and a cost code naming a
+  section outside that dict fails the build.
+
+  **Work results and resources are now separate dimensions.** MasterFormat classifies work results;
+  a superintendent, a plane ticket and the fee are resources and the standard has no home for them by
+  design. Those twelve moved to `RESOURCE_CODES` with codes that are deliberately not
+  MasterFormat-shaped (`LAB-SUPT`, `OH-TRAVEL`, `FEE`), because `00 2200` was indistinguishable from
+  a real section reference and would be read as one the moment it reached a general contractor.
+  Division 00 is vacated entirely — every number in it names a procurement document.
+
+  **Two hazards the new tests surfaced, both encoded rather than suppressed.** `REUSED_CODES` records
+  the two strings that exist in both catalogs with *different* meanings: `26 0500` meant General
+  Lighting and now correctly means Common Work Results for Electrical, and `22 1119` meant Water
+  Hammer Arrestors and now means Domestic Water Piping Specialties. Un-migrated data holding either
+  silently changes meaning instead of failing to resolve, so the migration must key on `old_code` and
+  never match the string. `MERGED_OLD_CODES` records the five places where several old codes
+  deliberately collapse into one.
+
+  Numbering follows CSI: a six-digit section is **Level 3**, not Level 4; the decimal tier is CSI's
+  own Level 4 and it grew 38% between 2011 and 2016, so it is occupied territory; true Level 5 is
+  internal-use-only and must never reach a pay application. The format extends to `NN NNNN.NN`, which
+  is CSI display option 2 verbatim. Six-digit siblings are never invented in the 13/16/19/23 gaps —
+  that space is reserved for future CSI assignments and inventing there is the original failure mode.
+
+  Seven assignments are medium or low confidence and are listed in `SECTIONS_NEEDING_RECHECK` rather
+  than presented as settled.
+
+## [1.492.1] - 2026-09-21
+
+### Added
+
+- **WI-077 and WI-078** — the estimating and progress-billing programme, which the ERPNext task
+  tree has referenced by number for some time without the work items existing. Docs only; no
+  executable behaviour changes.
+
+  WI-077 carries a finding worth stating here, because it is the kind of thing that is expensive
+  to rediscover and invisible until it reaches a customer. **Sapphire's cost codes are MasterFormat
+  1995 numbers wearing the post-2004 format.** Someone took the retired 16-division broadscope list,
+  split each 5-digit number after two digits and left-zero-padded the remainder: `05500 Metal
+  Fabrications` became `05 0500`, `16300 Transmission and Distribution` became `26 0300`. The
+  transform is exact and holds across Divisions 02–09 and the whole 26 03/04/05/07/08 block. Nine of
+  the twelve Division 02–09 titles are verbatim 1995 broadscope titles.
+
+  The result *reads* as a current six-digit MasterFormat number and points at an unrelated section.
+  Of 71 codes checked against CSI/CSC *MasterFormat Numbers and Titles* (2011, 2016 and 2020
+  editions, read as PDFs and text-extracted): **8 are correct, 24 are real sections meaning something
+  else, 32 are not sections at all, and 7 describe resources the standard has no home for by design.**
+
+  The middle class is the damaging one — it does not error, it misinforms. `22 3100` (Sapphire:
+  Pumps) is **Domestic Water Softeners**. `22 5100` (Nozzles) is **Swimming Pool Plumbing Systems**.
+  `00 5000` (Fee) is **Contracting Forms and Supplements**. `02 0300` (Earthwork) is **Conservation
+  Treatment for Existing Period Conditions**; earthwork moved to Division 31 in 2004. These codes are
+  printed on Schedules of Values and AIA G702/G703 pay applications that general contractors read, so
+  the failure surfaces as a rejected submittal rather than as an exception in a log.
+
+  Two of the collisions are *newer than the codes*: `02 03 00` and `09 03 00` are absent from
+  MasterFormat 2011 and present in 2016. Those numbers were merely meaningless when Sapphire adopted
+  them and have since become live collisions with real sections — which is the argument for
+  renumbering on a schedule rather than treating the current state as stable.
+
+  Also recorded there, because each has already caused or nearly caused a wrong decision: a six-digit
+  section is CSI **Level 3**, not Level 4, and CSI's publication restriction is worded in terms of
+  Levels 4 and 5, so the off-by-one is load-bearing; the decimal tier is CSI's own Level 4 and it grew
+  38% between 2011 and 2016, so it is occupied territory rather than free space; true Level 5 is
+  internal-use-only and must never appear on a pay application; and inventing six-digit siblings in
+  the gaps between `13/16/19/23` is the exact `22 3100` failure mode aimed at CSI's live growth space.
+
+  MasterFormat 2026 is the current edition and is licence-gated, so all of the above is verified
+  against 2011/2016/2020, which agree unanimously. CSI's own 2026 changes page attributes over 80% of
+  structural change to Divisions 32 and 34.
+
 ## [1.492.0] - 2026-09-19
 
 ### Added
