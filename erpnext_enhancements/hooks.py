@@ -1412,6 +1412,21 @@ jinja = {
 		# absolute (an email client has no site origin) and cache-busted with
 		# the deploy token, which is www/ page context, not a Jinja global.
 		"erpnext_enhancements.email_style.ee_email_logo_url",
+		# The print design system (docs/print-design-system.md). The Python-composed
+		# formats bake this chrome in at after_migrate; the Jinja fixture format
+		# (`Maintenance Record Print`) reaches the same functions through these
+		# globals at print time. Individually and prefixed, for the reason above.
+		"erpnext_enhancements.print_style.ps_page_open",
+		"erpnext_enhancements.print_style.ps_page_close",
+		"erpnext_enhancements.print_style.ps_letterhead",
+		"erpnext_enhancements.print_style.ps_section_title",
+		"erpnext_enhancements.print_style.ps_th",
+		"erpnext_enhancements.print_style.ps_td",
+		"erpnext_enhancements.print_style.ps_facts_open",
+		"erpnext_enhancements.print_style.ps_fact",
+		"erpnext_enhancements.print_style.ps_facts_close",
+		"erpnext_enhancements.print_style.ps_signature_lines",
+		"erpnext_enhancements.print_style.ps_style",
 	],
 }
 

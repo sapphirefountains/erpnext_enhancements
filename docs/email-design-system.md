@@ -40,6 +40,7 @@ only in the site database. All 19 live rules are now fixtured, and each body is
 
 ```
 erpnext_enhancements/email_style.py                    the Python API and the palette
+erpnext_enhancements/print_style.py                    the pillar records, shared with paper
 erpnext_enhancements/templates/emails/_shell.html      the layout
 erpnext_enhancements/templates/emails/_components.html the macros — the ONLY email markup
 erpnext_enhancements/public/images/email/logo.png      the letterhead
@@ -68,10 +69,33 @@ inline SVG**, so email uses a hosted `<img>`.
 
 ## Layout
 
+Since **v1.494.0** the chrome is the *Pillar Stripe* concept from the design canvas Nik
+picked on 2026-09-21, built from the Sapphire Fountains design system's own tokens. Top
+to bottom: a stripe in the pillar's left-to-right gradient; the wordmark on white with
+the pillar's name beside it; an eyebrow in the pillar's closing stop over a display-face
+title in deep-sea-blue; the body; a ruled footer with the tagline; a thinner stripe.
+
+**Pillars.** The four things the company sells each own a colour — Service is
+fresh-blue, Build bahama-blue, Design violet, Rent teal — and a mail that belongs to one
+says so with `pillar="service"` (or `build`, `design`, `rent`) on `wrap()`, `render()` or
+`ee_email()`. Everything else — an Error Log alert, a digest, anything internal — passes
+nothing and takes the brand's dark navy band with no pillar word. The pillar records
+live in `print_style.py` so paper and email cannot disagree; `email_style` imports them.
+Today the customer-facing maintenance mail is Service and the contract, fountain-move
+and e-sign mail is Build; sales and billing mail is neutral until a document can say
+which pillar it is under.
+
+**The display face never arrives.** frappe inlines every email through premailer, whose
+`_parse_style_rules` keeps `@media` rules and drops every other at-rule, `@font-face`
+included (verified against premailer 3.10). So titles and sub-heads name Big Noodle
+Titling first and render in Arial Narrow bold — the same condensed shape — where the
+client has it, and Arial bold where it does not. The sizes are chosen for that fallback.
+
 Fluid `width:100%`, capped at `max-width:840px`. Full-bleed with comfortable gutters on
 a phone; capped before body copy runs 1400px wide on a maximised desktop window. White
 throughout — no tinted canvas, no border, no shadow, because a *card* is what made the
-old emails read as a box.
+old emails read as a box, and because the design system separates with rules and
+ground changes, never with a lifted card.
 
 Two mechanics, both verified against this site rather than assumed:
 
@@ -101,20 +125,28 @@ Two mechanics, both verified against this site rather than assumed:
 
 ## Palette
 
-Colour carries meaning; chrome is navy and blue. Contrast against white is computed by
-the guard suite, not asserted in a comment.
+Every value is a token of the Sapphire Fountains design system, named beside it; the two
+status colours the token set lacks come from the 2016 brand guide's supportive set, as
+the design system directs. Contrast against white is computed by the guard suite, not
+asserted in a comment.
 
-| Token | Hex | Use | On white |
-|---|---|---|---|
-| `INK` | `#00263E` | Headings — the wordmark navy | 14.1:1 |
-| `BODY_INK` | `#1f2d38` | Body copy | 12.5:1 |
-| `MUTED` | `#5b6b78` | Secondary text, footer | 5.6:1 |
-| `ACCENT` | `#0077a8` | Links, letterhead rule, primary CTA | 4.99:1 |
-| `SUCCESS` | `#17753f` | Completed, submitted, paid | 5.83:1 |
-| `WARNING` | `#8a5a00` | Overdue, out of range, needs attention | 5.94:1 |
-| `DANGER` | `#a02a2a` | Failed, error | 6.51:1 |
-| `RULE` | `#dbe4ea` | Borders — never carries text | — |
-| `SURFACE` | `#f2f9fd` | Table tint — never carries text | — |
+| Token | Hex | Design-system name | Use | On white |
+|---|---|---|---|---|
+| `INK` | `#00263e` | deep-sea-blue | Titles, table rules | 15.6:1 |
+| `BODY_INK` | `#363636` | ink-700 | Body copy | 12.1:1 |
+| `MUTED` | `#363636` | ink-700 | Small print — the system has no muted grey; it is ink at 12–13px | 12.1:1 |
+| `ACCENT` | `#00609c` | bahama-blue | Links, labels, sub-heads on the light ground | 6.7:1 |
+| `SUCCESS` | `#316564` | teal-deep | Completed, submitted, paid | 6.6:1 |
+| `WARNING` | `#363636` | ink-700 | Overdue, needs attention — ink text under a yellow rule; Gold `#8e7631` measures **4.39:1** and fails AA | 12.1:1 |
+| `DANGER` | `#bd2e2b` | Red (supportive set) | Failed, error, out of range | 5.9:1 |
+| `FRESH_BLUE` | `#00a0df` | fresh-blue | The primary button **fill** and the info rule. 3.0:1 as text — never text | — |
+| `NAVY_900` | `#00111c` | navy-900 | The primary button **label** — 6.5:1 on fresh-blue, where off-white is 2.8:1 | — |
+| `TEAL` / `YELLOW` | `#62cbc9` / `#ffb819` | teal / Yellow | Rules only (success, warning) — 1.8:1 and 1.7:1 as text | — |
+| `RULE` | `#dadbdd` | border-100 | Hairlines — never carries text | — |
+| `SURFACE` | `#f8f8f8` | off-white | The ground of a callout or KPI — never carries text | — |
+
+The pillar stripe and the pillar word take the pillar's opening and closing stops from
+`print_style.PILLARS`; those are not email-only colours and are guarded there.
 
 **Three colours are banned and the build enforces it** — `tests/test_email_design.py`,
 `BANNED_HEX`. `#00a0dd` is the brand blue and may never be a text colour or a text-bearing
@@ -138,7 +170,7 @@ All in `_components.html`, all available as `email_style.<name>()` in Python and
 
 | Macro | For |
 |---|---|
-| `h(text)` | A sub-heading inside the body |
+| `h(text)` | A sub-heading inside the body — the display face, bahama-blue |
 | `p(text)` | A paragraph. Escapes its argument |
 | `rich(html)` | A paragraph carrying inline `<b>`/links. **Does not escape** — you must |
 | `note(text)` / `note_rich(html)` | Small print |
@@ -153,7 +185,11 @@ All in `_components.html`, all available as `email_style.<name>()` in Python and
 | `button_fallback(url)` | "If the button does not work…" — use it on anything a customer must reach |
 | `pill(label, tone)` | A short status word |
 
-Tones: `primary`, `success`, `warning`, `danger`, `info`.
+Tones: `primary`, `success`, `warning`, `danger`, `info`. A tone is a rule along the top
+of a callout or KPI and the edge of a pill, on the off-white ground; the ground itself
+never changes colour. The button is the design system's control: sapphire fill,
+`radius-10`, a bold label in capitals typed into the copy (`"VIEW THE REPORT"`), in
+navy-900. A `danger` button takes the red fill with an off-white label.
 
 **`prose()` and `code()` are not interchangeable.** Four senders used to emit their whole
 body as `<pre>`; two of them (offsite backup, call transcripts) really are machine
@@ -205,7 +241,9 @@ frappe.sendmail(
 
 `wrap()` never raises — it returns the unwrapped body rather than taking a deliverable
 email down with it. Pass `tagline=True` for customer-facing mail; it reads oddly under
-an Error Log alert, so it is off by default.
+an Error Log alert, so it is off by default. Pass `pillar="service"` (or `build`,
+`design`, `rent`) when the mail belongs to one of the four pillars — see Layout — and
+nothing when it does not.
 
 ### A `Notification` record
 

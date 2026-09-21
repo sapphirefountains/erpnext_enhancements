@@ -299,7 +299,7 @@
     "cc": "operations@sapphirefountains.com"
    }
   ],
-  "message": "{% set body %}\n{{ ee_callout(\"This maintenance record is waiting on a review before it can be finalized.\", \"warning\") }}\n{{ ee_kv([\n\t(\"Record\", doc.name),\n\t(\"Project\", doc.get(\"project\")),\n\t(\"Technician\", doc.get(\"technician\")),\n\t(\"Visit date\", doc.get_formatted(\"visit_date\") if doc.get(\"visit_date\") else None)\n]) }}\n{{ ee_doc_button(doc, \"Review the record\") }}\n{% endset %}\n{{ ee_email(body, title=\"Review required: \" ~ doc.name, eyebrow=\"Maintenance\") }}"
+  "message": "{% set body %}\n{{ ee_callout(\"This maintenance record is waiting on a review before it can be finalized.\", \"warning\") }}\n{{ ee_kv([\n\t(\"Record\", doc.name),\n\t(\"Project\", doc.get(\"project\")),\n\t(\"Technician\", doc.get(\"technician\")),\n\t(\"Visit date\", doc.get_formatted(\"visit_date\") if doc.get(\"visit_date\") else None)\n]) }}\n{{ ee_doc_button(doc, \"Review the record\") }}\n{% endset %}\n{{ ee_email(body, title=\"Review required: \" ~ doc.name, eyebrow=\"Maintenance\", pillar=\"service\") }}"
  },
  {
   "doctype": "Notification",
@@ -317,7 +317,7 @@
   "send_to_all_assignees": 0,
   "attach_print": 1,
   "print_format": "Maintenance Record Print",
-  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Record\", doc.name),\n\t(\"Project\", doc.get(\"project\")),\n\t(\"Draft Sales Invoice\", doc.get(\"sales_invoice\"))\n]) }}\n{{ ee_p(\"A draft Sales Invoice has been generated for your review and standard GL posting. Check the Sales Invoice list for the corresponding draft.\") }}\n{{ ee_doc_button(doc, \"Open the record\") }}\n{% endset %}\n{{ ee_email(body, title=\"Maintenance completed: \" ~ doc.name, eyebrow=\"Maintenance\") }}",
+  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Record\", doc.name),\n\t(\"Project\", doc.get(\"project\")),\n\t(\"Draft Sales Invoice\", doc.get(\"sales_invoice\"))\n]) }}\n{{ ee_p(\"A draft Sales Invoice has been generated for your review and standard GL posting. Check the Sales Invoice list for the corresponding draft.\") }}\n{{ ee_doc_button(doc, \"Open the record\") }}\n{% endset %}\n{{ ee_email(body, title=\"Maintenance completed: \" ~ doc.name, eyebrow=\"Maintenance\", pillar=\"service\") }}",
   "recipients": [
    {
     "cc": "billing@sapphirefountains.com"
@@ -337,7 +337,7 @@
   "event": "Submit",
   "condition": "doc.has_out_of_range_readings",
   "send_to_all_assignees": 0,
-  "message": "{% set body %}\n{{ ee_callout(\"This record was submitted with out-of-range water chemistry readings.\", \"warning\") }}\n{% set readings = [] %}\n{% for row in doc.get(\"chemistry_readings\") or [] %}{% if row.out_of_range %}{% set _ = readings.append([\n\trow.reading ~ (\" (\" ~ row.serial_no ~ \")\" if row.serial_no else \"\"),\n\t(row.reading_value|string) ~ \" \" ~ (row.uom or \"\"),\n\t(row.min_value|string) ~ \"–\" ~ (row.max_value|string)\n]) %}{% endif %}{% endfor %}\n{{ ee_table([\"Reading\", \"Value\", \"Target\"], readings) }}\n{{ ee_kv([(\"Record\", doc.name), (\"Project\", doc.get(\"project\")), (\"Technician\", doc.get(\"technician\"))]) }}\n{{ ee_doc_button(doc, \"Open the record\") }}\n{% endset %}\n{{ ee_email(body, title=\"Water chemistry out of range: \" ~ doc.name, eyebrow=\"Maintenance\") }}",
+  "message": "{% set body %}\n{{ ee_callout(\"This record was submitted with out-of-range water chemistry readings.\", \"warning\") }}\n{% set readings = [] %}\n{% for row in doc.get(\"chemistry_readings\") or [] %}{% if row.out_of_range %}{% set _ = readings.append([\n\trow.reading ~ (\" (\" ~ row.serial_no ~ \")\" if row.serial_no else \"\"),\n\t(row.reading_value|string) ~ \" \" ~ (row.uom or \"\"),\n\t(row.min_value|string) ~ \"–\" ~ (row.max_value|string)\n]) %}{% endif %}{% endfor %}\n{{ ee_table([\"Reading\", \"Value\", \"Target\"], readings) }}\n{{ ee_kv([(\"Record\", doc.name), (\"Project\", doc.get(\"project\")), (\"Technician\", doc.get(\"technician\"))]) }}\n{{ ee_doc_button(doc, \"Open the record\") }}\n{% endset %}\n{{ ee_email(body, title=\"Water chemistry out of range: \" ~ doc.name, eyebrow=\"Maintenance\", pillar=\"service\") }}",
   "recipients": [
    {
     "cc": "service_repair@sapphirefountains.com"
@@ -359,7 +359,7 @@
   "days_in_advance": 30,
   "condition": "doc.status == 'Active'",
   "send_to_all_assignees": 0,
-  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Contract\", doc.name),\n\t(\"Customer\", doc.get(\"customer\")),\n\t(\"Term ends\", doc.get_formatted(\"end_date\") if doc.get(\"end_date\") else None),\n\t(\"Status\", doc.get(\"status\"))\n]) }}\n{{ ee_p(\"Per the Maintenance Services Agreement (§9.2), non-renewal requires 30 days of written notice. With auto-renewal enabled this contract renews for another one-year term unless its Non-Renewal Notice flag is set; otherwise it expires the day after the end date and stops generating visits.\") }}\n{{ ee_callout(\"Decide now: let it renew, adjust the rate, or set the non-renewal notice.\", \"warning\") }}\n{{ ee_doc_button(doc, \"Open the contract\") }}\n{% endset %}\n{{ ee_email(body, title=\"Renewal due: \" ~ doc.name, eyebrow=\"Maintenance\") }}",
+  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Contract\", doc.name),\n\t(\"Customer\", doc.get(\"customer\")),\n\t(\"Term ends\", doc.get_formatted(\"end_date\") if doc.get(\"end_date\") else None),\n\t(\"Status\", doc.get(\"status\"))\n]) }}\n{{ ee_p(\"Per the Maintenance Services Agreement (§9.2), non-renewal requires 30 days of written notice. With auto-renewal enabled this contract renews for another one-year term unless its Non-Renewal Notice flag is set; otherwise it expires the day after the end date and stops generating visits.\") }}\n{{ ee_callout(\"Decide now: let it renew, adjust the rate, or set the non-renewal notice.\", \"warning\") }}\n{{ ee_doc_button(doc, \"Open the contract\") }}\n{% endset %}\n{{ ee_email(body, title=\"Renewal due: \" ~ doc.name, eyebrow=\"Maintenance\", pillar=\"service\") }}",
   "recipients": [
    {
     "cc": "operations@sapphirefountains.com"

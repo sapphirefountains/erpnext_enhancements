@@ -332,8 +332,13 @@ def test_the_whole_button_is_the_link(macros):
 
 	# The padding belongs to the anchor: its own box is what the client makes
 	# clickable. Moving it to the td would restore the dead border exactly.
-	assert "padding:13px 30px" in a
+	assert "padding:12px 30px" in a
 	assert "display:inline-block" in a
+	# The design system's control: radius-10, sapphire fill, navy-900 label —
+	# not the pill, and not the website's off-white label (2.8:1).
+	assert "border-radius:10px" in td
+	assert "#00a0df" in td
+	assert "color:#00111c" in a
 
 
 def test_the_button_still_fills_for_outlook():
@@ -341,7 +346,49 @@ def test_the_button_still_fills_for_outlook():
 	would shrink the fill to the bare text there. Only the label is the hit target in
 	Outlook either way — that needs <v:roundrect> and a hard-coded width."""
 	body = _read(EMAIL_DIR, "_components.html")
-	assert "mso-padding-alt:13px 30px" in body
+	assert "mso-padding-alt:12px 30px" in body
+
+
+# ---------------------------------------------------------------------------
+# The pillars. A pillar's closing stop carries small text and its opening stop is
+# a fill, so each has its own bar to clear; and paper and email must agree on
+# them, which is why email_style imports the records rather than copying them.
+
+
+def test_pillar_colours_clear_their_bars():
+	from erpnext_enhancements import print_style
+
+	def luminance(hex_value):
+		channels = []
+		for i in (1, 3, 5):
+			c = int(hex_value[i : i + 2], 16) / 255
+			channels.append(c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4)
+		r, g, b = channels
+		return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+	def ratio(fg, bg="#ffffff"):
+		lighter, darker = max(luminance(fg), luminance(bg)), min(luminance(fg), luminance(bg))
+		return (lighter + 0.05) / (darker + 0.05)
+
+	assert set(print_style.PILLARS) == {"service", "build", "design", "rent"}
+	for key, record in print_style.PILLARS.items():
+		assert ratio(record["deep"]) >= 4.5, f"{key}'s closing stop {record['deep']} fails AA on white"
+		assert record["name"] == record["name"].upper(), "pillar names are typed in capitals"
+	assert ratio(print_style.NEUTRAL["deep"]) >= 4.5
+	# The one primary button: sapphire fill, navy-900 label.
+	assert ratio(print_style.NAVY_900, print_style.FRESH_BLUE) >= 4.5
+
+
+def test_the_shell_carries_the_pillar_stripe():
+	"""The stripe is the concept. It must paint in Outlook (bgcolor, no gradient)
+	and everywhere else (the gradient), and it comes from wrap(), not the shell."""
+	shell = _strip_comments(_read(EMAIL_DIR, "_shell.html"))
+	assert shell.count("{{ _p.stripe }}") == 2, "a stripe at the top and a thinner one at the bottom"
+	assert shell.count('bgcolor="{{ _p.open }}"') == 2, "Outlook needs the flat opening stop"
+	assert "{{ _p.name }}" in shell, "the pillar's name sits beside the wordmark"
+	src = _read(REPO_ROOT, APP, "email_style.py")
+	assert '"pillar": pillar_context(pillar)' in src
+	assert "def ee_email(body, title=None, eyebrow=None, preheader=None, tagline=False, pillar=None)" in src
 
 
 # ---------------------------------------------------------------------------
@@ -447,6 +494,17 @@ def test_notification_bodies_use_the_design_system():
 		assert "<img" not in message, f"{rec['name']} inlines a logo; the shell owns the letterhead"
 		for hex_value, why in BANNED_HEX.items():
 			assert hex_value not in message.lower(), f"{rec['name']} uses {hex_value}: {why}"
+
+
+def test_maintenance_notifications_carry_the_service_pillar():
+	"""The four maintenance alerts belong to the Service pillar and say so; the rest
+	take the neutral band because an Error Log alert belongs to no pillar."""
+	for rec in _notification_fixtures():
+		message = rec.get("message") or ""
+		if rec["name"].startswith("Maintenance"):
+			assert 'pillar="service"' in message, f"{rec['name']} does not name its pillar"
+		else:
+			assert "pillar=" not in message, f"{rec['name']} names a pillar it does not belong to"
 
 
 def test_notification_fixtures_keep_their_recipients():

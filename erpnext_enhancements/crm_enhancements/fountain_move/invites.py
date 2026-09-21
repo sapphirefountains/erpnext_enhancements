@@ -263,6 +263,7 @@ def _email_invite(invite, url):
 			eyebrow="Sapphire Fountains",
 			preheader="Tell us about the fountain and we can quote without a site visit.",
 			tagline=True,
+			pillar="build",
 		),
 		reference_doctype="Fountain Move Invite",
 		reference_name=invite.name,

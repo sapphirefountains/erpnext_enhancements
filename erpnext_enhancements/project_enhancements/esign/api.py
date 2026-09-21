@@ -330,6 +330,7 @@ def _email_invite(request, contract, signing_url, message=None):
 			eyebrow=_contract_label(contract),
 			preheader=_("Your agreement is ready to review and sign."),
 			tagline=True,
+			pillar="build",
 		),
 		reference_doctype="Contract Signature Request",
 		reference_name=request.name,

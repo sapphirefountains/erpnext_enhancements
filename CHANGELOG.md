@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.494.0] - 2026-09-21
+
+### Added
+
+- **The print design system** — `erpnext_enhancements/print_style.py`, guarded by
+  `tests/test_print_style.py` on its own CI step, documented in
+  [`docs/print-design-system.md`](docs/print-design-system.md). Every printed document
+  now shares one chrome: a stripe in the pillar's left-to-right gradient along the top edge
+  and a thinner one along the bottom, the wordmark on white with our address and phone, an
+  eyebrow naming the pillar and the document in the pillar's closing stop, a display-face
+  title in deep-sea-blue, ruled tables, a running footer line. It is the *Pillar Stripe*
+  concept Nik picked on 2026-09-21 from the four on the design canvas, built from the
+  Sapphire Fountains design system's own tokens and nothing else.
+
+  Two doors, one implementation: the Python-composed sales formats call the functions at
+  `after_migrate` and bake the chrome into the stored HTML; the Jinja fixture format reaches
+  the same functions at print time through eleven `ps_*` Jinja globals registered
+  individually in `hooks.py` — prefixed for the reason the `ee_*` email globals are.
+  The module imports no frappe, because the format modules compose at import time and the
+  bench-free suites `exec` them under a stub.
+
+  **The display face is a data URI.** `public/fonts/big_noodle_titling.woff2` (13 KB, the
+  design system's file) is base64-inlined into every document's `@font-face` rather than
+  referenced by URL: a `url(/assets/…)` would make every PDF depend on the Chromium worker
+  reaching the site's own public origin, one more thing to go wrong on a host whose PDF
+  history is `docs/pdf-generation.md`. wkhtmltopdf takes a data-URI font too.
+
+- **`Maintenance Record Print` re-authored on it** — the customer's service report, the PDF
+  `api/maintenance_workflow.py` attaches on finalize. Service pillar; facts row (customer,
+  water feature or site visit, technician); checklist, water chemistry with out-of-range
+  readings in red, cleaning tasks, consumables actually used, visit notes, the captured
+  client signature. It prints no labor hours: the portal shows those only when the Sales
+  Order says so, and the PDF goes to the customer unconditionally. The fixture's margins
+  move from 0 to Frappe's 15 mm — the old value worked only because the old template was
+  a bare `<h3>` and three tables. `test_print_style` renders the fixture against sample
+  records, per-site and single-feature, signed and unsigned, every table empty, because
+  nothing else compiles a fixture's html before a customer is holding the PDF.
+
+- **`pillar=` on `email_style.wrap()`, `render()` and `ee_email()`** — `"service"`,
+  `"build"`, `"design"` or `"rent"` colours the stripe and names the pillar in the
+  letterhead; nothing means the brand's dark band and no pillar word. Set today on the
+  customer service report and the dispatch digest (Service), the e-sign invite, the signed
+  copy, the staff copy and the fountain-move invite (Build), and the four Maintenance
+  Notification fixtures (Service). Everything else — alerts, digests, billing — is neutral
+  until a document can say which pillar it is under. The pillar records live in
+  `print_style` and `email_style` imports them, so paper and email cannot disagree.
+
+### Changed
+
+- **The email chrome and palette are now the design system's** — `_shell.html`,
+  `_components.html`, `email_style.py`. The layout is the same stripe / wordmark / eyebrow /
+  display title / ruled footer / stripe as paper; the body is ink-700 Lato on white, labels
+  and links bahama-blue, sub-heads in the display face, tables ruled with no tinted header,
+  the `kv` label column no longer tinted, callouts and KPIs an off-white ground under a rule
+  in the tone's colour rather than a coloured box with a left border. The button is the
+  design system's control — sapphire fill, `radius-10`, a bold label — with a **navy-900
+  label** rather than the website's off-white one, which the design system itself records
+  at 2.8:1 as its most visible contrast failure; navy-900 reads 6.5:1 on the same fill.
+  `Add water. Make magic.` becomes `Add Water. Make Magic.`, as the brand writes it.
+
+  Two things the retint could not have: **a warm warning colour** — the brand guide's Gold
+  `#8e7631` measures 4.39:1 on white and fails AA, so a warning is ink text under a yellow
+  rule and the words carry the severity, as they already had to under Gmail's forced dark
+  mode — and **the display face in email at all**. Frappe inlines every email through
+  premailer, whose `_parse_style_rules` keeps `@media` and drops every other at-rule,
+  `@font-face` included (verified against premailer 3.10, which is why the shell carries
+  none). Titles name Big Noodle Titling first and render in Arial Narrow bold where the
+  client has it; the sizes are chosen for that fallback.
+
+- **The three sales formats (Quotation, Sales Order, Sales Invoice) are on the print
+  chrome** — neutral stripe, wordmark, display-face title, facts row (prepared for / bill
+  to, reference and project, valid-until / delivery / payment-due), ruled line table,
+  totals under a deep-sea-blue rule, display-face section titles for terms and payment.
+  The Quotation gains **acceptance lines** — Accepted by / Date — because a quotation is
+  accepted by signing it. `{{ letter_head }}` is **no longer rendered**: the template draws
+  the wordmark itself, and the site's `Sapphire Fountains Default` letter head is a bare
+  right-aligned logo that would now be a second one. `test_sales_print_formats` asserts
+  its absence, having asserted its presence since the month the Purchase Order format went
+  out unbranded. The Purchase Order format, the contracts and the report print sheets are
+  not on this chrome yet.
+
 ## [1.493.0] - 2026-09-21
 
 ### Added

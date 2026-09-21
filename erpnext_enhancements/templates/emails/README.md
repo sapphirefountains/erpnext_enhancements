@@ -6,7 +6,7 @@ guide, the palette, and an inventory of every email the app can send are in
 
 | File | What it is |
 |---|---|
-| `_shell.html` | The one layout — letterhead, heading, body slot, footer. Fluid, capped at 840px. |
+| `_shell.html` | The one layout — pillar stripe, letterhead, heading, body slot, footer, stripe. Fluid, capped at 840px. The pillar comes from `email_style.wrap(pillar=...)`. |
 | `_components.html` | The macros. **The only email markup in the app.** |
 | `crm_enhancements/` | Fountain Move request + intake invite bodies |
 | `project_enhancements/` | Contract e-sign bodies |

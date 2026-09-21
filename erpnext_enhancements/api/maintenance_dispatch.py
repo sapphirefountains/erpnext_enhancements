@@ -203,6 +203,7 @@ def _send_tech_digest(technician, visits, today):
                     html,
                     title=_("Your maintenance route"),
                     eyebrow=_("Maintenance") + " · " + str(when),
+                    pillar="service",
                 ),
             )
         except Exception:
