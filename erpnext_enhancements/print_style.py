@@ -258,11 +258,17 @@ def section_title(text):
 	)
 
 
-def facts_open():
-	"""A row of labelled facts under the letterhead, ruled above and below."""
+def facts_open(top=True):
+	"""A row of labelled facts under the letterhead, ruled above and below.
+
+	``top=False`` drops the heavier top rule, for a second row that continues the
+	first — the Purchase Order needs six facts, and two rules a row apart read as
+	two blocks rather than one.
+	"""
+	rule = f"border-top:1px solid {DEEP_SEA_BLUE};" if top else ""
 	return (
 		f'<div style="display:table;width:100%;margin:0 0 6px;padding:10px 0;'
-		f'border-top:1px solid {DEEP_SEA_BLUE};border-bottom:1px solid {BORDER_100}">\n'
+		f'{rule}border-bottom:1px solid {BORDER_100}">\n'
 	)
 
 
@@ -326,8 +332,8 @@ def ps_td(right=False):
 	return TD_RIGHT if right else TD
 
 
-def ps_facts_open():
-	return facts_open()
+def ps_facts_open(top=True):
+	return facts_open(top)
 
 
 def ps_fact(label, value_html, width="33%"):

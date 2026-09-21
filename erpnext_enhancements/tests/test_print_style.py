@@ -389,5 +389,196 @@ class TestMaintenanceRecordPrintFixture(unittest.TestCase):
             self.assertNotIn(field, html)
 
 
+class TestFactsRows(unittest.TestCase):
+    def test_a_second_row_can_drop_the_top_rule(self):
+        self.assertIn(f"border-top:1px solid {ps.DEEP_SEA_BLUE}", ps.facts_open())
+        self.assertNotIn("border-top", ps.facts_open(top=False))
+        self.assertIn(f"border-bottom:1px solid {ps.BORDER_100}", ps.facts_open(top=False))
+
+
+class TestProjectBriefClientCopy(unittest.TestCase):
+    """The Project Brief is rendered in the browser (`project_brief.js`) and cannot
+    read print_style, so it carries a copy of the pillar records. This keeps the
+    copy honest, and pins the two assets it loads by raw path."""
+
+    JS = (APP / "public" / "js" / "project_enhancements" / "project_brief.js").read_text(encoding="utf-8")
+
+    def test_the_pillar_copy_matches_print_style(self):
+        for key, record in ps.PILLARS.items():
+            with self.subTest(key):
+                match = re.search(rf'{key}: \{{ name: "([A-Z]+)", open: "(#[0-9a-f]{{6}})", end: "(#[0-9a-f]{{6}})", deep: "(#[0-9a-f]{{6}})" \}}', self.JS)
+                self.assertIsNotNone(match, f"no {key} record in project_brief.js")
+                self.assertEqual(match.group(1), record["name"])
+                self.assertEqual(match.group(2), record["open"])
+                self.assertEqual(match.group(3), record["deep"])
+                self.assertEqual(match.group(4), record["deep"])
+        neutral = re.search(r'NEUTRAL_PILLAR = \{ name: "", open: "(#[0-9a-f]{6})", end: "(#[0-9a-f]{6})", deep: "(#[0-9a-f]{6})" \}', self.JS)
+        self.assertIsNotNone(neutral)
+        self.assertEqual(neutral.group(1), ps.DEEP_SEA_BLUE)
+        self.assertEqual(neutral.group(2), ps.NAVY_900)
+        self.assertEqual(neutral.group(3), ps.NEUTRAL["deep"])
+
+    def test_every_stream_maps_to_a_pillar(self):
+        for stream in ("Design", "Build", "Products", "Service", "Events"):
+            self.assertRegex(self.JS, rf'{stream}: "(design|build|service|rent)"')
+
+    def test_it_loads_the_repo_assets(self):
+        self.assertIn("/assets/erpnext_enhancements/images/fountain_move/logo.svg", self.JS)
+        self.assertIn("/assets/erpnext_enhancements/fonts/big_noodle_titling.woff2", self.JS)
+        self.assertTrue(Path(ps.LOGO_PATH).is_file())
+        self.assertTrue(Path(ps.FONT_PATH).is_file())
+
+    def test_the_print_window_waits_for_the_face_and_keeps_the_stripe(self):
+        """`window.print()` on load fires before the webfont arrives, and a browser
+        drops background colours when printing unless told not to."""
+        self.assertIn("document.fonts.ready", self.JS)
+        self.assertIn("print-color-adjust: exact", self.JS)
+        self.assertIn("linear-gradient(90deg", self.JS)
+
+
+HEX = re.compile(r"#[0-9a-fA-F]{6}\b")
+TOKEN_HEXES = {
+    getattr(ps, name).lower()
+    for name in dir(ps)
+    if isinstance(getattr(ps, name), str) and HEX.fullmatch(getattr(ps, name))
+}
+
+
+class TestReportPrintSheets(unittest.TestCase):
+    """The two report `.html` sheets. Frappe compiles these with microtemplate, which
+    rewrites every double brace in the file (comments included) and escapes only the
+    last apostrophe in a text run; and its print wrapper prints the letter head above
+    the sheet, so the chrome here is everything BUT the wordmark."""
+
+    SHEETS = {
+        "crew_qualification_roster": APP / "hr_enhancements/report/crew_qualification_roster/crew_qualification_roster.html",
+        "supplier_pickup_list": APP / "project_enhancements/report/supplier_pickup_list/supplier_pickup_list.html",
+    }
+
+    def _body(self, path):
+        text = path.read_text(encoding="utf-8")
+        return re.sub(r"<!--.*?-->", "", text, flags=re.S), text
+
+    def test_no_double_brace_and_no_apostrophe(self):
+        for name, path in self.SHEETS.items():
+            body, text = self._body(path)
+            with self.subTest(name):
+                self.assertNotIn("{{", text)
+                self.assertNotIn("}}", text)
+                self.assertNotIn("'", body, "microtemplate escapes only the last apostrophe in a run")
+
+    def test_the_wrapper_letter_head_is_not_duplicated(self):
+        for name, path in self.SHEETS.items():
+            body, _ = self._body(path)
+            with self.subTest(name):
+                self.assertNotIn("letter_head", body)
+                self.assertNotIn("letterhead", body)
+                self.assertNotIn("<svg", body)
+                self.assertNotIn("logo", body)
+
+    def test_the_chrome_is_present_and_prints(self):
+        for name, path in self.SHEETS.items():
+            body, _ = self._body(path)
+            with self.subTest(name):
+                self.assertIn("/assets/erpnext_enhancements/fonts/big_noodle_titling.woff2", body)
+                self.assertIn('"Big Noodle Titling"', body)
+                self.assertIn(f"background-color: {ps.DEEP_SEA_BLUE}", body)
+                self.assertIn(f"linear-gradient(90deg, {ps.DEEP_SEA_BLUE} 0%, {ps.NAVY_900} 100%)", body)
+                self.assertLess(body.index("background-color: "), body.index("background-image: "))
+                self.assertIn("print-color-adjust: exact", body)
+
+    def test_every_colour_is_a_token(self):
+        for name, path in self.SHEETS.items():
+            body, _ = self._body(path)
+            with self.subTest(name):
+                used = {h.lower() for h in HEX.findall(body)}
+                self.assertEqual(used - TOKEN_HEXES, set(), "a colour that is not a design-system token")
+
+    def test_the_font_is_by_relative_path(self):
+        """The desk print window resolves it against the site and the PDF route makes
+        it absolute in scrub_urls; an absolute URL would pin the sheet to one site."""
+        for name, path in self.SHEETS.items():
+            body, _ = self._body(path)
+            with self.subTest(name):
+                self.assertNotIn("http://", body)
+                self.assertNotIn("https://", body)
+
+
+class TestTrainingCertificate(unittest.TestCase):
+    """Renders the certificate the way a bench would, against a stub frappe."""
+
+    MODULE_PATH = APP / "training" / "setup_print_formats.py"
+
+    @classmethod
+    def setUpClass(cls):
+        import types
+
+        sys.modules.setdefault("frappe", types.ModuleType("frappe"))
+        cls.ns = {}
+        exec(compile(cls.MODULE_PATH.read_text(encoding="utf-8"), str(cls.MODULE_PATH), "exec"), cls.ns)
+
+    def render(self, badge=None, signoff=None, **overrides):
+        import types
+
+        from jinja2 import Environment
+
+        def get_value(dt, name, field):
+            if dt == "Training Badge":
+                return badge
+            if dt == "Training Signoff":
+                return signoff
+            if dt == "Employee":
+                return "Pat Supervisor"
+            return None
+
+        frappe = types.SimpleNamespace(
+            format=lambda v, opts=None: str(v),
+            db=types.SimpleNamespace(get_value=get_value),
+            utils=types.SimpleNamespace(get_url=lambda path="": "https://erp.example.com" + path),
+        )
+        doc = _Doc(
+            name="TC-2026-0042", course="COURSE-01", course_title="Confined Space Entry", holder_name="Sam Learner",
+            user="sam@example.com", issued_on="2026-09-22", expires_on="2027-09-22", verification_code="SF-7Q2K-9X",
+            version_number=3, score_percent=94,
+        )
+        doc.__dict__.update(overrides)
+        return Environment().from_string(self.ns["_CERTIFICATE_HTML"]).render(doc=doc, frappe=frappe, letter_head="LETTERHEAD")
+
+    def test_it_is_on_the_chrome_and_draws_no_second_logo(self):
+        html = self.ns["_CERTIFICATE_HTML"]
+        self.assertIn("@font-face", html)
+        self.assertEqual(html.count("linear-gradient(90deg"), 2)
+        self.assertIn("<svg", html)
+        self.assertNotIn("{{ letter_head }}", html)
+        squashed = html.replace(" ", "")
+        self.assertNotIn("display:flex", squashed)
+        self.assertNotIn("display:grid", squashed)
+        self.assertIn("page-break-inside:avoid", squashed)
+
+    def test_it_renders_a_full_certificate(self):
+        out = self.render(badge="/files/badge.svg", signoff="EMP-0007")
+        self.assertNotIn("{{", out)
+        self.assertNotIn("None", out)
+        self.assertNotIn("LETTERHEAD", out)
+        for text in ("Sam Learner", "Confined Space Entry", "SF-7Q2K-9X", "TC-2026-0042", "version 3", "scored 94%",
+                     "Pat Supervisor", "VERIFIED COMPETENT BY", 'src="/files/badge.svg"', "https://erp.example.com/training_certificate"):
+            with self.subTest(text):
+                self.assertIn(text, out)
+
+    def test_the_sparse_certificate_still_renders(self):
+        out = self.render(badge=None, signoff=None, expires_on=None, version_number=None, score_percent=None, course_title=None)
+        self.assertNotIn("{{", out)
+        self.assertNotIn("None", out)
+        self.assertIn("Does not expire", out)
+        self.assertIn("COURSE-01", out, "the course id stands in for a missing title")
+        self.assertNotIn("<img", out, "no badge, no empty badge box")
+        self.assertNotIn("VERIFIED COMPETENT BY", out)
+
+    def test_the_holder_and_course_are_escaped(self):
+        out = self.render(holder_name="<b>Sam</b>", course_title="<i>x</i>")
+        self.assertIn("&lt;b&gt;Sam&lt;/b&gt;", out)
+        self.assertIn("&lt;i&gt;x&lt;/i&gt;", out)
+
+
 if __name__ == "__main__":
     unittest.main()

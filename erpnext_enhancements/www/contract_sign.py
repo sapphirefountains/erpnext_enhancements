@@ -65,9 +65,13 @@ def get_context(context):
 
 
 def _contract_ref(request):
-	"""Just enough of the contract for the footer to name it."""
+	"""Just enough of the contract for the footer to name it and the letterhead
+	to colour it: its name, and the template key that picks the pillar."""
 	name = request.project_contract if request else None
-	return frappe._dict({"name": name}) if name else None
+	if not name:
+		return None
+	template_key = frappe.db.get_value("Project Contract", name, "template_key")
+	return frappe._dict({"name": name, "template_key": template_key})
 
 
 def _safe_css(css):

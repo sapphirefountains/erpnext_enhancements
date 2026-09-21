@@ -18,40 +18,64 @@
 	since a number nobody acts on only makes the row slower to read; and each
 	supplier starts a new page, because a stop is one sheet handed to one person.
 
+	It wears the print design system's chrome (docs/print-design-system.md) minus
+	the wordmark: the frappe wrapper already prints the letter head above this
+	block, so the sheet draws the neutral stripe, an eyebrow, the supplier name in
+	the display face and ruled tables, and nothing that would put a second logo on
+	the page. Each supplier page opens on its own stripe, since each is handed to
+	a different person. The display face is loaded by relative path, which the
+	desk print window resolves against the site and the PDF route makes absolute
+	through frappe.utils.pdf.scrub_urls; the stripe is a flat colour before a
+	gradient so wkhtmltopdf still paints the band.
+
 	MIND THE TEMPLATE ENGINE. frappe.template.compile flattens every newline to a
 	space before compiling, so a `//` comment inside a template block would
 	swallow the rest of the file. It also escapes only the last apostrophe in
 	each text run, so apostrophes are avoided throughout -- both here and in the
-	markup. Use /* */ and rephrase. Even this comment is not inert: a template
-	block written out inside it would still be compiled and run.
+	markup, which is why the CSS quotes its font names with double quotes. Use
+	/* */ and rephrase. Even this comment is not inert: a template block written
+	out inside it would still be compiled and run.
 -->
 <style>
+	@font-face { font-family: "Big Noodle Titling"; font-weight: 700; font-style: normal; src: url("/assets/erpnext_enhancements/fonts/big_noodle_titling.woff2") format("woff2"); }
+
 	.spl-sheet {
+		font-family: Lato, "Helvetica Neue", Helvetica, Arial, sans-serif;
 		font-size: 12pt;
-		color: #000;
+		color: #363636;
 	}
 
 	.spl-group + .spl-group {
 		page-break-before: always;
 	}
 
+	.spl-stripe {
+		height: 9px;
+		background-color: #00263e;
+		background-image: linear-gradient(90deg, #00263e 0%, #00111c 100%);
+		-webkit-print-color-adjust: exact;
+		print-color-adjust: exact;
+	}
+
 	.spl-head {
-		border-bottom: 2px solid #000;
-		padding-bottom: 6px;
+		border-bottom: 1px solid #00263e;
+		padding: 12px 0 8px;
 		margin-bottom: 10px;
 	}
 
 	.spl-kicker {
-		font-size: 10pt;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
+		font-size: 9pt;
+		font-weight: 700;
+		color: #00609c;
 	}
 
 	.spl-supplier {
-		font-size: 22pt;
+		font-family: "Big Noodle Titling", "Arial Narrow", Arial, sans-serif;
 		font-weight: 700;
-		line-height: 1.15;
-		margin: 2px 0;
+		font-size: 26pt;
+		line-height: 1;
+		color: #00263e;
+		margin: 4px 0 6px;
 	}
 
 	.spl-meta {
@@ -67,16 +91,16 @@
 
 	.spl-table th {
 		font-size: 9pt;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		font-weight: 700;
+		color: #00609c;
 		text-align: left;
-		border-bottom: 1px solid #000;
+		border-bottom: 2px solid #00263e;
 		padding: 4px 6px;
 	}
 
 	.spl-table td {
 		padding: 7px 6px;
-		border-bottom: 1px solid #bbb;
+		border-bottom: 1px solid #dadbdd;
 		vertical-align: top;
 	}
 
@@ -89,23 +113,25 @@
 	.spl-qty {
 		font-weight: 700;
 		font-size: 13pt;
+		color: #151515;
 	}
 
 	.spl-uom {
 		font-size: 9pt;
 		font-weight: 400;
+		color: #363636;
 	}
 
 	.spl-box {
 		display: inline-block;
 		width: 16px;
 		height: 16px;
-		border: 1.5px solid #000;
+		border: 1.5px solid #00263e;
 	}
 
 	.spl-item-name {
 		font-size: 10pt;
-		color: #333;
+		color: #363636;
 	}
 
 	.spl-sign {
@@ -115,7 +141,7 @@
 
 	.spl-rule {
 		display: inline-block;
-		border-bottom: 1px solid #000;
+		border-bottom: 1px solid #00263e;
 		min-width: 220px;
 	}
 
@@ -169,6 +195,7 @@
 
 <div class="spl-sheet">
 	{% if (!groups.length) { %}
+		<div class="spl-stripe"></div>
 		<div class="spl-head">
 			<div class="spl-kicker">{%= __("Supplier Pickup List") %}</div>
 			<div class="spl-supplier">{%= filters.supplier || __("All Suppliers") %}</div>
@@ -179,6 +206,7 @@
 
 	{% for (var g = 0; g < groups.length; g++) { %}
 		<div class="spl-group">
+			<div class="spl-stripe"></div>
 			<div class="spl-head">
 				<div class="spl-kicker">{%= __("Pickup List") %}</div>
 				<div class="spl-supplier">{%= groups[g].supplier_name %}</div>

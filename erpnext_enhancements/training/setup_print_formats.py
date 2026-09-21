@@ -24,37 +24,28 @@ Two things here are specific to certificates and neither is obvious:
   only symptom would be a subtly different PDF.
 
 House rules for a `custom_format = 1` template, all inherited from the Purchase
-Order format and all previously learned the hard way: the letter head is rendered
-by the template itself (frappe injects one only for *standard* formats), CSS is
-print-safe — no flexbox, no grid, `page-break-inside: avoid` — styles are inline,
-and the type is Helvetica/Arial.
+Order format and all previously learned the hard way: the letterhead is drawn by
+the template itself (frappe injects one only for *standard* formats — and since
+v1.495.0 `print_style.letterhead()` draws the wordmark, so the site's Letter Head is
+no longer rendered beside it), CSS is print-safe — no flexbox, no grid,
+`page-break-inside: avoid` — and styles are inline.
+
+The chrome is `print_style`'s (docs/print-design-system.md): the neutral stripe,
+the wordmark with our address, an eyebrow, the display face for the title, the
+holder's name and the course. The holder's name is the largest thing on the page,
+because a certificate is about the person; the verification code is the working
+part and sits on an off-white ground under a sapphire rule.
 """
 
 import frappe
+
+from erpnext_enhancements import print_style as ps
 
 MODULE = "Training"
 CERTIFICATE_DOCTYPE = "Training Certificate"
 CERTIFICATE_FORMAT = "Training Certificate - Sapphire"
 
-_CERTIFICATE_HTML = """
-<div style="font-family:'Helvetica Neue',Arial,sans-serif; color:#222; font-size:13px; page-break-inside:avoid;">
-
-  {#- A custom Jinja format renders its own letterhead: frappe builds the `#header-html`
-      block only for *standard* formats, so a template that does not ask for `letter_head`
-      simply goes out unbranded. The Purchase Order format spent its first month that way.
-      A certificate leaves the company more often than anything else here, so it matters
-      more, not less. -#}
-  {%- if letter_head %}
-  <div style="margin-bottom:14px;">{{ letter_head }}</div>
-  {%- endif %}
-
-  <div style="border:3px double #333; padding:28px 30px;">
-
-    <div style="text-align:center; border-bottom:1px solid #ccc; padding-bottom:14px; margin-bottom:22px;">
-      <div style="font-size:11px; letter-spacing:3px; color:#777; text-transform:uppercase;">Certificate of Completion</div>
-      <h1 style="margin:10px 0 0 0; font-size:26px; font-weight:normal;">{{ (doc.course_title or doc.course or "") | e }}</h1>
-    </div>
-
+_BADGE = """
     {#- The badge this course awards, printed above the holder's name.
 
         Keyed on the COURSE, not on the learner's award, and that is forced rather than chosen:
@@ -73,56 +64,84 @@ _CERTIFICATE_HTML = """
         none of the three courses currently issuing one has a Course Completed badge. -#}
     {%- set badge_image = frappe.db.get_value("Training Badge", {"criteria_type": "Course Completed", "criteria_course": doc.course, "enabled": 1}, "image") %}
     {%- if badge_image %}
-    <div style="text-align:center; margin-bottom:18px; page-break-inside:avoid;">
+    <div style="text-align:center; margin:18px 0 6px; page-break-inside:avoid;">
       <img src="{{ badge_image }}" alt="" width="96" height="96" style="width:96px; height:96px;">
     </div>
     {%- endif %}
+"""
 
-    <div style="text-align:center; margin-bottom:24px;">
-      <div style="color:#777; font-size:11px; text-transform:uppercase; letter-spacing:1px;">This certifies that</div>
-      <div style="font-size:24px; margin:8px 0 10px 0;"><b>{{ (doc.holder_name or "") | e }}</b></div>
-      <div style="color:#555;">
-        has completed the training named above
-        {%- if doc.get("version_number") %} (version {{ doc.version_number }}){% endif -%}
-        {%- if doc.get("score_percent") %}, scoring {{ doc.score_percent }}%{% endif -%}.
+_CERTIFICATE_HTML = (
+	ps.page_open(None)
+	+ """
+  {#- A custom Jinja format renders its own letterhead: frappe builds the `#header-html`
+      block only for *standard* formats, so a template that does not draw one simply goes
+      out unbranded. The Purchase Order format spent its first month that way. A certificate
+      leaves the company more often than anything else here, so it matters more, not less.
+      Since v1.495.0 print_style.letterhead() inlines the wordmark itself, so `letter_head`
+      is deliberately NOT rendered: two logos on one page is worse than one. -#}
+"""
+	+ ps.letterhead(
+		None,
+		"TRAINING &middot; CERTIFICATE OF COMPLETION",
+		"Certificate of Completion",
+		'<span style="' + ps.STRONG + '">{{ doc.name | e }}</span><br>'
+		'{{ frappe.format(doc.issued_on, {"fieldtype": "Date"}) }}',
+	)
+	+ '<div style="page-break-inside:avoid;">\n'
+	+ _BADGE
+	+ """
+    <div style="text-align:center; margin:22px 0 6px;">
+      <div style=\""""
+	+ ps.LABEL
+	+ """\">THIS CERTIFIES THAT</div>
+      <div style="margin:8px 0 4px; font-family:"""
+	+ ps.DISPLAY_FONT
+	+ """; font-weight:700; font-size:34px; line-height:34px; color:"""
+	+ ps.DEEP_SEA_BLUE
+	+ """;">{{ (doc.holder_name or "") | e }}</div>
+      <div style="font-size:13px; color:"""
+	+ ps.INK_700
+	+ """;">has completed</div>
+      <div style="margin:6px 0 4px; font-family:"""
+	+ ps.DISPLAY_FONT
+	+ """; font-weight:700; font-size:24px; line-height:24px; color:"""
+	+ ps.BAHAMA_BLUE
+	+ """;">{{ (doc.course_title or doc.course or "") | e }}</div>
+      <div style="font-size:12.5px; color:"""
+	+ ps.INK_700
+	+ """;">
+        {%- if doc.get("version_number") %}version {{ doc.version_number }}{% endif -%}
+        {%- if doc.get("version_number") and doc.get("score_percent") %} &middot; {% endif -%}
+        {%- if doc.get("score_percent") %}scored {{ doc.score_percent }}%{% endif -%}
       </div>
     </div>
-
-    {#- A table rather than a flex row: the PDF engine on this host is print-CSS only,
-        and a flex layout collapses into a single column with no warning. -#}
-    <table style="width:100%; border-collapse:collapse; margin-bottom:22px; page-break-inside:avoid;">
-      <tr>
-        <td style="width:33%; padding:6px 4px; border-top:1px solid #eee; vertical-align:top;">
-          <div style="color:#777; font-size:10px; text-transform:uppercase; letter-spacing:1px;">Issued</div>
-          <div>{{ frappe.format(doc.issued_on, {"fieldtype": "Date"}) }}</div>
-        </td>
-        <td style="width:33%; padding:6px 4px; border-top:1px solid #eee; vertical-align:top;">
-          <div style="color:#777; font-size:10px; text-transform:uppercase; letter-spacing:1px;">Valid Until</div>
-          <div>
-            {%- if doc.expires_on -%}
-              {{ frappe.format(doc.expires_on, {"fieldtype": "Date"}) }}
-            {%- else -%}
-              <span style="color:#555;">Does not expire</span>
-            {%- endif -%}
-          </div>
-        </td>
-        <td style="width:34%; padding:6px 4px; border-top:1px solid #eee; vertical-align:top;">
-          <div style="color:#777; font-size:10px; text-transform:uppercase; letter-spacing:1px;">Certificate</div>
-          <div>{{ doc.name | e }}</div>
-        </td>
-      </tr>
-    </table>
-
+"""
+	+ ps.facts_open()
+	+ ps.fact("ISSUED", '{{ frappe.format(doc.issued_on, {"fieldtype": "Date"}) }}')
+	+ ps.fact(
+		"VALID UNTIL",
+		'{%- if doc.expires_on -%}{{ frappe.format(doc.expires_on, {"fieldtype": "Date"}) }}'
+		"{%- else -%}Does not expire{%- endif -%}",
+	)
+	+ ps.fact("CERTIFICATE", "{{ doc.name | e }}")
+	+ ps.facts_close()
+	+ """
     {#- The verification block is the working part of the document. Everything above it
         can be forged in a word processor in five minutes; this is what makes the thing
         checkable, so it is printed in full rather than reduced to a QR code that a
         printed-and-scanned copy would lose. -#}
-    <div style="background:#f4f5f7; padding:12px 14px; page-break-inside:avoid;">
-      <div style="color:#777; font-size:10px; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">Verify This Certificate</div>
-      <div style="font-size:16px; letter-spacing:2px;"><b>{{ (doc.verification_code or "") | e }}</b></div>
-      <div style="color:#555; margin-top:4px;">
-        Enter the code at {{ frappe.utils.get_url("/training_certificate") }}
-      </div>
+    <div style="margin-top:14px; padding:12px 14px; background:"""
+	+ ps.OFF_WHITE
+	+ """; border-top:3px solid """
+	+ ps.FRESH_BLUE
+	+ """; page-break-inside:avoid;">
+      <div style=\""""
+	+ ps.LABEL
+	+ """\">VERIFY THIS CERTIFICATE</div>
+      <div style="font-size:18px; letter-spacing:2px; margin-top:4px; """
+	+ ps.STRONG
+	+ """;">{{ (doc.verification_code or "") | e }}</div>
+      <div style="margin-top:4px; font-size:12px;">Enter the code at {{ frappe.utils.get_url("/training_certificate") }}</div>
     </div>
 
     {#- Supervisor sign-off, looked up rather than stored on the certificate: the
@@ -132,11 +151,17 @@ _CERTIFICATE_HTML = """
         allowed — the only symptom would be a blank certificate. -#}
     {%- set signoff = frappe.db.get_value("Training Signoff", {"course": doc.course, "user": doc.user, "outcome": "Competent", "docstatus": 1}, "supervisor") %}
     {%- if signoff %}
-    <table style="width:100%; border-collapse:collapse; margin-top:22px; page-break-inside:avoid;">
+    <table style="width:100%; border-collapse:collapse; margin-top:26px; page-break-inside:avoid;">
       <tr>
-        <td style="width:50%; padding-top:22px; border-top:1px solid #333; vertical-align:top;">
-          <div>{{ (frappe.db.get_value("Employee", signoff, "employee_name") or signoff) | e }}</div>
-          <div style="color:#777; font-size:11px;">Verified competent by</div>
+        <td style="width:50%; padding-top:6px; border-top:1px solid """
+	+ ps.DEEP_SEA_BLUE
+	+ """; vertical-align:top;">
+          <div style=\""""
+	+ ps.STRONG
+	+ """\">{{ (frappe.db.get_value("Employee", signoff, "employee_name") or signoff) | e }}</div>
+          <div style=\""""
+	+ ps.LABEL
+	+ """\">VERIFIED COMPETENT BY</div>
         </td>
         <td style="width:8%;"></td>
         <td style="width:42%;"></td>
@@ -144,15 +169,14 @@ _CERTIFICATE_HTML = """
     </table>
     {%- endif %}
 
+    <div style="margin-top:14px; font-size:11px; text-align:center;">
+      This certificate records training completed on the date shown. It is not a licence or a
+      statement of continuing competence.
+    </div>
   </div>
-
-  <div style="margin-top:10px; color:#777; font-size:10px; text-align:center;">
-    This certificate records training completed on the date shown. It is not a licence or a
-    statement of continuing competence.
-  </div>
-
-</div>
 """
+	+ ps.page_close(None)
+)
 
 
 def ensure_training_print_formats():

@@ -348,10 +348,15 @@ class TestTheHeaderCarriesOurContactDetails(unittest.TestCase):
             with self.subTest(label):
                 self.assertIn("Bountiful, UT 84010", self.render(**kwargs))
 
-    def test_the_letter_head_is_still_rendered(self):
-        """The month-long bug: a custom_format template gets no letterhead injected."""
-        self.assertIn("{{ letter_head }}", _NAMESPACE["_HTML"])
-        self.assertIn("LETTERHEAD", self.render())
+    def test_the_wordmark_is_drawn_and_the_letter_head_is_not(self):
+        """Since v1.495.0 `print_style.letterhead()` inlines the wordmark itself, so the
+        site's Letter Head (a bare logo) must NOT also render: two logos on one page is
+        the new version of the old unbranded-for-a-month bug."""
+        self.assertNotIn("{{ letter_head }}", _NAMESPACE["_HTML"])
+        self.assertIn("<svg", self.render())
+        self.assertNotIn("LETTERHEAD", self.render())
+        self.assertEqual(_NAMESPACE["_HTML"].count("linear-gradient(90deg"), 2, "a stripe top and bottom")
+        self.assertIn("@font-face", _NAMESPACE["_HTML"])
 
     def test_it_renders_without_a_letter_head(self):
         out = self.render(letter_head=None)

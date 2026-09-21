@@ -9,7 +9,10 @@
 	  print_settings.letter_head immediately above the block this file renders into,
 	  so a letterhead drawn here prints twice. That is the exact inverse of the Jinja
 	  print-format rule elsewhere in this app, where custom_format = 1 means the
-	  template draws everything.
+	  template draws everything. The print design system's chrome
+	  (docs/print-design-system.md) is therefore applied WITHOUT its wordmark: the
+	  pillar stripe, the eyebrow, the display-face title, ruled tables, the closing
+	  stripe. The wordmark is the letter head the wrapper prints above.
 	* NEVER WRITE A DOUBLE BRACE IN THIS FILE, COMMENTS INCLUDED, AND THAT IS NOT
 	  PEDANTRY. frappe.template.compile runs str.replace on every double brace in the
 	  WHOLE file before it looks for anything else, HTML comments very much included,
@@ -41,7 +44,16 @@
 	MIND THE TEMPLATE ENGINE. frappe.template.compile flattens every newline to a
 	space before compiling, so a line comment inside a template block would swallow
 	the rest of the file. It also escapes only the last apostrophe in each text run,
-	so apostrophes are avoided throughout. Use block comments and rephrase.
+	so apostrophes are avoided throughout -- the CSS quotes its font names with
+	double quotes for that reason. Use block comments and rephrase.
+
+	THE DISPLAY FACE IS LOADED BY RELATIVE PATH, and that works on both paths: the
+	print window is opened from the desk, so the path resolves against the site,
+	and the PDF route runs the markup through frappe.utils.pdf.scrub_urls, which
+	makes a relative url() absolute before wkhtmltopdf sees it. The file is
+	immutable by content, so the one-year cache on raw asset paths cannot serve a
+	stale one. The stripe is a flat colour before a gradient, so wkhtmltopdf,
+	which paints no gradients, still paints the band.
 
 	WHY THE SHEET LOOKS LIKE THIS. It is evidence, so it leads with the question it
 	answers and the date it answers it for, and it prints the caveats rather than
@@ -50,29 +62,38 @@
 	the opposite.
 -->
 <style>
-	.cqr-sheet { font-size: 10pt; }
-	.cqr-sheet h2 { margin: 0 0 2px 0; font-size: 14pt; }
-	.cqr-asof { font-size: 11pt; font-weight: bold; margin-bottom: 6px; }
-	.cqr-note { font-size: 8.5pt; color: #555; margin-bottom: 10px; line-height: 1.35; }
+	@font-face { font-family: "Big Noodle Titling"; font-weight: 700; font-style: normal; src: url("/assets/erpnext_enhancements/fonts/big_noodle_titling.woff2") format("woff2"); }
+	.cqr-sheet { font-family: Lato, "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 10pt; color: #363636; }
+	.cqr-stripe { height: 9px; background-color: #00263e; background-image: linear-gradient(90deg, #00263e 0%, #00111c 100%); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+	.cqr-stripe-foot { height: 4px; margin-top: 8px; }
+	.cqr-head { margin: 12px 0 10px; }
+	.cqr-eyebrow { font-size: 9pt; font-weight: 700; color: #00609c; }
+	.cqr-sheet h2 { margin: 2px 0 0; font-family: "Big Noodle Titling", "Arial Narrow", Arial, sans-serif; font-weight: 700; font-size: 26pt; line-height: 1; color: #00263e; }
+	.cqr-asof { font-size: 11pt; font-weight: 700; color: #151515; margin: 6px 0 6px; }
+	.cqr-note { font-size: 8.5pt; color: #363636; margin-bottom: 10px; line-height: 1.35; }
 	.cqr-sheet table { width: 100%; border-collapse: collapse; }
 	.cqr-sheet th {
 		text-align: left;
-		border-bottom: 1.5px solid #333;
-		padding: 3px 4px;
-		font-size: 9pt;
-		text-transform: uppercase;
-		letter-spacing: 0.4px;
+		border-bottom: 2px solid #00263e;
+		padding: 4px 4px;
+		font-size: 8.5pt;
+		font-weight: 700;
+		color: #00609c;
 	}
-	.cqr-sheet td { border-bottom: 1px solid #ddd; padding: 3px 4px; vertical-align: top; }
-	.cqr-person { font-weight: bold; }
-	.cqr-unknown { color: #8a6d1f; }
-	.cqr-notcleared { color: #a4262c; font-weight: bold; }
-	.cqr-foot { margin-top: 14px; font-size: 8.5pt; color: #555; border-top: 1px solid #ccc; padding-top: 6px; }
+	.cqr-sheet td { border-bottom: 1px solid #dadbdd; padding: 3px 4px; vertical-align: top; }
+	.cqr-person { font-weight: 700; color: #151515; }
+	.cqr-unknown { font-weight: 700; color: #151515; }
+	.cqr-notcleared { color: #bd2e2b; font-weight: 700; }
+	.cqr-foot { margin-top: 14px; font-size: 8.5pt; color: #363636; border-top: 1px solid #dadbdd; padding-top: 6px; }
 </style>
 
 <div class="cqr-sheet">
-	<h2>Crew qualification roster</h2>
-	<div class="cqr-asof">As of {%= frappe.datetime.str_to_user(filters.as_of) %}</div>
+	<div class="cqr-stripe"></div>
+	<div class="cqr-head">
+		<div class="cqr-eyebrow">CREW QUALIFICATION ROSTER</div>
+		<h2>Crew Qualification Roster</h2>
+		<div class="cqr-asof">As of {%= frappe.datetime.str_to_user(filters.as_of) %}</div>
+	</div>
 
 	<div class="cqr-note">
 		Every state on this sheet is re-derived from stored dates rather than read from a
@@ -122,4 +143,5 @@
 		blank cell means the field does not apply; where a fact could not be established from
 		stored dates the cell says so in words.
 	</div>
+	<div class="cqr-stripe cqr-stripe-foot"></div>
 </div>

@@ -395,7 +395,12 @@ def _print_wrapper(html, contract_name=None):
 		_contract_css,
 	)
 
-	doc = frappe._dict({"name": contract_name}) if contract_name else None
+	doc = None
+	if contract_name:
+		# The template key picks the pillar the letterhead is coloured for; the
+		# name is what the footer prints.
+		template_key = frappe.db.get_value("Project Contract", contract_name, "template_key")
+		doc = frappe._dict({"name": contract_name, "template_key": template_key})
 	body = contract_style.wrap(html, doc)
 	return (
 		"<html><head><meta charset='utf-8'>"

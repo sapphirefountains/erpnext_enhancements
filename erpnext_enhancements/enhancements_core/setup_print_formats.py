@@ -22,59 +22,42 @@ Design decisions, all confirmed rather than assumed:
   site (WI-014), and a supplier delivering to a job site rather than the shop needs it.
 - **No item images.** They make a multi-page order much heavier for little gain on
   fittings that are identified by part number.
-- **The letter head is rendered explicitly**, at the top of the body. A `custom_format`
+- **The letterhead is drawn by the template, not by Frappe.** A `custom_format`
   template supplies the whole document, so Frappe never injects one — it only builds the
   `#header-html` block for *standard* formats. `letter_head` is handed to the template in
   the render args and dropped if unused, which is how this format spent its first month
-  going to suppliers unbranded.
-- **Our own address and phone are printed beside the letter head**, because the letter
-  head does not carry them: `Sapphire Fountains Default` is a bare right-aligned logo and
-  nothing else, so before this the only way for a supplier to reach us was the buyer's
-  email in the "Questions to" cell. The block is shared with the three sales formats —
-  see `company_contact` for why the address prefers document data and the phone cannot.
+  going to suppliers unbranded. Since v1.495.0 `print_style.letterhead()` inlines the
+  wordmark itself and draws our name, address and phone beside it — the site's letter
+  head is a bare right-aligned logo and is no longer rendered here, since two logos on
+  one page is worse than one. The address prefers the document's own
+  `billing_address_display` and falls back to the constant in `company_contact`; the phone
+  *is* the constant. That module explains why.
 - **Print-safe CSS only**: no flexbox, no grid, `page-break-inside: avoid` on rows, and a
   `thead` that repeats across pages. The PDF engine on this host has been unreliable
   enough (see docs/pdf-generation.md) without asking it to do anything clever.
+- **The neutral stripe.** An order is raised for a job, and jobs span all four pillars,
+  so the format takes the brand's dark band rather than guessing — the same call the
+  sales formats make.
 
-House style otherwise follows the other eight: inline styles, no `css` field, no classes,
-Helvetica/Arial, and the `#222` / `#777` / `#555` / `#333` / `#ccc` / `#eee` / `#f4f5f7`
-palette.
+The chrome — stripe, wordmark, display-face title, ruled tables, running line — is
+`print_style`'s (docs/print-design-system.md); this module composes only the order.
 """
 
 import frappe
 
-from erpnext_enhancements.enhancements_core.company_contact import contact_block
+from erpnext_enhancements import print_style as ps
 
 MODULE = "Enhancements Core"
 PURCHASE_ORDER_FORMAT = "Purchase Order - Sapphire"
 
 # The company-address field is called `billing_address_display` here. Purchase Order has no
 # `company_address` at all — the sales doctypes' name for the same thing — which is why
-# `contact_block` takes the fieldname instead of hard-coding one. Get it wrong and the block
-# prints nothing and raises nothing: Jinja renders a missing attribute as empty.
+# `print_style.letterhead()` takes the fieldname instead of hard-coding one. Get it wrong and
+# the block prints nothing and raises nothing: Jinja renders a missing attribute as empty.
 ADDRESS_FIELD = "billing_address_display"
 
-_TEMPLATE = """
-<div style="font-family:'Helvetica Neue',Arial,sans-serif; color:#222; font-size:12px;">
-
-  {#- A custom Jinja format has to render the letterhead itself. Frappe injects it only for
-      *standard* formats, via the `#header-html` block that `repeat_header_footer` produces;
-      a format with `custom_format = 1` supplies the whole body, so `letter_head` is offered
-      to the template and simply dropped if nothing asks for it. That is why this order went
-      to suppliers unbranded for its first month while every stock format carried the logo.
-      Verified on production: the rendered HTML contains no `#header-html` div at all, and
-      the PDF was byte-identical with and without a letter head attached to the document.
-
-      Page one only, and deliberately. The identifier a counter clerk needs on every sheet is
-      the PO number, which is in the bar below and repeats through the table header. A logo
-      on each page would cost ~52 KB per page for no working benefit. -#}
-__CONTACT_BLOCK__
-
-  <div style="display:table; width:100%; border-bottom:2px solid #333; padding-bottom:6px; margin-bottom:12px;">
-    <div style="display:table-cell; vertical-align:bottom;">
-      <h2 style="margin:0; font-size:20px;">Purchase Order</h2>
-    </div>
-    <div style="display:table-cell; vertical-align:bottom; text-align:right; color:#777;">
+_META = (
+	"""
       {#- The identifier carries the job (ER-2026-256847): the person filing these cannot
           tell one PO from another without it. `PO-2026-00262-PRJ-00706`, and NOT
           `doc.name` on one line with the project under it — this is character-for-character
@@ -87,7 +70,9 @@ __CONTACT_BLOCK__
           exists: `doc.project` and `Purchase Order Item.project` can disagree, every report
           here matches on the union, and a template deciding for itself would be a third
           answer to a question this app already answers once. -#}
-      <div style="font-size:14px; color:#222;"><b>{{ purchase_order_document_id(doc) | e }}</b></div>
+      <span style=\""""
+	+ ps.STRONG
+	+ """\">{{ purchase_order_document_id(doc) | e }}</span>
       {#- The readable name under it, because nobody files by PRJ-00706. Dropped entirely
           when the project has no name of its own, rather than printing the number twice.
 
@@ -103,153 +88,199 @@ __CONTACT_BLOCK__
       {%- if project_name and project_name != project %}{% set _ = project_names.append(project_name) %}{% endif %}
       {%- endfor %}
       {%- if project_names %}
-      <div style="color:#555;">{{ project_names | join(", ") | e }}</div>
+      <br>{{ project_names | join(", ") | e }}
       {%- endif %}
       {%- endif %}
-      <div>{{ frappe.format(doc.transaction_date, {"fieldtype": "Date"}) }}</div>
-    </div>
-  </div>
+      <br>{{ frappe.format(doc.transaction_date, {"fieldtype": "Date"}) }}
+"""
+)
 
-  <table style="width:100%; border-collapse:collapse; margin-bottom:14px;">
-    <tr>
-      <td style="width:18%; color:#777; padding:2px 0; vertical-align:top;">Supplier</td>
-      <td style="width:32%; padding:2px 0; vertical-align:top;">
-        <b>{{ doc.supplier_name or doc.supplier }}</b>
-        {% if doc.address_display %}<div style="color:#555;">{{ doc.address_display }}</div>{% endif %}
-        {% if doc.contact_display %}<div style="color:#555;">Attn: {{ doc.contact_display }}</div>{% endif %}
-      </td>
-      <td style="width:18%; color:#777; padding:2px 0; vertical-align:top;">Required by</td>
-      <td style="width:32%; padding:2px 0; vertical-align:top;">
-        {% if doc.schedule_date %}{{ frappe.format(doc.schedule_date, {"fieldtype": "Date"}) }}{% else %}<span style="color:#999;">Not specified</span>{% endif %}
-      </td>
-    </tr>
-    <tr>
-      <td style="color:#777; padding:2px 0; vertical-align:top;">Deliver to</td>
-      <td style="padding:2px 0; vertical-align:top;">
-        {% if doc.shipping_address %}{{ doc.shipping_address }}
-        {% elif doc.shipping_address_display %}{{ doc.shipping_address_display }}
-        {% else %}<span style="color:#999;">Collection &mdash; see instructions below</span>{% endif %}
-      </td>
-      <td style="color:#777; padding:2px 0; vertical-align:top;">Order status</td>
-      <td style="padding:2px 0; vertical-align:top;">{{ doc.status }}</td>
-    </tr>
-    <tr>
-      <td style="color:#777; padding:2px 0; vertical-align:top;">Approved by</td>
-      <td style="padding:2px 0; vertical-align:top;">
-        {%- if doc.get("custom_approved_by") -%}
-          {{ frappe.db.get_value("User", doc.custom_approved_by, "full_name") or doc.custom_approved_by }}
-          {%- if doc.get("custom_approved_on") %}<div style="color:#555;">{{ frappe.format(doc.custom_approved_on, {"fieldtype": "Datetime"}) }}</div>{% endif -%}
-        {%- else -%}
-          <span style="color:#999;">&mdash;</span>
-        {%- endif -%}
-      </td>
-      <td style="color:#777; padding:2px 0; vertical-align:top;">Questions to</td>
-      <td style="padding:2px 0; vertical-align:top;">
-        {{ frappe.db.get_value("User", doc.owner, "full_name") or doc.owner }}
-        <div style="color:#555;">{{ doc.owner }}</div>
-      </td>
-    </tr>
-  </table>
+_DASH = '<span style="color:' + ps.INK_700 + ';">&mdash;</span>'
 
-  <table style="width:100%; border-collapse:collapse; font-size:11px;">
-    <thead style="display:table-header-group;">
-      <tr style="background:#f4f5f7;">
-        <th style="text-align:left;   padding:6px 4px; border-bottom:2px solid #ccc;">Item</th>
-        <th style="text-align:left;   padding:6px 4px; border-bottom:2px solid #ccc;">Description</th>
-        <th style="text-align:left;   padding:6px 4px; border-bottom:2px solid #ccc;">Project</th>
-        <th style="text-align:right;  padding:6px 4px; border-bottom:2px solid #ccc; white-space:nowrap;">Qty</th>
-        <th style="text-align:left;   padding:6px 4px; border-bottom:2px solid #ccc;">UOM</th>
-        <th style="text-align:right;  padding:6px 4px; border-bottom:2px solid #ccc; white-space:nowrap;">Rate</th>
-        <th style="text-align:right;  padding:6px 4px; border-bottom:2px solid #ccc; white-space:nowrap;">Amount</th>
-      </tr>
-    </thead>
-    <tbody>
-      {%- for row in doc.items %}
-      <tr style="page-break-inside:avoid;">
-        <td style="padding:5px 4px; border-bottom:1px solid #eee; vertical-align:top;">{{ row.item_code | e }}</td>
-        <!-- Rendered as HTML, NOT escaped. Purchase Order Item.description is a Text
-             Editor field, so it holds markup authored by staff in the Item master —
-             escaping it printed a literal "&lt;div&gt;&lt;p&gt;Use for waterproofing…"
-             at the supplier. Every stock ERPNext print format renders this field the
-             same way. item_name is a plain Data field and stays escaped. -->
-        <td style="padding:5px 4px; border-bottom:1px solid #eee; vertical-align:top; color:#555;">
-          {%- if row.description %}{{ row.description }}{% else %}{{ row.item_name | e }}{% endif -%}
-        </td>
-        <td style="padding:5px 4px; border-bottom:1px solid #eee; vertical-align:top; color:#555;">{{ (row.project or "") | e }}</td>
-        <td style="padding:5px 4px; border-bottom:1px solid #eee; vertical-align:top; text-align:right; white-space:nowrap;">{{ row.qty }}</td>
-        <td style="padding:5px 4px; border-bottom:1px solid #eee; vertical-align:top;">{{ (row.uom or "") | e }}</td>
-        <td style="padding:5px 4px; border-bottom:1px solid #eee; vertical-align:top; text-align:right; white-space:nowrap;">{{ frappe.utils.fmt_money(row.rate, currency=doc.currency) }}</td>
-        <td style="padding:5px 4px; border-bottom:1px solid #eee; vertical-align:top; text-align:right; white-space:nowrap;">{{ frappe.utils.fmt_money(row.amount, currency=doc.currency) }}</td>
-      </tr>
-      {%- endfor %}
-      {%- if not doc.items %}
-      <tr><td colspan="7" style="padding:8px 4px; color:#999; font-style:italic;">No items on this order.</td></tr>
-      {%- endif %}
-    </tbody>
-  </table>
+_FACTS = (
+	ps.facts_open()
+	+ ps.fact(
+		"SUPPLIER",
+		'<span style="' + ps.STRONG + '">{{ doc.supplier_name or doc.supplier }}</span>'
+		"{% if doc.address_display %}<br>{{ doc.address_display }}{% endif %}"
+		"{% if doc.contact_display %}<br>Attn: {{ doc.contact_display }}{% endif %}",
+		width="40%",
+	)
+	+ ps.fact(
+		"REQUIRED BY",
+		'{% if doc.schedule_date %}{{ frappe.format(doc.schedule_date, {"fieldtype": "Date"}) }}'
+		"{% else %}Not specified{% endif %}",
+		width="30%",
+	)
+	+ ps.fact(
+		"DELIVER TO",
+		"{% if doc.shipping_address %}{{ doc.shipping_address }}"
+		"{% elif doc.shipping_address_display %}{{ doc.shipping_address_display }}"
+		"{% else %}Collection &mdash; see instructions below{% endif %}",
+		width="30%",
+	)
+	+ ps.facts_close()
+	+ ps.facts_open(top=False)
+	+ ps.fact("ORDER STATUS", "{{ doc.status }}", width="40%")
+	+ ps.fact(
+		"APPROVED BY",
+		'{%- if doc.get("custom_approved_by") -%}'
+		'{{ frappe.db.get_value("User", doc.custom_approved_by, "full_name") or doc.custom_approved_by }}'
+		'{%- if doc.get("custom_approved_on") %}<br>{{ frappe.format(doc.custom_approved_on, {"fieldtype": "Datetime"}) }}{% endif -%}'
+		"{%- else -%}" + _DASH + "{%- endif -%}",
+		width="30%",
+	)
+	+ ps.fact(
+		"QUESTIONS TO",
+		'{{ frappe.db.get_value("User", doc.owner, "full_name") or doc.owner }}<br>{{ doc.owner }}',
+		width="30%",
+	)
+	+ ps.facts_close()
+)
 
-  <table style="width:100%; border-collapse:collapse; margin-top:10px; page-break-inside:avoid;">
-    <tr>
-      <td style="width:60%;"></td>
-      <td style="width:22%; text-align:right; color:#777; padding:2px 4px;">Net total</td>
-      <td style="width:18%; text-align:right; padding:2px 4px; white-space:nowrap;">{{ frappe.utils.fmt_money(doc.net_total, currency=doc.currency) }}</td>
-    </tr>
-    {%- for tax in doc.taxes %}
-    {%- if tax.tax_amount %}
-    <tr>
-      <td></td>
-      <td style="text-align:right; color:#777; padding:2px 4px;">{{ tax.description | e }}</td>
-      <td style="text-align:right; padding:2px 4px; white-space:nowrap;">{{ frappe.utils.fmt_money(tax.tax_amount, currency=doc.currency) }}</td>
-    </tr>
-    {%- endif %}
-    {%- endfor %}
-    <tr>
-      <td></td>
-      <td style="text-align:right; padding:6px 4px; border-top:2px solid #333;"><b>Grand total</b></td>
-      <td style="text-align:right; padding:6px 4px; border-top:2px solid #333; white-space:nowrap;">
-        <b>{{ frappe.utils.fmt_money(doc.grand_total, currency=doc.currency) }}</b>
-      </td>
-    </tr>
-  </table>
+_ITEMS = (
+	'<table style="width:100%; border-collapse:collapse; margin-top:4px;">\n'
+	'    <thead style="display:table-header-group;">\n'
+	"      <tr>\n"
+	'        <th style="' + ps.th() + '">Item</th>\n'
+	'        <th style="' + ps.th() + '">Description</th>\n'
+	'        <th style="' + ps.th() + '">Project</th>\n'
+	'        <th style="' + ps.th(right=True) + '; white-space:nowrap;">Qty</th>\n'
+	'        <th style="' + ps.th() + '">UOM</th>\n'
+	'        <th style="' + ps.th(right=True) + '; white-space:nowrap;">Rate</th>\n'
+	'        <th style="' + ps.th(right=True) + '; white-space:nowrap;">Amount</th>\n'
+	"      </tr>\n"
+	"    </thead>\n"
+	"    <tbody>\n"
+	"      {%- for row in doc.items %}\n"
+	'      <tr style="page-break-inside:avoid;">\n'
+	'        <td style="' + ps.TD + "; " + ps.STRONG + '">{{ row.item_code | e }}</td>\n'
+	"        <!-- Rendered as HTML, NOT escaped. Purchase Order Item.description is a Text\n"
+	"             Editor field, so it holds markup authored by staff in the Item master —\n"
+	'             escaping it printed a literal "&lt;div&gt;&lt;p&gt;Use for waterproofing…"\n'
+	"             at the supplier. Every stock ERPNext print format renders this field the\n"
+	"             same way. item_name is a plain Data field and stays escaped. -->\n"
+	'        <td style="' + ps.TD + '">\n'
+	"          {%- if row.description %}{{ row.description }}{% else %}{{ row.item_name | e }}{% endif -%}\n"
+	"        </td>\n"
+	'        <td style="' + ps.TD + '">{{ (row.project or "") | e }}</td>\n'
+	'        <td style="' + ps.TD_RIGHT + '">{{ row.qty }}</td>\n'
+	'        <td style="' + ps.TD + '">{{ (row.uom or "") | e }}</td>\n'
+	'        <td style="'
+	+ ps.TD_RIGHT
+	+ '">{{ frappe.utils.fmt_money(row.rate, currency=doc.currency) }}</td>\n'
+	'        <td style="'
+	+ ps.TD_RIGHT
+	+ '">{{ frappe.utils.fmt_money(row.amount, currency=doc.currency) }}</td>\n'
+	"      </tr>\n"
+	"      {%- endfor %}\n"
+	"      {%- if not doc.items %}\n"
+	'      <tr><td colspan="7" style="' + ps.TD + '; font-style:italic;">No items on this order.</td></tr>\n'
+	"      {%- endif %}\n"
+	"    </tbody>\n"
+	"  </table>\n"
+)
 
-  <div style="margin-top:18px; page-break-inside:avoid;">
-    <div style="color:#777; border-bottom:1px solid #eee; padding-bottom:3px; margin-bottom:6px;">Payment terms</div>
-    {%- if doc.payment_terms_template or doc.payment_schedule %}
+_TOTAL_LABEL_TD = "text-align:right; padding:3px 8px; color:" + ps.INK_700 + ";"
+_TOTAL_VALUE_TD = "text-align:right; padding:3px 8px; white-space:nowrap; color:" + ps.INK_700 + ";"
+_GRAND_TD = (
+	"text-align:right; padding:8px 8px 4px; border-top:2px solid " + ps.DEEP_SEA_BLUE + "; " + ps.STRONG
+)
+
+_TOTALS = (
+	'<table style="width:100%; border-collapse:collapse; margin-top:10px; page-break-inside:avoid;">\n'
+	"    <tr>\n"
+	'      <td style="width:56%;"></td>\n'
+	'      <td style="width:26%; ' + _TOTAL_LABEL_TD + '">Net total</td>\n'
+	'      <td style="width:18%; '
+	+ _TOTAL_VALUE_TD
+	+ '">{{ frappe.utils.fmt_money(doc.net_total, currency=doc.currency) }}</td>\n'
+	"    </tr>\n"
+	"    {%- for tax in doc.taxes %}\n"
+	"    {%- if tax.tax_amount %}\n"
+	"    <tr>\n"
+	"      <td></td>\n"
+	'      <td style="' + _TOTAL_LABEL_TD + '">{{ tax.description | e }}</td>\n'
+	'      <td style="'
+	+ _TOTAL_VALUE_TD
+	+ '">{{ frappe.utils.fmt_money(tax.tax_amount, currency=doc.currency) }}</td>\n'
+	"    </tr>\n"
+	"    {%- endif %}\n"
+	"    {%- endfor %}\n"
+	"    <tr>\n"
+	"      <td></td>\n"
+	'      <td style="' + _GRAND_TD + '">Grand total</td>\n'
+	'      <td style="' + _GRAND_TD + '; white-space:nowrap; font-size:14px;">'
+	"{{ frappe.utils.fmt_money(doc.grand_total, currency=doc.currency) }}</td>\n"
+	"    </tr>\n"
+	"  </table>\n"
+)
+
+_TERMS = (
+	'  <div style="page-break-inside:avoid;">\n'
+	+ ps.section_title("Payment terms")
+	+ """    {%- if doc.payment_terms_template or doc.payment_schedule %}
       {%- if doc.payment_terms_template %}<div>{{ doc.payment_terms_template | e }}</div>{% endif %}
       {%- for term in doc.payment_schedule %}
       {#- Parenthesised on purpose: `a or b or "" | e` binds the filter to the empty
           string alone, so the real values went out unescaped. And the separator is
           emitted only when there is a label, rather than leaving a dangling dash. -#}
       {%- set term_label = (term.description or term.payment_term or "") %}
-      <div style="color:#555;">
+      <div>
         {%- if term_label %}{{ term_label | e }} &mdash; {% endif %}
         {{- frappe.utils.fmt_money(term.payment_amount, currency=doc.currency) }}
         {%- if term.due_date %} due {{ frappe.format(term.due_date, {"fieldtype": "Date"}) }}{% endif %}
       </div>
       {%- endfor %}
     {%- else %}
-      <div style="color:#999; font-style:italic;">As agreed.</div>
+      <div style="font-style:italic;">As agreed.</div>
     {%- endif %}
   </div>
-
-  <div style="margin-top:14px; page-break-inside:avoid;">
-    <div style="color:#777; border-bottom:1px solid #eee; padding-bottom:3px; margin-bottom:6px;">Delivery &amp; receiving</div>
-    {%- if doc.terms %}
-      <div style="color:#555;">{{ doc.terms }}</div>
+  <div style="page-break-inside:avoid;">
+"""
+	+ ps.section_title("Delivery &amp; receiving")
+	+ """    {%- if doc.terms %}
+      <div>{{ doc.terms }}</div>
     {%- else %}
-      <div style="color:#555;">
+      <div>
         Please quote <b>{{ doc.name }}</b> on all packing slips and invoices, and notify the
         buyer above before delivery or collection.
       </div>
     {%- endif %}
   </div>
-
-</div>
 """
+)
 
-# Substituted rather than interpolated: the template is full of Jinja braces, so an
-# f-string is not an option and `%`/`.format` would collide with them too.
-_HTML = _TEMPLATE.replace("__CONTACT_BLOCK__", contact_block(ADDRESS_FIELD))
+_TEMPLATE = (
+	ps.page_open(None)
+	+ """
+  {#- A custom Jinja format has to render the letterhead itself. Frappe injects it only for
+      *standard* formats, via the `#header-html` block that `repeat_header_footer` produces;
+      a format with `custom_format = 1` supplies the whole body, so `letter_head` is offered
+      to the template and simply dropped if nothing asks for it. That is why this order went
+      to suppliers unbranded for its first month while every stock format carried the logo.
+      Verified on production: the rendered HTML contains no `#header-html` div at all, and
+      the PDF was byte-identical with and without a letter head attached to the document.
+
+      Since v1.495.0 print_style.letterhead() draws the wordmark itself, so `letter_head`
+      is deliberately NOT rendered here: the site's letter head is a bare right-aligned
+      logo, and two logos on one page is worse than one.
+
+      Page one only, and deliberately. The identifier a counter clerk needs on every sheet is
+      the PO number, which is in the meta block and repeats through the table header. A logo
+      on each page would cost ~52 KB per page for no working benefit. -#}
+"""
+	+ ps.letterhead(None, "PURCHASE ORDER", "Purchase Order", _META, ADDRESS_FIELD)
+	+ _FACTS
+	+ _ITEMS
+	+ _TOTALS
+	+ _TERMS
+	+ ps.page_close(None)
+)
+
+# The composed template. Concatenated rather than interpolated: the markup is full of Jinja
+# braces, so f-strings and `%`/`.format` are both unavailable.
+_HTML = _TEMPLATE
 
 
 def ensure_enhancements_core_print_formats():

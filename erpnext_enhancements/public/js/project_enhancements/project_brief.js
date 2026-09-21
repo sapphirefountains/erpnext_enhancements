@@ -33,6 +33,36 @@
  * `project_enhancements/project_brief.py` has the reasoning.
  */
 
+/*
+ * The print design system's chrome (docs/print-design-system.md), rendered in the
+ * browser. These four records are a COPY of print_style.PILLARS — the brief is
+ * built client-side and cannot read the Python module, and
+ * tests/test_print_style.py holds the two in agreement. The pillar is the job's
+ * leading stream; a job outside the five streams takes the brand's dark band.
+ *
+ * Raw /assets paths, deliberately: both files are immutable by content (the
+ * wordmark SVG the contracts inline, the design system's woff2), so the 1-year
+ * immutable cache on raw asset paths cannot serve a stale one.
+ */
+const PILLARS = {
+	design: { name: "DESIGN", open: "#b14fc5", end: "#55265f", deep: "#55265f" },
+	build: { name: "BUILD", open: "#00609c", end: "#002136", deep: "#002136" },
+	service: { name: "SERVICE", open: "#00a0df", end: "#005779", deep: "#005779" },
+	rent: { name: "RENT", open: "#62cbc9", end: "#316564", deep: "#316564" },
+};
+const NEUTRAL_PILLAR = { name: "", open: "#00263e", end: "#00111c", deep: "#00609c" };
+const STREAM_PILLAR = { Design: "design", Build: "build", Products: "build", Service: "service", Events: "rent" };
+const LOGO_URL = window.location.origin + "/assets/erpnext_enhancements/images/fountain_move/logo.svg";
+const FONT_URL = window.location.origin + "/assets/erpnext_enhancements/fonts/big_noodle_titling.woff2";
+
+/** The pillar the sheet is coloured for: the leading stream's, else neutral. */
+function pillar_for(d) {
+	const lead = (d.work_streams && d.work_streams.length ? d.work_streams : [d.project_stage]).filter(
+		Boolean
+	)[0];
+	return PILLARS[STREAM_PILLAR[lead]] || NEUTRAL_PILLAR;
+}
+
 frappe.ui.form.on("Project", {
 	refresh: function (frm) {
 		if (frm.is_new()) {
@@ -245,21 +275,22 @@ function build_brief_html(d) {
 		? frappe.utils.escape_html(d.description).replace(/\n/g, "<br>")
 		: '<span class="sf-blank-line"></span>';
 
+	const pillar = pillar_for(d);
+
 	return `
 <div class="sf-brief">
 	${brief_styles()}
 
-	<!-- Header -->
+	<!-- Header: the print design system's letterhead — the pillar stripe, the
+	     wordmark, an eyebrow naming the pillar over the display-face title. -->
+	<div class="sf-stripe" style="background-color:${pillar.open}; background-image:linear-gradient(90deg, ${pillar.open} 0%, ${pillar.end} 100%);"></div>
 	<div class="sf-header">
-		<div class="sf-logo">Sapphire Fountains<span class="sf-dot">.</span></div>
-		<div class="sf-prj">
-			<div class="sf-label">Project Number</div>
-			<div class="sf-prj-num">${slot(d.project_number)}</div>
-		</div>
+		<div class="sf-logo"><img src="${LOGO_URL}" alt="Sapphire Fountains" width="170" height="62"></div>
 		<div class="sf-title">
+			<div class="sf-eyebrow" style="color:${pillar.deep};">${pillar.name ? pillar.name + " &middot; " : ""}PROJECT BRIEF</div>
 			<div class="sf-brief-title">Project Brief</div>
+			<div class="sf-prj-num">${slot(d.project_number)} &middot; ${fmt_date(d.brief_date)}</div>
 			<div class="sf-streams">${streams || '<span class="sf-blank"></span>'}</div>
-			<div class="sf-date"><span class="sf-label">Date</span> ${fmt_date(d.brief_date)}</div>
 		</div>
 	</div>
 
@@ -365,77 +396,75 @@ function build_brief_html(d) {
 </div>`;
 }
 
+/*
+ * The print design system's look, in the design system's tokens: a white sheet
+ * (drawn under the brief even in a dark desk theme, like the contract viewer),
+ * ink-700 Lato, bahama-blue labels and display-face section titles, rules and
+ * weight for separation — no tints, no dotted rules, no italics-as-hierarchy.
+ * The two brand colours that carry small text are the closing stops; the
+ * opening stops paint only the stripe.
+ */
 function brief_styles() {
 	return `<style>
-.sf-brief { color: var(--text-color); font-family: Arial, Helvetica, sans-serif; font-size: 13px; line-height: 1.4; background: var(--card-bg); padding: 10px 6px; }
-.sf-brief .sf-label { font-style: italic; color: var(--text-muted); font-size: 11px; }
-.sf-brief .sf-label-inline { font-style: italic; color: var(--text-muted); font-weight: 600; }
-.sf-brief .sf-mt { margin-top: 10px; }
-.sf-brief .sf-header { display: flex; align-items: flex-start; justify-content: space-between; border-bottom: 2px solid var(--dark-border-color); padding-bottom: 14px; margin-bottom: 16px; }
-.sf-brief .sf-logo { font-size: 30px; font-weight: 800; color: #2f6fb0; letter-spacing: -1px; }
-.sf-brief .sf-dot { color: #2f6fb0; }
-.sf-brief .sf-prj { text-align: center; }
-.sf-brief .sf-prj-num { font-size: 18px; font-weight: 700; }
+@font-face { font-family: "Big Noodle Titling"; font-weight: 700; font-style: normal; src: url("${FONT_URL}") format("woff2"); }
+.sf-brief { background: #fff; color: #363636; font-family: Lato, "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 12.5px; line-height: 1.4; padding: 0 0 8px; }
+.sf-brief .sf-stripe { height: 10px; margin-bottom: 16px; }
+.sf-brief .sf-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 12px; }
+.sf-brief .sf-logo img { display: block; width: 170px; height: auto; }
 .sf-brief .sf-title { text-align: right; }
-.sf-brief .sf-brief-title { font-size: 26px; font-weight: 800; font-style: italic; }
-.sf-brief .sf-date { margin-top: 8px; font-size: 14px; font-weight: 700; }
-.sf-brief .sf-grid { display: grid; gap: 16px; }
+.sf-brief .sf-eyebrow { font-size: 11.5px; font-weight: 700; }
+.sf-brief .sf-brief-title { font-family: "Big Noodle Titling", "Arial Narrow", Arial, sans-serif; font-weight: 700; font-size: 38px; line-height: 1; color: #00263e; margin-top: 4px; }
+.sf-brief .sf-prj-num { font-weight: 700; color: #151515; margin-top: 6px; }
+.sf-brief .sf-streams { font-size: 11.5px; font-weight: 700; color: #00609c; margin-top: 2px; }
+.sf-brief .sf-label { font-size: 11.5px; font-weight: 700; color: #00609c; text-transform: uppercase; }
+.sf-brief .sf-label-inline { font-weight: 700; color: #00609c; }
+.sf-brief .sf-mt { margin-top: 10px; }
+.sf-brief .sf-grid { display: grid; gap: 16px 24px; }
 .sf-brief .sf-grid-2 { grid-template-columns: 1fr 1fr; }
 .sf-brief .sf-grid-3 { grid-template-columns: 1.2fr 1fr 1fr; }
-.sf-brief .sf-project-name { font-size: 22px; font-weight: 700; margin-top: 2px; }
+.sf-brief .sf-project-block { border-top: 1px solid #00263e; border-bottom: 1px solid #dadbdd; padding: 10px 0; }
+.sf-brief .sf-project-name { font-size: 16px; font-weight: 700; color: #151515; margin-top: 2px; }
 .sf-brief .sf-address { margin-top: 2px; }
-.sf-brief .sf-value { font-weight: 600; }
+.sf-brief .sf-value { font-weight: 700; color: #151515; }
 .sf-brief .sf-kv { margin-bottom: 4px; }
-.sf-brief .sf-section { border-top: 1px solid var(--border-color); margin-top: 18px; padding-top: 10px; }
-.sf-brief .sf-section-title { font-size: 16px; font-weight: 800; font-style: italic; text-transform: uppercase; margin-bottom: 8px; }
+.sf-brief .sf-section { margin-top: 16px; }
+.sf-brief .sf-section-title { font-family: "Big Noodle Titling", "Arial Narrow", Arial, sans-serif; font-weight: 700; font-size: 20px; line-height: 1; color: #00609c; margin-bottom: 8px; }
 .sf-brief .sf-description { white-space: pre-wrap; min-height: 40px; }
 .sf-brief .sf-checks { display: flex; gap: 24px; margin-bottom: 6px; }
-.sf-brief .sf-check { font-size: 14px; }
-.sf-brief .sf-note-small { font-style: italic; color: var(--text-muted); font-size: 11px; margin: 2px 0 6px; }
-.sf-brief .sf-payment { font-size: 13px; }
-.sf-brief .sf-blank { display: inline-block; min-width: 90px; border-bottom: 1px solid var(--border-color); height: 1em; vertical-align: bottom; }
-.sf-brief .sf-blank-sm { display: inline-block; min-width: 36px; border-bottom: 1px solid var(--border-color); height: 1em; vertical-align: bottom; }
-.sf-brief .sf-blank-line { display: block; border-bottom: 1px solid var(--border-color); height: 1.6em; margin-bottom: 6px; }
-.sf-brief .sf-streams { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #2f6fb0; margin-top: 4px; }
+.sf-brief .sf-check { font-size: 13px; }
+.sf-brief .sf-note-small { font-size: 11px; margin: 2px 0 6px; }
+.sf-brief .sf-payment { font-size: 12.5px; }
+.sf-brief .sf-blank { display: inline-block; min-width: 90px; border-bottom: 1px solid #00263e; height: 1em; vertical-align: bottom; }
+.sf-brief .sf-blank-sm { display: inline-block; min-width: 36px; border-bottom: 1px solid #00263e; height: 1em; vertical-align: bottom; }
+.sf-brief .sf-blank-line { display: block; border-bottom: 1px solid #00263e; height: 1.6em; margin-bottom: 6px; }
 /* Blocks flow in two columns and reflow to one when the dialog is narrow; a
    table block always claims the full width, since six columns in half of one
    is unreadable. */
 .sf-brief .sf-blocks { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; align-items: start; }
 .sf-brief .sf-block-wide { grid-column: 1 / -1; }
-.sf-brief .sf-block-title { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); margin-bottom: 4px; }
-.sf-brief .sf-row { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; border-bottom: 1px dotted var(--border-color); }
-.sf-brief .sf-row-label { flex: 0 0 46%; font-style: italic; color: var(--text-muted); }
-.sf-brief .sf-row-value { flex: 1 1 auto; font-weight: 600; min-width: 0; }
-.sf-brief .sf-row-note { font-weight: 400; font-style: italic; color: var(--text-muted); font-size: 11px; }
+.sf-brief .sf-block-title { font-weight: 700; font-size: 11.5px; text-transform: uppercase; color: #00609c; margin-bottom: 4px; }
+.sf-brief .sf-row { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid #dadbdd; }
+.sf-brief .sf-row-label { flex: 0 0 46%; color: #363636; }
+.sf-brief .sf-row-value { flex: 1 1 auto; font-weight: 700; color: #151515; min-width: 0; }
+.sf-brief .sf-row-note { font-weight: 400; font-size: 11px; color: #363636; }
 .sf-brief .sf-bullets { margin: 0; padding-left: 18px; }
 .sf-brief .sf-bullets li { margin-bottom: 3px; }
 .sf-brief .sf-block-text { white-space: pre-wrap; }
 .sf-brief .sf-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.sf-brief .sf-table th { text-align: left; font-style: italic; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color); padding: 2px 6px 2px 0; }
-.sf-brief .sf-table td { padding: 2px 6px 2px 0; border-bottom: 1px dotted var(--border-color); vertical-align: top; }
+.sf-brief .sf-table th { text-align: left; font-weight: 700; font-size: 11.5px; color: #00609c; border-bottom: 2px solid #00263e; padding: 4px 6px 4px 0; }
+.sf-brief .sf-table td { padding: 4px 6px 4px 0; border-bottom: 1px solid #dadbdd; vertical-align: top; }
 @media (max-width: 720px) {
   .sf-brief .sf-blocks { grid-template-columns: 1fr; }
   .sf-brief .sf-grid-2, .sf-brief .sf-grid-3 { grid-template-columns: 1fr; }
 }
 @media print {
-  .sf-brief { color: #1a1a1a; background: #fff; }
-  .sf-brief .sf-label { color: #666; }
-  .sf-brief .sf-label-inline { color: #444; }
-  .sf-brief .sf-header { border-bottom-color: #1a1a1a; }
-  .sf-brief .sf-section { border-top-color: #c8c8c8; }
-  .sf-brief .sf-note-small { color: #777; }
-  .sf-brief .sf-blank, .sf-brief .sf-blank-sm { border-bottom-color: #999; }
-  .sf-brief .sf-blank-line { border-bottom-color: #bbb; }
+  /* The stripe is a background; browsers drop backgrounds when printing unless
+     told not to, and a brief without its stripe is a brief without its pillar. */
+  .sf-brief .sf-stripe { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   /* Keep a section whole on one page where it fits: a rental fee schedule split
      across a page break is how a number gets read against the wrong heading. */
   .sf-brief .sf-type-section { break-inside: avoid; page-break-inside: avoid; }
   .sf-brief .sf-block { break-inside: avoid; page-break-inside: avoid; }
-  .sf-brief .sf-row-label { color: #666; }
-  .sf-brief .sf-row-note { color: #777; }
-  .sf-brief .sf-row { border-bottom-color: #ddd; }
-  .sf-brief .sf-block-title { color: #444; }
-  .sf-brief .sf-table th { color: #666; border-bottom-color: #999; }
-  .sf-brief .sf-table td { border-bottom-color: #ddd; }
 }
 </style>`;
 }
@@ -446,10 +475,12 @@ function print_brief(html) {
 		frappe.msgprint(__("Please allow pop-ups to print the Project Brief."));
 		return;
 	}
+	// Print once the display face has arrived: window.print() on load fires
+	// before a webfont does, and the title would go out in Arial Narrow.
 	win.document.write(
-		`<!doctype html><html><head><title>${__("Project Brief")}</title>` +
-			`<style>@page { margin: 18mm; } body { margin: 0; }</style></head>` +
-			`<body onload="window.print();">${html}</body></html>`
+		`<!doctype html><html><head><meta charset="utf-8"><title>${__("Project Brief")}</title>` +
+			`<style>@page { margin: 15mm; } body { margin: 0; background: #fff; }</style></head>` +
+			`<body onload="document.fonts.ready.then(function () { window.print(); });">${html}</body></html>`
 	);
 	win.document.close();
 }

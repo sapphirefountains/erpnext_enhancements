@@ -208,10 +208,73 @@ class TestWrap(unittest.TestCase):
         self.assertIn("footer-html", out)
 
 
+class TestPillar(unittest.TestCase):
+    """The print design system's stripe, coloured by the agreement's template.
+
+    Chrome only: the stripe, the display face and the pillar word all ride inside
+    the letterhead, outside the signed snapshot, so they reach a contract signed
+    before they existed without touching a byte of what was signed."""
+
+    def test_template_keys_map_to_pillars(self):
+        self.assertEqual(contract_style.pillar_for({"template_key": "maintenance"}), "service")
+        self.assertEqual(contract_style.pillar_for({"template_key": "rental"}), "rent")
+        for key in ("owner", "architect", "sow", "msa"):
+            with self.subTest(key):
+                self.assertEqual(contract_style.pillar_for({"template_key": key}), "build")
+        self.assertIsNone(contract_style.pillar_for({"template_key": "nda"}), "the NDA belongs to no pillar")
+        self.assertIsNone(contract_style.pillar_for({"template_key": None}))
+        self.assertIsNone(contract_style.pillar_for({"name": "SF-1"}))
+        self.assertIsNone(contract_style.pillar_for(None))
+
+    def test_letterhead_carries_the_stripe_the_face_and_the_pillar(self):
+        html = contract_style.letterhead_html("service")
+        self.assertIn("@font-face", html)
+        self.assertIn("data:font/woff2;base64,", html)
+        self.assertIn("background-color:#00a0df", html)
+        self.assertIn("linear-gradient(90deg,#00a0df 0%,#005779 100%)", html)
+        self.assertIn("SERVICE &middot; AGREEMENT", html)
+        self.assertIn("color:#005779", html)
+
+    def test_a_neutral_letterhead_names_no_pillar(self):
+        html = contract_style.letterhead_html(None)
+        self.assertNotIn("AGREEMENT", html)
+        self.assertIn("background-color:#00263e", html)
+
+    def test_the_stripe_paints_flat_before_the_gradient(self):
+        """wkhtmltopdf paints no gradients; the flat colour must come first."""
+        html = contract_style.letterhead_html("rent")
+        self.assertLess(html.index("background-color:#62cbc9"), html.index("linear-gradient"))
+
+    def test_it_is_still_one_element(self):
+        """`.ct-letterhead + h3` tolerates nothing between the letterhead and the
+        title, so the stripe and the font must live INSIDE the one div."""
+        html = contract_style.letterhead_html("build")
+        self.assertTrue(html.startswith('<div class="ct-letterhead">'))
+        self.assertTrue(html.endswith("</div>"))
+        self.assertEqual(html.count('<div class="ct-letterhead">'), 1)
+
+    def test_wrap_colours_by_the_documents_template(self):
+        out = contract_style.wrap("<h3>x</h3>", {"name": "SF-RENT-1", "template_key": "rental"})
+        self.assertIn("RENT &middot; AGREEMENT", out)
+        self.assertIn("SF-RENT-1", out)
+        self.assertIn("</div><h3>", out)
+
+
 class TestPrintFormatFixture(unittest.TestCase):
     """Static guards on the fixture. It is the single source of truth for the
     document's look, and nothing else in the bench-free suite would notice it
     losing a rule."""
+
+    def test_the_stylesheet_is_on_the_design_systems_tokens(self):
+        """The old palette (#222 body, #eef3f7 tints, a left-border on h1) is gone:
+        the design system separates with rules and weight, never a tint or a box."""
+        css = self.pf["css"]
+        self.assertIn("#363636", css)
+        self.assertIn("#00609c", css)
+        self.assertIn("'Big Noodle Titling'", css)
+        self.assertNotIn("border-left", css)
+        self.assertNotIn("#eef3f7", css)
+        self.assertNotIn("Georgia", css)
 
     @classmethod
     def setUpClass(cls):

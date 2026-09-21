@@ -4,7 +4,8 @@ Every printed document this app composes shares one chrome, defined once, in
 `erpnext_enhancements/print_style.py`. This page is the guide: what the chrome is, how a
 format consumes it, and the three things about it that are not obvious.
 
-Introduced in **v1.494.0**, alongside the matching email chrome
+Introduced in **v1.494.0** (the sales formats and the maintenance report), extended to every
+other printed document in **v1.495.0**, alongside the matching email chrome
 ([email-design-system.md](email-design-system.md)). Both are the *Pillar Stripe* concept
 Nik picked from the design canvas on 2026-09-21, built from the Sapphire Fountains design
 system's own tokens.
@@ -106,12 +107,12 @@ public origin — one more thing to go wrong on a host whose PDF history is
 wkhtmltopdf, still the fallback for report exports, takes a data-URI `@font-face` too.
 The fallback stack is Arial Narrow, a condensed bold that reads as the same idea.
 
-**The site's Letter Head is no longer rendered by the sales formats.** `print_style.
-letterhead()` inlines the wordmark itself, so `{{ letter_head }}` — the site's bare
-right-aligned logo — would put a second logo on the page. `tests/test_sales_print_formats.py`
-now asserts it is *absent*, having asserted its presence since the month the Purchase
-Order format went out unbranded. The Purchase Order format is not on this chrome yet and
-still renders it.
+**The site's Letter Head is no longer rendered by any Python-composed format.**
+`print_style.letterhead()` inlines the wordmark itself, so `{{ letter_head }}` — the site's
+bare right-aligned logo — would put a second logo on the page. The sales, Purchase Order and
+certificate suites now assert it is *absent*, having asserted its presence since the month
+the Purchase Order format went out unbranded. The report sheets are the exception: the
+report wrapper prints the Letter Head above them, so they draw no wordmark at all.
 
 **Print-safe CSS only.** The letterhead, facts row and signature lines are
 `display:table`; nothing is flex or grid, because the PDF backends on this host do not
@@ -124,12 +125,41 @@ support still paints the pillar's flat colour.
 | Document | Module | Pillar |
 |---|---|---|
 | Quotation, Sales Order, Sales Invoice | `enhancements_core/setup_sales_print_formats.py` | neutral |
+| Purchase Order | `enhancements_core/setup_print_formats.py` | neutral |
 | Maintenance Record Print | `fixtures/print_format.json` via `ps_*` | Service |
+| Contracts (all eight templates) | `project_enhancements/contract_style.py` + the `Project Contract Print` fixture CSS | by template: owner / architect / SOW / MSA → Build, maintenance → Service, rental → Rent, NDA and employee → neutral |
+| Project Brief | `public/js/project_enhancements/project_brief.js` | the job's leading stream: Design, Build (and Products), Service, Events → Rent |
+| Training Certificate | `training/setup_print_formats.py` | neutral |
+| Crew Qualification Roster, Supplier Pickup List (report sheets) | the report's `.html` beside it | neutral, **without the wordmark** |
 
-Not yet: the Purchase Order format (supplier-facing; still on `company_contact.contact_block`
-and the site Letter Head), the contracts (`project_enhancements/contract_style.py`, a legal
-document with its own serif conventions), and the report print sheets (crew qualification
-roster, supplier pickup list), which the frappe report wrapper letterheads itself.
+**Contracts are a third door.** The chrome cannot go into the agreement body — a signed
+contract prints its frozen `agreement_html` snapshot, and chrome inside it would never
+reach one signed before it existed — so `contract_style.letterhead_html()` emits the
+stripe, the wordmark, the pillar eyebrow *and* the `@font-face` inside the one
+`.ct-letterhead` element the stylesheet already anchors on, and `wrap()` picks the
+pillar from the document's `template_key`. The `Project Contract Print` fixture CSS
+carries the rest (sans body, display-face titles and section heads, ruled tables, black
+signature ink) and is published to all four surfaces by `_contract_css()`.
+
+**The Project Brief is rendered in the browser**, so it carries a *copy* of the pillar
+records and loads the wordmark and the font by raw `/assets` path — both files are
+immutable by content, so the one-year cache on raw paths cannot serve a stale one.
+`tests/test_print_style.py` holds the copy equal to `print_style.PILLARS`; the print window
+waits for `document.fonts.ready` before it prints and forces `print-color-adjust: exact`
+so the stripe survives the browser's print dialog.
+
+**The report sheets are a fourth door, and they leave the wordmark out.** A report's
+`.html` print sheet is compiled in the browser by frappe's microtemplate and framed by
+`print_template.html`, which prints the chosen Letter Head *above* the sheet — so a
+wordmark in the sheet would be a second logo. The sheets carry the stripe, the eyebrow, the
+display-face title, ruled tables and the closing stripe, written as static CSS in the
+tokens (a test holds every hex to the palette), with the font by relative `/assets` path:
+the desk print window resolves it against the site and the PDF route makes it absolute in
+`scrub_urls`. Microtemplate's two traps apply to the chrome too: no double brace anywhere
+in the file, comments included, and no apostrophe in the markup, which is why the CSS
+quotes its font names with double quotes.
+
+Everything the app prints is now on the chrome.
 
 ## Before you push
 

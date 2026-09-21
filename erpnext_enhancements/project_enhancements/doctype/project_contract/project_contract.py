@@ -341,8 +341,9 @@ class ProjectContract(Document):
 	# signed before it existed. See project_enhancements/contract_style.py.
 
 	def letterhead_html(self):
-		"""The logo-and-rule header that opens the printed agreement."""
-		return contract_style.letterhead_html()
+		"""The stripe-and-wordmark header that opens the printed agreement, coloured
+		for this contract's pillar (by its template)."""
+		return contract_style.letterhead_html(contract_style.pillar_for(self))
 
 	def footer_html(self):
 		"""The running footer (contract number, page numbers). PDF only."""
