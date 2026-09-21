@@ -128,6 +128,8 @@ support still paints the pillar's flat colour.
 | Maintenance Record Print | `fixtures/print_format.json` via `ps_*` | Service |
 | Contracts (all eight templates) | `project_enhancements/contract_style.py` + the `Project Contract Print` fixture CSS | by template: owner / architect / SOW / MSA → Build, maintenance → Service, rental → Rent, NDA and employee → neutral |
 | Project Brief | `public/js/project_enhancements/project_brief.js` | the job's leading stream: Design, Build (and Products), Service, Events → Rent |
+| Training Certificate | `training/setup_print_formats.py` | neutral |
+| Crew Qualification Roster, Supplier Pickup List (report sheets) | the report's `.html` beside it | neutral, **without the wordmark** |
 
 **Contracts are a third door.** The chrome cannot go into the agreement body — a signed
 contract prints its frozen `agreement_html` snapshot, and chrome inside it would never
@@ -145,8 +147,18 @@ immutable by content, so the one-year cache on raw paths cannot serve a stale on
 waits for `document.fonts.ready` before it prints and forces `print-color-adjust: exact`
 so the stripe survives the browser's print dialog.
 
-Not yet: the report print sheets (crew qualification roster, supplier pickup list), which
-the frappe report wrapper letterheads itself, and the training certificate.
+**The report sheets are a fourth door, and they leave the wordmark out.** A report's
+`.html` print sheet is compiled in the browser by frappe's microtemplate and framed by
+`print_template.html`, which prints the chosen Letter Head *above* the sheet — so a
+wordmark in the sheet would be a second logo. The sheets carry the stripe, the eyebrow, the
+display-face title, ruled tables and the closing stripe, written as static CSS in the
+tokens (a test holds every hex to the palette), with the font by relative `/assets` path:
+the desk print window resolves it against the site and the PDF route makes it absolute in
+`scrub_urls`. Microtemplate's two traps apply to the chrome too: no double brace anywhere
+in the file, comments included, and no apostrophe in the markup, which is why the CSS
+quotes its font names with double quotes.
+
+Everything the app prints is now on the chrome.
 
 ## Before you push
 

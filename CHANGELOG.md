@@ -122,8 +122,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before it prints (on `load`, the title went out in the fallback face) and forces
   `print-color-adjust: exact` so the stripe survives the print dialog.
 
-  Still not on the chrome: the report print sheets, which the frappe report wrapper
-  letterheads itself, and the training certificate.
+- **The Training Certificate is on it.** Neutral stripe, wordmark and address, an eyebrow,
+  the holder's name as the largest thing on the page in the display face, the course in
+  bahama-blue, the facts row (issued, valid until, number), the verification code on an
+  off-white ground under a sapphire rule, the supervisor line when a competent sign-off
+  exists. The site's Letter Head is no longer rendered. As before, re-upserting the format
+  touches no certificate already issued — each stores its own rendered HTML — so this reaches
+  certificates issued after the deploy. `tests/test_print_style.py` renders it full and
+  sparse against a stub.
+
+- **The two report print sheets are on it, without the wordmark.** The Crew Qualification
+  Roster and the Supplier Pickup List are compiled in the browser by frappe's microtemplate
+  and framed by `print_template.html`, which prints the chosen Letter Head *above* the
+  sheet, so a wordmark there would be a second logo. They carry the stripe, the eyebrow, the
+  display-face title, ruled tables in the tokens and the closing stripe, as static CSS —
+  every hex held to the palette by a test — with the font by relative `/assets` path, which
+  the desk print window resolves against the site and the PDF route makes absolute in
+  `scrub_urls`. Written inside microtemplate's two traps: no double brace anywhere in the
+  file and no apostrophe in the markup, so the CSS quotes its font names with double quotes.
+  Everything the app prints is now on the chrome.
 
 ## [1.493.0] - 2026-09-21
 
