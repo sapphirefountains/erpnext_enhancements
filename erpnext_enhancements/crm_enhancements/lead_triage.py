@@ -64,14 +64,19 @@ from erpnext_enhancements.utils import business_hours
 SETTINGS_DOCTYPE = "ERPNext Enhancements Settings"
 
 DEFAULT_TRIAGE_ROLE = "Sales Team"
-ESCALATION_ROLE = "Sales Manager"
 DEFAULT_RESPONSE_MINUTES = 60
 DEFAULT_ESCALATION_MINUTES = 240
 DEFAULT_DAY_START = datetime.time(8, 0)
 DEFAULT_DAY_END = datetime.time(17, 0)
 
-#: Never in a rotation, never an escalation recipient.
-SERVICE_USERS = frozenset({"Administrator", "Guest"})
+#: Never in a rotation, never an escalation recipient. The two service identities hold
+#: real roles on prod -- triton@ is in Sales Team (checked 2026-09-22) and is a Google
+#: Group, not a person -- so a role query alone would hand a Lead to a bot. They are
+#: literals here because the app keeps no registry of them
+#: (api/call_intelligence.TRITON_USER, mdm_integration/webhooks._SERVICE_USER).
+SERVICE_USERS = frozenset(
+	{"Administrator", "Guest", "triton@sapphirefountains.com", "mdm@sapphirefountains.com"}
+)
 
 #: DefaultValue key holding the last user the rotation picked.
 ROTATION_KEY = "lead_triage_last_owner"
@@ -203,18 +208,35 @@ def pick_owner(settings=None):
 
 
 def escalation_recipients(settings=None):
-	"""Who hears about a Lead nobody has answered.
+	"""Who hears about a Lead nobody has answered: ``lead_sla_escalate_to``, or nobody.
 
-	``lead_sla_escalate_to`` when it names an enabled user. Otherwise the users holding
-	BOTH ``Sales Manager`` and the triage role: ``Sales Manager`` alone is held by nine
-	people on this site, and a broadcast is how an escalation becomes wallpaper.
+	There is deliberately no role fallback. The obvious one -- users holding Sales
+	Manager, narrowed to the triage role -- was measured on prod (2026-09-22) and is the
+	entire sales team plus the Triton service account: every Sales Team member also
+	holds Sales Manager. An escalation that reaches everybody is wallpaper by the second
+	week. So the SLA cannot be switched on without a named person
+	(:func:`sla_settings_error`), and if that person is later disabled the sweep says so
+	in the Error Log rather than guessing.
 	"""
 	settings = settings or _settings()
 	named = (settings.get("lead_sla_escalate_to") or "").strip()
 	if named and _enabled_system_users({named}):
 		return [named]
-	role = (settings.get("lead_triage_role") or "").strip() or DEFAULT_TRIAGE_ROLE
-	return sorted(users_with_roles(ESCALATION_ROLE, role))
+	return []
+
+
+def sla_settings_error(settings):
+	"""Why these settings cannot enable the SLA, or None. Called by the Settings
+	controller's ``validate``, and only matters when ``lead_sla_enabled`` is ticked,
+	so a site that never turns the SLA on can never be blocked by it."""
+	if not cint(settings.get("lead_sla_enabled") or 0):
+		return None
+	if not escalation_recipients(settings):
+		return _(
+			"Set 'Escalate Unanswered Leads To' to an enabled user before enabling the "
+			"speed-to-lead SLA. Somebody has to hear when a Lead goes unanswered."
+		)
+	return None
 
 
 # ------------------------------------------------------------------ inbound
@@ -412,15 +434,16 @@ def sweep_first_response_sla():
 			action = sla_action(now, get_datetime(row.due), escalate_at, row.alert)
 			if not action:
 				continue
+			escalate_to = escalation_recipients(settings)
+			if not escalate_to:
+				_warn_no_escalation_recipient()
 			if action == "remind":
-				recipients = [row.lead_owner] if row.lead_owner else escalation_recipients(settings)
+				recipients = [row.lead_owner] if row.lead_owner else escalate_to
 				subject = _("Lead {0} is past its first-response time").format(row.lead_name or row.name)
 				_notify(recipients, subject, _lead_message(row, row.due), row.name)
 				_set_alert(row.name, ALERT_REMINDED)
 			else:
-				recipients = sorted(
-					set(escalation_recipients(settings)) | ({row.lead_owner} if row.lead_owner else set())
-				)
+				recipients = sorted(set(escalate_to) | ({row.lead_owner} if row.lead_owner else set()))
 				subject = _("Escalation: Lead {0} has had no response").format(row.lead_name or row.name)
 				_notify(recipients, subject, _lead_message(row, row.due, escalated=True), row.name)
 				_set_alert(row.name, ALERT_ESCALATED)
@@ -428,6 +451,19 @@ def sweep_first_response_sla():
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), f"Lead triage: SLA sweep failed on {row.name}")
 	return counts
+
+
+def _warn_no_escalation_recipient():
+	from erpnext_enhancements.utils.error_throttle import log_error_throttled
+
+	log_error_throttled(
+		"The speed-to-lead SLA is on but 'Escalate Unanswered Leads To' is blank or names a "
+		"disabled user, so escalations reach only the Lead's owner. Set it in ERPNext "
+		"Enhancements Settings -> Lead Triage & Speed to Lead.",
+		"Lead triage: no escalation recipient",
+		window=86400,
+		limit=1,
+	)
 
 
 def _set_alert(lead, value):

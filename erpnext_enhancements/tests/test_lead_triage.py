@@ -36,6 +36,7 @@ OURS = (
 	"erpnext_enhancements.crm_enhancements.lead_triage",
 	"erpnext_enhancements.crm_enhancements.attribution",
 	"erpnext_enhancements.patches.backfill_lead_triage_settings_defaults",
+	"erpnext_enhancements.utils.error_throttle",
 )
 STATE = {}
 lead_triage = None
@@ -221,6 +222,9 @@ PEOPLE = {
 	"dan@example.com": {"Sales Manager"},  # a manager outside the sales team
 	"eve@example.com": {"Sales User"},  # the role nearly everybody holds
 	"Administrator": {"Sales Team", "Sales Manager"},
+	# On prod the Triton service account holds Sales Team AND Sales Manager, and is a
+	# Google Group rather than a person. It must never own a Lead or be escalated to.
+	"triton@sapphirefountains.com": {"Sales Team", "Sales Manager"},
 }
 
 
@@ -235,6 +239,7 @@ def _reset(**settings):
 				"cat@example.com",
 				"dan@example.com",
 				"eve@example.com",
+				"triton@sapphirefountains.com",
 			},
 			"roles": PEOPLE,
 			"defaults": {},
@@ -340,15 +345,38 @@ class OwnerTests(unittest.TestCase):
 		_reset(lead_triage_role="Nonexistent Role")
 		self.assertEqual(lead_triage.pick_owner(), (None, None))
 
-	def test_escalation_recipients(self):
+	def test_escalation_needs_a_named_person(self):
+		# No role fallback: on prod, Sales Manager AND Sales Team is the whole team.
 		_reset()
-		self.assertEqual(
-			lead_triage.escalation_recipients(),
-			["ann@example.com"],
-			"Sales Manager AND Sales Team, never Administrator",
-		)
+		self.assertEqual(lead_triage.escalation_recipients(), [])
 		_reset(lead_sla_escalate_to="dan@example.com")
 		self.assertEqual(lead_triage.escalation_recipients(), ["dan@example.com"])
+		_reset(lead_sla_escalate_to="gone@example.com")
+		self.assertEqual(lead_triage.escalation_recipients(), [], "a disabled user is nobody")
+		_reset(lead_sla_escalate_to="triton@sapphirefountains.com")
+		self.assertEqual(lead_triage.escalation_recipients(), [], "a service account is nobody")
+
+	def test_the_sla_cannot_be_enabled_without_one(self):
+		_reset()
+		self.assertIsNone(lead_triage.sla_settings_error(FakeSettings()), "off never blocks a save")
+		self.assertIsNotNone(lead_triage.sla_settings_error(FakeSettings(lead_sla_enabled=1)))
+		self.assertIsNone(
+			lead_triage.sla_settings_error(
+				FakeSettings(lead_sla_enabled=1, lead_sla_escalate_to="dan@example.com")
+			)
+		)
+
+	def test_the_controller_calls_the_rule(self):
+		source = (
+			REPO_ROOT
+			/ "erpnext_enhancements"
+			/ "enhancements_core"
+			/ "doctype"
+			/ "erpnext_enhancements_settings"
+			/ "erpnext_enhancements_settings.py"
+		).read_text(encoding="utf-8")
+		self.assertIn("self.validate_lead_sla()", source)
+		self.assertIn("sla_settings_error(self)", source)
 
 
 class InboundTests(unittest.TestCase):
@@ -465,7 +493,7 @@ class SweepTests(unittest.TestCase):
 		self.assertIn(("Lead", "CRM-LEAD-1", "custom_sla_alert", "Reminded"), STATE["set_values"])
 
 	def test_escalation_reaches_the_manager_and_the_owner(self):
-		_reset(lead_sla_enabled=1)
+		_reset(lead_sla_enabled=1, lead_sla_escalate_to="ann@example.com")
 		STATE["now"] = D(2026, 9, 22, 13, 0)  # 240 working minutes after 09:00
 		STATE["sweep_rows"] = [self.row(alert="Reminded")]
 		self.assertEqual(lead_triage.sweep_first_response_sla(), {"remind": 0, "escalate": 1})
@@ -475,11 +503,19 @@ class SweepTests(unittest.TestCase):
 		self.assertIn(("Lead", "CRM-LEAD-1", "custom_sla_alert", "Escalated"), STATE["set_values"])
 
 	def test_an_ownerless_lead_is_reminded_to_the_escalation_list(self):
-		_reset(lead_sla_enabled=1)
+		_reset(lead_sla_enabled=1, lead_sla_escalate_to="ann@example.com")
 		STATE["now"] = D(2026, 9, 22, 10, 5)
 		STATE["sweep_rows"] = [self.row(lead_owner=None)]
 		lead_triage.sweep_first_response_sla()
 		self.assertEqual([e["recipients"] for e in STATE["emails"]], [["ann@example.com"]])
+
+	def test_escalation_with_nobody_named_tells_the_owner_and_the_error_log(self):
+		_reset(lead_sla_enabled=1)
+		STATE["now"] = D(2026, 9, 22, 13, 0)
+		STATE["sweep_rows"] = [self.row(alert="Reminded")]
+		lead_triage.sweep_first_response_sla()
+		self.assertEqual([e["recipients"] for e in STATE["emails"]], [["cat@example.com"]])
+		self.assertTrue(STATE["errors"], "a missing escalation recipient must be said out loud")
 
 	def test_not_yet_due_is_left_alone(self):
 		_reset(lead_sla_enabled=1)

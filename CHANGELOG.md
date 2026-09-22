@@ -24,7 +24,9 @@ escalation at 4.
   - **Owner:** `web_lead_default_owner`, or, when that is blank or disabled, round-robin
     across enabled users holding **Triage Rotation Role** (default `Sales Team`). Measured on
     prod, `Sales User` is held by 16 of 19 enabled users, so as a pool it would mean
-    everybody; `Sales Team` (9) is the role this site actually gates on.
+    everybody. `Sales Team` resolves to 7 people. Service accounts are excluded:
+    `triton@sapphirefountains.com` holds Sales Team on prod and is a Google Group, so a plain
+    role query would have handed Leads to a bot.
   - **ToDo:** the owner gets one (High, dated to the deadline) and a notification. Both are
     made directly, because Frappe's `assign_to.add` words the notification with the session
     user, and a website submission arrives as Guest ("Guest assigned a new task…").
@@ -39,9 +41,12 @@ escalation at 4.
     (`custom_sla_alert`). A Lead that reaches its escalation time without a reminder (an
     outage, or the SLA switched on over a backlog) escalates once, rather than reminding and
     then escalating ten minutes apart.
-  - **Escalation recipients:** `lead_sla_escalate_to`, or else users holding both
-    `Sales Manager` and the triage role. `Sales Manager` alone is 9 people, which would make
-    every escalation a broadcast.
+  - **Escalation goes to one named person, `lead_sla_escalate_to`, with no role fallback.**
+    The fallback I first wrote (Sales Manager ∩ Sales Team) resolved on prod to the entire
+    sales team plus Triton, because every Sales Team member also holds Sales Manager.
+    `validate` on the Settings refuses to enable the SLA without a named, enabled escalation
+    user, and only when the SLA box is ticked, so it can never block an unrelated save. If
+    that user is later disabled, the owner still hears, and the Error Log gets one row a day.
   - **Scope:** only inbound Leads carry a deadline. Today that means the website ingress; a
     Lead typed in after a phone call has already been answered.
 - **`utils/business_hours.py`**, stdlib only: working time in minutes (Mon–Fri, business hours,
@@ -63,10 +68,11 @@ escalation at 4.
   Lead → Opportunity qualification path and exactly what happens to attribution on
   conversion, the fountain-move exception, ownership, the SLA, the triage queue, turning it on,
   and measuring it.
-- `tests/test_lead_triage.py` (37 tests, own CI step):
+- `tests/test_lead_triage.py` (40 tests, own CI step):
   - business-hours edges: Friday rollover, holidays, closing time, a zero-length day, an
     all-holiday calendar;
-  - the rotation;
+  - the rotation, with Triton never picked;
+  - escalation needing a named person, and the Settings refusing the SLA without one;
   - the remind/escalate matrix;
   - the response rule, and that the dashboard no longer keeps its own copy;
   - one ToDo and no "Guest" notification;

@@ -1148,7 +1148,7 @@
    "options": "Role"
   },
   {
-   "description": "Who hears when an inbound Lead has had no response by the escalation time. Blank: every enabled user holding both Sales Manager and the triage role above.",
+   "description": "The one person who hears when an inbound Lead has had no response by the escalation time (the owner is told too). Required to enable the SLA. There is no role fallback: on this site every Sales Team member also holds Sales Manager, so a role would page the whole team.",
    "fieldname": "lead_sla_escalate_to",
    "fieldtype": "Link",
    "label": "Escalate Unanswered Leads To",

@@ -74,11 +74,12 @@ A website Lead always gets an owner the moment it arrives:
 1. **`web_lead_default_owner`** (ERPNext Enhancements Settings → Lead Attribution) — the one
    named person who triages website Leads. Set this.
 2. If it is blank, or that user is disabled: **round-robin** across enabled users holding
-   **Triage Rotation Role** (default `Sales Team`, which 9 users hold). Not `Sales User`: 16
-   of 19 users hold that, so as a pool it means everybody. The rotation remembers who was
-   last (`DefaultValue` key `lead_triage_last_owner`).
+   **Triage Rotation Role** (default `Sales Team`: 7 people on prod). Not `Sales User`: 16
+   of 19 users hold that, so as a pool it means everybody. Service accounts are never in the
+   pool: `triton@` holds Sales Team on prod and is a Google Group, not a person. The rotation
+   remembers who was last (`DefaultValue` key `lead_triage_last_owner`).
 3. If nobody qualifies, the Lead arrives unowned. It still shows in the Speed-to-Lead widget
-   and in Attribution Gaps, and the SLA reminder goes to the escalation list.
+   and in Attribution Gaps, and the SLA reminder goes to the escalation user.
 
 The owner gets a **ToDo** ("First response to new Lead …", priority High, dated to the
 deadline) and a notification, emailed per their own Notification Settings. The ToDo is made
@@ -97,7 +98,7 @@ assigned you…" — website submissions arrive as Guest.
 | First Response Within | 60 | Working minutes from arrival to the owner's reminder |
 | Escalate After | 240 | Working minutes from arrival to the escalation |
 | Business Day Starts / Ends | 08:00 / 17:00 | Site time (America/Denver) |
-| Escalate Unanswered Leads To | *blank* | A named user. Blank = users holding **both** `Sales Manager` and the triage role |
+| Escalate Unanswered Leads To | *blank* | **Required to enable the SLA.** One named person. No role fallback: every Sales Team member here also holds Sales Manager, so a role would page the whole team |
 | Triage Rotation Role | Sales Team | Backup owner pool (above) |
 
 **Working time** is Monday–Friday between those hours, skipping dates on the company's
@@ -117,8 +118,9 @@ constant (`lead_triage.RESPONSE_EXISTS_SQL`), so the widget and the alert cannot
 
 - At the deadline, the **owner** gets an in-app alert and an email. The Lead's **SLA Alert**
   becomes `Reminded`.
-- At the escalation time, the **escalation recipients and the owner** are told, and SLA Alert
-  becomes `Escalated`. Nothing further happens after that.
+- At the escalation time, the **escalation user and the owner** are told, and SLA Alert
+  becomes `Escalated`. Nothing further happens after that. If the escalation user has since
+  been disabled, only the owner hears, and the Error Log gets one row a day saying so.
 - Each fires at most once per Lead. A Lead that was not reminded before the escalation time
   (an outage, or the SLA switched on over a backlog) is escalated once, not reminded and then
   escalated ten minutes apart.
@@ -151,6 +153,7 @@ substitute for a person who owns the queue.
 In this order, after the website ingress is live (see the attribution runbook):
 
 1. Set **Website Lead Owner** (`web_lead_default_owner`) and **Escalate Unanswered Leads To**.
+   The Settings page refuses to enable the SLA without the second.
 2. Fix the Holiday List (above).
 3. Tick **Enable Speed-to-Lead SLA**.
 4. Submit a test enquiry through the website. The Lead should show **First Response Due**, and
