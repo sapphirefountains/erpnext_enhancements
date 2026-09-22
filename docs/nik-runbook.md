@@ -199,14 +199,15 @@ since 2026-06-26 — GA4 succeeded 40/40 days, GSC failed 40/40.** Organic click
 have therefore read **zero for the entire history** of `Marketing Web Snapshot`, and right now that
 reads as a real business fact. It is not one.
 
-Two candidate causes, possibly both: the GA4/GSC service account is not a user on the Search
-Console property, or the property is a `sc-domain:` property being requested as a URL prefix (or
-vice versa).
+Two causes, possibly both: the GA4/GSC service account is not a user on the Search Console
+property, and the setting holds the bare `sapphirefountains.com`, which Google reads as the one
+URL prefix `http://sapphirefountains.com/`. The second is fixed in code since v1.505.0 — the pull
+tries `sc-domain:` and every URL prefix and keeps whichever answers — so what is left is yours:
 
 1. Find out **who administers the Search Console property** — this is the open question.
-2. Add the service account as a user on the property.
-3. Confirm the property type matches what `api/analytics.py` requests.
-4. Backfill the affected range.
+2. Add the service account as a user on the property (*Restricted* is enough).
+3. Run the backfill — the commands are in
+   [Fixing the GSC 403](marketing-spend-runbook.md#fixing-the-gsc-403).
 
 ### 1.6 Wave two — after Phase 2 has something to demonstrate
 

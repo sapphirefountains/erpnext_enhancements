@@ -181,6 +181,14 @@ Since v1.254.0 a 403 here returns a message naming this fix rather than a
 traceback, and the log row is throttled — so if it is still wrong you will see
 one clear row per hour, not forty lines per scheduled run.
 
+Since v1.505.0 the scheme caveat above no longer needs you: the fetch tries
+`sc-domain:` and every `https://`/`http://` prefix of the stored domain, keeps the
+first one Google accepts, and a refusal names every form it tried and the service
+account to add. Granting the account on **any** form of the property is enough.
+Afterwards, repair the history — every refused night stored organic figures of
+zero — with `backfill_gsc_snapshots`
+([Fixing the GSC 403](marketing-spend-runbook.md#fixing-the-gsc-403)).
+
 ---
 
 ## 3. `Finance Calendar fetch failed`

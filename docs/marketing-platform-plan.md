@@ -238,9 +238,11 @@ the funnel metrics, not a nice-to-have:
 
 ### 1.4 Fix the Search Console 403
 
-GSC has failed 40/40 days. It is a Google-side grant, not a code bug: the service account is
-not a user on the property, and/or a `sc-domain:` property is being requested as a URL prefix.
-Add the SA to the property, confirm the property type matches the request, and backfill.
+GSC has failed 40/40 days. Part request, part grant: the setting holds the bare
+`sapphirefountains.com`, which Google reads as the one URL prefix `http://sapphirefountains.com/`
+— fixed in v1.505.0, which tries every property form — and the service account is not a user
+on the property, which is Google-side. Add the SA to the property, then run
+`backfill_gsc_snapshots` ([runbook](marketing-spend-runbook.md#fixing-the-gsc-403)).
 
 ### 1.5 Ad spend: campaign × day, auto-pulled
 

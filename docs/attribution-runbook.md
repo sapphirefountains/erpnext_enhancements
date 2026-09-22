@@ -354,6 +354,10 @@ Ingress failures land in the Error Log under `Web Lead ingress: insert failed`.
 - **Google Search Console has never worked.** `Marketing Web Snapshot` has pulled nightly
   since 2026-06-26: GA4 succeeded 40/40 days, GSC failed 40/40 with `HTTP 403` on
   `searchconsole.googleapis.com`. Organic clicks and impressions have been 0 for the entire
-  history of the dataset. This is a Google-side grant (the service account is not on the
-  Search Console property, and/or it is a `sc-domain:` property being requested as a URL
-  prefix), not a code bug — it cannot be fixed from this repository.
+  history of the dataset. Half of it was the request: the setting holds the bare
+  `sapphirefountains.com`, which Google reads as the one URL prefix
+  `http://sapphirefountains.com/`, and v1.505.0 now tries every property form and keeps the
+  one that answers. The other half is a Google-side grant (the service account is not a user
+  on the property) that cannot be fixed from this repository. Once it is granted,
+  `backfill_gsc_snapshots` repairs the history — see
+  [Fixing the GSC 403](marketing-spend-runbook.md#fixing-the-gsc-403).

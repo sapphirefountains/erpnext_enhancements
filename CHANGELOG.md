@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.505.0] - 2026-09-22
+
+**Search Console: ask for the property in every form it could exist in, and a backfill for the
+86 nights that stored zero.** TASK-2026-01474 (Marketing P1, item 8). GSC has returned HTTP 403
+on every nightly pull since the dataset began on 2026-06-26, so organic clicks and impressions
+have read 0 for its whole history. The task called that a Google-side grant, not code. It is
+both.
+
+### Fixed
+
+- **The request named one narrow property, and possibly not the real one.** On prod,
+  `GA4 Settings → GSC Property URL` holds the bare `sapphirefountains.com`, passed straight
+  through as `siteUrl`. Search Console names a property only as `sc-domain:example.com` or a
+  full URL prefix. Google reads a bare string as the single prefix `http://sapphirefountains.com/`,
+  and every 403 in the Error Log names exactly that. If the site is registered as a Domain
+  property or under `https://`, as most are now, the pull was asking for a property that does
+  not exist. Google answers that with the same 403 as a missing grant, so the two causes could
+  not be told apart. Nobody knows which form the property is (decided 2026-09-22: support
+  both), so `get_gsc_data` now:
+  - tries `sc-domain:` first, then the `https://` and `http://` prefixes, `www` first. The form
+    requested all along stays in the list, so the change cannot make a working grant stop
+    working;
+  - moves to the next form only on 401/403/404. Anything else still raises;
+  - caches the accepted form for a day, so the nightly pull does not spend refused requests
+    every run;
+  - returns `property`. `snapshot_marketing_web` records it in *Source Status*
+    (`GA4 ✓ · GSC ✓ (sc-domain:…)`), so it is visible which one answered.
+- A total refusal now names every form tried, each with its status, and the service-account
+  address to add. It is still throttled to one log row an hour.
+- The query and page breakdowns run in parallel against the form that answered, as before.
+
+### Added
+
+- **`api.analytics.backfill_gsc_snapshots(since=None, dry_run=False)`**: a bench command, not
+  whitelisted. Search Console keeps 16 months, so the gap is recoverable. The command:
+  - runs **one** query for daily clicks and impressions across the whole gap, then computes
+    each night's rolling 30-day sum locally over the same `today − 30 … today` window the
+    live pull uses;
+  - touches only snapshots with `gsc_ok = 0`, so a successful night is never overwritten and
+    a second run is harmless;
+  - marks each repaired row `GSC ✓ (backfilled)` and removes its GSC `pull_error`, but keeps
+    a GA4 error from the same night;
+  - supports `dry_run` to show what it would write. Until the grant is in, it returns the
+    same refusal and writes nothing.
+
+  Measured on prod: 86 snapshots, 2026-06-26 to 2026-09-22, all within Search Console's
+  retention.
+
+  A backfilled night will read slightly *higher* than a live pull would have. Search Console
+  lags two to three days, so the last days of a live window were always partial, and the
+  backfill sees them complete.
+- `utils/search_console.py` (standard library only): `site_candidates`, `window_for` and
+  `rolling_sums`.
+- `tests/test_search_console.py`, 13 tests in their own CI step. `api/analytics.py` imports
+  Google's client libraries at module level and CI installs none of them, so the suite stubs
+  them along with frappe and removes both afterwards.
+
+### Docs
+
+- The Search Console sections of `marketing-spend-runbook.md`, `error-log-runbook.md`,
+  `attribution-runbook.md`, `nik-runbook.md` and `marketing-platform-plan.md` now split the
+  cause into the request (fixed here) and the grant (still to do), with the grant steps and
+  the backfill commands. Granting the service account on any form of the property is now
+  enough.
+
 ## [1.504.0] - 2026-09-22
 
 **Ad Spend ROAS: what each campaign's spend bought, in booked revenue.** TASK-2026-01477

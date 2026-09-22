@@ -117,11 +117,45 @@ cannot be filtered into a folder nobody reads.
 
 ### Fixing the GSC 403
 
-Not fixable from this repo. The service account used by `GA4 Settings` needs
-access to the Search Console property, and the property form must match — a
-`sc-domain:` property cannot be queried as a URL prefix. Someone with Google Cloud
-console and Search Console admin needs ten minutes. Until then organic clicks and
-impressions read zero, and that zero is not real.
+Two causes, and since v1.505.0 only one of them is left.
+
+**The request (fixed in code, v1.505.0).** `GA4 Settings → GSC Property URL` on prod is
+the bare `sapphirefountains.com`. Google reads a bare string as the single URL-prefix
+property `http://sapphirefountains.com/` — every nightly 403 names exactly that — so if the
+site was registered as a Domain property or under `https://`, the pull was asking for a
+property that does not exist, and Google answers that with the same 403 as a missing grant.
+The pull now tries every form in turn (`sc-domain:` first, then the `https://` and `http://`
+prefixes, `www` first), keeps the first one Google accepts, and records it in the
+snapshot's **Source Status**. Nobody needs to know which form the property is.
+
+**The grant (Google-side, not code).** The GA4 service account must be a user on the
+property. Someone who owns the property in Search Console:
+
+1. Get the address to grant — `bench --site erp.sapphirefountains.com console`, then the
+   snippet in [the error-log runbook §2](error-log-runbook.md#2-gsc-api-error).
+2. Search Console → the property → *Settings* → *Users and permissions* → *Add user* →
+   that address, **Restricted**. Any one of the property's forms is enough.
+3. Check it answers — the result carries `property`, the form that worked:
+
+   ```bash
+   bench --site erp.sapphirefountains.com execute erpnext_enhancements.api.analytics.get_gsc_data
+   ```
+
+4. **Backfill.** Every night from 2026-06-26 recorded organic clicks and impressions of
+   zero, and that zero is not real — 86 snapshots as of 2026-09-22. Search Console keeps
+   16 months, so it is all recoverable. Look first, then write:
+
+   ```bash
+   bench --site erp.sapphirefountains.com execute erpnext_enhancements.api.analytics.backfill_gsc_snapshots --kwargs "{'dry_run': 1}"
+   bench --site erp.sapphirefountains.com execute erpnext_enhancements.api.analytics.backfill_gsc_snapshots
+   ```
+
+   One Search Console query covers the whole gap; each night's figure is the same rolling
+   30-day window the live pull uses. It touches **only** snapshots with `gsc_ok = 0`, so a
+   night that succeeded is never overwritten and a second run finds nothing to do. Each
+   repaired row reads `GSC ✓ (backfilled)` and loses its GSC `pull_error`; a GA4 error on
+   the same night is kept. `--kwargs "{'since': '2026-08-01'}"` limits the range. Until
+   the grant is in, it reports the same refusal the nightly pull does and writes nothing.
 
 ---
 
