@@ -20,7 +20,8 @@ class RunDeviceScript(BaseTool):
 		self.name = "run_device_script"
 		self.description = (
 			"Run a script on a managed computer (laptop/desktop, via Action1). "
-			"Provide the Managed Device name and the 'script' to run. This WRITES, "
+			"Provide the Managed Device name and the 'script' to run: PowerShell on "
+			"Windows, Bash on Mac/Linux. This WRITES, "
 			"runs ARBITRARY code on the endpoint, and is HIGH risk — it runs nothing "
 			"until a human confirms in ERPNext."
 		)

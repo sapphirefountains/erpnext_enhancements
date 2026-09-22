@@ -24,11 +24,13 @@ class RemoteWipeDevice(BaseTool):
 		self.name = "remote_wipe_device"
 		self.description = (
 			"Remotely wipe a managed mobile device (phone/tablet, via Miradore). "
-			"Provide the Managed Device name and a 'mode': 'selective' (remove "
-			"corporate data only — the default and safest) or 'full' (factory reset). "
-			"BYOD/personally-owned devices are ALWAYS selective regardless of mode. "
-			"This WRITES, is IRREVERSIBLE, and is gated: it wipes nothing until a "
-			"human confirms in ERPNext."
+			"Provide the Managed Device name and a 'mode': 'selective' (the default "
+			"and safest: removes company apps/data and unenrolls the device from "
+			"Miradore, keeping personal data; refused on a fully managed Android or a "
+			"supervised iPad, where it would factory-reset) or 'full' (factory reset; "
+			"refused until the device is confirmed). BYOD/personally-owned devices "
+			"are ALWAYS selective. This WRITES, is IRREVERSIBLE, and is gated: it "
+			"wipes nothing until a human confirms in ERPNext."
 		)
 		self.category = "Device Management"
 		self.source_app = "erpnext_enhancements"
@@ -42,7 +44,7 @@ class RemoteWipeDevice(BaseTool):
 					"type": "string",
 					"enum": list(_MODES),
 					"default": "selective",
-					"description": "'selective' (corporate data only) or 'full' (factory reset). BYOD is forced selective.",
+					"description": "'selective' (company data only; unenrolls) or 'full' (factory reset). BYOD is forced selective.",
 				},
 			},
 			"required": ["device"],

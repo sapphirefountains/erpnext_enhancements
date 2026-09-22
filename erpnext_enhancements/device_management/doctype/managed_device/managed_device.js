@@ -59,9 +59,38 @@ frappe.ui.form.on('Managed Device', {
 			frm.add_custom_button(__('Attest Security'), () => attest(frm)).addClass('btn-primary');
 		}
 
+		// A device the MDM sync created stays Discovered until a Device Manager confirms
+		// it and says who owns it. Ownership defaults to Company, so until then the server
+		// refuses a full wipe: the BYOD guard is only as good as that field.
+		if (frm.doc.mdm_link_state === 'Discovered') {
+			frm.add_custom_button(__('Confirm Discovered Device'), () =>
+				frappe.prompt(
+					[{
+						fieldname: 'ownership',
+						label: __('Who owns this device?'),
+						fieldtype: 'Select',
+						options: 'Company\nBYOD',
+						default: frm.doc.ownership || 'Company',
+						reqd: 1,
+						description: __('BYOD = personally owned. A BYOD device can never be fully wiped.'),
+					}],
+					(v) =>
+						frappe
+							.call({
+								method: 'erpnext_enhancements.mdm_integration.api.confirm_device',
+								args: { device: frm.doc.name, ownership: v.ownership },
+								freeze: true,
+							})
+							.then(() => frm.reload_doc()),
+					__('Confirm Discovered Device'),
+					__('Confirm')
+				)
+			).addClass('btn-primary');
+		}
+
 		// MDM remote actions (Phase 2) — shown only when the device is linked to a
 		// provider. Each routes through mdm_integration.api.remote_action; the server
-		// enforces capabilities + the BYOD wipe guard.
+		// enforces capabilities, the BYOD wipe guard and the provider's own guards.
 		if (frm.doc.mdm_provider && frm.doc.mdm_provider_device_id) {
 			const remote = (label, act, opts) => {
 				opts = opts || {};
@@ -73,8 +102,13 @@ frappe.ui.form.on('Managed Device', {
 								args: Object.assign({ device: frm.doc.name, action: act }, extra || {}),
 								freeze: true,
 							})
-							.then(() => {
-								frappe.show_alert({ message: __('Action sent.'), indicator: 'green' });
+							.then((r) => {
+								// A Miradore wipe reports what it actually did, which depends on enrollment.
+								const effect = r.message && r.message.result && r.message.result.effect;
+								frappe.show_alert(
+									{ message: effect ? __('Action sent. {0}', [effect]) : __('Action sent.'), indicator: 'green' },
+									effect ? 15 : 5
+								);
 								frm.reload_doc();
 							});
 					if (opts.prompt) opts.prompt(run);
@@ -87,10 +121,21 @@ frappe.ui.form.on('Managed Device', {
 				remote(__('Remote Wipe'), 'wipe', {
 					prompt: (run) =>
 						frappe.prompt(
-							[{ fieldname: 'mode', label: __('Wipe mode'), fieldtype: 'Select', options: 'selective\nfull', default: 'selective', reqd: 1 }],
+							[{
+								fieldname: 'mode',
+								label: __('Wipe mode'),
+								fieldtype: 'Select',
+								// The server never fully wipes a BYOD device; don't offer it.
+								options: frm.doc.ownership === 'BYOD' ? 'selective' : 'selective\nfull',
+								default: 'selective',
+								reqd: 1,
+								description: __('Selective = Miradore Retire: removes company apps, data and profiles and unenrolls the device; personal data stays. Refused where Retire would factory-reset (fully managed Android, supervised iPad). Full = Miradore Wipe: a factory reset, except on a work-profile Android, where it removes the work profile.'),
+							}],
 							(v) =>
 								frappe.confirm(
-									__('Wipe {0} ({1})? BYOD devices are always selective.', [frm.doc.device_name || frm.doc.name, v.mode]),
+									v.mode === 'selective'
+										? __('Retire {0} from Miradore? Company data is removed and the device is unenrolled; it can no longer be locked or located. BYOD devices are always selective.', [frm.doc.device_name || frm.doc.name])
+										: __('Factory-reset {0}? This erases the device and cannot be undone.', [frm.doc.device_name || frm.doc.name]),
 									() => run({ mode: v.mode })
 								),
 							__('Remote Wipe'),

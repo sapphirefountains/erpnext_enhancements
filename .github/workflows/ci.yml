@@ -1820,6 +1820,16 @@ jobs:
       # is gone. Own step: it stubs frappe, twilio and requests in setUpModule.
       - name: Webhook auth, MDM + telephony (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_webhook_auth -v
+      # The requests the MDM provider clients actually send, checked against the vendors'
+      # specs (v1.506.0). Both Live adapters had been written against guessed endpoints:
+      # Miradore sync called a list endpoint API v2 does not have (12,803 failed syncs), and
+      # every remote action for both providers called a path that does not exist. Pins
+      # Miradore v1 XML reads and v2 actions, selective wipe = Retire and never Wipe, refusal
+      # where Retire would factory-reset, the API key never reaching an error message,
+      # Action1 automations aimed at exactly one endpoint, and the executor refusing a full
+      # wipe of an unconfirmed Discovered device. Own step: stubs frappe and requests.
+      - name: MDM provider clients vs vendor specs (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_mdm_provider_clients -v
       # Lead triage + speed-to-lead SLA (TASK-2026-01473, v1.502.0). The working-time
       # arithmetic every deadline rests on (a Friday 16:30 enquiry is due Monday 08:30,
       # not overnight), the Sales Team rotation (not Sales User, which nearly everybody

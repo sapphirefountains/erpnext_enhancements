@@ -19,9 +19,11 @@ class DeployDevicePatch(BaseTool):
 		self.name = "deploy_device_patch"
 		self.description = (
 			"Deploy a specific update/patch to a managed computer (laptop/desktop, "
-			"via Action1). Provide the Managed Device name and the 'patch' identifier "
-			"(the Action1 update id). This WRITES and is gated: it deploys nothing "
-			"until a human confirms in ERPNext."
+			"via Action1). Provide the Managed Device name and the 'patch': the "
+			"Action1 update package ID, which must be in that computer's missing "
+			"updates; it deploys the version Action1 offers, without an automatic "
+			"restart. This WRITES and is gated: it deploys nothing until a human "
+			"confirms in ERPNext."
 		)
 		self.category = "Device Management"
 		self.source_app = "erpnext_enhancements"
@@ -31,7 +33,10 @@ class DeployDevicePatch(BaseTool):
 			"type": "object",
 			"properties": {
 				"device": {"type": "string", "description": "Managed Device name (a computer)."},
-				"patch": {"type": "string", "description": "The update/patch identifier to deploy."},
+				"patch": {
+					"type": "string",
+					"description": "The Action1 update package ID (from the computer's missing updates).",
+				},
 			},
 			"required": ["device", "patch"],
 		}

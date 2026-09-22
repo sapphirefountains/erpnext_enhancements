@@ -4,6 +4,11 @@
 * ``trigger_sync`` — run one provider's device sync now and return the counters.
 * ``remote_action`` — the manager-UI path into ``actions.execute_device_action``
   (the Managed Device form button; the AI-assistant path is the gated tools).
+* ``confirm_device`` — a Device Manager confirms a Discovered device and says
+  who owns it. The only way a Discovered device becomes Managed.
+
+``test_connection`` and ``trigger_sync`` are the MDM Settings form's buttons
+(``doctype/mdm_settings/mdm_settings.js``).
 """
 
 import frappe
@@ -65,3 +70,26 @@ def remote_action(device, action, mode=None, script=None, patch=None):
 	return execute_device_action(
 		device, action, mode=mode, source="UI", script=script, patch=patch, requested_by=frappe.session.user
 	)
+
+
+@frappe.whitelist(methods=["POST"])
+def confirm_device(device, ownership):
+	"""Confirm a Discovered device: a person has checked it is ours to manage, and
+	who owns it.
+
+	The sync creates provider devices it cannot match as Discovered, with
+	ownership defaulting to Company. Until confirmed, a full wipe is refused
+	(``actions.execute_device_action``), because the BYOD guard is only as good as
+	that ownership field. Recorded on the device's timeline.
+	"""
+	_check_manager()
+	if ownership not in ("Company", "BYOD"):
+		frappe.throw(_("Ownership must be Company or BYOD."), frappe.ValidationError)
+	doc = frappe.get_doc("Managed Device", device)
+	if doc.mdm_link_state != "Discovered":
+		frappe.throw(_("{0} is not awaiting confirmation.").format(doc.name), frappe.ValidationError)
+	doc.ownership = ownership
+	doc.mdm_link_state = "Managed"
+	doc.save()
+	doc.add_comment("Info", _("Confirmed as a {0} device by {1}.").format(ownership, frappe.session.user))
+	return {"device": doc.name, "ownership": doc.ownership, "mdm_link_state": doc.mdm_link_state}

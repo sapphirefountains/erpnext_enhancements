@@ -7,6 +7,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.506.0] - 2026-09-22
+
+**The MDM provider clients now call endpoints that exist.** Both Live adapters had been
+scaffolded against guessed endpoints, and none of the guesses matched either vendor:
+
+- **Miradore sync** called `GET /api/v2/devices`. Miradore API v2 has no endpoint for listing
+  or reading devices, so Miradore failed 12,803 times from 2026-06-15 and never synced once.
+- **Every remote action, for both providers,** called a path that does not exist:
+  - Miradore lock, wipe and locate;
+  - Action1 reboot, run-script and deploy-patch.
+
+  The Device Action Log is empty, so nobody had tried one yet.
+
+This release rewrites both clients from the vendors' own specs:
+
+- Miradore API v1.19 (PDF) and `online.miradore.com/swagger/v2/swagger.json`.
+- Action1's OpenAPI 3.1 document behind `app.action1.com/apidocs`, and its PSAction1 client.
+- A real Action1 payload archived on production.
+
+`mdm_integration/README.md` now has a *Provider API reference*.
+
+### Fixed
+
+- **Miradore reads through API v1 and acts through API v2.**
+  - Devices are listed with `GET {host}/{site}/API/Device?auth=&select=&options=rows=100,page=N`,
+    which returns XML. Miradore's own v2 docs say device IDs come from v1.
+  - Actions use v2: `POST /Device/{id}/Lock`, `GET /Device/{id}/Location`, and for a wipe either
+    `POST /Device/{id}/Wipe` or `DELETE /Device/{id}`.
+  - The v1 key travels in the URL. So every error is redacted, and transport errors are re-raised
+    `from None`: a `requests` exception's text contains the full URL, and the sync stores error
+    text on the Sync Log and in the Error Log.
+  - The site name and device ID are validated before either reaches a URL.
+- **A selective wipe can no longer become a factory reset.** Miradore's Wipe has no selective
+  option (`WipeConfiguration` has `additionalProperties: false`), and what it does depends on
+  enrollment:
+  - a fully managed Android phone is factory-reset;
+  - a work-profile Android phone loses only its work profile;
+  - an iPhone is erased.
+
+  The old client posted `{"selective": true}` to a Wipe path. Correcting only the path would
+  have been refused at best, and at worst a factory reset of a personal phone. Selective is now
+  Miradore's **Retire**: it removes managed apps, data and profiles and unenrolls the device.
+  Retire itself factory-resets fully managed Android phones and Shared iPads. So
+  `routing.miradore_selective_wipe_refusal` reads `Client.ManagementType` fresh from Miradore at
+  wipe time, and refuses anything other than a work-profile Android, an unsupervised iOS device
+  or a supervised non-iPad, failing closed. The Device Action Log records what Miradore actually
+  did (`effect`).
+- **Action1 actions run as automations.**
+  - They go through `POST /automations/instances/{org}` with the `reboot`, `run_script` or
+    `deploy_update` template, aimed at exactly one endpoint.
+  - Endpoint IDs must be UUIDs. `{"id": "all"}` is Action1's every-endpoint group, so it can
+    never be sent.
+  - **Reboot** warns the user and allows a 10-minute grace period.
+  - **Run script** uses PowerShell on Windows and Bash on Mac/Linux.
+  - **Deploy patch** takes an Action1 package ID. It is refused unless the package is in the
+    endpoint's own `/missing-updates`, and deploys the version Action1 offers there, with no
+    automatic reboot.
+  - Retry windows: 60 minutes for reboot and scripts, 1440 for patches.
+- **Action1 sync reads the fields Action1 actually returns:** `serial`, `OS`, `name`, `MAC`,
+  `user`. The old normalizer read `os_version`/`model`, so the four laptops on prod synced with
+  no OS version and names like "Discovered 5PKJNB4". The list is now paged (`from`/`limit`).
+- **A Discovered device stays Discovered until a person confirms it.**
+  - The next hourly sync used to promote every Discovered device to Managed on its own. All four
+    devices on prod were promoted that way, and nobody ever confirmed one.
+  - That matters because a discovered device's ownership defaults to Company, and the BYOD guard
+    trusts that field. Once Miradore phones started syncing, a personal phone would have been
+    eligible for a full wipe within the hour.
+  - `mapping` now keeps the Discovered state. `sync.flag_unmanaged` only flags Managed devices; a
+    Discovered one that went Unmanaged would have come back Managed.
+  - The executor refuses a **full** wipe of a Discovered device.
+
+### Added
+
+- **Confirm Discovered Device** on the Managed Device form (`mdm_integration.api.confirm_device`,
+  Device Manager only). It asks who owns the device, sets ownership, moves the device to
+  Managed, and records the confirmation on the timeline.
+- **Test Miradore / Test Action1** and **Sync Miradore / Action1 Now** on the MDM Settings form
+  (`mdm_settings.js`). The README had described Test Connection buttons, but none existed.
+  Both refuse unsaved changes, because they read the saved credentials.
+- The wipe prompt explains what each mode does. After an action, the alert shows the recorded
+  `effect`.
+
+### Changed
+
+- The `remote_wipe_device`, `deploy_device_patch` and `run_device_script` AI tool descriptions
+  say what the modes and arguments now mean (selective unenrolls; the patch is an Action1
+  package ID; the script language follows the platform).
+- Mock-mode sample devices have the providers' real record shapes, so Mock exercises the real
+  normalizers.
+- A KPI in `docs/KPI_DASHBOARD_DESIGN.md` counts `mdm_link_state = 'Managed'`. Unconfirmed
+  devices now fall outside it until someone confirms them. No code computes it yet.
+
+### Notes
+
+- The adapter still uses Action1's North America host (`app.action1.com`), which is where this
+  organization synced from. Action1 also runs EU, UK, AU and NA-2 hosts; see the README.
+- Eleven Miradore Sync Logs from 2026-06-16 are still stuck at `Running`. They are cosmetic,
+  and this release leaves them alone.
+
+### Tests
+
+- `tests/test_mdm_provider_clients.py` (bench-free, its own CI step): 36 tests that run the real
+  client code against a recording `requests` and pin every URL, header and payload to the specs
+  above. They also pin what must never be sent: a Wipe on a selective request, a Retire where
+  Retire would reset, an automation aimed at `all`, the Miradore key in an error. 32 of them fail
+  against the previous client, mapping, executor and sync.
+- `tests/test_mdm_integration.py`: the selective-wipe guard and Action1 script-target rules.
+
 ## [1.505.0] - 2026-09-22
 
 **Search Console: ask for the property in every form it could exist in, and a backfill for the

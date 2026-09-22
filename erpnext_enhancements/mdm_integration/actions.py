@@ -7,7 +7,11 @@ tools (``assistant_tools/remote_*``) call ``execute_device_action``. It:
    any action the provider's capability map disallows (a wipe can never reach an
    Action1 computer);
 2. enforces the **BYOD wipe guard** (``routing.resolve_wipe_mode``) before the
-   API call — a personally-owned device is never full-wiped;
+   API call — a personally-owned device is never full-wiped — and refuses a full
+   wipe of a **Discovered** device, whose ownership nobody has confirmed yet (it
+   defaults to Company, so the BYOD guard alone would let it through). The
+   provider applies its own guard on top: Miradore refuses a selective wipe on an
+   enrollment where it would factory-reset (``routing.miradore_selective_wipe_refusal``);
 3. dispatches to the provider, and writes an immutable **Device Action Log** row
    on every attempt (success or failure);
 4. notifies Device Managers on a wipe or a failure.
@@ -69,6 +73,10 @@ def execute_device_action(
 		)
 		if err:
 			_fail(doc, action, mode, key, source, requested_by, pending_action, err)
+		if effective_mode == "full" and doc.get("mdm_link_state") == "Discovered":
+			_fail(doc, action, effective_mode, key, source, requested_by, pending_action,
+				f"{doc.name} was discovered by the {key} sync and nobody has confirmed who owns it. "
+				"Confirm the device (and its ownership) on its form before a full wipe.")
 
 	provider_id = doc.mdm_provider_device_id
 	if not provider_id:
