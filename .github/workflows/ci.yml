@@ -366,6 +366,13 @@ jobs:
       # Own step: installs a frappe stub (frappe, frappe.utils, frappe.model) and removes it.
       - name: Ad-spend connectors (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_marketing_connectors -v
+      # The spend -> Lead -> Opportunity -> Project -> invoice join (TASK-2026-01477, v1.504.0).
+      # Pins the 2026-09-22 decisions: utm_id then gclid, a paid lead nothing matches is its own
+      # row (never a free lead), cohorts by the month the ad touched the customer, a 365-day
+      # window so repeat business does not count against the original ad, two revenue columns,
+      # and no ratio over zero. roas.py is stdlib-only, so no stub.
+      - name: Ad Spend ROAS join (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_ad_spend_roas -v
       # The placement test above says a DocType is in the right folder. This one says the
       # folder gets INSTALLED. Adding a module to modules.txt is not sufficient on an
       # already-installed site: frappe.model.sync.sync_for() iterates

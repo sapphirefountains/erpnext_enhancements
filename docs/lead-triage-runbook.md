@@ -30,9 +30,9 @@ The rule for sales is therefore short:
 |---|---|---|---|
 | New enquiry | Lead | `Lead` | Arrives from the website, or typed in by sales |
 | Contacted | Lead | `Lead` / `Replied` / `Interested` | Owner's first email, SMS or logged call. This stamps **First Response At** |
-| Qualified | Lead → **Opportunity** | Lead becomes `Opportunity` | Owner, from the Lead form: **Create → Opportunity** |
+| Qualified | Lead → **Customer** → Opportunity | Lead becomes `Converted` | Owner, from the Lead form: **Create → Customer**, then **+ Opportunity** from that Customer |
 | Not a fit | Lead | `Do Not Contact` | Owner. Add a comment saying why |
-| Existing customer | Opportunity from the **Customer** | — | See the fountain-move exception below |
+| Existing customer | Opportunity from the existing **Customer** | Lead → `Converted` | Set the Lead's **Customer** field first, then create the Opportunity from that Customer |
 
 **Qualified means**: we know what they want (service interest and a rough scope), where it
 is, and that they want a price or a visit. If you are about to quote, visit or design, it is an
@@ -42,28 +42,43 @@ counts.
 
 ### Converting, and what happens to attribution
 
-Use **Create → Opportunity** on the Lead. Do not make a blank Opportunity and type the name
-in: the button is what links the two records.
+**Never use Create → Opportunity on the Lead.** That makes an Opportunity whose party is the
+*Lead*, and on this site a won Opportunity must have a *Customer* as its party. The Closed-Won
+hand-off copies `party_name` into `Project.customer`, a Lead id fails that link, and the
+failure is caught and logged, so **the deal is marked won and no Project is ever created**.
+Drive folders are also only provisioned for Customer-party deals. (An earlier revision of this
+runbook, v1.502.0, said to use Create → Opportunity. It was wrong, and corrected in v1.504.0
+before any training used it.)
 
-- ERPNext maps the Lead into the new Opportunity with `opportunity_from = Lead` and
-  `party_name = <the Lead>`. `lead_owner` becomes the Opportunity owner.
-- On save, `attribution.propagate_to_opportunity` copies the Lead's attribution onto the
-  Opportunity: `custom_lead_source`, every `custom_utm_*` field **including
-  `custom_utm_id`**, `custom_gclid`, landing page, referrer and capture time. It fills blanks
-  only, so a value typed on the Opportunity is never overwritten. Tested in
-  `tests/test_lead_triage.py::QualificationPathTests`.
-- When the Customer is later created from the Lead (Create → Customer, or the quotation
-  flow), `propagate_to_customer` does the same via `Customer.lead_name`. An Opportunity
-  created later against that Customer inherits from the Customer.
-- The Lead's status moves to `Opportunity` by itself, so it leaves the triage queue.
+The path is **Lead → Customer → Opportunity**:
 
-This is the chain the spend report (TASK-2026-01477) walks: Ad Campaign → Lead →
-Opportunity → Project → Sales Invoice. A Lead skipped here is a paid click that can never be
-traced to revenue.
+1. On the Lead: **Create → Customer**. ERPNext builds the Customer from the Lead and sets
+   `Customer.lead_name`, which is the link attribution follows. The Lead moves to
+   `Converted` by itself, so it leaves the triage queue.
+2. On the new Customer: **+ Opportunity** (or the Opportunity list with *Opportunity From* =
+   Customer). This is the shape 168 of the 172 Opportunities created in 2026 already have.
+3. If the enquiry is from an **existing** customer, do not create a second Customer: set the
+   Lead's **Customer** field to the account, mark the Lead `Converted`, and create the
+   Opportunity from that Customer.
 
-**Exception — fountain moves.** The Cactus & Tropicals flow creates a Customer first and an
-Opportunity with `opportunity_from = Customer` on purpose (a Lead id there breaks the
-closed-won hand-off). Attribution follows the Customer path instead. Leave it alone.
+What happens to the campaign on the way:
+
+- `propagate_to_customer` (on the Customer's save) copies the Lead's attribution onto the
+  Customer through `lead_name`: `custom_lead_source`, every `custom_utm_*` field **including
+  `custom_utm_id`**, `custom_gclid`, landing page, referrer and capture time.
+- `propagate_to_opportunity` (on the Opportunity's save) copies it from the Customer onto the
+  Opportunity. Both fill blanks only, so a value typed by hand is never overwritten. Tested in
+  `tests/test_lead_triage.py::QualificationPathTests`, both paths.
+- The spend report ([Ad Spend ROAS](../erpnext_enhancements/marketing/report/ad_spend_roas/),
+  TASK-2026-01477) reads the attribution *on the Opportunity*, so a deal is traced to its ad
+  whichever way it was created.
+
+This is the chain the spend report walks: Ad Campaign → Lead → Customer → Opportunity →
+Project → Sales Invoice. A Lead skipped here is a paid click that can never be traced to
+revenue.
+
+**Fountain moves already work this way.** The Cactus & Tropicals flow creates the Customer
+first and the Opportunity from it, for exactly the hand-off reason above.
 
 ---
 

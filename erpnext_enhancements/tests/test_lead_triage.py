@@ -608,6 +608,40 @@ class QualificationPathTests(unittest.TestCase):
 		self.assertEqual(opp.custom_lead_source, "Advertisement")
 		self.assertIsNotNone(opp.custom_attribution_captured_on)
 
+	def test_attribution_survives_lead_to_customer_to_opportunity(self):
+		"""The path this site must use (docs/lead-triage-runbook.md): a Lead-party won deal
+		never becomes a Project, so the Opportunity is made from the Customer."""
+		_reset()
+		store = {
+			("Lead", "CRM-LEAD-1"): {
+				"custom_utm_source": "google",
+				"custom_utm_id": "21456789012",
+				"custom_lead_source": "Advertisement",
+				"custom_attribution_captured_on": "2026-09-22 10:00:00",
+			}
+		}
+		db = sys.modules["frappe"].db
+		saved = (db.exists, db.get_value)
+		db.exists = lambda doctype, name=None: (doctype, name) in store
+		db.get_value = lambda doctype, name, fields, as_dict=False: dict(store[(doctype, name)])
+		try:
+			customer = FakeDoc(doctype="Customer", name="Jane Doe", lead_name="CRM-LEAD-1")
+			for field in attribution.PROPAGATED_FIELDS:
+				customer[field] = None
+			attribution.propagate_to_customer(customer)
+			store[("Customer", "Jane Doe")] = {k: v for k, v in customer.items() if k.startswith("custom_") and v}
+
+			opp = FakeDoc(doctype="Opportunity", opportunity_from="Customer", party_name="Jane Doe")
+			for field in attribution.PROPAGATED_FIELDS:
+				opp[field] = None
+			attribution.propagate_to_opportunity(opp)
+		finally:
+			db.exists, db.get_value = saved
+		self.assertEqual(customer.custom_utm_id, "21456789012")
+		self.assertEqual(opp.custom_utm_id, "21456789012", "the ad reaches the deal through the Customer")
+		self.assertEqual(opp.custom_lead_source, "Advertisement")
+		self.assertEqual(opp.custom_attribution_captured_on, "2026-09-22 10:00:00", "the touch time, not the deal's")
+
 
 if __name__ == "__main__":
 	unittest.main()

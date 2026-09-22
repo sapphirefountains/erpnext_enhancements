@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.504.0] - 2026-09-22
+
+**Ad Spend ROAS: what each campaign's spend bought, in booked revenue.** TASK-2026-01477
+(Marketing P1, item 7), the join the whole program exists for: Ad Daily Metric → Lead →
+Opportunity → Project → Sales Invoice. It reports cost per lead, cost per won project, and ROAS
+against revenue this system booked, not against what an ad platform says converted. Also
+corrects the qualification path in v1.502.0's lead-triage runbook, which would have broken the
+Closed-Won hand-off.
+
+### Added
+
+- **`marketing/core/roas.py`**, standard library only, with the decisions of 2026-09-22 (Nik):
+  - **Campaign resolution (TASK-2026-01570, A + D):** `custom_utm_id` → `Ad Campaign.external_id`
+    first. An ID that exists on two platforms is settled by `utm_source`, or left unjoined rather
+    than guessed. Then `custom_gclid` → `Ad Click` → campaign.
+  - **Paid but unjoinable is its own row.** A record with a paid signal (a click ID, a `utm_id`,
+    a paid `utm_medium`, or Lead Source *Advertisement*) that nothing matches is counted under
+    `(paid, not joinable)`, in orange. A coverage gap reads as a gap, never as a free lead. The
+    paid mediums come from `attribution.PAID_MEDIUMS`, so there is one list.
+  - **Cohorts by lead month.** A month's spend is set against the Leads it produced and the
+    Opportunities they became, whenever those close. An Opportunity is counted in the month the
+    ad touched the customer (`custom_attribution_captured_on`), not the month it closed.
+  - **A 365-day attribution window** (a filter). Customer attribution is first-touch and
+    propagates to every later deal, so without a window a repeat customer's deal years on would
+    count against the ad that first found them.
+  - **Two revenue columns.** *Contract value* is the won Opportunity's amount, known at signing.
+    *Invoiced* is the linked Project's `total_billed_amount`: erpnext's own sum of submitted
+    Sales Invoices, pre-tax, with credit notes netted. It is the figure Value Stream Performance
+    already uses, so the two reports agree.
+  - A ratio over zero is None, never 0 or infinity. There is no total row, which would sum the
+    ratio columns.
+- **Opportunities are joined on their own attribution fields**, not by walking Lead → Customer →
+  Opportunity. Measured on prod, 168 of the 172 Opportunities created in 2026 are Customer-party,
+  and attribution is already propagated onto each of them.
+- **`marketing/report/ad_spend_roas/`**, a Script Report. Filters: lead-month range, platform,
+  group by campaign or platform, attribution window. System Manager / Sales Manager. It has
+  **no `.html` print template**, because a report template is compiled whole, prose included
+  (see CLAUDE.md). Its message states coverage: paid leads, how many joined by `utm_id` and by
+  `gclid`, how many could not be joined, and how many deals fell outside the window.
+- `tests/test_ad_spend_roas.py`: 16 tests, own CI step.
+
+### Fixed
+
+- **The lead-triage runbook (v1.502.0) told sales to use *Create → Opportunity* on the Lead.
+  On this site that silently breaks the Closed-Won hand-off.** The hand-off copies `party_name`
+  into `Project.customer`. A Lead id fails that link inside a `try/except log_error`, so the deal
+  is marked won and no Project is ever created. Drive folders are also only provisioned for
+  Customer-party deals. (The fountain-move conversion already documents and avoids this.) The
+  path is now **Lead → Create → Customer → Opportunity from the Customer**, which is the shape
+  168 of this year's 172 Opportunities already have. Attribution reaches the Opportunity
+  through `propagate_to_customer` (via `Customer.lead_name`) and then `propagate_to_opportunity`.
+  Verified against erpnext v16: `Customer.update_lead_status` marks the Lead `Converted`, so it
+  leaves the triage queue. No training had used the wrong instruction yet.
+- `tests/test_lead_triage.py::QualificationPathTests` now also covers Lead → Customer →
+  Opportunity, the path sales will actually use.
+
 ## [1.503.0] - 2026-09-22
 
 **Nightly, read-only ad-spend connectors for Google Ads, Meta and LinkedIn, with Connect
