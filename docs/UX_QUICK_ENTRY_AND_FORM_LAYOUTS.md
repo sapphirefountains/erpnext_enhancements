@@ -19,7 +19,7 @@ form-layout redesign below instead.
 | DocType | Dialog |
 |---|---|
 | **Item** (re-enabled) | item_code, item_name, item_group, stock_uom, is_stock_item, is_fixed_asset (+ asset_category when fixed asset) |
-| **Customer** (re-enabled) | name, type + ERPNext's built-in primary contact & address fields |
+| **Customer** (re-enabled) | ~~name, type + ERPNext's built-in primary contact & address fields~~ — superseded in v1.499.0, see below |
 | **Opportunity** | the 9 mandatory fields, 6 prefilled; "Opportunity From" now defaults to Customer and is restricted to Lead/Customer/Prospect inside the dialog (`link_filters` — the full form's script filter doesn't run in dialogs) |
 | **Employee** | first name, company, status, gender, DOB, date of joining (+ middle/last name) |
 | **Warehouse** | name, company, type, parent warehouse, customer |
@@ -32,7 +32,7 @@ this release reverses that on purpose — the dialogs are now curated.
 
 ### Curation added to already-enabled dialogs
 
-- **Supplier**: + supplier group, country, tax ID
+- **Supplier**: + supplier group, country, tax ID — superseded in v1.499.0, see below
 - **Lead**: + last name, service interest (email deliberately excluded — it
   lives on a hidden tab, values entered there would be invisible afterward)
 - **Project**: + customer, stage, requested start/end dates
@@ -56,6 +56,23 @@ this release reverses that on purpose — the dialogs are now curated.
   `quick_entry`/`allow_in_quick_entry` fixtures, so with the "Contact & Address
   Quick Entry" toggle off (or the bundle unloaded) behavior reverts to the
   stock full form, never to an orphan-creating stock dialog.
+- **Customer / Supplier contact & address sections** — **superseded in
+  v1.499.0**: both dialogs are now app-owned
+  (`public/js/global_enhancements/party_quick_entry.js`). ERPNext's stock
+  dialog appended "Primary Contact Details" and "Primary Address Details",
+  which the server turned into a separate Address/Contact — while every field
+  that would show them on the saved form is hidden here, so the values looked
+  lost. The Customer contact half never worked at all: its name fields only
+  show for customer_type `Company`, which this site calls `Commercial`. The
+  dialogs now carry account fields only — Customer: name, type, Industry
+  (shown and required for commercial types, mirroring
+  `data_quality.enforce_industry`), account status, territory, value stream,
+  phone, email; Supplier: name, type, group, country, phone, email (tax ID
+  dropped: it lives on the hidden Tax tab, the same trap). Save opens the full
+  form with a one-time "No address yet" banner pointing at the Address
+  Directory; a link-field create stays on the calling form and offers the
+  address in a toast. Same "Contact & Address Quick Entry" toggle; off, the
+  stock dialog returns unchanged.
 - **Territory / Sales Person** — rare tree masters; the tree view's own New
   dialog is the right tool.
 - Tree masters that ARE enabled (Warehouse, the three group doctypes): the

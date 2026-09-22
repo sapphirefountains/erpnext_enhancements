@@ -360,6 +360,13 @@ exempts bulk contexts, and skips residential accounts entirely.
 | `require_industry_on_commercial` | **on** | Block a NEW commercial account with no industry |
 | `require_industry_on_edit` | off | Also block edits — turn on **after** the 732-row backlog is cleared |
 
+Because the rule is a hook, no form knows about it on its own — which is how the
+Customer quick-entry dialog came to have no Industry field while Save demanded one. `industry_rule_for_client()` ships the new-record flag and
+`COMMERCIAL_TYPES` to the desk as `frappe.boot.ee_industry_rule`, and
+`public/js/global_enhancements/party_quick_entry.js` shows and requires Industry
+under exactly that (v1.499.0). Change the rule here and the dialog follows; the
+hook stays the authority either way.
+
 ### Assisted, never automatic
 
 `bulk_assign` / `assign_value_streams` apply a value **a human picked** to rows **a

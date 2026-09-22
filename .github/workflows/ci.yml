@@ -2007,6 +2007,19 @@ jobs:
       # the boundary cases are deliberately the same ones.
       - name: Gantt export date range (clip, boundaries, dropped-row count)
         run: node scripts/test_gantt_export_range.js
+      # Customer/Supplier quick entry. Executed against a stubbed frappe, not
+      # grepped, because every rule it holds fails silently: erpnext's stock
+      # dialog collected an address and a contact into keys no visible field
+      # shows (so what was typed "vanished"), and never offered the Industry the
+      # server then demanded. The dialog must ask only for fields the saved form
+      # shows, require Industry under exactly data_quality's rule and type list,
+      # open the full form after Save (stock stays on the list) without ever
+      # navigating away from a form that created the record through a link
+      # field, be wholly stock with the toggle off, and raise the "no address"
+      # banner only on a record just created -- 70% of Customers and 97% of
+      # Suppliers have no address, so anything broader is wallpaper.
+      - name: Customer/Supplier quick entry (dialog fields, industry rule, routing, banner)
+        run: node scripts/test_party_quick_entry.js
 
   # ---------------------------------------------------------------------------
   # Version sync — hard gate.

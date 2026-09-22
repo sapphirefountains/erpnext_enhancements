@@ -461,6 +461,12 @@ erpnext_enhancements.unified_controller = {
 			},
 			callback: (r) => {
 				wrapper.find(".text-muted").remove();
+				// Retires the "no address yet" banner on a just-created Customer or
+				// Supplier as soon as one exists (party_quick_entry.js).
+				const party_quick_entry = erpnext_enhancements.party_quick_entry;
+				if (party_quick_entry && party_quick_entry.addresses_rendered) {
+					party_quick_entry.addresses_rendered(frm, (r.message || []).length);
+				}
 				if (!r.message || r.message.length === 0) {
 					wrapper.append(
 						'<div class="alert alert-warning">No addresses linked to any related parties yet.</div>',

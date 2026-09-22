@@ -626,7 +626,7 @@
   },
   {
    "default": "1",
-   "description": "Create Contacts and Addresses in a quick-entry dialog instead of routing to the full form. Opened from a Customer, Opportunity, Project or other party form, the dialog pre-fills the Account, links the new record to the right documents automatically, and the form's contact/address lists refresh in place. Applies on each user's next page load; turn off to restore the standard full-form create flow. Note: the Contact \"Account\" field stays editable and kept in sync with the Links table regardless of this switch.",
+   "description": "Create Contacts and Addresses in a quick-entry dialog instead of routing to the full form. Opened from a Customer, Opportunity, Project or other party form, the dialog pre-fills the Account, links the new record to the right documents automatically, and the form's contact/address lists refresh in place. New Accounts (Customers) and Suppliers get the same treatment: the dialog asks for the account itself (Industry appears, and is required, for commercial types), and saving opens the full form, where the Address Directory adds or links the address. Applies on each user's next page load; turn off to restore the standard ERPNext create flows. Note: the Contact \"Account\" field stays editable and kept in sync with the Links table regardless of this switch.",
    "fieldname": "contacts_ux_enabled",
    "fieldtype": "Check",
    "label": "Contact & Address Quick Entry"
