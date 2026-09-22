@@ -1119,10 +1119,12 @@ erpnext_enhancements.patches.reload_training_workspace_for_canvas
 # prod (ran 2026-09-19 10:22:59) and will never run again, so editing it would land a file
 # nothing executes. One workspace edit, one patch. Cannot raise; safe twice.
 erpnext_enhancements.patches.reload_training_workspace_for_disputes
-# v1.496.0: the "Uncategorized" leaf under All Supplier Groups / All Customer Groups / All
-# Territories -- the deterministic default the QuickBooks importer files a NEW party into.
-# The old default, get_value(dt, {"is_group": 0}), orders by creation DESC on v16 and so
-# re-filed all 911 QBO Suppliers into whichever Supplier Group was newest, five times over
-# (and 466 Customers into "Government"). Insert-only, keyed on the name, guarded on the
-# DocType and the root, cannot raise. Also on after_migrate as the backstop.
-erpnext_enhancements.patches.seed_qbo_uncategorized_groups
+# v1.496.0: put every Supplier the QuickBooks importer swept into "Garbage & Junk Removal"
+# back where it belongs -- or in NO group. The old default, get_value(dt, {"is_group": 0}),
+# orders by creation DESC on v16 and the update path re-applied it, so all 911 QBO-linked
+# Suppliers moved into whichever Supplier Group was newest, five times over. Restores the
+# pre-sweep group from tabVersion (~63), clears the rest (a wrong group is worse than none:
+# Nik, 2026-09-22), then applies the audit's hand-curated corrections from
+# quickbooks_online/core/supplier_group_corrections.json. db.set_value with the Supplier
+# search fields recomputed; per-record guarded, wrapped, cannot raise, safe twice.
+erpnext_enhancements.patches.restore_supplier_groups_after_qbo_sweep

@@ -1575,15 +1575,6 @@ after_migrate = [
 	# patches.txt; here as the backstop for a site whose Patch Log already has the entry.
 	# Idempotent, fills missing rows only, and must never raise.
 	"erpnext_enhancements.patches.backfill_marketing_settings_defaults.backfill_marketing_settings_defaults",
-	# quickbooks_online (v1.496.0): the "Uncategorized" leaf under All Supplier Groups /
-	# All Customer Groups / All Territories that the importer files a NEW party into. The
-	# mapper returns it by name and cannot create it (a mapper is a transform, not a
-	# writer); before this the default was `get_value(dt, {"is_group": 0})`, which on v16
-	# orders by creation DESC and so re-filed all 911 QBO Suppliers into whichever group
-	# was newest, five times over. Also in patches.txt; here as the backstop for a site
-	# whose Patch Log already has the entry or where the leaf was deleted. Insert-only,
-	# keyed on the name, and must never raise.
-	"erpnext_enhancements.patches.seed_qbo_uncategorized_groups.seed_uncategorized_groups",
 	"erpnext_enhancements.water_engineering.setup.ensure_pump_catalog",
 	# water_engineering: the aquatic-equipment catalog (filters, heaters, chem feed,
 	# controllers, skimmers, VGB drains, therapy jets, gauges) — Item custom spec

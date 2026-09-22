@@ -197,11 +197,11 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 		# A QBO job must never re-clobber an existing Project's title with its prefixed
 		# DisplayName; drop it here so it's excluded from conflicts, the write and the snapshot.
 		_protect_existing_project_title(erpnext_doctype, values, doc)
-		# Same shape for a party's group / territory: QuickBooks has no such field, the
-		# mapper only ever supplies a default, and a default must never overwrite a value a
-		# person set (this re-application is what swept 906 Suppliers into whichever
-		# Supplier Group was newest, five times over -- see DEFAULT_PARTY_GROUP).
-		_protect_existing_party_groups(erpnext_doctype, values, doc)
+		# Same shape for a party's group / territory: QuickBooks has no such field, so an
+		# update never carries one -- whatever the record holds, blank included. Re-applying
+		# a default here is what swept 906 Suppliers into whichever Supplier Group was
+		# newest, five times over (see DEFAULT_PARTY_GROUP).
+		_drop_party_groups_on_update(erpnext_doctype, values, doc)
 		conflicts = detect_conflicts(doc, values, mapping)
 		# A conflict = a user changed a QBO-owned field; respect it unless overwriting.
 		if conflicts and not overwrite:
@@ -1686,8 +1686,9 @@ def _map_customer(payload, settings):
 			"customer_type",
 			("Company", "Commercial") if payload.get("CompanyName") else ("Individual", "Residential"),
 		),
-		# Create-time defaults only: the update path drops them when the record already
-		# has a value (_protect_existing_party_groups), and neither is ever QBO-owned.
+		# None unless DEFAULT_PARTY_GROUP names a leaf: a person files the customer. The
+		# update path drops both whatever the record holds (_drop_party_groups_on_update),
+		# and neither is ever QBO-owned.
 		"customer_group": _default_group("Customer Group"),
 		"territory": _default_group("Territory"),
 		# Links to an already-imported Payment Terms Template when QBO assigns the
@@ -1766,8 +1767,9 @@ def _map_supplier(payload, settings):
 			"supplier_type",
 			("Company", "Commercial") if payload.get("CompanyName") else ("Individual", "Residential"),
 		),
-		# Create-time default only: the update path drops it when the Supplier already
-		# has a group (_protect_existing_party_groups), and it is never QBO-owned.
+		# None unless DEFAULT_PARTY_GROUP names a leaf: a person files the supplier. The
+		# update path drops it whatever the record holds (_drop_party_groups_on_update),
+		# and it is never QBO-owned.
 		"supplier_group": _default_group("Supplier Group"),
 		# Links to an already-imported Payment Terms Template when QBO assigns the
 		# vendor a term (Term is imported before Vendor); None otherwise.
@@ -2765,7 +2767,8 @@ def _default_or_none(doctype: str, name: str):
 
 
 def _default_group(doctype: str):
-	"""Return the named default leaf of ``doctype`` (``DEFAULT_PARTY_GROUP``), or None.
+	"""Return the group a new party is filed into: ``DEFAULT_PARTY_GROUP`` when it names an
+	existing leaf of ``doctype``, else None -- and it is None by default.
 
 	A NAME, never a lookup. This used to be ``frappe.db.get_value(doctype, {"is_group": 0},
 	"name")`` -- "any leaf group" -- and on Frappe v16 a dict-filtered ``get_value`` with no
@@ -2775,10 +2778,12 @@ def _default_group(doctype: str):
 	911 QBO-linked Suppliers on the next scheduled run: Staffing (the 2026-06-18 vendor
 	import), then Event Decor (07-21), Encapsulant (08-19), Labels (09-09) and Garbage &
 	Junk Removal (09-16, 906 rows); 466 Customers landed in "Government" the same way.
-	The leaf is seeded by ``patches/seed_qbo_uncategorized_groups.py``; when it is absent
-	the mapper returns None and the party is created without a group (the three Links are
-	not ``reqd`` on v16), which is an honest blank rather than a guess.
+	Nik's call (2026-09-22): a wrong group is worse than no group, so the importer files a
+	new party into no group at all (none of the three Links is ``reqd`` on v16) and leaves
+	the choice to a person. ``apply_values`` skips a None, so nothing is written.
 	"""
+	if not DEFAULT_PARTY_GROUP:
+		return None
 	return DEFAULT_PARTY_GROUP if frappe.db.exists(doctype, DEFAULT_PARTY_GROUP) else None
 
 
@@ -3056,28 +3061,24 @@ def _protect_existing_project_title(erpnext_doctype: str, values: dict, doc):
 		values.pop("project_name", None)
 
 
-def _protect_existing_party_groups(erpnext_doctype: str, values: dict, doc):
-	"""Never let the import's default group / territory overwrite one a person set.
+def _drop_party_groups_on_update(erpnext_doctype: str, values: dict, doc):
+	"""An update never carries a party's group / territory -- whatever the record holds.
 
 	QuickBooks carries no supplier group, customer group or territory; ``_map_supplier``
-	and ``_map_customer`` only supply a default so a *new* party is filed somewhere. The
-	in-place update path applies every mapped value, so that default was re-written onto
-	every already-linked Supplier and Customer on every re-sync -- and while the default
-	was "whichever leaf is newest" (see ``_default_group``), that moved all 911 QBO-linked
-	Suppliers en bloc each time somebody added a Supplier Group. Drop each of the
-	``ERPNEXT_OWNED_PARTY_FIELDS`` from ``values`` when the record already holds one, so
-	the default is set once (on create), fills a blank on link / update, and is otherwise
-	ERPNext's: excluded from conflict detection, the field write and the owned-field
-	snapshot alike. Same shape as ``_protect_existing_project_title``.
+	and ``_map_customer`` can at most supply a create-time default (none, today -- see
+	``DEFAULT_PARTY_GROUP``). The in-place update path applies every mapped value, so a
+	default was re-written onto every already-linked Supplier and Customer on every
+	re-sync -- and while the default was "whichever leaf is newest" (see
+	``_default_group``), that moved all 911 QBO-linked Suppliers en bloc each time somebody
+	added a Supplier Group. Drop each of the ``ERPNEXT_OWNED_PARTY_FIELDS`` from ``values``
+	on every update, a blank record included: a person clearing a group means "no group",
+	not "fill it for me" (Nik, 2026-09-22), so the fields are ERPNext's from the moment the
+	record exists -- excluded from conflict detection, the field write and the owned-field
+	snapshot alike. Same shape as ``_protect_existing_project_title``; ``doc`` is accepted
+	for that symmetry and left unread.
 	"""
 	for fieldname in ERPNEXT_OWNED_PARTY_FIELDS.get(erpnext_doctype, ()):
-		if fieldname not in values:
-			continue
-		current = doc.get(fieldname)
-		if isinstance(current, str):
-			current = current.strip()
-		if current:
-			values.pop(fieldname, None)
+		values.pop(fieldname, None)
 
 
 def _heal_invalid_owned_selects(doc, values: dict) -> list[str]:

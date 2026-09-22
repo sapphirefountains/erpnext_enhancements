@@ -274,10 +274,10 @@ Runbook (do this in order, **on a sandbox/test site first**):
    the remediation first repoints every job's mapping to its Project, so the resumed sync
    updates the Project instead of recreating the flat Customer.
 
-## 7. Remediation: the default-group sweep (one-off, v1.496.0)
+## 7. Remediation: the default-group sweep (v1.496.0)
 
-QuickBooks has no supplier group, customer group or territory, so the importer defaults
-them. Until v1.496.0 the default was `frappe.db.get_value(doctype, {"is_group": 0}, "name")`
+QuickBooks has no supplier group, customer group or territory, so the importer used to
+default them. Until v1.496.0 the default was `frappe.db.get_value(doctype, {"is_group": 0}, "name")`
 -- "any leaf" -- and on Frappe v16 a dict-filtered `get_value` with no `order_by` sorts by
 `creation` **descending**, so it answered "the leaf somebody created most recently". The
 update path re-applied every mapped value on each re-sync, so each new Supplier Group anyone
@@ -286,34 +286,40 @@ prod 2026-09-22: all 911 QBO-linked Suppliers moved en bloc five times (Staffing
 2026-06-18 vendor import, then Event Decor 07-21, Encapsulant 08-19, Labels 09-09, Garbage &
 Junk Removal 09-16: 906 rows), and 466 Customers sit in "Government" for the same reason.
 
-The forward fix is in `core/mapping.py` (a NAMED default, `Uncategorized`, seeded by
-`patches/seed_qbo_uncategorized_groups`; the update path never overwrites a set group; the
-fields are never QBO-owned). `quickbooks_online/core/party_group_remediation.py` restores
-the records already swept, from each record's `tabVersion` history: the OLD value of the
-first change whose NEW value is a sweep landing group is the pre-sweep group; an old value
-that is empty, itself a landing group, or since deleted becomes `Uncategorized`; a record
-whose history shows no sweep change is listed and left alone. Only records with a QuickBooks
-Sync Mapping are in scope. Suppliers get `custom_supplier_groups_search` /
-`custom_additional_supplier_groups_list` recomputed alongside the group. It is **dry-run by
-default**, idempotent, batched/committed, per-record guarded, and writes with
-`frappe.db.set_value` (no doc hooks).
+The forward fix is in `core/mapping.py`: **no default at all** (`DEFAULT_PARTY_GROUP = None`
+-- a wrong group is worse than no group, Nik 2026-09-22), the update path never carries the
+three fields whatever the record holds, and they are never QBO-owned.
 
-Runbook (**on a sandbox/test site first**):
+**Suppliers are fixed by the deploy.** `patches/restore_supplier_groups_after_qbo_sweep`
+runs `core/party_group_remediation.py` twice, Suppliers only: for every QBO-linked Supplier
+in "Garbage & Junk Removal" the OLD value of the first `tabVersion` change whose NEW value is
+a sweep landing group is the pre-sweep group -- a real one is **restored** (~63), anything
+else (empty, itself a landing group, deleted since) is **cleared** to NULL, and a record
+with no history is cleared only when its mapping says the import created it; then the
+audit's hand-curated corrections in `core/supplier_group_corrections.json` (~230 Suppliers,
+each with the basis for the call) win over the history walk. Supplier search fields are
+recomputed alongside; writes are `frappe.db.set_value` (no doc hooks); per-record guarded,
+both passes wrapped, cannot raise, safe twice. The migrate log carries both summaries,
+including the names of any no-history rows left alone.
 
-1. Deploy v1.496.0 (the seed patch runs in that migrate; confirm `Uncategorized` exists under
-   All Supplier Groups, All Customer Groups and All Territories).
-2. Preview (writes nothing):
-   `bench --site <site> execute erpnext_enhancements.quickbooks_online.core.party_group_remediation.restore_party_groups`
-   Review the per-doctype counts (`restored` / `defaulted` / `no_history` /
-   `unlinked_left_alone`) and the `pre_sweep` value on each planned change -- a group a
-   person set deliberately to what later became a landing group reads as a sweep.
-   `--kwargs "{'doctype': 'Supplier', 'limit': 5}"` scopes a first look.
-3. Apply: re-run with `--kwargs "{'apply': True}"` (requires System Manager). Re-runnable --
-   a restored record has left the landing group and drops out of scope.
-4. The `no_history` rows were inserted straight into the landing group (no Version row is
-   written on insert) or filed there by a person; decide them by hand, or pass
-   `include_sync_created: True` to file the ones whose mapping says the import created them
-   into `Uncategorized`.
-5. Confirm: Supplier count in "Garbage & Junk Removal" and Customer count in "Government" are
-   what a person put there; the next scheduled sync moves nothing (the update path drops the
-   group when the record has one).
+Verify after the deploy (all three from the MCP sandbox or `bench console`):
+
+1. `select count(*) from tabSupplier where supplier_group = 'Garbage & Junk Removal'` -- should
+   be 1 (Dumpster Depot).
+2. `select count(*) from tabSupplier where supplier_group is null` -- roughly 640: the QBO
+   payees that never had a real group (restaurants, fuel, banks, employee reimbursements).
+3. Wait for the next `cdc_poll` (hourly, :20) and re-run 1 -- unchanged, because an update
+   no longer carries `supplier_group`.
+
+**Customers are not touched by the deploy.** 466 Customers in "Government" include real
+government customers, and only the Version history can separate a sync default from a
+person's choice. Preview, then apply by hand, **sandbox first**:
+
+1. `bench --site <site> execute erpnext_enhancements.quickbooks_online.core.party_group_remediation.restore_party_groups --kwargs "{'doctype': 'Customer'}"`
+   (writes nothing). Review the counts (`restored` / `cleared` / `no_history` /
+   `unlinked_left_alone`) and the `pre_sweep` value on each planned change.
+2. Apply: re-run with `--kwargs "{'doctype': 'Customer', 'apply': True}"` (requires System
+   Manager). Re-runnable -- a restored or cleared record has left the landing group.
+3. The `no_history` rows were inserted straight into "Government" (no Version row is written
+   on insert) or filed there by a person; decide them by hand, or pass
+   `include_sync_created: True` to clear the ones whose mapping says the import created them.

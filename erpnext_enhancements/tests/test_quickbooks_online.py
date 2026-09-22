@@ -106,8 +106,6 @@ def install_frappe_stub():
 				"All Supplier Groups",
 				"All Item Groups",
 				"Nos",
-				# The seeded party default (patches/seed_qbo_uncategorized_groups).
-				"Uncategorized",
 			}
 		),
 		get_value=get_value,
@@ -255,9 +253,10 @@ def test_customer_mapping_uses_native_erpnext_fields():
 	assert doctype == "Customer"
 	assert values["customer_name"] == "Acme Supply"
 	assert values["customer_type"] == "Company"
-	# The seeded, NAMED default -- never "whichever leaf is newest" (v1.496.0).
-	assert values["customer_group"] == "Uncategorized"
-	assert values["territory"] == "Uncategorized"
+	# No default group or territory -- never "whichever leaf is newest" (v1.496.0); a
+	# person files the customer.
+	assert values["customer_group"] is None
+	assert values["territory"] is None
 
 
 def test_customer_type_resolves_against_customized_select_options(monkeypatch):
@@ -5144,13 +5143,13 @@ def test_ensure_group_parent_refuses_to_clear_account_type_on_a_posted_account(m
 
 
 # ---------------------------------------------------------------------------
-# Party default group (v1.496.0): a NAMED leaf, create-time only, never QBO-owned.
+# Party group (v1.496.0): no default, never written on update, never QBO-owned.
 # ---------------------------------------------------------------------------
 
 
-def test_default_group_is_the_named_leaf_never_a_lookup(monkeypatch):
-	"""The party default is DEFAULT_PARTY_GROUP resolved by NAME (db.exists), never a
-	dict-filtered get_value.
+def test_party_default_group_is_none_and_never_a_lookup(monkeypatch):
+	"""The importer files a new Supplier / Customer into NO group, and never resolves one
+	with a dict-filtered get_value.
 
 	On Frappe 16 ``get_value(doctype, {"is_group": 0}, "name")`` orders by ``creation``
 	DESC and so answers "the leaf somebody created most recently" -- which, re-applied on
@@ -5158,6 +5157,7 @@ def test_default_group_is_the_named_leaf_never_a_lookup(monkeypatch):
 	added (Staffing -> Event Decor -> Encapsulant -> Labels -> Garbage & Junk Removal) and
 	466 Customers into "Government". The stub here answers every get_value with the last
 	landing group so a regression to the lookup shows up as the wrong value AND as a call.
+	A wrong group is worse than no group (Nik, 2026-09-22): the default is None.
 	"""
 	frappe = install_frappe_stub()
 	from erpnext_enhancements.quickbooks_online.core import mapping
@@ -5170,7 +5170,7 @@ def test_default_group_is_the_named_leaf_never_a_lookup(monkeypatch):
 		return "Garbage & Junk Removal"  # what "any leaf" answered on prod from 2026-09-16
 
 	monkeypatch.setattr(frappe.db, "get_value", get_value)
-	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name: name == DEFAULT_PARTY_GROUP, raising=False)
+	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name: True, raising=False)
 	settings = types.SimpleNamespace(company="SF")
 
 	_, supplier = mapping.map_qbo_to_erpnext(
@@ -5180,31 +5180,40 @@ def test_default_group_is_the_named_leaf_never_a_lookup(monkeypatch):
 		"Customer", {"Id": "8", "DisplayName": "Acme", "CompanyName": "Acme"}, settings
 	)
 
-	assert DEFAULT_PARTY_GROUP == "Uncategorized"
-	assert supplier["supplier_group"] == DEFAULT_PARTY_GROUP
-	assert customer["customer_group"] == DEFAULT_PARTY_GROUP
-	assert customer["territory"] == DEFAULT_PARTY_GROUP
+	assert DEFAULT_PARTY_GROUP is None
+	assert supplier["supplier_group"] is None
+	assert customer["customer_group"] is None
+	assert customer["territory"] is None
 	group_lookups = [call for call in lookups if call[0] in {"Supplier Group", "Customer Group", "Territory"}]
 	assert group_lookups == [], group_lookups
 
-	# The leaf is seeded by a patch; until it exists the mapper answers None (none of the
-	# three Links is reqd on v16) rather than guessing another group.
+	# If a named default is ever wanted it is resolved by NAME (db.exists), and a name that
+	# does not exist yields None rather than a guess at another group.
+	monkeypatch.setattr(mapping, "DEFAULT_PARTY_GROUP", "Uncategorized")
+	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name: name == "Uncategorized", raising=False)
+	_, supplier = mapping.map_qbo_to_erpnext(
+		"Vendor", {"Id": "9", "DisplayName": "Acme Steel", "CompanyName": "Acme Steel"}, settings
+	)
+	assert supplier["supplier_group"] == "Uncategorized"
 	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name: False, raising=False)
 	_, supplier = mapping.map_qbo_to_erpnext(
 		"Vendor", {"Id": "9", "DisplayName": "Acme Steel", "CompanyName": "Acme Steel"}, settings
 	)
 	assert supplier["supplier_group"] is None
+	assert [call for call in lookups if call[0] == "Supplier Group"] == []
 
 
-def test_update_path_never_overwrites_an_existing_group_or_territory(monkeypatch):
-	"""An already-linked Supplier / Customer keeps the group and territory it has.
+def test_update_path_never_writes_a_group_or_territory(monkeypatch):
+	"""An already-linked Supplier / Customer keeps its group and territory -- set, or blank.
 
-	The mapper's default is create-time only; the in-place update path used to re-apply
-	it with every other mapped value, which is the write that swept 906 Suppliers into
-	whichever Supplier Group was newest, five times over. The mapping's snapshot here
-	still lists the group as QBO-owned (every snapshot written before v1.496.0 does), and
-	the record's group differs from both it and the incoming default -- the exact shape
-	detect_conflicts used to call a conflict.
+	The in-place update path used to re-apply the mapper's default with every other mapped
+	value, which is the write that swept 906 Suppliers into whichever Supplier Group was
+	newest, five times over. Here the mapper is made to emit a named default (the shape a
+	future DEFAULT_PARTY_GROUP would produce), the mapping's snapshot still lists the group
+	as QBO-owned (every snapshot written before v1.496.0 does), and the record's group
+	differs from both it and the incoming value -- the exact shape detect_conflicts used to
+	call a conflict. Nothing is written, flagged or re-learned; a BLANK territory stays
+	blank, because a person clearing a group means "no group", not "fill it for me".
 	"""
 	frappe = install_frappe_stub()
 	from erpnext_enhancements.quickbooks_online.core import mapping
@@ -5253,8 +5262,15 @@ def test_update_path_never_overwrites_an_existing_group_or_territory(monkeypatch
 	assert preview["action"] == "update"
 	assert "supplier_group" not in preview["fields"]
 
-	# A Customer keeps both its group and its territory -- and a BLANK one is still
-	# filled, because the default is a fill, never an overwrite.
+	# A Supplier a person CLEARED stays cleared: the remediation patch blanks ~640 of them,
+	# and the next cdc_poll must not fill them back in.
+	doc.supplier_group = None
+	result = mapping.upsert_entity("Vendor", {"Id": "9", "DisplayName": "Acme Steel"}, settings)
+	assert result == {"action": "unchanged", "doctype": "Supplier", "name": "Acme Steel"}
+	assert doc.supplier_group is None
+	assert doc.saves == []
+
+	# A Customer keeps both its group and its territory -- the blank territory included.
 	values = {
 		"customer_name": "Acme",
 		"customer_type": "Company",
@@ -5285,40 +5301,46 @@ def test_update_path_never_overwrites_an_existing_group_or_territory(monkeypatch
 
 	result = mapping.upsert_entity("Customer", {"Id": "8", "DisplayName": "Acme"}, settings)
 
-	assert result == {"action": "updated", "doctype": "Customer", "name": "Acme"}
+	assert result == {"action": "unchanged", "doctype": "Customer", "name": "Acme"}
 	assert doc.customer_group == "Commercial"
-	assert doc.territory == "Uncategorized"
-	assert len(doc.saves) == 1
+	assert doc.territory == ""
+	assert doc.saves == []
 	assert "customer_group" not in saved[-1][0][5]
+	assert "territory" not in saved[-1][0][5]
 
 
-def test_protect_existing_party_groups_drops_only_set_values():
-	"""_protect_existing_party_groups removes a group / territory from the update values
-	only when the record already holds one (so the default never overwrites a person's
-	choice), leaves it to fill a blank, and touches no other doctype."""
+def test_drop_party_groups_on_update_strips_the_fields_whatever_the_record_holds():
+	"""_drop_party_groups_on_update removes a party's group / territory from the update
+	values whether the record holds one, holds a blank, or lacks the attribute -- and
+	touches no other doctype or field."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_online.core.mapping import _protect_existing_party_groups
+	from erpnext_enhancements.quickbooks_online.core.mapping import _drop_party_groups_on_update
 
 	values = {"supplier_name": "Acme Steel", "supplier_group": "Uncategorized"}
-	_protect_existing_party_groups("Supplier", values, _stub_doc(supplier_group="Plumbing"))
+	_drop_party_groups_on_update("Supplier", values, _stub_doc(supplier_group="Plumbing"))
 	assert values == {"supplier_name": "Acme Steel"}
 
-	# Blank (or whitespace-only) existing value -> the default stays to fill it.
+	# Blank (or whitespace-only, or absent) existing value -> still dropped: an update
+	# never carries the field.
 	values = {"supplier_group": "Uncategorized"}
-	_protect_existing_party_groups("Supplier", values, _stub_doc(supplier_group="  "))
-	assert values == {"supplier_group": "Uncategorized"}
+	_drop_party_groups_on_update("Supplier", values, _stub_doc(supplier_group="  "))
+	assert values == {}
 	values = {"supplier_group": "Uncategorized"}
-	_protect_existing_party_groups("Supplier", values, _stub_doc())
-	assert values == {"supplier_group": "Uncategorized"}
+	_drop_party_groups_on_update("Supplier", values, _stub_doc())
+	assert values == {}
+	# A mapped None (today's default) is dropped the same way -- nothing to write either way.
+	values = {"supplier_name": "Acme Steel", "supplier_group": None}
+	_drop_party_groups_on_update("Supplier", values, _stub_doc())
+	assert values == {"supplier_name": "Acme Steel"}
 
-	# Customer: group and territory are judged independently.
+	# Customer: both fields, independent of what the record holds.
 	values = {"customer_name": "Acme", "customer_group": "Uncategorized", "territory": "Uncategorized"}
-	_protect_existing_party_groups("Customer", values, _stub_doc(customer_group="Commercial", territory=None))
-	assert values == {"customer_name": "Acme", "territory": "Uncategorized"}
+	_drop_party_groups_on_update("Customer", values, _stub_doc(customer_group="Commercial", territory=None))
+	assert values == {"customer_name": "Acme"}
 
 	# Any other doctype -> never touched.
 	values = {"customer_group": "Uncategorized"}
-	_protect_existing_party_groups("Project", values, _stub_doc(customer_group="Commercial"))
+	_drop_party_groups_on_update("Project", values, _stub_doc(customer_group="Commercial"))
 	assert values == {"customer_group": "Uncategorized"}
 
 
@@ -5330,18 +5352,18 @@ def test_party_group_fields_are_never_qbo_owned(monkeypatch):
 	from erpnext_enhancements.quickbooks_online.core.mapping import _owned_snapshot, detect_conflicts
 
 	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name: False, raising=False)
-	assert _owned_snapshot("Supplier", "Acme Steel", {"supplier_name": "Acme Steel", "supplier_group": "Uncategorized"}) == {
+	assert _owned_snapshot("Supplier", "Acme Steel", {"supplier_name": "Acme Steel", "supplier_group": "Plumbing"}) == {
 		"supplier_name": "Acme Steel"
 	}
 	assert _owned_snapshot(
-		"Customer", "Acme", {"customer_name": "Acme", "customer_group": "Uncategorized", "territory": "Uncategorized"}
+		"Customer", "Acme", {"customer_name": "Acme", "customer_group": "Commercial", "territory": "Utah"}
 	) == {"customer_name": "Acme"}
 	# Other doctypes keep every mapped field.
 	assert _owned_snapshot("Item", "X", {"item_group": "Products"}) == {"item_group": "Products"}
 
 	doc = _stub_doc(doctype="Supplier", supplier_name="Acme Steel", supplier_group="Plumbing")
 	row = types.SimpleNamespace(owned_fields=json.dumps({"supplier_name": "Acme Steel", "supplier_group": "Labels"}))
-	# The group moved away from the old snapshot AND differs from the incoming default:
+	# The group moved away from the old snapshot AND differs from the incoming value:
 	# the three-way divergence detect_conflicts flags -- except that this field is never its.
 	assert detect_conflicts(doc, {"supplier_name": "Acme Steel", "supplier_group": "Uncategorized"}, row) == []
 	# ...whereas a person's edit to the QBO-owned name still is.
@@ -5351,75 +5373,12 @@ def test_party_group_fields_are_never_qbo_owned(monkeypatch):
 	]
 
 
-def test_seed_patch_creates_the_leaf_only_where_missing(monkeypatch):
-	"""seed_qbo_uncategorized_groups is insert-only, keyed on the name, skips a doctype
-	or root that is not there, and never raises -- a raising patch aborts bench migrate,
-	which on this repo is the deploy."""
-	frappe = install_frappe_stub()
-	from erpnext_enhancements.patches import seed_qbo_uncategorized_groups as seed
-	from erpnext_enhancements.quickbooks_online.core.constants import (
-		DEFAULT_PARTY_GROUP,
-		ERPNEXT_OWNED_PARTY_FIELDS,
-		PARTY_GROUP_DOCTYPES,
-	)
-
-	# The seed, the mapper and the update-path guard agree on which fields these are.
-	assert set(PARTY_GROUP_DOCTYPES) == {field for fields in ERPNEXT_OWNED_PARTY_FIELDS.values() for field in fields}
-
-	present = {("Supplier Group", DEFAULT_PARTY_GROUP)}  # already seeded on this site
-
-	def exists(doctype, name):
-		if doctype == "DocType":
-			return name != "Territory"  # not installed here
-		if name in {"All Supplier Groups", "All Customer Groups", "All Territories"}:
-			return True
-		return (doctype, name) in present
-
-	monkeypatch.setattr(frappe.db, "exists", exists, raising=False)
-	monkeypatch.setattr(frappe.db, "commit", lambda: None, raising=False)
-	inserted = []
-
-	def get_doc(spec):
-		doc = types.SimpleNamespace(**spec)
-		doc.insert = lambda **kwargs: inserted.append(spec)
-		return doc
-
-	monkeypatch.setattr(frappe, "get_doc", get_doc, raising=False)
-	monkeypatch.setattr(frappe, "log_error", lambda *args, **kwargs: None, raising=False)
-
-	assert seed.seed_uncategorized_groups() == ["Customer Group"]
-	assert inserted == [
-		{
-			"doctype": "Customer Group",
-			"customer_group_name": "Uncategorized",
-			"parent_customer_group": "All Customer Groups",
-			"is_group": 0,
-		}
-	]
-	# execute() is the patch entry; a second run creates nothing.
-	present.add(("Customer Group", DEFAULT_PARTY_GROUP))
-	seed.execute()
-	assert len(inserted) == 1
-
-	# An insert that blows up is an Error Log entry, not an aborted migrate, and the
-	# other doctypes are still attempted.
-	present.clear()
-	errors = []
-	monkeypatch.setattr(frappe, "log_error", lambda *args, **kwargs: errors.append(args), raising=False)
-
-	def failing_get_doc(spec):
-		raise Exception("boom")
-
-	monkeypatch.setattr(frappe, "get_doc", failing_get_doc, raising=False)
-	assert seed.seed_uncategorized_groups() == []
-	assert len(errors) == 2
-
-
 def test_party_group_remediation_reads_the_first_sweep_touch():
 	"""The remediation restores the OLD value of the first Version change whose NEW value
-	is a sweep landing group, and defaults to Uncategorized when that old value is itself
-	a landing group (the record was created by an earlier sweep), empty, or since deleted.
-	A history with no such change is 'not found' -- the tool does not guess."""
+	is a sweep landing group, and CLEARS the group when that old value is itself a landing
+	group (the record was created by an earlier sweep), empty, or since deleted -- no group
+	rather than a guessed one. A history with no such change is 'not found': the tool does
+	not guess."""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_online.core.party_group_remediation import (
 		SWEEP_LANDING_GROUPS,
@@ -5441,13 +5400,13 @@ def test_party_group_remediation_reads_the_first_sweep_touch():
 	assert restoration_target("Plumbing", landing, lambda group: True) == ("Plumbing", "restored")
 
 	# Created by the 2026-06-18 import INTO Staffing: its first sweep change reads
-	# Staffing -> Event Decor, and Staffing is itself a landing group -> Uncategorized.
+	# Staffing -> Event Decor, and Staffing is itself a landing group -> cleared.
 	history = [["supplier_group", "Staffing", "Event Decor"], ["supplier_group", "Event Decor", "Encapsulant"]]
 	assert pre_sweep_group(history, "supplier_group", landing) == (True, "Staffing")
-	assert restoration_target("Staffing", landing, lambda group: True) == ("Uncategorized", "defaulted")
-	# An empty pre-sweep value, or a group deleted since, defaults too.
-	assert restoration_target("", landing, lambda group: True) == ("Uncategorized", "defaulted")
-	assert restoration_target("Plumbing", landing, lambda group: False) == ("Uncategorized", "defaulted")
+	assert restoration_target("Staffing", landing, lambda group: True) == ("", "cleared")
+	# An empty pre-sweep value, or a group deleted since, clears too.
+	assert restoration_target("", landing, lambda group: True) == ("", "cleared")
+	assert restoration_target("Plumbing", landing, lambda group: False) == ("", "cleared")
 
 	# A person's re-grouping between sweeps is honoured: the first change LANDING on a
 	# sweep group is the one read, and changes to other fields are ignored.
@@ -5465,3 +5424,140 @@ def test_party_group_remediation_reads_the_first_sweep_touch():
 	assert pre_sweep_group([], "supplier_group", landing) == (False, "")
 	customer_landing = SWEEP_LANDING_GROUPS["Customer"]
 	assert pre_sweep_group([["customer_group", "", "Government"]], "customer_group", customer_landing) == (True, "")
+
+
+def test_curated_supplier_group_corrections_are_well_formed():
+	"""The audit's corrections file loads, every entry names a group or null with a known
+	basis, no supplier appears twice (JSON would silently keep the last), and the four
+	sweep landing groups appear only for the suppliers they were created for."""
+	import re
+	from pathlib import Path
+
+	import pytest
+
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.party_group_remediation import (
+		CURATED_BASES,
+		CURATED_SUPPLIER_GROUPS_FILE,
+		SWEEP_LANDING_GROUPS,
+		load_curated_supplier_groups,
+	)
+
+	raw = CURATED_SUPPLIER_GROUPS_FILE.read_text(encoding="utf-8")
+	keys = re.findall(r'^\s{4}"((?:[^"\\]|\\.)+)":\s*\{"group"', raw, flags=re.M)
+	assert len(keys) == len(set(keys)), sorted({key for key in keys if keys.count(key) > 1})
+
+	corrections = load_curated_supplier_groups()
+	assert len(corrections) == len(keys) >= 200
+	assert all(entry["basis"] in CURATED_BASES for entry in corrections.values())
+	landing = set(SWEEP_LANDING_GROUPS["Supplier"])
+	assert {name for name, entry in corrections.items() if entry["group"] in landing} == {
+		"Kajae",
+		"Taiwan Imports",
+		"Wesco / Anixter",
+		"Anixter",
+		"Dumpster Depot",
+	}
+	assert corrections["Sapphire Fountains"] == {"group": None, "basis": "audit"}
+	assert corrections["Stephanie Atwood"]["group"] == "Stone - Marble & Granite"
+
+	# A malformed file fails loudly (a test, not a migrate).
+	import tempfile
+
+	with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+		handle.write(json.dumps({"corrections": {"Acme": {"group": "", "basis": "twin"}}}))
+	with pytest.raises(ValueError):
+		load_curated_supplier_groups(Path(handle.name))
+	with open(handle.name, "w", encoding="utf-8") as fh:
+		fh.write(json.dumps({"corrections": {"Acme": {"group": "Plumbing", "basis": "guess"}}}))
+	with pytest.raises(ValueError):
+		load_curated_supplier_groups(Path(handle.name))
+
+
+def test_apply_curated_supplier_groups_writes_only_what_exists_and_differs(monkeypatch):
+	"""The curated pass restores a named group, clears on null, skips a Supplier or group
+	that does not exist (reported, never guessed), leaves an already-correct record
+	alone, and turns a bad row into an Error Log entry rather than an aborted batch."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import party_group_remediation as remediation
+
+	suppliers = {"Tile Tech": "Garbage & Junk Removal", "Sapphire Fountains": "3D Printing", "Ferguson": "Plumbing Supplies"}
+	groups = {"Tile - Supplier", "Plumbing Supplies"}
+
+	def exists(doctype, name):
+		return name in suppliers if doctype == "Supplier" else name in groups
+
+	monkeypatch.setattr(frappe.db, "exists", exists, raising=False)
+	monkeypatch.setattr(frappe.db, "get_value", lambda dt, name, field: suppliers.get(name), raising=False)
+	monkeypatch.setattr(frappe.db, "has_column", lambda dt, col: False, raising=False)
+	monkeypatch.setattr(frappe.db, "commit", lambda: None, raising=False)
+	writes = []
+	monkeypatch.setattr(frappe.db, "set_value", lambda dt, name, values, **kw: writes.append((name, values)), raising=False)
+	monkeypatch.setattr(frappe, "flags", types.SimpleNamespace(in_patch=True, in_migrate=False), raising=False)
+	errors = []
+	monkeypatch.setattr(frappe, "log_error", lambda *args, **kwargs: errors.append(args), raising=False)
+	monkeypatch.setattr(frappe, "get_traceback", lambda: "tb", raising=False)
+
+	corrections = {
+		"Tile Tech": {"group": "Tile - Supplier", "basis": "twin"},
+		"Sapphire Fountains": {"group": None, "basis": "audit"},
+		"Ferguson": {"group": "Plumbing Supplies", "basis": "twin"},
+		"Nobody": {"group": "Plumbing", "basis": "name"},
+		"Ferguson ": {"group": "No Such Group", "basis": "name"},
+	}
+	suppliers["Ferguson "] = "X"
+	report = remediation.apply_curated_supplier_groups(apply=False, verbose=False, corrections=corrections)
+	assert writes == []  # dry run
+	assert (report["applied"], report["unchanged"], report["missing_supplier"], report["missing_group"]) == (2, 1, 1, 1)
+
+	report = remediation.apply_curated_supplier_groups(apply=True, verbose=False, corrections=corrections)
+	assert writes == [
+		("Tile Tech", {"supplier_group": "Tile - Supplier"}),
+		("Sapphire Fountains", {"supplier_group": None}),
+	]
+	assert [change["name"] for change in report["changes"]] == ["Tile Tech", "Sapphire Fountains"]
+	assert {skipped["name"] for skipped in report["skipped"]} == {"Nobody", "Ferguson "}
+	assert report["errors"] == 0 and errors == []
+
+	# A row that blows up is logged and the batch continues.
+	writes.clear()
+
+	def exploding_set_value(dt, name, values, **kw):
+		if name == "Tile Tech":
+			raise Exception("boom")
+		writes.append((name, values))
+
+	monkeypatch.setattr(frappe.db, "set_value", exploding_set_value, raising=False)
+	report = remediation.apply_curated_supplier_groups(apply=True, verbose=False, corrections=corrections)
+	assert report["errors"] == 1 and len(errors) == 1
+	assert writes == [("Sapphire Fountains", {"supplier_group": None})]
+
+
+def test_restore_supplier_groups_patch_never_raises(monkeypatch):
+	"""The migrate-time patch wraps both passes: a failure in either is an Error Log entry,
+	the other pass still runs, and execute() returns -- a raising patch aborts bench
+	migrate, which on this repo is the deploy."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.patches import restore_supplier_groups_after_qbo_sweep as patch
+	from erpnext_enhancements.quickbooks_online.core import party_group_remediation as remediation
+
+	calls = []
+	errors = []
+	monkeypatch.setattr(frappe, "log_error", lambda *args, **kwargs: errors.append(args), raising=False)
+	monkeypatch.setattr(frappe, "get_traceback", lambda: "tb", raising=False)
+
+	def sweep(**kwargs):
+		calls.append(("sweep", kwargs))
+		raise Exception("boom")
+
+	monkeypatch.setattr(remediation, "restore_party_groups", sweep)
+	monkeypatch.setattr(
+		remediation, "apply_curated_supplier_groups", lambda **kwargs: calls.append(("curated", kwargs)) or {"applied": 1}
+	)
+
+	patch.execute()
+
+	assert [call[0] for call in calls] == ["sweep", "curated"]
+	assert calls[0][1] == {"apply": True, "doctype": "Supplier", "verbose": False, "include_sync_created": True}
+	assert calls[1][1] == {"apply": True, "verbose": False}
+	assert len(errors) == 1
