@@ -5561,3 +5561,41 @@ def test_restore_supplier_groups_patch_never_raises(monkeypatch):
 	assert calls[0][1] == {"apply": True, "doctype": "Supplier", "verbose": False, "include_sync_created": True}
 	assert calls[1][1] == {"apply": True, "verbose": False}
 	assert len(errors) == 1
+
+
+def test_delete_uncategorized_groups_patch_skips_missing_and_never_raises(monkeypatch):
+	"""delete_qbo_uncategorized_groups removes the leaf from each tree that has one, skips a
+	missing DocType or record, and turns a refused delete (a record something still links
+	to) into an Error Log entry rather than an aborted migrate."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.patches import delete_qbo_uncategorized_groups as cleanup
+
+	present = {("Supplier Group", "Uncategorized"), ("Territory", "Uncategorized")}
+
+	def exists(doctype, name):
+		if doctype == "DocType":
+			return name != "Customer Group"  # not installed here
+		return (doctype, name) in present
+
+	monkeypatch.setattr(frappe.db, "exists", exists, raising=False)
+	monkeypatch.setattr(frappe.db, "commit", lambda: None, raising=False)
+	deleted, errors = [], []
+
+	def delete_doc(doctype, name, **kwargs):
+		if doctype == "Territory":
+			raise Exception("LinkExistsError: a Customer still links to it")
+		deleted.append((doctype, name, kwargs))
+
+	monkeypatch.setattr(frappe, "delete_doc", delete_doc, raising=False)
+	monkeypatch.setattr(frappe, "log_error", lambda *args, **kwargs: errors.append(args), raising=False)
+	monkeypatch.setattr(frappe, "get_traceback", lambda: "tb", raising=False)
+
+	assert cleanup.delete_uncategorized_groups() == ["Supplier Group"]
+	assert deleted == [("Supplier Group", "Uncategorized", {"ignore_permissions": True})]
+	assert len(errors) == 1
+
+	# execute() is the patch entry; with nothing left it deletes nothing and raises nothing.
+	present.clear()
+	deleted.clear()
+	cleanup.execute()
+	assert deleted == []

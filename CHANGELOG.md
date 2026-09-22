@@ -7,7 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.497.0] - 2026-09-22
+
+### Changed
+
+- **Version hygiene: 1.496.0 was cut twice, and this release exists so the tag and the
+  changelog say what is actually deployed.** PR #1070 landed at 15:35 UTC as v1.496.0 with a
+  seeded `Uncategorized` default group; PR #1071, built on it, landed eighteen minutes later
+  under the *same* number with a different design. The 1.496.0 entry below is restored to what
+  that first merge shipped; everything #1071 changed is described here.
+- **The QuickBooks importer files a new Supplier or Customer into no group, and never writes a
+  group or territory on update.** `constants.DEFAULT_PARTY_GROUP` is `None` instead of
+  `"Uncategorized"` (Nik, 2026-09-22: a wrong group is worse than no group), and
+  `_drop_party_groups_on_update` (was `_protect_existing_party_groups`) strips
+  `supplier_group`, `customer_group` and `territory` from every in-place update whatever the
+  record holds, a blank included — the 1.496.0 draft back-filled a blank with `Uncategorized`
+  on the next sync, which would have undone the clearing below within the hour. If a named
+  default is ever wanted it goes in that constant as a NAME, resolved with `frappe.db.exists`.
+  The seed patch `seed_qbo_uncategorized_groups` and its `after_migrate` backstop are gone.
+
+### Fixed
+
+- **906 of 1,184 Suppliers sat in "Garbage & Junk Removal"; the deploy of #1071 put them
+  right.** `patches/restore_supplier_groups_after_qbo_sweep` runs
+  `quickbooks_online/core/party_group_remediation.py` twice, Suppliers only: the OLD value of
+  the first `tabVersion` change whose NEW value is a sweep landing group is the pre-sweep group
+  — a real one is **restored** (63), anything else is **cleared** to NULL, a no-history record
+  is cleared only when its mapping says the import created it; then the audit's hand-curated
+  corrections in `core/supplier_group_corrections.json` (245 Suppliers, each entry carrying its
+  basis: a duplicate record of the same company already holding the group, the trade in the
+  name, the record's notes, or a group created for that supplier minutes before a sweep — Kajae
+  → Staffing, Taiwan Imports → Event Decor, Wesco / Anixter → Encapsulant, Dumpster Depot →
+  Garbage & Junk Removal — plus Stephanie Atwood out of the company-named "European Marble &
+  Granite" and Sapphire Fountains itself out of 3D Printing) win over the walk. ~640 QBO payees
+  that were never suppliers (restaurants, fuel, banks, employee reimbursements) stay blank.
+  `frappe.db.set_value` with the Supplier search fields recomputed; per-record guarded, both
+  passes wrapped, cannot raise, safe twice. Customers in "Government" are left for a separate
+  decision (`MIGRATION_NOTES.md` §7).
+
+### Removed
+
+- **The three `Uncategorized` leaves 1.496.0 seeded** under All Supplier Groups, All Customer
+  Groups and All Territories, by `patches/delete_qbo_uncategorized_groups`. They lived for
+  eighteen minutes, nothing was ever filed under them, and an empty "Uncategorized" invites
+  exactly the filing the no-default design rejects. `frappe.delete_doc` refuses a record any
+  other doctype still links to (`LinkExistsError`), so a leaf that did pick up a reference in
+  that window is logged and left, never forced; guarded on the DocType and the record, cannot
+  raise, safe twice.
+
 ## [1.496.0] - 2026-09-22
+
+> **Superseded eighteen minutes later.** This is what PR #1070 shipped at 15:35 UTC. PR #1071
+> landed at 15:53 UTC under the same version number and replaced the `Uncategorized` default
+> with no default at all; see [1.497.0](#1497---2026-09-22) for what is actually deployed.
 
 ### Fixed
 
@@ -36,69 +88,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the next run had the sweep not got there first. Same shape as the Project-title clobber
   fixed by `_protect_existing_project_title` (v1.89.0), and fixed the same way, in three
   parts:
-  - **No default at all.** `constants.DEFAULT_PARTY_GROUP` is `None`, so a party the importer
-    creates gets no group and a person files it. That is Nik's call of 2026-09-22 — *a wrong
-    group is worse than no group* — and it replaces, before it shipped, the earlier draft of
-    this release that seeded an `Uncategorized` leaf and back-filled every blank with it on
-    the next sync. None of the three Links is `reqd` on v16, `apply_values` skips a `None`, and
-    if a named default is ever wanted it goes in that constant as a NAME, which
-    `_default_group` resolves with `frappe.db.exists` — never an unordered lookup again. The
-    test stub no longer answers a `{"is_group": 0}` lookup at all, so a regression shows up as
-    a wrong value *and* a call.
-  - **Never written on update.** `_drop_party_groups_on_update` strips `supplier_group`,
-    `customer_group` and `territory` from every in-place update whatever the record holds —
-    a blank included, because a person clearing a group means "no group", not "fill it for
-    me", and the patch below blanks ~640 of them. `ERPNEXT_OWNED_PARTY_FIELDS` are excluded
-    from `_owned_snapshot` (whichever path writes the mapping) and skipped by
-    `detect_conflicts` even when an older snapshot still lists them, so re-grouping or
-    clearing a party is never a conflict and never undone by `retry_failed_syncs`, which
-    replays with `overwrite=True`.
-  - **Bench-free tests** pin all of it: the `None` default, no lookup, a named default
-    resolved by name, the update path leaving a set, blank and cleared group alone, the
-    preview not listing the field, the snapshot and conflict exclusions, the remediation's
-    history walk, the curated file's shape, the curated pass's writes, and the patch's
-    never-raise contract.
-- **906 of 1,184 Suppliers sat in "Garbage & Junk Removal" and 27 had no group; the deploy
-  puts the Suppliers right.** `patches/restore_supplier_groups_after_qbo_sweep` runs the new
-  `quickbooks_online/core/party_group_remediation.py` twice, Suppliers only. First the
-  history walk: for every QBO-linked Supplier in the landing group, the OLD value of the
-  first `tabVersion` `changed` entry whose NEW value is a sweep landing group is the
-  pre-sweep group — a real, still-existing one is **restored** (63 on prod: Conely Company
-  → Plumbing Supplies, Codale → Electrical Supplies, Western Sheet Metal → Metal - Sheet
-  Metal…), anything else (empty, itself a landing group because an earlier sweep created
-  the record, or deleted since) is **cleared** to NULL, and a record with no history at all
-  is cleared only when its mapping says the import created it. Then the audit's hand-curated
-  corrections in `core/supplier_group_corrections.json` win over the walk: ~230 Suppliers
-  whose group is settled by a duplicate record of the same company already carrying it
-  (Tile Tech → Tile - Supplier, Oase North America Inc → Fountain Components), the trade in
-  the name (Durks Plumbing, Wholesale Pumps, Fastenal → Fasteners, Jiffy Lube → Vehicles -
-  Maintenance), the record's own notes (Kajae → Staffing, AspectLED → Lighting - Supplier),
-  or a group created for that supplier minutes before a sweep swallowed it (Taiwan Imports →
-  Event Decor, Wesco / Anixter → Encapsulant, Dumpster Depot → Garbage & Junk Removal) —
-  plus the audit's misplacements: Stephanie Atwood out of the company-named group "European
-  Marble & Granite" into Stone - Marble & Granite, and Sapphire Fountains itself out of 3D
-  Printing into no group. Every entry carries its basis; an entry whose Supplier or group is
-  missing is skipped and reported, never guessed. Deliberately left alone: the ~640 QBO
-  payees that never were suppliers (restaurants, fuel, hotels, banks, employee
-  reimbursements) stay blank rather than get a guessed trade; a person's deliberate choice
-  that merely looks odd (FLO-TECH under the stock "Hardware", Charles Machine Works under
-  Fabrication - Metal) stands; and the 466 Customers in "Government" wait for a separate
-  decision because real government customers are among them — the module's dry run covers
-  them (`MIGRATION_NOTES.md` §7). Writes are `frappe.db.set_value` (no doc hooks, 900 times
-  over) with the Supplier's two denormalized search fields recomputed alongside so list-view
-  search does not keep pointing at the old group; per-record guarded, both passes wrapped,
-  cannot raise (a raising patch aborts `bench migrate`, which is the deploy — v1.395.0),
-  safe twice. The migrate log carries both summaries and the names of any no-history rows
-  left for a person.
+  - **The default is a name.** `constants.DEFAULT_PARTY_GROUP = "Uncategorized"`;
+    `_default_group` returns it when `frappe.db.exists` says it does and `None` otherwise
+    (none of the three Links is `reqd` on v16, so a missing leaf yields an honest blank, not
+    a guess). Never an unordered lookup again — the test stub no longer answers a
+    `{"is_group": 0}` lookup at all, so a regression shows up as a wrong value *and* a call.
+  - **Create-time only.** `_protect_existing_party_groups` drops `supplier_group`,
+    `customer_group` and `territory` from an update when the record already holds one, so
+    the default is set once on create, fills a blank on link / update, and is otherwise
+    ERPNext's. `ERPNEXT_OWNED_PARTY_FIELDS` are excluded from `_owned_snapshot` (whichever
+    path writes the mapping) and skipped by `detect_conflicts` even when an older snapshot
+    still lists them, so re-grouping a party is never a conflict.
+  - **Bench-free tests** pin all of it: the named default, no lookup, the update path
+    leaving a set group and territory alone while still filling a blank one, the preview
+    not listing the field, the snapshot and conflict exclusions, the seed patch's
+    insert-only / never-raise contract, and the remediation's history walk.
 
 ### Added
 
-- **`quickbooks_online/core/party_group_remediation.py`** — the engine the patch runs:
-  `restore_party_groups` (dry-run by default, `doctype=`, `limit=`,
-  `include_sync_created=`), `apply_curated_supplier_groups`, and
-  `load_curated_supplier_groups`, which validates `core/supplier_group_corrections.json`
-  (exactly `group` + `basis` per entry, `basis` one of twin / name / notes / intent / audit)
-  so a typo fails a test, not a migrate.
+- **`Uncategorized` under All Supplier Groups, All Customer Groups and All Territories**,
+  seeded by `patches/seed_qbo_uncategorized_groups` — insert-only, keyed on the name,
+  guarded on the DocType and the root, cannot raise (a raising patch aborts `bench migrate`,
+  which is the deploy) — and registered on `after_migrate` as the backstop for a site whose
+  Patch Log already has the entry or where the leaf was deleted, because the mapper depends
+  on the record existing and cannot create it. A seed rather than a fixture for the reason
+  `seed_budget_categories` gives: fixture sync deletes and re-inserts each document every
+  migrate.
+- **`quickbooks_online/core/party_group_remediation.py`** puts the swept records back, from
+  each record's `tabVersion` history: for a Supplier in "Garbage & Junk Removal" or a Customer
+  in "Government" with a QuickBooks Sync Mapping, the OLD value of the first `changed` entry
+  whose NEW value is a sweep landing group is the pre-sweep group; an old value that is
+  empty, itself a landing group (the record was created by an earlier sweep) or since
+  deleted becomes `Uncategorized`; a record whose history shows no sweep change is listed
+  and left alone (`include_sync_created=True` files the ones the import created). Writes
+  with `frappe.db.set_value` — no doc hooks 900 times over — but recomputes a Supplier's
+  `custom_supplier_groups_search` / `custom_additional_supplier_groups_list` with
+  `supplier_query.sync_supplier_groups` alongside, since list-view search reads them. Dry-run
+  by default, idempotent, batched, per-record guarded, **not** wired to migrate or the
+  scheduler; runbook in `quickbooks_online/MIGRATION_NOTES.md` §7. Run it on sandbox first.
 
 ## [1.495.0] - 2026-09-21
 
