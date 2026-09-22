@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.502.1] - 2026-09-22
+
+**The attribution enablement checklist, and two defects it turned up in the process it
+describes.** TASK-2026-01472 (Marketing P1, item 5). No switch is flipped by this release;
+the checklist is for the person who does.
+
+### Fixed
+
+- **Attribution Gaps hid every bypass of the source gate.** When a salesperson does not know
+  a source, the gate's error message tells them to pick `Unknown (pre-Aug 2026)`, which is
+  deliberate so nobody is blocked mid-deal. The report classified that bucket as
+  *Historical* regardless of the record's date. So once enforcement was on, a new
+  Opportunity saved as "unknown" was sorted to the bottom, left out of the chart, and hidden
+  by the "only records with no source" filter. The live-gap count, which is exactly what each
+  stage of the checklist checks, would have read zero while the gate was being routed around.
+  It was already happening: **2 of the 29 Opportunities created since 2026-08-01 carry the
+  bucket**, and both were listed as history. A bucket record created on or after
+  `attribution.CAPTURE_START` (2026-08-01, the backfill's own cutoff, held together by a test)
+  is now its own live gap, **Unknown (new)**, shown in red and counted in the chart. The filter
+  is renamed *Only live gaps (hide history)* and keeps these records. The gate's message now
+  says such records are listed for follow-up.
+
+### Changed
+
+- **`docs/attribution-runbook.md` → "Turning it on" is now a staged checklist.** Stage 0 is
+  prerequisites and a recorded baseline. Stage 1 turns capture on. Stage 2 requires a source
+  on Opportunities. Stage 3 requires one on Leads. Every stage has the exact Attribution Gaps
+  filters to run, what the rows should show, an exit criterion, and a rollback.
+  - **Stage 1 is corrected.** The runbook said to turn on `lead_attribution_enabled` alone
+    for a week so that "capture and propagation start working". But propagation and the
+    capture timestamp are ungated hooks that have run on every save since v1.241.0. The
+    master switch gates only the source gate and the website ingress. A week of the master
+    switch alone would have changed nothing observable, so stage 1 turns it on together with
+    the ingress.
+  - **The expected friction, measured:** 18 of the 29 Opportunities created since
+    2026-08-01 (62%) would have been stopped at save by stage 2, about 2.5 a week.
+  - **Rollback now says to untick the specific `require_lead_source_on_*` box, not the master
+    switch.** The old "Turning it off" advice (untick the master switch) would also close the
+    website ingress, turning a sales complaint into lost enquiries.
+- The Nik runbook row for TASK-2026-01472 points at the checklist.
+
+### Notes
+
+- Set on production on 2026-09-22 at Nik's request, outside this release:
+  - **Company default Holiday List** moved from `Utah, USA Holidays 2025` to
+    `Utah, USA Holidays 2026`. The 2026 list already existed, created 2026-08-06 with
+    13 holidays; only the company default pointed at the old year.
+  - **Website Lead Owner** = Brian Morisseau and **Escalate Unanswered Leads To** =
+    Nikolas Bradshaw, set once v1.502.0's fields had migrated.
+- `tests/test_attribution_gaps.py` (9 tests, own CI step).
+
 ## [1.502.0] - 2026-09-22
 
 **Every inbound Lead now gets an owner, a first-response deadline in working time, and a
