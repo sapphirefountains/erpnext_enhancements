@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.507.0] - 2026-09-22
+
+**Marketing P2 scaffold: the publishing switches, their gate, and "nothing may touch spend"
+made to survive the first code that writes.** TASK-2026-01479, the first item of Phase 2
+(publishing to Facebook, Instagram, LinkedIn and YouTube). Nothing publishes yet: no
+publisher is installed, and every switch ships off.
+
+Most of what the task asked for shipped in Phase 1 with the ad connectors (v1.503.0): the
+`marketing/` module with its `core/`, `platforms/`, `doctype/` and README, the top-level
+`api.py`, the dormant Marketing Settings, and its defaults backfill (in `patches.txt` and on
+`after_migrate`, so this release's new fields get their `tabSingles` rows on the next
+migrate with no new patch). **The task's "Module Def patch" is not needed and is not
+shipped.** On prod the Marketing Module Def row was created on 2026-08-13 by the DocType
+import itself, as `marketing/README.md` explains; `setup/module_map.py` is what makes a new
+module install.
+
+### Added
+
+- **Marketing Settings → *Publishing (posts to public accounts)*:** one switch per network
+  (Facebook Page, Instagram, LinkedIn Company Page, YouTube). All ship `0`, and only System
+  Manager can change them. Marketing Settings is now **change-tracked**, so the Version log
+  shows who switched publishing on. Each switch's description names the platform approval it
+  waits on. YouTube's also says what happens before its audit passes: every video uploaded
+  through the API is locked private, and that lock cannot be appealed.
+- **`marketing/publish/`**, the package where Phase 2's writing code will live:
+  - `constants.py` names the four networks apart from the ad platforms. *Meta Ads* and
+    *Facebook* are one vendor but separate permissions, reviewed and switched separately, so
+    no switch or credential prefix can mean both.
+  - `gate.py` (pure) decides whether an approved post may go out: the master switch **and**
+    the network's own switch. The master switch alone publishes nothing, and the ad-reporting
+    switches play no part. The gate is to be asked at send time, so switching a network off
+    stops even posts already approved and scheduled. It is not the approval check and cannot
+    replace it (decision 9).
+- **`core/constants.SPEND_CAPABLE_SCOPES`:** `ads_management`, `business_management`,
+  `pages_manage_ads` and LinkedIn's `rw_ads`. Phase 1's guard looked only for Google's
+  `:mutate`, which is enough while nothing writes; publishing needs write scopes of its own.
+  The one a publisher would reach for is **`pages_manage_ads`, which lets a post be boosted
+  into paid spend**. The build now fails if any of these appears in any string in
+  `marketing/`. Google Ads' only scope is full access; it remains the tolerated exception
+  and is confined to `core/constants.py`.
+- `tests/test_marketing_publishing.py`: 17 tests, stub-free, in the existing marketing CI
+  step. They cover the gate, the switch schema and the scope guard, including a probe that
+  proves the scanner finds a scope written the way a publisher would write one.
+
+### Changed
+
+- `tests/test_marketing_settings.py` now checks that *every* Check on Marketing Settings
+  ships `0`, read from the schema, instead of a hand-kept list of the three ad switches.
+- *Sync Behaviour* → *Sync Behavior*.
+- `docs/marketing-platform-plan.md` → *Module shape* is redrawn from the code. The first
+  draft put each vendor's ads reading and publishing in one file per vendor. The build split
+  them instead: read-only ad connectors in `platforms/`, publishers in `publish/`, never
+  sharing a transport, a switch or a token.
+
+### Not in this release, deliberately
+
+- **The publish sweeper's cron entry** ships in the same PR as the sweeper
+  (TASK-2026-01481). It is still registered at build time, not added by hand on go-live day,
+  and this avoids a cron entry that points at code that does not exist.
+
 ## [1.506.0] - 2026-09-22
 
 **The MDM provider clients now call endpoints that exist.** Both Live adapters had been

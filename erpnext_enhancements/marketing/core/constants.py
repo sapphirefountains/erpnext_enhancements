@@ -87,6 +87,18 @@ OAUTH = {
 	},
 }
 
+#: OAuth scopes that can create, change or fund advertising, or hand out access to an ad
+#: account (``business_management``). Nothing in ``marketing/`` may
+#: request one -- not these read-only connectors, and not the publishing connections Phase 2
+#: adds, where the tempting one is Meta's ``pages_manage_ads``: it would let a post be
+#: boosted into paid spend. ``tests/test_marketing_publishing.py`` fails the build if any of
+#: these strings appears anywhere else in the module.
+#:
+#: Google Ads is the tolerated exception, because its only scope is full access (see
+#: ``OAUTH`` above). The same test confines that scope to this file, so it cannot reach a
+#: publishing connection either.
+SPEND_CAPABLE_SCOPES = frozenset({"ads_management", "business_management", "pages_manage_ads", "rw_ads"})
+
 #: How long a minted OAuth ``state`` is honored.
 OAUTH_STATE_TTL_SECONDS = 600
 

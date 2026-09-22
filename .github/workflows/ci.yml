@@ -355,8 +355,13 @@ jobs:
       # identity fields the record names are built from staying set_only_once (the
       # restate-as-upsert guarantee), and no credential-shaped field appearing on a
       # doctype Sales Manager can read.
-      - name: Marketing settings dials + ad-model identity
-        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings -v
+      # test_marketing_publishing (TASK-2026-01479, v1.507.0) shares the step: also stub-free.
+      # It pins the P2 publishing gate (master switch AND the network's own switch; the ad
+      # switches publish nothing), that every publishing switch ships off and only System
+      # Manager can flip one, and decision 3 once writes exist: no spend-capable OAuth scope
+      # (pages_manage_ads would boost a post into paid spend) anywhere in marketing/.
+      - name: Marketing settings dials + ad-model identity + publishing gate
+        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing -v
       # The read-only ad-spend connectors (TASK-2026-01476, v1.503.0), built against
       # recorded-shape fixtures because API access is still pending. Pins, in order: nothing
       # outside the read-only allowlist is ever sent (and no mutate-shaped string exists in

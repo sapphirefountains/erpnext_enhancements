@@ -116,31 +116,40 @@ refresh tokens) — the refresh job must be per-platform, not one shared timer.
 ## Module shape
 
 One new Frappe module, `marketing/`, following the house layout used by `quickbooks_online`,
-`stripe_payments` and `plaid_banking`:
+`stripe_payments` and `plaid_banking`. *(Redrawn 2026-09-22 from the code, after Phase 1
+shipped. The first draft put each vendor's ads reading and publishing in one file per vendor.
+The build split them instead: the read-only ad connectors and the publishers never share a
+transport, a switch or a token, so a publishing bug cannot reach spend.)*
 
 ```
 marketing/
-├── core/
-│   ├── client.py        ← shared REST transport (requests, no SDK), backoff, quota headers
-│   ├── api.py           ← @frappe.whitelist() RPC + permission gate
-│   ├── constants.py
+├── api.py               ← stable short path for the OAuth redirect URI              (shipped)
+├── core/                                                                            (shipped)
+│   ├── client.py        ← the READ-ONLY transport: allowlist, retries, redaction; no SDK
+│   ├── api.py           ← System-Manager RPC; POST-only except the OAuth callback
+│   ├── constants.py     ← versions, scopes, READ_ONLY_ALLOWLIST, SPEND_CAPABLE_SCOPES
 │   ├── utils.py         ← settings, get_secret / set_secret
 │   ├── tasks.py         ← scheduler shims: check switch, self-throttle, enqueue onto `long`
-│   └── oauth.py         ← start_oauth / oauth_callback / disconnect, per platform
-├── platforms/
-│   ├── meta.py          ← FB Pages + IG Content Publishing + ads_read insights
-│   ├── linkedin.py      ← UGC posts + ads reporting
-│   ├── youtube.py       ← resumable upload + Analytics
-│   ├── google_ads.py    ← read-only campaign + daily metrics
-│   └── gbp.py           ← reviews, replies, local posts
-├── publish/
-│   ├── outbox.py        ← Social Publish Job state machine
-│   ├── sweeper.py       ← re-drives Pending past available_at; reclaims expired leases
-│   └── ratelimit.py     ← pure decision functions + Redis Lua; shape described below
-├── attribution/         ← the spend ↔ pipeline join
+│   ├── oauth.py         ← start_oauth / oauth_callback / disconnect, per platform
+│   ├── sync.py          ← ad-spend engine: restate + upsert, cursor only on a clean run
+│   └── roas.py          ← the spend ↔ pipeline join, pure (was `attribution/` in this plan)
+├── platforms/           ← read-only ad reporting, one module per platform            (shipped)
+│   ├── google_ads.py
+│   ├── meta_ads.py
+│   └── linkedin_ads.py
+├── publish/             ← Phase 2: the only code in the module that writes to a network
+│   ├── constants.py     ← the four networks and their switches                (01479, shipped)
+│   ├── gate.py          ← master switch AND the network's own switch          (01479, shipped)
+│   ├── outbox.py        ← Social Publish Job state machine                             (01481)
+│   ├── sweeper.py       ← re-drives Pending past available_at; reclaims leases         (01481)
+│   ├── ratelimit.py     ← pure decision functions + Redis Lua; shape described below   (01482)
+│   └── meta.py, linkedin.py, youtube.py ← publishers, with their own allowlist  (01483–01485)
+├── report/ad_spend_roas/                                                            (shipped)
 ├── doctype/
 └── README.md
 ```
+
+Google Business Profile (reviews, replies, local posts) is Phase 3 and is not placed yet.
 
 ### Traps this module must not walk into
 
