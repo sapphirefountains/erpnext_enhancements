@@ -7,6 +7,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.508.0] - 2026-09-22
+
+**Marketing P2: the publishing connections.** TASK-2026-01480. Meta (Facebook Page + Instagram),
+LinkedIn (Company Page) and YouTube can be connected on Marketing Connections, and their tokens
+are kept alive daily. Nothing publishes yet: no publisher is installed, and every publishing
+switch ships off. Also fixes two bugs in the ad connectors' shared token code, both found by
+the new tests.
+
+Decisions of 2026-09-22 (Nik):
+
+- **Instagram publishes through the Facebook Page**, one Meta connection for both networks, as
+  the approvals packet files it.
+- **YouTube may manage playlists**, so it requests `youtube.force-ssl`.
+- **Who owns the YouTube channel is still open**, so the runbook covers both cases.
+
+### Added
+
+- **Three publishing connections on Marketing Connections**, each with its own section, fields
+  (`meta_publishing_*`, `linkedin_publishing_*`, `youtube_publishing_*`, disjoint from the ad
+  prefixes), Connect, Test and Disconnect. They use the same logged-in, state-bound, rate-limited
+  callback and redirect URI as the ad connectors. System Manager only, like the rest of the
+  doctype.
+  - **Meta keeps only the Page token.** The login's long-lived *user* token can act on every Page
+    the person manages. It is used in memory to check permissions and fetch the Page token, and
+    never stored.
+  - **Meta's grant is checked, not assumed.** `GET /me/permissions` is read before anything is
+    kept, because a Meta token carries everything the person ever granted this app, and the ads
+    connection uses the same app.
+    - The connection is **refused** if it holds a spend-capable permission
+      (`SPEND_CAPABLE_SCOPES`).
+    - It is refused if a Facebook publishing permission is missing.
+    - A missing Instagram permission, or a Page with no linked Instagram professional account,
+      connects Facebook alone and says which it was.
+    - The requested list is the approvals packet's, plus `read_insights` for Page metrics.
+      `ads_read` is included because Meta requires an ads permission for Instagram publishing
+      when the Page role comes through Business Manager. `ads_management` never is.
+  - **Meta Page choice.** A person managing several Pages gets them listed, to copy into the new
+    **Facebook Page ID** field. A Page they cannot create content on is refused.
+  - **Meta Login Configuration ID**, optional, for a *Facebook Login for Business* configuration
+    if Meta requires one. The grant check above still applies.
+  - **LinkedIn** needs a second app, holding only the Community Management API (LinkedIn's rule).
+    It requests `w_organization_social`, `r_organization_social` and `rw_organization_admin`,
+    finds the Company Page the person administers, and handles LinkedIn's **non-rolling** refresh
+    token. A refresh never extends the 365 days, and a connection with no refresh token at all
+    says so.
+  - **YouTube** requests `youtube.force-ssl` and `yt-analytics.readonly`, needs a refresh token
+    and a channel, and never stores an access token.
+- **`marketing/publish/client.py`**, the publishing transport, separate from the read-only one.
+  - It has its own allowlist, holding only the identity reads so far, and never an ad endpoint.
+    Each transport refuses the other's paths.
+  - Reads retry on 408/429/5xx. **Writes never retry on their own:** a create that timed out may
+    already have published, so resending is the outbox's call (TASK-2026-01481).
+  - Any method gets **one retry after a 401**, with a refreshed token. A 401 means the platform
+    acted on nothing.
+- **Daily upkeep at 03:35** (`publish.tasks.maintain_publishing_tokens`), one rule per
+  connection, because the lifetimes differ:
+  - Meta: the Page is read.
+  - LinkedIn: refreshed inside 7 days of expiry, warned 30 days before a token nobody can
+    refresh runs out.
+  - YouTube: the refresh token is exercised, so Google does not expire it for six months'
+    disuse.
+
+  A credential the platform **rejects** is cleared and marked *Auth Failed* with "Reconnect
+  needed". It is not retried every night. A platform that is only **down** leaves the
+  connection as it is. Gated by the master switch only. The publishing switches play no part,
+  so a token stays alive while its network is off.
+- Recorded-shape fixtures for all three platforms, and 31 new tests in `test_marketing_connectors`:
+  30 for publishing, plus one pinning the token-outage fix below.
+- Runbook: *Publishing connections* in `marketing-connectors-runbook.md`, with setup,
+  lifetimes and troubleshooting per platform. It flags two things:
+  - the Google OAuth consent screen: **Internal** if the channel is Workspace-owned. An
+    External app in *Testing* has its refresh tokens expire every 7 days.
+  - what to do if Meta insists on `ads_management` for Instagram: use Instagram Login, never the
+    scope.
+
+### Fixed
+
+- **An expired Meta token was a nightly failure instead of *Auth Failed*.** Meta reports a dead
+  token as **HTTP 400, error code 190**, not 401. The ad transport treated only 401 as an auth
+  failure, so an expired Meta Ads token failed every night instead of stopping to wait for a
+  reconnect, which is the design. `client.effective_status` now reads 400/190 as 401 for both
+  transports. The recorded Meta error fixture had existed since v1.503.0, but no test used it.
+- **A token server that was merely down was reported as a dead credential.** `_token_request`
+  gave every token-endpoint error status 401. One bad minute at Google (a 503) therefore marked a
+  good Google Ads connection *Auth Failed* and stopped the nightly pull until someone clicked.
+  For publishing, it would have **cleared a good refresh token**. Only a rejection
+  (`invalid_grant`, a bad client) is an auth failure now; 408/429/5xx keep their own status and
+  are retryable.
+
+### Changed
+
+- `core/oauth.py` state, specs and token calls accept publishing connection names as well as ad
+  platforms (`spec_for`, `known_connections`). `core/utils.field` resolves either prefix set.
+- The form's Test result carries its own heading, and its orange banner also warns before LinkedIn
+  Publishing runs out.
+- Approvals packet:
+  - Meta: `read_insights` added, and a note that the build now refuses `ads_management` and
+    `business_management`.
+  - LinkedIn: `rw_organization_admin`, and the must-be-its-own-app rule.
+  - YouTube: the scopes, and the OAuth consent screen as a second Google gate.
+
 ## [1.507.0] - 2026-09-22
 
 **Marketing P2 scaffold: the publishing switches, their gate, and "nothing may touch spend"

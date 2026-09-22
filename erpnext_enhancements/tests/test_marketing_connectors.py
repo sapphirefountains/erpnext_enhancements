@@ -463,7 +463,8 @@ class Doc(dict):
 		return self
 
 	def get_password(self, fieldname, raise_exception=True):
-		return STATE["secrets"].get(fieldname)
+		# A value staged by set_secret() and not yet saved reads back, as on a real Document.
+		return STATE["secrets"].get(fieldname) or dict.get(self, fieldname)
 
 	@property
 	def meta(self):
@@ -842,6 +843,23 @@ class OAuthTests(unittest.TestCase):
 		self.assertTrue(ctx.exception.is_auth_failure)
 		self.assertNotIn("csecret", str(ctx.exception))
 
+	def test_a_token_server_outage_is_not_an_auth_failure(self):
+		# Until v1.508.0 every token-endpoint error read as 401, so one bad minute at Google
+		# marked a good Google Ads connection Auth Failed and stopped the nightly pull.
+		reset()
+		from erpnext_enhancements.marketing.core import oauth
+
+		creds = STATE[C.CONNECTIONS_DOCTYPE]
+		down = FakeHTTP(lambda *a: FakeResponse(503, {"error": "backendError"}))
+		with self.assertRaises(client.MarketingAPIError) as ctx:
+			oauth.access_token(C.PLATFORM_GOOGLE, creds, http=down)
+		self.assertFalse(ctx.exception.is_auth_failure)
+		self.assertTrue(ctx.exception.retryable)
+		dead = FakeHTTP(lambda *a: FakeResponse(400, FIX["google"]["token_invalid_grant"]))
+		with self.assertRaises(client.MarketingAPIError) as ctx:
+			oauth.access_token(C.PLATFORM_GOOGLE, creds, http=dead)
+		self.assertTrue(ctx.exception.is_auth_failure)
+
 	def test_linkedin_refreshes_inside_seven_days(self):
 		reset()
 		from erpnext_enhancements.marketing.core import oauth
@@ -855,6 +873,472 @@ class OAuthTests(unittest.TestCase):
 		http = FakeHTTP(lambda *a: FIX["linkedin"]["token_exchange"])
 		self.assertEqual(oauth.access_token(C.PLATFORM_LINKEDIN, creds, http=http), "AQV-TEST-ACCESS")
 		self.assertEqual(http.calls[0][2]["data"]["grant_type"], "refresh_token")
+
+
+# ---------------------------------------------------------------- 7. publishing connections (01480)
+
+PUB = FIX["publishing"]
+
+
+def pub_reset(**settings):
+	reset(**settings)
+	STATE["secrets"].clear()
+	creds = STATE[C.CONNECTIONS_DOCTYPE]
+	for prefix in ("meta_publishing", "linkedin_publishing", "youtube_publishing"):
+		creds[f"{prefix}_client_id"] = f"{prefix}-app"
+		STATE["secrets"][f"{prefix}_client_secret"] = "s3"
+	return creds
+
+
+def meta_route(accounts="meta_accounts", permissions=None):
+	from erpnext_enhancements.marketing.publish import constants as P
+
+	replies = {"short": PUB["meta_token_short"], "long": PUB["meta_token_long"]}
+
+	def route(method, url, kw):
+		if url == P.PUBLISH_OAUTH[P.CONNECTION_META]["token_url"]:
+			return (
+				replies["long"] if kw["params"].get("grant_type") == "fb_exchange_token" else replies["short"]
+			)
+		if url.endswith("/me/permissions"):
+			return permissions or PUB["meta_permissions"]
+		if url.endswith("/me/accounts"):
+			return PUB[accounts]
+		if url.endswith("/101"):
+			return PUB["meta_page"]
+		raise AssertionError(f"unexpected {method} {url}")
+
+	return route
+
+
+def granted(*names):
+	return {"data": [{"permission": n, "status": "granted"} for n in names]}
+
+
+class PublishTransportTests(unittest.TestCase):
+	"""The publishing transport: its own allowlist, and no automatic retry of a write."""
+
+	def setUp(self):
+		from erpnext_enhancements.marketing.publish import constants as P
+
+		self.P = P
+
+	def transport(self, route, refresh=None, connection=None):
+		from erpnext_enhancements.marketing.publish.client import PublishTransport
+
+		sleeps = []
+		http = FakeHTTP(route)
+		t = PublishTransport(
+			connection or self.P.CONNECTION_META,
+			token="T1",
+			refresh=refresh,
+			http=http,
+			sleep=sleeps.append,
+			max_retries=2,
+		)
+		return t, http, sleeps
+
+	def with_write(self):
+		"""The allowlist plus one write, the way a publisher (01483) will add it."""
+		import re
+		from unittest import mock
+
+		entry = (self.P.CONNECTION_META, "POST", self.P.GRAPH_HOST, re.compile(r"^/v\d+\.\d+/\d+/feed$"))
+		return mock.patch.object(self.P, "PUBLISH_ALLOWLIST", (*self.P.PUBLISH_ALLOWLIST, entry))
+
+	def test_refuses_every_ad_endpoint(self):
+		from erpnext_enhancements.marketing.publish.client import PublishViolation, allowed
+
+		for url in (
+			f"{C.META_GRAPH_BASE}/act_123/campaigns",
+			f"{C.META_GRAPH_BASE}/act_123/insights",
+			f"{C.LINKEDIN_REST_BASE}/adAccounts",
+			f"{C.GOOGLE_ADS_BASE}/customers:listAccessibleCustomers",
+		):
+			for connection in self.P.PUBLISH_CONNECTIONS:
+				self.assertFalse(allowed(connection, "GET", url), url)
+		t, http, _ = self.transport(lambda *a: {})
+		with self.assertRaises(PublishViolation):
+			t.request("GET", f"{C.META_GRAPH_BASE}/act_123/campaigns")
+		self.assertEqual(http.calls, [], "refused before sending")
+
+	def test_the_ad_transport_refuses_publishing_paths(self):
+		self.assertFalse(client.allowed(C.PLATFORM_META, "GET", f"{C.META_GRAPH_BASE}/me/accounts"))
+		self.assertFalse(client.allowed(C.PLATFORM_META, "POST", f"{C.META_GRAPH_BASE}/101/feed"))
+
+	def test_allowlist_names_no_ad_endpoint_and_is_connection_scoped(self):
+		for connection, _method, host, pattern in self.P.PUBLISH_ALLOWLIST:
+			for needle in ("act_", "adAccounts", "adCampaigns", "adAnalytics", "adCreatives", "googleAds"):
+				self.assertNotIn(needle, pattern.pattern, connection)
+			self.assertNotEqual(host, "googleads.googleapis.com")
+		self.assertFalse(
+			__import__("erpnext_enhancements.marketing.publish.client", fromlist=["allowed"]).allowed(
+				self.P.CONNECTION_LINKEDIN, "GET", f"{C.META_GRAPH_BASE}/me/accounts"
+			),
+			"a Meta path is not a LinkedIn one",
+		)
+
+	def test_a_read_retries_and_a_write_never_does(self):
+		t, http, sleeps = self.transport(
+			lambda m, u, k: FakeResponse(503, {"error": {"message": "busy"}})
+			if len(http.calls) == 1
+			else {"ok": 1}
+		)
+		self.assertEqual(t.request("GET", f"{C.META_GRAPH_BASE}/me/accounts"), {"ok": 1})
+		self.assertEqual(len(sleeps), 1)
+		with self.with_write():
+			t, http, _ = self.transport(lambda *a: FakeResponse(502, {"error": {"message": "bad gateway"}}))
+			with self.assertRaises(client.MarketingAPIError) as ctx:
+				t.request("POST", f"{C.META_GRAPH_BASE}/101/feed", json={"message": "hi"})
+			self.assertEqual(ctx.exception.status, 502)
+			self.assertEqual(len(http.calls), 1, "a 502 on a create may have published: never resend it")
+			t, http, _ = self.transport(lambda *a: TimeoutError("read timed out"))
+			with self.assertRaises(client.MarketingAPIError):
+				t.request("POST", f"{C.META_GRAPH_BASE}/101/feed", json={})
+			self.assertEqual(len(http.calls), 1)
+
+	def test_one_retry_after_a_401_even_for_a_write(self):
+		with self.with_write():
+			t, http, _ = self.transport(
+				lambda m, u, k: FakeResponse(401, {"error": {"message": "expired"}})
+				if len(http.calls) == 1
+				else {"id": "1"},
+				refresh=lambda: "T2",
+			)
+			self.assertEqual(t.request("POST", f"{C.META_GRAPH_BASE}/101/feed", json={}), {"id": "1"})
+			self.assertEqual(
+				[c[2]["headers"]["Authorization"] for c in http.calls], ["Bearer T1", "Bearer T2"]
+			)
+		t, http, _ = self.transport(
+			lambda *a: FakeResponse(401, {"error": {"message": "no"}}), refresh=lambda: "T2"
+		)
+		with self.assertRaises(client.MarketingAPIError) as ctx:
+			t.request("GET", f"{C.META_GRAPH_BASE}/me/accounts")
+		self.assertTrue(ctx.exception.is_auth_failure)
+		self.assertEqual(len(http.calls), 2, "one refresh, then a person has to reconnect")
+
+	def test_meta_dead_token_400_code_190_is_an_auth_failure(self):
+		refreshed = []
+		t, http, _ = self.transport(
+			lambda *a: FakeResponse(400, FIX["meta"]["error_auth"]),
+			refresh=lambda: refreshed.append(1) or "T2",
+		)
+		with self.assertRaises(client.MarketingAPIError) as ctx:
+			t.request("GET", f"{C.META_GRAPH_BASE}/me/accounts")
+		self.assertTrue(ctx.exception.is_auth_failure)
+		self.assertEqual(refreshed, [1])
+
+	def test_the_ad_transport_reads_code_190_as_auth_failure_too(self):
+		t, http, _ = transport(C.PLATFORM_META, lambda *a: FakeResponse(400, FIX["meta"]["error_auth"]))
+		with self.assertRaises(client.MarketingAPIError) as ctx:
+			t.request("GET", f"{C.META_GRAPH_BASE}/me/adaccounts")
+		self.assertTrue(ctx.exception.is_auth_failure, "an expired Meta token must stop, not fail nightly")
+		self.assertEqual(len(http.calls), 1)
+		t, http, _ = transport(
+			C.PLATFORM_META, lambda *a: FakeResponse(400, {"error": {"code": 100, "message": "bad field"}})
+		)
+		with self.assertRaises(client.MarketingAPIError) as ctx:
+			t.request("GET", f"{C.META_GRAPH_BASE}/me/adaccounts")
+		self.assertFalse(ctx.exception.is_auth_failure, "other 400s stay 400")
+
+
+class PublishConnectTests(unittest.TestCase):
+	def setUp(self):
+		from erpnext_enhancements.marketing.publish import constants as P
+		from erpnext_enhancements.marketing.publish import oauth as publish_oauth
+
+		self.P = P
+		self.po = publish_oauth
+
+	def test_state_accepts_publishing_connections_and_nothing_else(self):
+		reset()
+		from erpnext_enhancements.marketing.core import oauth
+
+		for name in self.P.PUBLISH_CONNECTIONS:
+			self.assertEqual(
+				oauth.consume_state(oauth.mint_state(name, "nik@example.com"), "nik@example.com"), name
+			)
+		self.assertIsNone(
+			oauth.consume_state(oauth.mint_state("Facebook", "nik@example.com"), "nik@example.com")
+		)
+
+	def test_prefixes_are_disjoint_and_resolve(self):
+		self.assertFalse(set(C.CREDENTIAL_PREFIX.values()) & set(self.P.CREDENTIAL_PREFIX.values()))
+		self.assertEqual(utils.field(self.P.CONNECTION_META, "access_token"), "meta_publishing_access_token")
+		self.assertEqual(utils.field(C.PLATFORM_META, "access_token"), "meta_access_token")
+
+	def test_authorization_urls(self):
+		creds = pub_reset()
+		yt = self.po.authorization_url(self.P.CONNECTION_YOUTUBE, creds, "S")
+		self.assertIn("youtube.force-ssl", yt)
+		self.assertIn("access_type=offline", yt)
+		self.assertNotIn("youtube.upload", yt, "force-ssl already covers uploads")
+		meta = self.po.authorization_url(self.P.CONNECTION_META, creds, "S")
+		self.assertIn("instagram_content_publish", meta)
+		self.assertIn("ads_read", meta)
+		self.assertNotIn("ads_management", meta)
+		creds["meta_publishing_login_config_id"] = "cfg-1"
+		meta = self.po.authorization_url(self.P.CONNECTION_META, creds, "S")
+		self.assertIn("config_id=cfg-1", meta)
+		self.assertNotIn("scope=", meta, "a Login for Business configuration carries its own permissions")
+
+	def test_meta_keeps_only_the_page_token(self):
+		creds = pub_reset()
+		http = FakeHTTP(meta_route())
+		summary = self.po.exchange_code(self.P.CONNECTION_META, "CODE", creds, http=http)
+		self.assertEqual(creds["meta_publishing_access_token"], "EAAB-PAGE-TOKEN")
+		self.assertNotIn("EAAB-LONG-USER", json.dumps(creds, default=str), "the user token is never kept")
+		self.assertNotIn("EAAB-SHORT-USER", json.dumps(creds, default=str))
+		self.assertEqual(
+			(creds["meta_publishing_page_id"], creds["meta_publishing_instagram_username"]),
+			("101", "sapphirefountains"),
+		)
+		self.assertIn("Instagram: @sapphirefountains", summary)
+
+	def test_meta_refuses_a_login_that_can_touch_spend(self):
+		creds = pub_reset()
+		perms = granted("pages_show_list", "pages_manage_posts", "pages_read_engagement", "ads_management")
+		with self.assertRaises(client.MarketingAPIError) as ctx:
+			self.po.exchange_code(
+				self.P.CONNECTION_META, "CODE", creds, http=FakeHTTP(meta_route(permissions=perms))
+			)
+		self.assertIn("ads_management", str(ctx.exception))
+		self.assertTrue(ctx.exception.is_auth_failure)
+		self.assertNotIn("meta_publishing_access_token", creds, "nothing staged")
+
+	def test_meta_without_posting_permission_is_refused(self):
+		creds = pub_reset()
+		with self.assertRaises(client.MarketingAPIError) as ctx:
+			self.po.exchange_code(
+				self.P.CONNECTION_META,
+				"C",
+				creds,
+				http=FakeHTTP(meta_route(permissions=granted("pages_show_list"))),
+			)
+		self.assertIn("pages_manage_posts", str(ctx.exception))
+
+	def test_instagram_not_granted_connects_facebook_alone_and_says_so(self):
+		creds = pub_reset()
+		perms = granted("pages_show_list", "pages_manage_posts", "pages_read_engagement")
+		summary = self.po.exchange_code(
+			self.P.CONNECTION_META, "C", creds, http=FakeHTTP(meta_route(permissions=perms))
+		)
+		self.assertEqual(creds["meta_publishing_access_token"], "EAAB-PAGE-TOKEN")
+		self.assertEqual(creds["meta_publishing_instagram_user_id"], "")
+		self.assertIn("instagram_content_publish", summary)
+
+	def test_several_pages_need_a_choice_and_the_choice_needs_the_posting_role(self):
+		creds = pub_reset()
+		with self.assertRaises(client.MarketingAPIError) as ctx:
+			self.po.exchange_code(
+				self.P.CONNECTION_META, "C", creds, http=FakeHTTP(meta_route("meta_accounts_two"))
+			)
+		self.assertIn("Sapphire Rentals (202)", str(ctx.exception))
+		creds = pub_reset()
+		creds["meta_publishing_page_id"] = "202"
+		with self.assertRaises(client.MarketingAPIError) as ctx:
+			self.po.exchange_code(
+				self.P.CONNECTION_META, "C", creds, http=FakeHTTP(meta_route("meta_accounts_two"))
+			)
+		self.assertIn("CREATE_CONTENT", str(ctx.exception))
+		creds = pub_reset()
+		creds["meta_publishing_page_id"] = "101"
+		self.po.exchange_code(
+			self.P.CONNECTION_META, "C", creds, http=FakeHTTP(meta_route("meta_accounts_two"))
+		)
+		self.assertEqual(creds["meta_publishing_access_token"], "EAAB-PAGE-TOKEN")
+
+	def test_linkedin_connects_to_the_administered_company_page(self):
+		creds = pub_reset()
+
+		def route(method, url, kw):
+			if "accessToken" in url:
+				return PUB["linkedin_token"]
+			if url.endswith("/organizationAcls"):
+				self.assertEqual(kw["params"]["role"], "ADMINISTRATOR")
+				self.assertEqual(kw["headers"]["LinkedIn-Version"], C.LINKEDIN_API_VERSION)
+				return PUB["linkedin_acls"]
+			return PUB["linkedin_org"]
+
+		summary = self.po.exchange_code(self.P.CONNECTION_LINKEDIN, "C", creds, http=FakeHTTP(route))
+		self.assertEqual(creds["linkedin_publishing_organization_id"], "2414183")
+		self.assertEqual(creds["linkedin_publishing_refresh_token"], "AQX-PUB-REFRESH")
+		self.assertEqual(creds["linkedin_publishing_refresh_token_expires_on"].date(), D(2027, 9, 22))
+		self.assertIn("Sapphire Fountains", summary)
+
+	def test_linkedin_without_a_refresh_token_says_to_reconnect(self):
+		creds = pub_reset()
+		replies = {"accessToken": PUB["linkedin_token_no_refresh"], "Acls": PUB["linkedin_acls"]}
+		http = FakeHTTP(
+			lambda m, u, k: next((v for key, v in replies.items() if key in u), PUB["linkedin_org"])
+		)
+		summary = self.po.exchange_code(self.P.CONNECTION_LINKEDIN, "C", creds, http=http)
+		self.assertIn("no refresh token", summary)
+		self.assertNotIn("linkedin_publishing_refresh_token", creds)
+
+	def test_youtube_needs_a_refresh_token_and_a_channel(self):
+		creds = pub_reset()
+		http = FakeHTTP(lambda m, u, k: PUB["youtube_token"] if "oauth2" in u else PUB["youtube_channels"])
+		self.assertIn(
+			"Sapphire Fountains", self.po.exchange_code(self.P.CONNECTION_YOUTUBE, "C", creds, http=http)
+		)
+		self.assertEqual(creds["youtube_publishing_refresh_token"], "1//PUB-REFRESH")
+		self.assertEqual(creds["youtube_publishing_channel_id"], "UCsapphire0000000000000")
+		creds = pub_reset()
+		http = FakeHTTP(lambda m, u, k: PUB["youtube_token"] if "oauth2" in u else PUB["youtube_no_channel"])
+		with self.assertRaises(client.MarketingAPIError) as ctx:
+			self.po.exchange_code(self.P.CONNECTION_YOUTUBE, "C", creds, http=http)
+		self.assertIn("no YouTube channel", str(ctx.exception))
+		self.assertNotIn("youtube_publishing_refresh_token", creds, "nothing staged on a failed connect")
+
+
+class PublishTokenUseTests(unittest.TestCase):
+	def setUp(self):
+		from erpnext_enhancements.marketing.publish import constants as P
+		from erpnext_enhancements.marketing.publish import oauth as publish_oauth
+
+		self.P = P
+		self.po = publish_oauth
+
+	def linkedin(self, expires, refresh_expires=None, refresh="AQX-OLD"):
+		creds = pub_reset()
+		creds["linkedin_publishing_access_token_expires_on"] = expires
+		creds["linkedin_publishing_refresh_token_expires_on"] = refresh_expires
+		STATE["secrets"]["linkedin_publishing_access_token"] = "AQV-OLD"
+		if refresh:
+			STATE["secrets"]["linkedin_publishing_refresh_token"] = refresh
+		return creds
+
+	def test_linkedin_refreshes_inside_seven_days_without_rolling_the_refresh_token(self):
+		creds = self.linkedin(datetime.datetime(2026, 9, 25), datetime.datetime(2027, 3, 1))
+		http = FakeHTTP(lambda *a: PUB["linkedin_refreshed"])
+		self.assertEqual(
+			self.po.access_token(self.P.CONNECTION_LINKEDIN, creds, http=http), "AQV-PUB-ACCESS-2"
+		)
+		self.assertEqual(creds["linkedin_publishing_refresh_token_expires_on"], datetime.datetime(2027, 3, 1))
+		self.assertEqual(http.calls[0][2]["data"]["refresh_token"], "AQX-OLD")
+
+	def test_linkedin_far_from_expiry_uses_the_stored_token(self):
+		creds = self.linkedin(datetime.datetime(2026, 11, 20))
+		http = FakeHTTP(lambda *a: self.fail("no refresh expected"))
+		self.assertEqual(self.po.access_token(self.P.CONNECTION_LINKEDIN, creds, http=http), "AQV-OLD")
+
+	def test_linkedin_force_refresh_after_a_401(self):
+		creds = self.linkedin(datetime.datetime(2026, 11, 20))
+		http = FakeHTTP(lambda *a: PUB["linkedin_refreshed"])
+		self.assertEqual(
+			self.po.access_token(self.P.CONNECTION_LINKEDIN, creds, force_refresh=True, http=http),
+			"AQV-PUB-ACCESS-2",
+		)
+
+	def test_linkedin_expired_without_refresh_token_needs_a_person(self):
+		creds = self.linkedin(datetime.datetime(2026, 9, 1), refresh=None)
+		with self.assertRaises(client.MarketingAPIError) as ctx:
+			self.po.access_token(self.P.CONNECTION_LINKEDIN, creds, http=FakeHTTP(lambda *a: {}))
+		self.assertTrue(ctx.exception.is_auth_failure)
+
+	def test_meta_page_token_cannot_be_refreshed(self):
+		creds = pub_reset()
+		STATE["secrets"]["meta_publishing_access_token"] = "EAAB-PAGE"
+		self.assertEqual(self.po.access_token(self.P.CONNECTION_META, creds), "EAAB-PAGE")
+		with self.assertRaises(client.MarketingAPIError) as ctx:
+			self.po.access_token(self.P.CONNECTION_META, creds, force_refresh=True)
+		self.assertTrue(ctx.exception.is_auth_failure)
+
+	def test_youtube_refreshes_every_use(self):
+		creds = pub_reset()
+		STATE["secrets"]["youtube_publishing_refresh_token"] = "1//R"
+		http = FakeHTTP(lambda *a: PUB["youtube_refresh"])
+		self.assertEqual(
+			self.po.access_token(self.P.CONNECTION_YOUTUBE, creds, http=http), "ya29.PUB-ACCESS-2"
+		)
+		self.assertEqual(http.calls[0][2]["data"]["grant_type"], "refresh_token")
+
+
+class PublishUpkeepTests(unittest.TestCase):
+	def setUp(self):
+		from erpnext_enhancements.marketing.publish import constants as P
+		from erpnext_enhancements.marketing.publish import oauth as publish_oauth
+		from erpnext_enhancements.marketing.publish import tasks as publish_tasks
+
+		self.P = P
+		self.po = publish_oauth
+		self.tasks = publish_tasks
+
+	def connected(self, **settings):
+		creds = pub_reset(**settings)
+		for prefix in ("meta_publishing", "linkedin_publishing", "youtube_publishing"):
+			creds[f"{prefix}_connection_status"] = "Connected"
+		creds["meta_publishing_page_id"] = "101"
+		creds["meta_publishing_page_name"] = "Sapphire Fountains"
+		creds["meta_publishing_instagram_user_id"] = "17841400000000001"
+		creds["linkedin_publishing_organization_id"] = "2414183"
+		creds["linkedin_publishing_access_token_expires_on"] = datetime.datetime(2026, 11, 20)
+		creds["linkedin_publishing_refresh_token_expires_on"] = datetime.datetime(2027, 9, 1)
+		creds["youtube_publishing_channel_id"] = "UCsapphire0000000000000"
+		STATE["secrets"].update(
+			{
+				"meta_publishing_access_token": "EAAB-PAGE",
+				"linkedin_publishing_access_token": "AQV",
+				"linkedin_publishing_refresh_token": "AQX",
+				"youtube_publishing_refresh_token": "1//R",
+			}
+		)
+		return creds
+
+	def test_dormant_does_nothing(self):
+		self.connected(enabled=0)
+		self.assertEqual(
+			self.tasks.maintain_publishing_tokens(http=FakeHTTP(lambda *a: self.fail("no call"))), {}
+		)
+
+	def test_each_connection_gets_its_own_rule(self):
+		creds = self.connected()
+		creds["linkedin_publishing_connection_status"] = "Auth Failed"
+
+		def route(method, url, kw):
+			if "oauth2" in url:
+				return PUB["youtube_refresh"]
+			if url.endswith("/101"):
+				return PUB["meta_page"]
+			raise AssertionError(url)
+
+		http = FakeHTTP(route)
+		outcomes = self.tasks.maintain_publishing_tokens(http=http)
+		self.assertEqual(outcomes, {self.P.CONNECTION_META: "ok", self.P.CONNECTION_YOUTUBE: "ok"})
+		self.assertFalse(any("linkedin" in c[1] for c in http.calls), "Auth Failed waits for a person")
+
+	def test_invalid_grant_clears_the_tokens_and_marks_auth_failed(self):
+		creds = self.connected()
+		http = FakeHTTP(lambda *a: FakeResponse(400, FIX["google"]["token_invalid_grant"]))
+		self.assertEqual(self.po.maintain(self.P.CONNECTION_YOUTUBE, creds, http=http), "dead")
+		self.assertIsNone(creds["youtube_publishing_refresh_token"])
+		self.assertEqual(creds["youtube_publishing_connection_status"], "Auth Failed")
+		self.assertIn("Reconnect needed", creds["youtube_publishing_status_message"])
+		self.assertEqual(creds["youtube_publishing_channel_id"], "UCsapphire0000000000000", "identity kept")
+
+	def test_a_revoked_meta_page_token_is_dead_not_a_nightly_error(self):
+		creds = self.connected()
+		http = FakeHTTP(lambda *a: FakeResponse(400, FIX["meta"]["error_auth"]))
+		self.assertEqual(self.po.maintain(self.P.CONNECTION_META, creds, http=http), "dead")
+		self.assertIsNone(creds["meta_publishing_access_token"])
+		self.assertEqual(creds["meta_publishing_page_name"], "Sapphire Fountains")
+
+	def test_a_transient_failure_keeps_the_connection(self):
+		creds = self.connected()
+		http = FakeHTTP(lambda *a: FakeResponse(503, {"error": {"message": "busy"}}))
+		self.assertEqual(self.po.maintain(self.P.CONNECTION_YOUTUBE, creds, http=http), "error")
+		self.assertEqual(creds["youtube_publishing_connection_status"], "Connected")
+		self.assertEqual(STATE["secrets"]["youtube_publishing_refresh_token"], "1//R")
+
+	def test_linkedin_warns_before_the_refresh_token_runs_out(self):
+		creds = self.connected()
+		creds["linkedin_publishing_refresh_token_expires_on"] = datetime.datetime(2026, 10, 10)
+		self.assertEqual(
+			self.po.maintain(self.P.CONNECTION_LINKEDIN, creds, http=FakeHTTP(lambda *a: {})), "warned"
+		)
+		self.assertIn("2026-10-10", creds["linkedin_publishing_status_message"])
+		self.assertEqual(creds["linkedin_publishing_connection_status"], "Connected")
 
 
 # ---------------------------------------------------------------- wiring
@@ -886,6 +1370,9 @@ class WiringTests(unittest.TestCase):
 			'"25 3 * * *": ["erpnext_enhancements.marketing.core.tasks.nightly_ad_spend_sync"]', hooks
 		)
 		self.assertIn('"erpnext_enhancements.marketing.core.tasks.daily_prune"', hooks)
+		self.assertIn(
+			'"35 3 * * *": ["erpnext_enhancements.marketing.publish.tasks.maintain_publishing_tokens"]', hooks
+		)
 
 	def test_credentials_are_system_manager_only(self):
 		doc = json.loads(
@@ -895,9 +1382,14 @@ class WiringTests(unittest.TestCase):
 		)
 		self.assertEqual([p["role"] for p in doc["permissions"]], ["System Manager"])
 		tokens = [f for f in doc["fields"] if f["fieldname"].endswith(("_access_token", "_refresh_token"))]
-		self.assertEqual(len(tokens), 4)
+		# 4 for the ad platforms (v1.503.0) + 4 for publishing (v1.508.0): Meta's Page token,
+		# LinkedIn's pair, YouTube's refresh token.
+		self.assertEqual(len(tokens), 8)
 		for f in tokens:
 			self.assertEqual((f["fieldtype"], f.get("hidden")), ("Password", 1), f["fieldname"])
+		for f in doc["fields"]:
+			if f["fieldname"].endswith("_client_secret"):
+				self.assertEqual(f["fieldtype"], "Password", f["fieldname"])
 
 	def test_every_credential_field_the_code_reads_exists(self):
 		doc = json.loads(
@@ -921,6 +1413,28 @@ class WiringTests(unittest.TestCase):
 		self.assertIn("google_ads_login_customer_id", names)
 		self.assertIn("meta_access_token_expires_on", names)
 		self.assertIn("linkedin_refresh_token_expires_on", names)
+		from erpnext_enhancements.marketing.publish import constants as P
+		from erpnext_enhancements.marketing.publish import oauth as publish_oauth
+
+		for connection in P.PUBLISH_CONNECTIONS:
+			for suffix in (
+				"client_id",
+				"client_secret",
+				"connection_status",
+				"status_message",
+				"connected_on",
+				"connected_by",
+				"last_error_at",
+				*P.IDENTITY_FIELDS[connection],
+			):
+				self.assertIn(utils.field(connection, suffix), names)
+		for connection, suffixes in {
+			P.CONNECTION_META: ("page_id", "login_config_id", "access_token"),
+			P.CONNECTION_LINKEDIN: ("organization_id", *publish_oauth.TOKEN_FIELDS),
+			P.CONNECTION_YOUTUBE: ("refresh_token",),
+		}.items():
+			for suffix in suffixes:
+				self.assertIn(utils.field(connection, suffix), names)
 
 
 if __name__ == "__main__":

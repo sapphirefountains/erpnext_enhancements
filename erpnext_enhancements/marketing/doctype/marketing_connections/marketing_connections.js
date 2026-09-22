@@ -1,15 +1,21 @@
 // Copyright (c) 2026, Sapphire Fountains and contributors
 // For license information, please see license.txt
 
-// Connect / Test / Disconnect per ad platform, plus Sync now. Every call is a POST to
-// erpnext_enhancements.marketing.api.*; the only GET in the flow is the platform sending
-// the browser back to oauth_callback, which redirects here.
+// Connect / Test / Disconnect per ad platform and per publishing connection, plus Sync now
+// (ads only). Every call is a POST to erpnext_enhancements.marketing.api.*; the only GET in
+// the flow is the platform sending the browser back to oauth_callback, which redirects here.
 
 const MARKETING_PLATFORMS = [
 	{ name: "Google Ads", prefix: "google_ads" },
 	{ name: "Meta Ads", prefix: "meta" },
 	{ name: "LinkedIn Ads", prefix: "linkedin" },
+	{ name: "Meta Publishing", prefix: "meta_publishing" },
+	{ name: "LinkedIn Publishing", prefix: "linkedin_publishing" },
+	{ name: "YouTube Publishing", prefix: "youtube_publishing" },
 ];
+
+// Warn this many days before a token nobody can refresh runs out (publish/constants.py).
+const MARKETING_EXPIRY_WARNING_DAYS = 30;
 
 const MARKETING_API = "erpnext_enhancements.marketing.api";
 
@@ -61,7 +67,9 @@ frappe.ui.form.on("Marketing Connections", {
 									title: __(platform.name),
 									indicator: m.ok ? "green" : "red",
 									message: m.ok
-										? __("Readable accounts:") + "<br>" + (m.accounts || []).map(frappe.utils.escape_html).join("<br>")
+										? frappe.utils.escape_html(m.heading || __("Readable accounts:")) +
+											"<br>" +
+											(m.accounts || []).map(frappe.utils.escape_html).join("<br>")
 										: frappe.utils.escape_html(m.message || __("Failed")),
 								});
 								frm.reload_doc();
@@ -96,12 +104,32 @@ frappe.ui.form.on("Marketing Connections", {
 			})
 		);
 
+		const warnings = [];
 		const metaExpiry = frm.doc.meta_access_token_expires_on;
 		if (metaExpiry && frappe.datetime.get_day_diff(metaExpiry, frappe.datetime.now_date()) <= 10) {
-			frm.dashboard.set_headline_alert(
-				__("The Meta token expires on {0}. Click Reconnect under Meta Ads before then.", [frappe.datetime.str_to_user(metaExpiry)]),
-				"orange"
+			warnings.push(
+				__("The Meta Ads token expires on {0}. Click Reconnect under Meta Ads before then.", [
+					frappe.datetime.str_to_user(metaExpiry),
+				])
 			);
+		}
+		// LinkedIn's refresh token lasts 365 days and refreshing does not extend it; without a
+		// refresh token the 60-day access token is all there is. Either way: reconnect in time.
+		const linkedinLimit =
+			frm.doc.linkedin_publishing_refresh_token_expires_on || frm.doc.linkedin_publishing_access_token_expires_on;
+		if (
+			frm.doc.linkedin_publishing_connection_status === "Connected" &&
+			linkedinLimit &&
+			frappe.datetime.get_day_diff(linkedinLimit, frappe.datetime.now_date()) <= MARKETING_EXPIRY_WARNING_DAYS
+		) {
+			warnings.push(
+				__("LinkedIn Publishing stops working on {0}. Click Reconnect under LinkedIn Publishing before then.", [
+					frappe.datetime.str_to_user(linkedinLimit),
+				])
+			);
+		}
+		if (warnings.length) {
+			frm.dashboard.set_headline_alert(warnings.map(frappe.utils.escape_html).join("<br>"), "orange");
 		}
 	},
 });

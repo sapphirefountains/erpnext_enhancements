@@ -40,7 +40,49 @@
   "linkedin_status_message",
   "linkedin_last_error_at",
   "linkedin_access_token",
-  "linkedin_refresh_token"
+  "linkedin_refresh_token",
+  "meta_publishing_section",
+  "meta_publishing_client_id",
+  "meta_publishing_client_secret",
+  "meta_publishing_page_id",
+  "meta_publishing_login_config_id",
+  "meta_publishing_column_break",
+  "meta_publishing_connection_status",
+  "meta_publishing_connected_on",
+  "meta_publishing_connected_by",
+  "meta_publishing_page_name",
+  "meta_publishing_instagram_user_id",
+  "meta_publishing_instagram_username",
+  "meta_publishing_status_message",
+  "meta_publishing_last_error_at",
+  "meta_publishing_access_token",
+  "linkedin_publishing_section",
+  "linkedin_publishing_client_id",
+  "linkedin_publishing_client_secret",
+  "linkedin_publishing_organization_id",
+  "linkedin_publishing_column_break",
+  "linkedin_publishing_connection_status",
+  "linkedin_publishing_connected_on",
+  "linkedin_publishing_connected_by",
+  "linkedin_publishing_organization_name",
+  "linkedin_publishing_access_token_expires_on",
+  "linkedin_publishing_refresh_token_expires_on",
+  "linkedin_publishing_status_message",
+  "linkedin_publishing_last_error_at",
+  "linkedin_publishing_access_token",
+  "linkedin_publishing_refresh_token",
+  "youtube_publishing_section",
+  "youtube_publishing_client_id",
+  "youtube_publishing_client_secret",
+  "youtube_publishing_column_break",
+  "youtube_publishing_connection_status",
+  "youtube_publishing_connected_on",
+  "youtube_publishing_connected_by",
+  "youtube_publishing_channel_id",
+  "youtube_publishing_channel_title",
+  "youtube_publishing_status_message",
+  "youtube_publishing_last_error_at",
+  "youtube_publishing_refresh_token"
  ],
  "fields": [
   {
@@ -259,11 +301,269 @@
    "fieldtype": "Password",
    "hidden": 1,
    "label": "Refresh Token"
+  },
+  {
+   "description": "Posts to the Facebook Page, and to the Instagram professional account linked to it. Separate from Meta Ads: its own Connect, its own token, and only the Page token is kept.",
+   "fieldname": "meta_publishing_section",
+   "fieldtype": "Section Break",
+   "label": "Meta Publishing (Facebook Page + Instagram)"
+  },
+  {
+   "description": "Usually the same Meta app as Meta Ads: Meta reviews ads_read and the publishing permissions in one submission. Not secret.",
+   "fieldname": "meta_publishing_client_id",
+   "fieldtype": "Data",
+   "label": "App ID"
+  },
+  {
+   "fieldname": "meta_publishing_client_secret",
+   "fieldtype": "Password",
+   "label": "App Secret"
+  },
+  {
+   "description": "Which Page to post as. Leave blank when the person connecting manages exactly one Page; when they manage several, Connect lists them, and you put the right ID here and Connect again.",
+   "fieldname": "meta_publishing_page_id",
+   "fieldtype": "Data",
+   "label": "Facebook Page ID"
+  },
+  {
+   "description": "Optional. A Facebook Login for Business configuration ID, if Meta requires one for this app. Its permissions are set in Meta's console; Connect still refuses any that can touch ad spend.",
+   "fieldname": "meta_publishing_login_config_id",
+   "fieldtype": "Data",
+   "label": "Login Configuration ID"
+  },
+  {
+   "fieldname": "meta_publishing_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "meta_publishing_connection_status",
+   "fieldtype": "Select",
+   "in_list_view": 0,
+   "label": "Connection",
+   "options": "\nNot Connected\nConnected\nAuth Failed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_publishing_connected_on",
+   "fieldtype": "Datetime",
+   "label": "Connected On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_publishing_connected_by",
+   "fieldtype": "Link",
+   "label": "Connected By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_publishing_page_name",
+   "fieldtype": "Data",
+   "label": "Page",
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_publishing_instagram_user_id",
+   "fieldtype": "Data",
+   "label": "Instagram Account ID",
+   "read_only": 1
+  },
+  {
+   "description": "Blank means Instagram is not available on this connection: no professional account is linked to the Page, or its permissions were not granted. The Status line says which.",
+   "fieldname": "meta_publishing_instagram_username",
+   "fieldtype": "Data",
+   "label": "Instagram Account",
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_publishing_status_message",
+   "fieldtype": "Small Text",
+   "label": "Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_publishing_last_error_at",
+   "fieldtype": "Datetime",
+   "label": "Last Error At",
+   "read_only": 1
+  },
+  {
+   "description": "Set only by the Connect flow. Encrypted. The Page token only; the user token it came from is never kept.",
+   "fieldname": "meta_publishing_access_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Page Access Token"
+  },
+  {
+   "description": "Posts as the Company Page. A separate LinkedIn app from LinkedIn Ads: LinkedIn requires the Community Management API to be the only product on its app.",
+   "fieldname": "linkedin_publishing_section",
+   "fieldtype": "Section Break",
+   "label": "LinkedIn Publishing (Company Page)"
+  },
+  {
+   "description": "From the Community Management API app, not the ads app. Not secret.",
+   "fieldname": "linkedin_publishing_client_id",
+   "fieldtype": "Data",
+   "label": "Client ID"
+  },
+  {
+   "fieldname": "linkedin_publishing_client_secret",
+   "fieldtype": "Password",
+   "label": "Client Secret"
+  },
+  {
+   "description": "Which Company Page to post as (the number in urn:li:organization:NNN). Leave blank when the person connecting is an administrator of exactly one.",
+   "fieldname": "linkedin_publishing_organization_id",
+   "fieldtype": "Data",
+   "label": "Company Page (Organization) ID"
+  },
+  {
+   "fieldname": "linkedin_publishing_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "linkedin_publishing_connection_status",
+   "fieldtype": "Select",
+   "in_list_view": 0,
+   "label": "Connection",
+   "options": "\nNot Connected\nConnected\nAuth Failed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "linkedin_publishing_connected_on",
+   "fieldtype": "Datetime",
+   "label": "Connected On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "linkedin_publishing_connected_by",
+   "fieldtype": "Link",
+   "label": "Connected By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "linkedin_publishing_organization_name",
+   "fieldtype": "Data",
+   "label": "Company Page",
+   "read_only": 1
+  },
+  {
+   "fieldname": "linkedin_publishing_access_token_expires_on",
+   "fieldtype": "Datetime",
+   "label": "Access Token Expires On",
+   "read_only": 1
+  },
+  {
+   "description": "365 days from connecting, and refreshing does not extend it. Reconnect before this date.",
+   "fieldname": "linkedin_publishing_refresh_token_expires_on",
+   "fieldtype": "Datetime",
+   "label": "Refresh Token Expires On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "linkedin_publishing_status_message",
+   "fieldtype": "Small Text",
+   "label": "Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "linkedin_publishing_last_error_at",
+   "fieldtype": "Datetime",
+   "label": "Last Error At",
+   "read_only": 1
+  },
+  {
+   "description": "Set only by the Connect flow. Encrypted.",
+   "fieldname": "linkedin_publishing_access_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Access Token"
+  },
+  {
+   "description": "Set only by the Connect flow. Encrypted.",
+   "fieldname": "linkedin_publishing_refresh_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Refresh Token"
+  },
+  {
+   "description": "Uploads to the YouTube channel. Until the YouTube Data API audit passes, every video uploaded through the API is locked private, and that lock cannot be appealed.",
+   "fieldname": "youtube_publishing_section",
+   "fieldtype": "Section Break",
+   "label": "YouTube Publishing"
+  },
+  {
+   "description": "From Google Cloud (APIs & Services -> Credentials), in a project with the YouTube Data API enabled. Not secret.",
+   "fieldname": "youtube_publishing_client_id",
+   "fieldtype": "Data",
+   "label": "OAuth Client ID"
+  },
+  {
+   "fieldname": "youtube_publishing_client_secret",
+   "fieldtype": "Password",
+   "label": "OAuth Client Secret"
+  },
+  {
+   "fieldname": "youtube_publishing_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "youtube_publishing_connection_status",
+   "fieldtype": "Select",
+   "in_list_view": 0,
+   "label": "Connection",
+   "options": "\nNot Connected\nConnected\nAuth Failed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "youtube_publishing_connected_on",
+   "fieldtype": "Datetime",
+   "label": "Connected On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "youtube_publishing_connected_by",
+   "fieldtype": "Link",
+   "label": "Connected By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "youtube_publishing_channel_id",
+   "fieldtype": "Data",
+   "label": "Channel ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "youtube_publishing_channel_title",
+   "fieldtype": "Data",
+   "label": "Channel",
+   "read_only": 1
+  },
+  {
+   "fieldname": "youtube_publishing_status_message",
+   "fieldtype": "Small Text",
+   "label": "Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "youtube_publishing_last_error_at",
+   "fieldtype": "Datetime",
+   "label": "Last Error At",
+   "read_only": 1
+  },
+  {
+   "description": "Set only by the Connect flow. Encrypted.",
+   "fieldname": "youtube_publishing_refresh_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Refresh Token"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-09-22 12:00:00.000000",
+ "modified": "2026-09-22 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "Marketing",
  "name": "Marketing Connections",

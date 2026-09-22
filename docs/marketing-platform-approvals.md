@@ -220,12 +220,23 @@ publishing scopes are reviewed by the same process.
 | `instagram_basic` | read the IG professional account and its media | Advanced |
 | `instagram_content_publish` | publish organic IG feed photo/video posts | Advanced |
 | `instagram_manage_insights` | IG insights for the analytics surface | Advanced |
-| `ads_read` | Ads Insights API — spend and campaign reporting | Advanced |
+| `read_insights` | Facebook Page post insights for the analytics surface | Advanced |
+| `ads_read` | Ads Insights API — spend and campaign reporting; also what Meta requires for IG publishing when the person's Page role comes through Business Manager | Advanced |
+
+*Added 2026-09-22 (TASK-2026-01480):* `read_insights`, because Page post metrics need it and
+`pages_read_engagement` alone does not cover them. The Meta Publishing connection requests exactly
+this list; see [the connectors runbook](marketing-connectors-runbook.md#meta-publishing-facebook-page--instagram).
 
 `instagram_basic` and `pages_show_list` are not in the plan's list but are required
 dependencies of the publishing flow; add them. Do **not** request `ads_management` — decision 3
 is that ads are read-only, and asking for a write scope invites questions you have no use case
 to answer. Do not request `business_management` unless a reviewer asks for it.
+
+**Since v1.507.0 the code enforces this.** A build check refuses `ads_management`,
+`business_management`, `pages_manage_ads` and `rw_ads` anywhere in the marketing module, and Meta
+Publishing's Connect refuses a login that carries one. If a reviewer asks for `business_management`,
+or Meta insists on `ads_management` for Instagram, that is a decision for Nik, not a box to tick: the
+Instagram fallback is Meta's *Instagram API with Instagram Login*, which needs no ads permission at all.
 
 **Prerequisites before submitting:**
 
@@ -280,8 +291,15 @@ for weeks. Budget six weeks and be pleasantly surprised.
 **Where:** developer.linkedin.com → create app → Products → request access.
 
 **Scopes:** `w_organization_social` (post as the organisation), `r_organization_social` (read
-posts, comments, reactions). Add the organisation and follower/share statistics products if the
-analytics surface needs them.
+posts, comments, reactions), and `rw_organization_admin`, which the Community Management product
+grants. The Connect flow uses it to find the Company Page the person administers
+(`organizationAcls`), and the metrics pull will use it for share statistics. The LinkedIn
+Publishing connection requests exactly these three (TASK-2026-01480).
+
+**It must be its own app.** LinkedIn requires the Community Management API to be the **only
+product** on its developer app; the request button is greyed out on an app that has others. So
+this is a second app, separate from the ads app (gate 5), with its own Client ID and secret. The
+side effect is useful: an app holding only this product cannot carry `rw_ads`.
 
 Do **not** request `r_member_social` — LinkedIn's FAQ states it is a **closed permission** and
 they are not accepting requests. Nothing in this plan needs it; we post as the organisation, not
@@ -390,6 +408,19 @@ run **periodically** after approval, and a change of project ownership requires 
 > not upload third-party content and we do not host, download or redistribute YouTube content.
 > We read back view and engagement counts for our own videos to display alongside the project
 > the video documents. All of it is used internally by our staff and is never sold or shared.
+
+**Scopes the YouTube Publishing connection requests** (TASK-2026-01480, decided 2026-09-22):
+`youtube.force-ssl` (upload, thumbnails, playlist assignment, and reading the channel) and
+`yt-analytics.readonly` (view and engagement counts). The audit form asks for these. Playlist
+assignment is what makes the broad `force-ssl` scope necessary; `youtube.upload` alone would not
+allow it.
+
+**A second Google gate this list did not have: the OAuth consent screen.** It is separate from the
+audit. If the channel is owned by a @sapphirefountains.com Workspace account, make the consent screen
+**Internal**: no Google verification, and refresh tokens do not expire weekly. If it is not, the
+screen must be **External**, and an External app in *Testing* has its refresh tokens expire after
+**7 days**. Publishing it to production needs Google's verification review. Which one applies turns
+on question 3 above (who owns the channel), which is still open.
 
 ---
 

@@ -150,6 +150,12 @@ RETRYABLE_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 #: Statuses that mean the stored credential is dead and a human has to reconnect.
 AUTH_FAILURE_STATUSES = frozenset({401})
 
+#: Meta reports a dead, expired or revoked token as **HTTP 400** with error code 190
+#: (``OAuthException``), not 401. ``client.effective_status`` reads it as 401, so a dead Meta
+#: token becomes *Auth Failed* -- a person has to reconnect -- instead of a failed run that
+#: repeats every night. Until v1.508.0 the ad connector missed this.
+META_AUTH_ERROR_CODES = frozenset({190})
+
 BACKOFF_BASE_SECONDS = 2
 BACKOFF_CAP_SECONDS = 60
 RETRY_AFTER_CAP_SECONDS = 120
