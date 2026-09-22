@@ -108,36 +108,28 @@ CDC_ENTITIES = [
 # The jurisdiction survives on each charge row's description.
 DEFAULT_SALES_TAX_ACCOUNT_NUMBER = "25010"
 
-# The group / territory a QBO-created Supplier or Customer lands in. QuickBooks has no
-# notion of a supplier group, customer group or territory, so the importer has to pick
-# one, and the pick must be a NAME, never a lookup. Until v1.496.0 it was
-# ``frappe.db.get_value(doctype, {"is_group": 0}, "name")`` -- and a dict-filtered
-# ``get_value`` on Frappe v16 orders by ``creation`` DESC, so "any leaf" meant "the leaf
-# somebody created most recently". Every Supplier Group anyone added became, for the
-# next sync, the default for all 911 QBO-linked Suppliers at once (Staffing -> Event
-# Decor -> Encapsulant -> Labels -> Garbage & Junk Removal, 2026-06-18 to 2026-09-16),
-# and 466 Customers sat in "Government" for the same reason. One leaf named here, seeded
-# by ``patches/seed_qbo_uncategorized_groups.py`` under each root, is what the mapper
-# returns; when it is missing the mapper returns None and the party is created with no
-# group (none of the three Links is ``reqd`` on v16), which is honest rather than a guess.
-DEFAULT_PARTY_GROUP = "Uncategorized"
+# The group / territory a QBO-created Supplier or Customer lands in: none. QuickBooks has
+# no notion of a supplier group, customer group or territory, and until v1.496.0 the
+# importer invented one with ``frappe.db.get_value(doctype, {"is_group": 0}, "name")`` --
+# and a dict-filtered ``get_value`` on Frappe v16 orders by ``creation`` DESC, so "any
+# leaf" meant "the leaf somebody created most recently". Every Supplier Group anyone added
+# became, for the next sync, the group of all 911 QBO-linked Suppliers at once (Staffing ->
+# Event Decor -> Encapsulant -> Labels -> Garbage & Junk Removal, 2026-06-18 to
+# 2026-09-16), and 466 Customers sat in "Government" for the same reason. Nik's call,
+# 2026-09-22: a wrong group is worse than no group, so a party the importer creates gets
+# NO group (none of the three Links is ``reqd`` on v16) and a person files it. If a named
+# default is ever wanted, put its NAME here -- ``_default_group`` resolves it with
+# ``frappe.db.exists`` -- never a lookup.
+DEFAULT_PARTY_GROUP = None
 
-# Party fields ERPNext owns once a record exists. The importer fills them on create (and
-# fills a blank one on link / update) but never overwrites a value a person set, and they
-# are excluded from the ``owned_fields`` snapshot so conflict detection never treats them
-# as QuickBooks-sourced. Keyed on the ERPNext DocType; mirrors what ``_map_supplier`` /
-# ``_map_customer`` default.
+# Party fields ERPNext owns from the moment a record exists. The importer never writes
+# them on update (``_drop_party_groups_on_update``), whatever the record holds, and they
+# are excluded from the ``owned_fields`` snapshot and from ``detect_conflicts`` so a
+# person re-grouping a party is never a conflict. Keyed on the ERPNext DocType; mirrors
+# what ``_map_supplier`` / ``_map_customer`` emit.
 ERPNEXT_OWNED_PARTY_FIELDS = {
 	"Supplier": ("supplier_group",),
 	"Customer": ("customer_group", "territory"),
-}
-
-# The ``(group doctype, parent root, name field, parent field)`` the seed patch needs per
-# party field, so the patch and the remediation build the same records the mapper reads.
-PARTY_GROUP_DOCTYPES = {
-	"supplier_group": ("Supplier Group", "All Supplier Groups", "supplier_group_name", "parent_supplier_group"),
-	"customer_group": ("Customer Group", "All Customer Groups", "customer_group_name", "parent_customer_group"),
-	"territory": ("Territory", "All Territories", "territory_name", "parent_territory"),
 }
 
 # QBO rejects a CDC ``changedSince`` cursor older than 30 days. When the stored
